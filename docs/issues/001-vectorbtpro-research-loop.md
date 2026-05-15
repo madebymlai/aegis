@@ -1,10 +1,12 @@
-# Build the VectorBT Pro-first research loop from zero
+# Build the VectorBT Pro-first Aegis RD loop from zero
 
 ## Goal
 
-Build the first Aegis Trading research loop around VectorBT Pro from day one.
+Build the first Aegis RD research loop around VectorBT Pro from day one.
 
 The purpose is not to port the old Aegis architecture. The purpose is to solve the problem that paused the previous project: feature and signal research did not reliably tell whether an idea would survive out-of-sample testing and realistic portfolio simulation.
+
+Aegis RD is public. `aegis-trader` remains private. Public RD owns reusable methodology, scaffolding, reports, and schemas. Private Trader owns runtime execution, real promoted bundles, live configuration, and any strategy edge that should not be public.
 
 Target flow:
 
@@ -14,8 +16,8 @@ VectorBT Pro data fetch or load
 -> out-of-sample and walk-forward testing
 -> VectorBT Pro portfolio simulation with costs
 -> survival report
--> promotion manifest for survivors
--> Rust runtime parity and execution later
+-> promotion bundle for survivors
+-> private aegis-trader runtime parity and execution later
 ```
 
 ## Core Decisions
@@ -25,8 +27,9 @@ VectorBT Pro data fetch or load
 - Let VectorBT Pro own data fetch/load for the first loop where practical.
 - Keep Python as the lab for disposable factors, signals, diagnostics, and reports.
 - Do not center the first loop on Feature Forge, Rust feature catalogs, Rust training, Polars boundaries, or production promotion contracts.
-- Treat Rust as a later runtime parity and execution target for promoted survivors only.
+- Treat private `aegis-trader` as the later runtime parity and execution target for promoted survivors only.
 - Avoid calling research ideas `features` until they survive enough evidence to become promotion candidates.
+- Keep real profitable parameters, private run outputs, proprietary data, live promotion bundles, and execution configuration out of public Aegis RD.
 
 ## Research Vocabulary
 
@@ -34,7 +37,26 @@ VectorBT Pro data fetch or load
 - `signal`: entries, exits, weights, or target sizes derived from one or more factors.
 - `experiment`: data source, factor, signal, split policy, portfolio assumptions, and parameters run together.
 - `survival_report`: evidence explaining whether the experiment survived, failed, or needs more testing.
-- `promotion_manifest`: a language-neutral contract for ideas worth reproducing in runtime code.
+- `promotion_bundle`: a language-neutral contract plus artifacts for ideas worth reproducing in private runtime code.
+
+## Public And Private Boundary
+
+Public Aegis RD can contain:
+
+- Generic VectorBT Pro-first experiment runner code.
+- Baseline examples such as SMA crossover or RSI threshold.
+- Survival report schemas and example reports.
+- Promotion-bundle schemas and validators.
+- Methodology docs for OOS, walk-forward, cost sensitivity, and rejection criteria.
+
+Public Aegis RD must not contain:
+
+- Real profitable strategy parameters.
+- Private run outputs for live candidates.
+- Exchange credentials, account identifiers, or execution configuration.
+- Proprietary data snapshots.
+- Promotion bundles for live strategies.
+- Anything that reveals deployed edge.
 
 ## First Implementation Direction
 
@@ -118,27 +140,24 @@ The first experiment should be boring and deterministic.
 - Implementing live trading.
 - Treating any metric-only diagnostic as promotion-ready.
 
-## Runtime Handoff Later
+## Promotion Bundle And Runtime Handoff Later
 
-Only after an idea survives should the project emit a promotion manifest.
+Only after an idea survives should the project emit a promotion bundle.
 
-The manifest should eventually include:
+The bundle should eventually include:
 
-- Strategy or signal ID.
-- Data source and snapshot identity.
-- Symbols, timeframe, and date range.
-- Factor and signal definitions.
-- Selected parameters.
-- Split policy.
-- Fees, slippage, sizing, and execution timing.
-- OOS and portfolio evidence.
-- Runtime parity requirements.
+- `manifest.yaml` with strategy or signal ID, selected parameters, runtime parity requirements, and compatibility metadata.
+- `survival_report.json` with rejection/survival evidence.
+- Metrics, trades, orders, returns, equity curve, and plots where safe to store.
+- Data source identity, symbols, timeframe, date range, and split policy.
+- Fees, slippage, sizing, and execution timing assumptions.
+- Factor and signal definitions needed for runtime parity.
 
-Rust runtime work should start from this manifest and answer whether live/runtime behavior can reproduce the tested VectorBT Pro behavior safely.
+Real promotion bundles stay private. `aegis-trader` should start from a bundle and answer whether live/runtime behavior can reproduce the tested VectorBT Pro behavior safely.
 
 ## Acceptance Criteria
 
-- [ ] The repo has a clean VectorBT Pro-first research README.
+- [ ] The repo has a clean public Aegis RD / private Aegis Trader README boundary.
 - [ ] Research code imports `vectorbtpro`, not open-source `vectorbt`.
 - [ ] One command runs a deterministic baseline experiment from config.
 - [ ] The baseline fetches or loads data without depending on the old Aegis runtime architecture.
@@ -147,4 +166,5 @@ Rust runtime work should start from this manifest and answer whether live/runtim
 - [ ] The run emits a survival report under `runs/`.
 - [ ] The report clearly identifies OOS collapse when it happens.
 - [ ] The report distinguishes `survived`, `rejected`, and `needs_more_evidence`.
-- [ ] Rust runtime work remains deferred until a promotion manifest exists.
+- [ ] The public repo keeps live/private edge artifacts out of source control.
+- [ ] Private `aegis-trader` runtime work remains deferred until a promotion bundle exists.

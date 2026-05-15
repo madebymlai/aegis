@@ -1,8 +1,10 @@
-# Aegis Trading
+# Aegis RD
 
-Aegis Trading is a fresh VectorBT Pro-first rebuild of the Aegis research loop.
+Aegis RD is the public research and development lab for Aegis.
 
-The old project stalled because the hardest problem was not exchange execution, Rust safety, or application architecture. The blocker was feature research: testing ideas quickly, seeing whether they survive out-of-sample evidence, and understanding why they fail before spending time on runtime infrastructure.
+It is a VectorBT Pro-first workspace for testing factors, signals, labels, models, and trading ideas before anything is allowed near live runtime code. The private `aegis-trader` repo stays focused on execution, risk, exchange integration, and promoted artifacts.
+
+The old project stalled because the hardest problem was not exchange execution, Rust safety, or application architecture. The blocker was research: testing ideas quickly, seeing whether they survive out-of-sample evidence, and understanding why they fail before spending time on runtime infrastructure.
 
 This repo starts from zero around that problem.
 
@@ -16,11 +18,38 @@ VectorBT Pro data fetch
 -> out-of-sample and walk-forward testing
 -> portfolio simulation with realistic costs
 -> survival report
--> promotion manifest
--> Rust runtime parity and execution only for survivors
+-> promotion bundle for survivors
+-> private aegis-trader runtime parity and execution
 ```
 
-VectorBT Pro is the research engine. Rust is the robot, not the lab.
+VectorBT Pro is the research engine. `aegis-trader` is the robot, not the lab.
+
+## Repository Split
+
+- `aegis-rd`: public research methodology, experiment runner, baseline examples, survival reports, and promotion-bundle schema.
+- `aegis-trader`: private runtime, execution adapters, risk controls, live configuration, real promoted bundles, and any strategy edge that should not be public.
+
+Public lab. Private robot.
+
+## Public Boundary
+
+This repo may contain:
+
+- VectorBT Pro-first research workflow code.
+- Generic data-fetch and experiment scaffolding.
+- Baseline examples such as SMA or RSI.
+- Survival report formats and examples.
+- Promotion-bundle schemas and validators.
+- Methodology docs for OOS, walk-forward, cost sensitivity, and rejection criteria.
+
+This repo must not contain:
+
+- Real profitable strategy parameters.
+- Private run outputs for live candidates.
+- Exchange credentials, account identifiers, or execution configuration.
+- Proprietary data snapshots.
+- Promotion bundles for live strategies.
+- Anything that reveals deployed edge.
 
 ## Non-Negotiable Goal
 
@@ -54,7 +83,7 @@ This rebuild removes that friction. A research idea should begin as a disposable
 - `signal`: entries, exits, weights, or target sizes derived from one or more factors.
 - `experiment`: data, factor, signal, split policy, portfolio assumptions, and parameters run together.
 - `survival_report`: the evidence that explains whether the experiment survived or failed.
-- `promotion_manifest`: the minimal contract for something worth reproducing in runtime code.
+- `promotion_bundle`: the minimal contract and artifacts for something worth reproducing in `aegis-trader`.
 
 Avoid calling research ideas `features` until they are strong enough to promote.
 
@@ -67,7 +96,7 @@ The first version should be intentionally small:
 - Run out-of-sample and walk-forward diagnostics.
 - Run VectorBT Pro portfolio simulations with fees, slippage, sizing, and timing assumptions.
 - Emit survival reports that identify OOS collapse, regime fragility, cost sensitivity, and concentrated edge.
-- Emit promotion manifests only for ideas that survive.
+- Emit promotion bundles only for ideas that survive.
 
 ## Out Of Scope For The First Loop
 
@@ -78,6 +107,35 @@ The first version should be intentionally small:
 - Making Rust the primary research runtime.
 - Building a custom data lake before the research loop works.
 - Treating a clean diagnostic as promotion-ready without OOS and portfolio evidence.
+
+## Promotion Bundle Boundary
+
+Public code defines the bundle schema. Private research decides whether a real bundle should exist.
+
+```text
+promotion_bundle/
+  manifest.yaml
+  survival_report.json
+  metrics.parquet
+  trades.parquet
+  equity_curve.parquet
+  plots/
+  artifacts/
+```
+
+The manifest should eventually capture:
+
+- Strategy or signal ID.
+- Data source and snapshot identity.
+- Symbols, timeframe, and date range.
+- Factor and signal definitions.
+- Selected parameters.
+- Split policy.
+- Fees, slippage, sizing, and execution timing.
+- OOS and portfolio evidence.
+- Runtime parity requirements.
+
+Real promotion bundles belong in private storage or the private `aegis-trader` repo, not in this public repo.
 
 ## Intended Repo Shape
 
@@ -105,13 +163,13 @@ This shape is provisional. Keep it simple until the first survival report is use
 
 Rust remains valuable, but only after research has produced a survivor.
 
-Runtime work should begin from a promotion manifest and answer:
+Runtime work should begin from a promotion bundle and answer:
 
 ```text
 Can the runtime reproduce and safely execute the behavior VectorBT Pro tested?
 ```
 
-Rust responsibilities later:
+`aegis-trader` responsibilities later:
 
 - Recompute or replay promoted signals against the same data.
 - Compare runtime decisions/trades with VectorBT Pro expectations.
@@ -120,9 +178,17 @@ Rust responsibilities later:
 
 ## Relationship To `aegis-trader`
 
-`aegis-trader` is the previous architecture-heavy repo. It remains useful as reference material for exchange integration, runtime safety, historical decisions, and lessons learned.
+`aegis-trader` is private because runtime execution, live configuration, promoted artifacts, and real edge are sensitive.
 
-This repo is the pivot: a research-first rebuild designed around VectorBT Pro from day one.
+`aegis-rd` is public because the research methodology, scaffolding, and schemas are reusable without exposing live strategy edge.
+
+The intended connection is direct but one-way:
+
+```text
+aegis-rd proves an idea and emits a private promotion bundle
+-> aegis-trader imports/verifies the bundle
+-> aegis-trader executes only if runtime parity and safety checks pass
+```
 
 ## First Milestone
 
