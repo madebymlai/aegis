@@ -2,8 +2,7 @@
 
 Aegis RD is the public research and development lab for Aegis.
 
-It is a VectorBT Pro-first workspace for testing factors, signals, labels, models, and trading ideas.
-The old project stalled because the hardest problem was not exchange execution, Rust safety, or application architecture. The blocker was research: testing ideas quickly, seeing whether they survive out-of-sample evidence, and understanding why they fail before spending time on runtime infrastructure.
+It is a VectorBT Pro-first workspace for testing factors, signals, labels, models, and trading ideas. testing ideas quickly, seeing whether they survive out-of-sample evidence, and understanding why they fail.
 
 This repo starts from zero around that problem.
 
