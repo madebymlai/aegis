@@ -4,6 +4,20 @@ Aegis RD is a public research and development lab for VectorBT Pro-first trading
 
 It exists to make market ideas cheap to test, cheap to reject, and easy to explain. The focus is out-of-sample survival, walk-forward evidence, cost-aware portfolio simulation, and clear reports that say why an idea failed or survived.
 
+[Vectorbt Pro](https://vectorbt.pro/pvt_16ebf9ef/) Sites:
+
+**features**
+[Pro features](https//vectorbt.pro/pvt_16ebf9ef/features/overview/)
+[Basic features](https://vectorbt.dev/getting-started/features/)
+
+**examples**:
+[Mastering tutorials](https://vectorbt.pro/pvt_16ebf9ef/tutorials/overview/)
+[Practical examples](https://vectorbt.pro/pvt_16ebf9ef/cookbook/overview/)
+
+**documentation**
+[API documentation](https://vectorbt.pro/pvt_16ebf9ef/api/)
+[documentation](https://vectorbt.pro/pvt_16ebf9ef/documentation/overview/)
+
 ## Product Thesis
 
 Research should start from the fastest honest loop:
