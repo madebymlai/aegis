@@ -6,7 +6,7 @@ It exists to make market ideas cheap to test, cheap to reject, and easy to expla
 
 [Vectorbt Pro](https://vectorbt.pro/pvt_16ebf9ef/) Sites:
 
-**features**
+**features**:
 [Pro features](https//vectorbt.pro/pvt_16ebf9ef/features/overview/)
 [Basic features](https://vectorbt.dev/getting-started/features/)
 
@@ -14,7 +14,7 @@ It exists to make market ideas cheap to test, cheap to reject, and easy to expla
 [Mastering tutorials](https://vectorbt.pro/pvt_16ebf9ef/tutorials/overview/)
 [Practical examples](https://vectorbt.pro/pvt_16ebf9ef/cookbook/overview/)
 
-**documentation**
+**documentation**:
 [API documentation](https://vectorbt.pro/pvt_16ebf9ef/api/)
 [documentation](https://vectorbt.pro/pvt_16ebf9ef/documentation/overview/)
 
