@@ -6,16 +6,30 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.config import ReportConfig, to_builtin
+from research.aegis_research.config import (
+    REPORT_STATUS_NEEDS_MORE_EVIDENCE,
+    REPORT_STATUS_REJECTED,
+    REPORT_STATUS_SURVIVED,
+    ReportConfig,
+    to_builtin,
+)
 
 
-def portfolio_metrics(pf: Any) -> dict[str, Any]:
-    stats = pf.stats(agg_func=None)
+def portfolio_metrics(pf: Any, config: ReportConfig) -> dict[str, Any]:
+    stats = pf.stats(
+        metrics=["total_return", "max_dd", "total_trades", "win_rate", "total_fees_paid"],
+        agg_func=None,
+    )
     if isinstance(stats, pd.DataFrame):
         stats = stats.iloc[0]
     return {
         "total_return_pct": _metric(stats, "Total Return [%]"),
-        "sharpe_ratio": _metric(stats, "Sharpe Ratio"),
+        "sharpe_ratio": _scalar_metric(
+            pf.get_sharpe_ratio(
+                freq=pd.Timedelta(config.freq),
+                year_freq=pd.Timedelta(config.year_freq),
+            )
+        ),
         "max_drawdown_pct": _metric(stats, "Max Drawdown [%]"),
         "total_trades": _metric(stats, "Total Trades"),
         "win_rate_pct": _metric(stats, "Win Rate [%]"),
@@ -42,9 +56,9 @@ def build_survival_report(
     if oos_trades is None or oos_trades < config.min_oos_trades:
         reasons.append(f"Too few OOS trades: {oos_trades} < {config.min_oos_trades}")
 
-    status = "survived" if not reasons else "rejected"
+    status = REPORT_STATUS_SURVIVED if not reasons else REPORT_STATUS_REJECTED
     if oos_trades is not None and oos_trades < config.min_oos_trades:
-        status = "needs_more_evidence"
+        status = REPORT_STATUS_NEEDS_MORE_EVIDENCE
 
     return {
         "experiment": experiment_name,
@@ -62,7 +76,14 @@ def write_report(report: dict[str, Any], path: str | Path) -> None:
 
 
 def _metric(stats: pd.Series, name: str) -> Any:
-    value = stats.get(name)
+    return _scalar_metric(stats.get(name))
+
+
+def _scalar_metric(value: Any) -> Any:
+    if isinstance(value, pd.DataFrame):
+        value = value.iloc[0, 0]
+    elif isinstance(value, pd.Series):
+        value = value.iloc[0]
     if pd.isna(value):
         return None
     return to_builtin(value)

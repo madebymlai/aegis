@@ -1,3 +1,4 @@
+schema_version: 1
 name: synthetic_trendlb_baseline
 output_dir: runs
 
@@ -46,6 +47,8 @@ portfolio:
   direction: longonly
 
 report:
+  freq: 1D
+  year_freq: 252D
   min_oos_sharpe: 0.5
   max_oos_drawdown: 0.35
   min_oos_trades: 5

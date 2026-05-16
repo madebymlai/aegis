@@ -45,7 +45,9 @@ def evaluate_validation_splits(
         train_indicators = indicators.loc[split.train_index]
         train_labels = labels.loc[split.train_index]
         model = train_model(train_indicators, train_labels, config.model)
-        probabilities = predict_long_probability(model, indicators.loc[split.train_index.union(split.test_index)])
+        probabilities = predict_long_probability(
+            model, indicators.loc[split.train_index.union(split.test_index)]
+        )
         entries, exits = probabilities_to_signals(probabilities, config.signals)
 
         train_pf = simulate_portfolio(
@@ -61,8 +63,8 @@ def evaluate_validation_splits(
             config.portfolio,
         )
 
-        train_metrics = portfolio_metrics(train_pf)
-        test_metrics = portfolio_metrics(test_pf)
+        train_metrics = portfolio_metrics(train_pf, config.report)
+        test_metrics = portfolio_metrics(test_pf, config.report)
         split_rows.extend(
             [
                 {"split": split.label, "set": "train", **train_metrics},

@@ -6,7 +6,13 @@ import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.config import DataConfig
+from research.aegis_research.config import DataConfig, redact_text, resolve_secret_refs
+
+
+class RemoteDataPullError(ValueError):
+    def __init__(self, source: str, message: str) -> None:
+        self.source = source
+        super().__init__(f"Failed to pull {source} data: {message}")
 
 
 def load_market_data(config: DataConfig) -> pd.DataFrame:
@@ -18,24 +24,11 @@ def load_market_data(config: DataConfig) -> pd.DataFrame:
             raise ValueError("data.path is required for csv source")
         return _read_csv(config.path)
     if source == "yfinance":
-        data = vbt.YFData.pull(config.symbols, start=config.start, end=config.end, timeframe=config.timeframe)
-        return data.get()
+        return _pull_remote(vbt.YFData, config).get()
     if source == "binance":
-        data = vbt.BinanceData.pull(
-            config.symbols,
-            start=config.start,
-            end=config.end,
-            timeframe=config.timeframe,
-        )
-        return data.get()
+        return _pull_remote(vbt.BinanceData, config).get()
     if source == "ccxt":
-        data = vbt.CCXTData.pull(
-            config.symbols,
-            start=config.start,
-            end=config.end,
-            timeframe=config.timeframe,
-        )
-        return data.get()
+        return _pull_remote(vbt.CCXTData, config).get()
     raise ValueError(f"Unsupported data source: {config.source}")
 
 
@@ -69,6 +62,40 @@ def _read_csv(path: str) -> pd.DataFrame:
     return frame
 
 
+def _pull_remote(data_cls, config: DataConfig):
+    wrapper_kwargs, wrapper_secrets = resolve_secret_refs(
+        config.wrapper_kwargs,
+        "data.wrapper_kwargs",
+    )
+    provider_kwargs, provider_secrets = resolve_secret_refs(
+        config.provider_kwargs,
+        "data.provider_kwargs",
+    )
+    execution_kwargs, execution_secrets = resolve_secret_refs(
+        config.execution_kwargs,
+        "data.execution_kwargs",
+    )
+    secrets = wrapper_secrets + provider_secrets + execution_secrets
+    error_message = None
+    try:
+        return data_cls.pull(
+            config.symbols,
+            start=config.start,
+            end=config.end,
+            timeframe=config.timeframe,
+            missing_index=config.missing_index,
+            missing_columns=config.missing_columns,
+            tz_localize=config.tz_localize,
+            tz_convert=config.tz_convert,
+            wrapper_kwargs=wrapper_kwargs,
+            execute_kwargs=execution_kwargs,
+            **provider_kwargs,
+        )
+    except Exception as error:
+        error_message = redact_text(str(error), secrets)
+    raise RemoteDataPullError(config.source, error_message)
+
+
 def _synthetic_ohlcv(config: DataConfig) -> pd.DataFrame:
     rng = np.random.default_rng(config.seed)
     index = pd.date_range(
@@ -99,6 +126,8 @@ def _synthetic_ohlcv(config: DataConfig) -> pd.DataFrame:
             },
             index=index,
         )
-        frame.columns = pd.MultiIndex.from_product([[symbol], frame.columns], names=["symbol", "feature"])
+        frame.columns = pd.MultiIndex.from_product(
+            [[symbol], frame.columns], names=["symbol", "feature"]
+        )
         frames.append(frame)
     return pd.concat(frames, axis=1)

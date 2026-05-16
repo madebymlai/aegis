@@ -36,6 +36,19 @@ python -m research.aegis_research.cli run research/configs/experiments/synthetic
 
 The default config uses deterministic synthetic OHLCV data, so it is safe for CI and does not require exchange credentials.
 
+## Config Contract
+
+Experiment YAML is a versioned public contract. Every config must declare `schema_version: 1` and is validated before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write.
+
+Validation is strict by default:
+
+- Unknown fields fail unless they are inside explicit provider or execution passthrough maps.
+- Wrong scalar/list/mapping/null shapes fail without broad coercion.
+- Config errors include the offending config path.
+- Inline credential-like values are rejected; use environment-backed secret references for provider credentials.
+
+Remote provider configs keep scaffold-owned fields first-class (`source`, `symbols`, `start`, `end`, `timeframe`) and put provider-specific VectorBT kwargs behind named passthrough maps. Public artifacts store redacted config evidence only; runtime-expanded secret values are never serialized.
+
 ## Validation Modes
 
 Use a single chronological holdout:
@@ -95,6 +108,32 @@ labels:
 ## VectorBT PRO Notes
 
 - Use `YFData`, `BinanceData`, or `CCXTData` for real fetches once an experiment needs external data.
+- For schema v1, `Portfolio.from_signals` sizing accepts `amount`, `value`, `percent`, `percent100`, `valuepercent`, and `valuepercent100`; target size types are intentionally rejected.
+- Portfolio direction accepts `longonly`, `shortonly`, and `both`.
+- TRENDLB remains binary-only in schema v1 because the scaffold trains binary classification targets.
 - Keep high-cardinality parameter sweeps inside VectorBT indicator/portfolio/splitter objects instead of Python loops where possible.
 - Use `Portfolio.from_signals` for the first loop; move to `from_order_func` only when signal arrays cannot express the execution model.
 - Save only public, non-sensitive run artifacts in git. The `runs/` directory remains ignored except for `.gitkeep`.
+
+## Report Frequency
+
+Survival report gates that depend on annualized metrics require explicit frequency assumptions:
+
+```yaml
+report:
+  freq: 1D
+  year_freq: 252D
+  min_oos_sharpe: 0.5
+```
+
+The scaffold does not infer annualization solely from `data.timeframe`; report frequency is part of the experiment contract.
+
+## Run Config Artifacts
+
+Successful runs write public-safe config evidence:
+
+- `config.yaml`: redacted resolved config with defaults applied.
+- `config_authored.yaml`: redacted authored config view.
+- `config_manifest.json`: schema version and raw config identity.
+
+Invalid static configs fail before run artifact creation. Data-contract failures that require loaded data may happen after data access, but must not write public artifacts.

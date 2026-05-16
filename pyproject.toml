@@ -18,3 +18,25 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "F",    # pyflakes: undefined names, unused imports
+  "I",    # import sorting
+  "UP",   # modern Python syntax
+  "B",    # likely bugs and unsafe patterns
+  "C4",   # cleaner comprehensions
+  "SIM",  # simpler control flow
+  "RET",  # clearer returns
+  "TRY",  # exception-handling hygiene
+  "PERF", # obvious performance footguns
+  "PTH",  # pathlib consistency
+  "PIE",  # miscellaneous cleanup rules
+  "RUF",  # Ruff-specific rules
+]
+ignore = [
+  "E501",   # let the formatter handle wrapping; long literals/messages can stay readable
+  "PERF401", # explicit loops are often clearer for accumulating validation issues
+  "TRY003", # keep concise domain errors without forcing custom exception classes everywhere
+]

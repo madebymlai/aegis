@@ -28,7 +28,9 @@ def _chronological_split(index: pd.Index, config: SplitConfig) -> ValidationSpli
         raise ValueError("split.train_size must be between 0 and 1")
     split_at = int(len(index) * config.train_size)
     test_start = min(len(index), split_at + config.embargo_bars)
-    return ValidationSplit(label="holdout", train_index=index[:split_at], test_index=index[test_start:])
+    return ValidationSplit(
+        label="holdout", train_index=index[:split_at], test_index=index[test_start:]
+    )
 
 
 def _rolling_splits(index: pd.Index, config: SplitConfig) -> list[ValidationSplit]:
