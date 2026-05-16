@@ -2,8 +2,7 @@
   <title id="title">Aegis RD</title>
   <desc id="desc">Aegis RD trading research logo</desc>
   <rect width="720" height="220" rx="36" fill="#07111f"/>
-  <path d="M112 48 58 78v54c0 33 22 64 54 76 32-12 54-43 54-76V78l-54-30Z" fill="#12233d" stroke="#5eead4" stroke-width="6"/>
-  <path d="M112 78 84 94v36c0 18 11 35 28 44 17-9 28-26 28-44V94l-28-16Z" fill="#5eead4" opacity="0.9"/>
+  <image href="logo.png" x="48" y="38" width="128" height="128" preserveAspectRatio="xMidYMid meet"/>
   <path d="M229 152h-28l42-104h31l42 104h-29l-8-22h-42l-8 22Zm16-44h26l-13-36-13 36Z" fill="#f8fafc"/>
   <path d="M336 152V48h71v24h-43v16h39v23h-39v17h44v24h-72Z" fill="#f8fafc"/>
   <path d="M476 154c-31 0-53-22-53-54s22-54 54-54c25 0 44 14 50 36h-29c-4-8-11-12-21-12-16 0-26 12-26 30 0 19 10 31 27 31 13 0 21-6 24-17h-28V94h55v18c0 25-20 42-53 42Z" fill="#f8fafc"/>
