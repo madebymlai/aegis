@@ -2,9 +2,24 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.ipynb_checkpoints/
 .venv/
 venv/
+vectorbtpro/
 *.pyc
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+.DS_Store
+
+data/
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.pkl
 
 runs/*
 !runs/.gitkeep
@@ -12,3 +27,10 @@ runs/*
 .env
 .env.*
 !.env.example
+.claude/
+.codex/
+.opencode/
+.mcp.json
+opencode.json
+opencode.jsonc
+vbt.toml

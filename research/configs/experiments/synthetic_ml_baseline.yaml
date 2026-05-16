@@ -1,0 +1,45 @@
+name: synthetic_ml_baseline
+output_dir: runs
+
+data:
+  source: synthetic
+  symbols: [SYN]
+  start: "2020-01-01"
+  timeframe: "1D"
+  rows: 750
+  seed: 42
+
+indicators:
+  returns: [1, 5, 20]
+  moving_average_windows: [10, 30]
+  volatility_windows: [20]
+  rsi_windows: [14]
+
+labels:
+  horizon: 5
+  threshold: 0.0
+
+split:
+  train_size: 0.7
+  embargo_bars: 5
+
+model:
+  kind: logistic_regression
+  min_train_samples: 100
+
+signals:
+  long_threshold: 0.55
+  exit_threshold: 0.50
+
+portfolio:
+  init_cash: 10000.0
+  fees: 0.001
+  slippage: 0.0005
+  size: 1.0
+  size_type: valuepercent
+  direction: longonly
+
+report:
+  min_oos_sharpe: 0.5
+  max_oos_drawdown: 0.35
+  min_oos_trades: 5

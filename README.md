@@ -1,175 +1,124 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Aegis RD" width="260">
+</p>
+
 # Aegis RD
 
-Aegis RD is a public research and development lab for VectorBT Pro-first trading research.
+Aegis RD is a VectorBT PRO-first research scaffold for trading experiments.
 
 It exists to make market ideas cheap to test, cheap to reject, and easy to explain. The focus is out-of-sample survival, walk-forward evidence, cost-aware portfolio simulation, and clear reports that say why an idea failed or survived.
 
-[Vectorbt Pro](https://vectorbt.pro/pvt_16ebf9ef/) Sites:
-
-**features**:
-[Pro features](https//vectorbt.pro/pvt_16ebf9ef/features/overview/)
-[Basic features](https://vectorbt.dev/getting-started/features/)
-
-**examples**:
-[Mastering tutorials](https://vectorbt.pro/pvt_16ebf9ef/tutorials/overview/)
-[Practical examples](https://vectorbt.pro/pvt_16ebf9ef/cookbook/overview/)
-
-**documentation**:
-[API documentation](https://vectorbt.pro/pvt_16ebf9ef/api/)
-[documentation](https://vectorbt.pro/pvt_16ebf9ef/documentation/overview/)
-
-## Product Thesis
-
-Research should start from the fastest honest loop:
+The goal is to make the core quantitative loop fast, explicit, and easy to reject:
 
 ```text
-VectorBT Pro data fetch
--> Python research factors and signals
--> out-of-sample and walk-forward testing
--> portfolio simulation with realistic costs
+VectorBT PRO data
+-> indicators
+-> labels
+-> validation split
+-> model or signal rule
+-> Portfolio.from_signals
 -> survival report
--> research handoff bundle for survivors
 ```
 
-VectorBT Pro is the research engine. Python is the lab surface. The output is evidence, not faith in a metric.
+VectorBT PRO is the engine for data access, indicator computation, signal handling, portfolio simulation, statistics, and future walk-forward validation. This repo adds a thin project structure around it so experiments can be run from config and produce repeatable artifacts.
+
+## VectorBT PRO Resources
+
+- [VectorBT PRO](https://vectorbt.pro/pvt_16ebf9ef/)
+- [PRO feature overview](https://vectorbt.pro/pvt_16ebf9ef/features/overview/)
+- [Open-source VectorBT features](https://vectorbt.dev/getting-started/features/)
+- [Tutorials](https://vectorbt.pro/pvt_16ebf9ef/tutorials/overview/)
+- [Cookbook](https://vectorbt.pro/pvt_16ebf9ef/cookbook/overview/)
+- [API documentation](https://vectorbt.pro/pvt_16ebf9ef/api/)
+- [Documentation overview](https://vectorbt.pro/pvt_16ebf9ef/documentation/overview/)
+
+## Current Scaffold
+
+```text
+research/
+  aegis_research/
+    config.py        # typed experiment config
+    data.py          # synthetic, CSV, YFData, BinanceData, CCXTData loaders
+    indicators.py    # indicator matrix builders using VectorBT PRO + Pandas
+    labels.py        # forward-return labels
+    splits.py        # chronological train/test split policy
+    models.py        # sklearn model training and joblib export
+    signals.py       # probabilities -> entries/exits
+    portfolios.py    # vbt.Portfolio.from_signals wrapper
+    validation.py    # train/test evaluation boundary
+    reports.py       # survival verdicts and metrics
+    experiments.py   # orchestration and artifact writing
+    cli.py           # command runner
+  configs/
+    experiments/
+      synthetic_ml_baseline.yaml
+runs/
+docs/
+```
+
+## Run The Baseline
+
+```bash
+python -m research.aegis_research.cli run research/configs/experiments/synthetic_ml_baseline.yaml
+```
+
+The baseline uses deterministic synthetic OHLCV data, so it does not require exchange credentials or network access. It trains a simple logistic regression model on indicator-derived inputs, converts model probabilities into entries/exits, runs `vbt.Portfolio.from_signals`, and writes a report under `runs/`.
+
+Example output:
+
+```text
+Run: runs/20260516T012248Z_synthetic_ml_baseline
+Status: rejected
+Reason:
+- OOS Sharpe below threshold: -1.100812081585402 < 0.5
+```
+
+## VectorBT PRO Concepts Used
+
+- `Data`: fetch or load market data through VectorBT PRO data classes where practical.
+- `Indicators`: compute reusable numeric arrays such as returns, moving-average distance, volatility, and RSI.
+- `Labels`: create forward-looking targets for supervised experiments.
+- `Signals`: convert model outputs or indicator conditions into entries and exits.
+- `Portfolio.from_signals`: simulate orders, positions, fees, slippage, returns, drawdowns, and trade stats.
+- `Stats`: reduce portfolio results into train/test metrics.
 
 ## Public Boundary
 
-This repo may contain:
+This repository may contain generic research workflow code, deterministic baselines, public methodology docs, report schemas, and scaffold examples.
 
-- VectorBT Pro-first research workflow code.
-- Generic data-fetch and experiment scaffolding.
-- Baseline examples such as SMA or RSI.
-- Survival report formats and examples.
-- Research handoff bundle schemas and validators.
-- Methodology docs for OOS, walk-forward, cost sensitivity, and rejection criteria.
-
-This repo must not contain:
+This repository must not contain:
 
 - Real profitable strategy parameters.
 - Sensitive run outputs for live candidates.
 - Exchange credentials, account identifiers, or execution configuration.
 - Proprietary data snapshots.
-- Handoff bundles for live strategies.
+- Live handoff bundles.
 - Anything that reveals deployed edge.
 
-## Non-Negotiable Goal
+## Artifact Policy
 
-One command should answer:
+Experiment outputs belong under `runs/`, which is ignored by git except for `runs/.gitkeep`.
 
-```text
-Did this idea survive out-of-sample and portfolio testing?
-```
-
-The default output should be blunt. Most ideas should be cheap to reject.
+Typical run artifacts:
 
 ```text
-Status: rejected
-
-Reason:
-- OOS Sharpe collapsed from 1.4 in-sample to -0.2 out-of-sample
-- Edge was concentrated in 1 of 8 walk-forward slices
-- Fees erased gross returns
-- Not worth productionizing
-```
-
-## Why This Exists
-
-The previous Aegis direction made research ideas too production-shaped too early. Feature catalogs, diagnostic workbenches, dataframe handoffs, training paths, and promotion contracts all have value later, but they add friction before the project knows whether a market idea has edge.
-
-This rebuild removes that friction. A research idea should begin as a disposable factor or signal, not as a production feature.
-
-## Vocabulary
-
-- `factor`: a numeric research series derived from market data.
-- `signal`: entries, exits, weights, or target sizes derived from one or more factors.
-- `experiment`: data, factor, signal, split policy, portfolio assumptions, and parameters run together.
-- `survival_report`: the evidence that explains whether the experiment survived or failed.
-- `handoff_bundle`: the minimal contract and artifacts for a surviving idea.
-
-Avoid calling research ideas `features` until they are strong enough to promote.
-
-## Initial Scope
-
-The first version should be intentionally small:
-
-- Fetch or load market data directly through VectorBT Pro where practical.
-- Define disposable Python factors and signals.
-- Run out-of-sample and walk-forward diagnostics.
-- Run VectorBT Pro portfolio simulations with fees, slippage, sizing, and timing assumptions.
-- Emit survival reports that identify OOS collapse, regime fragility, cost sensitivity, and concentrated edge.
-- Emit handoff bundles only for ideas that survive.
-
-## Out Of Scope For The First Loop
-
-- Rebuilding the old Aegis application architecture.
-- Reviving the Python archive wholesale.
-- Making a diagnostic workbench the center of research.
-- Building a production feature catalog before ideas survive.
-- Building a custom data lake before the research loop works.
-- Treating a clean diagnostic as promotion-ready without OOS and portfolio evidence.
-
-## Handoff Bundle Boundary
-
-Public code defines the bundle schema. Sensitive real-world bundles should not be committed here.
-
-```text
-handoff_bundle/
-  manifest.yaml
+runs/<timestamp>_<experiment>/
+  config.yaml
   survival_report.json
-  metrics.parquet
-  trades.parquet
-  equity_curve.parquet
-  plots/
+  probabilities.csv
+  signals.csv
   artifacts/
+    model.joblib
 ```
 
-The manifest should eventually capture:
+## Next Architecture Moves
 
-- Strategy or signal ID.
-- Data source and snapshot identity.
-- Symbols, timeframe, and date range.
-- Factor and signal definitions.
-- Selected parameters.
-- Split policy.
-- Fees, slippage, sizing, and timing assumptions.
-- OOS and portfolio evidence.
+- Replace the simple chronological split with `vbt.Splitter`-backed walk-forward validation.
+- Add VectorBT PRO label-generator wrappers such as `FIXLB`, `TRENDLB`, and `PIVOTLB` where useful.
+- Add parameter-grid experiments using VectorBT PRO parameterization instead of Python loops.
+- Add multi-symbol portfolio handling with grouping and cash-sharing assumptions.
+- Add cost sensitivity, regime slicing, bootstrap diagnostics, and handoff bundles only after an idea survives the basic loop.
 
-## Intended Repo Shape
+## Principle
 
-```text
-research/
-  aegis_research/
-    data.py
-    factors.py
-    signals.py
-    splits.py
-    portfolios.py
-    diagnostics.py
-    reports.py
-    cli.py
-  configs/
-    experiments/
-      sma_baseline.yaml
-runs/
-docs/
-```
-
-This shape is provisional. Keep it simple until the first survival report is useful.
-
-## First Milestone
-
-Create the smallest working experiment runner:
-
-```bash
-python -m research.aegis_research.cli run research/configs/experiments/sma_baseline.yaml
-```
-
-It should:
-
-- Fetch or load data.
-- Build one baseline signal.
-- Run walk-forward/OOS testing.
-- Run a portfolio simulation with costs.
-- Save a survival report under `runs/`.
-- Say whether the idea survived, failed, or needs more evidence.
+Keep the project thin around VectorBT PRO. Use VectorBT PRO primitives directly where they fit, and add local code only where the project needs repeatable configuration, validation policy, artifact writing, or public-safe reporting.
