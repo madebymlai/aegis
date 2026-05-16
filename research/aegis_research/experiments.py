@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 from research.aegis_research.config import ExperimentConfig, to_builtin
-from research.aegis_research.data import close_from_ohlcv, load_market_data
+from research.aegis_research.data import close_from_ohlcv, high_from_ohlcv, load_market_data, low_from_ohlcv
 from research.aegis_research.indicators import build_indicators
 from research.aegis_research.labels import _primary_close, build_labels
 from research.aegis_research.models import export_model
@@ -20,8 +20,10 @@ def run_experiment(config: ExperimentConfig) -> dict[str, object]:
     run_dir = _make_run_dir(config)
     data = load_market_data(config.data)
     close = _primary_close(close_from_ohlcv(data))
+    high = _primary_close(high_from_ohlcv(data))
+    low = _primary_close(low_from_ohlcv(data))
     indicators = build_indicators(close, config.indicators)
-    labels = build_labels(close, config.labels)
+    labels = build_labels(close, config.labels, high=high, low=low)
     splits = build_validation_splits(indicators.index.intersection(labels.dropna().index), config.split)
     validation = evaluate_validation_splits(close, indicators, labels, splits, config)
     report = build_survival_report(

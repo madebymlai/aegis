@@ -18,7 +18,7 @@ data fetch/load
 
 - `data.py`: local, synthetic, and VectorBT PRO remote data adapters.
 - `indicators.py`: reusable indicator builders using VectorBT PRO indicators.
-- `labels.py`: forward-return labels for supervised research.
+- `labels.py`: VectorBT PRO `FIXLB`, `TRENDLB`, and `PIVOTLB` label wrappers.
 - `models.py`: training and `joblib` export boundary.
 - `signals.py`: converts model probabilities into entries and exits.
 - `portfolios.py`: owns `vbt.Portfolio.from_signals` assumptions.
@@ -59,6 +59,38 @@ split:
 ```
 
 Rolling validation writes per-split train/test metrics to `split_metrics.csv` and aggregates test metrics into the survival report.
+
+## Label Modes
+
+Use VectorBT PRO `FIXLB` fixed look-ahead labels:
+
+```yaml
+labels:
+  kind: fixlb
+  horizon: 5
+  threshold: 0.0
+```
+
+Use VectorBT PRO `TRENDLB` trend labels:
+
+```yaml
+labels:
+  kind: trendlb
+  up_th: 0.08
+  down_th: 0.08
+  mode: binary
+  positive_value: 1
+```
+
+Use VectorBT PRO `PIVOTLB` pivot labels:
+
+```yaml
+labels:
+  kind: pivotlb
+  up_th: 0.08
+  down_th: 0.08
+  positive_value: -1
+```
 
 ## VectorBT PRO Notes
 

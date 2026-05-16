@@ -1,4 +1,4 @@
-name: synthetic_ml_baseline
+name: synthetic_trendlb_baseline
 output_dir: runs
 
 data:
@@ -6,7 +6,7 @@ data:
   symbols: [SYN]
   start: "2020-01-01"
   timeframe: "1D"
-  rows: 750
+  rows: 900
   seed: 42
 
 indicators:
@@ -16,14 +16,18 @@ indicators:
   rsi_windows: [14]
 
 labels:
-  kind: fixlb
-  horizon: 5
-  threshold: 0.0
+  kind: trendlb
+  up_th: 0.08
+  down_th: 0.08
+  mode: binary
+  positive_value: 1
 
 split:
-  kind: holdout
+  kind: rolling
   train_size: 0.7
   embargo_bars: 5
+  n: 5
+  length: optimize
 
 model:
   kind: logistic_regression

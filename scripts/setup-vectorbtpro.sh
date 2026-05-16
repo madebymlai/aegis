@@ -50,6 +50,7 @@ EOF
         "OPENAI_API_KEY": "${OPENAI_API_KEY:-}",
         "VBT_SETTINGS_PATH": "$settings_path"
       },
+      "timeout": 120000,
       "enabled": true
     }
   }

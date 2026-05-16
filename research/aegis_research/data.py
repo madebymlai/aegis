@@ -40,14 +40,26 @@ def load_market_data(config: DataConfig) -> pd.DataFrame:
 
 
 def close_from_ohlcv(data: pd.DataFrame) -> pd.Series | pd.DataFrame:
+    return feature_from_ohlcv(data, "Close")
+
+
+def high_from_ohlcv(data: pd.DataFrame) -> pd.Series | pd.DataFrame:
+    return feature_from_ohlcv(data, "High")
+
+
+def low_from_ohlcv(data: pd.DataFrame) -> pd.Series | pd.DataFrame:
+    return feature_from_ohlcv(data, "Low")
+
+
+def feature_from_ohlcv(data: pd.DataFrame, feature: str) -> pd.Series | pd.DataFrame:
     if isinstance(data.columns, pd.MultiIndex):
-        if "Close" in data.columns.get_level_values(-1):
-            return data.xs("Close", axis=1, level=-1)
-        if "Close" in data.columns.get_level_values(0):
-            return data.xs("Close", axis=1, level=0)
-    if "Close" in data.columns:
-        return data["Close"]
-    raise ValueError("Data must contain a Close column")
+        if feature in data.columns.get_level_values(-1):
+            return data.xs(feature, axis=1, level=-1)
+        if feature in data.columns.get_level_values(0):
+            return data.xs(feature, axis=1, level=0)
+    if feature in data.columns:
+        return data[feature]
+    raise ValueError(f"Data must contain a {feature} column")
 
 
 def _read_csv(path: str) -> pd.DataFrame:

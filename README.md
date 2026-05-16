@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.png" alt="Aegis RD" width="260">
+  <img src="docs/assets/logo.svg" alt="Aegis RD" width="420">
 </p>
 
 # Aegis RD
@@ -40,7 +40,7 @@ research/
     config.py        # typed experiment config
     data.py          # synthetic, CSV, YFData, BinanceData, CCXTData loaders
     indicators.py    # indicator matrix builders using VectorBT PRO + Pandas
-    labels.py        # forward-return labels
+    labels.py        # FIXLB, TRENDLB, and PIVOTLB labels
     splits.py        # holdout and vbt.Splitter rolling split policies
     models.py        # sklearn model training and joblib export
     signals.py       # probabilities -> entries/exits
@@ -77,7 +77,7 @@ Reason:
 
 - `Data`: fetch or load market data through VectorBT PRO data classes where practical.
 - `Indicators`: compute reusable numeric arrays such as returns, moving-average distance, volatility, and RSI.
-- `Labels`: create forward-looking targets for supervised experiments.
+- `Labels`: create forward-looking targets using VectorBT PRO label generators such as `FIXLB`, `TRENDLB`, and `PIVOTLB`.
 - `Signals`: convert model outputs or indicator conditions into entries and exits.
 - `Portfolio.from_signals`: simulate orders, positions, fees, slippage, returns, drawdowns, and trade stats.
 - `Splitter`: generate rolling walk-forward train/test windows.
@@ -115,7 +115,6 @@ runs/<timestamp>_<experiment>/
 ## Next Architecture Moves
 
 - Replace the simple chronological split with `vbt.Splitter`-backed walk-forward validation.
-- Add VectorBT PRO label-generator wrappers such as `FIXLB`, `TRENDLB`, and `PIVOTLB` where useful.
 - Add parameter-grid experiments using VectorBT PRO parameterization instead of Python loops.
 - Add multi-symbol portfolio handling with grouping and cash-sharing assumptions.
 - Add cost sensitivity, regime slicing, bootstrap diagnostics, and handoff bundles only after an idea survives the basic loop.

@@ -29,8 +29,13 @@ class IndicatorConfig:
 
 @dataclass(frozen=True)
 class LabelConfig:
+    kind: str = "fixlb"
     horizon: int = 5
     threshold: float = 0.0
+    up_th: float = 0.1
+    down_th: float = 0.1
+    mode: str = "binary"
+    positive_value: int = 1
 
 
 @dataclass(frozen=True)
