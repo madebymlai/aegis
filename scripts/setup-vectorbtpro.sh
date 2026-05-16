@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$REPO_ROOT"
+
 REF="${VECTORBTPRO_REF:-develop}"
 EXTRA="${VECTORBTPRO_EXTRA:-base}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
@@ -119,6 +122,7 @@ GITHUB_TOKEN=$GITHUB_TOKEN
 OPENAI_API_KEY=${OPENAI_API_KEY:-}
 EOF
 chmod 600 .env
+echo "Environment written to $REPO_ROOT/.env"
 
 if [[ -d "$VENV_DIR" ]]; then
   read -r -p "$VENV_DIR already exists. Replace it? [y/N] " replace
@@ -130,26 +134,12 @@ fi
 
 uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
 
-askpass_file="$(mktemp)"
-cat > "$askpass_file" <<'EOF'
-#!/usr/bin/env bash
-case "$1" in
-  *Username*) printf '%s\n' "$GITHUB_USERNAME" ;;
-  *Password*) printf '%s\n' "$GITHUB_TOKEN" ;;
-  *) printf '\n' ;;
-esac
-EOF
-chmod 700 "$askpass_file"
-trap 'rm -f "$askpass_file"' EXIT
-
 export GITHUB_USERNAME GITHUB_TOKEN
-export GIT_ASKPASS="$askpass_file"
-export GIT_TERMINAL_PROMPT=0
 
 if [[ -n "$EXTRA" ]]; then
-  package="vectorbtpro[$EXTRA] @ git+https://github.com/polakowo/vectorbt.pro.git@$REF"
+  package="vectorbtpro[$EXTRA] @ git+https://$GITHUB_USERNAME:$GITHUB_TOKEN@github.com/polakowo/vectorbt.pro.git@$REF"
 else
-  package="git+https://github.com/polakowo/vectorbt.pro.git@$REF"
+  package="git+https://$GITHUB_USERNAME:$GITHUB_TOKEN@github.com/polakowo/vectorbt.pro.git@$REF"
 fi
 
 uv pip install --python "$VENV_DIR/bin/python" -U "$package"
@@ -158,6 +148,6 @@ write_vbt_settings
 write_mcp_configs
 
 echo "VectorBT PRO is ready. Activate with: source $VENV_DIR/bin/activate"
-echo "VectorBT PRO settings written to $VBT_SETTINGS_FILE"
-echo "Claude MCP config written to .mcp.json"
-echo "OpenCode MCP config written to opencode.json"
+echo "VectorBT PRO settings written to $REPO_ROOT/$VBT_SETTINGS_FILE"
+echo "Claude MCP config written to $REPO_ROOT/.mcp.json"
+echo "OpenCode MCP config written to $REPO_ROOT/opencode.json"
