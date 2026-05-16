@@ -4,9 +4,9 @@
 
 # Aegis RD
 
-Aegis RD is a rejection engine for market ideas.
+Aegis RD is a research and development workspace for testing market ideas with reproducible evidence.
 
-It turns raw hypotheses into blunt evidence: split the data, train or define the signal, simulate the portfolio, price in friction, and write down why the idea survived or died. The goal is not to make backtests look good. The goal is to kill weak ideas quickly and preserve only the ones worth deeper research.
+It turns raw hypotheses into repeatable experiments: split the data, train or define the signal, simulate the portfolio, price in friction, and write down why the idea survived or failed. The goal is to make research decisions easier to audit and easier to repeat.
 
 The goal is to make the core quantitative loop fast, explicit, and easy to reject:
 
