@@ -4,29 +4,27 @@
 
 # Aegis RD
 
-Aegis RD is a VectorBT PRO-first research scaffold for trading experiments.
+Aegis RD is a rejection engine for market ideas.
 
-It exists to make market ideas cheap to test, cheap to reject, and easy to explain. The focus is out-of-sample survival, walk-forward evidence, cost-aware portfolio simulation, and clear reports that say why an idea failed or survived.
+It turns raw hypotheses into blunt evidence: split the data, train or define the signal, simulate the portfolio, price in friction, and write down why the idea survived or died. The goal is not to make backtests look good. The goal is to kill weak ideas quickly and preserve only the ones worth deeper research.
 
 The goal is to make the core quantitative loop fast, explicit, and easy to reject:
 
 ```text
-VectorBT PRO data
--> indicators
+market data
+-> feature and indicator matrix
 -> labels
 -> validation split
 -> model or signal rule
--> Portfolio.from_signals
+-> portfolio simulation with costs
 -> survival report
 ```
 
-VectorBT PRO is the engine for data access, indicator computation, signal handling, portfolio simulation, statistics, and future walk-forward validation. This repo adds a thin project structure around it so experiments can be run from config and produce repeatable artifacts.
+This repo is intentionally thin: config in, evidence out. The local code handles repeatable experiment wiring, validation policy, artifact writing, and public-safe reports.
 
-## VectorBT PRO Resources
+## Research Engine Resources
 
-- [VectorBT PRO](https://vectorbt.pro/pvt_16ebf9ef/)
-- [PRO feature overview](https://vectorbt.pro/pvt_16ebf9ef/features/overview/)
-- [Open-source VectorBT features](https://vectorbt.dev/getting-started/features/)
+- [Feature overview](https://vectorbt.pro/pvt_16ebf9ef/features/overview/)
 - [Tutorials](https://vectorbt.pro/pvt_16ebf9ef/tutorials/overview/)
 - [Cookbook](https://vectorbt.pro/pvt_16ebf9ef/cookbook/overview/)
 - [API documentation](https://vectorbt.pro/pvt_16ebf9ef/api/)
@@ -39,7 +37,7 @@ research/
   aegis_research/
     config.py        # typed experiment config
     data.py          # synthetic, CSV, YFData, BinanceData, CCXTData loaders
-    indicators.py    # indicator matrix builders using VectorBT PRO + Pandas
+    indicators.py    # indicator matrix builders
     labels.py        # FIXLB, TRENDLB, and PIVOTLB labels
     splits.py        # holdout and vbt.Splitter rolling split policies
     models.py        # sklearn model training and joblib export
@@ -73,11 +71,11 @@ Reason:
 - OOS Sharpe below threshold: -1.100812081585402 < 0.5
 ```
 
-## VectorBT PRO Concepts Used
+## Research Concepts Used
 
-- `Data`: fetch or load market data through VectorBT PRO data classes where practical.
+- `Data`: fetch or load market data through reusable data adapters.
 - `Indicators`: compute reusable numeric arrays such as returns, moving-average distance, volatility, and RSI.
-- `Labels`: create forward-looking targets using VectorBT PRO label generators such as `FIXLB`, `TRENDLB`, and `PIVOTLB`.
+- `Labels`: create forward-looking targets such as fixed-horizon, trend, and pivot labels.
 - `Signals`: convert model outputs or indicator conditions into entries and exits.
 - `Portfolio.from_signals`: simulate orders, positions, fees, slippage, returns, drawdowns, and trade stats.
 - `Splitter`: generate rolling walk-forward train/test windows.
@@ -115,10 +113,16 @@ runs/<timestamp>_<experiment>/
 ## Next Architecture Moves
 
 - Replace the simple chronological split with `vbt.Splitter`-backed walk-forward validation.
-- Add parameter-grid experiments using VectorBT PRO parameterization instead of Python loops.
+- Add parameter-grid experiments that keep high-cardinality sweeps inside vectorized research primitives.
 - Add multi-symbol portfolio handling with grouping and cash-sharing assumptions.
 - Add cost sensitivity, regime slicing, bootstrap diagnostics, and handoff bundles only after an idea survives the basic loop.
 
 ## Principle
 
-Keep the project thin around VectorBT PRO. Use VectorBT PRO primitives directly where they fit, and add local code only where the project needs repeatable configuration, validation policy, artifact writing, or public-safe reporting.
+Keep the project thin around the research engine. Use proven primitives directly where they fit, and add local code only where the project needs repeatable configuration, validation policy, artifact writing, or public-safe reporting.
+
+<p align="center">
+  <a href="https://vectorbt.pro/">
+    <img src="docs/assets/disclaimer.svg" alt="VectorBT PRO license required" width="720">
+  </a>
+</p>
