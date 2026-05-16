@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="110" viewBox="0 0 960 110" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1012" height="120" viewBox="0 0 1012 120" role="img" aria-labelledby="title desc">
   <title id="title">VectorBT PRO license required</title>
   <desc id="desc">A disclaimer that this project uses VectorBT PRO and requires a valid license.</desc>
-  <rect width="960" height="110" rx="22" fill="#07111f"/>
-  <text x="44" y="47" fill="#f8fafc" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700">VectorBT PRO license required</text>
-  <text x="44" y="76" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="16">This project uses VectorBT PRO and requires a valid license for the full workflow.</text>
+  <rect width="1012" height="120" rx="24" fill="#07111f"/>
+  <text x="48" y="50" fill="#f8fafc" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700">VectorBT PRO license required</text>
+  <text x="48" y="82" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="17">This project uses VectorBT PRO and requires a valid license for the full workflow.</text>
   <a href="https://vectorbt.pro/" target="_blank">
-    <rect x="750" y="32" width="158" height="46" rx="13" fill="#5eead4"/>
-    <text x="829" y="62" text-anchor="middle" fill="#07111f" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">vectorbt.pro</text>
+    <rect x="796" y="35" width="168" height="50" rx="14" fill="#5eead4"/>
+    <text x="880" y="67" text-anchor="middle" fill="#07111f" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">vectorbt.pro</text>
   </a>
 </svg>

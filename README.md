@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="Aegis RD" width="720">
+  <img src="docs/assets/hero.png" alt="Aegis RD" width="830">
 </p>
 
 Aegis RD is a research and development workspace for testing market ideas with reproducible evidence.
@@ -121,6 +121,6 @@ Keep the project thin around the research engine. Use proven primitives directly
 
 <p align="center">
   <a href="https://vectorbt.pro/">
-    <img src="docs/assets/disclaimer.svg" alt="VectorBT PRO license required" width="720">
+    <img src="docs/assets/disclaimer.svg" alt="VectorBT PRO license required" width="830">
   </a>
 </p>
