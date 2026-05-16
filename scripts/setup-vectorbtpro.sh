@@ -103,6 +103,11 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   printf '\n'
 fi
 
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  read -r -s -p "OpenAI API key for optional docs/chat search features [press Enter to skip]: " OPENAI_API_KEY
+  printf '\n'
+fi
+
 if [[ -z "$GITHUB_USERNAME" || -z "$GITHUB_TOKEN" ]]; then
   echo "GitHub username and token are required." >&2
   exit 1
