@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" alt="Aegis RD" width="420">
+  <img src="docs/assets/hero.svg" alt="Aegis RD" width="720">
 </p>
 
 # Aegis RD

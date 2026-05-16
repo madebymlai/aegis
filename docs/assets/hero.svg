@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="260" viewBox="0 0 960 260" role="img" aria-labelledby="title desc">
+  <title id="title">Aegis RD</title>
+  <desc id="desc">Aegis RD trading research logo</desc>
+  <rect width="960" height="260" rx="40" fill="#07111f"/>
+  <image href="logo.png" x="-10" y="-12" width="284" height="284" preserveAspectRatio="xMidYMid meet"/>
+  <g transform="translate(70 20)">
+    <path d="M229 152h-28l42-104h31l42 104h-29l-8-22h-42l-8 22Zm16-44h26l-13-36-13 36Z" fill="#f8fafc"/>
+    <path d="M336 152V48h71v24h-43v16h39v23h-39v17h44v24h-72Z" fill="#f8fafc"/>
+    <path d="M476 154c-31 0-53-22-53-54s22-54 54-54c25 0 44 14 50 36h-29c-4-8-11-12-21-12-16 0-26 12-26 30 0 19 10 31 27 31 13 0 21-6 24-17h-28V94h55v18c0 25-20 42-53 42Z" fill="#f8fafc"/>
+    <path d="M552 152V48h28v104h-28Z" fill="#f8fafc"/>
+    <path d="M643 154c-27 0-46-13-47-36h28c1 9 8 14 20 14 10 0 16-4 16-11 0-8-8-10-24-14-20-5-37-13-37-31 0-19 17-30 43-30 25 0 42 12 43 34h-28c-1-8-7-12-16-12-9 0-14 4-14 10 0 7 8 9 24 13 21 5 38 13 38 32 0 20-18 31-46 31Z" fill="#f8fafc"/>
+  </g>
+  <text x="270" y="220" fill="#5eead4" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" letter-spacing="7">RESEARCH DEVELOPMENT</text>
+</svg>
