@@ -8,6 +8,8 @@ Aegis RD is a research operating system for turning market hypotheses into repro
 
 It gives every idea the same audit trail: source data, feature construction, labels, splits, model behavior, signal rules, execution assumptions, costs, reports, and the final decision about whether the idea survived. The result is a research process that can be rerun, inspected, rejected, or promoted without relying on memory, notebooks, or hand-waved assumptions.
 
+Each valid experiment run writes a local `manifest.json` that records lifecycle status, config evidence, environment and Git evidence, artifact hashes, schema versions, and lineage. Failed runs remain inspectable, and walk-forward validation keeps per-split artifacts separate from aggregate reports.
+
 ## What It Does
 
 Aegis RD gives each research loop a clear contract:

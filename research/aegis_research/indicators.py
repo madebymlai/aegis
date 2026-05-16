@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.config import IndicatorConfig
+from research.aegis_research.data_schema import table_shape
+
+
+@dataclass(frozen=True)
+class IndicatorResult:
+    frame: pd.DataFrame
+    metadata: dict[str, object]
 
 
 def build_indicators(close: pd.Series | pd.DataFrame, config: IndicatorConfig) -> pd.DataFrame:
+    return build_indicator_result(close, config).frame
+
+
+def build_indicator_result(close: pd.Series | pd.DataFrame, config: IndicatorConfig) -> IndicatorResult:
     indicator_frames: list[pd.DataFrame] = []
 
     close_df = close.to_frame() if isinstance(close, pd.Series) else close
@@ -31,7 +44,18 @@ def build_indicators(close: pd.Series | pd.DataFrame, config: IndicatorConfig) -
         "__".join(map(str, col)) if isinstance(col, tuple) else str(col)
         for col in indicators.columns
     ]
-    return indicators.replace([float("inf"), float("-inf")], pd.NA)
+    frame = indicators.replace([float("inf"), float("-inf")], pd.NA)
+    return IndicatorResult(
+        frame=frame,
+        metadata={
+            "returns": list(config.returns),
+            "moving_average_windows": list(config.moving_average_windows),
+            "volatility_windows": list(config.volatility_windows),
+            "rsi_windows": list(config.rsi_windows),
+            "shape": table_shape(frame),
+            "columns": list(map(str, frame.columns)),
+        },
+    )
 
 
 def _with_indicator_name(frame: pd.DataFrame, indicator_name: str) -> pd.DataFrame:

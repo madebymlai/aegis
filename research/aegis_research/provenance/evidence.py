@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+import hashlib
+import importlib.metadata
+import os
+import platform
+import random
+import subprocess
+import sys
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+
+from research.aegis_research.config import (
+    ResolvedExperimentConfig,
+    redact_config,
+    redact_text,
+    to_builtin,
+)
+from research.aegis_research.provenance.manifest import (
+    ArtifactVisibility,
+    canonical_json_bytes,
+)
+
+SAFE_ENV_KEYS = ("LANG", "LC_ALL", "TZ", "PYTHONHASHSEED")
+PACKAGE_NAMES = (
+    "vectorbtpro",
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "numba",
+    "joblib",
+    "pyyaml",
+    "aegis-rd",
+)
+VBT_SETTINGS_SECTIONS = (
+    "data",
+    "portfolio",
+    "returns",
+    "splitter",
+    "signals",
+    "numba",
+    "jitting",
+    "chunking",
+    "caching",
+    "pickling",
+)
+
+
+def capture_run_start_evidence(
+    config: ResolvedExperimentConfig,
+    *,
+    repo_path: str | Path,
+) -> dict[str, Any]:
+    return {
+        "config": capture_config_evidence(config),
+        "environment": capture_environment_evidence(),
+        "repository": capture_git_evidence(repo_path),
+        "packages": capture_package_versions(),
+        "vectorbt_settings": capture_vectorbt_settings(),
+        "seed_policy": {
+            "data_seed": config.config.data.seed,
+            "run_seed": config.config.data.seed,
+            "model_random_state": 42,
+            "vectorbt_set_seed": True,
+        },
+    }
+
+
+def capture_config_evidence(config: ResolvedExperimentConfig) -> dict[str, Any]:
+    return {
+        "schema_version": config.config.schema_version,
+        "source_path": _sanitize_text(config.source_path) if config.source_path else None,
+        "authored_config_hash": canonical_hash(config.redacted_authored_config()),
+        "resolved_config_hash": canonical_hash(config.redacted_resolved_config()),
+        "raw_config_identity": {
+            "hash": config.raw_config_hash,
+            "visibility": ArtifactVisibility.PRIVATE,
+        },
+    }
+
+
+def capture_environment_evidence() -> dict[str, Any]:
+    variables = {key: os.environ[key] for key in SAFE_ENV_KEYS if key in os.environ}
+    return {
+        "allowlist": list(SAFE_ENV_KEYS),
+        "variables": variables,
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+    }
+
+
+def capture_git_evidence(repo_path: str | Path) -> dict[str, Any]:
+    root = Path(repo_path)
+    commit = _git(root, "rev-parse", "HEAD")
+    if commit is None:
+        return {"available": False, "reason": "not a git checkout"}
+    branch = _git(root, "branch", "--show-current") or "detached"
+    remote = _git(root, "config", "--get", "remote.origin.url")
+    untracked_files = _git_lines(root, "ls-files", "--others", "--exclude-standard")
+    changed_files = (
+        _git_lines(root, "diff", "--name-only")
+        + _git_lines(root, "diff", "--cached", "--name-only")
+        + untracked_files
+    )
+    diff = "\n".join(
+        [
+            _git(root, "diff", "--binary") or "",
+            _git(root, "diff", "--cached", "--binary") or "",
+            _untracked_content_identity(root, untracked_files),
+        ]
+    )
+    return {
+        "available": True,
+        "commit": commit,
+        "branch": _sanitize_text(branch),
+        "dirty": bool(changed_files),
+        "changed_files": sorted(set(changed_files)),
+        "diff_hash": hashlib.sha256(diff.encode()).hexdigest(),
+        "remote": _sanitize_remote(remote) if remote else None,
+    }
+
+
+def capture_package_versions() -> dict[str, str | None]:
+    versions: dict[str, str | None] = {}
+    for package_name in PACKAGE_NAMES:
+        try:
+            versions[package_name] = importlib.metadata.version(package_name)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package_name] = None
+    return versions
+
+
+def capture_vectorbt_settings() -> dict[str, Any]:
+    try:
+        from vectorbtpro import vbt
+    except Exception:
+        return {"available": False}
+
+    settings = {}
+    for section in VBT_SETTINGS_SECTIONS:
+        try:
+            settings[section] = _safe_json_value(redact_config(to_builtin(vbt.settings[section])))
+        except Exception:
+            settings[section] = {"available": False}
+    return {"available": True, "sections": settings}
+
+
+def apply_seed_policy(seed: int) -> dict[str, Any]:
+    random.seed(seed)
+    seed_state: dict[str, Any] = {
+        "run_seed": seed,
+        "numpy_seeded": False,
+        "vectorbt_set_seed": False,
+    }
+    try:
+        import numpy as np
+
+        np.random.seed(seed)
+        seed_state["numpy_seeded"] = True
+    except ImportError:
+        seed_state["numpy_seed_error"] = "not installed"
+    except Exception as error:
+        seed_state["numpy_seed_error"] = type(error).__name__
+    try:
+        from vectorbtpro import vbt
+
+        vbt.set_seed(seed)
+        seed_state["vectorbt_set_seed"] = True
+    except ImportError:
+        seed_state["vectorbt_seed_error"] = "not installed"
+    except Exception as error:
+        seed_state["vectorbt_seed_error"] = type(error).__name__
+    return seed_state
+
+
+def canonical_hash(value: Any) -> str:
+    return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def _safe_json_value(value: Any) -> Any:
+    if value is None or isinstance(value, int | float | bool):
+        return value
+    if isinstance(value, str):
+        return _sanitize_text(redact_text(value))
+    if isinstance(value, Mapping):
+        return {str(key): _safe_json_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_safe_json_value(item) for item in value]
+    return {"available": False, "type": type(value).__name__}
+
+
+def _git(repo_path: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip()
+
+
+def _git_lines(repo_path: Path, *args: str) -> list[str]:
+    output = _git(repo_path, *args)
+    if not output:
+        return []
+    return [_sanitize_text(line) for line in output.splitlines() if line]
+
+
+def _untracked_content_identity(repo_path: Path, paths: list[str]) -> str:
+    records = []
+    for relative_path in sorted(paths):
+        path = repo_path / relative_path
+        if path.is_file():
+            records.append({"path": relative_path, "sha256": _hash_file(path)})
+        else:
+            records.append({"path": relative_path, "type": "non-file"})
+    return canonical_json_bytes(records).decode()
+
+
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sanitize_remote(remote: str) -> str:
+    if "://" not in remote:
+        return _sanitize_text(remote)
+    parts = urlsplit(remote)
+    hostname = parts.hostname or ""
+    port = f":{parts.port}" if parts.port else ""
+    netloc = f"{hostname}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+
+
+def _sanitize_text(value: str) -> str:
+    return value.replace(str(Path.home()), "~")

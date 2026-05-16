@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -20,8 +21,11 @@ def test_synthetic_holdout_experiment_runs(tmp_path: Path) -> None:
     assert (run_dir / "config.yaml").exists()
     assert (run_dir / "config_authored.yaml").exists()
     assert (run_dir / "config_manifest.json").exists()
-    assert (run_dir / "artifacts" / "model.joblib").exists()
+    assert not (run_dir / "artifacts" / "model.joblib").exists()
     assert (run_dir / "split_metrics.csv").exists()
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    artifact_ids = {artifact["id"] for artifact in manifest["artifacts"]}
+    assert "validation.holdout.model" in artifact_ids
     assert result["report"]["validation"]["kind"] == "holdout"
     assert result["report"]["validation"]["n_splits"] == 1
     assert result["report"]["status"] in REPORT_STATUSES

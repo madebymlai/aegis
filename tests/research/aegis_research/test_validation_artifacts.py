@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+from research.aegis_research.config import load_experiment_config
+from research.aegis_research.data import (
+    close_from_ohlcv,
+    high_from_ohlcv,
+    load_market_data,
+    low_from_ohlcv,
+)
+from research.aegis_research.data_schema import primary_series
+from research.aegis_research.indicators import build_indicators
+from research.aegis_research.labels import build_labels
+from research.aegis_research.splits import build_validation_splits
+from research.aegis_research.validation import evaluate_validation_splits
+
+
+def test_validation_result_exposes_complete_split_child_shape() -> None:
+    result = _evaluate("research/configs/experiments/synthetic_walkforward_baseline.yaml")
+
+    assert len(result.split_results) == 5
+    assert result.validation_metadata["n_splits"] == 5
+    for split in result.split_results:
+        assert split.model is not None
+        assert split.train_probabilities.name == "long_probability"
+        assert split.test_probabilities.name == "long_probability"
+        assert split.train_entries.dtype == bool
+        assert split.test_entries.dtype == bool
+        assert split.train_portfolio is not None
+        assert split.test_portfolio is not None
+        assert split.train_metrics
+        assert split.test_metrics
+        assert split.metadata["label"] == split.label
+        assert split.metadata["sets"]["train"]["rows"] > 0
+        assert split.metadata["sets"]["test"]["rows"] > 0
+
+
+def test_holdout_uses_same_one_split_result_shape() -> None:
+    result = _evaluate("research/configs/experiments/synthetic_ml_baseline.yaml")
+
+    assert len(result.split_results) == 1
+    split = result.split_results[0]
+    assert split.label == "holdout"
+    assert split.train_portfolio is not None
+    assert split.test_portfolio is not None
+    assert result.validation_metadata["kind"] == "holdout"
+    assert result.validation_metadata["n_splits"] == 1
+
+
+def _evaluate(config_path: str):
+    resolved = load_experiment_config(config_path)
+    config = resolved.config
+    data = load_market_data(config.data)
+    close = primary_series(close_from_ohlcv(data), role="close")
+    high = primary_series(high_from_ohlcv(data), role="high")
+    low = primary_series(low_from_ohlcv(data), role="low")
+    indicators = build_indicators(close, config.indicators)
+    labels = build_labels(close, config.labels, high=high, low=low)
+    splits = build_validation_splits(
+        indicators.index.intersection(labels.dropna().index), config.split
+    )
+    return evaluate_validation_splits(close, indicators, labels, splits, config)

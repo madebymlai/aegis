@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.config import DataConfig, redact_text, resolve_secret_refs
+from research.aegis_research.data_schema import ohlc_availability, table_shape
 
 
 class RemoteDataPullError(ValueError):
@@ -15,20 +18,55 @@ class RemoteDataPullError(ValueError):
         super().__init__(f"Failed to pull {source} data: {message}")
 
 
+@dataclass(frozen=True)
+class MarketDataResult:
+    data: pd.DataFrame
+    metadata: dict[str, Any]
+    native_object: Any | None = None
+    known_secrets: tuple[str, ...] = ()
+
+
 def load_market_data(config: DataConfig) -> pd.DataFrame:
+    return load_market_data_result(config).data
+
+
+def load_market_data_result(config: DataConfig) -> MarketDataResult:
     source = config.source.lower()
     if source == "synthetic":
-        return _synthetic_ohlcv(config)
+        data = _synthetic_ohlcv(config)
+        return MarketDataResult(data=data, metadata=_data_metadata(config, data))
     if source == "csv":
         if config.path is None:
             raise ValueError("data.path is required for csv source")
-        return _read_csv(config.path)
+        data = _read_csv(config.path)
+        return MarketDataResult(data=data, metadata=_data_metadata(config, data))
     if source == "yfinance":
-        return _pull_remote(vbt.YFData, config).get()
+        native, known_secrets = _pull_remote(vbt.YFData, config)
+        data = native.get()
+        return MarketDataResult(
+            data=data,
+            metadata=_data_metadata(config, data, native),
+            native_object=native,
+            known_secrets=known_secrets,
+        )
     if source == "binance":
-        return _pull_remote(vbt.BinanceData, config).get()
+        native, known_secrets = _pull_remote(vbt.BinanceData, config)
+        data = native.get()
+        return MarketDataResult(
+            data=data,
+            metadata=_data_metadata(config, data, native),
+            native_object=native,
+            known_secrets=known_secrets,
+        )
     if source == "ccxt":
-        return _pull_remote(vbt.CCXTData, config).get()
+        native, known_secrets = _pull_remote(vbt.CCXTData, config)
+        data = native.get()
+        return MarketDataResult(
+            data=data,
+            metadata=_data_metadata(config, data, native),
+            native_object=native,
+            known_secrets=known_secrets,
+        )
     raise ValueError(f"Unsupported data source: {config.source}")
 
 
@@ -78,22 +116,53 @@ def _pull_remote(data_cls, config: DataConfig):
     secrets = wrapper_secrets + provider_secrets + execution_secrets
     error_message = None
     try:
-        return data_cls.pull(
-            config.symbols,
-            start=config.start,
-            end=config.end,
-            timeframe=config.timeframe,
-            missing_index=config.missing_index,
-            missing_columns=config.missing_columns,
-            tz_localize=config.tz_localize,
-            tz_convert=config.tz_convert,
-            wrapper_kwargs=wrapper_kwargs,
-            execute_kwargs=execution_kwargs,
-            **provider_kwargs,
+        return (
+            data_cls.pull(
+                config.symbols,
+                start=config.start,
+                end=config.end,
+                timeframe=config.timeframe,
+                missing_index=config.missing_index,
+                missing_columns=config.missing_columns,
+                tz_localize=config.tz_localize,
+                tz_convert=config.tz_convert,
+                wrapper_kwargs=wrapper_kwargs,
+                execute_kwargs=execution_kwargs,
+                **provider_kwargs,
+            ),
+            tuple(secrets),
         )
     except Exception as error:
         error_message = redact_text(str(error), secrets)
     raise RemoteDataPullError(config.source, error_message)
+
+
+def _data_metadata(
+    config: DataConfig,
+    data: pd.DataFrame,
+    native_object: Any | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "source": config.source,
+        "symbols": list(config.symbols),
+        "timeframe": config.timeframe,
+        "shape": table_shape(data),
+        "ohlc_available": ohlc_availability(data),
+        "index_start": str(data.index[0]) if len(data.index) else None,
+        "index_end": str(data.index[-1]) if len(data.index) else None,
+    }
+    if native_object is not None:
+        metadata["native_class"] = type(native_object).__name__
+        metadata["provider_metadata"] = _safe_native_data_metadata(native_object)
+    return metadata
+
+
+def _safe_native_data_metadata(native_object: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for name in ("last_index", "delisted", "missing_index", "missing_columns", "tz_localize", "tz_convert"):
+        if hasattr(native_object, name):
+            metadata[name] = str(getattr(native_object, name))
+    return metadata
 
 
 def _synthetic_ohlcv(config: DataConfig) -> pd.DataFrame:

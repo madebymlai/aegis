@@ -17,6 +17,7 @@ data fetch/load
 ## Modules
 
 - `data.py`: local, synthetic, and VectorBT PRO remote data adapters.
+- `data_schema.py`: shared OHLC selection, availability, index identity, and shape helpers.
 - `indicators.py`: reusable indicator builders using VectorBT PRO indicators.
 - `labels.py`: VectorBT PRO `FIXLB`, `TRENDLB`, and `PIVOTLB` label wrappers.
 - `models.py`: training and `joblib` export boundary.
@@ -49,6 +50,24 @@ Validation is strict by default:
 
 Remote provider configs keep scaffold-owned fields first-class (`source`, `symbols`, `start`, `end`, `timeframe`) and put provider-specific VectorBT kwargs behind named passthrough maps. Public artifacts store redacted config evidence only; runtime-expanded secret values are never serialized.
 
+## Run Manifest And Artifacts
+
+Every valid run creates its run directory and `manifest.json` before data loading or model work starts. Static config failures still produce no run directory.
+
+The manifest is the machine-readable source of truth for:
+
+- run id, lifecycle status, timestamps, rerun mode, and lineage;
+- public redacted config identities and private raw config identity;
+- package, platform, Git, VectorBT settings, environment allowlist, and seed evidence;
+- stage records and artifact inventory;
+- artifact path, schema version, producer stage, content hash, size, status, visibility, and upstream lineage.
+
+Artifact status changes go through recorder/registry transition methods. Completed artifacts are valid evidence only when listed in the manifest with matching hash and size. Temp files, unregistered files, failed artifacts, and orphaned partial native saves are not evidence.
+
+Public artifacts and metadata are redacted. Native VectorBT artifacts are private local artifacts by default, version-sensitive, and paired with portable metadata sidecars so manifest validation does not require loading pickles.
+
+The CLI exposes explicit rerun intent with `--rerun-mode` and optional run lineage flags. The default creates a fresh immutable physical run. Overwrite mode creates a new superseding physical run rather than mutating prior evidence in place.
+
 ## Validation Modes
 
 Use a single chronological holdout:
@@ -71,7 +90,7 @@ split:
   length: optimize
 ```
 
-Rolling validation writes per-split train/test metrics to `split_metrics.csv` and aggregates test metrics into the survival report.
+Holdout is represented as one split. Rolling validation writes one child artifact set per split: model, train/test probabilities, train/test signals, train/test portfolio artifacts, train/test metrics, and metadata. Aggregate probability/signal/metric/report artifacts link back to those child artifacts. There is no generic top-level `artifacts/model.joblib` for split validation because it would imply deployment readiness.
 
 ## Label Modes
 
@@ -137,3 +156,5 @@ Successful runs write public-safe config evidence:
 - `config_manifest.json`: schema version and raw config identity.
 
 Invalid static configs fail before run artifact creation. Data-contract failures that require loaded data may happen after data access, but must not write public artifacts.
+
+The root manifest registers these config artifacts with hashes and schema versions; `config_manifest.json` is generated evidence, not a parallel source of truth.

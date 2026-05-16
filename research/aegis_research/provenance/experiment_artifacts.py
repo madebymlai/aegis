@@ -1,0 +1,313 @@
+from __future__ import annotations
+
+from typing import Any
+
+import yaml
+
+from research.aegis_research.config import ResolvedExperimentConfig
+from research.aegis_research.data import MarketDataResult
+from research.aegis_research.labels import LabelResult
+from research.aegis_research.models import export_model
+from research.aegis_research.provenance.manifest import ArtifactVisibility, atomic_write_json
+from research.aegis_research.provenance.native import NativeArtifactWriter
+from research.aegis_research.provenance.recorder import RunRecorder
+from research.aegis_research.splits import ValidationSplitsResult
+from research.aegis_research.validation import SplitValidationResult, ValidationResult
+
+
+class ExperimentArtifactWriter:
+    def __init__(self, recorder: RunRecorder) -> None:
+        self.recorder = recorder
+        self.native_writer = NativeArtifactWriter(
+            recorder.manifest,
+            recorder.run_dir,
+            persist=recorder.persist,
+        )
+
+    def write_config_artifacts(self, config: ResolvedExperimentConfig) -> None:
+        _write_text_artifact(
+            self.recorder,
+            artifact_id="config.resolved",
+            role="resolved_config",
+            producer_stage="config",
+            path="config.yaml",
+            text=yaml.safe_dump(config.redacted_resolved_config(), sort_keys=False),
+            schema_version="resolved_config.v1",
+        )
+        _write_text_artifact(
+            self.recorder,
+            artifact_id="config.authored",
+            role="authored_config",
+            producer_stage="config",
+            path="config_authored.yaml",
+            text=yaml.safe_dump(config.redacted_authored_config(), sort_keys=False),
+            schema_version="authored_config.v1",
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="config.manifest",
+            role="config_manifest",
+            producer_stage="config",
+            path="config_manifest.json",
+            payload=config.manifest(),
+            schema_version="config_manifest.v1",
+            visibility=ArtifactVisibility.PRIVATE,
+        )
+
+    def write_stage_native_artifacts(
+        self,
+        data_result: MarketDataResult,
+        label_result: LabelResult,
+        splits_result: ValidationSplitsResult,
+    ) -> None:
+        if data_result.native_object is not None:
+            self.native_writer.write_native_artifact(
+                artifact_id="data.native",
+                role="data_native",
+                producer_stage="data",
+                path="native/data.pkl",
+                obj=data_result.native_object,
+                metadata=data_result.metadata,
+                known_secrets=data_result.known_secrets,
+            )
+        if label_result.native_object is not None:
+            self.native_writer.write_native_artifact(
+                artifact_id="labels.native",
+                role="labels_native",
+                producer_stage="labels",
+                path="native/labels.pkl",
+                obj=label_result.native_object,
+                metadata=label_result.metadata,
+            )
+        if splits_result.native_object is not None:
+            self.native_writer.write_native_artifact(
+                artifact_id="splits.native",
+                role="splits_native",
+                producer_stage="splits",
+                path="native/splitter.pkl",
+                obj=splits_result.native_object,
+                metadata=splits_result.metadata,
+            )
+
+    def write_split_artifacts(self, split_results: list[SplitValidationResult]) -> list[str]:
+        metric_ids: list[str] = []
+        for split in split_results:
+            prefix = f"validation.{split.label}"
+            directory = f"splits/{split.label}"
+            _write_model_artifact(
+                self.recorder,
+                artifact_id=f"{prefix}.model",
+                producer_stage="validation",
+                path=f"{directory}/model.joblib",
+                model=split.model,
+            )
+            for set_name in ("train", "test"):
+                probabilities = getattr(split, f"{set_name}_probabilities")
+                entries = getattr(split, f"{set_name}_entries")
+                exits = getattr(split, f"{set_name}_exits")
+                metrics = getattr(split, f"{set_name}_metrics")
+                _write_csv_artifact(
+                    self.recorder,
+                    artifact_id=f"{prefix}.probabilities.{set_name}",
+                    role="probabilities",
+                    producer_stage="validation",
+                    path=f"{directory}/probabilities_{set_name}.csv",
+                    frame=_as_frame(probabilities),
+                    schema_version="probabilities.v1",
+                    upstream_artifact_ids=[f"{prefix}.model"],
+                )
+                _write_csv_artifact(
+                    self.recorder,
+                    artifact_id=f"{prefix}.signals.{set_name}",
+                    role="signals",
+                    producer_stage="validation",
+                    path=f"{directory}/signals_{set_name}.csv",
+                    frame=_signals_frame(entries, exits),
+                    schema_version="signals.v1",
+                    upstream_artifact_ids=[f"{prefix}.probabilities.{set_name}"],
+                )
+                metric_id = f"{prefix}.metrics.{set_name}"
+                _write_json_artifact(
+                    self.recorder,
+                    artifact_id=metric_id,
+                    role="metrics",
+                    producer_stage="validation",
+                    path=f"{directory}/metrics_{set_name}.json",
+                    payload=metrics,
+                    schema_version="metrics.v1",
+                    upstream_artifact_ids=[f"{prefix}.signals.{set_name}"],
+                )
+                metric_ids.append(metric_id)
+                self.native_writer.write_native_artifact(
+                    artifact_id=f"{prefix}.portfolio.{set_name}",
+                    role="portfolio",
+                    producer_stage="validation",
+                    path=f"native/portfolios/{split.label}_{set_name}.pkl",
+                    obj=getattr(split, f"{set_name}_portfolio"),
+                    metadata={"split": split.label, "set": set_name, **split.metadata},
+                )
+        return metric_ids
+
+    def write_validation_aggregates(
+        self,
+        validation: ValidationResult,
+        *,
+        split_metric_ids: list[str],
+    ) -> None:
+        probability_ids = [
+            f"validation.{split.label}.probabilities.test" for split in validation.split_results
+        ]
+        signal_ids = [f"validation.{split.label}.signals.test" for split in validation.split_results]
+        _write_csv_artifact(
+            self.recorder,
+            artifact_id="validation.probabilities",
+            role="aggregate_probabilities",
+            producer_stage="validation",
+            path="probabilities.csv",
+            frame=_as_frame(validation.probabilities),
+            schema_version="probabilities.aggregate.v1",
+            upstream_artifact_ids=probability_ids,
+        )
+        _write_csv_artifact(
+            self.recorder,
+            artifact_id="validation.signals",
+            role="aggregate_signals",
+            producer_stage="validation",
+            path="signals.csv",
+            frame=_signals_frame(validation.entries, validation.exits),
+            schema_version="signals.aggregate.v1",
+            upstream_artifact_ids=signal_ids,
+        )
+        _write_csv_artifact(
+            self.recorder,
+            artifact_id="validation.split_metrics",
+            role="split_metrics",
+            producer_stage="validation",
+            path="split_metrics.csv",
+            frame=validation.split_metrics,
+            schema_version="split_metrics.v1",
+            upstream_artifact_ids=split_metric_ids,
+        )
+
+    def write_report_artifact(self, report: dict[str, Any]) -> None:
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="report.survival",
+            role="survival_report",
+            producer_stage="report",
+            path="survival_report.json",
+            payload=report,
+            schema_version="survival_report.v1",
+            upstream_artifact_ids=["validation.split_metrics"],
+        )
+
+
+def _write_json_artifact(
+    recorder: RunRecorder,
+    *,
+    artifact_id: str,
+    role: str,
+    producer_stage: str,
+    path: str,
+    payload: dict[str, Any],
+    schema_version: str,
+    upstream_artifact_ids: list[str] | None = None,
+    visibility: str = ArtifactVisibility.PUBLIC,
+) -> None:
+    recorder.artifacts.plan_artifact(
+        artifact_id=artifact_id,
+        role=role,
+        artifact_type="json",
+        producer_stage=producer_stage,
+        path=path,
+        schema_version=schema_version,
+        upstream_artifact_ids=upstream_artifact_ids,
+        visibility=visibility,
+    )
+    recorder.artifacts.begin_artifact_write(artifact_id)
+    atomic_write_json(recorder.run_dir / path, payload)
+    recorder.artifacts.complete_existing_file(artifact_id)
+
+
+def _write_text_artifact(
+    recorder: RunRecorder,
+    *,
+    artifact_id: str,
+    role: str,
+    producer_stage: str,
+    path: str,
+    text: str,
+    schema_version: str,
+) -> None:
+    recorder.artifacts.plan_artifact(
+        artifact_id=artifact_id,
+        role=role,
+        artifact_type="yaml",
+        producer_stage=producer_stage,
+        path=path,
+        schema_version=schema_version,
+    )
+    recorder.artifacts.begin_artifact_write(artifact_id)
+    target = recorder.run_dir / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    recorder.artifacts.complete_existing_file(artifact_id)
+
+
+def _write_csv_artifact(
+    recorder: RunRecorder,
+    *,
+    artifact_id: str,
+    role: str,
+    producer_stage: str,
+    path: str,
+    frame,
+    schema_version: str,
+    upstream_artifact_ids: list[str] | None = None,
+) -> None:
+    recorder.artifacts.plan_artifact(
+        artifact_id=artifact_id,
+        role=role,
+        artifact_type="csv",
+        producer_stage=producer_stage,
+        path=path,
+        schema_version=schema_version,
+        upstream_artifact_ids=upstream_artifact_ids,
+    )
+    recorder.artifacts.begin_artifact_write(artifact_id)
+    target = recorder.run_dir / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(target)
+    recorder.artifacts.complete_existing_file(
+        artifact_id,
+        shape={"rows": len(frame), "columns": len(frame.columns)},
+    )
+
+
+def _write_model_artifact(
+    recorder: RunRecorder,
+    *,
+    artifact_id: str,
+    producer_stage: str,
+    path: str,
+    model,
+) -> None:
+    recorder.artifacts.plan_artifact(
+        artifact_id=artifact_id,
+        role="model",
+        artifact_type="joblib",
+        producer_stage=producer_stage,
+        path=path,
+        schema_version="model.joblib.v1",
+    )
+    recorder.artifacts.begin_artifact_write(artifact_id)
+    export_model(model, recorder.run_dir / path)
+    recorder.artifacts.complete_existing_file(artifact_id)
+
+
+def _as_frame(obj):
+    return obj.to_frame() if hasattr(obj, "to_frame") else obj
+
+
+def _signals_frame(entries, exits):
+    return _as_frame(entries).add_prefix("entry_").join(_as_frame(exits).add_prefix("exit_"))
