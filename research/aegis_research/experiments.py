@@ -12,8 +12,8 @@ from research.aegis_research.indicators import build_indicators
 from research.aegis_research.labels import _primary_close, build_labels
 from research.aegis_research.models import export_model
 from research.aegis_research.reports import build_survival_report, write_report
-from research.aegis_research.splits import chronological_split
-from research.aegis_research.validation import evaluate_holdout_split
+from research.aegis_research.splits import build_validation_splits
+from research.aegis_research.validation import evaluate_validation_splits
 
 
 def run_experiment(config: ExperimentConfig) -> dict[str, object]:
@@ -22,20 +22,24 @@ def run_experiment(config: ExperimentConfig) -> dict[str, object]:
     close = _primary_close(close_from_ohlcv(data))
     indicators = build_indicators(close, config.indicators)
     labels = build_labels(close, config.labels)
-    split = chronological_split(indicators.index.intersection(labels.dropna().index), config.split)
-    validation = evaluate_holdout_split(close, indicators, labels, split, config)
+    splits = build_validation_splits(indicators.index.intersection(labels.dropna().index), config.split)
+    validation = evaluate_validation_splits(close, indicators, labels, splits, config)
     report = build_survival_report(
         config.name,
         validation.train_metrics,
         validation.test_metrics,
         config.report,
+        validation.validation_metadata,
     )
 
     export_model(validation.model, run_dir / "artifacts" / "model.joblib")
     write_report(report, run_dir / "survival_report.json")
     (run_dir / "config.yaml").write_text(yaml.safe_dump(to_builtin(asdict(config)), sort_keys=False))
-    validation.probabilities.to_frame().to_csv(run_dir / "probabilities.csv")
-    validation.entries.to_frame().join(validation.exits).to_csv(run_dir / "signals.csv")
+    _as_frame(validation.probabilities).to_csv(run_dir / "probabilities.csv")
+    _as_frame(validation.entries).add_prefix("entry_").join(
+        _as_frame(validation.exits).add_prefix("exit_")
+    ).to_csv(run_dir / "signals.csv")
+    validation.split_metrics.to_csv(run_dir / "split_metrics.csv")
 
     return {"run_dir": str(run_dir), "report": report}
 
@@ -46,3 +50,7 @@ def _make_run_dir(config: ExperimentConfig) -> Path:
     run_dir.mkdir(parents=True, exist_ok=False)
     (run_dir / "artifacts").mkdir()
     return run_dir
+
+
+def _as_frame(obj):
+    return obj.to_frame() if hasattr(obj, "to_frame") else obj

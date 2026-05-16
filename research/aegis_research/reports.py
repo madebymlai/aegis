@@ -28,6 +28,7 @@ def build_survival_report(
     train_metrics: dict[str, Any],
     test_metrics: dict[str, Any],
     config: ReportConfig,
+    validation_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     reasons: list[str] = []
     oos_sharpe = test_metrics.get("sharpe_ratio")
@@ -48,6 +49,7 @@ def build_survival_report(
     return {
         "experiment": experiment_name,
         "status": status,
+        "validation": validation_metadata or {},
         "reasons": reasons or ["OOS metrics cleared configured survival thresholds"],
         "train_metrics": train_metrics,
         "test_metrics": test_metrics,

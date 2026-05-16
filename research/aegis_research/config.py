@@ -35,8 +35,11 @@ class LabelConfig:
 
 @dataclass(frozen=True)
 class SplitConfig:
+    kind: str = "holdout"
     train_size: float = 0.7
     embargo_bars: int = 0
+    n: int = 5
+    length: str | int | None = "optimize"
 
 
 @dataclass(frozen=True)

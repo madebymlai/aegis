@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Aegis RD" width="260">
+  <img src="docs/assets/logo.png" alt="Aegis RD" width="260">
 </p>
 
 # Aegis RD
@@ -41,7 +41,7 @@ research/
     data.py          # synthetic, CSV, YFData, BinanceData, CCXTData loaders
     indicators.py    # indicator matrix builders using VectorBT PRO + Pandas
     labels.py        # forward-return labels
-    splits.py        # chronological train/test split policy
+    splits.py        # holdout and vbt.Splitter rolling split policies
     models.py        # sklearn model training and joblib export
     signals.py       # probabilities -> entries/exits
     portfolios.py    # vbt.Portfolio.from_signals wrapper
@@ -80,6 +80,7 @@ Reason:
 - `Labels`: create forward-looking targets for supervised experiments.
 - `Signals`: convert model outputs or indicator conditions into entries and exits.
 - `Portfolio.from_signals`: simulate orders, positions, fees, slippage, returns, drawdowns, and trade stats.
+- `Splitter`: generate rolling walk-forward train/test windows.
 - `Stats`: reduce portfolio results into train/test metrics.
 
 ## Public Boundary
