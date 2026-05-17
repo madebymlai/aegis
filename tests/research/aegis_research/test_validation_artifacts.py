@@ -12,6 +12,7 @@ from research.aegis_research.labels import build_label_result
 from research.aegis_research.models import target_model_compatibility
 from research.aegis_research.splits import build_validation_splits_result
 from research.aegis_research.validation import _decision_grade, evaluate_validation_splits
+from tests.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_validation_result_exposes_complete_split_child_shape() -> None:
@@ -52,7 +53,8 @@ def test_decision_grade_requires_split_purging_proof() -> None:
 
 
 def _evaluate(config_path: str):
-    resolved = load_experiment_config(config_path)
+    registry = make_model_registry()
+    resolved = load_experiment_config(config_path, model_registry=registry)
     config = resolved.config
     data = load_market_data(config.data)
     close = close_from_ohlcv(data)
@@ -79,6 +81,7 @@ def _evaluate(config_path: str):
         splits_result.splits,
         phase="post_split",
         split_metadata=splits_result.metadata,
+        model_registry=registry,
     )
     return evaluate_validation_splits(
         close,
@@ -89,4 +92,5 @@ def _evaluate(config_path: str):
         target_schema=label_result.target_schema,
         split_metadata=splits_result.metadata,
         compatibility=compatibility,
+        model_registry=registry,
     )

@@ -351,10 +351,13 @@ def _target_schema(
     diagnostics: dict[str, Any],
     split_safety: dict[str, Any],
 ) -> dict[str, Any]:
+    classes = _target_classes(target_kind)
     return {
         "schema_version": LABEL_TARGET_SCHEMA_VERSION,
         "target_kind": target_kind,
         "target_role": config.target.role,
+        "classes": classes,
+        "positive_class": 1 if target_kind == "binary_classification" else None,
         "source": {
             "generator_kind": config.generator.kind,
             "native_output": config.target.source_output,
@@ -385,11 +388,20 @@ def _pre_split_model_compatibility(config: LabelConfig, target_kind: str) -> dic
     return {
         "stage": "pre_split",
         "compatible_with_current_model": compatible,
-        "required_model_kind": "logistic_regression",
+        "required_model_contract": "registered_binary_positive_class_probability_plugin",
         "reason": None
         if compatible
         else "current model requires supervised binary classification target",
     }
+
+
+def _target_classes(target_kind: str) -> list[dict[str, Any]]:
+    if target_kind != "binary_classification":
+        return []
+    return [
+        {"label": 0, "role": "negative", "canonical": "int:0"},
+        {"label": 1, "role": "positive", "canonical": "int:1"},
+    ]
 
 
 def _frame_diagnostics(frame: pd.DataFrame) -> dict[str, Any]:

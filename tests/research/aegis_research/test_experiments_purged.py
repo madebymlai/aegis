@@ -9,16 +9,26 @@ from research.aegis_research.config import (
     REPORT_STATUSES,
     DataConfig,
     ExperimentConfig,
+    ModelConfig,
     SplitConfig,
     load_experiment_config,
     resolve_experiment_config,
 )
 from research.aegis_research.experiments import run_experiment
+from tests.research.aegis_research.model_plugin_fixtures import (
+    make_model_registry,
+    model_config_dict,
+)
 
 
 def test_synthetic_baseline_experiment_runs(tmp_path: Path) -> None:
-    config = load_experiment_config("research/configs/experiments/synthetic_ml_baseline.yaml")
-    config = resolve_experiment_config(replace(config.config, output_dir=str(tmp_path)))
+    registry = make_model_registry()
+    config = load_experiment_config(
+        "research/configs/experiments/synthetic_ml_baseline.yaml", model_registry=registry
+    )
+    config = resolve_experiment_config(
+        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+    )
 
     result = run_experiment(config)
 
@@ -40,10 +50,14 @@ def test_synthetic_baseline_experiment_runs(tmp_path: Path) -> None:
 
 
 def test_synthetic_purged_fixlb_experiment_is_decision_grade(tmp_path: Path) -> None:
+    registry = make_model_registry()
     config = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml"
+        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        model_registry=registry,
     )
-    config = resolve_experiment_config(replace(config.config, output_dir=str(tmp_path)))
+    config = resolve_experiment_config(
+        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+    )
 
     result = run_experiment(config, run_id="purged-fixlb")
 
@@ -68,15 +82,17 @@ def test_synthetic_purged_fixlb_experiment_is_decision_grade(tmp_path: Path) -> 
 def test_purged_public_evidence_enforces_actual_byte_cap_before_split_outputs(
     tmp_path: Path,
 ) -> None:
+    registry = make_model_registry()
     resolved = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml"
+        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        model_registry=registry,
     )
     experiment = replace(
         resolved.config,
         output_dir=str(tmp_path),
         split=replace(resolved.config.split, max_public_artifact_bytes=100),
     )
-    config = resolve_experiment_config(experiment)
+    config = resolve_experiment_config(experiment, model_registry=registry)
 
     with pytest.raises(ValueError, match="label evaluation evidence"):
         run_experiment(config, run_id="purged-byte-cap")
@@ -87,13 +103,16 @@ def test_purged_public_evidence_enforces_actual_byte_cap_before_split_outputs(
 
 
 def test_synthetic_purged_experiment_preserves_multi_asset_axis(tmp_path: Path) -> None:
-    config = load_experiment_config("research/configs/experiments/synthetic_ml_baseline.yaml")
+    registry = make_model_registry()
+    config = load_experiment_config(
+        "research/configs/experiments/synthetic_ml_baseline.yaml", model_registry=registry
+    )
     experiment = replace(
         config.config,
         output_dir=str(tmp_path),
         data=replace(config.config.data, symbols=["AAA", "BBB"], rows=240),
     )
-    config = resolve_experiment_config(experiment)
+    config = resolve_experiment_config(experiment, model_registry=registry)
 
     result = run_experiment(config)
 
@@ -119,7 +138,9 @@ def test_purged_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:
             output_dir=str(tmp_path / "runs"),
             data=DataConfig(source="csv", path=str(csv_path), symbols=["SYN"]),
             split=SplitConfig(kind="purged_kfold", n_folds=3, max_splits=3),
-        )
+            model=ModelConfig(**model_config_dict(min_train_samples=50)),
+        ),
+        model_registry=make_model_registry(),
     )
 
     result = run_experiment(config, run_id="close-only-run")

@@ -9,6 +9,7 @@ import pytest
 from research.aegis_research.config import (
     DataConfig,
     ExperimentConfig,
+    ModelConfig,
     SplitConfig,
     resolve_experiment_config,
 )
@@ -22,6 +23,10 @@ from research.aegis_research.provenance.manifest import (
 from research.aegis_research.provenance.native import (
     NativeArtifactSafetyError,
     NativeArtifactWriter,
+)
+from tests.research.aegis_research.model_plugin_fixtures import (
+    make_model_registry,
+    model_config_dict,
 )
 
 
@@ -234,6 +239,7 @@ def test_remote_native_artifact_scans_resolved_remote_secrets(
         ExperimentConfig(
             name="remote-secret-check",
             output_dir=str(tmp_path),
+            model=ModelConfig(**model_config_dict(min_train_samples=50)),
             data=DataConfig(
                 source="yfinance",
                 symbols=["SYN"],
@@ -242,7 +248,8 @@ def test_remote_native_artifact_scans_resolved_remote_secrets(
                 timeframe="1D",
                 **data_kwargs,
             ),
-        )
+        ),
+        model_registry=make_model_registry(),
     )
 
     with pytest.raises(NativeArtifactSafetyError):
@@ -264,7 +271,9 @@ def test_indicator_native_artifact_uses_private_bundle_and_public_sidecar(tmp_pa
             output_dir=str(tmp_path),
             data=DataConfig(source="synthetic", symbols=["SYN"], rows=260),
             split=SplitConfig(kind="purged_kfold", n_folds=3, max_splits=3),
-        )
+            model=ModelConfig(**model_config_dict(min_train_samples=50)),
+        ),
+        model_registry=make_model_registry(),
     )
 
     result = run_experiment(config, run_id="indicator-native-run")

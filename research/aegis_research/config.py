@@ -12,6 +12,11 @@ import pandas as pd
 import yaml
 
 from research.aegis_research.indicator_registry import indicator_registry
+from research.aegis_research.model_registry import (
+    FrozenModelRegistry,
+    ModelRegistry,
+    freeze_model_registry,
+)
 
 CONFIG_SCHEMA_VERSION = 2
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -28,7 +33,23 @@ LABEL_TARGET_TRANSFORMS = {
     "positive_event",
 }
 SPLIT_KINDS = {"purged_kfold"}
-MODEL_KINDS = {"logistic_regression"}
+MODEL_DENIED_KEYS = {
+    "class",
+    "code",
+    "estimator",
+    "factory",
+    "function",
+    "import",
+    "load",
+    "loaded_model",
+    "kind",
+    "module",
+    "mutable",
+    "plugin",
+    "python",
+    "state",
+    "update",
+}
 PORTFOLIO_SIZE_TYPES = {
     "amount",
     "value",
@@ -266,8 +287,9 @@ class SplitConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    kind: str = "logistic_regression"
+    plugin_id: str | None = None
     min_train_samples: int = 100
+    params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -316,6 +338,7 @@ class ResolvedExperimentConfig:
     raw_config_hash: str
     authored_config: dict[str, Any]
     source_path: str | None = None
+    model_registry: FrozenModelRegistry | None = None
 
     def redacted_authored_config(self) -> dict[str, Any]:
         return redact_config(self.authored_config)
@@ -331,11 +354,20 @@ class ResolvedExperimentConfig:
         }
 
 
-def load_experiment_config(path: str | Path) -> ResolvedExperimentConfig:
+def load_experiment_config(
+    path: str | Path,
+    *,
+    model_registry: ModelRegistry | FrozenModelRegistry | None = None,
+) -> ResolvedExperimentConfig:
     config_path = Path(path)
     raw_text = config_path.read_text()
     raw = yaml.load(raw_text, Loader=_UniqueKeySafeLoader)
-    return resolve_experiment_config(raw, raw_text=raw_text, source_path=str(path))
+    return resolve_experiment_config(
+        raw,
+        raw_text=raw_text,
+        source_path=str(path),
+        model_registry=model_registry,
+    )
 
 
 def resolve_experiment_config(
@@ -343,16 +375,37 @@ def resolve_experiment_config(
     *,
     raw_text: str | None = None,
     source_path: str | None = None,
+    model_registry: ModelRegistry | FrozenModelRegistry | None = None,
 ) -> ResolvedExperimentConfig:
+    frozen_registry = freeze_model_registry(model_registry)
     if isinstance(value, ResolvedExperimentConfig):
+        if frozen_registry is not None:
+            _assert_model_config_registered(value.config.model, frozen_registry)
+            return ResolvedExperimentConfig(
+                config=value.config,
+                raw_config_hash=value.raw_config_hash,
+                authored_config=value.authored_config,
+                source_path=value.source_path,
+                model_registry=frozen_registry,
+            )
         return value
 
     if isinstance(value, ExperimentConfig):
         raw = to_builtin(asdict(value))
         raw_text = yaml.safe_dump(raw, sort_keys=False)
-        return _build_resolved_config(raw, raw_text=raw_text, source_path=source_path)
+        return _build_resolved_config(
+            raw,
+            raw_text=raw_text,
+            source_path=source_path,
+            model_registry=frozen_registry,
+        )
 
-    return _build_resolved_config(value, raw_text=raw_text, source_path=source_path)
+    return _build_resolved_config(
+        value,
+        raw_text=raw_text,
+        source_path=source_path,
+        model_registry=frozen_registry,
+    )
 
 
 def _build_resolved_config(
@@ -360,6 +413,7 @@ def _build_resolved_config(
     *,
     raw_text: str | None,
     source_path: str | None,
+    model_registry: FrozenModelRegistry | None,
 ) -> ResolvedExperimentConfig:
     if not isinstance(raw, dict):
         raise ConfigValidationError(
@@ -367,7 +421,7 @@ def _build_resolved_config(
         )
 
     issues: list[ConfigValidationIssue] = []
-    _validate_raw_config(raw, issues)
+    _validate_raw_config(raw, issues, model_registry=model_registry)
     if issues:
         raise ConfigValidationError(issues)
 
@@ -390,6 +444,7 @@ def _build_resolved_config(
         raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
         authored_config=to_builtin(raw),
         source_path=source_path,
+        model_registry=model_registry,
     )
 
 
@@ -496,7 +551,12 @@ def _default_label_transform_params(transform_name: str) -> dict[str, Any]:
     return {}
 
 
-def _validate_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
+def _validate_raw_config(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    model_registry: FrozenModelRegistry | None,
+) -> None:
     _validate_known_keys(
         "$",
         raw,
@@ -542,7 +602,7 @@ def _validate_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue
     _validate_labels(labels, issues)
     _validate_split(split, issues)
     _validate_label_split_compatibility(labels, split, issues)
-    _validate_model(model, issues)
+    _validate_model(model, issues, model_registry=model_registry)
     _validate_signals(signals, issues)
     _validate_portfolio(portfolio, issues)
     _validate_report(report, issues)
@@ -1002,11 +1062,7 @@ def _validate_label_target(
     _optional_int("labels.target.transform.version", transform, issues, positive=True)
     transform_name = str(
         transform.get("name")
-        or _default_label_transform_name(
-            LabelGeneratorConfig(
-                kind=kind, params={**_default_label_generator_params(kind), **params}
-            )
-        )
+        or _default_label_transform_name(LabelGeneratorConfig(kind=kind, params=params))
     )
     transform_params = transform.get("params", {})
     if not isinstance(transform_params, dict):
@@ -1170,9 +1226,49 @@ def _validate_purged_kfold_split(
         )
 
 
-def _validate_model(model: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    _optional_enum("model.kind", model, MODEL_KINDS, issues)
+def _validate_model(
+    model: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    model_registry: FrozenModelRegistry | None,
+) -> None:
+    _optional_str("model.plugin_id", model, issues, allow_none=True)
     _optional_int("model.min_train_samples", model, issues, positive=True)
+    params = model.get("params", {})
+    if not isinstance(params, dict):
+        issues.append(ConfigValidationIssue("model.params", "must be a mapping"))
+    else:
+        _validate_json_like("model.params", params, issues)
+        _validate_no_inline_secrets("model.params", params, issues)
+    _validate_no_denied_model_keys("model", model, issues)
+    if model_registry is None:
+        return
+    plugin_id = model.get("plugin_id")
+    if not isinstance(plugin_id, str) or not plugin_id:
+        issues.append(ConfigValidationIssue("model.plugin_id", "is required"))
+        return
+    if plugin_id not in model_registry:
+        issues.append(ConfigValidationIssue("model.plugin_id", "unknown registered model plugin id"))
+        return
+    definition = model_registry.get(plugin_id)
+    if definition.validate_params is not None and isinstance(params, dict):
+        for param_path, message in definition.validate_params(params).items():
+            child_path = f"model.params.{param_path}" if param_path else "model.params"
+            issues.append(ConfigValidationIssue(child_path, message))
+
+
+def _assert_model_config_registered(
+    model: ModelConfig,
+    model_registry: FrozenModelRegistry,
+) -> None:
+    issues: list[ConfigValidationIssue] = []
+    _validate_model(
+        to_builtin(asdict(model)),
+        issues,
+        model_registry=model_registry,
+    )
+    if issues:
+        raise ConfigValidationError(issues)
 
 
 def _validate_signals(signals: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -1294,18 +1390,46 @@ def _validate_no_denied_passthrough_keys(
     value: Any,
     issues: list[ConfigValidationIssue],
 ) -> None:
+    _validate_no_denied_keys(
+        path,
+        value,
+        DENIED_PASSTHROUGH_KEYS,
+        "is not allowed in passthrough config",
+        issues,
+    )
+
+
+def _validate_no_denied_model_keys(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    _validate_no_denied_keys(
+        path,
+        value,
+        MODEL_DENIED_KEYS,
+        "is not allowed in model config; register trusted plugin code before validation",
+        issues,
+    )
+
+
+def _validate_no_denied_keys(
+    path: str,
+    value: Any,
+    denied_keys: set[str],
+    message: str,
+    issues: list[ConfigValidationIssue],
+) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             child_path = f"{path}.{key}"
-            if str(key).lower() in DENIED_PASSTHROUGH_KEYS:
-                issues.append(
-                    ConfigValidationIssue(child_path, "is not allowed in passthrough config")
-                )
-            _validate_no_denied_passthrough_keys(child_path, item, issues)
+            if str(key).lower() in denied_keys:
+                issues.append(ConfigValidationIssue(child_path, message))
+            _validate_no_denied_keys(child_path, item, denied_keys, message, issues)
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
-            _validate_no_denied_passthrough_keys(f"{path}[{index}]", item, issues)
+            _validate_no_denied_keys(f"{path}[{index}]", item, denied_keys, message, issues)
 
 
 def _validate_json_like(path: str, value: Any, issues: list[ConfigValidationIssue]) -> None:

@@ -13,6 +13,10 @@ from research.aegis_research.config import (
 from research.aegis_research.indicator_registry import IndicatorDefinition
 from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
 from research.aegis_research.models import train_model
+from tests.research.aegis_research.model_plugin_fixtures import (
+    make_model_registry,
+    model_config_dict,
+)
 
 
 def test_ma_sweep_preserves_native_visible_params_and_lineage() -> None:
@@ -246,7 +250,22 @@ def test_training_boundary_rejects_colliding_feature_names() -> None:
     labels = pd.DataFrame({"SYN": [0, 1, 0, 1, 0, 1, 0, 1]}, index=index)
 
     with pytest.raises(ValueError, match="collide"):
-        train_model(indicators, labels, ModelConfig(min_train_samples=1))
+        train_model(
+            indicators,
+            labels,
+            ModelConfig(**model_config_dict(min_train_samples=1)),
+            model_registry=make_model_registry(),
+            target_schema={
+                "target_kind": "binary_classification",
+                "target_role": "supervised_target",
+                "classes": [
+                    {"label": 0, "role": "negative", "canonical": "int:0"},
+                    {"label": 1, "role": "positive", "canonical": "int:1"},
+                ],
+                "positive_class": 1,
+            },
+            split_label="split_0",
+        )
 
 
 def _close_frame(symbols: list[str]) -> pd.DataFrame:

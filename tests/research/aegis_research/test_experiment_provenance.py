@@ -4,6 +4,7 @@ import inspect
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -11,13 +12,20 @@ from research.aegis_research import data, indicators, labels, models, portfolios
 from research.aegis_research import validation as validation_module
 from research.aegis_research.config import load_experiment_config, resolve_experiment_config
 from research.aegis_research.experiments import run_experiment
-from research.aegis_research.provenance import artifacts, manifest
+from research.aegis_research.provenance import artifacts, experiment_artifacts, manifest
 from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus, validate_manifest
+from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
+from tests.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None:
-    config = load_experiment_config("research/configs/experiments/synthetic_ml_baseline.yaml")
-    config = resolve_experiment_config(replace(config.config, output_dir=str(tmp_path)))
+    registry = make_model_registry()
+    config = load_experiment_config(
+        "research/configs/experiments/synthetic_ml_baseline.yaml", model_registry=registry
+    )
+    config = resolve_experiment_config(
+        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+    )
 
     result = run_experiment(config, run_id="purged-manifest-run")
 
@@ -85,10 +93,14 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
 
 
 def test_purged_run_writes_per_split_models_and_links_aggregates(tmp_path: Path) -> None:
+    registry = make_model_registry()
     config = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml"
+        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        model_registry=registry,
     )
-    config = resolve_experiment_config(replace(config.config, output_dir=str(tmp_path)))
+    config = resolve_experiment_config(
+        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+    )
 
     result = run_experiment(config, run_id="purged-run")
 
@@ -122,10 +134,14 @@ def test_failed_split_run_preserves_prior_completed_split_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    registry = make_model_registry()
     config = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml"
+        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        model_registry=registry,
     )
-    config = resolve_experiment_config(replace(config.config, output_dir=str(tmp_path)))
+    config = resolve_experiment_config(
+        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+    )
     original_train_model = validation_module.train_model
     call_count = 0
 
@@ -152,6 +168,73 @@ def test_failed_split_run_preserves_prior_completed_split_artifacts(
     assert "validation.split_2.model" not in artifacts
 
 
+def test_csv_artifact_write_failure_marks_failed_without_partial_file(tmp_path: Path) -> None:
+    recorder = RunRecorder.start(
+        run_dir=tmp_path / "run",
+        run_id="run",
+        run_label="artifact-failure",
+        mode=RerunMode.NEW,
+        config={"schema_version": 1},
+    )
+
+    with pytest.raises(OSError, match="csv failed"):
+        experiment_artifacts._write_csv_artifact(
+            recorder,
+            artifact_id="validation.metrics",
+            role="metrics",
+            producer_stage="validation",
+            path="metrics.csv",
+            frame=_FailingCsvFrame(),
+            schema_version="metrics.v1",
+        )
+
+    payload = json.loads(recorder.manifest_path.read_text())
+    artifact = payload["artifacts"][0]
+
+    assert artifact["status"] == ArtifactStatus.FAILED
+    assert artifact["diagnostic"]["message"] == "csv failed"
+    assert not (recorder.run_dir / "metrics.csv").exists()
+    assert not list(recorder.run_dir.glob(".metrics.csv.*.tmp"))
+    validate_manifest(payload, run_dir=recorder.run_dir)
+
+
+def test_text_artifact_completion_failure_removes_uncompleted_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = RunRecorder.start(
+        run_dir=tmp_path / "run",
+        run_id="run",
+        run_label="artifact-failure",
+        mode=RerunMode.NEW,
+        config={"schema_version": 1},
+    )
+
+    def fail_complete(*_args, **_kwargs):
+        raise OSError("manifest persist failed")
+
+    monkeypatch.setattr(recorder.artifacts, "complete_existing_file", fail_complete)
+
+    with pytest.raises(OSError, match="manifest persist failed"):
+        experiment_artifacts._write_text_artifact(
+            recorder,
+            artifact_id="config.resolved",
+            role="resolved_config",
+            producer_stage="config",
+            path="config.yaml",
+            text="name: test\n",
+            schema_version="resolved_config.v1",
+        )
+
+    payload = json.loads(recorder.manifest_path.read_text())
+    artifact = payload["artifacts"][0]
+
+    assert artifact["status"] == ArtifactStatus.FAILED
+    assert artifact["diagnostic"]["message"] == "manifest persist failed"
+    assert not (recorder.run_dir / "config.yaml").exists()
+    validate_manifest(payload, run_dir=recorder.run_dir)
+
+
 def test_architecture_boundaries_remain_one_way() -> None:
     stage_modules = [data, indicators, labels, splits, models, signals, portfolios]
 
@@ -165,3 +248,14 @@ def test_architecture_boundaries_remain_one_way() -> None:
         assert "aegis_research.validation" not in source
         assert "aegis_research.portfolios" not in source
         assert "aegis_research.labels" not in source
+
+
+class _FailingCsvFrame:
+    columns: ClassVar[list[str]] = ["value"]
+
+    def __len__(self) -> int:
+        return 1
+
+    def to_csv(self, path: str | Path) -> None:
+        Path(path).write_text("partial")
+        raise OSError("csv failed")

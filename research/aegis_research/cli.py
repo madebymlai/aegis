@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 
-from research.aegis_research.config import load_experiment_config
+from research.aegis_research.config import ConfigValidationError, load_experiment_config
 from research.aegis_research.experiments import run_experiment
+from research.aegis_research.model_registry import empty_model_registry
 from research.aegis_research.provenance.recorder import RerunMode
 
 
@@ -25,13 +26,18 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "run":
-        result = run_experiment(
-            load_experiment_config(args.config),
-            rerun_mode=args.rerun_mode,
-            run_id=args.run_id,
-            parent_run_id=args.parent_run_id,
-            supersedes_run_id=args.supersedes_run_id,
-        )
+        registry = empty_model_registry().freeze()
+        try:
+            config = load_experiment_config(args.config, model_registry=registry)
+            result = run_experiment(
+                config,
+                rerun_mode=args.rerun_mode,
+                run_id=args.run_id,
+                parent_run_id=args.parent_run_id,
+                supersedes_run_id=args.supersedes_run_id,
+            )
+        except ConfigValidationError as error:
+            parser.error(str(error))
         report = result.get("report", {})
         print(f"Run: {result['run_dir']}")
         print(f"Status: {result['status']}")

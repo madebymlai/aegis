@@ -1,3 +1,4 @@
+import sys
 import traceback
 from pathlib import Path
 from typing import ClassVar
@@ -5,6 +6,7 @@ from typing import ClassVar
 import pytest
 import yaml
 
+from research.aegis_research import cli
 from research.aegis_research import config as config_module
 from research.aegis_research.config import (
     ConfigValidationError,
@@ -14,7 +16,15 @@ from research.aegis_research.config import (
     resolve_secret_refs,
 )
 from research.aegis_research.data import RemoteDataPullError, _pull_remote
+from research.aegis_research.experiments import run_experiment
 from research.aegis_research.indicator_registry import IndicatorDefinition, indicator_registry
+from research.aegis_research.model_contracts import ModelPluginDeclaration, ModelPluginDefinition
+from research.aegis_research.model_registry import ModelRegistry, ModelRegistryError
+from tests.research.aegis_research.model_plugin_fixtures import (
+    SklearnLogisticTestPlugin,
+    make_model_registry,
+    model_config_dict,
+)
 
 
 def test_baseline_configs_load_with_schema_metadata() -> None:
@@ -314,6 +324,110 @@ def test_enum_values_must_use_canonical_casing(
         load_experiment_config(path)
 
     assert expected_path in str(error.value)
+
+
+def test_unknown_model_plugin_id_fails_with_registered_bootstrap(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        model={**model_config_dict(), "plugin_id": "unknown.model"},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path, model_registry=make_model_registry())
+
+    assert "model.plugin_id" in str(error.value)
+    assert "unknown" in str(error.value)
+
+
+def test_model_plugin_params_are_validated_by_registered_plugin(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        model={**model_config_dict(), "params": {"max_iter": 0, "extra": True}},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path, model_registry=make_model_registry())
+
+    assert "model.params.max_iter" in str(error.value)
+    assert "model.params.extra" in str(error.value)
+
+
+def test_model_config_rejects_import_like_payloads(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        model={**model_config_dict(), "params": {"module": "unsafe.import.path"}},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "model.params.module" in str(error.value)
+    assert "register trusted plugin code" in str(error.value)
+
+
+def test_duplicate_model_plugin_ids_fail_before_config_resolution() -> None:
+    registry = ModelRegistry()
+    definition = ModelPluginDefinition(
+        declaration=ModelPluginDeclaration(id="duplicate.model", version="1.0.0"),
+        plugin=SklearnLogisticTestPlugin(),
+    )
+    registry.register(definition)
+
+    with pytest.raises(ModelRegistryError, match="duplicate"):
+        registry.register(definition)
+
+
+def test_malformed_model_plugin_declaration_fails_before_config_resolution() -> None:
+    registry = ModelRegistry()
+
+    with pytest.raises(ModelRegistryError, match="positive_class_probability"):
+        registry.register(
+            ModelPluginDefinition(
+                declaration=ModelPluginDeclaration(
+                    id="bad.model",
+                    version="1.0.0",
+                    prediction_outputs=(),
+                ),
+                plugin=SklearnLogisticTestPlugin(),
+            )
+        )
+
+
+def test_missing_model_registry_fails_before_run_directory(tmp_path: Path) -> None:
+    config = resolve_experiment_config(
+        {
+            "schema_version": config_module.CONFIG_SCHEMA_VERSION,
+            "name": "missing_registry",
+            "output_dir": str(tmp_path),
+            "model": model_config_dict(),
+        }
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        run_experiment(config, run_id="missing-registry-run")
+
+    assert "model.plugin_id" in str(error.value)
+    assert not (tmp_path / "missing-registry-run").exists()
+
+
+def test_cli_rejects_unregistered_model_before_run_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = _write_config(tmp_path, model=model_config_dict())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["aegis-research", "run", str(path), "--run-id", "cli-missing-registry"],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert error.value.code == 2
+    assert "unknown registered model plugin id" in capsys.readouterr().err
+    assert not (tmp_path / "runs" / "cli-missing-registry").exists()
 
 
 def test_duplicate_yaml_keys_fail_validation(tmp_path: Path) -> None:

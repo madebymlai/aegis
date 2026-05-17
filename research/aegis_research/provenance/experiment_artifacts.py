@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -10,7 +14,6 @@ from research.aegis_research.data import MarketDataResult, assert_public_metadat
 from research.aegis_research.data_schema import index_identity, table_shape
 from research.aegis_research.indicators import IndicatorResult, ModelFeatureMatrix
 from research.aegis_research.labels import LabelResult
-from research.aegis_research.models import export_model
 from research.aegis_research.provenance.manifest import (
     ArtifactVisibility,
     atomic_write_json,
@@ -307,12 +310,15 @@ class ExperimentArtifactWriter:
         metric_ids: list[str] = []
         prefix = f"validation.{split.label}"
         directory = f"splits/{split.label}"
-        _write_model_artifact(
-            self.recorder,
+        assert_public_metadata_safe(split.model.metadata)
+        self.native_writer.write_native_artifact(
             artifact_id=f"{prefix}.model",
+            role="validation_model_state",
             producer_stage="validation",
             path=f"{directory}/model.joblib",
-            model=split.model,
+            obj=split.model.state,
+            schema_version=split.model.metadata["trusted_loading"]["state_schema_version"],
+            metadata=split.model.metadata,
         )
         for set_name in ("train", "test"):
             probabilities = getattr(split, f"{set_name}_probabilities")
@@ -326,8 +332,8 @@ class ExperimentArtifactWriter:
                 producer_stage="validation",
                 path=f"{directory}/probabilities_{set_name}.csv",
                 frame=probabilities,
-                schema_version="probabilities.v1",
-                upstream_artifact_ids=[f"{prefix}.model"],
+                schema_version="positive_class_probabilities.v1",
+                upstream_artifact_ids=[f"{prefix}.model.metadata"],
             )
             _write_csv_artifact(
                 self.recorder,
@@ -443,9 +449,12 @@ def _write_json_artifact(
         upstream_artifact_ids=upstream_artifact_ids,
         visibility=visibility,
     )
-    recorder.artifacts.begin_artifact_write(artifact_id)
-    atomic_write_json(recorder.run_dir / path, payload)
-    recorder.artifacts.complete_existing_file(artifact_id)
+    _write_artifact_file(
+        recorder,
+        artifact_id=artifact_id,
+        path=path,
+        write=lambda target: atomic_write_json(target, payload),
+    )
 
 
 def _write_text_artifact(
@@ -466,11 +475,12 @@ def _write_text_artifact(
         path=path,
         schema_version=schema_version,
     )
-    recorder.artifacts.begin_artifact_write(artifact_id)
-    target = recorder.run_dir / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text)
-    recorder.artifacts.complete_existing_file(artifact_id)
+    _write_artifact_file(
+        recorder,
+        artifact_id=artifact_id,
+        path=path,
+        write=lambda target: _atomic_write_text(target, text),
+    )
 
 
 def _write_csv_artifact(
@@ -493,35 +503,114 @@ def _write_csv_artifact(
         schema_version=schema_version,
         upstream_artifact_ids=upstream_artifact_ids,
     )
-    recorder.artifacts.begin_artifact_write(artifact_id)
-    target = recorder.run_dir / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(target)
-    recorder.artifacts.complete_existing_file(
-        artifact_id,
-        shape={"rows": len(frame), "columns": len(frame.columns)},
+    _write_artifact_file(
+        recorder,
+        artifact_id=artifact_id,
+        path=path,
+        write=lambda target: _atomic_write_csv(target, frame),
+        shape=lambda: {"rows": len(frame), "columns": len(frame.columns)},
     )
 
 
-def _write_model_artifact(
+def _write_artifact_file(
     recorder: RunRecorder,
     *,
     artifact_id: str,
-    producer_stage: str,
     path: str,
-    model,
+    write: Callable[[Path], None],
+    shape: Callable[[], dict[str, Any]] | None = None,
 ) -> None:
-    recorder.artifacts.plan_artifact(
-        artifact_id=artifact_id,
-        role="model",
-        artifact_type="joblib",
-        producer_stage=producer_stage,
-        path=path,
-        schema_version="model.joblib.v1",
-    )
+    target = recorder.run_dir / path
     recorder.artifacts.begin_artifact_write(artifact_id)
-    export_model(model, recorder.run_dir / path)
-    recorder.artifacts.complete_existing_file(artifact_id)
+    try:
+        write(target)
+        recorder.artifacts.complete_existing_file(
+            artifact_id,
+            shape=shape() if shape is not None else None,
+        )
+    except Exception as error:
+        try:
+            _fail_artifact_write(recorder, artifact_id=artifact_id, target=target, error=error)
+        except Exception as failure_error:
+            error.add_note(
+                f"failed to mark artifact {artifact_id!r} as failed: {failure_error}"
+            )
+        raise
+
+
+def _fail_artifact_write(
+    recorder: RunRecorder,
+    *,
+    artifact_id: str,
+    target: Path,
+    error: Exception,
+) -> None:
+    if target.exists():
+        target.unlink()
+    recorder.artifacts.fail_artifact(
+        artifact_id,
+        {"error_type": type(error).__name__, "message": str(error)[:1000]},
+    )
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    _atomic_write_bytes(path, text.encode())
+
+
+def _atomic_write_csv(path: Path, frame: Any) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = _temp_path(target)
+    try:
+        frame.to_csv(temp_path)
+        _fsync_file(temp_path)
+        temp_path.replace(target)
+        _fsync_parent(target)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = _temp_path(target)
+    try:
+        with temp_path.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp_path.replace(target)
+        _fsync_parent(target)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def _temp_path(target: Path) -> Path:
+    with tempfile.NamedTemporaryFile(
+        "wb",
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        temp_path = Path(handle.name)
+        temp_path.chmod(0o600)
+    return temp_path
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_parent(path: Path) -> None:
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def _label_evaluation_evidence_payload(
@@ -560,18 +649,14 @@ def _public_json_artifact_payload(
     if max_public_artifact_bytes is None:
         return payload
 
-    capped_payload = {
-        **payload,
-        "resource_estimate": {"max_public_artifact_bytes": max_public_artifact_bytes},
-    }
-    while True:
-        size = len(canonical_json_bytes(capped_payload, pretty=True))
-        if capped_payload["resource_estimate"].get("public_artifact_bytes") == size:
-            break
-        capped_payload["resource_estimate"]["public_artifact_bytes"] = size
-    if size > max_public_artifact_bytes:
-        raise ValueError(f"{artifact_name} exceeds split.max_public_artifact_bytes")
-    return capped_payload
+    return _apply_public_artifact_byte_cap(
+        {
+            **payload,
+            "resource_estimate": {"max_public_artifact_bytes": max_public_artifact_bytes},
+        },
+        max_public_artifact_bytes=max_public_artifact_bytes,
+        artifact_name=artifact_name,
+    )
 
 
 def _split_evidence_payload(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -584,13 +669,26 @@ def _split_evidence_payload(metadata: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(max_bytes, int):
         return payload
 
+    return _apply_public_artifact_byte_cap(
+        payload,
+        max_public_artifact_bytes=max_bytes,
+        artifact_name="split evidence",
+    )
+
+
+def _apply_public_artifact_byte_cap(
+    payload: dict[str, Any],
+    *,
+    max_public_artifact_bytes: int,
+    artifact_name: str,
+) -> dict[str, Any]:
     while True:
         size = len(canonical_json_bytes(payload, pretty=True))
         if payload["resource_estimate"].get("public_artifact_bytes") == size:
             break
         payload["resource_estimate"]["public_artifact_bytes"] = size
-    if size > max_bytes:
-        raise ValueError("split evidence exceeds split.max_public_artifact_bytes")
+    if size > max_public_artifact_bytes:
+        raise ValueError(f"{artifact_name} exceeds split.max_public_artifact_bytes")
     return payload
 
 

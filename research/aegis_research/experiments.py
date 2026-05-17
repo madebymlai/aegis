@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.config import (
+    ConfigValidationError,
+    ConfigValidationIssue,
     ExperimentConfig,
     ResolvedExperimentConfig,
     redact_text,
@@ -17,6 +19,7 @@ from research.aegis_research.data import (
 )
 from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
 from research.aegis_research.labels import build_label_result
+from research.aegis_research.model_registry import FrozenModelRegistry, ModelRegistry
 from research.aegis_research.models import (
     assert_target_model_compatible,
     target_model_compatibility,
@@ -36,12 +39,17 @@ from research.aegis_research.validation import evaluate_validation_splits
 def run_experiment(
     config: ResolvedExperimentConfig | ExperimentConfig | dict[str, Any],
     *,
+    model_registry: ModelRegistry | FrozenModelRegistry | None = None,
     rerun_mode: str = RerunMode.NEW,
     run_id: str | None = None,
     parent_run_id: str | None = None,
     supersedes_run_id: str | None = None,
 ) -> dict[str, object]:
-    resolved_config = resolve_experiment_config(config)
+    resolved_config = resolve_experiment_config(config, model_registry=model_registry)
+    if resolved_config.model_registry is None:
+        raise ConfigValidationError(
+            [ConfigValidationIssue("model.plugin_id", "registered model plugin registry is required")]
+        )
     config = resolved_config.config
     known_secrets = _known_config_secret_values(resolved_config.authored_config)
     run_start_evidence = capture_run_start_evidence(resolved_config, repo_path=Path.cwd())
@@ -84,6 +92,7 @@ def run_experiment(
             config.model,
             label_result.target_schema,
             phase="pre_split",
+            model_registry=resolved_config.model_registry,
         )
         if not pre_split_compatibility["compatible"]:
             artifacts.write_label_compatibility_artifact(pre_split_compatibility)
@@ -117,6 +126,7 @@ def run_experiment(
             splits_result.splits,
             phase="post_split",
             split_metadata=splits_result.metadata,
+            model_registry=resolved_config.model_registry,
         )
         artifacts.write_label_compatibility_artifact(compatibility)
         assert_target_model_compatible(compatibility)
@@ -135,6 +145,7 @@ def run_experiment(
             target_schema=label_result.target_schema,
             split_metadata=splits_result.metadata,
             compatibility=compatibility,
+            model_registry=resolved_config.model_registry,
             on_split_result=record_split_artifacts,
         )
         report = build_survival_report(
@@ -194,7 +205,7 @@ def _pre_split_compatibility_failure(
         "compatible": False,
         "target_kind": target_schema.get("target_kind"),
         "target_role": target_schema.get("target_role"),
-        "model_kind": None,
+        "model_plugin_id": None,
         "split_safety": target_schema.get("split_safety", {}),
         "splits": [],
         "failure_reason": str(error),

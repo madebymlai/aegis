@@ -8,26 +8,28 @@ import pandas as pd
 
 from research.aegis_research.config import ExperimentConfig
 from research.aegis_research.data_schema import index_identity
-from research.aegis_research.models import predict_long_probability, train_model
+from research.aegis_research.model_registry import FrozenModelRegistry
+from research.aegis_research.models import (
+    TrainedModel,
+    predict_positive_class_probability,
+    train_model,
+)
 from research.aegis_research.portfolios import simulate_portfolio
 from research.aegis_research.reports import portfolio_metrics
 from research.aegis_research.signals import probabilities_to_signals
 from research.aegis_research.splits import ValidationSplit, split_purging_passed
 
-# Downstream stages use explicit timestamp-by-symbol panels derived from native market data.
-PanelFrame = pd.DataFrame
-
 
 @dataclass(frozen=True)
 class SplitValidationResult:
     label: str
-    model: Any
-    train_probabilities: PanelFrame
-    test_probabilities: PanelFrame
-    train_entries: PanelFrame
-    test_entries: PanelFrame
-    train_exits: PanelFrame
-    test_exits: PanelFrame
+    model: TrainedModel
+    train_probabilities: pd.DataFrame
+    test_probabilities: pd.DataFrame
+    train_entries: pd.DataFrame
+    test_entries: pd.DataFrame
+    train_exits: pd.DataFrame
+    test_exits: pd.DataFrame
     train_portfolio: Any
     test_portfolio: Any
     train_metrics: dict[str, Any]
@@ -38,9 +40,9 @@ class SplitValidationResult:
 @dataclass(frozen=True)
 class ValidationResult:
     split_results: list[SplitValidationResult]
-    probabilities: PanelFrame
-    entries: PanelFrame
-    exits: PanelFrame
+    probabilities: pd.DataFrame
+    entries: pd.DataFrame
+    exits: pd.DataFrame
     train_metrics: dict[str, Any]
     test_metrics: dict[str, Any]
     split_metrics: pd.DataFrame
@@ -52,32 +54,48 @@ class ValidationResult:
 
 
 def evaluate_validation_splits(
-    close: PanelFrame,
+    close: pd.DataFrame,
     indicators: pd.DataFrame,
-    labels: PanelFrame,
+    labels: pd.DataFrame,
     splits: list[ValidationSplit],
     config: ExperimentConfig,
     *,
-    target_schema: dict[str, Any] | None = None,
+    target_schema: dict[str, Any],
     split_metadata: dict[str, Any] | None = None,
     compatibility: dict[str, Any] | None = None,
+    model_registry: FrozenModelRegistry | None = None,
     on_split_result: Callable[[SplitValidationResult], None] | None = None,
 ) -> ValidationResult:
     if not splits:
         raise ValueError("At least one validation split is required")
+    if not target_schema:
+        raise ValueError("target_schema is required for model plugin validation")
+    split_metadata = split_metadata or {}
+    compatibility = compatibility or {}
 
     split_rows: list[dict[str, Any]] = []
-    probability_frames: dict[str, PanelFrame] = {}
-    entry_frames: dict[str, PanelFrame] = {}
-    exit_frames: dict[str, PanelFrame] = {}
+    probability_frames: dict[str, pd.DataFrame] = {}
+    entry_frames: dict[str, pd.DataFrame] = {}
+    exit_frames: dict[str, pd.DataFrame] = {}
     split_results: list[SplitValidationResult] = []
 
     for split in splits:
         train_indicators = indicators.loc[split.train_index]
         train_labels = labels.loc[split.train_index]
-        model = train_model(train_indicators, train_labels, config.model)
-        probabilities = predict_long_probability(
-            model, indicators.loc[split.train_index.union(split.test_index)]
+        model = train_model(
+            train_indicators,
+            train_labels,
+            config.model,
+            model_registry=model_registry,
+            target_schema=target_schema,
+            split_label=split.label,
+        )
+        probabilities = predict_positive_class_probability(
+            model,
+            indicators.loc[split.train_index.union(split.test_index)],
+            target_schema=target_schema,
+            split_label=split.label,
+            set_name="validation_union",
         )
         entries, exits = probabilities_to_signals(probabilities, config.signals)
         train_close = close.loc[split.train_index]
@@ -128,8 +146,13 @@ def evaluate_validation_splits(
             test_metrics=test_metrics,
             metadata={
                 "label": split.label,
-                "target": target_schema or {},
-                "compatibility": compatibility or {},
+                "target": target_schema,
+                "model": model.metadata,
+                "probabilities": {
+                    "train": _probability_diagnostics(train_probabilities),
+                    "test": _probability_diagnostics(test_probabilities),
+                },
+                "compatibility": compatibility,
                 "sets": {
                     "train": {"rows": len(split.train_index), **index_identity(split.train_index)},
                     "test": {"rows": len(split.test_index), **index_identity(split.test_index)},
@@ -158,9 +181,9 @@ def evaluate_validation_splits(
         validation_metadata={
             "kind": config.split.kind,
             "n_splits": len(splits),
-            "target": target_schema or {},
-            "split_metadata": split_metadata or {},
-            "compatibility": compatibility or {},
+            "target": target_schema,
+            "split_metadata": split_metadata,
+            "compatibility": compatibility,
             "decision_grade": _decision_grade(
                 target_schema,
                 split_metadata=split_metadata,
@@ -170,6 +193,8 @@ def evaluate_validation_splits(
             "feature_causality_checked": False,
             "portfolio_execution_timing_checked": False,
             "decision_evidence": "per_split_test_metrics",
+            "probability_output_name": "positive_class_probability",
+            "probability_calibrated": False,
             "aggregate_metrics_role": "descriptive_summary",
             "aggregation_methods": _aggregation_methods(),
         },
@@ -197,6 +222,19 @@ def _aggregate_metrics(metrics: pd.DataFrame) -> dict[str, Any]:
     if "per_symbol" in metrics:
         aggregated["per_symbol"] = _aggregate_per_symbol_metrics(metrics["per_symbol"])
     return aggregated
+
+
+def _probability_diagnostics(probabilities: pd.DataFrame) -> dict[str, Any]:
+    values = probabilities.stack().dropna()
+    return {
+        "rows": len(probabilities),
+        "symbols": [str(column) for column in probabilities.columns],
+        "observations": int(values.size),
+        "missing": int(probabilities.isna().sum().sum()),
+        "min": float(values.min()) if len(values) else None,
+        "max": float(values.max()) if len(values) else None,
+        "mean": float(values.mean()) if len(values) else None,
+    }
 
 
 def _aggregate_per_symbol_metrics(rows: pd.Series) -> dict[str, dict[str, Any]]:
@@ -228,8 +266,8 @@ def _aggregate_symbol_values(metric_name: str, values: list[float]) -> Any:
 
 
 def _concat_split_frames(
-    frames: dict[str, PanelFrame],
-) -> PanelFrame:
+    frames: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, axis=1)
