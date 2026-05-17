@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: synthetic_ml_baseline
 output_dir: runs
 
@@ -63,6 +63,7 @@ split:
   kind: holdout
   train_size: 0.7
   embargo_bars: 5
+  diagnostic_validation_allowed: true
 
 model:
   kind: logistic_regression

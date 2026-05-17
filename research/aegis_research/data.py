@@ -206,7 +206,7 @@ def _provider_failed_result(config: DataConfig, error: RemoteDataPullError) -> M
         "provider_metadata": {},
         "omitted_metadata_fields": [],
         "update_supported": False,
-        "cache_policy": "disabled_in_schema_v1",
+        "cache_policy": "disabled_in_schema_v2",
     }
     metadata = to_builtin(metadata)
     assert_public_metadata_safe(metadata)
@@ -418,9 +418,9 @@ def _multiindex_csv_feature_data(
 ) -> dict[str, pd.DataFrame]:
     symbol_level, feature_level = _csv_multiindex_levels(frame, config)
     feature_data = {}
+    feature_values = set(map(str, frame.columns.get_level_values(feature_level)))
     for feature in OHLCV_FEATURES:
         source_feature = _source_feature_name(feature, config.feature_map)
-        feature_values = set(map(str, frame.columns.get_level_values(feature_level)))
         if source_feature not in feature_values:
             continue
         panel = frame.xs(source_feature, axis=1, level=feature_level)
@@ -439,9 +439,8 @@ def _csv_multiindex_levels(frame: pd.DataFrame, config: DataConfig) -> tuple[int
         set(map(str, frame.columns.get_level_values(index)))
         for index in range(frame.columns.nlevels)
     ]
-    symbol_levels = [
-        index for index, values in enumerate(level_values) if set(config.symbols) & values
-    ]
+    configured_symbols = set(config.symbols)
+    symbol_levels = [index for index, values in enumerate(level_values) if configured_symbols & values]
     source_features = {
         _source_feature_name(feature, config.feature_map) for feature in OHLCV_FEATURES
     }
@@ -745,7 +744,7 @@ def _data_metadata(
         "provider_metadata": provider_metadata["metadata"],
         "omitted_metadata_fields": provider_metadata["omitted"],
         "update_supported": _supports_update(native_data),
-        "cache_policy": "disabled_in_schema_v1",
+        "cache_policy": "disabled_in_schema_v2",
     }
     return to_builtin(metadata)
 

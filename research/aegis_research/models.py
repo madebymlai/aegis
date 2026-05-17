@@ -50,14 +50,17 @@ def target_model_compatibility(
     splits: list[ValidationSplit] | None = None,
     *,
     phase: str,
+    diagnostic_validation_allowed: bool = False,
 ) -> dict[str, Any]:
+    split_safety = target_schema.get("split_safety", {})
     diagnostics: dict[str, Any] = {
         "phase": phase,
         "compatible": True,
         "target_kind": target_schema.get("target_kind"),
         "target_role": target_schema.get("target_role"),
         "model_kind": config.kind,
-        "split_safety": target_schema.get("split_safety", {}),
+        "split_safety": split_safety,
+        "diagnostic_validation_allowed": diagnostic_validation_allowed,
         "splits": [],
         "failure_reason": None,
     }
@@ -72,12 +75,17 @@ def target_model_compatibility(
         )
     if not isinstance(labels, pd.DataFrame) or isinstance(labels.columns, pd.MultiIndex):
         return _incompatible(diagnostics, "selected target must be a timestamp-by-symbol panel")
+    if _requires_diagnostic_validation_opt_in(split_safety) and not diagnostic_validation_allowed:
+        return _incompatible(
+            diagnostics,
+            "split.diagnostic_validation_allowed must be true for unpurged look-ahead labels",
+        )
 
     if splits is None:
         return diagnostics
 
     for split in splits:
-        values = labels.loc[split.train_index].stack().dropna().astype(int)
+        values = _stack_label_panel(labels.loc[split.train_index]).dropna().astype(int)
         class_counts = {str(key): int(value) for key, value in values.value_counts().items()}
         diagnostics["splits"].append({"label": split.label, "train_class_counts": class_counts})
         if len(class_counts) < 2:
@@ -185,3 +193,9 @@ def _validate_feature_label_symbols(indicators: pd.DataFrame, labels: pd.DataFra
 
 def _incompatible(diagnostics: dict[str, Any], reason: str) -> dict[str, Any]:
     return {**diagnostics, "compatible": False, "failure_reason": reason}
+
+
+def _requires_diagnostic_validation_opt_in(split_safety: dict[str, Any]) -> bool:
+    return bool(split_safety.get("purging_required")) and not bool(
+        split_safety.get("purging_applied")
+    )

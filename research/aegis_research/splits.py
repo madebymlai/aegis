@@ -114,6 +114,7 @@ def _split_metadata(
         "n_splits": len(splits),
         "train_size": config.train_size,
         "embargo_bars": config.embargo_bars,
+        "diagnostic_validation_allowed": config.diagnostic_validation_allowed,
         "source_index": index_identity(index),
         "splits": [
             {

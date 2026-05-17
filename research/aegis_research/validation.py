@@ -80,28 +80,30 @@ def evaluate_validation_splits(
             model, indicators.loc[split.train_index.union(split.test_index)]
         )
         entries, exits = probabilities_to_signals(probabilities, config.signals)
-
-        train_pf = simulate_portfolio(
-            close.loc[split.train_index],
-            entries.loc[split.train_index],
-            exits.loc[split.train_index],
-            config.portfolio,
-        )
-        test_pf = simulate_portfolio(
-            close.loc[split.test_index],
-            entries.loc[split.test_index],
-            exits.loc[split.test_index],
-            config.portfolio,
-        )
-
-        train_metrics = portfolio_metrics(train_pf, config.report)
-        test_metrics = portfolio_metrics(test_pf, config.report)
+        train_close = close.loc[split.train_index]
+        test_close = close.loc[split.test_index]
         train_probabilities = probabilities.loc[split.train_index]
         test_probabilities = probabilities.loc[split.test_index]
         train_entries = entries.loc[split.train_index]
         test_entries = entries.loc[split.test_index]
         train_exits = exits.loc[split.train_index]
         test_exits = exits.loc[split.test_index]
+
+        train_pf = simulate_portfolio(
+            train_close,
+            train_entries,
+            train_exits,
+            config.portfolio,
+        )
+        test_pf = simulate_portfolio(
+            test_close,
+            test_entries,
+            test_exits,
+            config.portfolio,
+        )
+
+        train_metrics = portfolio_metrics(train_pf, config.report)
+        test_metrics = portfolio_metrics(test_pf, config.report)
         split_rows.extend(
             [
                 {"split": split.label, "set": "train", **train_metrics},
@@ -159,6 +161,7 @@ def evaluate_validation_splits(
             "target": target_schema or {},
             "split_metadata": split_metadata or {},
             "compatibility": compatibility or {},
+            "diagnostic_validation_allowed": config.split.diagnostic_validation_allowed,
             "decision_grade": _decision_grade(target_schema),
         },
     )

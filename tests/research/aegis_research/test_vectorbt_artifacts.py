@@ -9,6 +9,7 @@ import pytest
 from research.aegis_research.config import (
     DataConfig,
     ExperimentConfig,
+    SplitConfig,
     resolve_experiment_config,
 )
 from research.aegis_research.experiments import run_experiment
@@ -262,6 +263,7 @@ def test_indicator_native_artifact_uses_private_bundle_and_public_sidecar(tmp_pa
             name="indicator-native-check",
             output_dir=str(tmp_path),
             data=DataConfig(source="synthetic", symbols=["SYN"], rows=180),
+            split=SplitConfig(diagnostic_validation_allowed=True),
         )
     )
 

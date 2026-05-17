@@ -74,6 +74,7 @@ def _evaluate(config_path: str):
         label_result.target_schema,
         splits,
         phase="post_split",
+        diagnostic_validation_allowed=config.split.diagnostic_validation_allowed,
     )
     return evaluate_validation_splits(
         close,

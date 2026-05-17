@@ -40,6 +40,33 @@ def test_binary_target_with_one_class_in_train_split_fails() -> None:
     assert diagnostics["splits"][0]["train_class_counts"] == {"1": 2}
 
 
+def test_regime_target_fails_even_when_values_are_binary() -> None:
+    diagnostics = target_model_compatibility(
+        _labels([0, 1, 0, 1]),
+        ModelConfig(min_train_samples=1),
+        _target_schema("binary_classification", target_role="regime"),
+        phase="pre_split",
+    )
+
+    with pytest.raises(TargetModelCompatibilityError, match="supervised_target"):
+        assert_target_model_compatible(diagnostics)
+
+
+def test_unpurged_lookahead_target_requires_diagnostic_opt_in() -> None:
+    diagnostics = target_model_compatibility(
+        _labels([0, 1, 0, 1]),
+        ModelConfig(min_train_samples=1),
+        _target_schema(
+            "binary_classification",
+            split_safety={"purging_required": True, "purging_applied": False},
+        ),
+        phase="pre_split",
+    )
+
+    with pytest.raises(TargetModelCompatibilityError, match="diagnostic_validation_allowed"):
+        assert_target_model_compatible(diagnostics)
+
+
 def test_valid_binary_target_reaches_training() -> None:
     index = pd.RangeIndex(4)
     indicators = pd.DataFrame(
@@ -69,13 +96,16 @@ def _labels(values, *, index=None) -> pd.DataFrame:
     return pd.DataFrame({"SYN": values}, index=index)
 
 
-def _target_schema(target_kind: str) -> dict[str, object]:
-    return {
+def _target_schema(
+    target_kind: str,
+    *,
+    target_role: str = "supervised_target",
+    split_safety: dict[str, object] | None = None,
+) -> dict[str, object]:
+    schema: dict[str, object] = {
         "target_kind": target_kind,
-        "target_role": "supervised_target",
-        "split_safety": {
-            "purging_required": True,
-            "purging_applied": False,
-            "leakage_risk": "fixed_unpurged",
-        },
+        "target_role": target_role,
     }
+    if split_safety is not None:
+        schema["split_safety"] = split_safety
+    return schema

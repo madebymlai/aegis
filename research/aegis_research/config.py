@@ -13,7 +13,7 @@ import yaml
 
 from research.aegis_research.indicator_registry import indicator_registry
 
-CONFIG_SCHEMA_VERSION = 1
+CONFIG_SCHEMA_VERSION = 2
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 DATA_SOURCES = {"synthetic", "csv", "yfinance", "binance", "ccxt"}
@@ -259,6 +259,7 @@ class SplitConfig:
     embargo_bars: int = 0
     n: int = 5
     length: str | int | None = "optimize"
+    diagnostic_validation_allowed: bool = False
 
 
 @dataclass(frozen=True)
@@ -446,7 +447,7 @@ def _build_label_config(raw: dict[str, Any]) -> LabelConfig:
     target_raw = raw.get("target", {})
     transform_raw = target_raw.get("transform", {})
     transform_name = transform_raw.get("name") or _default_label_transform_name(generator)
-    transform_params = _default_label_transform_params(generator, str(transform_name))
+    transform_params = _default_label_transform_params(str(transform_name))
     transform_params.update(transform_raw.get("params", {}))
     target = LabelTargetConfig(
         role=target_raw.get("role", "supervised_target"),
@@ -485,10 +486,7 @@ def _default_label_transform_name(generator: LabelGeneratorConfig) -> str:
     return "identity_binary"
 
 
-def _default_label_transform_params(
-    generator: LabelGeneratorConfig,
-    transform_name: str,
-) -> dict[str, Any]:
+def _default_label_transform_params(transform_name: str) -> dict[str, Any]:
     if transform_name == "threshold_future_return":
         return {"threshold": 0.0}
     if transform_name in {"identity_binary", "positive_event"}:
@@ -904,7 +902,8 @@ def _validate_labels(labels: dict[str, Any], issues: list[ConfigValidationIssue]
         issues.append(ConfigValidationIssue("labels.generator.params", "must be a mapping"))
         return
     _validate_label_generator_params(kind, params, issues)
-    _validate_label_target(kind, params, target, issues)
+    effective_params = {**_default_label_generator_params(kind), **params}
+    _validate_label_target(kind, effective_params, target, issues)
 
 
 def _validate_label_generator_params(
@@ -1004,11 +1003,21 @@ def _validate_target_selection(
             )
     for key, selected in select_params.items():
         values = params.get(key)
-        if isinstance(values, list) and selected not in values:
+        if isinstance(values, list):
+            if selected in values:
+                continue
             issues.append(
                 ConfigValidationIssue(
                     f"labels.target.select.params.{key}",
                     f"must be one of {values}",
+                )
+            )
+            continue
+        if values is not None and selected != values:
+            issues.append(
+                ConfigValidationIssue(
+                    f"labels.target.select.params.{key}",
+                    f"must be {values!r}",
                 )
             )
 
@@ -1092,6 +1101,7 @@ def _validate_split(split: dict[str, Any], issues: list[ConfigValidationIssue]) 
         issues.append(
             ConfigValidationIssue("split.length", "must be a positive integer, string, or null")
         )
+    _optional_bool("split.diagnostic_validation_allowed", split, issues)
 
 
 def _validate_model(model: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:

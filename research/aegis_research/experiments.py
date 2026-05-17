@@ -73,10 +73,21 @@ def run_experiment(
         close = data_result.feature("Close")
         high = data_result.feature("High") if "High" in required_features else None
         low = data_result.feature("Low") if "Low" in required_features else None
-        indicator_result = build_indicator_result(close, config.indicators)
         label_result = build_label_result(close, config.labels, high=high, low=low)
         artifacts.write_label_artifacts(label_result)
         labels = label_result.labels
+        pre_split_compatibility = target_model_compatibility(
+            labels,
+            config.model,
+            label_result.target_schema,
+            phase="pre_split",
+            diagnostic_validation_allowed=config.split.diagnostic_validation_allowed,
+        )
+        if not pre_split_compatibility["compatible"]:
+            artifacts.write_label_compatibility_artifact(pre_split_compatibility)
+            assert_target_model_compatible(pre_split_compatibility)
+
+        indicator_result = build_indicator_result(close, config.indicators)
         try:
             model_features = build_model_feature_matrix(
                 indicator_result,
@@ -85,7 +96,7 @@ def run_experiment(
             )
         except Exception as error:
             artifacts.write_label_compatibility_artifact(
-                _pre_split_compatibility_failure(label_result.target_schema or {}, error)
+                _pre_split_compatibility_failure(label_result.target_schema, error)
             )
             raise
         indicators = model_features.frame
@@ -97,9 +108,10 @@ def run_experiment(
         compatibility = target_model_compatibility(
             labels,
             config.model,
-            label_result.target_schema or {},
+            label_result.target_schema,
             splits_result.splits,
             phase="post_split",
+            diagnostic_validation_allowed=config.split.diagnostic_validation_allowed,
         )
         artifacts.write_label_compatibility_artifact(compatibility)
         assert_target_model_compatible(compatibility)
@@ -160,11 +172,11 @@ def _redacted_diagnostic(error: Exception, known_secrets: tuple[str, ...]) -> di
 
 
 def _split_target_metadata(label_result) -> dict[str, object]:
-    target_schema = label_result.target_schema or {}
+    target_schema = label_result.target_schema
     return {
         "target_kind": target_schema.get("target_kind"),
         "target_role": target_schema.get("target_role"),
-        "split_safety": label_result.split_safety or {},
+        "split_safety": label_result.split_safety,
         "schema_artifact_id": "labels.target.schema",
     }
 

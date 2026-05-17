@@ -40,7 +40,7 @@ The default config uses deterministic synthetic OHLCV data, so it is safe for CI
 
 ## Config Contract
 
-Experiment YAML is a versioned public contract. Every config must declare `schema_version: 1` and is validated before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write.
+Experiment YAML is a versioned public contract. Every config must declare `schema_version: 2` and is validated before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write.
 
 Validation is strict by default:
 
@@ -53,7 +53,7 @@ Remote provider configs keep scaffold-owned fields first-class (`source`, `symbo
 
 Market data sources are selected from the approved in-code adapter registry: `synthetic`, `csv`, `yfinance`, `binance`, and `ccxt`. Configs cannot import arbitrary provider classes. Tests can use a controlled fake-adapter seam to exercise future provider shapes without adding a public import surface.
 
-Provider-native symbols are passed through as authored in `data.symbols`. The scaffold does not normalize tickers, exchange symbols, or aliases in schema v1 because hidden normalization would make evidence hard to audit.
+Provider-native symbols are passed through as authored in `data.symbols`. The scaffold does not normalize tickers, exchange symbols, or aliases in schema v2 because hidden normalization would make evidence hard to audit.
 
 Use `data.feature_map` when a source uses non-standard OHLCV feature names. The map uses logical scaffold keys and source feature names:
 
@@ -106,7 +106,7 @@ indicators:
 
 Built-in VectorBT indicators run through their indicator class `.run(...)` methods with visible params. MA and RSI preserve effective `window` and `wtype` levels in native outputs by using visible parameter settings rather than hiding params. Ordinary sweeps use parameter lists. Zipped lists are the default. Cartesian products require both `grid: product` and `param_product: true` so grid expansion is explicit in config and metadata.
 
-Primitive features such as returns and rolling volatility stay local in schema v1, but they still produce the same lineage, feature mapping, invalid-value diagnostics, and artifact metadata as VectorBT-backed indicators. Reusable/domain transforms should graduate to a reviewed registry definition when they need first-class indicator identity or repeated use.
+Primitive features such as returns and rolling volatility stay local in schema v2, but they still produce the same lineage, feature mapping, invalid-value diagnostics, and artifact metadata as VectorBT-backed indicators. Reusable/domain transforms should graduate to a reviewed registry definition when they need first-class indicator identity or repeated use.
 
 Trusted custom indicators are added in project code, usually with `vbt.IF(...).with_apply_func(...)`, and then referenced by stable id from config:
 
@@ -121,7 +121,7 @@ indicators:
         - output: retvol
 ```
 
-Custom `IndicatorFactory` outputs must be bar-aligned in schema v1: each selected output preserves the input index and symbol shape. Shape-changing transforms such as Renko bricks, event lists, compressed bars, trades, or arbitrary objects belong in a separate future pipeline, such as a `vbt.parameterized` workflow, not the experiment indicator stage.
+Custom `IndicatorFactory` outputs must be bar-aligned in schema v2: each selected output preserves the input index and symbol shape. Shape-changing transforms such as Renko bricks, event lists, compressed bars, trades, or arbitrary objects belong in a separate future pipeline, such as a `vbt.parameterized` workflow, not the experiment indicator stage.
 
 The indicator stage keeps native VectorBT objects private until the modeling boundary. Public artifacts write portable `indicators.metadata`, `indicators.lineage`, `indicators.diagnostics`, and `indicators.features.schema`. Private native indicator objects and native outputs are stored as `indicators.native` with a public metadata sidecar. sklearn receives only the derived model-feature matrix with deterministic feature names and reversible mapping; native VectorBT objects never enter sklearn internals.
 
@@ -142,7 +142,7 @@ Quality states are fail-fast:
 
 `skip_on_error` defaults to `false`. If provider partial fetch behavior is needed, set both `data.skip_on_error: true` and `data.quality.allowed_degradations: [skipped_symbols]`; otherwise skipped configured symbols are rejected.
 
-Cache and update behavior is metadata-only in schema v1. Public metadata records update support and uses `cache_policy: disabled_in_schema_v1`; cache paths, sessions, clients, proxies, and private transport objects remain denied passthrough fields.
+Cache and update behavior is metadata-only in schema v2. Public metadata records update support and uses `cache_policy: disabled_in_schema_v2`; cache paths, sessions, clients, proxies, and private transport objects remain denied passthrough fields.
 
 ## Run Manifest And Artifacts
 
@@ -173,6 +173,7 @@ split:
   kind: holdout
   train_size: 0.7
   embargo_bars: 5
+  diagnostic_validation_allowed: true
 ```
 
 Use VectorBT PRO rolling windows through `vbt.Splitter.from_n_rolling`:
@@ -184,7 +185,10 @@ split:
   embargo_bars: 5
   n: 5
   length: optimize
+  diagnostic_validation_allowed: true
 ```
+
+`diagnostic_validation_allowed` defaults to `false`. Set it to `true` only when intentionally producing non-decision-grade validation/report artifacts for unpurged look-ahead labels; otherwise the model compatibility gate fails closed before validation.
 
 Holdout is represented as one split. Rolling validation writes one child artifact set per split: model, train/test probabilities, train/test signals, train/test portfolio artifacts, train/test metrics, and metadata. Aggregate probability/signal/metric/report artifacts link back to those child artifacts. There is no generic top-level `artifacts/model.joblib` for split validation because it would imply deployment readiness.
 
@@ -257,14 +261,14 @@ labels:
 
 Label generation is native-first. Runs preserve the native VectorBT object and raw `.labels` separately from the selected model target. The current model path accepts only `role: supervised_target` binary classification targets; continuous `TRENDLB` modes, sparse-event targets, and regime targets are artifactable but require future estimator support in #9 before training.
 
-Label functions use future information and are target generators, not predictor features. Until #3 implements purged CV, validation/report artifacts expose `purging_required: true`, `purging_applied: false`, and non-decision-grade trust metadata for look-ahead label targets.
+Label functions use future information and are target generators, not predictor features. Until #3 implements purged CV, validation/report artifacts expose `purging_required: true`, `purging_applied: false`, and non-decision-grade trust metadata only for configs that explicitly opt into diagnostic validation.
 
 ## VectorBT PRO Notes
 
 - Use approved `YFData`, `BinanceData`, or `CCXTData` adapters for real fetches once an experiment needs external data.
-- For schema v1, `Portfolio.from_signals` sizing accepts `amount`, `value`, `percent`, `percent100`, `valuepercent`, and `valuepercent100`; target size types are intentionally rejected.
+- For schema v2, `Portfolio.from_signals` sizing accepts `amount`, `value`, `percent`, `percent100`, `valuepercent`, and `valuepercent100`; target size types are intentionally rejected.
 - Portfolio direction accepts `longonly`, `shortonly`, and `both`.
-- `TRENDLB` accepts `binary`, `binary_cont`, `binary_cont_sat`, `pct_change`, and `pct_change_norm` as native modes; only `binary` is compatible with the current binary classifier target path.
+- `TRENDLB` config accepts `binary`, `binary_cont`, `binary_cont_sat`, `pct_change`, and `pct_change_norm`; only `binary` is compatible with the current binary classifier target path.
 - Keep high-cardinality parameter sweeps inside VectorBT indicator/portfolio/splitter objects instead of Python loops where possible.
 - Use `Portfolio.from_signals` for the first loop; move to `from_order_func` only when signal arrays cannot express the execution model.
 - Save only public, non-sensitive run artifacts in git. The `runs/` directory remains ignored except for `.gitkeep`.

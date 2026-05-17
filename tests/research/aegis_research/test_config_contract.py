@@ -25,16 +25,19 @@ def test_baseline_configs_load_with_schema_metadata() -> None:
     ]:
         config = load_experiment_config(path)
 
-        assert config.config.schema_version == 1
+        assert config.config.schema_version == config_module.CONFIG_SCHEMA_VERSION
         assert config.raw_config_hash
         assert config.redacted_resolved_config()["report"]["freq"] == "1D"
 
 
 def test_minimal_dict_config_uses_report_defaults() -> None:
-    config = resolve_experiment_config({"schema_version": 1, "name": "minimal_defaults"})
+    config = resolve_experiment_config(
+        {"schema_version": config_module.CONFIG_SCHEMA_VERSION, "name": "minimal_defaults"}
+    )
 
     assert config.config.report.freq == "1D"
     assert config.config.report.year_freq == "252D"
+    assert config.config.split.diagnostic_validation_allowed is False
 
 
 def test_unknown_fields_fail_with_config_path(tmp_path: Path) -> None:
@@ -104,6 +107,57 @@ def test_trendlb_mode_rejects_legacy_spellings(tmp_path: Path) -> None:
     assert "labels.generator.params.mode" in str(error.value)
 
 
+def test_split_diagnostic_validation_allowed_must_be_boolean(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, split={"diagnostic_validation_allowed": "yes"})
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "split.diagnostic_validation_allowed" in str(error.value)
+
+
+def test_label_target_selection_rejects_default_scalar_mismatch(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        labels={"target": {"select": {"params": {"n": 6}}}},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "labels.target.select.params.n" in str(error.value)
+    assert "must be 5" in str(error.value)
+
+
+def test_label_target_selection_rejects_scalar_type_mismatch(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        labels={
+            "generator": {"kind": "fixlb", "params": {"n": 5}},
+            "target": {"select": {"params": {"n": "5"}}},
+        },
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "labels.target.select.params.n" in str(error.value)
+    assert "must be 5" in str(error.value)
+
+
+def test_label_target_selection_requires_multi_value_coordinate(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        labels={"generator": {"kind": "fixlb", "params": {"n": [1, 2]}}},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "labels.target.select.params.n" in str(error.value)
+    assert "multiple values" in str(error.value)
+
+
 def test_report_frequency_must_be_timedelta_compatible(tmp_path: Path) -> None:
     path = _write_config(tmp_path, report={"freq": "not-a-frequency"})
 
@@ -171,7 +225,7 @@ def test_duplicate_yaml_keys_fail_validation(tmp_path: Path) -> None:
     path.write_text(
         "\n".join(
             [
-                "schema_version: 1",
+                f"schema_version: {config_module.CONFIG_SCHEMA_VERSION}",
                 "name: duplicate_key_test",
                 "data:",
                 "  source: synthetic",
@@ -493,7 +547,7 @@ def test_indicator_specs_reject_non_bar_aligned_custom_definitions(monkeypatch) 
     with pytest.raises(ConfigValidationError) as error:
         resolve_experiment_config(
             {
-                "schema_version": 1,
+                "schema_version": config_module.CONFIG_SCHEMA_VERSION,
                 "name": "shape_changing_indicator",
                 "indicators": {
                     "specs": [
@@ -606,7 +660,7 @@ class _FailingData:
 
 def _write_config(tmp_path: Path, **overrides) -> Path:
     config = {
-        "schema_version": 1,
+        "schema_version": config_module.CONFIG_SCHEMA_VERSION,
         "name": "contract_test",
         "output_dir": str(tmp_path / "runs"),
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 50, "timeframe": "1D"},

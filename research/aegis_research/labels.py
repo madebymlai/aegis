@@ -6,10 +6,11 @@ from typing import Any
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.config import LabelConfig
+from research.aegis_research.config import LabelConfig, to_builtin
 from research.aegis_research.data_schema import table_shape
 
 LABEL_TARGET_SCHEMA_VERSION = "label_target.v1"
+DIAGNOSTIC_DISTRIBUTION_MAX_VALUES = 50
 
 TRENDLB_MODE_NATIVE_VALUES = {
     "binary": "binary",
@@ -24,12 +25,12 @@ TRENDLB_MODE_NATIVE_VALUES = {
 class LabelResult:
     labels: pd.DataFrame
     metadata: dict[str, Any]
+    native_labels: pd.DataFrame
+    lineage: dict[str, Any]
+    diagnostics: dict[str, Any]
+    target_schema: dict[str, Any]
+    split_safety: dict[str, Any]
     native_object: Any | None = None
-    native_labels: pd.DataFrame | None = None
-    lineage: dict[str, Any] | None = None
-    diagnostics: dict[str, Any] | None = None
-    target_schema: dict[str, Any] | None = None
-    split_safety: dict[str, Any] | None = None
 
 
 def build_labels(
@@ -53,7 +54,7 @@ def build_label_result(
     selected_native = _select_native_target(native_labels, close, config.kind, selected_params)
     target = _derive_target(selected_native, config)
     target_kind = _target_kind(config)
-    split_safety = _split_safety(config, target)
+    split_safety = _split_safety(config, target, selected_params)
     diagnostics = {
         "native": _frame_diagnostics(native_labels),
         "target": _frame_diagnostics(target),
@@ -117,7 +118,7 @@ def _run_native_label_generator(
             low_values,
             params["up_th"],
             params["down_th"],
-            mode=params["mode"],
+            mode=TRENDLB_MODE_NATIVE_VALUES[str(params["mode"])],
             hide_params=None,
             hide_default=False,
         )
@@ -136,8 +137,9 @@ def _run_native_label_generator(
 
 def _selected_params(config: LabelConfig) -> dict[str, Any]:
     selected = dict(config.target.select.params)
+    param_keys = set(_native_param_level_names(config.kind))
     for key, value in config.generator.params.items():
-        if key not in _label_param_keys(config.kind):
+        if key not in param_keys:
             continue
         if key not in selected:
             selected[key] = value[0] if isinstance(value, list) else value
@@ -232,10 +234,14 @@ def _target_kind(config: LabelConfig) -> str:
     return "binary_classification"
 
 
-def _split_safety(config: LabelConfig, target: pd.DataFrame) -> dict[str, Any]:
+def _split_safety(
+    config: LabelConfig,
+    target: pd.DataFrame,
+    selected_params: dict[str, Any],
+) -> dict[str, Any]:
     unavailable_rows = int(target.isna().all(axis=1).sum())
     if config.kind == "fixlb":
-        horizon = int(_selected_params(config)["n"])
+        horizon = int(selected_params["n"])
         return {
             "prediction_time": "bar_timestamp",
             "evaluation_time": {"kind": "fixed_horizon", "horizon_bars": horizon},
@@ -326,20 +332,57 @@ def _pre_split_model_compatibility(config: LabelConfig, target_kind: str) -> dic
 
 
 def _frame_diagnostics(frame: pd.DataFrame) -> dict[str, Any]:
-    values = pd.Series(frame.to_numpy().ravel()).dropna()
-    counts = values.value_counts(dropna=False).sort_index()
-    numeric_values = pd.to_numeric(values, errors="coerce").dropna()
+    missing_count = int(frame.isna().sum().sum())
+    valid_count = int(frame.size - missing_count)
+    numeric_frame = frame.apply(pd.to_numeric, errors="coerce")
+    numeric_count = int(numeric_frame.notna().sum().sum())
+    distribution, distribution_omitted = _frame_distribution(frame)
     return {
         "shape": table_shape(frame),
-        "missing_count": int(frame.isna().sum().sum()),
-        "valid_count": int(frame.notna().sum().sum()),
-        "distribution": {str(_native_scalar(key)): int(value) for key, value in counts.items()},
+        "missing_count": missing_count,
+        "valid_count": valid_count,
+        "distribution": distribution,
+        "distribution_omitted": distribution_omitted,
         "summary": {
-            "min": float(numeric_values.min()) if len(numeric_values) else None,
-            "max": float(numeric_values.max()) if len(numeric_values) else None,
-            "mean": float(numeric_values.mean()) if len(numeric_values) else None,
+            "min": _frame_numeric_min(numeric_frame, numeric_count),
+            "max": _frame_numeric_max(numeric_frame, numeric_count),
+            "mean": _frame_numeric_mean(numeric_frame, numeric_count),
         },
     }
+
+
+def _frame_distribution(frame: pd.DataFrame) -> tuple[dict[str, int], bool]:
+    distribution: dict[str, int] = {}
+    for column_index in range(len(frame.columns)):
+        values = frame.iloc[:, column_index]
+        counts = values.dropna().value_counts(dropna=False)
+        for key, value in counts.items():
+            distribution_key = str(to_builtin(key))
+            if (
+                distribution_key not in distribution
+                and len(distribution) >= DIAGNOSTIC_DISTRIBUTION_MAX_VALUES
+            ):
+                return {}, True
+            distribution[distribution_key] = distribution.get(distribution_key, 0) + int(value)
+    return dict(sorted(distribution.items())), False
+
+
+def _frame_numeric_min(frame: pd.DataFrame, count: int) -> float | None:
+    if not count:
+        return None
+    return float(frame.min(skipna=True).min(skipna=True))
+
+
+def _frame_numeric_max(frame: pd.DataFrame, count: int) -> float | None:
+    if not count:
+        return None
+    return float(frame.max(skipna=True).max(skipna=True))
+
+
+def _frame_numeric_mean(frame: pd.DataFrame, count: int) -> float | None:
+    if not count:
+        return None
+    return float(frame.sum(skipna=True).sum(skipna=True) / count)
 
 
 def _label_panel(values: Any) -> pd.DataFrame:
@@ -362,10 +405,6 @@ def _native_param_level_names(kind: str) -> dict[str, str]:
     return {}
 
 
-def _label_param_keys(kind: str) -> set[str]:
-    return set(_native_param_level_names(kind))
-
-
 def _require_high_low(
     high: pd.DataFrame | None,
     low: pd.DataFrame | None,
@@ -373,7 +412,3 @@ def _require_high_low(
     if high is None or low is None:
         raise ValueError("high and low are required for this VectorBT label generator")
     return high, low
-
-
-def _native_scalar(value: Any) -> Any:
-    return value.item() if hasattr(value, "item") else value

@@ -163,9 +163,9 @@ class ExperimentArtifactWriter:
             )
 
     def write_label_artifacts(self, label_result: LabelResult) -> None:
-        lineage = {"lineage": label_result.lineage or {}}
-        diagnostics = label_result.diagnostics or {}
-        target_schema = label_result.target_schema or {}
+        lineage = {"lineage": label_result.lineage}
+        diagnostics = label_result.diagnostics
+        target_schema = label_result.target_schema
         payloads = (label_result.metadata, lineage, diagnostics, target_schema)
         for payload in payloads:
             assert_public_metadata_safe(payload)
@@ -208,6 +208,16 @@ class ExperimentArtifactWriter:
             payload=target_schema,
             schema_version="label_target_schema.v1",
             upstream_artifact_ids=["labels.lineage", "labels.diagnostics"],
+        )
+        _write_csv_artifact(
+            self.recorder,
+            artifact_id="labels.target",
+            role="label_target_panel",
+            producer_stage="labels",
+            path="labels/target.csv",
+            frame=label_result.labels,
+            schema_version="label_target_panel.v1",
+            upstream_artifact_ids=["labels.target.schema"],
         )
         if label_result.native_object is not None:
             native_metadata = {

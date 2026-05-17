@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: synthetic_walkforward_baseline
 output_dir: runs
 
@@ -65,6 +65,7 @@ split:
   embargo_bars: 5
   n: 5
   length: optimize
+  diagnostic_validation_allowed: true
 
 model:
   kind: logistic_regression

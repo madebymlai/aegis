@@ -43,6 +43,7 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     assert "labels.lineage" in artifact_ids
     assert "labels.diagnostics" in artifact_ids
     assert "labels.target.schema" in artifact_ids
+    assert "labels.target" in artifact_ids
     assert "labels.compatibility" in artifact_ids
     assert "labels.native" in artifact_ids
     assert "labels.native.metadata" in artifact_ids
@@ -56,6 +57,7 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     feature_schema = json.loads((run_dir / "indicators" / "features.schema.json").read_text())
     assert feature_schema["features"]
     assert feature_schema["features"][0]["name"]
+    assert (run_dir / "labels" / "target.csv").exists()
     assert "native_objects" not in json.dumps(feature_schema)
     assert all(artifact["status"] == ArtifactStatus.COMPLETED for artifact in manifest["artifacts"])
     artifact_order = [artifact["id"] for artifact in manifest["artifacts"]]
