@@ -60,10 +60,14 @@ labels:
         threshold: 0.0
 
 split:
-  kind: holdout
-  train_size: 0.7
-  embargo_bars: 5
-  diagnostic_validation_allowed: true
+  kind: purged_kfold
+  n_folds: 5
+  n_test_folds: 1
+  purge_td: 0D
+  embargo_td: 0D
+  max_splits: 5
+  max_estimated_output_cells: 1000000
+  max_public_artifact_bytes: 5000000
 
 model:
   kind: logistic_regression

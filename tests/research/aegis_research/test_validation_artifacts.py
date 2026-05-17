@@ -10,17 +10,17 @@ from research.aegis_research.data import (
 from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
 from research.aegis_research.labels import build_label_result
 from research.aegis_research.models import target_model_compatibility
-from research.aegis_research.splits import build_validation_splits
-from research.aegis_research.validation import evaluate_validation_splits
+from research.aegis_research.splits import build_validation_splits_result
+from research.aegis_research.validation import _decision_grade, evaluate_validation_splits
 
 
 def test_validation_result_exposes_complete_split_child_shape() -> None:
-    result = _evaluate("research/configs/experiments/synthetic_walkforward_baseline.yaml")
+    result = _evaluate("research/configs/experiments/synthetic_purged_fixlb_baseline.yaml")
 
     assert len(result.split_results) == 5
     assert result.validation_metadata["n_splits"] == 5
-    assert result.validation_metadata["decision_grade"] is False
-    assert result.validation_metadata["target"]["split_safety"]["purging_applied"] is False
+    assert result.validation_metadata["decision_grade"] is True
+    assert result.validation_metadata["split_metadata"]["purging_applied"] is True
     for split in result.split_results:
         assert split.model is not None
         assert list(split.train_probabilities.columns) == ["SYN"]
@@ -36,16 +36,19 @@ def test_validation_result_exposes_complete_split_child_shape() -> None:
         assert split.metadata["sets"]["test"]["rows"] > 0
 
 
-def test_holdout_uses_same_one_split_result_shape() -> None:
-    result = _evaluate("research/configs/experiments/synthetic_ml_baseline.yaml")
+def test_decision_grade_requires_split_purging_proof() -> None:
+    target_schema = {"split_safety": {"purging_required": True, "purging_applied": False}}
 
-    assert len(result.split_results) == 1
-    split = result.split_results[0]
-    assert split.label == "holdout"
-    assert split.train_portfolio is not None
-    assert split.test_portfolio is not None
-    assert result.validation_metadata["kind"] == "holdout"
-    assert result.validation_metadata["n_splits"] == 1
+    assert _decision_grade(None, split_metadata=None, compatibility=None) is False
+    assert _decision_grade(target_schema, split_metadata=None, compatibility=None) is False
+    assert (
+        _decision_grade(
+            target_schema,
+            split_metadata={"purging_applied": True, "leakage_invariant": {"passed": True}},
+            compatibility={"compatible": True},
+        )
+        is True
+    )
 
 
 def _evaluate(config_path: str):
@@ -63,26 +66,27 @@ def _evaluate(config_path: str):
         labels,
         invalid_value_policy=config.indicators.invalid_value_policy,
     )
-    splits = build_validation_splits(
+    splits_result = build_validation_splits_result(
         model_features.eligible_index,
         config.split,
         target_metadata={"split_safety": label_result.split_safety},
+        evaluation_evidence=label_result.evaluation_evidence,
     )
     compatibility = target_model_compatibility(
         labels,
         config.model,
         label_result.target_schema,
-        splits,
+        splits_result.splits,
         phase="post_split",
-        diagnostic_validation_allowed=config.split.diagnostic_validation_allowed,
+        split_metadata=splits_result.metadata,
     )
     return evaluate_validation_splits(
         close,
         model_features.frame,
         labels,
-        splits,
+        splits_result.splits,
         config,
         target_schema=label_result.target_schema,
-        split_metadata={"target": {"split_safety": label_result.split_safety}},
+        split_metadata=splits_result.metadata,
         compatibility=compatibility,
     )

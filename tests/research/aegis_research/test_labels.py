@@ -109,6 +109,48 @@ def test_fixlb_native_horizon_sweep_selects_one_model_target() -> None:
     pd.testing.assert_frame_equal(result.labels, expected)
 
 
+def test_fixlb_records_concrete_future_row_evaluation_times() -> None:
+    index = pd.to_datetime(
+        ["2024-01-01", "2024-01-03", "2024-01-06", "2024-01-10", "2024-01-15"]
+    )
+    close = pd.DataFrame({"SYN": [1.0, 2.0, 3.0, 2.0, 4.0]}, index=index)
+
+    result = build_label_result(
+        close,
+        _label_config("fixlb", {"n": 2}, "threshold_future_return", {"threshold": 0.0}),
+    )
+
+    evidence = result.evaluation_evidence
+    assert evidence.metadata["evaluation_time"]["kind"] == "fixed_horizon"
+    assert result.split_safety["evaluation_time"]["evidence"] == "label_evaluation_evidence"
+    pd.testing.assert_series_equal(evidence.prediction_times["SYN"], pd.Series(index, index=index, name="SYN"))
+    expected_eval = pd.Series([index[2], index[3], index[4], pd.NaT, pd.NaT], index=index, name="SYN")
+    pd.testing.assert_series_equal(evidence.evaluation_times["SYN"], expected_eval)
+
+
+def test_variable_pivot_labels_remain_fail_closed_without_confirmation_oracle() -> None:
+    close = pd.DataFrame({"SYN": [1.0, 2.0, 3.0, 2.0, 1.0, 2.0, 3.0]})
+
+    result = build_label_result(
+        close,
+        _label_config(
+            "pivotlb",
+            {"up_th": 0.2, "down_th": 0.2},
+            "positive_event",
+            {"positive_value": -1},
+        ),
+        high=close * 1.01,
+        low=close * 0.99,
+    )
+
+    assert result.split_safety["evaluation_time"] == {
+        "kind": "variable_unknown",
+        "confirmation_time_oracle": None,
+    }
+    assert result.evaluation_evidence.evaluation_times.isna().all().all()
+    assert result.split_safety["validation_suitability"] == "non_decision_grade_until_purged_cv"
+
+
 def test_trendlb_pct_change_is_continuous_target() -> None:
     close = pd.DataFrame({"SYN": [1.0, 2.0, 3.0, 2.0, 1.0, 2.0]})
 

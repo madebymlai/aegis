@@ -12,7 +12,7 @@ from research.aegis_research.models import predict_long_probability, train_model
 from research.aegis_research.portfolios import simulate_portfolio
 from research.aegis_research.reports import portfolio_metrics
 from research.aegis_research.signals import probabilities_to_signals
-from research.aegis_research.splits import ValidationSplit
+from research.aegis_research.splits import ValidationSplit, split_purging_passed
 
 # Downstream stages use explicit timestamp-by-symbol panels derived from native market data.
 PanelFrame = pd.DataFrame
@@ -161,8 +161,17 @@ def evaluate_validation_splits(
             "target": target_schema or {},
             "split_metadata": split_metadata or {},
             "compatibility": compatibility or {},
-            "diagnostic_validation_allowed": config.split.diagnostic_validation_allowed,
-            "decision_grade": _decision_grade(target_schema),
+            "decision_grade": _decision_grade(
+                target_schema,
+                split_metadata=split_metadata,
+                compatibility=compatibility,
+            ),
+            "decision_grade_scope": "label_window_purging",
+            "feature_causality_checked": False,
+            "portfolio_execution_timing_checked": False,
+            "decision_evidence": "per_split_test_metrics",
+            "aggregate_metrics_role": "descriptive_summary",
+            "aggregation_methods": _aggregation_methods(),
         },
     )
 
@@ -226,8 +235,29 @@ def _concat_split_frames(
     return pd.concat(frames, axis=1)
 
 
-def _decision_grade(target_schema: dict[str, Any] | None) -> bool:
+def _decision_grade(
+    target_schema: dict[str, Any] | None,
+    *,
+    split_metadata: dict[str, Any] | None,
+    compatibility: dict[str, Any] | None,
+) -> bool:
+    if compatibility and not compatibility.get("compatible", False):
+        return False
     if not target_schema:
-        return True
+        return False
     split_safety = target_schema.get("split_safety", {})
-    return not (split_safety.get("purging_required") and not split_safety.get("purging_applied"))
+    if not split_safety.get("purging_required"):
+        return True
+    return split_purging_passed(split_metadata)
+
+
+def _aggregation_methods() -> dict[str, str]:
+    return {
+        "total_return_pct": "mean_across_splits",
+        "sharpe_ratio": "mean_across_splits",
+        "max_drawdown_pct": "max_across_splits",
+        "total_trades": "sum_across_splits",
+        "win_rate_pct": "mean_across_splits",
+        "total_fees_paid": "sum_across_splits",
+        "per_symbol": "metric_specific_across_splits",
+    }

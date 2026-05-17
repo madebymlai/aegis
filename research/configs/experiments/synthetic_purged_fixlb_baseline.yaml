@@ -1,5 +1,5 @@
 schema_version: 2
-name: synthetic_trendlb_baseline
+name: synthetic_purged_fixlb_baseline
 output_dir: runs
 
 data:
@@ -7,7 +7,7 @@ data:
   symbols: [SYN]
   start: "2020-01-01"
   timeframe: "1D"
-  rows: 900
+  rows: 360
   seed: 42
 
 indicators:
@@ -44,36 +44,34 @@ indicators:
 
 labels:
   generator:
-    kind: trendlb
+    kind: fixlb
     params:
-      up_th: 0.08
-      down_th: 0.08
-      mode: binary
+      n: 5
   target:
     role: supervised_target
     source_output: labels
     select:
       params:
-        up_th: 0.08
-        down_th: 0.08
-        mode: binary
+        n: 5
     transform:
-      name: identity_binary
+      name: threshold_future_return
       version: 1
       params:
-        positive_value: 1
+        threshold: 0.0
 
 split:
-  kind: rolling
-  train_size: 0.7
-  embargo_bars: 5
-  n: 5
-  length: optimize
-  diagnostic_validation_allowed: true
+  kind: purged_kfold
+  n_folds: 5
+  n_test_folds: 1
+  purge_td: 0D
+  embargo_td: 0D
+  max_splits: 5
+  max_estimated_output_cells: 500000
+  max_public_artifact_bytes: 5000000
 
 model:
   kind: logistic_regression
-  min_train_samples: 100
+  min_train_samples: 50
 
 signals:
   long_threshold: 0.55

@@ -10,7 +10,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from research.aegis_research.config import ModelConfig
-from research.aegis_research.splits import ValidationSplit
+from research.aegis_research.splits import ValidationSplit, split_purging_passed
 
 LABEL_COLUMN = "__label__"
 
@@ -50,9 +50,12 @@ def target_model_compatibility(
     splits: list[ValidationSplit] | None = None,
     *,
     phase: str,
-    diagnostic_validation_allowed: bool = False,
+    split_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    split_safety = target_schema.get("split_safety", {})
+    split_safety = _effective_split_safety(
+        target_schema.get("split_safety", {}),
+        split_metadata,
+    )
     diagnostics: dict[str, Any] = {
         "phase": phase,
         "compatible": True,
@@ -60,7 +63,6 @@ def target_model_compatibility(
         "target_role": target_schema.get("target_role"),
         "model_kind": config.kind,
         "split_safety": split_safety,
-        "diagnostic_validation_allowed": diagnostic_validation_allowed,
         "splits": [],
         "failure_reason": None,
     }
@@ -75,19 +77,34 @@ def target_model_compatibility(
         )
     if not isinstance(labels, pd.DataFrame) or isinstance(labels.columns, pd.MultiIndex):
         return _incompatible(diagnostics, "selected target must be a timestamp-by-symbol panel")
-    if _requires_diagnostic_validation_opt_in(split_safety) and not diagnostic_validation_allowed:
+    if phase == "post_split" and _requires_purging_proof(split_safety):
         return _incompatible(
             diagnostics,
-            "split.diagnostic_validation_allowed must be true for unpurged look-ahead labels",
+            "look-ahead labels require purged split evidence before validation",
         )
 
     if splits is None:
         return diagnostics
 
     for split in splits:
+        if len(split.train_index) == 0 or len(split.test_index) == 0:
+            return _incompatible(
+                diagnostics,
+                f"Split {split.label} produced an empty train or test range",
+            )
         values = _stack_label_panel(labels.loc[split.train_index]).dropna().astype(int)
+        test_values = _stack_label_panel(labels.loc[split.test_index]).dropna().astype(int)
         class_counts = {str(key): int(value) for key, value in values.value_counts().items()}
-        diagnostics["splits"].append({"label": split.label, "train_class_counts": class_counts})
+        test_class_counts = {
+            str(key): int(value) for key, value in test_values.value_counts().items()
+        }
+        diagnostics["splits"].append(
+            {
+                "label": split.label,
+                "train_class_counts": class_counts,
+                "test_class_counts": test_class_counts,
+            }
+        )
         if len(class_counts) < 2:
             return _incompatible(
                 diagnostics,
@@ -195,7 +212,19 @@ def _incompatible(diagnostics: dict[str, Any], reason: str) -> dict[str, Any]:
     return {**diagnostics, "compatible": False, "failure_reason": reason}
 
 
-def _requires_diagnostic_validation_opt_in(split_safety: dict[str, Any]) -> bool:
+def _effective_split_safety(
+    split_safety: dict[str, Any],
+    split_metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    effective = dict(split_safety)
+    if split_purging_passed(split_metadata):
+        effective["purging_applied"] = True
+        effective["leakage_risk"] = "purged_interval_checked"
+        effective["validation_suitability"] = "decision_grade_label_purging"
+    return effective
+
+
+def _requires_purging_proof(split_safety: dict[str, Any]) -> bool:
     return bool(split_safety.get("purging_required")) and not bool(
         split_safety.get("purging_applied")
     )

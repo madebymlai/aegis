@@ -262,8 +262,8 @@ def test_indicator_native_artifact_uses_private_bundle_and_public_sidecar(tmp_pa
         ExperimentConfig(
             name="indicator-native-check",
             output_dir=str(tmp_path),
-            data=DataConfig(source="synthetic", symbols=["SYN"], rows=180),
-            split=SplitConfig(diagnostic_validation_allowed=True),
+            data=DataConfig(source="synthetic", symbols=["SYN"], rows=260),
+            split=SplitConfig(kind="purged_kfold", n_folds=3, max_splits=3),
         )
     )
 

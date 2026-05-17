@@ -22,6 +22,13 @@ TRENDLB_MODE_NATIVE_VALUES = {
 
 
 @dataclass(frozen=True)
+class LabelEvaluationEvidence:
+    prediction_times: pd.DataFrame
+    evaluation_times: pd.DataFrame
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class LabelResult:
     labels: pd.DataFrame
     metadata: dict[str, Any]
@@ -30,6 +37,7 @@ class LabelResult:
     diagnostics: dict[str, Any]
     target_schema: dict[str, Any]
     split_safety: dict[str, Any]
+    evaluation_evidence: LabelEvaluationEvidence
     native_object: Any | None = None
 
 
@@ -54,11 +62,13 @@ def build_label_result(
     selected_native = _select_native_target(native_labels, close, config.kind, selected_params)
     target = _derive_target(selected_native, config)
     target_kind = _target_kind(config)
-    split_safety = _split_safety(config, target, selected_params)
+    evaluation_evidence = _evaluation_evidence(config, target, selected_params)
+    split_safety = _split_safety(config, target, selected_params, evaluation_evidence)
     diagnostics = {
         "native": _frame_diagnostics(native_labels),
         "target": _frame_diagnostics(target),
         "unavailable_target_rows": split_safety["unavailable_target_rows"],
+        "unavailable_evaluation_rows": split_safety["unavailable_evaluation_rows"],
     }
     lineage = _lineage(config, selected_params, target)
     target_schema = _target_schema(
@@ -93,6 +103,7 @@ def build_label_result(
         diagnostics=diagnostics,
         target_schema=target_schema,
         split_safety=split_safety,
+        evaluation_evidence=evaluation_evidence,
     )
 
 
@@ -238,14 +249,21 @@ def _split_safety(
     config: LabelConfig,
     target: pd.DataFrame,
     selected_params: dict[str, Any],
+    evaluation_evidence: LabelEvaluationEvidence,
 ) -> dict[str, Any]:
     unavailable_rows = int(target.isna().all(axis=1).sum())
+    unavailable_evaluation_rows = int(evaluation_evidence.evaluation_times.isna().all(axis=1).sum())
     if config.kind == "fixlb":
         horizon = int(selected_params["n"])
         return {
             "prediction_time": "bar_timestamp",
-            "evaluation_time": {"kind": "fixed_horizon", "horizon_bars": horizon},
+            "evaluation_time": {
+                "kind": "fixed_horizon",
+                "horizon_bars": horizon,
+                "evidence": "label_evaluation_evidence",
+            },
             "unavailable_target_rows": unavailable_rows,
+            "unavailable_evaluation_rows": unavailable_evaluation_rows,
             "purging_required": True,
             "purging_applied": False,
             "leakage_risk": "fixed_unpurged",
@@ -253,13 +271,56 @@ def _split_safety(
         }
     return {
         "prediction_time": "bar_timestamp",
-        "evaluation_time": {"kind": "variable_unknown"},
+        "evaluation_time": {"kind": "variable_unknown", "confirmation_time_oracle": None},
         "unavailable_target_rows": unavailable_rows,
+        "unavailable_evaluation_rows": unavailable_evaluation_rows,
         "purging_required": True,
         "purging_applied": False,
         "leakage_risk": "variable_unknown",
         "validation_suitability": "non_decision_grade_until_purged_cv",
     }
+
+
+def _evaluation_evidence(
+    config: LabelConfig,
+    target: pd.DataFrame,
+    selected_params: dict[str, Any],
+) -> LabelEvaluationEvidence:
+    prediction_times = _time_frame_from_index(target.index, target.columns)
+    if config.kind == "fixlb":
+        horizon = int(selected_params["n"])
+        evaluation_times = _time_frame_from_index(target.index, target.columns, shift=-horizon)
+        metadata = {
+            "prediction_time": "bar_timestamp",
+            "evaluation_time": {"kind": "fixed_horizon", "horizon_bars": horizon},
+        }
+    else:
+        evaluation_times = pd.DataFrame(pd.NaT, index=target.index, columns=target.columns)
+        metadata = {
+            "prediction_time": "bar_timestamp",
+            "evaluation_time": {"kind": "variable_unknown", "confirmation_time_oracle": None},
+        }
+    return LabelEvaluationEvidence(
+        prediction_times=prediction_times,
+        evaluation_times=evaluation_times,
+        metadata=metadata,
+    )
+
+
+def _time_frame_from_index(
+    index: pd.Index,
+    columns: pd.Index,
+    *,
+    shift: int = 0,
+) -> pd.DataFrame:
+    values = pd.Series(index, index=index)
+    if shift:
+        values = values.shift(shift)
+    if len(columns) == 0:
+        return pd.DataFrame(index=index, columns=columns)
+    frame = pd.concat([values] * len(columns), axis=1)
+    frame.columns = columns
+    return frame
 
 
 def _lineage(

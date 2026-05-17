@@ -7,11 +7,15 @@ import yaml
 
 from research.aegis_research.config import ResolvedExperimentConfig
 from research.aegis_research.data import MarketDataResult, assert_public_metadata_safe
-from research.aegis_research.data_schema import table_shape
+from research.aegis_research.data_schema import index_identity, table_shape
 from research.aegis_research.indicators import IndicatorResult, ModelFeatureMatrix
 from research.aegis_research.labels import LabelResult
 from research.aegis_research.models import export_model
-from research.aegis_research.provenance.manifest import ArtifactVisibility, atomic_write_json
+from research.aegis_research.provenance.manifest import (
+    ArtifactVisibility,
+    atomic_write_json,
+    canonical_json_bytes,
+)
 from research.aegis_research.provenance.native import NativeArtifactWriter
 from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.splits import ValidationSplitsResult
@@ -162,11 +166,20 @@ class ExperimentArtifactWriter:
                 metadata=native_metadata,
             )
 
-    def write_label_artifacts(self, label_result: LabelResult) -> None:
+    def write_label_artifacts(
+        self,
+        label_result: LabelResult,
+        *,
+        max_public_artifact_bytes: int | None = None,
+    ) -> None:
         lineage = {"lineage": label_result.lineage}
         diagnostics = label_result.diagnostics
         target_schema = label_result.target_schema
-        payloads = (label_result.metadata, lineage, diagnostics, target_schema)
+        evaluation_evidence = _label_evaluation_evidence_payload(
+            label_result,
+            max_public_artifact_bytes=max_public_artifact_bytes,
+        )
+        payloads = (label_result.metadata, lineage, diagnostics, evaluation_evidence, target_schema)
         for payload in payloads:
             assert_public_metadata_safe(payload)
 
@@ -201,13 +214,27 @@ class ExperimentArtifactWriter:
         )
         _write_json_artifact(
             self.recorder,
+            artifact_id="labels.evaluation_evidence",
+            role="label_evaluation_evidence",
+            producer_stage="labels",
+            path="labels/evaluation_evidence.json",
+            payload=evaluation_evidence,
+            schema_version="label_evaluation_evidence.v1",
+            upstream_artifact_ids=["labels.metadata", "labels.lineage"],
+        )
+        _write_json_artifact(
+            self.recorder,
             artifact_id="labels.target.schema",
             role="label_target_schema",
             producer_stage="labels",
             path="labels/target.schema.json",
             payload=target_schema,
             schema_version="label_target_schema.v1",
-            upstream_artifact_ids=["labels.lineage", "labels.diagnostics"],
+            upstream_artifact_ids=[
+                "labels.lineage",
+                "labels.diagnostics",
+                "labels.evaluation_evidence",
+            ],
         )
         _write_csv_artifact(
             self.recorder,
@@ -257,6 +284,24 @@ class ExperimentArtifactWriter:
                 obj=splits_result.native_object,
                 metadata=splits_result.metadata,
             )
+
+    def write_split_evidence_artifacts(self, splits_result: ValidationSplitsResult) -> None:
+        evidence = _split_evidence_payload(splits_result.metadata)
+        assert_public_metadata_safe(evidence)
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="splits.evidence",
+            role="split_evidence",
+            producer_stage="splits",
+            path="splits/evidence.json",
+            payload=evidence,
+            schema_version="split_evidence.v1",
+            upstream_artifact_ids=[
+                "labels.target.schema",
+                "labels.evaluation_evidence",
+                "indicators.features.schema",
+            ],
+        )
 
     def write_split_artifacts(self, split: SplitValidationResult) -> list[str]:
         metric_ids: list[str] = []
@@ -367,8 +412,12 @@ class ExperimentArtifactWriter:
             producer_stage="report",
             path="survival_report.json",
             payload=report,
-            schema_version="survival_report.v1",
-            upstream_artifact_ids=["validation.split_metrics"],
+            schema_version="survival_report.v2",
+            upstream_artifact_ids=[
+                "validation.split_metrics",
+                "splits.evidence",
+                "labels.compatibility",
+            ],
         )
 
 
@@ -473,6 +522,88 @@ def _write_model_artifact(
     recorder.artifacts.begin_artifact_write(artifact_id)
     export_model(model, recorder.run_dir / path)
     recorder.artifacts.complete_existing_file(artifact_id)
+
+
+def _label_evaluation_evidence_payload(
+    label_result: LabelResult,
+    *,
+    max_public_artifact_bytes: int | None = None,
+) -> dict[str, Any]:
+    evidence = label_result.evaluation_evidence
+    payload = {
+        "metadata": evidence.metadata,
+        "index": index_identity(label_result.labels.index),
+        "columns": [str(column) for column in label_result.labels.columns],
+        "rows": [
+            {
+                "position": position,
+                "timestamp": _public_time_value(index_value),
+                "prediction_times": _time_row(evidence.prediction_times.iloc[position]),
+                "evaluation_times": _time_row(evidence.evaluation_times.iloc[position]),
+            }
+            for position, index_value in enumerate(label_result.labels.index)
+        ],
+    }
+    return _public_json_artifact_payload(
+        payload,
+        max_public_artifact_bytes=max_public_artifact_bytes,
+        artifact_name="label evaluation evidence",
+    )
+
+
+def _public_json_artifact_payload(
+    payload: dict[str, Any],
+    *,
+    max_public_artifact_bytes: int | None,
+    artifact_name: str,
+) -> dict[str, Any]:
+    if max_public_artifact_bytes is None:
+        return payload
+
+    capped_payload = {
+        **payload,
+        "resource_estimate": {"max_public_artifact_bytes": max_public_artifact_bytes},
+    }
+    while True:
+        size = len(canonical_json_bytes(capped_payload, pretty=True))
+        if capped_payload["resource_estimate"].get("public_artifact_bytes") == size:
+            break
+        capped_payload["resource_estimate"]["public_artifact_bytes"] = size
+    if size > max_public_artifact_bytes:
+        raise ValueError(f"{artifact_name} exceeds split.max_public_artifact_bytes")
+    return capped_payload
+
+
+def _split_evidence_payload(metadata: dict[str, Any]) -> dict[str, Any]:
+    resource_estimate = metadata.get("resource_estimate")
+    if not isinstance(resource_estimate, dict):
+        return metadata
+
+    payload = {**metadata, "resource_estimate": dict(resource_estimate)}
+    max_bytes = payload["resource_estimate"].get("max_public_artifact_bytes")
+    if not isinstance(max_bytes, int):
+        return payload
+
+    while True:
+        size = len(canonical_json_bytes(payload, pretty=True))
+        if payload["resource_estimate"].get("public_artifact_bytes") == size:
+            break
+        payload["resource_estimate"]["public_artifact_bytes"] = size
+    if size > max_bytes:
+        raise ValueError("split evidence exceeds split.max_public_artifact_bytes")
+    return payload
+
+
+def _time_row(row: pd.Series) -> dict[str, str | None]:
+    return {str(column): _public_time_value(value) for column, value in row.items()}
+
+
+def _public_time_value(value: Any) -> str | None:
+    if pd.isna(value):
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
 
 
 def _signals_frame(entries: pd.DataFrame, exits: pd.DataFrame) -> pd.DataFrame:

@@ -74,14 +74,16 @@ def run_experiment(
         high = data_result.feature("High") if "High" in required_features else None
         low = data_result.feature("Low") if "Low" in required_features else None
         label_result = build_label_result(close, config.labels, high=high, low=low)
-        artifacts.write_label_artifacts(label_result)
+        artifacts.write_label_artifacts(
+            label_result,
+            max_public_artifact_bytes=config.split.max_public_artifact_bytes,
+        )
         labels = label_result.labels
         pre_split_compatibility = target_model_compatibility(
             labels,
             config.model,
             label_result.target_schema,
             phase="pre_split",
-            diagnostic_validation_allowed=config.split.diagnostic_validation_allowed,
         )
         if not pre_split_compatibility["compatible"]:
             artifacts.write_label_compatibility_artifact(pre_split_compatibility)
@@ -100,22 +102,24 @@ def run_experiment(
             )
             raise
         indicators = model_features.frame
+        artifacts.write_indicator_artifacts(indicator_result, model_features)
         splits_result = build_validation_splits_result(
             model_features.eligible_index,
             config.split,
             target_metadata=_split_target_metadata(label_result),
+            evaluation_evidence=label_result.evaluation_evidence,
         )
+        artifacts.write_split_evidence_artifacts(splits_result)
         compatibility = target_model_compatibility(
             labels,
             config.model,
             label_result.target_schema,
             splits_result.splits,
             phase="post_split",
-            diagnostic_validation_allowed=config.split.diagnostic_validation_allowed,
+            split_metadata=splits_result.metadata,
         )
         artifacts.write_label_compatibility_artifact(compatibility)
         assert_target_model_compatible(compatibility)
-        artifacts.write_indicator_artifacts(indicator_result, model_features)
         artifacts.write_split_native_artifact(splits_result)
         split_metric_ids: list[str] = []
 

@@ -66,6 +66,8 @@ def build_model_feature_matrix(
     feature_valid = feature_rows.notna().all(axis=1)
     label_valid = label_rows.notna().all(axis=1)
     eligible_index = common_index[feature_valid & label_valid]
+    feature_invalid = ~feature_valid
+    label_invalid = ~label_valid
     dropped_count = int(len(common_index) - len(eligible_index))
     if policy == "raise" and dropped_count:
         raise ValueError(f"Invalid feature or label values on {dropped_count} rows")
@@ -80,6 +82,9 @@ def build_model_feature_matrix(
         "eligible_index": index_identity(eligible_index),
         "input_index": index_identity(common_index),
         "dropped_row_count": dropped_count,
+        "feature_invalid_row_count": int(feature_invalid.sum()),
+        "label_invalid_row_count": int(label_invalid.sum()),
+        "overlapping_invalid_row_count": int((feature_invalid & label_invalid).sum()),
         "total_inf_count": total_inf_count,
         "total_feature_missing_count": int(feature_rows.isna().sum().sum()),
         "total_label_missing_count": int(label_rows.isna().sum().sum()),

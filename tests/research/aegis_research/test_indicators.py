@@ -174,6 +174,9 @@ def test_model_feature_matrix_builds_mapping_and_cleaned_eligible_index() -> Non
         "wtype": "simple",
     }
     assert matrix.diagnostics["eligible_index"]["count"] == 5
+    assert matrix.diagnostics["feature_invalid_row_count"] == 2
+    assert matrix.diagnostics["label_invalid_row_count"] == 1
+    assert matrix.diagnostics["overlapping_invalid_row_count"] == 0
 
 
 def test_model_feature_matrix_rejects_label_feature_symbol_mismatch() -> None:

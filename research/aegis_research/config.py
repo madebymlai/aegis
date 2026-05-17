@@ -27,7 +27,7 @@ LABEL_TARGET_TRANSFORMS = {
     "continuous_identity",
     "positive_event",
 }
-SPLIT_KINDS = {"holdout", "rolling"}
+SPLIT_KINDS = {"purged_kfold"}
 MODEL_KINDS = {"logistic_regression"}
 PORTFOLIO_SIZE_TYPES = {
     "amount",
@@ -254,12 +254,14 @@ class LabelConfig:
 
 @dataclass(frozen=True)
 class SplitConfig:
-    kind: str = "holdout"
-    train_size: float = 0.7
-    embargo_bars: int = 0
-    n: int = 5
-    length: str | int | None = "optimize"
-    diagnostic_validation_allowed: bool = False
+    kind: str = "purged_kfold"
+    n_folds: int = 5
+    n_test_folds: int = 1
+    purge_td: str | int | float = "0D"
+    embargo_td: str | int | float = "0D"
+    max_splits: int = 100
+    max_estimated_output_cells: int = 25_000_000
+    max_public_artifact_bytes: int = 10_000_000
 
 
 @dataclass(frozen=True)
@@ -539,10 +541,38 @@ def _validate_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue
     _validate_indicators(indicators, issues)
     _validate_labels(labels, issues)
     _validate_split(split, issues)
+    _validate_label_split_compatibility(labels, split, issues)
     _validate_model(model, issues)
     _validate_signals(signals, issues)
     _validate_portfolio(portfolio, issues)
     _validate_report(report, issues)
+
+
+def _validate_label_split_compatibility(
+    labels: dict[str, Any],
+    split: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    split_kind = split.get("kind", SplitConfig.kind)
+    generator = labels.get("generator", {})
+    if not isinstance(generator, dict):
+        return
+    label_kind = generator.get("kind", "fixlb")
+    if split_kind != "purged_kfold":
+        issues.append(
+            ConfigValidationIssue(
+                "split.kind",
+                f"{label_kind} look-ahead labels require purged_kfold validation",
+            )
+        )
+        return
+    if label_kind in {"trendlb", "pivotlb"}:
+        issues.append(
+            ConfigValidationIssue(
+                "labels.generator.kind",
+                "purged_kfold requires exact evaluation-time evidence; only fixlb is supported until confirmation-time oracles are configured",
+            )
+        )
 
 
 def _validate_data(data: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -1082,26 +1112,62 @@ def _validate_label_transform(
 
 
 def _validate_split(split: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    kind = split.get("kind", "holdout")
+    kind = split.get("kind", SplitConfig.kind)
     if not _optional_enum("split.kind", split, SPLIT_KINDS, issues):
         return
     kind = str(kind)
-    train_size = split.get("train_size", 0.7)
-    if _optional_number("split.train_size", split, issues) and not 0 < float(train_size) < 1:
-        issues.append(ConfigValidationIssue("split.train_size", "must be between 0 and 1"))
-    _optional_int("split.embargo_bars", split, issues, minimum=0)
-    n = split.get("n", 5)
-    if _optional_int("split.n", split, issues, positive=True) and kind == "rolling" and int(n) < 2:
-        issues.append(ConfigValidationIssue("split.n", "must be at least 2 for rolling validation"))
-    if "length" in split and not (
-        split["length"] is None
-        or isinstance(split["length"], str)
-        or (_is_int(split["length"]) and int(split["length"]) > 0)
-    ):
+    _validate_purged_kfold_split(split, kind, issues)
+
+
+def _validate_purged_kfold_split(
+    split: dict[str, Any],
+    kind: str,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    _optional_int("split.n_folds", split, issues, minimum=2)
+    _optional_int("split.n_test_folds", split, issues, positive=True)
+    _optional_timedelta("split.purge_td", split, issues, minimum=pd.Timedelta(0))
+    _optional_timedelta("split.embargo_td", split, issues, minimum=pd.Timedelta(0))
+    _optional_int("split.max_splits", split, issues, positive=True)
+    _optional_int("split.max_estimated_output_cells", split, issues, positive=True)
+    _optional_int("split.max_public_artifact_bytes", split, issues, positive=True)
+
+    if kind != "purged_kfold":
+        return
+
+    n_folds_value = split.get("n_folds", SplitConfig.n_folds)
+    n_test_folds_value = split.get("n_test_folds", SplitConfig.n_test_folds)
+    max_splits_value = split.get("max_splits", SplitConfig.max_splits)
+    if not (_is_int(n_folds_value) and _is_int(n_test_folds_value) and _is_int(max_splits_value)):
+        return
+
+    n_folds = int(n_folds_value)
+    n_test_folds = int(n_test_folds_value)
+    if n_test_folds != 1:
         issues.append(
-            ConfigValidationIssue("split.length", "must be a positive integer, string, or null")
+            ConfigValidationIssue(
+                "split.n_test_folds",
+                "must be 1 until overlapping CPCV aggregation is supported",
+            )
         )
-    _optional_bool("split.diagnostic_validation_allowed", split, issues)
+        return
+    if n_test_folds >= n_folds:
+        issues.append(
+            ConfigValidationIssue(
+                "split.n_test_folds",
+                "must be less than split.n_folds for purged_kfold",
+            )
+        )
+        return
+    max_splits = int(max_splits_value)
+    split_count = math.comb(n_folds, n_test_folds)
+    if split_count > max_splits:
+        issues.append(
+            ConfigValidationIssue(
+                "split.max_splits",
+                f"must be at least {split_count} for purged_kfold",
+            )
+        )
 
 
 def _validate_model(model: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -1167,10 +1233,13 @@ def _require_timedelta_str(
     key = path.rsplit(".", 1)[-1]
     if not _require_str(path, mapping, issues):
         return
-    try:
-        value = pd.Timedelta(mapping[key])
-    except ValueError:
-        issues.append(ConfigValidationIssue(path, "must be a Timedelta-compatible string"))
+    value = _parse_timedelta(
+        path,
+        mapping[key],
+        issues,
+        message="must be a Timedelta-compatible string",
+    )
+    if value is None:
         return
     if value <= pd.Timedelta(0):
         issues.append(ConfigValidationIssue(path, "must be positive"))
@@ -1470,6 +1539,48 @@ def _optional_number(
         issues.append(ConfigValidationIssue(path, f"must be at most {maximum}"))
         return False
     return True
+
+
+def _optional_timedelta(
+    path: str,
+    mapping: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    minimum: pd.Timedelta | None = None,
+) -> bool:
+    key = path.rsplit(".", 1)[-1]
+    if key not in mapping:
+        return True
+    value = mapping[key]
+    if isinstance(value, bool):
+        issues.append(ConfigValidationIssue(path, "must be a timedelta-compatible value"))
+        return False
+    timedelta = _parse_timedelta(
+        path,
+        value,
+        issues,
+        message="must be a timedelta-compatible value",
+    )
+    if timedelta is None:
+        return False
+    if minimum is not None and timedelta < minimum:
+        issues.append(ConfigValidationIssue(path, f"must be at least {minimum}"))
+        return False
+    return True
+
+
+def _parse_timedelta(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+    *,
+    message: str,
+) -> pd.Timedelta | None:
+    try:
+        return pd.Timedelta(value)
+    except (TypeError, ValueError):
+        issues.append(ConfigValidationIssue(path, message))
+        return None
 
 
 def _optional_enum(

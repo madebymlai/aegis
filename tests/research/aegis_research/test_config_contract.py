@@ -20,8 +20,7 @@ from research.aegis_research.indicator_registry import IndicatorDefinition, indi
 def test_baseline_configs_load_with_schema_metadata() -> None:
     for path in [
         "research/configs/experiments/synthetic_ml_baseline.yaml",
-        "research/configs/experiments/synthetic_walkforward_baseline.yaml",
-        "research/configs/experiments/synthetic_trendlb_baseline.yaml",
+        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
     ]:
         config = load_experiment_config(path)
 
@@ -37,7 +36,7 @@ def test_minimal_dict_config_uses_report_defaults() -> None:
 
     assert config.config.report.freq == "1D"
     assert config.config.report.year_freq == "252D"
-    assert config.config.split.diagnostic_validation_allowed is False
+    assert config.config.split.kind == "purged_kfold"
 
 
 def test_unknown_fields_fail_with_config_path(tmp_path: Path) -> None:
@@ -81,7 +80,7 @@ def test_portfolio_rejects_target_size_types(tmp_path: Path) -> None:
     "mode",
     ["binary", "binary_cont", "binary_cont_sat", "pct_change", "pct_change_norm"],
 )
-def test_trendlb_accepts_canonical_mode_names(tmp_path: Path, mode: str) -> None:
+def test_trendlb_canonical_mode_names_reach_evaluation_oracle_gate(tmp_path: Path, mode: str) -> None:
     path = _write_config(
         tmp_path,
         labels={
@@ -90,9 +89,11 @@ def test_trendlb_accepts_canonical_mode_names(tmp_path: Path, mode: str) -> None
         },
     )
 
-    config = load_experiment_config(path)
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
 
-    assert config.config.labels.generator.params["mode"] == mode
+    assert "labels.generator.kind" in str(error.value)
+    assert "labels.generator.params.mode" not in str(error.value)
 
 
 def test_trendlb_mode_rejects_legacy_spellings(tmp_path: Path) -> None:
@@ -107,13 +108,108 @@ def test_trendlb_mode_rejects_legacy_spellings(tmp_path: Path) -> None:
     assert "labels.generator.params.mode" in str(error.value)
 
 
-def test_split_diagnostic_validation_allowed_must_be_boolean(tmp_path: Path) -> None:
-    path = _write_config(tmp_path, split={"diagnostic_validation_allowed": "yes"})
+def test_purged_kfold_split_config_resolves_explicit_contract(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        split={
+            "kind": "purged_kfold",
+            "n_folds": 5,
+            "n_test_folds": 1,
+            "purge_td": "2D",
+            "embargo_td": "1D",
+            "max_splits": 20,
+            "max_estimated_output_cells": 100_000,
+            "max_public_artifact_bytes": 1_000_000,
+        },
+    )
+
+    config = load_experiment_config(path).config
+
+    assert config.split.kind == "purged_kfold"
+    assert config.split.n_folds == 5
+    assert config.split.n_test_folds == 1
+    assert config.split.purge_td == "2D"
+    assert config.split.embargo_td == "1D"
+    assert config.split.max_splits == 20
+
+
+@pytest.mark.parametrize(
+    ("split", "expected_path"),
+    [
+        ({"kind": "purged_kfold", "n_folds": 1}, "split.n_folds"),
+        (
+            {"kind": "purged_kfold", "n_folds": 5, "n_test_folds": 0},
+            "split.n_test_folds",
+        ),
+        (
+            {"kind": "purged_kfold", "n_folds": 5, "n_test_folds": 2},
+            "split.n_test_folds",
+        ),
+        (
+            {"kind": "purged_kfold", "n_folds": 5, "n_test_folds": 5},
+            "split.n_test_folds",
+        ),
+        ({"kind": "purged_kfold", "purge_td": "not-a-duration"}, "split.purge_td"),
+        ({"kind": "purged_kfold", "embargo_td": "-1D"}, "split.embargo_td"),
+        (
+            {"kind": "purged_kfold", "n_folds": 6, "n_test_folds": 1, "max_splits": 5},
+            "split.max_splits",
+        ),
+    ],
+)
+def test_purged_kfold_split_config_fails_closed(
+    tmp_path: Path,
+    split: dict[str, object],
+    expected_path: str,
+) -> None:
+    path = _write_config(tmp_path, split=split)
 
     with pytest.raises(ConfigValidationError) as error:
         load_experiment_config(path)
 
-    assert "split.diagnostic_validation_allowed" in str(error.value)
+    assert expected_path in str(error.value)
+
+
+def test_purged_kfold_rejects_removed_bar_embargo_field(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        split={"kind": "purged_kfold", "embargo_bars": 2},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "split.embargo_bars" in str(error.value)
+    assert "unknown field" in str(error.value)
+
+
+@pytest.mark.parametrize("split_kind", ["holdout", "rolling"])
+def test_non_purged_split_kinds_are_not_in_schema_v2(tmp_path: Path, split_kind: str) -> None:
+    path = _write_config(tmp_path, split={"kind": split_kind})
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "split.kind" in str(error.value)
+    assert "must be one of ['purged_kfold']" in str(error.value)
+
+
+@pytest.mark.parametrize("label_kind", ["trendlb", "pivotlb"])
+def test_purged_kfold_rejects_labels_without_evaluation_oracle(
+    tmp_path: Path,
+    label_kind: str,
+) -> None:
+    path = _write_config(
+        tmp_path,
+        labels={"generator": {"kind": label_kind}},
+        split={"kind": "purged_kfold"},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "labels.generator.kind" in str(error.value)
+    assert "exact evaluation-time evidence" in str(error.value)
 
 
 def test_label_target_selection_rejects_default_scalar_mismatch(tmp_path: Path) -> None:

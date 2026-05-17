@@ -25,7 +25,7 @@ data fetch/load
 - `signals.py`: converts model probabilities into entries and exits.
 - `portfolios.py`: owns `vbt.Portfolio.from_signals` assumptions.
 - `validation.py`: evaluates train/test validation flows and keeps split mechanics out of orchestration.
-- `splits.py`: builds holdout or `vbt.Splitter` rolling validation splits.
+- `splits.py`: builds VectorBT purged K-fold validation splits.
 - `reports.py`: turns IS/OOS portfolio stats into a blunt survival verdict.
 - `experiments.py`: config-driven orchestration.
 - `cli.py`: one-command runner.
@@ -40,7 +40,7 @@ The default config uses deterministic synthetic OHLCV data, so it is safe for CI
 
 ## Config Contract
 
-Experiment YAML is a versioned public contract. Every config must declare `schema_version: 2` and is validated before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write.
+Experiment YAML is a versioned public contract. Every config must declare `schema_version: 2` and is validated before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write. This in-repo schema v2 contract is forward-first: older draft v2 configs that used non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
 
 Validation is strict by default:
 
@@ -166,31 +166,27 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 ## Validation Modes
 
-Use a single chronological holdout:
+Schema v2 supports one experiment validation mode: VectorBT PRO purged K-fold with one test fold per split. Chronological holdout, ordinary rolling validation, and overlapping CPCV-style test-fold combinations are not exposed because all current label generators are look-ahead targets, and duplicated or unpurged look-ahead metrics are not written as survival evidence.
+
+Use purged K-fold as the decision-grade path for supervised look-ahead labels when exact label evaluation times are available:
 
 ```yaml
 split:
-  kind: holdout
-  train_size: 0.7
-  embargo_bars: 5
-  diagnostic_validation_allowed: true
+  kind: purged_kfold
+  n_folds: 5
+  n_test_folds: 1
+  purge_td: 0D
+  embargo_td: 0D
+  max_splits: 5
+  max_estimated_output_cells: 500000
+  max_public_artifact_bytes: 5000000
 ```
 
-Use VectorBT PRO rolling windows through `vbt.Splitter.from_n_rolling`:
+Purged validation passes explicit prediction and evaluation time `Series` into `vbt.Splitter.from_purged_kfold`. `purge_td` is added to evaluation times when purging overlapping training samples; `embargo_td` excludes training predictions too close after the latest test evaluation time. Neither setting replaces concrete label evaluation times.
 
-```yaml
-split:
-  kind: rolling
-  train_size: 0.7
-  embargo_bars: 5
-  n: 5
-  length: optimize
-  diagnostic_validation_allowed: true
-```
+Decision-grade in this scaffold means label-window purging and split/set identity were proven. It does not certify feature causality, portfolio execution timing, or strategy profitability. The report records `decision_grade_scope: label_window_purging`, keeps feature causality marked unchecked, and treats current aggregate metrics as descriptive summaries; per-split test metrics remain the decision evidence.
 
-`diagnostic_validation_allowed` defaults to `false`. Set it to `true` only when intentionally producing non-decision-grade validation/report artifacts for unpurged look-ahead labels; otherwise the model compatibility gate fails closed before validation.
-
-Holdout is represented as one split. Rolling validation writes one child artifact set per split: model, train/test probabilities, train/test signals, train/test portfolio artifacts, train/test metrics, and metadata. Aggregate probability/signal/metric/report artifacts link back to those child artifacts. There is no generic top-level `artifacts/model.joblib` for split validation because it would imply deployment readiness.
+Purged validation writes one child artifact set per split: model, train/test probabilities, train/test signals, train/test portfolio artifacts, train/test metrics, and metadata. Aggregate probability/signal/metric/report artifacts link back to those child artifacts. There is no generic top-level `artifacts/model.joblib` for split validation because it would imply deployment readiness.
 
 ## Label Modes
 
@@ -215,7 +211,7 @@ labels:
         threshold: 0.0
 ```
 
-Use VectorBT PRO `TRENDLB` trend labels:
+The lower-level label builder can preserve VectorBT PRO `TRENDLB` trend labels, but schema v2 experiment configs reject them until a confirmation-time oracle provides exact evaluation times:
 
 ```yaml
 labels:
@@ -240,7 +236,7 @@ labels:
         positive_value: 1
 ```
 
-Use VectorBT PRO `PIVOTLB` pivot labels:
+The lower-level label builder can preserve VectorBT PRO `PIVOTLB` pivot labels, but schema v2 experiment configs reject them until a confirmation-time oracle provides exact evaluation times:
 
 ```yaml
 labels:
@@ -259,9 +255,11 @@ labels:
         positive_value: -1
 ```
 
-Label generation is native-first. Runs preserve the native VectorBT object and raw `.labels` separately from the selected model target. The current model path accepts only `role: supervised_target` binary classification targets; continuous `TRENDLB` modes, sparse-event targets, and regime targets are artifactable but require future estimator support in #9 before training.
+Label generation is native-first. Runs preserve the native VectorBT object and raw `.labels` separately from the selected model target. The current runnable experiment path accepts only `FIXLB` with `role: supervised_target` binary classification targets; continuous `TRENDLB` modes, sparse-event targets, and regime targets are lower-level label-builder capabilities that require future estimator support in #9 and confirmation-time oracle support before training.
 
-Label functions use future information and are target generators, not predictor features. Until #3 implements purged CV, validation/report artifacts expose `purging_required: true`, `purging_applied: false`, and non-decision-grade trust metadata only for configs that explicitly opt into diagnostic validation.
+Label functions use future information and are target generators, not predictor features. `FIXLB` fixed-horizon labels can produce exact evaluation times from the actual future row timestamps, including irregular datetime indexes. `TRENDLB` and `PIVOTLB` remain fail-closed for decision-grade validation unless a confirmation-time oracle proves when each historical label became knowable; label-value parity alone is not enough because VectorBT pivot/trend labels are written on historical rows using future confirmation.
+
+Configs that request non-purged split kinds fail at config validation. Purged runs write public `labels.evaluation_evidence` and `splits.evidence` artifacts with exact train/test membership, row-level prediction/evaluation intervals, no-leakage invariant status, resource estimates, and actual public artifact byte-cap enforcement. Private native VectorBT splitters are persisted only as replay/debug sidecars; reviewers should not need to unpickle them to audit decision-grade status.
 
 ## VectorBT PRO Notes
 
@@ -293,6 +291,11 @@ Successful runs write public-safe config evidence:
 - `config.yaml`: redacted resolved config with defaults applied.
 - `config_authored.yaml`: redacted authored config view.
 - `config_manifest.json`: schema version and raw config identity.
+
+Label and split evidence artifacts are also public and manifest-linked:
+
+- `labels/evaluation_evidence.json`: selected-target prediction/evaluation times by row and symbol.
+- `splits/evidence.json`: split/set membership, source-index identity, purging settings, row-level intervals for purged runs, and leakage-invariant status.
 
 Invalid static configs fail before run artifact creation. Data-contract failures that require loaded data may happen after data access; public `data.metadata` is still recorded when it passes safety validation, and downstream/native artifacts are not written.
 

@@ -71,14 +71,20 @@ def test_indicator_and_label_results_expose_portable_metadata() -> None:
     assert labels.native_object is not None
 
 
-def test_split_result_exposes_holdout_and_rolling_metadata() -> None:
+def test_split_result_exposes_purged_metadata() -> None:
     index = pd.date_range("2020-01-01", periods=120, tz="UTC")
+    close = pd.DataFrame({"SYN": range(1, 121)}, index=index, dtype=float)
+    label_result = build_label_result(close, LabelConfig())
+    eligible_index = label_result.labels.dropna().index
 
-    holdout = build_validation_splits_result(index, SplitConfig(kind="holdout"))
-    rolling = build_validation_splits_result(index, SplitConfig(kind="rolling", n=3, length=40))
+    result = build_validation_splits_result(
+        eligible_index,
+        SplitConfig(kind="purged_kfold", n_folds=3, max_splits=3),
+        target_metadata={"split_safety": label_result.split_safety},
+        evaluation_evidence=label_result.evaluation_evidence,
+    )
 
-    assert holdout.metadata["kind"] == "holdout"
-    assert holdout.metadata["n_splits"] == 1
-    assert rolling.metadata["kind"] == "rolling"
-    assert rolling.metadata["n_splits"] == 3
-    assert rolling.native_object is not None
+    assert result.metadata["kind"] == "purged_kfold"
+    assert result.metadata["n_splits"] == 3
+    assert result.metadata["purging_applied"] is True
+    assert result.native_object is not None

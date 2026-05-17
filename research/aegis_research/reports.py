@@ -13,6 +13,7 @@ from research.aegis_research.config import (
     ReportConfig,
     to_builtin,
 )
+from research.aegis_research.splits import split_purging_passed
 
 
 def portfolio_metrics(pf: Any, config: ReportConfig) -> dict[str, Any]:
@@ -57,7 +58,15 @@ def build_survival_report(
     oos_drawdown = test_metrics.get("max_drawdown_pct")
     oos_trades = test_metrics.get("total_trades")
 
-    decision_grade = validation_metadata.get("decision_grade", True)
+    decision_grade = validation_metadata.get("decision_grade", False)
+    split_safety = validation_metadata.get("target", {}).get("split_safety", {})
+    if (
+        decision_grade
+        and split_safety.get("purging_required")
+        and not split_purging_passed(validation_metadata.get("split_metadata"))
+    ):
+        decision_grade = False
+        reasons.append("Validation is missing public split evidence for label-window purging")
     if not decision_grade:
         reasons.append("Validation is non-decision-grade until purged CV is applied")
 

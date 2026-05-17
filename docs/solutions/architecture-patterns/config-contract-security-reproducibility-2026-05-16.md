@@ -1,6 +1,7 @@
 ---
 title: Schema-Versioned Experiment Config Contracts
 date: 2026-05-16
+last_updated: 2026-05-17
 category: architecture-patterns
 module: research/aegis_research
 problem_type: architecture_pattern
@@ -133,7 +134,7 @@ runs/<timestamp>_<name>/
 
 Store `source_path` only when local path disclosure is acceptable. If paths may reveal usernames or private directory structure, persist a relative path or omit it.
 
-Make third-party library assumptions explicit in the config contract. For VectorBT-based experiments, validate `Portfolio.from_signals`-compatible size types, allowed portfolio directions, `labels.kind: trendlb` requiring `labels.mode: binary`, and report frequency assumptions before calling VectorBT.
+Make third-party library assumptions explicit in the config contract. For VectorBT-based experiments, validate `Portfolio.from_signals`-compatible size types, allowed portfolio directions, label generator/target compatibility, and report frequency assumptions before calling VectorBT. Label configs should distinguish native generator params from target selection and target transforms so `TRENDLB` continuous modes, `PIVOTLB` sparse-event targets, and `FIXLB` threshold targets fail or proceed at the right boundary.
 
 ## Why This Matters
 
@@ -177,7 +178,7 @@ report:
 After, the authored config is explicit, canonical, and safe to serialize:
 
 ```yaml
-schema_version: 1
+schema_version: 2
 name: baseline_research
 output_dir: runs
 data:
@@ -213,3 +214,5 @@ Key regression tests for this pattern should assert:
 - GitHub issue #8: Review experiment orchestration and artifact provenance
 - GitHub issue #10: Review report metrics and survival verdict contract
 - GitHub issue #13: Review baseline experiment methodology configs
+- GitHub issue #2: Review VectorBT PRO label-generator usage
+- Related solution: `docs/solutions/logic-errors/vectorbt-label-contract-target-lineage-2026-05-17.md`

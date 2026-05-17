@@ -31,7 +31,7 @@ def test_binary_target_with_one_class_in_train_split_fails() -> None:
         _labels([1, 1, 0, 0], index=index),
         ModelConfig(min_train_samples=1),
         _target_schema("binary_classification"),
-        [ValidationSplit(label="holdout", train_index=index[:2], test_index=index[2:])],
+        [ValidationSplit(label="split_0", train_index=index[:2], test_index=index[2:])],
         phase="post_split",
     )
 
@@ -52,7 +52,7 @@ def test_regime_target_fails_even_when_values_are_binary() -> None:
         assert_target_model_compatible(diagnostics)
 
 
-def test_unpurged_lookahead_target_requires_diagnostic_opt_in() -> None:
+def test_pre_split_lookahead_target_does_not_require_purging_proof_yet() -> None:
     diagnostics = target_model_compatibility(
         _labels([0, 1, 0, 1]),
         ModelConfig(min_train_samples=1),
@@ -63,8 +63,42 @@ def test_unpurged_lookahead_target_requires_diagnostic_opt_in() -> None:
         phase="pre_split",
     )
 
-    with pytest.raises(TargetModelCompatibilityError, match="diagnostic_validation_allowed"):
+    assert_target_model_compatible(diagnostics)
+
+
+def test_post_split_unpurged_lookahead_target_requires_purging_proof() -> None:
+    index = pd.RangeIndex(4)
+    diagnostics = target_model_compatibility(
+        _labels([0, 1, 0, 1], index=index),
+        ModelConfig(min_train_samples=1),
+        _target_schema(
+            "binary_classification",
+            split_safety={"purging_required": True, "purging_applied": False},
+        ),
+        [ValidationSplit(label="unpurged", train_index=index[:2], test_index=index[2:])],
+        phase="post_split",
+    )
+
+    with pytest.raises(TargetModelCompatibilityError, match="purged split evidence"):
         assert_target_model_compatible(diagnostics)
+
+
+def test_post_split_purged_lookahead_target_uses_split_proof() -> None:
+    index = pd.RangeIndex(4)
+    diagnostics = target_model_compatibility(
+        _labels([0, 1, 0, 1], index=index),
+        ModelConfig(min_train_samples=1),
+        _target_schema(
+            "binary_classification",
+            split_safety={"purging_required": True, "purging_applied": False},
+        ),
+        [ValidationSplit(label="purged", train_index=index[:2], test_index=index[2:])],
+        phase="post_split",
+        split_metadata={"purging_applied": True, "leakage_invariant": {"passed": True}},
+    )
+
+    assert_target_model_compatible(diagnostics)
+    assert diagnostics["split_safety"]["purging_applied"] is True
 
 
 def test_valid_binary_target_reaches_training() -> None:
@@ -82,7 +116,7 @@ def test_valid_binary_target_reaches_training() -> None:
         labels,
         ModelConfig(min_train_samples=2),
         _target_schema("binary_classification"),
-        [ValidationSplit(label="holdout", train_index=index, test_index=index[2:])],
+        [ValidationSplit(label="split_0", train_index=index, test_index=index[2:])],
         phase="post_split",
     )
 
