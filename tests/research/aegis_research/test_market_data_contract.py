@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from research.aegis_research import data as data_module
-from research.aegis_research.config import DataConfig
+from research.aegis_research.config import DataConfig, LabelConfig, LabelGeneratorConfig
 from research.aegis_research.data import (
     MarketDataAdapterResult,
     close_from_ohlcv,
@@ -68,7 +68,9 @@ def test_csv_multiindex_symbol_feature_layout_preserves_symbols(tmp_path: Path) 
     frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["symbol", "feature"])
     frame.to_csv(path)
 
-    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["AAA", "BBB"]))
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["AAA", "BBB"])
+    )
 
     assert result.quality.state == "healthy"
     assert list(result.feature("Close").columns) == ["AAA", "BBB"]
@@ -149,3 +151,10 @@ def test_future_provider_adapter_uses_same_result_contract() -> None:
 def test_required_features_follow_label_kind() -> None:
     assert required_ohlcv_features("fixlb") == ("Close",)
     assert required_ohlcv_features("trendlb") == ("Close", "High", "Low")
+    assert required_ohlcv_features("pivotlb") == ("Close", "High", "Low")
+    assert required_ohlcv_features(LabelConfig()) == ("Close",)
+    assert required_ohlcv_features(LabelConfig(generator=LabelGeneratorConfig(kind="trendlb"))) == (
+        "Close",
+        "High",
+        "Low",
+    )

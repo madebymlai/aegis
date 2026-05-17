@@ -74,13 +74,34 @@ def test_portfolio_rejects_target_size_types(tmp_path: Path) -> None:
     assert "target size types" in str(error.value)
 
 
-def test_trendlb_schema_v1_requires_binary_mode(tmp_path: Path) -> None:
-    path = _write_config(tmp_path, labels={"kind": "trendlb", "mode": "pctchange"})
+@pytest.mark.parametrize(
+    "mode",
+    ["binary", "binary_cont", "binary_cont_sat", "pct_change", "pct_change_norm"],
+)
+def test_trendlb_accepts_canonical_mode_names(tmp_path: Path, mode: str) -> None:
+    path = _write_config(
+        tmp_path,
+        labels={
+            "generator": {"kind": "trendlb", "params": {"mode": mode}},
+            "target": {"transform": {"name": _expected_trendlb_transform(mode)}},
+        },
+    )
+
+    config = load_experiment_config(path)
+
+    assert config.config.labels.generator.params["mode"] == mode
+
+
+def test_trendlb_mode_rejects_legacy_spellings(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        labels={"generator": {"kind": "trendlb", "params": {"mode": "pctchange"}}},
+    )
 
     with pytest.raises(ConfigValidationError) as error:
         load_experiment_config(path)
 
-    assert "labels.mode" in str(error.value)
+    assert "labels.generator.params.mode" in str(error.value)
 
 
 def test_report_frequency_must_be_timedelta_compatible(tmp_path: Path) -> None:
@@ -124,7 +145,7 @@ def test_report_frequency_must_be_positive(tmp_path: Path) -> None:
     ("section", "override", "expected_path"),
     [
         ("data", {"source": "SYNTHETIC"}, "data.source"),
-        ("labels", {"kind": "FIXLB"}, "labels.kind"),
+        ("labels", {"generator": {"kind": "FIXLB"}}, "labels.generator.kind"),
         ("split", {"kind": "Holdout"}, "split.kind"),
         ("model", {"kind": "Logistic_Regression"}, "model.kind"),
         ("portfolio", {"direction": "LongOnly"}, "portfolio.direction"),
@@ -599,3 +620,7 @@ def _write_config(tmp_path: Path, **overrides) -> Path:
     path = tmp_path / "experiment.yaml"
     path.write_text(yaml.safe_dump(config, sort_keys=False))
     return path
+
+
+def _expected_trendlb_transform(mode: str) -> str:
+    return "identity_binary" if mode == "binary" else "continuous_identity"

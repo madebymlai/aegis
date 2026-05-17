@@ -43,11 +43,25 @@ indicators:
           transform: scale_0_1
 
 labels:
-  kind: trendlb
-  up_th: 0.08
-  down_th: 0.08
-  mode: binary
-  positive_value: 1
+  generator:
+    kind: trendlb
+    params:
+      up_th: 0.08
+      down_th: 0.08
+      mode: binary
+  target:
+    role: supervised_target
+    source_output: labels
+    select:
+      params:
+        up_th: 0.08
+        down_th: 0.08
+        mode: binary
+    transform:
+      name: identity_binary
+      version: 1
+      params:
+        positive_value: 1
 
 split:
   kind: rolling

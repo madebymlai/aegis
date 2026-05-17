@@ -257,7 +257,9 @@ def assert_public_metadata_safe(
     path: str = "$",
 ) -> None:
     if isinstance(value, str):
-        if any(secret and secret in value for secret in known_secrets) or SECRET_VALUE_RE.search(value):
+        if any(secret and secret in value for secret in known_secrets) or SECRET_VALUE_RE.search(
+            value
+        ):
             raise ValueError(f"public data metadata contains secret material at {path}")
         if _looks_like_absolute_path(value):
             raise ValueError(f"public data metadata contains a non-portable path at {path}")
@@ -283,8 +285,12 @@ def _default_adapters() -> dict[str, MarketDataAdapter]:
     return {
         "synthetic": _synthetic_adapter,
         "csv": _csv_adapter,
-        "yfinance": lambda config: _remote_adapter("yfinance", REMOTE_DATA_CLASSES["yfinance"](), config),
-        "binance": lambda config: _remote_adapter("binance", REMOTE_DATA_CLASSES["binance"](), config),
+        "yfinance": lambda config: _remote_adapter(
+            "yfinance", REMOTE_DATA_CLASSES["yfinance"](), config
+        ),
+        "binance": lambda config: _remote_adapter(
+            "binance", REMOTE_DATA_CLASSES["binance"](), config
+        ),
         "ccxt": lambda config: _remote_adapter("ccxt", REMOTE_DATA_CLASSES["ccxt"](), config),
     }
 
@@ -353,9 +359,7 @@ def _remote_adapter(source: str, data_cls, config: DataConfig) -> MarketDataAdap
 def _read_csv(config: DataConfig) -> pd.DataFrame:
     path = Path(config.path or "")
     if _csv_looks_multiindex(path, config):
-        return _localize_csv_index(
-            pd.read_csv(path, header=[0, 1], index_col=0, parse_dates=True)
-        )
+        return _localize_csv_index(pd.read_csv(path, header=[0, 1], index_col=0, parse_dates=True))
     return _localize_csv_index(pd.read_csv(path, index_col=0, parse_dates=True))
 
 
@@ -409,7 +413,9 @@ def _flat_csv_feature_data(frame: pd.DataFrame, config: DataConfig) -> dict[str,
     return feature_data
 
 
-def _multiindex_csv_feature_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.DataFrame]:
+def _multiindex_csv_feature_data(
+    frame: pd.DataFrame, config: DataConfig
+) -> dict[str, pd.DataFrame]:
     symbol_level, feature_level = _csv_multiindex_levels(frame, config)
     feature_data = {}
     for feature in OHLCV_FEATURES:
@@ -429,14 +435,25 @@ def _multiindex_csv_feature_data(frame: pd.DataFrame, config: DataConfig) -> dic
 
 
 def _csv_multiindex_levels(frame: pd.DataFrame, config: DataConfig) -> tuple[int, int]:
-    level_values = [set(map(str, frame.columns.get_level_values(index))) for index in range(frame.columns.nlevels)]
-    symbol_levels = [index for index, values in enumerate(level_values) if set(config.symbols) & values]
-    source_features = {_source_feature_name(feature, config.feature_map) for feature in OHLCV_FEATURES}
-    feature_levels = [index for index, values in enumerate(level_values) if source_features & values]
+    level_values = [
+        set(map(str, frame.columns.get_level_values(index)))
+        for index in range(frame.columns.nlevels)
+    ]
+    symbol_levels = [
+        index for index, values in enumerate(level_values) if set(config.symbols) & values
+    ]
+    source_features = {
+        _source_feature_name(feature, config.feature_map) for feature in OHLCV_FEATURES
+    }
+    feature_levels = [
+        index for index, values in enumerate(level_values) if source_features & values
+    ]
     if not symbol_levels or not feature_levels:
         raise ValueError("CSV MultiIndex columns must include symbol and feature levels")
     symbol_level = symbol_levels[0]
-    feature_level = next((level for level in feature_levels if level != symbol_level), feature_levels[0])
+    feature_level = next(
+        (level for level in feature_levels if level != symbol_level), feature_levels[0]
+    )
     if symbol_level == feature_level:
         raise ValueError("CSV MultiIndex symbol and feature levels must be distinct")
     return symbol_level, feature_level
@@ -525,9 +542,9 @@ def _evaluate_quality(
 
     observed_symbols = set(_native_symbols(native_data, fallback=config.symbols))
     skipped_symbols = [symbol for symbol in config.symbols if symbol not in observed_symbols]
-    allowed_skipped_symbols = set(skipped_symbols) if (
-        config.skip_on_error and "skipped_symbols" in allowed
-    ) else set()
+    allowed_skipped_symbols = (
+        set(skipped_symbols) if (config.skip_on_error and "skipped_symbols" in allowed) else set()
+    )
     if skipped_symbols:
         if allowed_skipped_symbols:
             _record_quality_issue(
@@ -586,11 +603,17 @@ def _evaluate_quality(
                 warnings,
                 degradations,
             )
-        non_numeric = [symbol for symbol in panel.columns if not pd.api.types.is_numeric_dtype(panel[symbol])]
+        non_numeric = [
+            symbol for symbol in panel.columns if not pd.api.types.is_numeric_dtype(panel[symbol])
+        ]
         if non_numeric:
             reasons.append(f"required feature {feature!r} has non-numeric symbols {non_numeric}")
 
-    missing_optional = [feature for feature in OHLCV_FEATURES if feature not in required_features and feature not in panels]
+    missing_optional = [
+        feature
+        for feature in OHLCV_FEATURES
+        if feature not in required_features and feature not in panels
+    ]
     if missing_optional:
         warnings.append(f"optional OHLCV features unavailable: {missing_optional}")
         degradations.add("missing_optional_features")
@@ -753,7 +776,9 @@ def _native_features(native_data: Any) -> list[str]:
 
 def _frame_features(frame: pd.DataFrame) -> list[str]:
     if isinstance(frame.columns, pd.MultiIndex):
-        values = frame.columns.get_level_values("feature" if "feature" in frame.columns.names else -1)
+        values = frame.columns.get_level_values(
+            "feature" if "feature" in frame.columns.names else -1
+        )
         return sorted(set(map(str, values)))
     return [feature for feature in OHLCV_FEATURES if feature in frame.columns]
 
@@ -921,7 +946,9 @@ def _index_evidence(index: pd.Index, *, source: str) -> dict[str, Any]:
         "raw_index_end": str(index[-1]) if len(index) else None,
         "raw_index_has_duplicates": bool(index.has_duplicates),
         "raw_index_monotonic_increasing": bool(index.is_monotonic_increasing),
-        "raw_index_timezone": str(index.tz) if isinstance(index, pd.DatetimeIndex) and index.tz else None,
+        "raw_index_timezone": str(index.tz)
+        if isinstance(index, pd.DatetimeIndex) and index.tz
+        else None,
     }
 
 

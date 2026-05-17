@@ -39,7 +39,14 @@ def test_ma_sweep_preserves_native_visible_params_and_lineage() -> None:
         {"window": 2, "wtype": "simple"},
         {"window": 3, "wtype": "simple"},
     ]
-    assert result.frame.columns.names == ["feature", "indicator", "output", "transform", "params", "symbol"]
+    assert result.frame.columns.names == [
+        "feature",
+        "indicator",
+        "output",
+        "transform",
+        "params",
+        "symbol",
+    ]
     assert result.lineage[0]["indicator_id"] == "ma"
     assert result.lineage[0]["transform"] == "distance_to_close"
 
@@ -160,7 +167,9 @@ def test_model_feature_matrix_builds_mapping_and_cleaned_eligible_index() -> Non
     assert matrix.eligible_index[0] == close.index[2]
     assert matrix.eligible_index[-1] == close.index[6]
     assert list(matrix.feature_mapping) == ["ma__ma__distance_to_close__window_3__wtype_simple"]
-    assert matrix.feature_mapping["ma__ma__distance_to_close__window_3__wtype_simple"]["params"] == {
+    assert matrix.feature_mapping["ma__ma__distance_to_close__window_3__wtype_simple"][
+        "params"
+    ] == {
         "window": 3,
         "wtype": "simple",
     }

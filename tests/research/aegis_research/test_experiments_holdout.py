@@ -9,7 +9,6 @@ from research.aegis_research.config import (
     REPORT_STATUSES,
     DataConfig,
     ExperimentConfig,
-    LabelConfig,
     load_experiment_config,
     resolve_experiment_config,
 )
@@ -63,10 +62,7 @@ def test_synthetic_holdout_experiment_preserves_multi_asset_axis(tmp_path: Path)
 
 def test_holdout_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:
     csv_path = tmp_path / "close_only.csv"
-    close_values = [
-        100 + (i % 30 if (i // 30) % 2 == 0 else 30 - (i % 30))
-        for i in range(260)
-    ]
+    close_values = [100 + (i % 30 if (i // 30) % 2 == 0 else 30 - (i % 30)) for i in range(260)]
     pd.DataFrame(
         {"Close": close_values},
         index=pd.date_range("2020-01-01", periods=260, freq="1D", tz="UTC"),
@@ -86,21 +82,19 @@ def test_holdout_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:
 
 def test_trendlb_close_only_csv_fails_data_preflight(tmp_path: Path) -> None:
     csv_path = tmp_path / "close_only.csv"
-    close_values = [
-        100 + (i % 30 if (i // 30) % 2 == 0 else 30 - (i % 30))
-        for i in range(260)
-    ]
+    close_values = [100 + (i % 30 if (i // 30) % 2 == 0 else 30 - (i % 30)) for i in range(260)]
     pd.DataFrame(
         {"Close": close_values},
         index=pd.date_range("2020-01-01", periods=260, freq="1D", tz="UTC"),
     ).to_csv(csv_path)
     config = resolve_experiment_config(
-        ExperimentConfig(
-            name="close-only-trendlb",
-            output_dir=str(tmp_path / "runs"),
-            data=DataConfig(source="csv", path=str(csv_path), symbols=["SYN"]),
-            labels=LabelConfig(kind="trendlb"),
-        )
+        {
+            "schema_version": 1,
+            "name": "close-only-trendlb",
+            "output_dir": str(tmp_path / "runs"),
+            "data": {"source": "csv", "path": str(csv_path), "symbols": ["SYN"]},
+            "labels": {"generator": {"kind": "trendlb"}},
+        }
     )
 
     with pytest.raises(MarketDataQualityError):

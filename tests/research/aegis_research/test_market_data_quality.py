@@ -175,7 +175,9 @@ def test_provider_failure_returns_safe_non_usable_result() -> None:
 def test_provider_metadata_projection_omits_unsafe_nested_mappings() -> None:
     result = load_market_data_result(
         DataConfig(source="fake", symbols=["SYN"]),
-        adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=_ProviderMetadataData())},
+        adapters={
+            "fake": lambda _config: MarketDataAdapterResult(native_data=_ProviderMetadataData())
+        },
     )
 
     provider_metadata = result.metadata["provider_metadata"]
@@ -193,7 +195,11 @@ def test_provider_metadata_projection_omits_unsafe_nested_mappings() -> None:
 def test_provider_update_support_uses_symbol_update_capability() -> None:
     result = load_market_data_result(
         DataConfig(source="fake", symbols=["SYN"]),
-        adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=_UpdateCapableProviderData())},
+        adapters={
+            "fake": lambda _config: MarketDataAdapterResult(
+                native_data=_UpdateCapableProviderData()
+            )
+        },
     )
 
     assert result.metadata["update_supported"] is True
@@ -202,7 +208,11 @@ def test_provider_update_support_uses_symbol_update_capability() -> None:
 def test_provider_update_support_uses_feature_update_capability() -> None:
     result = load_market_data_result(
         DataConfig(source="fake", symbols=["SYN"]),
-        adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=_FeatureUpdateProviderData())},
+        adapters={
+            "fake": lambda _config: MarketDataAdapterResult(
+                native_data=_FeatureUpdateProviderData()
+            )
+        },
     )
 
     assert result.metadata["update_supported"] is True

@@ -194,38 +194,77 @@ Use VectorBT PRO `FIXLB` fixed look-ahead labels:
 
 ```yaml
 labels:
-  kind: fixlb
-  horizon: 5
-  threshold: 0.0
+  generator:
+    kind: fixlb
+    params:
+      n: 5
+  target:
+    role: supervised_target
+    source_output: labels
+    select:
+      params:
+        n: 5
+    transform:
+      name: threshold_future_return
+      version: 1
+      params:
+        threshold: 0.0
 ```
 
 Use VectorBT PRO `TRENDLB` trend labels:
 
 ```yaml
 labels:
-  kind: trendlb
-  up_th: 0.08
-  down_th: 0.08
-  mode: binary
-  positive_value: 1
+  generator:
+    kind: trendlb
+    params:
+      up_th: 0.08
+      down_th: 0.08
+      mode: binary
+  target:
+    role: supervised_target
+    source_output: labels
+    select:
+      params:
+        up_th: 0.08
+        down_th: 0.08
+        mode: binary
+    transform:
+      name: identity_binary
+      version: 1
+      params:
+        positive_value: 1
 ```
 
 Use VectorBT PRO `PIVOTLB` pivot labels:
 
 ```yaml
 labels:
-  kind: pivotlb
-  up_th: 0.08
-  down_th: 0.08
-  positive_value: -1
+  generator:
+    kind: pivotlb
+    params:
+      up_th: 0.08
+      down_th: 0.08
+  target:
+    role: supervised_target
+    source_output: labels
+    transform:
+      name: positive_event
+      version: 1
+      params:
+        positive_value: -1
 ```
+
+Label generation is native-first. Runs preserve the native VectorBT object and raw `.labels` separately from the selected model target. The current model path accepts only `role: supervised_target` binary classification targets; continuous `TRENDLB` modes, sparse-event targets, and regime targets are artifactable but require future estimator support in #9 before training.
+
+Label functions use future information and are target generators, not predictor features. Until #3 implements purged CV, validation/report artifacts expose `purging_required: true`, `purging_applied: false`, and non-decision-grade trust metadata for look-ahead label targets.
 
 ## VectorBT PRO Notes
 
 - Use approved `YFData`, `BinanceData`, or `CCXTData` adapters for real fetches once an experiment needs external data.
 - For schema v1, `Portfolio.from_signals` sizing accepts `amount`, `value`, `percent`, `percent100`, `valuepercent`, and `valuepercent100`; target size types are intentionally rejected.
 - Portfolio direction accepts `longonly`, `shortonly`, and `both`.
-- TRENDLB remains binary-only in schema v1 because the scaffold trains binary classification targets.
+- `TRENDLB` accepts `binary`, `binary_cont`, `binary_cont_sat`, `pct_change`, and `pct_change_norm` as native modes; only `binary` is compatible with the current binary classifier target path.
 - Keep high-cardinality parameter sweeps inside VectorBT indicator/portfolio/splitter objects instead of Python loops where possible.
 - Use `Portfolio.from_signals` for the first loop; move to `from_order_func` only when signal arrays cannot express the execution model.
 - Save only public, non-sensitive run artifacts in git. The `runs/` directory remains ignored except for `.gitkeep`.

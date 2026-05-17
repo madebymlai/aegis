@@ -39,8 +39,17 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     assert "indicators.features.schema" in artifact_ids
     assert "indicators.native" in artifact_ids
     assert "indicators.native.metadata" in artifact_ids
+    assert "labels.metadata" in artifact_ids
+    assert "labels.lineage" in artifact_ids
+    assert "labels.diagnostics" in artifact_ids
+    assert "labels.target.schema" in artifact_ids
+    assert "labels.compatibility" in artifact_ids
+    assert "labels.native" in artifact_ids
+    assert "labels.native.metadata" in artifact_ids
     assert "report.survival" in artifact_ids
-    config_manifest = next(artifact for artifact in manifest["artifacts"] if artifact["id"] == "config.manifest")
+    config_manifest = next(
+        artifact for artifact in manifest["artifacts"] if artifact["id"] == "config.manifest"
+    )
     assert config_manifest["visibility"] == "private"
     assert "validation.holdout.model" in artifact_ids
     assert "validation.holdout.portfolio.test" in artifact_ids
@@ -49,6 +58,13 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     assert feature_schema["features"][0]["name"]
     assert "native_objects" not in json.dumps(feature_schema)
     assert all(artifact["status"] == ArtifactStatus.COMPLETED for artifact in manifest["artifacts"])
+    artifact_order = [artifact["id"] for artifact in manifest["artifacts"]]
+    assert artifact_order.index("labels.target.schema") < artifact_order.index(
+        "validation.holdout.model"
+    )
+    assert artifact_order.index("labels.compatibility") < artifact_order.index(
+        "validation.holdout.model"
+    )
     assert not (run_dir / "artifacts" / "model.joblib").exists()
 
 

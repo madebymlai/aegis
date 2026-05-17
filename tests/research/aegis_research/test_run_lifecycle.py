@@ -122,7 +122,9 @@ def test_run_experiment_initializes_manifest_before_data_loading(
         assert manifest_path.exists()
         raise RuntimeError("data stage failed")
 
-    monkeypatch.setattr("research.aegis_research.experiments.load_market_data_result", fail_after_manifest)
+    monkeypatch.setattr(
+        "research.aegis_research.experiments.load_market_data_result", fail_after_manifest
+    )
 
     with pytest.raises(RuntimeError, match="data stage failed"):
         run_experiment(resolved, run_id="fixed-run")
@@ -156,7 +158,9 @@ def test_failed_run_diagnostic_redacts_config_secret_values(
     def fail_with_secret(_config, **_kwargs):
         raise RuntimeError("provider returned super-secret-token")
 
-    monkeypatch.setattr("research.aegis_research.experiments.load_market_data_result", fail_with_secret)
+    monkeypatch.setattr(
+        "research.aegis_research.experiments.load_market_data_result", fail_with_secret
+    )
 
     with pytest.raises(RuntimeError, match="provider returned"):
         run_experiment(resolved, run_id="secret-failed-run")

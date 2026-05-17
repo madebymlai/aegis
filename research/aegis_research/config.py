@@ -19,6 +19,14 @@ EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 DATA_SOURCES = {"synthetic", "csv", "yfinance", "binance", "ccxt"}
 REMOTE_DATA_SOURCES = {"yfinance", "binance", "ccxt"}
 LABEL_KINDS = {"fixlb", "trendlb", "pivotlb"}
+TRENDLB_MODES = {"binary", "binary_cont", "binary_cont_sat", "pct_change", "pct_change_norm"}
+LABEL_TARGET_ROLES = {"supervised_target", "regime"}
+LABEL_TARGET_TRANSFORMS = {
+    "threshold_future_return",
+    "identity_binary",
+    "continuous_identity",
+    "positive_event",
+}
 SPLIT_KINDS = {"holdout", "rolling"}
 MODEL_KINDS = {"logistic_regression"}
 PORTFOLIO_SIZE_TYPES = {
@@ -209,14 +217,39 @@ class IndicatorConfig:
 
 
 @dataclass(frozen=True)
-class LabelConfig:
+class LabelGeneratorConfig:
     kind: str = "fixlb"
-    horizon: int = 5
-    threshold: float = 0.0
-    up_th: float = 0.1
-    down_th: float = 0.1
-    mode: str = "binary"
-    positive_value: int = 1
+    params: dict[str, Any] = field(default_factory=lambda: {"n": 5})
+
+
+@dataclass(frozen=True)
+class LabelTargetSelectionConfig:
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LabelTargetTransformConfig:
+    name: str = "threshold_future_return"
+    version: int = 1
+    params: dict[str, Any] = field(default_factory=lambda: {"threshold": 0.0})
+
+
+@dataclass(frozen=True)
+class LabelTargetConfig:
+    role: str = "supervised_target"
+    source_output: str = "labels"
+    select: LabelTargetSelectionConfig = field(default_factory=LabelTargetSelectionConfig)
+    transform: LabelTargetTransformConfig = field(default_factory=LabelTargetTransformConfig)
+
+
+@dataclass(frozen=True)
+class LabelConfig:
+    generator: LabelGeneratorConfig = field(default_factory=LabelGeneratorConfig)
+    target: LabelTargetConfig = field(default_factory=LabelTargetConfig)
+
+    @property
+    def kind(self) -> str:
+        return self.generator.kind
 
 
 @dataclass(frozen=True)
@@ -340,7 +373,7 @@ def _build_resolved_config(
         schema_version=raw["schema_version"],
         data=_build_data_config(raw.get("data", {})),
         indicators=_build_indicator_config(raw.get("indicators", {})),
-        labels=LabelConfig(**raw.get("labels", {})),
+        labels=_build_label_config(raw.get("labels", {})),
         split=SplitConfig(**raw.get("split", {})),
         model=ModelConfig(**raw.get("model", {})),
         signals=SignalConfig(**raw.get("signals", {})),
@@ -375,7 +408,9 @@ def _build_indicator_config(raw: dict[str, Any]) -> IndicatorConfig:
     specs = raw.get("specs")
     return IndicatorConfig(
         invalid_value_policy=raw.get("invalid_value_policy", "drop_rows"),
-        specs=default_config.specs if specs is None else [_build_indicator_spec(spec) for spec in specs],
+        specs=default_config.specs
+        if specs is None
+        else [_build_indicator_spec(spec) for spec in specs],
     )
 
 
@@ -399,6 +434,66 @@ def _build_indicator_spec(raw: dict[str, Any]) -> IndicatorSpecConfig:
         grid=raw.get("grid", "zipped"),
         param_product=raw.get("param_product", False),
     )
+
+
+def _build_label_config(raw: dict[str, Any]) -> LabelConfig:
+    generator_raw = raw.get("generator", {})
+    kind = generator_raw.get("kind", "fixlb")
+    generator_params = _default_label_generator_params(str(kind))
+    generator_params.update(generator_raw.get("params", {}))
+    generator = LabelGeneratorConfig(kind=str(kind), params=generator_params)
+
+    target_raw = raw.get("target", {})
+    transform_raw = target_raw.get("transform", {})
+    transform_name = transform_raw.get("name") or _default_label_transform_name(generator)
+    transform_params = _default_label_transform_params(generator, str(transform_name))
+    transform_params.update(transform_raw.get("params", {}))
+    target = LabelTargetConfig(
+        role=target_raw.get("role", "supervised_target"),
+        source_output=target_raw.get("source_output", "labels"),
+        select=LabelTargetSelectionConfig(
+            params=dict(target_raw.get("select", {}).get("params", {}))
+        ),
+        transform=LabelTargetTransformConfig(
+            name=str(transform_name),
+            version=transform_raw.get("version", 1),
+            params=transform_params,
+        ),
+    )
+    return LabelConfig(generator=generator, target=target)
+
+
+def _default_label_generator_params(kind: str) -> dict[str, Any]:
+    if kind == "fixlb":
+        return {"n": 5}
+    if kind == "trendlb":
+        return {"up_th": 0.1, "down_th": 0.1, "mode": "binary"}
+    if kind == "pivotlb":
+        return {"up_th": 0.1, "down_th": 0.1}
+    return {}
+
+
+def _default_label_transform_name(generator: LabelGeneratorConfig) -> str:
+    if generator.kind == "fixlb":
+        return "threshold_future_return"
+    if generator.kind == "trendlb" and generator.params.get("mode", "binary") == "binary":
+        return "identity_binary"
+    if generator.kind == "trendlb":
+        return "continuous_identity"
+    if generator.kind == "pivotlb":
+        return "positive_event"
+    return "identity_binary"
+
+
+def _default_label_transform_params(
+    generator: LabelGeneratorConfig,
+    transform_name: str,
+) -> dict[str, Any]:
+    if transform_name == "threshold_future_return":
+        return {"threshold": 0.0}
+    if transform_name in {"identity_binary", "positive_event"}:
+        return {"positive_value": 1}
+    return {}
 
 
 def _validate_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -519,7 +614,9 @@ def _validate_feature_map(value: Any, issues: list[ConfigValidationIssue]) -> No
         child_path = f"{path}.{key}"
         if key not in OHLCV_FEATURE_MAP_KEYS:
             issues.append(
-                ConfigValidationIssue(child_path, f"must be one of {sorted(OHLCV_FEATURE_MAP_KEYS)}")
+                ConfigValidationIssue(
+                    child_path, f"must be one of {sorted(OHLCV_FEATURE_MAP_KEYS)}"
+                )
             )
             continue
         if not isinstance(item, str) or not item:
@@ -597,7 +694,9 @@ def _validate_indicators(indicators: dict[str, Any], issues: list[ConfigValidati
             issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty string"))
             continue
         if indicator_id in seen_ids:
-            issues.append(ConfigValidationIssue(f"{path}.id", "duplicates another indicator spec id"))
+            issues.append(
+                ConfigValidationIssue(f"{path}.id", "duplicates another indicator spec id")
+            )
         seen_ids.add(indicator_id)
         definition = registry.get(indicator_id)
         if definition is None:
@@ -660,14 +759,20 @@ def _validate_indicator_params(
         values = value if isinstance(value, list) else [value]
         if key == "window":
             for value_index, item in enumerate(values):
-                item_path = child_path if not isinstance(value, list) else f"{child_path}[{value_index}]"
+                item_path = (
+                    child_path if not isinstance(value, list) else f"{child_path}[{value_index}]"
+                )
                 _validate_int(item_path, item, issues, positive=True)
         if key in definition.allowed_param_values:
             allowed = definition.allowed_param_values[key]
             for value_index, item in enumerate(values):
-                item_path = child_path if not isinstance(value, list) else f"{child_path}[{value_index}]"
+                item_path = (
+                    child_path if not isinstance(value, list) else f"{child_path}[{value_index}]"
+                )
                 if item not in allowed:
-                    issues.append(ConfigValidationIssue(item_path, f"must be one of {sorted(allowed)}"))
+                    issues.append(
+                        ConfigValidationIssue(item_path, f"must be one of {sorted(allowed)}")
+                    )
 
 
 def _validate_indicator_outputs(
@@ -711,7 +816,9 @@ def _validate_indicator_model_features(
         _validate_known_keys(feature_path, feature, {"output", "transform"}, issues)
         output = feature.get("output")
         if not isinstance(output, str) or not output:
-            issues.append(ConfigValidationIssue(f"{feature_path}.output", "must be a non-empty string"))
+            issues.append(
+                ConfigValidationIssue(f"{feature_path}.output", "must be a non-empty string")
+            )
         elif output not in definition.output_names:
             issues.append(
                 ConfigValidationIssue(
@@ -759,7 +866,9 @@ def _validate_indicator_grid(
     params = spec.get("params", {})
     if not isinstance(params, dict):
         return
-    list_lengths = {len(value) for value in params.values() if isinstance(value, list) and len(value) > 1}
+    list_lengths = {
+        len(value) for value in params.values() if isinstance(value, list) and len(value) > 1
+    }
     if len(list_lengths) > 1:
         issues.append(
             ConfigValidationIssue(
@@ -770,23 +879,197 @@ def _validate_indicator_grid(
 
 
 def _validate_labels(labels: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    kind = labels.get("kind", "fixlb")
-    if not _optional_enum("labels.kind", labels, LABEL_KINDS, issues):
+    generator = labels.get("generator", {})
+    target = labels.get("target", {})
+    if not isinstance(generator, dict):
+        issues.append(ConfigValidationIssue("labels.generator", "must be a mapping"))
         return
-    kind = str(kind)
-    _optional_int("labels.horizon", labels, issues, positive=True)
-    _optional_number("labels.threshold", labels, issues)
-    _optional_number("labels.up_th", labels, issues, positive=True)
-    _optional_number("labels.down_th", labels, issues, positive=True)
-    _optional_int("labels.positive_value", labels, issues)
+    if not isinstance(target, dict):
+        issues.append(ConfigValidationIssue("labels.target", "must be a mapping"))
+        return
 
-    mode = labels.get("mode", "binary")
-    if "mode" in labels and not isinstance(mode, str):
-        issues.append(ConfigValidationIssue("labels.mode", "must be a string"))
-    elif kind == "trendlb" and mode != "binary":
-        issues.append(
-            ConfigValidationIssue("labels.mode", "must be 'binary' for trendlb in schema v1")
+    _validate_known_keys("labels.generator", generator, {"kind", "params"}, issues)
+    _validate_known_keys(
+        "labels.target",
+        target,
+        {"role", "source_output", "select", "transform"},
+        issues,
+    )
+    if not _optional_enum("labels.generator.kind", generator, LABEL_KINDS, issues):
+        return
+
+    kind = str(generator.get("kind", "fixlb"))
+    params = generator.get("params", {})
+    if not isinstance(params, dict):
+        issues.append(ConfigValidationIssue("labels.generator.params", "must be a mapping"))
+        return
+    _validate_label_generator_params(kind, params, issues)
+    _validate_label_target(kind, params, target, issues)
+
+
+def _validate_label_generator_params(
+    kind: str,
+    params: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if kind == "fixlb":
+        _validate_known_keys("labels.generator.params", params, {"n"}, issues)
+        if "n" in params:
+            _validate_int_or_int_list(
+                "labels.generator.params.n", params["n"], issues, positive=True
+            )
+        return
+
+    if kind == "trendlb":
+        _validate_known_keys(
+            "labels.generator.params",
+            params,
+            {"up_th", "down_th", "mode"},
+            issues,
         )
+        _optional_number("labels.generator.params.up_th", params, issues, positive=True)
+        _optional_number("labels.generator.params.down_th", params, issues, positive=True)
+        _optional_enum("labels.generator.params.mode", params, TRENDLB_MODES, issues)
+        return
+
+    if kind == "pivotlb":
+        _validate_known_keys("labels.generator.params", params, {"up_th", "down_th"}, issues)
+        _optional_number("labels.generator.params.up_th", params, issues, positive=True)
+        _optional_number("labels.generator.params.down_th", params, issues, positive=True)
+
+
+def _validate_label_target(
+    kind: str,
+    params: dict[str, Any],
+    target: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    _optional_enum("labels.target.role", target, LABEL_TARGET_ROLES, issues)
+    source_output = target.get("source_output", "labels")
+    if "source_output" in target and not isinstance(source_output, str):
+        issues.append(ConfigValidationIssue("labels.target.source_output", "must be a string"))
+    elif source_output != "labels":
+        issues.append(ConfigValidationIssue("labels.target.source_output", "must be 'labels'"))
+
+    select = target.get("select", {})
+    if not isinstance(select, dict):
+        issues.append(ConfigValidationIssue("labels.target.select", "must be a mapping"))
+        return
+    _validate_known_keys("labels.target.select", select, {"params"}, issues)
+    select_params = select.get("params", {})
+    if not isinstance(select_params, dict):
+        issues.append(ConfigValidationIssue("labels.target.select.params", "must be a mapping"))
+        return
+    _validate_target_selection(kind, params, select_params, issues)
+
+    transform = target.get("transform", {})
+    if not isinstance(transform, dict):
+        issues.append(ConfigValidationIssue("labels.target.transform", "must be a mapping"))
+        return
+    _validate_known_keys(
+        "labels.target.transform", transform, {"name", "version", "params"}, issues
+    )
+    _optional_enum("labels.target.transform.name", transform, LABEL_TARGET_TRANSFORMS, issues)
+    _optional_int("labels.target.transform.version", transform, issues, positive=True)
+    transform_name = str(
+        transform.get("name")
+        or _default_label_transform_name(
+            LabelGeneratorConfig(
+                kind=kind, params={**_default_label_generator_params(kind), **params}
+            )
+        )
+    )
+    transform_params = transform.get("params", {})
+    if not isinstance(transform_params, dict):
+        issues.append(ConfigValidationIssue("labels.target.transform.params", "must be a mapping"))
+        return
+    _validate_label_transform(kind, params, transform_name, transform_params, issues)
+
+
+def _validate_target_selection(
+    kind: str,
+    params: dict[str, Any],
+    select_params: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    parameter_keys = {"n"} if kind == "fixlb" else set(params)
+    _validate_known_keys("labels.target.select.params", select_params, parameter_keys, issues)
+    for key, value in params.items():
+        if isinstance(value, list) and len(value) > 1 and key not in select_params:
+            issues.append(
+                ConfigValidationIssue(
+                    f"labels.target.select.params.{key}",
+                    "is required when generator parameter has multiple values",
+                )
+            )
+    for key, selected in select_params.items():
+        values = params.get(key)
+        if isinstance(values, list) and selected not in values:
+            issues.append(
+                ConfigValidationIssue(
+                    f"labels.target.select.params.{key}",
+                    f"must be one of {values}",
+                )
+            )
+
+
+def _validate_label_transform(
+    kind: str,
+    params: dict[str, Any],
+    transform_name: str,
+    transform_params: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    mode = params.get("mode", "binary")
+    if kind == "fixlb" and transform_name != "threshold_future_return":
+        issues.append(
+            ConfigValidationIssue(
+                "labels.target.transform.name",
+                "must be 'threshold_future_return' for fixlb",
+            )
+        )
+    if kind == "trendlb" and mode == "binary" and transform_name != "identity_binary":
+        issues.append(
+            ConfigValidationIssue(
+                "labels.target.transform.name",
+                "must be 'identity_binary' for binary trendlb",
+            )
+        )
+    if kind == "trendlb" and mode != "binary" and transform_name != "continuous_identity":
+        issues.append(
+            ConfigValidationIssue(
+                "labels.target.transform.name",
+                "must be 'continuous_identity' for continuous trendlb modes",
+            )
+        )
+    if kind == "pivotlb" and transform_name != "positive_event":
+        issues.append(
+            ConfigValidationIssue(
+                "labels.target.transform.name",
+                "must be 'positive_event' for pivotlb",
+            )
+        )
+
+    if transform_name == "threshold_future_return":
+        _validate_known_keys(
+            "labels.target.transform.params", transform_params, {"threshold"}, issues
+        )
+        _optional_number("labels.target.transform.params.threshold", transform_params, issues)
+    elif transform_name in {"identity_binary", "positive_event"}:
+        _validate_known_keys(
+            "labels.target.transform.params", transform_params, {"positive_value"}, issues
+        )
+        _optional_int("labels.target.transform.params.positive_value", transform_params, issues)
+        positive_value = transform_params.get("positive_value", 1)
+        if kind == "pivotlb" and positive_value not in {-1, 1}:
+            issues.append(
+                ConfigValidationIssue(
+                    "labels.target.transform.params.positive_value",
+                    "must be -1 or 1 for pivotlb",
+                )
+            )
+    elif transform_name == "continuous_identity":
+        _validate_known_keys("labels.target.transform.params", transform_params, set(), issues)
 
 
 def _validate_split(split: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -1123,6 +1406,24 @@ def _validate_int(
         issues.append(ConfigValidationIssue(path, f"must be at least {minimum}"))
         return False
     return True
+
+
+def _validate_int_or_int_list(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+    *,
+    positive: bool = False,
+) -> bool:
+    if isinstance(value, list):
+        if not value:
+            issues.append(ConfigValidationIssue(path, "must not be empty"))
+            return False
+        ok = True
+        for index, item in enumerate(value):
+            ok = _validate_int(f"{path}[{index}]", item, issues, positive=positive) and ok
+        return ok
+    return _validate_int(path, value, issues, positive=positive)
 
 
 def _optional_number(

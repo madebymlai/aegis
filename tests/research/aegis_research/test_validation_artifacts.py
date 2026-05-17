@@ -8,7 +8,8 @@ from research.aegis_research.data import (
     low_from_ohlcv,
 )
 from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
-from research.aegis_research.labels import build_labels
+from research.aegis_research.labels import build_label_result
+from research.aegis_research.models import target_model_compatibility
 from research.aegis_research.splits import build_validation_splits
 from research.aegis_research.validation import evaluate_validation_splits
 
@@ -18,6 +19,8 @@ def test_validation_result_exposes_complete_split_child_shape() -> None:
 
     assert len(result.split_results) == 5
     assert result.validation_metadata["n_splits"] == 5
+    assert result.validation_metadata["decision_grade"] is False
+    assert result.validation_metadata["target"]["split_safety"]["purging_applied"] is False
     for split in result.split_results:
         assert split.model is not None
         assert list(split.train_probabilities.columns) == ["SYN"]
@@ -53,7 +56,8 @@ def _evaluate(config_path: str):
     high = high_from_ohlcv(data)
     low = low_from_ohlcv(data)
     indicator_result = build_indicator_result(close, config.indicators)
-    labels = build_labels(close, config.labels, high=high, low=low)
+    label_result = build_label_result(close, config.labels, high=high, low=low)
+    labels = label_result.labels
     model_features = build_model_feature_matrix(
         indicator_result,
         labels,
@@ -62,5 +66,22 @@ def _evaluate(config_path: str):
     splits = build_validation_splits(
         model_features.eligible_index,
         config.split,
+        target_metadata={"split_safety": label_result.split_safety},
     )
-    return evaluate_validation_splits(close, model_features.frame, labels, splits, config)
+    compatibility = target_model_compatibility(
+        labels,
+        config.model,
+        label_result.target_schema,
+        splits,
+        phase="post_split",
+    )
+    return evaluate_validation_splits(
+        close,
+        model_features.frame,
+        labels,
+        splits,
+        config,
+        target_schema=label_result.target_schema,
+        split_metadata={"target": {"split_safety": label_result.split_safety}},
+        compatibility=compatibility,
+    )

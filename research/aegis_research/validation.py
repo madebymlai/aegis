@@ -58,6 +58,9 @@ def evaluate_validation_splits(
     splits: list[ValidationSplit],
     config: ExperimentConfig,
     *,
+    target_schema: dict[str, Any] | None = None,
+    split_metadata: dict[str, Any] | None = None,
+    compatibility: dict[str, Any] | None = None,
     on_split_result: Callable[[SplitValidationResult], None] | None = None,
 ) -> ValidationResult:
     if not splits:
@@ -123,6 +126,8 @@ def evaluate_validation_splits(
             test_metrics=test_metrics,
             metadata={
                 "label": split.label,
+                "target": target_schema or {},
+                "compatibility": compatibility or {},
                 "sets": {
                     "train": {"rows": len(split.train_index), **index_identity(split.train_index)},
                     "test": {"rows": len(split.test_index), **index_identity(split.test_index)},
@@ -151,6 +156,10 @@ def evaluate_validation_splits(
         validation_metadata={
             "kind": config.split.kind,
             "n_splits": len(splits),
+            "target": target_schema or {},
+            "split_metadata": split_metadata or {},
+            "compatibility": compatibility or {},
+            "decision_grade": _decision_grade(target_schema),
         },
     )
 
@@ -212,3 +221,10 @@ def _concat_split_frames(
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, axis=1)
+
+
+def _decision_grade(target_schema: dict[str, Any] | None) -> bool:
+    if not target_schema:
+        return True
+    split_safety = target_schema.get("split_safety", {})
+    return not (split_safety.get("purging_required") and not split_safety.get("purging_applied"))

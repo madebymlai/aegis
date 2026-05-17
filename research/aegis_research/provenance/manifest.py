@@ -207,7 +207,9 @@ def validate_manifest(payload: dict[str, Any], *, run_dir: str | Path | None = N
         if status == ArtifactStatus.COMPLETED and root is not None:
             artifact_path = root / path
             if not artifact_path.exists():
-                raise ManifestValidationError(f"completed artifact is missing: {artifact.get('id')}")
+                raise ManifestValidationError(
+                    f"completed artifact is missing: {artifact.get('id')}"
+                )
             _validate_file_identity(artifact, artifact_path)
 
     for artifact in artifacts:

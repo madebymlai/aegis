@@ -52,9 +52,14 @@ def build_survival_report(
     validation_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     reasons: list[str] = []
+    validation_metadata = validation_metadata or {}
     oos_sharpe = test_metrics.get("sharpe_ratio")
     oos_drawdown = test_metrics.get("max_drawdown_pct")
     oos_trades = test_metrics.get("total_trades")
+
+    decision_grade = validation_metadata.get("decision_grade", True)
+    if not decision_grade:
+        reasons.append("Validation is non-decision-grade until purged CV is applied")
 
     if oos_sharpe is None or oos_sharpe < config.min_oos_sharpe:
         reasons.append(f"OOS Sharpe below threshold: {oos_sharpe} < {config.min_oos_sharpe}")
@@ -64,13 +69,15 @@ def build_survival_report(
         reasons.append(f"Too few OOS trades: {oos_trades} < {config.min_oos_trades}")
 
     status = REPORT_STATUS_SURVIVED if not reasons else REPORT_STATUS_REJECTED
+    if not decision_grade:
+        status = REPORT_STATUS_NEEDS_MORE_EVIDENCE
     if oos_trades is not None and oos_trades < config.min_oos_trades:
         status = REPORT_STATUS_NEEDS_MORE_EVIDENCE
 
     return {
         "experiment": experiment_name,
         "status": status,
-        "validation": validation_metadata or {},
+        "validation": validation_metadata,
         "reasons": reasons or ["OOS metrics cleared configured survival thresholds"],
         "train_metrics": train_metrics,
         "test_metrics": test_metrics,

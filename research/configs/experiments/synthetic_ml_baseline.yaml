@@ -43,9 +43,21 @@ indicators:
           transform: scale_0_1
 
 labels:
-  kind: fixlb
-  horizon: 5
-  threshold: 0.0
+  generator:
+    kind: fixlb
+    params:
+      n: 5
+  target:
+    role: supervised_target
+    source_output: labels
+    select:
+      params:
+        n: 5
+    transform:
+      name: threshold_future_return
+      version: 1
+      params:
+        threshold: 0.0
 
 split:
   kind: holdout
