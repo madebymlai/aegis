@@ -8,6 +8,7 @@ import pandas as pd
 
 from research.aegis_research.config import ExperimentConfig
 from research.aegis_research.data_schema import index_identity
+from research.aegis_research.model_contracts import POSITIVE_CLASS_PROBABILITY
 from research.aegis_research.model_registry import FrozenModelRegistry
 from research.aegis_research.models import (
     TrainedModel,
@@ -18,6 +19,9 @@ from research.aegis_research.portfolios import simulate_portfolio
 from research.aegis_research.reports import portfolio_metrics
 from research.aegis_research.signals import probabilities_to_signals
 from research.aegis_research.splits import ValidationSplit, split_purging_passed
+
+VALIDATION_SIGNAL_DIAGNOSTICS_SCHEMA_VERSION = "validation_signal_diagnostics.v1"
+VALIDATION_PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "validation_portfolio_diagnostics.v1"
 
 
 @dataclass(frozen=True)
@@ -30,8 +34,12 @@ class SplitValidationResult:
     test_entries: pd.DataFrame
     train_exits: pd.DataFrame
     test_exits: pd.DataFrame
+    train_signal_diagnostics: dict[str, Any]
+    test_signal_diagnostics: dict[str, Any]
     train_portfolio: Any
     test_portfolio: Any
+    train_portfolio_diagnostics: dict[str, Any]
+    test_portfolio_diagnostics: dict[str, Any]
     train_metrics: dict[str, Any]
     test_metrics: dict[str, Any]
     metadata: dict[str, Any]
@@ -46,6 +54,8 @@ class ValidationResult:
     train_metrics: dict[str, Any]
     test_metrics: dict[str, Any]
     split_metrics: pd.DataFrame
+    signal_diagnostics: dict[str, Any]
+    portfolio_diagnostics: dict[str, Any]
     validation_metadata: dict[str, Any]
 
     @property
@@ -60,6 +70,7 @@ def evaluate_validation_splits(
     splits: list[ValidationSplit],
     config: ExperimentConfig,
     *,
+    open_prices: pd.DataFrame | None = None,
     target_schema: dict[str, Any],
     split_metadata: dict[str, Any] | None = None,
     compatibility: dict[str, Any] | None = None,
@@ -70,6 +81,8 @@ def evaluate_validation_splits(
         raise ValueError("At least one validation split is required")
     if not target_schema:
         raise ValueError("target_schema is required for model plugin validation")
+    if config.signals.execution_timing == "next_open" and open_prices is None:
+        raise ValueError("next_open validation requires open prices")
     split_metadata = split_metadata or {}
     compatibility = compatibility or {}
 
@@ -97,28 +110,56 @@ def evaluate_validation_splits(
             split_label=split.label,
             set_name="validation_union",
         )
-        entries, exits = probabilities_to_signals(probabilities, config.signals)
         train_close = close.loc[split.train_index]
         test_close = close.loc[split.test_index]
+        train_open = _slice_optional_panel(
+            open_prices, split.train_index, "Open", split.label, "train"
+        )
+        test_open = _slice_optional_panel(
+            open_prices, split.test_index, "Open", split.label, "test"
+        )
         train_probabilities = probabilities.loc[split.train_index]
         test_probabilities = probabilities.loc[split.test_index]
-        train_entries = entries.loc[split.train_index]
-        test_entries = entries.loc[split.test_index]
-        train_exits = exits.loc[split.train_index]
-        test_exits = exits.loc[split.test_index]
+        probability_metadata = _signal_probability_metadata(model.metadata, target_schema)
+        train_signals = probabilities_to_signals(
+            train_probabilities,
+            config.signals,
+            probability_metadata=probability_metadata,
+            split_id=split.label,
+            set_name="train",
+        )
+        test_signals = probabilities_to_signals(
+            test_probabilities,
+            config.signals,
+            probability_metadata=probability_metadata,
+            split_id=split.label,
+            set_name="test",
+        )
+        train_entries = train_signals.entries
+        test_entries = test_signals.entries
+        train_exits = train_signals.exits
+        test_exits = test_signals.exits
 
-        train_pf = simulate_portfolio(
+        train_simulation = simulate_portfolio(
             train_close,
             train_entries,
             train_exits,
             config.portfolio,
+            config.signals,
+            open_prices=train_open,
+            market_index=close.index,
         )
-        test_pf = simulate_portfolio(
+        test_simulation = simulate_portfolio(
             test_close,
             test_entries,
             test_exits,
             config.portfolio,
+            config.signals,
+            open_prices=test_open,
+            market_index=close.index,
         )
+        train_pf = train_simulation.portfolio
+        test_pf = test_simulation.portfolio
 
         train_metrics = portfolio_metrics(train_pf, config.report)
         test_metrics = portfolio_metrics(test_pf, config.report)
@@ -140,8 +181,12 @@ def evaluate_validation_splits(
             test_entries=test_entries,
             train_exits=train_exits,
             test_exits=test_exits,
+            train_signal_diagnostics=train_signals.diagnostics,
+            test_signal_diagnostics=test_signals.diagnostics,
             train_portfolio=train_pf,
             test_portfolio=test_pf,
+            train_portfolio_diagnostics=train_simulation.diagnostics,
+            test_portfolio_diagnostics=test_simulation.diagnostics,
             train_metrics=train_metrics,
             test_metrics=test_metrics,
             metadata={
@@ -151,6 +196,14 @@ def evaluate_validation_splits(
                 "probabilities": {
                     "train": _probability_diagnostics(train_probabilities),
                     "test": _probability_diagnostics(test_probabilities),
+                },
+                "signals": {
+                    "train": train_signals.diagnostics,
+                    "test": test_signals.diagnostics,
+                },
+                "portfolios": {
+                    "train": train_simulation.diagnostics,
+                    "test": test_simulation.diagnostics,
                 },
                 "compatibility": compatibility,
                 "sets": {
@@ -178,6 +231,8 @@ def evaluate_validation_splits(
         train_metrics=train_metrics,
         test_metrics=test_metrics,
         split_metrics=split_metrics,
+        signal_diagnostics=_aggregate_signal_diagnostics(split_results),
+        portfolio_diagnostics=_aggregate_portfolio_diagnostics(split_results),
         validation_metadata={
             "kind": config.split.kind,
             "n_splits": len(splits),
@@ -191,10 +246,16 @@ def evaluate_validation_splits(
             ),
             "decision_grade_scope": "label_window_purging",
             "feature_causality_checked": False,
-            "portfolio_execution_timing_checked": False,
+            "portfolio_execution_timing_checked": True,
             "decision_evidence": "per_split_test_metrics",
-            "probability_output_name": "positive_class_probability",
+            "probability_output_name": POSITIVE_CLASS_PROBABILITY,
             "probability_calibrated": False,
+            "signal_policy": {
+                "name": config.signals.policy,
+                "long_entry_threshold": config.signals.long_entry_threshold,
+                "long_exit_threshold": config.signals.long_exit_threshold,
+                "execution_timing": config.signals.execution_timing,
+            },
             "aggregate_metrics_role": "descriptive_summary",
             "aggregation_methods": _aggregation_methods(),
         },
@@ -222,6 +283,69 @@ def _aggregate_metrics(metrics: pd.DataFrame) -> dict[str, Any]:
     if "per_symbol" in metrics:
         aggregated["per_symbol"] = _aggregate_per_symbol_metrics(metrics["per_symbol"])
     return aggregated
+
+
+def _slice_optional_panel(
+    panel: pd.DataFrame | None,
+    index: pd.Index,
+    name: str,
+    split_label: str,
+    set_name: str,
+) -> pd.DataFrame | None:
+    if panel is None:
+        return None
+    try:
+        return panel.loc[index]
+    except KeyError as error:
+        raise ValueError(
+            f"validation {name} prices must include all rows for {split_label} {set_name}"
+        ) from error
+
+
+def _signal_probability_metadata(
+    model_metadata: dict[str, Any],
+    target_schema: dict[str, Any],
+) -> dict[str, Any]:
+    probability = dict(model_metadata.get("probability", {}))
+    target = dict(model_metadata.get("target", {}))
+    return {
+        "output_name": probability.get("output_name", POSITIVE_CLASS_PROBABILITY),
+        "positive_class": target.get("positive_class", target_schema.get("positive_class")),
+        "calibrated": probability.get("calibrated", False),
+        "threshold_tuned": probability.get("threshold_tuned", False),
+        "class_probability_columns": probability.get("class_probability_columns", {}),
+        "target_kind": target.get("target_kind", target_schema.get("target_kind")),
+    }
+
+
+def _aggregate_signal_diagnostics(
+    split_results: list[SplitValidationResult],
+) -> dict[str, Any]:
+    return {
+        "schema_version": VALIDATION_SIGNAL_DIAGNOSTICS_SCHEMA_VERSION,
+        "splits": {
+            split.label: {
+                "train": split.train_signal_diagnostics,
+                "test": split.test_signal_diagnostics,
+            }
+            for split in split_results
+        },
+    }
+
+
+def _aggregate_portfolio_diagnostics(
+    split_results: list[SplitValidationResult],
+) -> dict[str, Any]:
+    return {
+        "schema_version": VALIDATION_PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION,
+        "splits": {
+            split.label: {
+                "train": split.train_portfolio_diagnostics,
+                "test": split.test_portfolio_diagnostics,
+            }
+            for split in split_results
+        },
+    }
 
 
 def _probability_diagnostics(probabilities: pd.DataFrame) -> dict[str, Any]:

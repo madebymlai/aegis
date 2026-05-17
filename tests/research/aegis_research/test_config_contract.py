@@ -35,6 +35,10 @@ def test_baseline_configs_load_with_schema_metadata() -> None:
         config = load_experiment_config(path)
 
         assert config.config.schema_version == config_module.CONFIG_SCHEMA_VERSION
+        assert config.config.signals.policy == "long_only_hysteresis"
+        assert config.config.signals.long_entry_threshold == 0.55
+        assert config.config.signals.long_exit_threshold == 0.50
+        assert config.config.signals.execution_timing == "next_open"
         assert config.raw_config_hash
         assert config.redacted_resolved_config()["report"]["freq"] == "1D"
 
@@ -47,6 +51,91 @@ def test_minimal_dict_config_uses_report_defaults() -> None:
     assert config.config.report.freq == "1D"
     assert config.config.report.year_freq == "252D"
     assert config.config.split.kind == "purged_kfold"
+
+
+def test_minimal_dict_config_uses_signal_contract_defaults() -> None:
+    config = resolve_experiment_config(
+        {"schema_version": config_module.CONFIG_SCHEMA_VERSION, "name": "signal_defaults"}
+    )
+
+    assert config.config.signals.policy == "long_only_hysteresis"
+    assert config.config.signals.long_entry_threshold == 0.55
+    assert config.config.signals.long_exit_threshold == 0.50
+    assert config.config.signals.execution_timing == "next_open"
+
+
+def test_signal_config_allows_explicit_same_close_timing(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, signals={"execution_timing": "same_close"})
+
+    config = load_experiment_config(path).config
+
+    assert config.signals.execution_timing == "same_close"
+
+
+def test_signal_threshold_ordering_uses_action_specific_paths(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        signals={"long_entry_threshold": 0.50, "long_exit_threshold": 0.50},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "signals.long_exit_threshold" in str(error.value)
+    assert "signals.long_entry_threshold" in str(error.value)
+
+
+@pytest.mark.parametrize("removed_field", ["long_threshold", "exit_threshold"])
+def test_removed_signal_threshold_fields_fail_as_unknown_fields(
+    tmp_path: Path,
+    removed_field: str,
+) -> None:
+    path = _write_config(tmp_path, signals={removed_field: 0.5})
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert f"signals.{removed_field}" in str(error.value)
+    assert "unknown field" in str(error.value)
+
+
+def test_unknown_signal_policy_fails_with_config_path(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, signals={"policy": "long_short"})
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "signals.policy" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "execution_timing",
+    ["next_close", "next_valid_open", "NextValidOpen", "custom"],
+)
+def test_unsupported_signal_timing_modes_fail_closed(
+    tmp_path: Path,
+    execution_timing: str,
+) -> None:
+    path = _write_config(tmp_path, signals={"execution_timing": execution_timing})
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "signals.execution_timing" in str(error.value)
+
+
+@pytest.mark.parametrize("direction", ["both", "shortonly"])
+def test_portfolio_direction_is_long_only_for_v1_signal_contract(
+    tmp_path: Path,
+    direction: str,
+) -> None:
+    path = _write_config(tmp_path, portfolio={"direction": direction})
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "portfolio.direction" in str(error.value)
+    assert "long-only" in str(error.value)
 
 
 def test_unknown_fields_fail_with_config_path(tmp_path: Path) -> None:
@@ -90,7 +179,9 @@ def test_portfolio_rejects_target_size_types(tmp_path: Path) -> None:
     "mode",
     ["binary", "binary_cont", "binary_cont_sat", "pct_change", "pct_change_norm"],
 )
-def test_trendlb_canonical_mode_names_reach_evaluation_oracle_gate(tmp_path: Path, mode: str) -> None:
+def test_trendlb_canonical_mode_names_reach_evaluation_oracle_gate(
+    tmp_path: Path, mode: str
+) -> None:
     path = _write_config(
         tmp_path,
         labels={

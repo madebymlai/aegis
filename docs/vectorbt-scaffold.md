@@ -22,8 +22,8 @@ data fetch/load
 - `indicators.py`: VectorBT-native indicator stage, model-feature boundary, lineage, and diagnostics.
 - `labels.py`: VectorBT PRO `FIXLB`, `TRENDLB`, and `PIVOTLB` label wrappers.
 - `models.py`: training and `joblib` export boundary.
-- `signals.py`: converts model probabilities into entries and exits.
-- `portfolios.py`: owns `vbt.Portfolio.from_signals` assumptions.
+- `signals.py`: converts `positive_class_probability` panels into long-only raw threshold-state entries/exits plus compact diagnostics.
+- `portfolios.py`: owns `vbt.Portfolio.from_signals` execution timing, Open-price validation, and resolved VBT settings.
 - `validation.py`: evaluates train/test validation flows and keeps split mechanics out of orchestration.
 - `splits.py`: builds VectorBT purged K-fold validation splits.
 - `reports.py`: turns IS/OOS portfolio stats into a blunt survival verdict.
@@ -129,7 +129,32 @@ The indicator stage keeps native VectorBT objects private until the modeling bou
 
 Every source returns a `MarketDataResult` with native `vbt.Data`, safe metadata, asset diagnostics, quality state, and known-secret evidence. Derived feature views are requested with `result.feature("Close")` or the OHLC helpers and always return timestamp-by-symbol DataFrames. Orchestration does not select a first symbol or squeeze single-symbol panels.
 
-Required OHLCV features are derived from the experiment config. `fixlb` needs close only. `trendlb` and `pivotlb` need close, high, and low. Open and volume are optional until a stage explicitly requires them.
+Required OHLCV features are derived from the experiment config. `fixlb` needs close only. `trendlb` and `pivotlb` need close, high, and low. The default signal timing `next_open` also requires Open; explicit `same_close` is the only v1 timing override that allows close-only data. Volume is optional until a stage explicitly requires it.
+
+## Signal And Portfolio Contract
+
+The runnable v1 signal contract is long-only. Model plugins emit `positive_class_probability`; the signal stage interprets that probability only as evidence for entering or exiting a long position. It does not derive shorts, reversals, bearish leverage, or `direction: both` behavior from one positive-class score.
+
+```yaml
+signals:
+  policy: long_only_hysteresis
+  long_entry_threshold: 0.55
+  long_exit_threshold: 0.50
+  execution_timing: next_open
+
+portfolio:
+  direction: longonly
+```
+
+`long_only_hysteresis` uses strict threshold comparisons. A probability greater than `long_entry_threshold` emits a raw entry state. A probability less than `long_exit_threshold` emits a raw exit state. Equality with either threshold is part of the hold band and emits no raw signal. Legacy `signals.long_threshold` and `signals.exit_threshold` are rejected so configs must state the action-specific fields.
+
+Raw signal CSVs are threshold-state evidence, not order evidence. Repeated high probabilities can produce repeated raw entry states while VBT ignores redundant entries when already in position. Public signal diagnostics record raw counts, missing probability counts, simultaneous raw state counts, cleaned diagnostic event-chain counts, policy metadata, threshold values, source probability metadata, split/set/symbol identity, and the selected execution timing. Cleaned diagnostics are review evidence only; portfolio simulation still receives the raw entry/exit panels.
+
+Default portfolio execution uses `price="nextopen"` with an aligned Open panel and does not manually shift signals. If `next_open` is selected and Open is unavailable, missing, misaligned, or null at required execution rows, the run fails instead of falling back to same-close or VBT `NextValidOpen` behavior. A raw signal on the last bar of a train/test split has no following in-split Open; it remains in raw diagnostics and increments terminal non-executable counts rather than borrowing a row from another split.
+
+The only accepted v1 timing modes are `next_open` and explicit `same_close`. `same_close` records the research override and does not require Open. `next_close`, custom timing modes, and valid-price skipping are deferred until separate contracts pin their artifact semantics.
+
+Portfolio simulation stays array-based through `vbt.Portfolio.from_signals`. The scaffold passes only long-relevant resolved settings into VBT and public portfolio diagnostics: `direction: longonly`, accumulation disabled, long-signal conflict handling set to `ignore`, short-side conflict/opposite-entry settings marked `not_applicable_long_only_v1`, one-order-per-bar limitation noted, execution timing, terminal non-executable counts, order counts, and trade counts. Private native portfolios remain local artifacts with public metadata sidecars; reviewers should be able to audit the signal/portfolio contract from public JSON and CSV artifacts without loading VBT pickles.
 
 Quality states are fail-fast:
 
@@ -186,7 +211,7 @@ Purged validation passes explicit prediction and evaluation time `Series` into `
 
 Decision-grade in this scaffold means label-window purging and split/set identity were proven. It does not certify feature causality, portfolio execution timing, or strategy profitability. The report records `decision_grade_scope: label_window_purging`, keeps feature causality marked unchecked, and treats current aggregate metrics as descriptive summaries; per-split test metrics remain the decision evidence.
 
-Purged validation writes one child artifact set per split: model, train/test probabilities, train/test signals, train/test portfolio artifacts, train/test metrics, and metadata. Aggregate probability/signal/metric/report artifacts link back to those child artifacts. There is no generic top-level `artifacts/model.joblib` for split validation because it would imply deployment readiness.
+Purged validation writes one child artifact set per split: model, train/test probabilities, train/test raw threshold-state signals, train/test signal diagnostics, train/test portfolio diagnostics, private train/test portfolio artifacts, train/test metrics, and metadata. Aggregate probability, raw signal, signal diagnostic, portfolio diagnostic, metric, and report artifacts link back to those child artifacts. There is no generic top-level `artifacts/model.joblib` for split validation because it would imply deployment readiness.
 
 ## Label Modes
 
@@ -265,7 +290,7 @@ Configs that request non-purged split kinds fail at config validation. Purged ru
 
 - Use approved `YFData`, `BinanceData`, or `CCXTData` adapters for real fetches once an experiment needs external data.
 - For schema v2, `Portfolio.from_signals` sizing accepts `amount`, `value`, `percent`, `percent100`, `valuepercent`, and `valuepercent100`; target size types are intentionally rejected.
-- Portfolio direction accepts `longonly`, `shortonly`, and `both`.
+- Portfolio direction is fixed to `longonly` in schema v2 while signals consume only `positive_class_probability`; `shortonly` and `both` are rejected until a future side-specific signal contract exists.
 - `TRENDLB` config accepts `binary`, `binary_cont`, `binary_cont_sat`, `pct_change`, and `pct_change_norm`; only `binary` is compatible with the current binary classifier target path.
 - Keep high-cardinality parameter sweeps inside VectorBT indicator/portfolio/splitter objects instead of Python loops where possible.
 - Use `Portfolio.from_signals` for the first loop; move to `from_order_func` only when signal arrays cannot express the execution model.

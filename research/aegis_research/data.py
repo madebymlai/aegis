@@ -15,6 +15,7 @@ from research.aegis_research.config import (
     SECRET_VALUE_RE,
     DataConfig,
     LabelConfig,
+    SignalConfig,
     redact_text,
     resolve_secret_refs,
     to_builtin,
@@ -223,6 +224,17 @@ def required_ohlcv_features(label_config: LabelConfig | str | None = None) -> tu
     if label_kind in {"trendlb", "pivotlb"}:
         return ("Close", "High", "Low")
     return ("Close",)
+
+
+def required_experiment_ohlcv_features(
+    label_config: LabelConfig | str | None = None,
+    signal_config: SignalConfig | None = None,
+) -> tuple[str, ...]:
+    features = list(required_ohlcv_features(label_config))
+    signal_config = signal_config or SignalConfig()
+    if signal_config.execution_timing == "next_open" and "Open" not in features:
+        features.append("Open")
+    return tuple(features)
 
 
 def close_from_ohlcv(data: Any) -> pd.DataFrame:
@@ -440,7 +452,9 @@ def _csv_multiindex_levels(frame: pd.DataFrame, config: DataConfig) -> tuple[int
         for index in range(frame.columns.nlevels)
     ]
     configured_symbols = set(config.symbols)
-    symbol_levels = [index for index, values in enumerate(level_values) if configured_symbols & values]
+    symbol_levels = [
+        index for index, values in enumerate(level_values) if configured_symbols & values
+    ]
     source_features = {
         _source_feature_name(feature, config.feature_map) for feature in OHLCV_FEATURES
     }

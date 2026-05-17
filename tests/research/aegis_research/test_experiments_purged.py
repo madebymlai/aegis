@@ -10,6 +10,7 @@ from research.aegis_research.config import (
     DataConfig,
     ExperimentConfig,
     ModelConfig,
+    SignalConfig,
     SplitConfig,
     load_experiment_config,
     resolve_experiment_config,
@@ -74,9 +75,10 @@ def test_synthetic_purged_fixlb_experiment_is_decision_grade(tmp_path: Path) -> 
     assert split_evidence["sample_intervals"]
     assert split_evidence["sample_intervals"][0]["prediction_time"]
     assert split_evidence["sample_intervals"][0]["evaluation_time"]
-    assert split_evidence["resource_estimate"]["public_artifact_bytes"] <= split_evidence[
-        "resource_estimate"
-    ]["max_public_artifact_bytes"]
+    assert (
+        split_evidence["resource_estimate"]["public_artifact_bytes"]
+        <= split_evidence["resource_estimate"]["max_public_artifact_bytes"]
+    )
 
 
 def test_purged_public_evidence_enforces_actual_byte_cap_before_split_outputs(
@@ -139,6 +141,7 @@ def test_purged_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:
             data=DataConfig(source="csv", path=str(csv_path), symbols=["SYN"]),
             split=SplitConfig(kind="purged_kfold", n_folds=3, max_splits=3),
             model=ModelConfig(**model_config_dict(min_train_samples=50)),
+            signals=SignalConfig(execution_timing="same_close"),
         ),
         model_registry=make_model_registry(),
     )
