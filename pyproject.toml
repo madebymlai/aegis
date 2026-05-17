@@ -18,7 +18,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 
 [tool.uv.sources]
-vectorbtpro = { git = "https://github.com/polakowo/vectorbt.pro.git", tag = "v2026.4.7" }
+vectorbtpro = { git = "https://github.com/polakowo/vectorbt.pro.git", branch = "develop" }
 
 [tool.ruff]
 line-length = 100

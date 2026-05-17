@@ -42,7 +42,7 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "scikit-learn" },
     { name = "tomlkit" },
-    { name = "vectorbtpro", git = "https://github.com/polakowo/vectorbt.pro.git?tag=v2026.4.7" },
+    { name = "vectorbtpro", git = "https://github.com/polakowo/vectorbt.pro.git?branch=develop" },
 ]
 
 [package.metadata.requires-dev]
@@ -1902,7 +1902,7 @@ wheels = [
 [[package]]
 name = "vectorbtpro"
 version = "2026.4.7"
-source = { git = "https://github.com/polakowo/vectorbt.pro.git?tag=v2026.4.7#b1727ac67fff23169e003a2031d8303396f17e17" }
+source = { git = "https://github.com/polakowo/vectorbt.pro.git?branch=develop#e445df1bb1ab2fd0bad871d2116e4a692f5f3d4a" }
 dependencies = [
     { name = "attrs" },
     { name = "dateparser" },
