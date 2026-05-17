@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
 import yaml
 
 from research.aegis_research.config import ResolvedExperimentConfig
-from research.aegis_research.data import MarketDataResult
+from research.aegis_research.data import MarketDataResult, assert_public_metadata_safe
 from research.aegis_research.labels import LabelResult
 from research.aegis_research.models import export_model
 from research.aegis_research.provenance.manifest import ArtifactVisibility, atomic_write_json
@@ -54,22 +55,37 @@ class ExperimentArtifactWriter:
             visibility=ArtifactVisibility.PRIVATE,
         )
 
+    def write_data_metadata_artifact(self, data_result: MarketDataResult) -> None:
+        assert_public_metadata_safe(
+            data_result.metadata,
+            known_secrets=data_result.known_secrets,
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="data.metadata",
+            role="data_metadata",
+            producer_stage="data",
+            path="data_metadata.json",
+            payload=data_result.metadata,
+            schema_version="data_metadata.v1",
+        )
+
+    def write_data_native_artifact(self, data_result: MarketDataResult) -> None:
+        self.native_writer.write_native_artifact(
+            artifact_id="data.native",
+            role="data_native",
+            producer_stage="data",
+            path="native/data.pkl",
+            obj=data_result.native_data,
+            metadata=data_result.metadata,
+            known_secrets=data_result.known_secrets,
+        )
+
     def write_stage_native_artifacts(
         self,
-        data_result: MarketDataResult,
         label_result: LabelResult,
         splits_result: ValidationSplitsResult,
     ) -> None:
-        if data_result.native_object is not None:
-            self.native_writer.write_native_artifact(
-                artifact_id="data.native",
-                role="data_native",
-                producer_stage="data",
-                path="native/data.pkl",
-                obj=data_result.native_object,
-                metadata=data_result.metadata,
-                known_secrets=data_result.known_secrets,
-            )
         if label_result.native_object is not None:
             self.native_writer.write_native_artifact(
                 artifact_id="labels.native",
@@ -89,63 +105,62 @@ class ExperimentArtifactWriter:
                 metadata=splits_result.metadata,
             )
 
-    def write_split_artifacts(self, split_results: list[SplitValidationResult]) -> list[str]:
+    def write_split_artifacts(self, split: SplitValidationResult) -> list[str]:
         metric_ids: list[str] = []
-        for split in split_results:
-            prefix = f"validation.{split.label}"
-            directory = f"splits/{split.label}"
-            _write_model_artifact(
+        prefix = f"validation.{split.label}"
+        directory = f"splits/{split.label}"
+        _write_model_artifact(
+            self.recorder,
+            artifact_id=f"{prefix}.model",
+            producer_stage="validation",
+            path=f"{directory}/model.joblib",
+            model=split.model,
+        )
+        for set_name in ("train", "test"):
+            probabilities = getattr(split, f"{set_name}_probabilities")
+            entries = getattr(split, f"{set_name}_entries")
+            exits = getattr(split, f"{set_name}_exits")
+            metrics = getattr(split, f"{set_name}_metrics")
+            _write_csv_artifact(
                 self.recorder,
-                artifact_id=f"{prefix}.model",
+                artifact_id=f"{prefix}.probabilities.{set_name}",
+                role="probabilities",
                 producer_stage="validation",
-                path=f"{directory}/model.joblib",
-                model=split.model,
+                path=f"{directory}/probabilities_{set_name}.csv",
+                frame=probabilities,
+                schema_version="probabilities.v1",
+                upstream_artifact_ids=[f"{prefix}.model"],
             )
-            for set_name in ("train", "test"):
-                probabilities = getattr(split, f"{set_name}_probabilities")
-                entries = getattr(split, f"{set_name}_entries")
-                exits = getattr(split, f"{set_name}_exits")
-                metrics = getattr(split, f"{set_name}_metrics")
-                _write_csv_artifact(
-                    self.recorder,
-                    artifact_id=f"{prefix}.probabilities.{set_name}",
-                    role="probabilities",
-                    producer_stage="validation",
-                    path=f"{directory}/probabilities_{set_name}.csv",
-                    frame=_as_frame(probabilities),
-                    schema_version="probabilities.v1",
-                    upstream_artifact_ids=[f"{prefix}.model"],
-                )
-                _write_csv_artifact(
-                    self.recorder,
-                    artifact_id=f"{prefix}.signals.{set_name}",
-                    role="signals",
-                    producer_stage="validation",
-                    path=f"{directory}/signals_{set_name}.csv",
-                    frame=_signals_frame(entries, exits),
-                    schema_version="signals.v1",
-                    upstream_artifact_ids=[f"{prefix}.probabilities.{set_name}"],
-                )
-                metric_id = f"{prefix}.metrics.{set_name}"
-                _write_json_artifact(
-                    self.recorder,
-                    artifact_id=metric_id,
-                    role="metrics",
-                    producer_stage="validation",
-                    path=f"{directory}/metrics_{set_name}.json",
-                    payload=metrics,
-                    schema_version="metrics.v1",
-                    upstream_artifact_ids=[f"{prefix}.signals.{set_name}"],
-                )
-                metric_ids.append(metric_id)
-                self.native_writer.write_native_artifact(
-                    artifact_id=f"{prefix}.portfolio.{set_name}",
-                    role="portfolio",
-                    producer_stage="validation",
-                    path=f"native/portfolios/{split.label}_{set_name}.pkl",
-                    obj=getattr(split, f"{set_name}_portfolio"),
-                    metadata={"split": split.label, "set": set_name, **split.metadata},
-                )
+            _write_csv_artifact(
+                self.recorder,
+                artifact_id=f"{prefix}.signals.{set_name}",
+                role="signals",
+                producer_stage="validation",
+                path=f"{directory}/signals_{set_name}.csv",
+                frame=_signals_frame(entries, exits),
+                schema_version="signals.v1",
+                upstream_artifact_ids=[f"{prefix}.probabilities.{set_name}"],
+            )
+            metric_id = f"{prefix}.metrics.{set_name}"
+            _write_json_artifact(
+                self.recorder,
+                artifact_id=metric_id,
+                role="metrics",
+                producer_stage="validation",
+                path=f"{directory}/metrics_{set_name}.json",
+                payload=metrics,
+                schema_version="metrics.v1",
+                upstream_artifact_ids=[f"{prefix}.signals.{set_name}"],
+            )
+            metric_ids.append(metric_id)
+            self.native_writer.write_native_artifact(
+                artifact_id=f"{prefix}.portfolio.{set_name}",
+                role="portfolio",
+                producer_stage="validation",
+                path=f"native/portfolios/{split.label}_{set_name}.pkl",
+                obj=getattr(split, f"{set_name}_portfolio"),
+                metadata={"split": split.label, "set": set_name, **split.metadata},
+            )
         return metric_ids
 
     def write_validation_aggregates(
@@ -164,7 +179,7 @@ class ExperimentArtifactWriter:
             role="aggregate_probabilities",
             producer_stage="validation",
             path="probabilities.csv",
-            frame=_as_frame(validation.probabilities),
+            frame=validation.probabilities,
             schema_version="probabilities.aggregate.v1",
             upstream_artifact_ids=probability_ids,
         )
@@ -305,9 +320,5 @@ def _write_model_artifact(
     recorder.artifacts.complete_existing_file(artifact_id)
 
 
-def _as_frame(obj):
-    return obj.to_frame() if hasattr(obj, "to_frame") else obj
-
-
-def _signals_frame(entries, exits):
-    return _as_frame(entries).add_prefix("entry_").join(_as_frame(exits).add_prefix("exit_"))
+def _signals_frame(entries: pd.DataFrame, exits: pd.DataFrame) -> pd.DataFrame:
+    return pd.concat({"entry": entries, "exit": exits}, axis=1)

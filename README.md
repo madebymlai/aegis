@@ -14,7 +14,7 @@ Each valid experiment run writes a local `manifest.json` that records lifecycle 
 
 Aegis RD gives each research loop a clear contract:
 
-- Load market data with explicit provider, symbol, timeframe, timezone, missing-data, and cache behavior.
+- Load market data through a native VectorBT `Data` contract with explicit provider, symbol, feature, timeframe, timezone, missing-data, and quality behavior.
 - Build indicator matrices with preserved parameter metadata.
 - Generate labels and model targets without hiding look-ahead, sparse-event, or trend-regime semantics.
 - Split data with validation windows that make leakage and embargo assumptions visible.
@@ -22,6 +22,14 @@ Aegis RD gives each research loop a clear contract:
 - Convert probabilities into signals with documented threshold, timing, cleaning, and conflict rules.
 - Simulate portfolios with stated sizing, costs, execution timing, direction, cash, and benchmark assumptions.
 - Produce reports that separate per-split evidence, aggregate summaries, survival gates, and uncertainty.
+
+## Market Data Contract
+
+Market data is loaded as native VectorBT `Data` for every supported source: `synthetic`, `csv`, `yfinance`, `binance`, and `ccxt`. Downstream stages consume explicit derived OHLCV panels where timestamps are rows and symbols are columns; single-symbol runs are still one-column panels, not squeezed Series.
+
+Each run writes public `data.metadata` with safe provider metadata, requested and observed symbols, canonical feature availability, per-symbol diagnostics, quality state, timezone and index evidence, and omitted metadata fields. Private `data.native` preserves VectorBT-native state after public metadata succeeds and remains secret-scanned and fail-closed.
+
+Non-standard OHLCV names use `data.feature_map`, with logical keys such as `close` and `volume` mapped to provider or CSV feature names. Market-data symbols are not normalized in schema v1: configs must use the market data provider's exact symbol format, such as `BTC-USD` for Yahoo Finance, `BTCUSDT` for Binance, or `BTC/USDT` for CCXT. This is intentional rather than bad; hidden alias mapping would make evidence ambiguous. The caveat is that switching market data providers may require changing symbols until a documented normalization table exists.
 
 ## Why It Exists
 

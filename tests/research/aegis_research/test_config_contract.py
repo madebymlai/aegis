@@ -219,7 +219,11 @@ def test_inline_secret_values_under_benign_keys_fail_validation(tmp_path: Path) 
     assert "secret-like values" in str(error.value)
 
 
-def test_nested_denied_passthrough_keys_fail_validation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("denied_key", ["auth", "headers", "cookies", "cache"])
+def test_nested_denied_passthrough_keys_fail_validation(
+    tmp_path: Path,
+    denied_key: str,
+) -> None:
     path = _write_config(
         tmp_path,
         data={
@@ -228,14 +232,61 @@ def test_nested_denied_passthrough_keys_fail_validation(tmp_path: Path) -> None:
             "start": "2020-01-01",
             "end": "2020-02-01",
             "timeframe": "1D",
-            "provider_kwargs": {"nested": {"cache": "enabled"}},
+            "provider_kwargs": {"nested": {denied_key: "enabled"}},
         },
     )
 
     with pytest.raises(ConfigValidationError) as error:
         load_experiment_config(path)
 
-    assert "data.provider_kwargs.nested.cache" in str(error.value)
+    assert f"data.provider_kwargs.nested.{denied_key}" in str(error.value)
+
+
+def test_feature_map_accepts_only_logical_ohlcv_keys(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        data={"source": "synthetic", "feature_map": {"close": "Adj Close"}},
+    )
+
+    config = load_experiment_config(path)
+
+    assert config.config.data.feature_map == {"close": "Adj Close"}
+
+
+def test_unknown_feature_map_key_fails_validation(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        data={"source": "synthetic", "feature_map": {"settlement": "Settle"}},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "data.feature_map.settlement" in str(error.value)
+
+
+def test_quality_policy_rejects_unknown_degradation(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        data={"source": "synthetic", "quality": {"allowed_degradations": ["anything"]}},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "data.quality.allowed_degradations[0]" in str(error.value)
+
+
+def test_skip_on_error_requires_skipped_symbol_quality_policy(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        data={"source": "synthetic", "skip_on_error": True},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "data.skip_on_error" in str(error.value)
 
 
 def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:

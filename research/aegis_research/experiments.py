@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +12,9 @@ from research.aegis_research.config import (
     resolve_experiment_config,
 )
 from research.aegis_research.data import (
-    close_from_ohlcv,
-    high_from_ohlcv,
     load_market_data_result,
-    low_from_ohlcv,
+    required_ohlcv_features,
 )
-from research.aegis_research.data_schema import primary_series
 from research.aegis_research.indicators import build_indicator_result
 from research.aegis_research.labels import build_label_result
 from research.aegis_research.provenance.evidence import (
@@ -60,23 +58,30 @@ def run_experiment(
         artifacts = ExperimentArtifactWriter(recorder)
         artifacts.write_config_artifacts(resolved_config)
 
-        data_result = load_market_data_result(config.data)
-        data = data_result.data
-        close = primary_series(close_from_ohlcv(data), role="close")
-        high = primary_series(high_from_ohlcv(data), role="high")
-        low = primary_series(low_from_ohlcv(data), role="low")
+        required_features = required_ohlcv_features(config.labels)
+        data_result = load_market_data_result(
+            config.data,
+            required_features=required_features,
+        )
+        artifacts.write_data_metadata_artifact(data_result)
+        data_result.assert_usable()
+        artifacts.write_data_native_artifact(data_result)
+        close = data_result.feature("Close")
+        high = data_result.feature("High") if "High" in required_features else None
+        low = data_result.feature("Low") if "Low" in required_features else None
         indicator_result = build_indicator_result(close, config.indicators)
         indicators = indicator_result.frame
         label_result = build_label_result(close, config.labels, high=high, low=low)
         labels = label_result.labels
+        valid_label_index = labels.index[labels.notna().all(axis=1)]
         splits_result = build_validation_splits_result(
-            indicators.index.intersection(labels.dropna().index), config.split
+            indicators.index.intersection(valid_label_index), config.split
         )
-        artifacts.write_stage_native_artifacts(data_result, label_result, splits_result)
+        artifacts.write_stage_native_artifacts(label_result, splits_result)
         split_metric_ids: list[str] = []
 
         def record_split_artifacts(split_result) -> None:
-            split_metric_ids.extend(artifacts.write_split_artifacts([split_result]))
+            split_metric_ids.extend(artifacts.write_split_artifacts(split_result))
 
         validation = evaluate_validation_splits(
             close,
@@ -117,10 +122,16 @@ def run_experiment(
 
 
 def _redacted_diagnostic(error: Exception, known_secrets: tuple[str, ...]) -> dict[str, str]:
+    message = _redact_nonportable_paths(redact_text(str(error), known_secrets))
     return {
         "error_type": type(error).__name__,
-        "message": redact_text(str(error), known_secrets)[:1000],
+        "message": message[:1000],
     }
+
+
+def _redact_nonportable_paths(value: str) -> str:
+    value = value.replace(str(Path.home()), "~")
+    return re.sub(r"(?<!\w)/(?:[^\s'\"]+/)*[^\s'\"]+", "<path>", value)
 
 
 def _known_config_secret_values(value: Any) -> tuple[str, ...]:

@@ -6,7 +6,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 MANIFEST_SCHEMA_VERSION = 1
@@ -167,7 +167,7 @@ class RunManifest:
                 "label": self.run_label,
                 "status": self.status,
                 "mode": self.mode,
-                "run_dir": str(self.run_dir),
+                "run_dir": self.run_id,
                 "started_at": self.started_at,
                 "finished_at": self.finished_at,
             },
@@ -265,7 +265,14 @@ def hash_file(path: str | Path) -> str:
 
 def normalize_artifact_path(path: str) -> str:
     pure_path = PurePosixPath(path)
-    if pure_path.is_absolute() or not path or any(part == ".." for part in pure_path.parts):
+    windows_path = PureWindowsPath(path)
+    if (
+        pure_path.is_absolute()
+        or windows_path.is_absolute()
+        or path.startswith("~")
+        or not path
+        or any(part == ".." for part in pure_path.parts)
+    ):
         raise ManifestValidationError("artifact path must be run-relative and normalized")
     normalized = pure_path.as_posix()
     if normalized in {".", ""}:

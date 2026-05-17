@@ -31,6 +31,8 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     artifact_ids = {artifact["id"] for artifact in manifest["artifacts"]}
     assert "config.resolved" in artifact_ids
     assert "config.authored" in artifact_ids
+    assert "data.metadata" in artifact_ids
+    assert "data.native" in artifact_ids
     assert "report.survival" in artifact_ids
     config_manifest = next(artifact for artifact in manifest["artifacts"] if artifact["id"] == "config.manifest")
     assert config_manifest["visibility"] == "private"

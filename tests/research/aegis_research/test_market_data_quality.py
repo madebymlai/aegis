@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import ClassVar
+
+import pandas as pd
+import pytest
+
+from research.aegis_research.config import DataConfig, DataQualityConfig
+from research.aegis_research.data import (
+    MarketDataAdapterResult,
+    RemoteDataPullError,
+    assert_public_metadata_safe,
+    load_market_data_result,
+)
+
+
+def test_duplicate_csv_index_is_rejected_before_vectorbt_normalizes(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, 2.0, 3.0]},
+        index=pd.to_datetime(["2020-01-01", "2020-01-01", "2020-01-02"], utc=True),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+
+    assert result.quality.state == "rejected"
+    assert "raw data index contains duplicate timestamps" in result.quality.reasons
+    assert result.metadata["index_evidence"]["raw_index_has_duplicates"] is True
+
+
+def test_non_monotonic_csv_index_is_rejected_before_vectorbt_sorts(tmp_path: Path) -> None:
+    path = tmp_path / "non_monotonic.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, 2.0, 3.0]},
+        index=pd.to_datetime(["2020-01-02", "2020-01-01", "2020-01-03"], utc=True),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+
+    assert result.quality.state == "rejected"
+    assert "raw data index is not monotonic increasing" in result.quality.reasons
+
+
+def test_missing_required_rows_are_rejected_by_default(tmp_path: Path) -> None:
+    path = tmp_path / "missing.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, None, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+
+    assert result.quality.state == "rejected"
+    assert "required feature 'Close' contains missing values" in result.quality.reasons
+
+
+def test_allowed_missing_rows_are_degraded_allowed(tmp_path: Path) -> None:
+    path = tmp_path / "allowed_missing.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, None, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        DataConfig(
+            source="csv",
+            path=str(path),
+            symbols=["SYN"],
+            quality=DataQualityConfig(allowed_degradations=["missing_rows"]),
+        )
+    )
+
+    assert result.quality.state == "degraded_allowed"
+    assert "required feature 'Close' contains missing values" in result.quality.warnings
+
+
+def test_close_only_fixlb_requirement_allows_missing_optional_features(tmp_path: Path) -> None:
+    path = tmp_path / "close_only.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+
+    assert result.quality.state == "healthy"
+    assert "optional OHLCV features unavailable" in result.quality.warnings[0]
+
+
+def test_high_low_label_requirement_rejects_close_only_data(tmp_path: Path) -> None:
+    path = tmp_path / "close_only.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"]),
+        required_features=("Close", "High", "Low"),
+    )
+
+    assert result.quality.state == "rejected"
+    assert "required feature 'High' is unavailable" in result.quality.reasons
+    assert "required feature 'Low' is unavailable" in result.quality.reasons
+
+
+def test_skipped_symbol_requires_skip_policy_opt_in() -> None:
+    native_data = load_market_data_result(DataConfig(rows=5, symbols=["AAA"])).native_data
+
+    result = load_market_data_result(
+        DataConfig(source="fake", symbols=["AAA", "BBB"]),
+        adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=native_data)},
+    )
+
+    assert result.quality.state == "rejected"
+    assert "configured symbols missing from loaded data: ['BBB']" in result.quality.reasons
+
+
+def test_skipped_symbol_with_explicit_policy_is_degraded_allowed() -> None:
+    native_data = load_market_data_result(DataConfig(rows=5, symbols=["AAA"])).native_data
+
+    result = load_market_data_result(
+        DataConfig(
+            source="fake",
+            symbols=["AAA", "BBB"],
+            skip_on_error=True,
+            quality=DataQualityConfig(allowed_degradations=["skipped_symbols"]),
+        ),
+        adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=native_data)},
+    )
+
+    assert result.quality.state == "degraded_allowed"
+    assert "configured symbols missing from loaded data: ['BBB']" in result.quality.warnings
+
+
+def test_remote_post_alignment_evidence_is_explicit() -> None:
+    native_data = load_market_data_result(DataConfig(rows=5, symbols=["AAA"])).native_data
+
+    result = load_market_data_result(
+        DataConfig(source="fake", symbols=["AAA"]),
+        adapters={
+            "fake": lambda _config: MarketDataAdapterResult(
+                native_data=native_data,
+                evidence={"source": "post_vectorbt_alignment"},
+            )
+        },
+    )
+
+    assert result.metadata["index_evidence"]["source"] == "post_vectorbt_alignment"
+
+
+def test_provider_failure_returns_safe_non_usable_result() -> None:
+    def fail(_config: DataConfig) -> MarketDataAdapterResult:
+        raise RemoteDataPullError("fake", "network unavailable")
+
+    result = load_market_data_result(
+        DataConfig(source="fake", symbols=["AAA"]),
+        adapters={"fake": fail},
+    )
+
+    assert result.native_data is None
+    assert result.quality.state == "provider_failed"
+    assert result.metadata["quality"]["state"] == "provider_failed"
+    assert result.metadata["diagnostics"][0]["provider_status"] == "provider_failed"
+    assert "network unavailable" not in str(result.metadata)
+
+
+def test_provider_metadata_projection_omits_unsafe_nested_mappings() -> None:
+    result = load_market_data_result(
+        DataConfig(source="fake", symbols=["SYN"]),
+        adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=_ProviderMetadataData())},
+    )
+
+    provider_metadata = result.metadata["provider_metadata"]
+    omitted = result.metadata["omitted_metadata_fields"]
+
+    assert provider_metadata["fetch_kwargs"] == {"period": "1mo", "limit": 100}
+    assert provider_metadata["returned_kwargs"] == {"freq": "1D"}
+    assert {item["path"] for item in omitted} >= {
+        "fetch_kwargs.headers",
+        "fetch_kwargs.cache_path",
+        "returned_kwargs.auth",
+    }
+
+
+def test_provider_update_support_uses_symbol_update_capability() -> None:
+    result = load_market_data_result(
+        DataConfig(source="fake", symbols=["SYN"]),
+        adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=_UpdateCapableProviderData())},
+    )
+
+    assert result.metadata["update_supported"] is True
+
+
+def test_provider_update_support_uses_feature_update_capability() -> None:
+    result = load_market_data_result(
+        DataConfig(source="fake", symbols=["SYN"]),
+        adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=_FeatureUpdateProviderData())},
+    )
+
+    assert result.metadata["update_supported"] is True
+
+
+@pytest.mark.parametrize(
+    "path_value",
+    [
+        "/home/alice/cache.db",
+        "C:\\Users\\alice\\cache.db",
+        "\\\\server\\share\\cache.db",
+        "~",
+        "~/.cache/provider",
+        "~alice/.cache/provider",
+    ],
+)
+def test_public_metadata_rejects_nonportable_paths(path_value: str) -> None:
+    with pytest.raises(ValueError, match="non-portable path"):
+        assert_public_metadata_safe({"path": path_value})
+
+
+class _ProviderMetadataData:
+    index = pd.date_range("2020-01-01", periods=3, freq="1D", tz="UTC")
+    features: ClassVar[list[str]] = ["Close"]
+    symbols: ClassVar[list[str]] = ["SYN"]
+    fetch_kwargs: ClassVar[dict[str, object]] = {
+        "period": "1mo",
+        "limit": 100,
+        "headers": {"period": "sessionid=abc"},
+        "cache_path": "/home/alice/cache.db",
+    }
+    returned_kwargs: ClassVar[dict[str, object]] = {"freq": "1D", "auth": {"tz": "UTC"}}
+
+    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
+        if feature not in {None, "Close"}:
+            raise ValueError(feature)
+        return pd.DataFrame({"SYN": [1.0, 2.0, 3.0]}, index=self.index)
+
+
+class _UpdateCapableProviderData(_ProviderMetadataData):
+    symbol_oriented = True
+
+    def update_symbol(self, symbol: str, **_kwargs) -> pd.DataFrame:
+        return pd.DataFrame({symbol: [4.0]}, index=self.index[:1])
+
+
+class _FeatureUpdateProviderData(_ProviderMetadataData):
+    feature_oriented = True
+
+    def update_feature(self, feature: str, **_kwargs) -> pd.DataFrame:
+        return pd.DataFrame({"SYN": [4.0]}, index=self.index[:1])

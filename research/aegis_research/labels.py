@@ -7,34 +7,33 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.config import LabelConfig
-from research.aegis_research.data_schema import primary_series, table_shape
+from research.aegis_research.data_schema import table_shape
 
 
 @dataclass(frozen=True)
 class LabelResult:
-    labels: pd.Series
+    labels: pd.DataFrame
     metadata: dict[str, Any]
     native_object: Any | None = None
 
 
 def build_labels(
-    close: pd.Series | pd.DataFrame,
+    close: pd.DataFrame,
     config: LabelConfig,
-    high: pd.Series | pd.DataFrame | None = None,
-    low: pd.Series | pd.DataFrame | None = None,
-) -> pd.Series:
+    high: pd.DataFrame | None = None,
+    low: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     return build_label_result(close, config, high=high, low=low).labels
 
 
 def build_label_result(
-    close: pd.Series | pd.DataFrame,
+    close: pd.DataFrame,
     config: LabelConfig,
-    high: pd.Series | pd.DataFrame | None = None,
-    low: pd.Series | pd.DataFrame | None = None,
+    high: pd.DataFrame | None = None,
+    low: pd.DataFrame | None = None,
 ) -> LabelResult:
-    close_series = primary_series(close, role="close")
     if config.kind == "fixlb":
-        fixlb = vbt.FIXLB.run(close_series, n=config.horizon, hide_params=True)
+        fixlb = vbt.FIXLB.run(close, n=config.horizon, hide_params=True)
         labels = _binary_from_numeric_labels(fixlb.labels, config.threshold)
         return LabelResult(
             labels=labels,
@@ -47,10 +46,10 @@ def build_label_result(
             },
         )
     if config.kind == "trendlb":
-        high_series, low_series = _require_high_low(high, low)
+        high_values, low_values = _require_high_low(high, low)
         trendlb = vbt.TRENDLB.run(
-            primary_series(high_series, role="high"),
-            primary_series(low_series, role="low"),
+            high_values,
+            low_values,
             config.up_th,
             config.down_th,
             mode=config.mode,
@@ -71,10 +70,10 @@ def build_label_result(
             },
         )
     if config.kind == "pivotlb":
-        high_series, low_series = _require_high_low(high, low)
+        high_values, low_values = _require_high_low(high, low)
         pivotlb = vbt.PIVOTLB.run(
-            primary_series(high_series, role="high"),
-            primary_series(low_series, role="low"),
+            high_values,
+            low_values,
             config.up_th,
             config.down_th,
             hide_params=True,
@@ -95,22 +94,32 @@ def build_label_result(
     raise ValueError(f"Unsupported label kind: {config.kind}")
 
 
-def _binary_from_numeric_labels(values: pd.Series, threshold: float) -> pd.Series:
+def _binary_from_numeric_labels(
+    values: pd.DataFrame, threshold: float
+) -> pd.DataFrame:
     labels = (values > threshold).astype("Int8")
-    labels[values.isna()] = pd.NA
-    return labels.rename("label")
+    labels = labels.mask(values.isna(), pd.NA)
+    return _label_panel(labels)
 
 
-def _binary_from_value_labels(values: pd.Series, positive_value: int) -> pd.Series:
+def _binary_from_value_labels(
+    values: pd.DataFrame, positive_value: int
+) -> pd.DataFrame:
     labels = (values == positive_value).astype("Int8")
-    labels[values.isna()] = pd.NA
-    return labels.rename("label")
+    labels = labels.mask(values.isna(), pd.NA)
+    return _label_panel(labels)
+
+
+def _label_panel(values: Any) -> pd.DataFrame:
+    if isinstance(values, pd.Series):
+        return values.to_frame(name=values.name or "label")
+    return values
 
 
 def _require_high_low(
-    high: pd.Series | pd.DataFrame | None,
-    low: pd.Series | pd.DataFrame | None,
-) -> tuple[pd.Series | pd.DataFrame, pd.Series | pd.DataFrame]:
+    high: pd.DataFrame | None,
+    low: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     if high is None or low is None:
         raise ValueError("high and low are required for this VectorBT label generator")
     return high, low

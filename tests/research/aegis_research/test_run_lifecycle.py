@@ -117,7 +117,7 @@ def test_run_experiment_initializes_manifest_before_data_loading(
     resolved = load_experiment_config("research/configs/experiments/synthetic_ml_baseline.yaml")
     resolved = resolve_experiment_config(replace(resolved.config, output_dir=str(tmp_path)))
 
-    def fail_after_manifest(_config):
+    def fail_after_manifest(_config, **_kwargs):
         manifest_path = tmp_path / "fixed-run" / "manifest.json"
         assert manifest_path.exists()
         raise RuntimeError("data stage failed")
@@ -153,7 +153,7 @@ def test_failed_run_diagnostic_redacts_config_secret_values(
         )
     )
 
-    def fail_with_secret(_config):
+    def fail_with_secret(_config, **_kwargs):
         raise RuntimeError("provider returned super-secret-token")
 
     monkeypatch.setattr("research.aegis_research.experiments.load_market_data_result", fail_with_secret)

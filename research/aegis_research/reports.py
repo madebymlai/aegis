@@ -20,20 +20,27 @@ def portfolio_metrics(pf: Any, config: ReportConfig) -> dict[str, Any]:
         metrics=["total_return", "max_dd", "total_trades", "win_rate", "total_fees_paid"],
         agg_func=None,
     )
-    if isinstance(stats, pd.DataFrame):
-        stats = stats.iloc[0]
-    return {
-        "total_return_pct": _metric(stats, "Total Return [%]"),
-        "sharpe_ratio": _scalar_metric(
+    per_symbol = {
+        "total_return_pct": _metric_map(stats, "Total Return [%]"),
+        "max_drawdown_pct": _metric_map(stats, "Max Drawdown [%]"),
+        "total_trades": _metric_map(stats, "Total Trades"),
+        "win_rate_pct": _metric_map(stats, "Win Rate [%]"),
+        "total_fees_paid": _metric_map(stats, "Total Fees Paid"),
+        "sharpe_ratio": _value_map(
             pf.get_sharpe_ratio(
                 freq=pd.Timedelta(config.freq),
                 year_freq=pd.Timedelta(config.year_freq),
             )
         ),
-        "max_drawdown_pct": _metric(stats, "Max Drawdown [%]"),
-        "total_trades": _metric(stats, "Total Trades"),
-        "win_rate_pct": _metric(stats, "Win Rate [%]"),
-        "total_fees_paid": _metric(stats, "Total Fees Paid"),
+    }
+    return {
+        "total_return_pct": _mean_metric(per_symbol["total_return_pct"]),
+        "sharpe_ratio": _mean_metric(per_symbol["sharpe_ratio"]),
+        "max_drawdown_pct": _max_metric(per_symbol["max_drawdown_pct"]),
+        "total_trades": _sum_metric(per_symbol["total_trades"]),
+        "win_rate_pct": _mean_metric(per_symbol["win_rate_pct"]),
+        "total_fees_paid": _sum_metric(per_symbol["total_fees_paid"]),
+        "per_symbol": per_symbol,
     }
 
 
@@ -75,15 +82,49 @@ def write_report(report: dict[str, Any], path: str | Path) -> None:
     Path(path).write_text(json.dumps(to_builtin(report), indent=2, sort_keys=True) + "\n")
 
 
-def _metric(stats: pd.Series, name: str) -> Any:
-    return _scalar_metric(stats.get(name))
+def _metric_map(stats: Any, name: str) -> dict[str, Any]:
+    if isinstance(stats, pd.DataFrame):
+        if name in stats.index:
+            return _value_map(stats.loc[name])
+        if name in stats.columns:
+            return _value_map(stats[name])
+        return {}
+    return {"portfolio": _scalar_metric(stats.get(name))}
+
+
+def _value_map(value: Any) -> dict[str, Any]:
+    if isinstance(value, pd.DataFrame):
+        return {
+            "__".join(map(str, key)) if isinstance(key, tuple) else str(key): _scalar_metric(item)
+            for key, item in value.stack().items()
+        }
+    if isinstance(value, pd.Series):
+        return {str(key): _scalar_metric(item) for key, item in value.items()}
+    return {"portfolio": _scalar_metric(value)}
+
+
+def _mean_metric(values: dict[str, Any]) -> Any:
+    numbers = _numeric_values(values)
+    return sum(numbers) / len(numbers) if numbers else None
+
+
+def _sum_metric(values: dict[str, Any]) -> Any:
+    numbers = _numeric_values(values)
+    return sum(numbers) if numbers else None
+
+
+def _max_metric(values: dict[str, Any]) -> Any:
+    numbers = _numeric_values(values)
+    return max(numbers) if numbers else None
+
+
+def _numeric_values(values: dict[str, Any]) -> list[float]:
+    return [float(value) for value in values.values() if value is not None]
 
 
 def _scalar_metric(value: Any) -> Any:
-    if isinstance(value, pd.DataFrame):
-        value = value.iloc[0, 0]
-    elif isinstance(value, pd.Series):
-        value = value.iloc[0]
+    if isinstance(value, (pd.Series, pd.DataFrame)):
+        raise TypeError("metric value must be scalar")
     if pd.isna(value):
         return None
     return to_builtin(value)

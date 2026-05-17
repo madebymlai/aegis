@@ -53,7 +53,9 @@ def test_native_writer_persists_private_artifact_and_public_metadata(tmp_path: P
     assert sidecar["visibility"] == ArtifactVisibility.PUBLIC
     assert sidecar["upstream_artifact_ids"] == []
     assert native["upstream_artifact_ids"] == [sidecar["id"]]
-    assert json.loads((tmp_path / sidecar["path"]).read_text())["split"] == "split_0"
+    sidecar_payload = json.loads((tmp_path / sidecar["path"]).read_text())
+    assert sidecar_payload["schema_version"] == "native_metadata.v1"
+    assert sidecar_payload["metadata"]["split"] == "split_0"
     validate_manifest(manifest.to_dict(), run_dir=tmp_path)
 
 
@@ -98,6 +100,30 @@ def test_native_writer_fails_closed_when_secret_bytes_are_detected(tmp_path: Pat
             path="native/data.pkl",
             obj=_NativeObject(b"token=super-secret-token"),
             known_secrets=["super-secret-token"],
+        )
+
+    artifact = next(artifact for artifact in manifest.artifacts if artifact["id"] == "data.remote")
+    assert artifact["status"] == ArtifactStatus.FAILED
+    assert not (tmp_path / "native" / "data.pkl").exists()
+
+
+def test_native_writer_fails_closed_when_secret_like_bytes_are_detected(tmp_path: Path) -> None:
+    manifest = RunManifest.new(
+        run_id="run-1",
+        run_dir=tmp_path,
+        run_label="baseline",
+        mode="new",
+        config={},
+    )
+    writer = NativeArtifactWriter(manifest, tmp_path)
+
+    with pytest.raises(NativeArtifactSafetyError):
+        writer.write_native_artifact(
+            artifact_id="data.remote",
+            role="data",
+            producer_stage="data",
+            path="native/data.pkl",
+            obj=_NativeObject(b"Authorization: Bearer generated-token"),
         )
 
     artifact = next(artifact for artifact in manifest.artifacts if artifact["id"] == "data.remote")
@@ -218,6 +244,7 @@ def test_remote_native_artifact_scans_resolved_remote_secrets(
     run_dir = tmp_path / "remote-run"
     payload = json.loads((run_dir / "manifest.json").read_text())
     artifacts = {artifact["id"]: artifact for artifact in payload["artifacts"]}
+    assert artifacts["data.metadata"]["status"] == ArtifactStatus.COMPLETED
     assert artifacts["data.native"]["status"] == ArtifactStatus.FAILED
     assert not (run_dir / "native" / "data.pkl").exists()
     assert "super-secret-token" not in json.dumps(payload)
@@ -257,7 +284,7 @@ class _RemoteDataWithSecret:
         api_token = api_token or (execute_kwargs or {}).get("api_token")
         return cls(api_token)
 
-    def get(self) -> pd.DataFrame:
+    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
         index = pd.date_range("2020-01-01", periods=180, freq="1D", tz="UTC", name="Open time")
         frame = pd.DataFrame(
             {
@@ -270,6 +297,8 @@ class _RemoteDataWithSecret:
             index=index,
         )
         frame.columns = pd.MultiIndex.from_product([["SYN"], frame.columns], names=["symbol", "feature"])
+        if feature is not None:
+            return frame.xs(feature, axis=1, level="feature")
         return frame
 
     def save(self, path: str | Path) -> None:

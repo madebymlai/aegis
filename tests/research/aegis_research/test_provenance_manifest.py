@@ -57,6 +57,8 @@ def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
 
     assert payload["schema_version"] == 1
     assert payload["run"]["id"] == "run-1"
+    assert payload["run"]["run_dir"] == "run-1"
+    assert str(tmp_path) not in json.dumps(payload)
     assert payload["run"]["status"] == RunStatus.RUNNING
     assert payload["stages"][0]["id"] == "data"
     assert payload["artifacts"][0]["id"] == "data.prices"
@@ -139,7 +141,17 @@ def test_manifest_rejects_duplicate_artifact_ids_and_paths(tmp_path: Path) -> No
         manifest.add_artifact(artifact_id="report2", **artifact)
 
 
-@pytest.mark.parametrize("path", ["/tmp/escape.json", "../escape.json", "nested/../../escape"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/tmp/escape.json",
+        "../escape.json",
+        "nested/../../escape",
+        "C:\\Users\\alice\\secret.pkl",
+        "\\\\server\\share\\secret.pkl",
+        "~/.cache/provider",
+    ],
+)
 def test_manifest_rejects_unsafe_artifact_paths(tmp_path: Path, path: str) -> None:
     manifest = RunManifest.new(
         run_id="run-1",

@@ -11,8 +11,8 @@ from research.aegis_research.config import (
     LabelConfig,
     SplitConfig,
 )
-from research.aegis_research.data import load_market_data_result
-from research.aegis_research.data_schema import ohlc_availability, primary_series
+from research.aegis_research.data import close_from_ohlcv, load_market_data_result
+from research.aegis_research.data_schema import ohlc_availability
 from research.aegis_research.indicators import build_indicator_result
 from research.aegis_research.labels import build_label_result
 from research.aegis_research.splits import build_validation_splits_result
@@ -25,7 +25,7 @@ def test_experiments_no_longer_imports_private_label_primary_close() -> None:
     assert "_primary_close(" not in source
 
 
-def test_data_schema_selects_primary_series_and_ohlc_availability() -> None:
+def test_data_schema_reports_ohlc_availability() -> None:
     index = pd.date_range("2020-01-01", periods=3, tz="UTC")
     data = pd.DataFrame(
         {
@@ -37,32 +37,29 @@ def test_data_schema_selects_primary_series_and_ohlc_availability() -> None:
     )
     data.columns = pd.MultiIndex.from_tuples(data.columns, names=["symbol", "feature"])
 
-    selected = primary_series(data.xs("Close", axis=1, level="feature"), role="close")
-
-    assert selected.name == "AAA"
-    assert selected.to_list() == [1.0, 2.0, 3.0]
     assert ohlc_availability(data) == {"Close": True, "High": True, "Low": False, "Open": False}
 
 
 def test_data_stage_result_exposes_metadata_without_recorder_ids() -> None:
     result = load_market_data_result(DataConfig(rows=10, symbols=["SYN"]))
 
-    assert result.data.shape[0] == 10
+    assert result.native_data.feature_oriented
+    assert close_from_ohlcv(result.native_data).shape == (10, 1)
     assert result.metadata["source"] == "synthetic"
     assert result.metadata["shape"]["rows"] == 10
     assert "artifact_id" not in result.metadata
 
 
 def test_indicator_and_label_results_expose_portable_metadata() -> None:
-    data = load_market_data_result(DataConfig(rows=120, symbols=["SYN"])).data
-    close = primary_series(data.xs("Close", axis=1, level="feature"), role="close")
+    data = load_market_data_result(DataConfig(rows=120, symbols=["SYN"])).native_data
+    close = close_from_ohlcv(data)
 
     indicators = build_indicator_result(close, IndicatorConfig())
     labels = build_label_result(close, LabelConfig())
 
     assert indicators.frame.shape[0] == 120
     assert indicators.metadata["returns"] == [1, 5, 20]
-    assert labels.labels.name == "label"
+    assert list(labels.labels.columns) == ["SYN"]
     assert labels.metadata["kind"] == "fixlb"
     assert labels.native_object is not None
 

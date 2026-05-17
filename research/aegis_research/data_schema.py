@@ -8,15 +8,6 @@ import pandas as pd
 OHLC_FEATURES = ("Close", "High", "Low", "Open")
 
 
-def primary_series(values: pd.Series | pd.DataFrame, *, role: str) -> pd.Series:
-    if isinstance(values, pd.Series):
-        return values.rename(values.name or role)
-    if values.empty or len(values.columns) == 0:
-        raise ValueError(f"{role} data must contain at least one column")
-    column = values.columns[0]
-    return values.iloc[:, 0].rename(str(column))
-
-
 def ohlc_availability(data: pd.DataFrame) -> dict[str, bool]:
     if isinstance(data.columns, pd.MultiIndex):
         levels = set(map(str, data.columns.get_level_values(-1))) | set(
@@ -27,18 +18,27 @@ def ohlc_availability(data: pd.DataFrame) -> dict[str, bool]:
     return {feature: feature in columns for feature in OHLC_FEATURES}
 
 
-def table_shape(data: pd.Series | pd.DataFrame) -> dict[str, int]:
-    if isinstance(data, pd.Series):
-        return {"rows": len(data), "columns": 1}
+def table_shape(data: pd.DataFrame) -> dict[str, int]:
     return {"rows": len(data), "columns": len(data.columns)}
 
 
 def index_identity(index: pd.Index) -> dict[str, Any]:
-    values = [str(value) for value in index]
-    digest = hashlib.sha256("\n".join(values).encode()).hexdigest()
+    digest = hashlib.sha256()
+    count = 0
+    start = None
+    end = None
+    for value in index:
+        text = str(value)
+        if count:
+            digest.update(b"\n")
+        digest.update(text.encode())
+        if start is None:
+            start = text
+        end = text
+        count += 1
     return {
-        "count": len(index),
-        "start": values[0] if values else None,
-        "end": values[-1] if values else None,
-        "hash": digest,
+        "count": count,
+        "start": start,
+        "end": end,
+        "hash": digest.hexdigest(),
     }

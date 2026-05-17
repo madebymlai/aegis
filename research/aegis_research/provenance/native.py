@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import pickle
 import tempfile
@@ -14,7 +15,7 @@ from research.aegis_research.provenance.manifest import (
     ArtifactVisibility,
     RunManifest,
     atomic_write_json,
-    hash_file,
+    normalize_artifact_path,
 )
 
 
@@ -32,6 +33,18 @@ DENIED_NATIVE_STATE_KEYS = {
     "headers",
     "session",
 }
+SECRET_LIKE_BYTE_MARKERS = (
+    b"api_key",
+    b"authorization",
+    b"bearer ",
+    b"basic ",
+    b"cookie",
+    b"headers",
+    b"password",
+    b"private key",
+    b"secret=",
+    b"token=",
+)
 
 
 class NativeArtifactWriter:
@@ -58,6 +71,7 @@ class NativeArtifactWriter:
         metadata: dict[str, Any] | None = None,
         known_secrets: list[str] | tuple[str, ...] = (),
     ) -> None:
+        path = normalize_artifact_path(path)
         final_path = self.run_dir / path
         if final_path.exists():
             raise FileExistsError(f"Native artifact path already exists: {final_path}")
@@ -96,15 +110,16 @@ class NativeArtifactWriter:
                 required=role == "data_native",
             )
             _save_native_object(obj, temp_path)
-            _assert_no_known_secret_bytes(temp_path, known_secrets)
+            content_hash, size = _scan_native_artifact(temp_path, known_secrets)
             temp_path.replace(final_path)
             _fsync_parent(final_path)
 
             sidecar_payload = {
+                "schema_version": "native_metadata.v1",
                 "artifact_id": artifact_id,
                 "object_type": f"{type(obj).__module__}.{type(obj).__qualname__}",
                 "native_artifact_path": path,
-                **(metadata or {}),
+                "metadata": metadata or {},
             }
             _assert_no_secret_material(sidecar_payload, known_secrets)
             self.registry.begin_artifact_write(sidecar_id)
@@ -113,8 +128,8 @@ class NativeArtifactWriter:
             self.registry.complete_existing_file(sidecar_id)
             self.registry.complete_artifact(
                 artifact_id,
-                content_hash=hash_file(final_path),
-                size=final_path.stat().st_size,
+                content_hash=content_hash,
+                size=size,
                 metadata={"metadata_artifact_id": sidecar_id, **(metadata or {})},
             )
         except Exception as error:
@@ -152,13 +167,30 @@ def _save_native_object(obj: Any, path: Path) -> None:
         pickle.dump(obj, handle)
 
 
-def _assert_no_known_secret_bytes(path: Path, known_secrets: list[str] | tuple[str, ...]) -> None:
-    if not known_secrets:
-        return
-    payload = path.read_bytes()
-    for secret in known_secrets:
-        if secret and secret.encode() in payload:
-            raise NativeArtifactSafetyError("native artifact bytes contain a known secret")
+def _scan_native_artifact(
+    path: Path,
+    known_secrets: list[str] | tuple[str, ...],
+) -> tuple[str, int]:
+    known_secret_bytes = tuple(secret.encode() for secret in known_secrets if secret)
+    needles = known_secret_bytes + SECRET_LIKE_BYTE_MARKERS
+    overlap_size = max((len(needle) for needle in needles), default=1) - 1
+    overlap = b""
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+            window = overlap + chunk
+            for secret in known_secret_bytes:
+                if secret in window:
+                    raise NativeArtifactSafetyError("native artifact bytes contain a known secret")
+            lowered = window.lower()
+            for marker in SECRET_LIKE_BYTE_MARKERS:
+                if marker in lowered:
+                    raise NativeArtifactSafetyError("native artifact bytes contain secret-like material")
+            overlap = window[-overlap_size:] if overlap_size else b""
+    return digest.hexdigest(), size
 
 
 def _assert_no_native_secret_state(

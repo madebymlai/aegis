@@ -50,10 +50,6 @@ def _chronological_split(index: pd.Index, config: SplitConfig) -> ValidationSpli
     )
 
 
-def _rolling_splits(index: pd.Index, config: SplitConfig) -> list[ValidationSplit]:
-    return _rolling_splits_result(index, config).splits
-
-
 def _rolling_splits_result(index: pd.Index, config: SplitConfig) -> ValidationSplitsResult:
     if config.n < 2:
         raise ValueError("split.n must be at least 2 for rolling validation")

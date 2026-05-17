@@ -21,6 +21,7 @@ from research.aegis_research.config import (
 from research.aegis_research.provenance.manifest import (
     ArtifactVisibility,
     canonical_json_bytes,
+    hash_file,
 )
 
 SAFE_ENV_KEYS = ("LANG", "LC_ALL", "TZ", "PYTHONHASHSEED")
@@ -218,18 +219,10 @@ def _untracked_content_identity(repo_path: Path, paths: list[str]) -> str:
     for relative_path in sorted(paths):
         path = repo_path / relative_path
         if path.is_file():
-            records.append({"path": relative_path, "sha256": _hash_file(path)})
+            records.append({"path": relative_path, "sha256": hash_file(path)})
         else:
             records.append({"path": relative_path, "type": "non-file"})
     return canonical_json_bytes(records).decode()
-
-
-def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _sanitize_remote(remote: str) -> str:

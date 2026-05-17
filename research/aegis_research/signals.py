@@ -6,11 +6,9 @@ from research.aegis_research.config import SignalConfig
 
 
 def probabilities_to_signals(
-    long_probability: pd.Series,
+    long_probability: pd.DataFrame,
     config: SignalConfig,
-) -> tuple[pd.Series, pd.Series]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     entries = long_probability > config.long_threshold
     exits = long_probability < config.exit_threshold
-    entries = entries.fillna(False).rename("entry")
-    exits = exits.fillna(False).rename("exit")
-    return entries, exits
+    return entries.fillna(False), exits.fillna(False)

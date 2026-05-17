@@ -7,7 +7,6 @@ from research.aegis_research.data import (
     load_market_data,
     low_from_ohlcv,
 )
-from research.aegis_research.data_schema import primary_series
 from research.aegis_research.indicators import build_indicators
 from research.aegis_research.labels import build_labels
 from research.aegis_research.splits import build_validation_splits
@@ -21,10 +20,10 @@ def test_validation_result_exposes_complete_split_child_shape() -> None:
     assert result.validation_metadata["n_splits"] == 5
     for split in result.split_results:
         assert split.model is not None
-        assert split.train_probabilities.name == "long_probability"
-        assert split.test_probabilities.name == "long_probability"
-        assert split.train_entries.dtype == bool
-        assert split.test_entries.dtype == bool
+        assert list(split.train_probabilities.columns) == ["SYN"]
+        assert list(split.test_probabilities.columns) == ["SYN"]
+        assert all(str(dtype) == "bool" for dtype in split.train_entries.dtypes)
+        assert all(str(dtype) == "bool" for dtype in split.test_entries.dtypes)
         assert split.train_portfolio is not None
         assert split.test_portfolio is not None
         assert split.train_metrics
@@ -50,9 +49,9 @@ def _evaluate(config_path: str):
     resolved = load_experiment_config(config_path)
     config = resolved.config
     data = load_market_data(config.data)
-    close = primary_series(close_from_ohlcv(data), role="close")
-    high = primary_series(high_from_ohlcv(data), role="high")
-    low = primary_series(low_from_ohlcv(data), role="low")
+    close = close_from_ohlcv(data)
+    high = high_from_ohlcv(data)
+    low = low_from_ohlcv(data)
     indicators = build_indicators(close, config.indicators)
     labels = build_labels(close, config.labels, high=high, low=low)
     splits = build_validation_splits(
