@@ -1,7 +1,7 @@
 ---
 title: feat: Implement VectorBT indicator contract
 type: feat
-status: active
+status: completed
 date: 2026-05-17
 origin: docs/brainstorms/2026-05-17-vectorbt-indicator-contract-requirements.md
 deepened: 2026-05-17

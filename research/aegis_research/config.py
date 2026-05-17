@@ -11,6 +11,8 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from research.aegis_research.indicator_registry import indicator_registry
+
 CONFIG_SCHEMA_VERSION = 1
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -49,6 +51,17 @@ REPORT_STATUSES = {
     REPORT_STATUS_SURVIVED,
     REPORT_STATUS_REJECTED,
     REPORT_STATUS_NEEDS_MORE_EVIDENCE,
+}
+INDICATOR_INVALID_VALUE_POLICIES = {"drop_rows", "raise"}
+INDICATOR_GRIDS = {"zipped", "product"}
+INDICATOR_INLINE_CODE_KEYS = {
+    "apply_func",
+    "code",
+    "formula",
+    "function",
+    "import",
+    "module",
+    "python",
 }
 
 SECRET_KEY_RE = re.compile(
@@ -147,11 +160,52 @@ class DataConfig:
 
 
 @dataclass(frozen=True)
+class IndicatorFeatureConfig:
+    output: str
+    transform: str = "identity"
+
+
+@dataclass(frozen=True)
+class IndicatorSpecConfig:
+    id: str
+    params: dict[str, Any] = field(default_factory=dict)
+    outputs: list[str] = field(default_factory=list)
+    model_features: list[IndicatorFeatureConfig] = field(default_factory=list)
+    grid: str = "zipped"
+    param_product: bool = False
+
+
+@dataclass(frozen=True)
 class IndicatorConfig:
-    returns: list[int] = field(default_factory=lambda: [1, 5, 20])
-    moving_average_windows: list[int] = field(default_factory=lambda: [10, 30])
-    volatility_windows: list[int] = field(default_factory=lambda: [20])
-    rsi_windows: list[int] = field(default_factory=lambda: [14])
+    invalid_value_policy: str = "drop_rows"
+    specs: list[IndicatorSpecConfig] = field(
+        default_factory=lambda: [
+            IndicatorSpecConfig(
+                id="returns",
+                params={"window": [1, 5, 20]},
+                outputs=["returns"],
+                model_features=[IndicatorFeatureConfig(output="returns")],
+            ),
+            IndicatorSpecConfig(
+                id="ma",
+                params={"window": [10, 30], "wtype": "simple"},
+                outputs=["ma"],
+                model_features=[IndicatorFeatureConfig(output="ma", transform="distance_to_close")],
+            ),
+            IndicatorSpecConfig(
+                id="volatility",
+                params={"window": [20]},
+                outputs=["volatility"],
+                model_features=[IndicatorFeatureConfig(output="volatility")],
+            ),
+            IndicatorSpecConfig(
+                id="rsi",
+                params={"window": [14], "wtype": "wilder"},
+                outputs=["rsi"],
+                model_features=[IndicatorFeatureConfig(output="rsi", transform="scale_0_1")],
+            ),
+        ]
+    )
 
 
 @dataclass(frozen=True)
@@ -285,7 +339,7 @@ def _build_resolved_config(
         name=raw["name"],
         schema_version=raw["schema_version"],
         data=_build_data_config(raw.get("data", {})),
-        indicators=IndicatorConfig(**raw.get("indicators", {})),
+        indicators=_build_indicator_config(raw.get("indicators", {})),
         labels=LabelConfig(**raw.get("labels", {})),
         split=SplitConfig(**raw.get("split", {})),
         model=ModelConfig(**raw.get("model", {})),
@@ -312,6 +366,39 @@ def _build_data_config(raw: dict[str, Any]) -> DataConfig:
         quality_config = DataQualityConfig(**quality)
     value["quality"] = quality_config
     return DataConfig(**value)
+
+
+def _build_indicator_config(raw: dict[str, Any]) -> IndicatorConfig:
+    if not raw:
+        return IndicatorConfig()
+    default_config = IndicatorConfig()
+    specs = raw.get("specs")
+    return IndicatorConfig(
+        invalid_value_policy=raw.get("invalid_value_policy", "drop_rows"),
+        specs=default_config.specs if specs is None else [_build_indicator_spec(spec) for spec in specs],
+    )
+
+
+def _build_indicator_spec(raw: dict[str, Any]) -> IndicatorSpecConfig:
+    definition = indicator_registry()[raw["id"]]
+    outputs = list(raw.get("outputs", definition.default_outputs))
+    model_features = raw.get("model_features")
+    if model_features is None:
+        model_features = definition.default_model_features
+    return IndicatorSpecConfig(
+        id=raw["id"],
+        params=dict(raw.get("params", {})),
+        outputs=outputs,
+        model_features=[
+            IndicatorFeatureConfig(
+                output=feature["output"],
+                transform=feature.get("transform", "identity"),
+            )
+            for feature in model_features
+        ],
+        grid=raw.get("grid", "zipped"),
+        param_product=raw.get("param_product", False),
+    )
 
 
 def _validate_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -478,9 +565,208 @@ def _quality_degradations(data: dict[str, Any]) -> set[str]:
 
 
 def _validate_indicators(indicators: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    for key in ("returns", "moving_average_windows", "volatility_windows", "rsi_windows"):
-        if key in indicators:
-            _require_int_list(f"indicators.{key}", indicators[key], issues, positive=True)
+    _optional_enum(
+        "indicators.invalid_value_policy",
+        indicators,
+        INDICATOR_INVALID_VALUE_POLICIES,
+        issues,
+    )
+    specs = indicators.get("specs")
+    if specs is None:
+        return
+    if not isinstance(specs, list) or not specs:
+        issues.append(ConfigValidationIssue("indicators.specs", "must be a non-empty list"))
+        return
+
+    seen_ids: set[str] = set()
+    registry = indicator_registry()
+    for index, spec in enumerate(specs):
+        path = f"indicators.specs[{index}]"
+        if not isinstance(spec, dict):
+            issues.append(ConfigValidationIssue(path, "must be a mapping"))
+            continue
+        _validate_known_keys(
+            path,
+            spec,
+            {"id", "params", "outputs", "model_features", "grid", "param_product"},
+            issues,
+        )
+        _validate_no_inline_indicator_code(path, spec, issues)
+        indicator_id = spec.get("id")
+        if not isinstance(indicator_id, str) or not indicator_id:
+            issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty string"))
+            continue
+        if indicator_id in seen_ids:
+            issues.append(ConfigValidationIssue(f"{path}.id", "duplicates another indicator spec id"))
+        seen_ids.add(indicator_id)
+        definition = registry.get(indicator_id)
+        if definition is None:
+            issues.append(ConfigValidationIssue(f"{path}.id", "is not a registered indicator id"))
+            continue
+        if not definition.bar_aligned:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}.id",
+                    "must reference a bar-aligned indicator definition in schema v1",
+                )
+            )
+        _validate_indicator_params(path, spec.get("params", {}), definition, issues)
+        _validate_indicator_outputs(path, spec.get("outputs"), definition, issues)
+        _validate_indicator_model_features(path, spec.get("model_features"), definition, issues)
+        _validate_indicator_grid(path, spec, issues)
+
+
+def _validate_no_inline_indicator_code(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child_path = f"{path}.{key}"
+            if str(key) in INDICATOR_INLINE_CODE_KEYS:
+                issues.append(
+                    ConfigValidationIssue(child_path, "inline code is not allowed in indicators")
+                )
+            _validate_no_inline_indicator_code(child_path, item, issues)
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_no_inline_indicator_code(f"{path}[{index}]", item, issues)
+
+
+def _validate_indicator_params(
+    spec_path: str,
+    params: Any,
+    definition: Any,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    path = f"{spec_path}.params"
+    if not isinstance(params, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_json_like(path, params, issues)
+    for param_name in definition.param_names:
+        if param_name not in params and param_name not in definition.default_params:
+            issues.append(ConfigValidationIssue(f"{path}.{param_name}", "is required"))
+    for key, value in params.items():
+        child_path = f"{path}.{key}"
+        if key not in definition.param_names:
+            issues.append(ConfigValidationIssue(child_path, "is not supported by this indicator"))
+            continue
+        if isinstance(value, list) and not value:
+            issues.append(ConfigValidationIssue(child_path, "must not be empty"))
+            continue
+        values = value if isinstance(value, list) else [value]
+        if key == "window":
+            for value_index, item in enumerate(values):
+                item_path = child_path if not isinstance(value, list) else f"{child_path}[{value_index}]"
+                _validate_int(item_path, item, issues, positive=True)
+        if key in definition.allowed_param_values:
+            allowed = definition.allowed_param_values[key]
+            for value_index, item in enumerate(values):
+                item_path = child_path if not isinstance(value, list) else f"{child_path}[{value_index}]"
+                if item not in allowed:
+                    issues.append(ConfigValidationIssue(item_path, f"must be one of {sorted(allowed)}"))
+
+
+def _validate_indicator_outputs(
+    spec_path: str,
+    outputs: Any,
+    definition: Any,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if outputs is None:
+        return
+    path = f"{spec_path}.outputs"
+    if not _require_str_list(path, outputs, issues, non_empty=True):
+        return
+    for index, output in enumerate(outputs):
+        if output not in definition.output_names:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}[{index}]",
+                    f"must be one of {sorted(definition.output_names)}",
+                )
+            )
+
+
+def _validate_indicator_model_features(
+    spec_path: str,
+    model_features: Any,
+    definition: Any,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if model_features is None:
+        return
+    path = f"{spec_path}.model_features"
+    if not isinstance(model_features, list) or not model_features:
+        issues.append(ConfigValidationIssue(path, "must be a non-empty list"))
+        return
+    for index, feature in enumerate(model_features):
+        feature_path = f"{path}[{index}]"
+        if not isinstance(feature, dict):
+            issues.append(ConfigValidationIssue(feature_path, "must be a mapping"))
+            continue
+        _validate_known_keys(feature_path, feature, {"output", "transform"}, issues)
+        output = feature.get("output")
+        if not isinstance(output, str) or not output:
+            issues.append(ConfigValidationIssue(f"{feature_path}.output", "must be a non-empty string"))
+        elif output not in definition.output_names:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{feature_path}.output",
+                    f"must be one of {sorted(definition.output_names)}",
+                )
+            )
+        transform = feature.get("transform", "identity")
+        if not isinstance(transform, str) or not transform:
+            issues.append(ConfigValidationIssue(f"{feature_path}.transform", "must be a string"))
+        elif transform not in definition.supported_transforms:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{feature_path}.transform",
+                    f"must be one of {sorted(definition.supported_transforms)}",
+                )
+            )
+
+
+def _validate_indicator_grid(
+    spec_path: str,
+    spec: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    _optional_enum(f"{spec_path}.grid", spec, INDICATOR_GRIDS, issues)
+    _optional_bool(f"{spec_path}.param_product", spec, issues)
+    grid = spec.get("grid", "zipped")
+    param_product = spec.get("param_product", False)
+    if grid == "product" and param_product is not True:
+        issues.append(
+            ConfigValidationIssue(
+                f"{spec_path}.param_product",
+                "must be true when grid is 'product'",
+            )
+        )
+    if grid == "zipped" and param_product is True:
+        issues.append(
+            ConfigValidationIssue(
+                f"{spec_path}.grid",
+                "must be 'product' when param_product is true",
+            )
+        )
+    if grid != "zipped":
+        return
+    params = spec.get("params", {})
+    if not isinstance(params, dict):
+        return
+    list_lengths = {len(value) for value in params.values() if isinstance(value, list) and len(value) > 1}
+    if len(list_lengths) > 1:
+        issues.append(
+            ConfigValidationIssue(
+                f"{spec_path}.params",
+                "zipped parameter lists must have matching lengths",
+            )
+        )
 
 
 def _validate_labels(labels: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -574,8 +860,10 @@ def _validate_report(report: dict[str, Any], issues: list[ConfigValidationIssue]
     _optional_number("report.min_oos_sharpe", report, issues)
     _optional_number("report.max_oos_drawdown", report, issues, minimum=0, maximum=1)
     _optional_int("report.min_oos_trades", report, issues, minimum=0)
-    _require_timedelta_str("report.freq", report, issues)
-    _require_timedelta_str("report.year_freq", report, issues)
+    if "freq" in report:
+        _require_timedelta_str("report.freq", report, issues)
+    if "year_freq" in report:
+        _require_timedelta_str("report.year_freq", report, issues)
 
 
 def _require_timedelta_str(

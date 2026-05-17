@@ -250,6 +250,30 @@ def test_remote_native_artifact_scans_resolved_remote_secrets(
     assert "super-secret-token" not in json.dumps(payload)
 
 
+def test_indicator_native_artifact_uses_private_bundle_and_public_sidecar(tmp_path: Path) -> None:
+    config = resolve_experiment_config(
+        ExperimentConfig(
+            name="indicator-native-check",
+            output_dir=str(tmp_path),
+            data=DataConfig(source="synthetic", symbols=["SYN"], rows=180),
+        )
+    )
+
+    result = run_experiment(config, run_id="indicator-native-run")
+
+    run_dir = Path(result["run_dir"])
+    payload = json.loads((run_dir / "manifest.json").read_text())
+    artifacts = {artifact["id"]: artifact for artifact in payload["artifacts"]}
+    sidecar = json.loads((run_dir / "native" / "indicators.pkl.metadata.json").read_text())
+
+    assert artifacts["indicators.native"]["visibility"] == ArtifactVisibility.PRIVATE
+    assert artifacts["indicators.native.metadata"]["visibility"] == ArtifactVisibility.PUBLIC
+    assert artifacts["indicators.native"]["status"] == ArtifactStatus.COMPLETED
+    assert "ma" in sidecar["metadata"]["native_object_ids"]
+    assert "rsi" in sidecar["metadata"]["native_object_ids"]
+    assert "/home/" not in json.dumps(sidecar)
+
+
 class _NativeObject:
     def __init__(self, payload: bytes) -> None:
         self.payload = payload

@@ -11,10 +11,36 @@ data:
   seed: 42
 
 indicators:
-  returns: [1, 5, 20]
-  moving_average_windows: [10, 30]
-  volatility_windows: [20]
-  rsi_windows: [14]
+  invalid_value_policy: drop_rows
+  specs:
+    - id: returns
+      params:
+        window: [1, 5, 20]
+      outputs: [returns]
+      model_features:
+        - output: returns
+    - id: ma
+      params:
+        window: [10, 30]
+        wtype: simple
+      outputs: [ma]
+      model_features:
+        - output: ma
+          transform: distance_to_close
+    - id: volatility
+      params:
+        window: [20]
+      outputs: [volatility]
+      model_features:
+        - output: volatility
+    - id: rsi
+      params:
+        window: [14]
+        wtype: wilder
+      outputs: [rsi]
+      model_features:
+        - output: rsi
+          transform: scale_0_1
 
 labels:
   horizon: 5

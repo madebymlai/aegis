@@ -33,11 +33,21 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     assert "config.authored" in artifact_ids
     assert "data.metadata" in artifact_ids
     assert "data.native" in artifact_ids
+    assert "indicators.metadata" in artifact_ids
+    assert "indicators.lineage" in artifact_ids
+    assert "indicators.diagnostics" in artifact_ids
+    assert "indicators.features.schema" in artifact_ids
+    assert "indicators.native" in artifact_ids
+    assert "indicators.native.metadata" in artifact_ids
     assert "report.survival" in artifact_ids
     config_manifest = next(artifact for artifact in manifest["artifacts"] if artifact["id"] == "config.manifest")
     assert config_manifest["visibility"] == "private"
     assert "validation.holdout.model" in artifact_ids
     assert "validation.holdout.portfolio.test" in artifact_ids
+    feature_schema = json.loads((run_dir / "indicators" / "features.schema.json").read_text())
+    assert feature_schema["features"]
+    assert feature_schema["features"][0]["name"]
+    assert "native_objects" not in json.dumps(feature_schema)
     assert all(artifact["status"] == ArtifactStatus.COMPLETED for artifact in manifest["artifacts"])
     assert not (run_dir / "artifacts" / "model.joblib").exists()
 

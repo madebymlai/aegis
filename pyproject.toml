@@ -23,6 +23,7 @@ vectorbtpro = { git = "https://github.com/polakowo/vectorbt.pro.git", tag = "v20
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["docs/**"]
 
 [tool.ruff.lint]
 select = [

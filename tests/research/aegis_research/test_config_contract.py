@@ -5,13 +5,16 @@ from typing import ClassVar
 import pytest
 import yaml
 
+from research.aegis_research import config as config_module
 from research.aegis_research.config import (
     ConfigValidationError,
     DataConfig,
     load_experiment_config,
+    resolve_experiment_config,
     resolve_secret_refs,
 )
 from research.aegis_research.data import RemoteDataPullError, _pull_remote
+from research.aegis_research.indicator_registry import IndicatorDefinition, indicator_registry
 
 
 def test_baseline_configs_load_with_schema_metadata() -> None:
@@ -25,6 +28,13 @@ def test_baseline_configs_load_with_schema_metadata() -> None:
         assert config.config.schema_version == 1
         assert config.raw_config_hash
         assert config.redacted_resolved_config()["report"]["freq"] == "1D"
+
+
+def test_minimal_dict_config_uses_report_defaults() -> None:
+    config = resolve_experiment_config({"schema_version": 1, "name": "minimal_defaults"})
+
+    assert config.config.report.freq == "1D"
+    assert config.config.report.year_freq == "252D"
 
 
 def test_unknown_fields_fail_with_config_path(tmp_path: Path) -> None:
@@ -287,6 +297,199 @@ def test_skip_on_error_requires_skipped_symbol_quality_policy(tmp_path: Path) ->
         load_experiment_config(path)
 
     assert "data.skip_on_error" in str(error.value)
+
+
+def test_indicator_specs_validate_builtin_and_custom_registry_ids(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        indicators={
+            "invalid_value_policy": "drop_rows",
+            "specs": [
+                {
+                    "id": "ma",
+                    "params": {"window": [10, 30], "wtype": "simple"},
+                    "outputs": ["ma"],
+                    "model_features": [
+                        {"output": "ma", "transform": "distance_to_close"},
+                    ],
+                },
+                {
+                    "id": "custom_retvol",
+                    "params": {"window": [5]},
+                    "outputs": ["retvol"],
+                    "model_features": [{"output": "retvol"}],
+                },
+            ],
+        },
+    )
+
+    config = load_experiment_config(path).config
+
+    assert config.indicators.invalid_value_policy == "drop_rows"
+    assert [spec.id for spec in config.indicators.specs] == ["ma", "custom_retvol"]
+    assert config.indicators.specs[0].model_features[0].transform == "distance_to_close"
+
+
+def test_indicator_specs_reject_inline_code_fields(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        indicators={
+            "specs": [
+                {
+                    "id": "ma",
+                    "params": {"window": [10]},
+                    "outputs": ["ma"],
+                    "formula": "close.rolling(10).mean()",
+                },
+            ],
+        },
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "indicators.specs[0].formula" in str(error.value)
+    assert "inline code" in str(error.value)
+
+
+def test_indicator_specs_report_registry_paths_for_invalid_values(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        indicators={
+            "specs": [
+                {
+                    "id": "ma",
+                    "params": {"unknown": 10, "window": [10, 30], "wtype": "not-a-type"},
+                    "outputs": ["not_ma"],
+                    "model_features": [
+                        {"output": "ma", "transform": "not_a_transform"},
+                    ],
+                },
+            ],
+        },
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    message = str(error.value)
+    assert "indicators.specs[0].params.unknown" in message
+    assert "indicators.specs[0].params.wtype" in message
+    assert "indicators.specs[0].outputs[0]" in message
+    assert "indicators.specs[0].model_features[0].transform" in message
+
+
+def test_indicator_specs_require_non_default_params_at_config_boundary(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        indicators={
+            "specs": [
+                {
+                    "id": "returns",
+                    "params": {},
+                    "outputs": ["returns"],
+                    "model_features": [{"output": "returns"}],
+                },
+                {
+                    "id": "ma",
+                    "params": {"window": []},
+                    "outputs": ["ma"],
+                    "model_features": [{"output": "ma", "transform": "distance_to_close"}],
+                },
+            ],
+        },
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    message = str(error.value)
+    assert "indicators.specs[0].params.window" in message
+    assert "is required" in message
+    assert "indicators.specs[1].params.window" in message
+    assert "must not be empty" in message
+
+
+def test_indicator_specs_require_explicit_product_grid(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        indicators={
+            "specs": [
+                {
+                    "id": "ma",
+                    "grid": "product",
+                    "params": {"window": [10, 30], "wtype": ["simple", "wilder"]},
+                    "outputs": ["ma"],
+                    "model_features": [{"output": "ma", "transform": "distance_to_close"}],
+                },
+            ],
+        },
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "indicators.specs[0].param_product" in str(error.value)
+
+
+def test_indicator_specs_reject_mismatched_zipped_param_lengths(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        indicators={
+            "specs": [
+                {
+                    "id": "ma",
+                    "params": {"window": [10, 30], "wtype": ["simple", "wilder", "exp"]},
+                    "outputs": ["ma"],
+                    "model_features": [{"output": "ma", "transform": "distance_to_close"}],
+                },
+            ],
+        },
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "indicators.specs[0].params" in str(error.value)
+    assert "zipped" in str(error.value)
+
+
+def test_indicator_specs_reject_non_bar_aligned_custom_definitions(monkeypatch) -> None:
+    registry = indicator_registry()
+    registry["shape_changing_test"] = IndicatorDefinition(
+        id="shape_changing_test",
+        kind="custom",
+        input_names=("close",),
+        param_names=("window",),
+        output_names=("events",),
+        default_outputs=("events",),
+        default_model_features=({"output": "events", "transform": "identity"},),
+        supported_transforms=("identity",),
+        bar_aligned=False,
+    )
+    monkeypatch.setattr(config_module, "indicator_registry", lambda: registry)
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_experiment_config(
+            {
+                "schema_version": 1,
+                "name": "shape_changing_indicator",
+                "indicators": {
+                    "specs": [
+                        {
+                            "id": "shape_changing_test",
+                            "params": {"window": [10]},
+                            "outputs": ["events"],
+                            "model_features": [{"output": "events"}],
+                        }
+                    ]
+                },
+                "report": {"freq": "1D", "year_freq": "252D"},
+            }
+        )
+
+    assert "indicators.specs[0].id" in str(error.value)
+    assert "bar-aligned" in str(error.value)
 
 
 def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:

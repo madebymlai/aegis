@@ -7,7 +7,7 @@ from research.aegis_research.data import (
     load_market_data,
     low_from_ohlcv,
 )
-from research.aegis_research.indicators import build_indicators
+from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
 from research.aegis_research.labels import build_labels
 from research.aegis_research.splits import build_validation_splits
 from research.aegis_research.validation import evaluate_validation_splits
@@ -52,9 +52,15 @@ def _evaluate(config_path: str):
     close = close_from_ohlcv(data)
     high = high_from_ohlcv(data)
     low = low_from_ohlcv(data)
-    indicators = build_indicators(close, config.indicators)
+    indicator_result = build_indicator_result(close, config.indicators)
     labels = build_labels(close, config.labels, high=high, low=low)
-    splits = build_validation_splits(
-        indicators.index.intersection(labels.dropna().index), config.split
+    model_features = build_model_feature_matrix(
+        indicator_result,
+        labels,
+        invalid_value_policy=config.indicators.invalid_value_policy,
     )
-    return evaluate_validation_splits(close, indicators, labels, splits, config)
+    splits = build_validation_splits(
+        model_features.eligible_index,
+        config.split,
+    )
+    return evaluate_validation_splits(close, model_features.frame, labels, splits, config)

@@ -15,7 +15,7 @@ from research.aegis_research.data import (
     load_market_data_result,
     required_ohlcv_features,
 )
-from research.aegis_research.indicators import build_indicator_result
+from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
 from research.aegis_research.labels import build_label_result
 from research.aegis_research.provenance.evidence import (
     apply_seed_policy,
@@ -70,13 +70,19 @@ def run_experiment(
         high = data_result.feature("High") if "High" in required_features else None
         low = data_result.feature("Low") if "Low" in required_features else None
         indicator_result = build_indicator_result(close, config.indicators)
-        indicators = indicator_result.frame
         label_result = build_label_result(close, config.labels, high=high, low=low)
         labels = label_result.labels
-        valid_label_index = labels.index[labels.notna().all(axis=1)]
-        splits_result = build_validation_splits_result(
-            indicators.index.intersection(valid_label_index), config.split
+        model_features = build_model_feature_matrix(
+            indicator_result,
+            labels,
+            invalid_value_policy=config.indicators.invalid_value_policy,
         )
+        indicators = model_features.frame
+        splits_result = build_validation_splits_result(
+            model_features.eligible_index,
+            config.split,
+        )
+        artifacts.write_indicator_artifacts(indicator_result, model_features)
         artifacts.write_stage_native_artifacts(label_result, splits_result)
         split_metric_ids: list[str] = []
 

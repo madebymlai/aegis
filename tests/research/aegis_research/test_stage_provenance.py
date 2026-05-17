@@ -58,7 +58,14 @@ def test_indicator_and_label_results_expose_portable_metadata() -> None:
     labels = build_label_result(close, LabelConfig())
 
     assert indicators.frame.shape[0] == 120
-    assert indicators.metadata["returns"] == [1, 5, 20]
+    assert indicators.metadata["specs"][0]["id"] == "returns"
+    assert indicators.metadata["specs"][0]["parameter_combinations"] == [
+        {"window": 1},
+        {"window": 5},
+        {"window": 20},
+    ]
+    assert indicators.native_objects["ma"] is not None
+    assert indicators.lineage[0]["symbol"] == "SYN"
     assert list(labels.labels.columns) == ["SYN"]
     assert labels.metadata["kind"] == "fixlb"
     assert labels.native_object is not None

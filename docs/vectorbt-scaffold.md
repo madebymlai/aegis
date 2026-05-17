@@ -18,7 +18,8 @@ data fetch/load
 
 - `data.py`: native VectorBT market data adapters, feature-panel views, data quality gates, and public metadata safety.
 - `data_schema.py`: shared OHLC selection, availability, index identity, and shape helpers.
-- `indicators.py`: reusable indicator builders using VectorBT PRO indicators.
+- `indicator_registry.py`: project-owned built-in, primitive, and trusted custom indicator definitions.
+- `indicators.py`: VectorBT-native indicator stage, model-feature boundary, lineage, and diagnostics.
 - `labels.py`: VectorBT PRO `FIXLB`, `TRENDLB`, and `PIVOTLB` label wrappers.
 - `models.py`: training and `joblib` export boundary.
 - `signals.py`: converts model probabilities into entries and exits.
@@ -67,6 +68,62 @@ data:
 ```
 
 CSV input supports flat OHLCV columns for one configured symbol and documented MultiIndex layouts that include separate symbol and feature levels, such as `(symbol, feature)` columns. Ambiguous local layouts, missing mapped source columns, and multi-symbol flat CSV input fail at the data boundary instead of guessing.
+
+## Indicator Contract
+
+Experiment configs reference project registry ids. They do not define inline formulas, imports, Python snippets, or arbitrary functions. Static validation resolves each id against `research/aegis_research/indicator_registry.py` before data loading or artifact side effects.
+
+```yaml
+indicators:
+  invalid_value_policy: drop_rows
+  specs:
+    - id: returns
+      params:
+        window: [1, 5, 20]
+      outputs: [returns]
+      model_features:
+        - output: returns
+
+    - id: ma
+      params:
+        window: [10, 30]
+        wtype: simple
+      grid: zipped
+      outputs: [ma]
+      model_features:
+        - output: ma
+          transform: distance_to_close
+
+    - id: rsi
+      params:
+        window: [14]
+        wtype: wilder
+      outputs: [rsi]
+      model_features:
+        - output: rsi
+          transform: scale_0_1
+```
+
+Built-in VectorBT indicators run through their indicator class `.run(...)` methods with visible params. MA and RSI preserve effective `window` and `wtype` levels in native outputs by using visible parameter settings rather than hiding params. Ordinary sweeps use parameter lists. Zipped lists are the default. Cartesian products require both `grid: product` and `param_product: true` so grid expansion is explicit in config and metadata.
+
+Primitive features such as returns and rolling volatility stay local in schema v1, but they still produce the same lineage, feature mapping, invalid-value diagnostics, and artifact metadata as VectorBT-backed indicators. Reusable/domain transforms should graduate to a reviewed registry definition when they need first-class indicator identity or repeated use.
+
+Trusted custom indicators are added in project code, usually with `vbt.IF(...).with_apply_func(...)`, and then referenced by stable id from config:
+
+```yaml
+indicators:
+  specs:
+    - id: custom_retvol
+      params:
+        window: [5]
+      outputs: [retvol]
+      model_features:
+        - output: retvol
+```
+
+Custom `IndicatorFactory` outputs must be bar-aligned in schema v1: each selected output preserves the input index and symbol shape. Shape-changing transforms such as Renko bricks, event lists, compressed bars, trades, or arbitrary objects belong in a separate future pipeline, such as a `vbt.parameterized` workflow, not the experiment indicator stage.
+
+The indicator stage keeps native VectorBT objects private until the modeling boundary. Public artifacts write portable `indicators.metadata`, `indicators.lineage`, `indicators.diagnostics`, and `indicators.features.schema`. Private native indicator objects and native outputs are stored as `indicators.native` with a public metadata sidecar. sklearn receives only the derived model-feature matrix with deterministic feature names and reversible mapping; native VectorBT objects never enter sklearn internals.
 
 ## Native Data Lifecycle
 

@@ -7,6 +7,8 @@ import yaml
 
 from research.aegis_research.config import ResolvedExperimentConfig
 from research.aegis_research.data import MarketDataResult, assert_public_metadata_safe
+from research.aegis_research.data_schema import table_shape
+from research.aegis_research.indicators import IndicatorResult, ModelFeatureMatrix
 from research.aegis_research.labels import LabelResult
 from research.aegis_research.models import export_model
 from research.aegis_research.provenance.manifest import ArtifactVisibility, atomic_write_json
@@ -80,6 +82,86 @@ class ExperimentArtifactWriter:
             metadata=data_result.metadata,
             known_secrets=data_result.known_secrets,
         )
+
+    def write_indicator_artifacts(
+        self,
+        indicator_result: IndicatorResult,
+        model_features: ModelFeatureMatrix,
+    ) -> None:
+        metadata = indicator_result.metadata
+        lineage = {"lineage": indicator_result.lineage}
+        diagnostics = {
+            "indicator_stage": indicator_result.diagnostics,
+            "model_boundary": model_features.diagnostics,
+        }
+        feature_schema = {
+            "metadata": model_features.metadata,
+            "features": [
+                {"name": feature_name, **mapping}
+                for feature_name, mapping in model_features.feature_mapping.items()
+            ],
+        }
+        for payload in (metadata, lineage, diagnostics, feature_schema):
+            assert_public_metadata_safe(payload)
+
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="indicators.metadata",
+            role="indicator_metadata",
+            producer_stage="indicators",
+            path="indicators/metadata.json",
+            payload=metadata,
+            schema_version="indicators_metadata.v1",
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="indicators.lineage",
+            role="indicator_lineage",
+            producer_stage="indicators",
+            path="indicators/lineage.json",
+            payload=lineage,
+            schema_version="indicator_lineage.v1",
+            upstream_artifact_ids=["indicators.metadata"],
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="indicators.diagnostics",
+            role="indicator_diagnostics",
+            producer_stage="indicators",
+            path="indicators/diagnostics.json",
+            payload=diagnostics,
+            schema_version="indicator_diagnostics.v1",
+            upstream_artifact_ids=["indicators.metadata"],
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="indicators.features.schema",
+            role="model_feature_schema",
+            producer_stage="indicators",
+            path="indicators/features.schema.json",
+            payload=feature_schema,
+            schema_version="model_feature_schema.v1",
+            upstream_artifact_ids=["indicators.lineage", "indicators.diagnostics"],
+        )
+        if indicator_result.native_objects:
+            native_metadata = {
+                "native_object_ids": sorted(indicator_result.native_objects),
+                "native_output_shapes": {
+                    indicator_id: {
+                        output_name: table_shape(output)
+                        for output_name, output in outputs.items()
+                    }
+                    for indicator_id, outputs in indicator_result.native_outputs.items()
+                },
+            }
+            self.native_writer.write_native_artifact(
+                artifact_id="indicators.native",
+                role="indicators_native",
+                producer_stage="indicators",
+                path="native/indicators.pkl",
+                obj=indicator_result.native_objects,
+                metadata=native_metadata,
+            )
 
     def write_stage_native_artifacts(
         self,

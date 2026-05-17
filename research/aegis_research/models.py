@@ -55,6 +55,7 @@ def _training_dataset(
     indicators: pd.DataFrame,
     labels: pd.DataFrame,
 ) -> pd.DataFrame:
+    _validate_feature_label_symbols(indicators, labels)
     features = _stack_indicator_panel(indicators, symbols=labels.columns)
     label_values = _stack_label_panel(labels)
     return features.join(label_values.rename(LABEL_COLUMN)).dropna()
@@ -71,15 +72,25 @@ def _stack_indicator_panel(
     symbol_level = indicators.columns.names.index("symbol")
     if symbols is None:
         symbols = indicators.columns.get_level_values(symbol_level).unique()
+    available_symbols = set(indicators.columns.get_level_values(symbol_level))
+    missing_symbols = [symbol for symbol in symbols if symbol not in available_symbols]
+    if missing_symbols:
+        raise ValueError(f"indicator features are missing symbols: {missing_symbols}")
 
     frames: list[pd.DataFrame] = []
     for symbol in symbols:
         symbol_features = indicators.xs(symbol, axis=1, level="symbol", drop_level=True)
         symbol_features = symbol_features.copy()
-        symbol_features.columns = [
-            "__".join(map(str, column)) if isinstance(column, tuple) else str(column)
-            for column in symbol_features.columns
-        ]
+        if isinstance(symbol_features.columns, pd.MultiIndex) and "feature" in symbol_features.columns.names:
+            symbol_features.columns = symbol_features.columns.get_level_values("feature")
+        else:
+            symbol_features.columns = [
+                "__".join(map(str, column)) if isinstance(column, tuple) else str(column)
+                for column in symbol_features.columns
+            ]
+        if symbol_features.columns.duplicated().any():
+            duplicates = sorted(set(symbol_features.columns[symbol_features.columns.duplicated()]))
+            raise ValueError(f"indicator feature names collide: {duplicates}")
         symbol_features.index = pd.MultiIndex.from_arrays(
             [symbol_features.index, [symbol] * len(symbol_features)],
             names=[indicators.index.name, "symbol"],
@@ -96,3 +107,16 @@ def _stack_label_panel(labels: pd.DataFrame) -> pd.Series:
 
 def _has_symbol_level(indicators: pd.DataFrame) -> bool:
     return isinstance(indicators.columns, pd.MultiIndex) and "symbol" in indicators.columns.names
+
+
+def _validate_feature_label_symbols(indicators: pd.DataFrame, labels: pd.DataFrame) -> None:
+    if not _has_symbol_level(indicators):
+        raise ValueError("indicator columns must include a symbol level")
+    symbol_level = indicators.columns.names.index("symbol")
+    feature_symbols = set(map(str, indicators.columns.get_level_values(symbol_level)))
+    label_symbols = set(map(str, labels.columns))
+    if feature_symbols != label_symbols:
+        raise ValueError(
+            "indicator feature symbols must match labels: "
+            f"features={sorted(feature_symbols)}, labels={sorted(label_symbols)}"
+        )
