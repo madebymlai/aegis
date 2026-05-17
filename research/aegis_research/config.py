@@ -35,6 +35,13 @@ PORTFOLIO_TARGET_SIZE_TYPES = {
 }
 PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
 MISSING_POLICIES = {"nan", "drop", "raise"}
+OHLCV_FEATURE_MAP_KEYS = {"open", "high", "low", "close", "volume"}
+DATA_QUALITY_DEGRADATIONS = {
+    "duplicate_index",
+    "missing_rows",
+    "non_monotonic_index",
+    "skipped_symbols",
+}
 REPORT_STATUS_SURVIVED = "survived"
 REPORT_STATUS_REJECTED = "rejected"
 REPORT_STATUS_NEEDS_MORE_EVIDENCE = "needs_more_evidence"
@@ -56,6 +63,12 @@ SECRET_VALUE_RE = re.compile(
     re.IGNORECASE,
 )
 DENIED_PASSTHROUGH_KEYS = {
+    "auth",
+    "authentication",
+    "cookie",
+    "cookies",
+    "header",
+    "headers",
     "proxy",
     "proxies",
     "session",
@@ -106,6 +119,11 @@ _UniqueKeySafeLoader.add_constructor(
 
 
 @dataclass(frozen=True)
+class DataQualityConfig:
+    allowed_degradations: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class DataConfig:
     source: str = "synthetic"
     symbols: list[str] = field(default_factory=lambda: ["SYN"])
@@ -119,6 +137,10 @@ class DataConfig:
     missing_columns: str = "raise"
     tz_localize: str | bool | None = None
     tz_convert: str | bool | None = None
+    skip_on_error: bool = False
+    silence_warnings: bool = False
+    feature_map: dict[str, str] = field(default_factory=dict)
+    quality: DataQualityConfig = field(default_factory=DataQualityConfig)
     wrapper_kwargs: dict[str, Any] = field(default_factory=dict)
     provider_kwargs: dict[str, Any] = field(default_factory=dict)
     execution_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -262,7 +284,7 @@ def _build_resolved_config(
     config = ExperimentConfig(
         name=raw["name"],
         schema_version=raw["schema_version"],
-        data=DataConfig(**raw.get("data", {})),
+        data=_build_data_config(raw.get("data", {})),
         indicators=IndicatorConfig(**raw.get("indicators", {})),
         labels=LabelConfig(**raw.get("labels", {})),
         split=SplitConfig(**raw.get("split", {})),
@@ -279,6 +301,17 @@ def _build_resolved_config(
         authored_config=to_builtin(raw),
         source_path=source_path,
     )
+
+
+def _build_data_config(raw: dict[str, Any]) -> DataConfig:
+    value = dict(raw)
+    quality = value.get("quality", {})
+    if isinstance(quality, DataQualityConfig):
+        quality_config = quality
+    else:
+        quality_config = DataQualityConfig(**quality)
+    value["quality"] = quality_config
+    return DataConfig(**value)
 
 
 def _validate_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -367,6 +400,10 @@ def _validate_data(data: dict[str, Any], issues: list[ConfigValidationIssue]) ->
     _optional_enum("data.missing_columns", data, MISSING_POLICIES, issues)
     _optional_str_bool_none("data.tz_localize", data, issues)
     _optional_str_bool_none("data.tz_convert", data, issues)
+    _optional_bool("data.skip_on_error", data, issues)
+    _optional_bool("data.silence_warnings", data, issues)
+    _validate_feature_map(data.get("feature_map", {}), issues)
+    _validate_quality_policy(data.get("quality", {}), issues)
     _validate_passthrough("data.wrapper_kwargs", data.get("wrapper_kwargs", {}), issues)
     _validate_passthrough("data.provider_kwargs", data.get("provider_kwargs", {}), issues)
     _validate_passthrough("data.execution_kwargs", data.get("execution_kwargs", {}), issues)
@@ -377,6 +414,67 @@ def _validate_data(data: dict[str, Any], issues: list[ConfigValidationIssue]) ->
                 issues.append(
                     ConfigValidationIssue(f"data.{key}", f"is not supported for {source} source")
                 )
+    if data.get("skip_on_error") and "skipped_symbols" not in _quality_degradations(data):
+        issues.append(
+            ConfigValidationIssue(
+                "data.skip_on_error",
+                "requires data.quality.allowed_degradations to include 'skipped_symbols'",
+            )
+        )
+
+
+def _validate_feature_map(value: Any, issues: list[ConfigValidationIssue]) -> None:
+    path = "data.feature_map"
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    for key, item in value.items():
+        child_path = f"{path}.{key}"
+        if key not in OHLCV_FEATURE_MAP_KEYS:
+            issues.append(
+                ConfigValidationIssue(child_path, f"must be one of {sorted(OHLCV_FEATURE_MAP_KEYS)}")
+            )
+            continue
+        if not isinstance(item, str) or not item:
+            issues.append(ConfigValidationIssue(child_path, "must be a non-empty string"))
+
+
+def _validate_quality_policy(value: Any, issues: list[ConfigValidationIssue]) -> None:
+    path = "data.quality"
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_known_keys(path, value, set(DataQualityConfig.__dataclass_fields__), issues)
+    if "allowed_degradations" in value:
+        degradations = value["allowed_degradations"]
+        if not isinstance(degradations, list) or not all(
+            isinstance(item, str) for item in degradations
+        ):
+            issues.append(
+                ConfigValidationIssue(
+                    "data.quality.allowed_degradations",
+                    "must be a list of strings",
+                )
+            )
+            return
+        for index, degradation in enumerate(degradations):
+            if degradation not in DATA_QUALITY_DEGRADATIONS:
+                issues.append(
+                    ConfigValidationIssue(
+                        f"data.quality.allowed_degradations[{index}]",
+                        f"must be one of {sorted(DATA_QUALITY_DEGRADATIONS)}",
+                    )
+                )
+
+
+def _quality_degradations(data: dict[str, Any]) -> set[str]:
+    quality = data.get("quality", {})
+    if not isinstance(quality, dict):
+        return set()
+    degradations = quality.get("allowed_degradations", [])
+    if not isinstance(degradations, list):
+        return set()
+    return {str(item) for item in degradations}
 
 
 def _validate_indicators(indicators: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -673,6 +771,20 @@ def _optional_str_bool_none(
     if mapping[key] is None or isinstance(mapping[key], str | bool):
         return True
     issues.append(ConfigValidationIssue(path, "must be a string, boolean, or null"))
+    return False
+
+
+def _optional_bool(
+    path: str,
+    mapping: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> bool:
+    key = path.rsplit(".", 1)[-1]
+    if key not in mapping:
+        return True
+    if isinstance(mapping[key], bool):
+        return True
+    issues.append(ConfigValidationIssue(path, "must be a boolean"))
     return False
 
 

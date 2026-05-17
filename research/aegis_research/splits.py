@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.config import SplitConfig
+from research.aegis_research.data_schema import index_identity
 
 
 @dataclass(frozen=True)
@@ -15,11 +17,26 @@ class ValidationSplit:
     test_index: pd.Index
 
 
+@dataclass(frozen=True)
+class ValidationSplitsResult:
+    splits: list[ValidationSplit]
+    metadata: dict[str, Any]
+    native_object: Any | None = None
+
+
 def build_validation_splits(index: pd.Index, config: SplitConfig) -> list[ValidationSplit]:
+    return build_validation_splits_result(index, config).splits
+
+
+def build_validation_splits_result(index: pd.Index, config: SplitConfig) -> ValidationSplitsResult:
     if config.kind == "holdout":
-        return [_chronological_split(index, config)]
+        splits = [_chronological_split(index, config)]
+        return ValidationSplitsResult(
+            splits=splits,
+            metadata=_split_metadata(config, index, splits),
+        )
     if config.kind == "rolling":
-        return _rolling_splits(index, config)
+        return _rolling_splits_result(index, config)
     raise ValueError(f"Unsupported split kind: {config.kind}")
 
 
@@ -33,7 +50,7 @@ def _chronological_split(index: pd.Index, config: SplitConfig) -> ValidationSpli
     )
 
 
-def _rolling_splits(index: pd.Index, config: SplitConfig) -> list[ValidationSplit]:
+def _rolling_splits_result(index: pd.Index, config: SplitConfig) -> ValidationSplitsResult:
     if config.n < 2:
         raise ValueError("split.n must be at least 2 for rolling validation")
     if not 0 < config.train_size < 1:
@@ -63,4 +80,30 @@ def _rolling_splits(index: pd.Index, config: SplitConfig) -> list[ValidationSpli
                 test_index=test_index,
             )
         )
-    return splits
+    return ValidationSplitsResult(
+        splits=splits,
+        metadata=_split_metadata(config, index, splits),
+        native_object=splitter,
+    )
+
+
+def _split_metadata(
+    config: SplitConfig,
+    index: pd.Index,
+    splits: list[ValidationSplit],
+) -> dict[str, Any]:
+    return {
+        "kind": config.kind,
+        "n_splits": len(splits),
+        "train_size": config.train_size,
+        "embargo_bars": config.embargo_bars,
+        "source_index": index_identity(index),
+        "splits": [
+            {
+                "label": split.label,
+                "train": index_identity(split.train_index),
+                "test": index_identity(split.test_index),
+            }
+            for split in splits
+        ],
+    }

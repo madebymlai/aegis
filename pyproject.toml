@@ -9,11 +9,16 @@ dependencies = [
   "pandas",
   "pyyaml",
   "scikit-learn",
+  "tomlkit",
+  "vectorbtpro",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+vectorbtpro = { git = "https://github.com/polakowo/vectorbt.pro.git", tag = "v2026.4.7" }
 
 [tool.ruff]
 line-length = 100

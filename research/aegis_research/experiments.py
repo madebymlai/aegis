@@ -1,83 +1,155 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import os
+import re
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from research.aegis_research.config import (
     ExperimentConfig,
     ResolvedExperimentConfig,
+    redact_text,
     resolve_experiment_config,
 )
 from research.aegis_research.data import (
-    close_from_ohlcv,
-    high_from_ohlcv,
-    load_market_data,
-    low_from_ohlcv,
+    load_market_data_result,
+    required_ohlcv_features,
 )
-from research.aegis_research.indicators import build_indicators
-from research.aegis_research.labels import _primary_close, build_labels
-from research.aegis_research.models import export_model
-from research.aegis_research.reports import build_survival_report, write_report
-from research.aegis_research.splits import build_validation_splits
+from research.aegis_research.indicators import build_indicator_result
+from research.aegis_research.labels import build_label_result
+from research.aegis_research.provenance.evidence import (
+    apply_seed_policy,
+    capture_run_start_evidence,
+)
+from research.aegis_research.provenance.experiment_artifacts import ExperimentArtifactWriter
+from research.aegis_research.provenance.recorder import RerunMode
+from research.aegis_research.provenance.run_store import RunStore
+from research.aegis_research.reports import build_survival_report
+from research.aegis_research.splits import build_validation_splits_result
 from research.aegis_research.validation import evaluate_validation_splits
 
 
 def run_experiment(
     config: ResolvedExperimentConfig | ExperimentConfig | dict[str, Any],
+    *,
+    rerun_mode: str = RerunMode.NEW,
+    run_id: str | None = None,
+    parent_run_id: str | None = None,
+    supersedes_run_id: str | None = None,
 ) -> dict[str, object]:
     resolved_config = resolve_experiment_config(config)
     config = resolved_config.config
-    data = load_market_data(config.data)
-    close = _primary_close(close_from_ohlcv(data))
-    high = _primary_close(high_from_ohlcv(data))
-    low = _primary_close(low_from_ohlcv(data))
-    indicators = build_indicators(close, config.indicators)
-    labels = build_labels(close, config.labels, high=high, low=low)
-    splits = build_validation_splits(
-        indicators.index.intersection(labels.dropna().index), config.split
+    known_secrets = _known_config_secret_values(resolved_config.authored_config)
+    run_start_evidence = capture_run_start_evidence(resolved_config, repo_path=Path.cwd())
+    recorder = RunStore(config.output_dir).start_run(
+        run_label=config.name,
+        config=run_start_evidence["config"],
+        mode=rerun_mode,
+        run_id=run_id,
+        parent_run_id=parent_run_id,
+        supersedes_run_id=supersedes_run_id,
     )
-    validation = evaluate_validation_splits(close, indicators, labels, splits, config)
-    report = build_survival_report(
-        config.name,
-        validation.train_metrics,
-        validation.test_metrics,
-        config.report,
-        validation.validation_metadata,
-    )
+    recorder.manifest.evidence = {
+        key: value for key, value in run_start_evidence.items() if key != "config"
+    }
+    recorder.manifest.evidence["seed_policy"] |= apply_seed_policy(config.data.seed)
+    recorder.persist()
+    try:
+        artifacts = ExperimentArtifactWriter(recorder)
+        artifacts.write_config_artifacts(resolved_config)
 
-    run_dir = _make_run_dir(config)
-    export_model(validation.model, run_dir / "artifacts" / "model.joblib")
-    write_report(report, run_dir / "survival_report.json")
-    _write_config_artifacts(resolved_config, run_dir)
-    _as_frame(validation.probabilities).to_csv(run_dir / "probabilities.csv")
-    _as_frame(validation.entries).add_prefix("entry_").join(
-        _as_frame(validation.exits).add_prefix("exit_")
-    ).to_csv(run_dir / "signals.csv")
-    validation.split_metrics.to_csv(run_dir / "split_metrics.csv")
+        required_features = required_ohlcv_features(config.labels)
+        data_result = load_market_data_result(
+            config.data,
+            required_features=required_features,
+        )
+        artifacts.write_data_metadata_artifact(data_result)
+        data_result.assert_usable()
+        artifacts.write_data_native_artifact(data_result)
+        close = data_result.feature("Close")
+        high = data_result.feature("High") if "High" in required_features else None
+        low = data_result.feature("Low") if "Low" in required_features else None
+        indicator_result = build_indicator_result(close, config.indicators)
+        indicators = indicator_result.frame
+        label_result = build_label_result(close, config.labels, high=high, low=low)
+        labels = label_result.labels
+        valid_label_index = labels.index[labels.notna().all(axis=1)]
+        splits_result = build_validation_splits_result(
+            indicators.index.intersection(valid_label_index), config.split
+        )
+        artifacts.write_stage_native_artifacts(label_result, splits_result)
+        split_metric_ids: list[str] = []
 
-    return {"run_dir": str(run_dir), "report": report}
+        def record_split_artifacts(split_result) -> None:
+            split_metric_ids.extend(artifacts.write_split_artifacts(split_result))
+
+        validation = evaluate_validation_splits(
+            close,
+            indicators,
+            labels,
+            splits_result.splits,
+            config,
+            on_split_result=record_split_artifacts,
+        )
+        report = build_survival_report(
+            config.name,
+            validation.train_metrics,
+            validation.test_metrics,
+            config.report,
+            validation.validation_metadata,
+        )
+
+        artifacts.write_validation_aggregates(validation, split_metric_ids=split_metric_ids)
+        artifacts.write_report_artifact(report)
+        recorder.mark_run_completed()
+
+        return {
+            "run_id": recorder.manifest.run_id,
+            "run_dir": str(recorder.run_dir),
+            "manifest_path": str(recorder.manifest_path),
+            "status": recorder.manifest.status,
+            "started_at": recorder.manifest.started_at,
+            "finished_at": recorder.manifest.finished_at,
+            "report_artifact_id": "report.survival",
+            "report": report,
+        }
+    except KeyboardInterrupt:
+        recorder.mark_run_interrupted()
+        raise
+    except Exception as error:
+        recorder.mark_run_failed(diagnostic=_redacted_diagnostic(error, known_secrets))
+        raise
 
 
-def _write_config_artifacts(config: ResolvedExperimentConfig, run_dir: Path) -> None:
-    (run_dir / "config.yaml").write_text(
-        yaml.safe_dump(config.redacted_resolved_config(), sort_keys=False)
-    )
-    (run_dir / "config_authored.yaml").write_text(
-        yaml.safe_dump(config.redacted_authored_config(), sort_keys=False)
-    )
-    write_report(config.manifest(), run_dir / "config_manifest.json")
+def _redacted_diagnostic(error: Exception, known_secrets: tuple[str, ...]) -> dict[str, str]:
+    message = _redact_nonportable_paths(redact_text(str(error), known_secrets))
+    return {
+        "error_type": type(error).__name__,
+        "message": message[:1000],
+    }
 
 
-def _make_run_dir(config: ExperimentConfig) -> Path:
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = Path(config.output_dir) / f"{timestamp}_{config.name}"
-    run_dir.mkdir(parents=True, exist_ok=False)
-    (run_dir / "artifacts").mkdir()
-    return run_dir
+def _redact_nonportable_paths(value: str) -> str:
+    value = value.replace(str(Path.home()), "~")
+    return re.sub(r"(?<!\w)/(?:[^\s'\"]+/)*[^\s'\"]+", "<path>", value)
 
 
-def _as_frame(obj):
-    return obj.to_frame() if hasattr(obj, "to_frame") else obj
+def _known_config_secret_values(value: Any) -> tuple[str, ...]:
+    secrets: list[str] = []
+    _collect_config_secret_values(value, secrets)
+    return tuple(secrets)
+
+
+def _collect_config_secret_values(value: Any, secrets: list[str]) -> None:
+    if isinstance(value, dict) and set(value) == {"env"}:
+        secret = os.environ.get(str(value["env"]), "")
+        if secret:
+            secrets.append(secret)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _collect_config_secret_values(item, secrets)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_config_secret_values(item, secrets)
