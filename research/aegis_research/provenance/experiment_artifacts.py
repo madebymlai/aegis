@@ -148,8 +148,7 @@ class ExperimentArtifactWriter:
                 "native_object_ids": sorted(indicator_result.native_objects),
                 "native_output_shapes": {
                     indicator_id: {
-                        output_name: table_shape(output)
-                        for output_name, output in outputs.items()
+                        output_name: table_shape(output) for output_name, output in outputs.items()
                     }
                     for indicator_id, outputs in indicator_result.native_outputs.items()
                 },
@@ -163,20 +162,92 @@ class ExperimentArtifactWriter:
                 metadata=native_metadata,
             )
 
-    def write_stage_native_artifacts(
-        self,
-        label_result: LabelResult,
-        splits_result: ValidationSplitsResult,
-    ) -> None:
+    def write_label_artifacts(self, label_result: LabelResult) -> None:
+        lineage = {"lineage": label_result.lineage}
+        diagnostics = label_result.diagnostics
+        target_schema = label_result.target_schema
+        payloads = (label_result.metadata, lineage, diagnostics, target_schema)
+        for payload in payloads:
+            assert_public_metadata_safe(payload)
+
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="labels.metadata",
+            role="label_metadata",
+            producer_stage="labels",
+            path="labels/metadata.json",
+            payload=label_result.metadata,
+            schema_version="labels_metadata.v1",
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="labels.lineage",
+            role="label_lineage",
+            producer_stage="labels",
+            path="labels/lineage.json",
+            payload=lineage,
+            schema_version="label_lineage.v1",
+            upstream_artifact_ids=["labels.metadata"],
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="labels.diagnostics",
+            role="label_diagnostics",
+            producer_stage="labels",
+            path="labels/diagnostics.json",
+            payload=diagnostics,
+            schema_version="label_diagnostics.v1",
+            upstream_artifact_ids=["labels.metadata"],
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="labels.target.schema",
+            role="label_target_schema",
+            producer_stage="labels",
+            path="labels/target.schema.json",
+            payload=target_schema,
+            schema_version="label_target_schema.v1",
+            upstream_artifact_ids=["labels.lineage", "labels.diagnostics"],
+        )
+        _write_csv_artifact(
+            self.recorder,
+            artifact_id="labels.target",
+            role="label_target_panel",
+            producer_stage="labels",
+            path="labels/target.csv",
+            frame=label_result.labels,
+            schema_version="label_target_panel.v1",
+            upstream_artifact_ids=["labels.target.schema"],
+        )
         if label_result.native_object is not None:
+            native_metadata = {
+                "kind": label_result.metadata["kind"],
+                "native_output_shape": label_result.metadata["native_output_shape"],
+                "target": label_result.metadata["target"],
+            }
             self.native_writer.write_native_artifact(
                 artifact_id="labels.native",
                 role="labels_native",
                 producer_stage="labels",
                 path="native/labels.pkl",
                 obj=label_result.native_object,
-                metadata=label_result.metadata,
+                metadata=native_metadata,
             )
+
+    def write_label_compatibility_artifact(self, compatibility: dict[str, Any]) -> None:
+        assert_public_metadata_safe(compatibility)
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="labels.compatibility",
+            role="label_compatibility",
+            producer_stage="labels",
+            path="labels/compatibility.json",
+            payload=compatibility,
+            schema_version="label_compatibility.v1",
+            upstream_artifact_ids=["labels.target.schema"],
+        )
+
+    def write_split_native_artifact(self, splits_result: ValidationSplitsResult) -> None:
         if splits_result.native_object is not None:
             self.native_writer.write_native_artifact(
                 artifact_id="splits.native",
@@ -254,7 +325,9 @@ class ExperimentArtifactWriter:
         probability_ids = [
             f"validation.{split.label}.probabilities.test" for split in validation.split_results
         ]
-        signal_ids = [f"validation.{split.label}.signals.test" for split in validation.split_results]
+        signal_ids = [
+            f"validation.{split.label}.signals.test" for split in validation.split_results
+        ]
         _write_csv_artifact(
             self.recorder,
             artifact_id="validation.probabilities",

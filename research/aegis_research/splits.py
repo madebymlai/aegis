@@ -24,19 +24,29 @@ class ValidationSplitsResult:
     native_object: Any | None = None
 
 
-def build_validation_splits(index: pd.Index, config: SplitConfig) -> list[ValidationSplit]:
-    return build_validation_splits_result(index, config).splits
+def build_validation_splits(
+    index: pd.Index,
+    config: SplitConfig,
+    *,
+    target_metadata: dict[str, Any] | None = None,
+) -> list[ValidationSplit]:
+    return build_validation_splits_result(index, config, target_metadata=target_metadata).splits
 
 
-def build_validation_splits_result(index: pd.Index, config: SplitConfig) -> ValidationSplitsResult:
+def build_validation_splits_result(
+    index: pd.Index,
+    config: SplitConfig,
+    *,
+    target_metadata: dict[str, Any] | None = None,
+) -> ValidationSplitsResult:
     if config.kind == "holdout":
         splits = [_chronological_split(index, config)]
         return ValidationSplitsResult(
             splits=splits,
-            metadata=_split_metadata(config, index, splits),
+            metadata=_split_metadata(config, index, splits, target_metadata=target_metadata),
         )
     if config.kind == "rolling":
-        return _rolling_splits_result(index, config)
+        return _rolling_splits_result(index, config, target_metadata=target_metadata)
     raise ValueError(f"Unsupported split kind: {config.kind}")
 
 
@@ -50,7 +60,12 @@ def _chronological_split(index: pd.Index, config: SplitConfig) -> ValidationSpli
     )
 
 
-def _rolling_splits_result(index: pd.Index, config: SplitConfig) -> ValidationSplitsResult:
+def _rolling_splits_result(
+    index: pd.Index,
+    config: SplitConfig,
+    *,
+    target_metadata: dict[str, Any] | None,
+) -> ValidationSplitsResult:
     if config.n < 2:
         raise ValueError("split.n must be at least 2 for rolling validation")
     if not 0 < config.train_size < 1:
@@ -82,7 +97,7 @@ def _rolling_splits_result(index: pd.Index, config: SplitConfig) -> ValidationSp
         )
     return ValidationSplitsResult(
         splits=splits,
-        metadata=_split_metadata(config, index, splits),
+        metadata=_split_metadata(config, index, splits, target_metadata=target_metadata),
         native_object=splitter,
     )
 
@@ -91,12 +106,15 @@ def _split_metadata(
     config: SplitConfig,
     index: pd.Index,
     splits: list[ValidationSplit],
+    *,
+    target_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    metadata = {
         "kind": config.kind,
         "n_splits": len(splits),
         "train_size": config.train_size,
         "embargo_bars": config.embargo_bars,
+        "diagnostic_validation_allowed": config.diagnostic_validation_allowed,
         "source_index": index_identity(index),
         "splits": [
             {
@@ -107,3 +125,6 @@ def _split_metadata(
             for split in splits
         ],
     }
+    if target_metadata is not None:
+        metadata["target"] = target_metadata
+    return metadata

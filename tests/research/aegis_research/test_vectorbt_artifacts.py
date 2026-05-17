@@ -9,6 +9,7 @@ import pytest
 from research.aegis_research.config import (
     DataConfig,
     ExperimentConfig,
+    SplitConfig,
     resolve_experiment_config,
 )
 from research.aegis_research.experiments import run_experiment
@@ -43,9 +44,13 @@ def test_native_writer_persists_private_artifact_and_public_metadata(tmp_path: P
         metadata={"split": "split_0", "set": "test"},
     )
 
-    native = next(artifact for artifact in manifest.artifacts if artifact["id"] == "portfolio.split_0.test")
+    native = next(
+        artifact for artifact in manifest.artifacts if artifact["id"] == "portfolio.split_0.test"
+    )
     sidecar = next(
-        artifact for artifact in manifest.artifacts if artifact["id"] == "portfolio.split_0.test.metadata"
+        artifact
+        for artifact in manifest.artifacts
+        if artifact["id"] == "portfolio.split_0.test.metadata"
     )
     assert native["status"] == ArtifactStatus.COMPLETED
     assert native["visibility"] == ArtifactVisibility.PRIVATE
@@ -212,7 +217,9 @@ def test_native_writer_fails_sidecar_when_metadata_write_fails(tmp_path: Path) -
     validate_manifest(manifest.to_dict(), run_dir=tmp_path)
 
 
-@pytest.mark.parametrize("secret_section", ["wrapper_kwargs", "provider_kwargs", "execution_kwargs"])
+@pytest.mark.parametrize(
+    "secret_section", ["wrapper_kwargs", "provider_kwargs", "execution_kwargs"]
+)
 def test_remote_native_artifact_scans_resolved_remote_secrets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -256,6 +263,7 @@ def test_indicator_native_artifact_uses_private_bundle_and_public_sidecar(tmp_pa
             name="indicator-native-check",
             output_dir=str(tmp_path),
             data=DataConfig(source="synthetic", symbols=["SYN"], rows=180),
+            split=SplitConfig(diagnostic_validation_allowed=True),
         )
     )
 
@@ -320,7 +328,9 @@ class _RemoteDataWithSecret:
             },
             index=index,
         )
-        frame.columns = pd.MultiIndex.from_product([["SYN"], frame.columns], names=["symbol", "feature"])
+        frame.columns = pd.MultiIndex.from_product(
+            [["SYN"], frame.columns], names=["symbol", "feature"]
+        )
         if feature is not None:
             return frame.xs(feature, axis=1, level="feature")
         return frame

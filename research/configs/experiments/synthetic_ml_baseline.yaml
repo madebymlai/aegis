@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: synthetic_ml_baseline
 output_dir: runs
 
@@ -43,14 +43,27 @@ indicators:
           transform: scale_0_1
 
 labels:
-  kind: fixlb
-  horizon: 5
-  threshold: 0.0
+  generator:
+    kind: fixlb
+    params:
+      n: 5
+  target:
+    role: supervised_target
+    source_output: labels
+    select:
+      params:
+        n: 5
+    transform:
+      name: threshold_future_return
+      version: 1
+      params:
+        threshold: 0.0
 
 split:
   kind: holdout
   train_size: 0.7
   embargo_bars: 5
+  diagnostic_validation_allowed: true
 
 model:
   kind: logistic_regression

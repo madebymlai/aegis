@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: synthetic_walkforward_baseline
 output_dir: runs
 
@@ -43,8 +43,21 @@ indicators:
           transform: scale_0_1
 
 labels:
-  horizon: 5
-  threshold: 0.0
+  generator:
+    kind: fixlb
+    params:
+      n: 5
+  target:
+    role: supervised_target
+    source_output: labels
+    select:
+      params:
+        n: 5
+    transform:
+      name: threshold_future_return
+      version: 1
+      params:
+        threshold: 0.0
 
 split:
   kind: rolling
@@ -52,6 +65,7 @@ split:
   embargo_bars: 5
   n: 5
   length: optimize
+  diagnostic_validation_allowed: true
 
 model:
   kind: logistic_regression

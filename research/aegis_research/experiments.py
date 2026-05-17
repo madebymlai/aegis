@@ -17,6 +17,10 @@ from research.aegis_research.data import (
 )
 from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
 from research.aegis_research.labels import build_label_result
+from research.aegis_research.models import (
+    assert_target_model_compatible,
+    target_model_compatibility,
+)
 from research.aegis_research.provenance.evidence import (
     apply_seed_policy,
     capture_run_start_evidence,
@@ -69,21 +73,50 @@ def run_experiment(
         close = data_result.feature("Close")
         high = data_result.feature("High") if "High" in required_features else None
         low = data_result.feature("Low") if "Low" in required_features else None
-        indicator_result = build_indicator_result(close, config.indicators)
         label_result = build_label_result(close, config.labels, high=high, low=low)
+        artifacts.write_label_artifacts(label_result)
         labels = label_result.labels
-        model_features = build_model_feature_matrix(
-            indicator_result,
+        pre_split_compatibility = target_model_compatibility(
             labels,
-            invalid_value_policy=config.indicators.invalid_value_policy,
+            config.model,
+            label_result.target_schema,
+            phase="pre_split",
+            diagnostic_validation_allowed=config.split.diagnostic_validation_allowed,
         )
+        if not pre_split_compatibility["compatible"]:
+            artifacts.write_label_compatibility_artifact(pre_split_compatibility)
+            assert_target_model_compatible(pre_split_compatibility)
+
+        indicator_result = build_indicator_result(close, config.indicators)
+        try:
+            model_features = build_model_feature_matrix(
+                indicator_result,
+                labels,
+                invalid_value_policy=config.indicators.invalid_value_policy,
+            )
+        except Exception as error:
+            artifacts.write_label_compatibility_artifact(
+                _pre_split_compatibility_failure(label_result.target_schema, error)
+            )
+            raise
         indicators = model_features.frame
         splits_result = build_validation_splits_result(
             model_features.eligible_index,
             config.split,
+            target_metadata=_split_target_metadata(label_result),
         )
+        compatibility = target_model_compatibility(
+            labels,
+            config.model,
+            label_result.target_schema,
+            splits_result.splits,
+            phase="post_split",
+            diagnostic_validation_allowed=config.split.diagnostic_validation_allowed,
+        )
+        artifacts.write_label_compatibility_artifact(compatibility)
+        assert_target_model_compatible(compatibility)
         artifacts.write_indicator_artifacts(indicator_result, model_features)
-        artifacts.write_stage_native_artifacts(label_result, splits_result)
+        artifacts.write_split_native_artifact(splits_result)
         split_metric_ids: list[str] = []
 
         def record_split_artifacts(split_result) -> None:
@@ -95,6 +128,9 @@ def run_experiment(
             labels,
             splits_result.splits,
             config,
+            target_schema=label_result.target_schema,
+            split_metadata=splits_result.metadata,
+            compatibility=compatibility,
             on_split_result=record_split_artifacts,
         )
         report = build_survival_report(
@@ -132,6 +168,32 @@ def _redacted_diagnostic(error: Exception, known_secrets: tuple[str, ...]) -> di
     return {
         "error_type": type(error).__name__,
         "message": message[:1000],
+    }
+
+
+def _split_target_metadata(label_result) -> dict[str, object]:
+    target_schema = label_result.target_schema
+    return {
+        "target_kind": target_schema.get("target_kind"),
+        "target_role": target_schema.get("target_role"),
+        "split_safety": label_result.split_safety,
+        "schema_artifact_id": "labels.target.schema",
+    }
+
+
+def _pre_split_compatibility_failure(
+    target_schema: dict[str, object],
+    error: Exception,
+) -> dict[str, object]:
+    return {
+        "phase": "pre_split",
+        "compatible": False,
+        "target_kind": target_schema.get("target_kind"),
+        "target_role": target_schema.get("target_role"),
+        "model_kind": None,
+        "split_safety": target_schema.get("split_safety", {}),
+        "splits": [],
+        "failure_reason": str(error),
     }
 
 

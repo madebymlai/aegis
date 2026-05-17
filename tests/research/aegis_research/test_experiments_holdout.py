@@ -9,12 +9,13 @@ from research.aegis_research.config import (
     REPORT_STATUSES,
     DataConfig,
     ExperimentConfig,
-    LabelConfig,
+    SplitConfig,
     load_experiment_config,
     resolve_experiment_config,
 )
 from research.aegis_research.data import MarketDataQualityError
 from research.aegis_research.experiments import run_experiment
+from research.aegis_research.models import TargetModelCompatibilityError
 from research.aegis_research.provenance.manifest import ArtifactStatus, validate_manifest
 
 
@@ -63,10 +64,7 @@ def test_synthetic_holdout_experiment_preserves_multi_asset_axis(tmp_path: Path)
 
 def test_holdout_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:
     csv_path = tmp_path / "close_only.csv"
-    close_values = [
-        100 + (i % 30 if (i // 30) % 2 == 0 else 30 - (i % 30))
-        for i in range(260)
-    ]
+    close_values = [100 + (i % 30 if (i // 30) % 2 == 0 else 30 - (i % 30)) for i in range(260)]
     pd.DataFrame(
         {"Close": close_values},
         index=pd.date_range("2020-01-01", periods=260, freq="1D", tz="UTC"),
@@ -76,6 +74,7 @@ def test_holdout_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:
             name="close-only-fixlb",
             output_dir=str(tmp_path / "runs"),
             data=DataConfig(source="csv", path=str(csv_path), symbols=["SYN"]),
+            split=SplitConfig(diagnostic_validation_allowed=True),
         )
     )
 
@@ -86,21 +85,19 @@ def test_holdout_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:
 
 def test_trendlb_close_only_csv_fails_data_preflight(tmp_path: Path) -> None:
     csv_path = tmp_path / "close_only.csv"
-    close_values = [
-        100 + (i % 30 if (i // 30) % 2 == 0 else 30 - (i % 30))
-        for i in range(260)
-    ]
+    close_values = [100 + (i % 30 if (i // 30) % 2 == 0 else 30 - (i % 30)) for i in range(260)]
     pd.DataFrame(
         {"Close": close_values},
         index=pd.date_range("2020-01-01", periods=260, freq="1D", tz="UTC"),
     ).to_csv(csv_path)
     config = resolve_experiment_config(
-        ExperimentConfig(
-            name="close-only-trendlb",
-            output_dir=str(tmp_path / "runs"),
-            data=DataConfig(source="csv", path=str(csv_path), symbols=["SYN"]),
-            labels=LabelConfig(kind="trendlb"),
-        )
+        {
+            "schema_version": 2,
+            "name": "close-only-trendlb",
+            "output_dir": str(tmp_path / "runs"),
+            "data": {"source": "csv", "path": str(csv_path), "symbols": ["SYN"]},
+            "labels": {"generator": {"kind": "trendlb"}},
+        }
     )
 
     with pytest.raises(MarketDataQualityError):
@@ -118,3 +115,26 @@ def test_trendlb_close_only_csv_fails_data_preflight(tmp_path: Path) -> None:
     assert artifacts["data.metadata"]["status"] == ArtifactStatus.COMPLETED
     assert "data.native" not in artifact_ids
     assert data_metadata["quality"]["state"] == "rejected"
+
+
+def test_unpurged_label_validation_requires_diagnostic_opt_in(tmp_path: Path) -> None:
+    resolved = load_experiment_config("research/configs/experiments/synthetic_ml_baseline.yaml")
+    experiment = replace(
+        resolved.config,
+        output_dir=str(tmp_path),
+        split=replace(resolved.config.split, diagnostic_validation_allowed=False),
+    )
+    config = resolve_experiment_config(experiment)
+
+    with pytest.raises(TargetModelCompatibilityError, match="diagnostic_validation_allowed"):
+        run_experiment(config, run_id="unpurged-fails-closed")
+
+    run_dir = tmp_path / "unpurged-fails-closed"
+    compatibility = json.loads((run_dir / "labels" / "compatibility.json").read_text())
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+
+    assert compatibility["compatible"] is False
+    assert compatibility["diagnostic_validation_allowed"] is False
+    assert "diagnostic_validation_allowed" in compatibility["failure_reason"]
+    assert not (run_dir / "split_metrics.csv").exists()
+    assert manifest["run"]["status"] == "failed"

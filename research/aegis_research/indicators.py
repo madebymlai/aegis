@@ -149,7 +149,14 @@ def build_indicator_result(close: pd.DataFrame, config: IndicatorConfig) -> Indi
                 )
                 model_feature_series.append(values.rename(feature_name))
                 model_feature_columns.append(
-                    (feature_name, spec.id, output_name, feature_spec.transform, params_token, symbol)
+                    (
+                        feature_name,
+                        spec.id,
+                        output_name,
+                        feature_spec.transform,
+                        params_token,
+                        symbol,
+                    )
                 )
                 lineage_record = {
                     "feature": feature_name,
@@ -301,8 +308,7 @@ def _normalize_output_frame(
             names[-1] = "symbol"
 
     names = [
-        f"{definition.id}_{name}" if name in definition.param_names else name
-        for name in names
+        f"{definition.id}_{name}" if name in definition.param_names else name for name in names
     ]
     frame.columns = pd.MultiIndex.from_tuples(columns, names=names)
     return frame
@@ -359,14 +365,14 @@ def _parameter_combinations(
     else:
         length = max(len(values) for values in value_lists)
         rows = zip(
-            *[
-                values * length if len(values) == 1 else values
-                for values in value_lists
-            ],
+            *[values * length if len(values) == 1 else values for values in value_lists],
             strict=True,
         )
     return [
-        {name: _native_scalar(value) for name, value in zip(definition.param_names, row, strict=True)}
+        {
+            name: _native_scalar(value)
+            for name, value in zip(definition.param_names, row, strict=True)
+        }
         for row in rows
     ]
 
@@ -375,7 +381,9 @@ def _default_model_features(definition: IndicatorDefinition):
     from research.aegis_research.config import IndicatorFeatureConfig
 
     return [
-        IndicatorFeatureConfig(output=feature["output"], transform=feature.get("transform", "identity"))
+        IndicatorFeatureConfig(
+            output=feature["output"], transform=feature.get("transform", "identity")
+        )
         for feature in definition.default_model_features
     ]
 
@@ -391,7 +399,9 @@ def _assert_bar_aligned(
     output_symbols = set(map(str, output.columns.get_level_values("symbol")))
     input_symbols = set(map(str, _symbols(close)))
     if output_symbols != input_symbols:
-        raise ValueError(f"Indicator {indicator_id!r} output {output_name!r} symbols do not match input")
+        raise ValueError(
+            f"Indicator {indicator_id!r} output {output_name!r} symbols do not match input"
+        )
 
 
 def _indicator_diagnostics(frame: pd.DataFrame, lineage: list[dict[str, Any]]) -> dict[str, Any]:

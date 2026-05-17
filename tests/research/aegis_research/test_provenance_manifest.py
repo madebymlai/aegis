@@ -287,7 +287,17 @@ def test_git_evidence_excludes_raw_diff() -> None:
 
 def test_git_evidence_includes_staged_and_untracked_content_identity(tmp_path: Path) -> None:
     _git(tmp_path, "init")
-    _git(tmp_path, "-c", "user.name=Aegis", "-c", "user.email=aegis@example.test", "commit", "--allow-empty", "-m", "init")
+    _git(
+        tmp_path,
+        "-c",
+        "user.name=Aegis",
+        "-c",
+        "user.email=aegis@example.test",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+    )
     clean = capture_git_evidence(tmp_path)
 
     tracked = tmp_path / "tracked.txt"

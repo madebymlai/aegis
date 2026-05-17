@@ -188,7 +188,9 @@ def _scan_native_artifact(
             lowered = window.lower()
             for marker in SECRET_LIKE_BYTE_MARKERS:
                 if marker in lowered:
-                    raise NativeArtifactSafetyError("native artifact bytes contain secret-like material")
+                    raise NativeArtifactSafetyError(
+                        "native artifact bytes contain secret-like material"
+                    )
             overlap = window[-overlap_size:] if overlap_size else b""
     return digest.hexdigest(), size
 
@@ -210,7 +212,9 @@ def _assert_no_secret_material(
     path: str = "$",
 ) -> None:
     if isinstance(value, str):
-        if any(secret and secret in value for secret in known_secrets) or SECRET_VALUE_RE.search(value):
+        if any(secret and secret in value for secret in known_secrets) or SECRET_VALUE_RE.search(
+            value
+        ):
             raise NativeArtifactSafetyError(f"native metadata contains secret material at {path}")
         return
     if isinstance(value, bytes):
@@ -221,7 +225,9 @@ def _assert_no_secret_material(
         for key, item in value.items():
             key_text = str(key)
             if SECRET_KEY_RE.search(key_text) or key_text.lower() in DENIED_NATIVE_STATE_KEYS:
-                raise NativeArtifactSafetyError(f"native metadata contains secret key at {path}.{key_text}")
+                raise NativeArtifactSafetyError(
+                    f"native metadata contains secret key at {path}.{key_text}"
+                )
             _assert_no_secret_material(item, known_secrets, path=f"{path}.{key_text}")
         return
     if isinstance(value, list | tuple | set):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import joblib
 import pandas as pd
@@ -9,8 +10,15 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from research.aegis_research.config import ModelConfig
+from research.aegis_research.splits import ValidationSplit
 
 LABEL_COLUMN = "__label__"
+
+
+class TargetModelCompatibilityError(ValueError):
+    def __init__(self, diagnostics: dict[str, Any]) -> None:
+        self.diagnostics = diagnostics
+        super().__init__(str(diagnostics.get("failure_reason", "target/model incompatible")))
 
 
 def train_model(
@@ -33,6 +41,64 @@ def train_model(
     )
     model.fit(dataset.drop(columns=[LABEL_COLUMN]), dataset[LABEL_COLUMN].astype(int))
     return model
+
+
+def target_model_compatibility(
+    labels: pd.DataFrame,
+    config: ModelConfig,
+    target_schema: dict[str, Any],
+    splits: list[ValidationSplit] | None = None,
+    *,
+    phase: str,
+    diagnostic_validation_allowed: bool = False,
+) -> dict[str, Any]:
+    split_safety = target_schema.get("split_safety", {})
+    diagnostics: dict[str, Any] = {
+        "phase": phase,
+        "compatible": True,
+        "target_kind": target_schema.get("target_kind"),
+        "target_role": target_schema.get("target_role"),
+        "model_kind": config.kind,
+        "split_safety": split_safety,
+        "diagnostic_validation_allowed": diagnostic_validation_allowed,
+        "splits": [],
+        "failure_reason": None,
+    }
+    if config.kind != "logistic_regression":
+        return _incompatible(diagnostics, f"Unsupported model kind: {config.kind}")
+    if target_schema.get("target_role") != "supervised_target":
+        return _incompatible(diagnostics, "current model requires target role 'supervised_target'")
+    if target_schema.get("target_kind") != "binary_classification":
+        return _incompatible(
+            diagnostics,
+            "current model requires binary classification target; broader target support belongs to #9",
+        )
+    if not isinstance(labels, pd.DataFrame) or isinstance(labels.columns, pd.MultiIndex):
+        return _incompatible(diagnostics, "selected target must be a timestamp-by-symbol panel")
+    if _requires_diagnostic_validation_opt_in(split_safety) and not diagnostic_validation_allowed:
+        return _incompatible(
+            diagnostics,
+            "split.diagnostic_validation_allowed must be true for unpurged look-ahead labels",
+        )
+
+    if splits is None:
+        return diagnostics
+
+    for split in splits:
+        values = _stack_label_panel(labels.loc[split.train_index]).dropna().astype(int)
+        class_counts = {str(key): int(value) for key, value in values.value_counts().items()}
+        diagnostics["splits"].append({"label": split.label, "train_class_counts": class_counts})
+        if len(class_counts) < 2:
+            return _incompatible(
+                diagnostics,
+                f"Split {split.label} training target must contain both classes",
+            )
+    return diagnostics
+
+
+def assert_target_model_compatible(diagnostics: dict[str, Any]) -> None:
+    if not diagnostics.get("compatible", False):
+        raise TargetModelCompatibilityError(diagnostics)
 
 
 def predict_long_probability(
@@ -81,7 +147,10 @@ def _stack_indicator_panel(
     for symbol in symbols:
         symbol_features = indicators.xs(symbol, axis=1, level="symbol", drop_level=True)
         symbol_features = symbol_features.copy()
-        if isinstance(symbol_features.columns, pd.MultiIndex) and "feature" in symbol_features.columns.names:
+        if (
+            isinstance(symbol_features.columns, pd.MultiIndex)
+            and "feature" in symbol_features.columns.names
+        ):
             symbol_features.columns = symbol_features.columns.get_level_values("feature")
         else:
             symbol_features.columns = [
@@ -120,3 +189,13 @@ def _validate_feature_label_symbols(indicators: pd.DataFrame, labels: pd.DataFra
             "indicator feature symbols must match labels: "
             f"features={sorted(feature_symbols)}, labels={sorted(label_symbols)}"
         )
+
+
+def _incompatible(diagnostics: dict[str, Any], reason: str) -> dict[str, Any]:
+    return {**diagnostics, "compatible": False, "failure_reason": reason}
+
+
+def _requires_diagnostic_validation_opt_in(split_safety: dict[str, Any]) -> bool:
+    return bool(split_safety.get("purging_required")) and not bool(
+        split_safety.get("purging_applied")
+    )
