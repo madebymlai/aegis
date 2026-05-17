@@ -15,7 +15,7 @@ from research.aegis_research.config import (
 )
 from research.aegis_research.data import (
     load_market_data_result,
-    required_ohlcv_features,
+    required_experiment_ohlcv_features,
 )
 from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
 from research.aegis_research.labels import build_label_result
@@ -48,7 +48,11 @@ def run_experiment(
     resolved_config = resolve_experiment_config(config, model_registry=model_registry)
     if resolved_config.model_registry is None:
         raise ConfigValidationError(
-            [ConfigValidationIssue("model.plugin_id", "registered model plugin registry is required")]
+            [
+                ConfigValidationIssue(
+                    "model.plugin_id", "registered model plugin registry is required"
+                )
+            ]
         )
     config = resolved_config.config
     known_secrets = _known_config_secret_values(resolved_config.authored_config)
@@ -70,7 +74,7 @@ def run_experiment(
         artifacts = ExperimentArtifactWriter(recorder)
         artifacts.write_config_artifacts(resolved_config)
 
-        required_features = required_ohlcv_features(config.labels)
+        required_features = required_experiment_ohlcv_features(config.labels, config.signals)
         data_result = load_market_data_result(
             config.data,
             required_features=required_features,
@@ -79,6 +83,7 @@ def run_experiment(
         data_result.assert_usable()
         artifacts.write_data_native_artifact(data_result)
         close = data_result.feature("Close")
+        open_prices = data_result.feature("Open") if "Open" in required_features else None
         high = data_result.feature("High") if "High" in required_features else None
         low = data_result.feature("Low") if "Low" in required_features else None
         label_result = build_label_result(close, config.labels, high=high, low=low)
@@ -142,6 +147,7 @@ def run_experiment(
             labels,
             splits_result.splits,
             config,
+            open_prices=open_prices,
             target_schema=label_result.target_schema,
             split_metadata=splits_result.metadata,
             compatibility=compatibility,

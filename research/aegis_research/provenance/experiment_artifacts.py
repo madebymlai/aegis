@@ -14,6 +14,7 @@ from research.aegis_research.data import MarketDataResult, assert_public_metadat
 from research.aegis_research.data_schema import index_identity, table_shape
 from research.aegis_research.indicators import IndicatorResult, ModelFeatureMatrix
 from research.aegis_research.labels import LabelResult
+from research.aegis_research.portfolios import PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION
 from research.aegis_research.provenance.manifest import (
     ArtifactVisibility,
     atomic_write_json,
@@ -21,8 +22,14 @@ from research.aegis_research.provenance.manifest import (
 )
 from research.aegis_research.provenance.native import NativeArtifactWriter
 from research.aegis_research.provenance.recorder import RunRecorder
+from research.aegis_research.signals import SIGNAL_DIAGNOSTICS_SCHEMA_VERSION
 from research.aegis_research.splits import ValidationSplitsResult
-from research.aegis_research.validation import SplitValidationResult, ValidationResult
+from research.aegis_research.validation import (
+    VALIDATION_PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION,
+    VALIDATION_SIGNAL_DIAGNOSTICS_SCHEMA_VERSION,
+    SplitValidationResult,
+    ValidationResult,
+)
 
 
 class ExperimentArtifactWriter:
@@ -325,6 +332,10 @@ class ExperimentArtifactWriter:
             entries = getattr(split, f"{set_name}_entries")
             exits = getattr(split, f"{set_name}_exits")
             metrics = getattr(split, f"{set_name}_metrics")
+            signal_diagnostics = getattr(split, f"{set_name}_signal_diagnostics")
+            portfolio_diagnostics = getattr(split, f"{set_name}_portfolio_diagnostics")
+            assert_public_metadata_safe(signal_diagnostics)
+            assert_public_metadata_safe(portfolio_diagnostics)
             _write_csv_artifact(
                 self.recorder,
                 artifact_id=f"{prefix}.probabilities.{set_name}",
@@ -335,15 +346,38 @@ class ExperimentArtifactWriter:
                 schema_version="positive_class_probabilities.v1",
                 upstream_artifact_ids=[f"{prefix}.model.metadata"],
             )
+            signal_artifact_id = f"{prefix}.signals.{set_name}"
             _write_csv_artifact(
                 self.recorder,
-                artifact_id=f"{prefix}.signals.{set_name}",
-                role="signals",
+                artifact_id=signal_artifact_id,
+                role="raw_threshold_state_signals",
                 producer_stage="validation",
                 path=f"{directory}/signals_{set_name}.csv",
                 frame=_signals_frame(entries, exits),
-                schema_version="signals.v1",
+                schema_version="long_only_threshold_state_signals.v1",
                 upstream_artifact_ids=[f"{prefix}.probabilities.{set_name}"],
+            )
+            signal_diagnostic_id = f"{prefix}.signal_diagnostics.{set_name}"
+            _write_json_artifact(
+                self.recorder,
+                artifact_id=signal_diagnostic_id,
+                role="signal_diagnostics",
+                producer_stage="validation",
+                path=f"{directory}/signal_diagnostics_{set_name}.json",
+                payload=signal_diagnostics,
+                schema_version=SIGNAL_DIAGNOSTICS_SCHEMA_VERSION,
+                upstream_artifact_ids=[signal_artifact_id],
+            )
+            portfolio_diagnostic_id = f"{prefix}.portfolio_diagnostics.{set_name}"
+            _write_json_artifact(
+                self.recorder,
+                artifact_id=portfolio_diagnostic_id,
+                role="portfolio_diagnostics",
+                producer_stage="validation",
+                path=f"{directory}/portfolio_diagnostics_{set_name}.json",
+                payload=portfolio_diagnostics,
+                schema_version=PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION,
+                upstream_artifact_ids=[signal_diagnostic_id],
             )
             metric_id = f"{prefix}.metrics.{set_name}"
             _write_json_artifact(
@@ -354,7 +388,7 @@ class ExperimentArtifactWriter:
                 path=f"{directory}/metrics_{set_name}.json",
                 payload=metrics,
                 schema_version="metrics.v1",
-                upstream_artifact_ids=[f"{prefix}.signals.{set_name}"],
+                upstream_artifact_ids=[portfolio_diagnostic_id],
             )
             metric_ids.append(metric_id)
             self.native_writer.write_native_artifact(
@@ -363,7 +397,12 @@ class ExperimentArtifactWriter:
                 producer_stage="validation",
                 path=f"native/portfolios/{split.label}_{set_name}.pkl",
                 obj=getattr(split, f"{set_name}_portfolio"),
-                metadata={"split": split.label, "set": set_name, **split.metadata},
+                metadata={
+                    "split": split.label,
+                    "set": set_name,
+                    "signal_diagnostics": signal_diagnostics,
+                    "portfolio_diagnostics": portfolio_diagnostics,
+                },
             )
         return metric_ids
 
@@ -378,6 +417,14 @@ class ExperimentArtifactWriter:
         ]
         signal_ids = [
             f"validation.{split.label}.signals.test" for split in validation.split_results
+        ]
+        signal_diagnostic_ids = [
+            f"validation.{split.label}.signal_diagnostics.test"
+            for split in validation.split_results
+        ]
+        portfolio_diagnostic_ids = [
+            f"validation.{split.label}.portfolio_diagnostics.test"
+            for split in validation.split_results
         ]
         _write_csv_artifact(
             self.recorder,
@@ -396,8 +443,28 @@ class ExperimentArtifactWriter:
             producer_stage="validation",
             path="signals.csv",
             frame=_signals_frame(validation.entries, validation.exits),
-            schema_version="signals.aggregate.v1",
+            schema_version="long_only_threshold_state_signals.aggregate.v1",
             upstream_artifact_ids=signal_ids,
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="validation.signal_diagnostics",
+            role="aggregate_signal_diagnostics",
+            producer_stage="validation",
+            path="signal_diagnostics.json",
+            payload=validation.signal_diagnostics,
+            schema_version=VALIDATION_SIGNAL_DIAGNOSTICS_SCHEMA_VERSION,
+            upstream_artifact_ids=signal_diagnostic_ids,
+        )
+        _write_json_artifact(
+            self.recorder,
+            artifact_id="validation.portfolio_diagnostics",
+            role="aggregate_portfolio_diagnostics",
+            producer_stage="validation",
+            path="portfolio_diagnostics.json",
+            payload=validation.portfolio_diagnostics,
+            schema_version=VALIDATION_PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION,
+            upstream_artifact_ids=portfolio_diagnostic_ids,
         )
         _write_csv_artifact(
             self.recorder,
@@ -532,9 +599,7 @@ def _write_artifact_file(
         try:
             _fail_artifact_write(recorder, artifact_id=artifact_id, target=target, error=error)
         except Exception as failure_error:
-            error.add_note(
-                f"failed to mark artifact {artifact_id!r} as failed: {failure_error}"
-            )
+            error.add_note(f"failed to mark artifact {artifact_id!r} as failed: {failure_error}")
         raise
 
 

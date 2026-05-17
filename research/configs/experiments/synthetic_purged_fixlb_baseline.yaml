@@ -77,8 +77,10 @@ model:
     random_state: 42
 
 signals:
-  long_threshold: 0.55
-  exit_threshold: 0.50
+  policy: long_only_hysteresis
+  long_entry_threshold: 0.55
+  long_exit_threshold: 0.50
+  execution_timing: next_open
 
 portfolio:
   init_cash: 10000.0

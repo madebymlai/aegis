@@ -50,21 +50,15 @@ MODEL_DENIED_KEYS = {
     "state",
     "update",
 }
-PORTFOLIO_SIZE_TYPES = {
-    "amount",
-    "value",
-    "percent",
-    "percent100",
-    "valuepercent",
-    "valuepercent100",
-}
 PORTFOLIO_TARGET_SIZE_TYPES = {
     "targetamount",
     "targetvalue",
     "targetpercent",
     "targetpercent100",
 }
-PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
+PORTFOLIO_DIRECTIONS = {"longonly"}
+SIGNAL_POLICIES = {"long_only_hysteresis"}
+SIGNAL_EXECUTION_TIMINGS = {"next_open", "same_close"}
 MISSING_POLICIES = {"nan", "drop", "raise"}
 OHLCV_FEATURE_MAP_KEYS = {"open", "high", "low", "close", "volume"}
 DATA_QUALITY_DEGRADATIONS = {
@@ -294,8 +288,10 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class SignalConfig:
-    long_threshold: float = 0.55
-    exit_threshold: float = 0.50
+    policy: str = "long_only_hysteresis"
+    long_entry_threshold: float = 0.55
+    long_exit_threshold: float = 0.50
+    execution_timing: str = "next_open"
 
 
 @dataclass(frozen=True)
@@ -303,8 +299,7 @@ class PortfolioConfig:
     init_cash: float = 10_000.0
     fees: float = 0.001
     slippage: float = 0.0005
-    size: float = 1.0
-    size_type: str = "valuepercent"
+    entry_budget: float = 1.0
     direction: str = "longonly"
 
 
@@ -594,7 +589,12 @@ def _validate_raw_config(
     split = _section(raw, "split", set(SplitConfig.__dataclass_fields__), issues)
     model = _section(raw, "model", set(ModelConfig.__dataclass_fields__), issues)
     signals = _section(raw, "signals", set(SignalConfig.__dataclass_fields__), issues)
-    portfolio = _section(raw, "portfolio", set(PortfolioConfig.__dataclass_fields__), issues)
+    portfolio = _section(
+        raw,
+        "portfolio",
+        set(PortfolioConfig.__dataclass_fields__) | {"size", "size_type"},
+        issues,
+    )
     report = _section(raw, "report", set(ReportConfig.__dataclass_fields__), issues)
 
     _validate_data(data, issues)
@@ -1248,7 +1248,9 @@ def _validate_model(
         issues.append(ConfigValidationIssue("model.plugin_id", "is required"))
         return
     if plugin_id not in model_registry:
-        issues.append(ConfigValidationIssue("model.plugin_id", "unknown registered model plugin id"))
+        issues.append(
+            ConfigValidationIssue("model.plugin_id", "unknown registered model plugin id")
+        )
         return
     definition = model_registry.get(plugin_id)
     if definition.validate_params is not None and isinstance(params, dict):
@@ -1272,15 +1274,29 @@ def _assert_model_config_registered(
 
 
 def _validate_signals(signals: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    long_threshold = signals.get("long_threshold", 0.55)
-    exit_threshold = signals.get("exit_threshold", 0.50)
-    long_ok = _optional_number("signals.long_threshold", signals, issues)
-    exit_ok = _optional_number("signals.exit_threshold", signals, issues)
-    if long_ok and exit_ok and float(exit_threshold) >= float(long_threshold):
+    _optional_enum("signals.policy", signals, SIGNAL_POLICIES, issues)
+    _optional_enum("signals.execution_timing", signals, SIGNAL_EXECUTION_TIMINGS, issues)
+    long_entry_threshold = signals.get("long_entry_threshold", 0.55)
+    long_exit_threshold = signals.get("long_exit_threshold", 0.50)
+    entry_ok = _optional_number(
+        "signals.long_entry_threshold",
+        signals,
+        issues,
+        minimum=0,
+        maximum=1,
+    )
+    exit_ok = _optional_number(
+        "signals.long_exit_threshold",
+        signals,
+        issues,
+        minimum=0,
+        maximum=1,
+    )
+    if entry_ok and exit_ok and float(long_exit_threshold) >= float(long_entry_threshold):
         issues.append(
             ConfigValidationIssue(
-                "signals.exit_threshold",
-                "must be less than signals.long_threshold",
+                "signals.long_exit_threshold",
+                "must be less than signals.long_entry_threshold",
             )
         )
 
@@ -1289,26 +1305,52 @@ def _validate_portfolio(portfolio: dict[str, Any], issues: list[ConfigValidation
     _optional_number("portfolio.init_cash", portfolio, issues, positive=True)
     _optional_number("portfolio.fees", portfolio, issues, minimum=0)
     _optional_number("portfolio.slippage", portfolio, issues, minimum=0)
-    _optional_number("portfolio.size", portfolio, issues, positive=True)
-    size_type = portfolio.get("size_type", "valuepercent")
-    if "size_type" in portfolio and not isinstance(size_type, str):
-        issues.append(ConfigValidationIssue("portfolio.size_type", "must be a string"))
+    if "entry_budget" not in portfolio:
+        issues.append(ConfigValidationIssue("portfolio.entry_budget", "is required"))
     else:
-        if size_type in PORTFOLIO_TARGET_SIZE_TYPES:
+        _optional_number("portfolio.entry_budget", portfolio, issues, positive=True, maximum=1)
+    if "size" in portfolio:
+        issues.append(
+            ConfigValidationIssue(
+                "portfolio.size",
+                "was removed; use portfolio.entry_budget for v1 signal entry sizing",
+            )
+        )
+    if "size_type" in portfolio and not isinstance(portfolio["size_type"], str):
+        issues.append(ConfigValidationIssue("portfolio.size_type", "must be a string"))
+    elif "size_type" in portfolio:
+        if portfolio["size_type"] in PORTFOLIO_TARGET_SIZE_TYPES:
             issues.append(
                 ConfigValidationIssue(
                     "portfolio.size_type",
-                    "target size types are incompatible with Portfolio.from_signals",
+                    "target allocation sizing is deferred; baseline signal simulation uses portfolio.entry_budget",
                 )
             )
-        elif size_type not in PORTFOLIO_SIZE_TYPES:
+        else:
             issues.append(
                 ConfigValidationIssue(
                     "portfolio.size_type",
-                    f"must be one of {sorted(PORTFOLIO_SIZE_TYPES)}",
+                    "was removed; baseline signal simulation resolves valuepercent sizing internally",
                 )
             )
-    _optional_enum("portfolio.direction", portfolio, PORTFOLIO_DIRECTIONS, issues)
+    direction = portfolio.get("direction", "longonly")
+    if "direction" in portfolio and not isinstance(direction, str):
+        issues.append(ConfigValidationIssue("portfolio.direction", "must be a string"))
+    elif direction != "longonly":
+        if direction in {"both", "shortonly"}:
+            issues.append(
+                ConfigValidationIssue(
+                    "portfolio.direction",
+                    "v1 positive_class_probability signal contract is long-only; use longonly",
+                )
+            )
+        else:
+            issues.append(
+                ConfigValidationIssue(
+                    "portfolio.direction",
+                    f"must be one of {sorted(PORTFOLIO_DIRECTIONS)}",
+                )
+            )
 
 
 def _validate_report(report: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:

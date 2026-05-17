@@ -6,12 +6,19 @@ from typing import ClassVar
 import pandas as pd
 import pytest
 
-from research.aegis_research.config import DataConfig, DataQualityConfig
+from research.aegis_research.config import (
+    DataConfig,
+    DataQualityConfig,
+    LabelConfig,
+    LabelGeneratorConfig,
+    SignalConfig,
+)
 from research.aegis_research.data import (
     MarketDataAdapterResult,
     RemoteDataPullError,
     assert_public_metadata_safe,
     load_market_data_result,
+    required_experiment_ohlcv_features,
 )
 
 
@@ -91,6 +98,63 @@ def test_close_only_fixlb_requirement_allows_missing_optional_features(tmp_path:
 
     assert result.quality.state == "healthy"
     assert "optional OHLCV features unavailable" in result.quality.warnings[0]
+
+
+def test_next_open_signal_timing_requires_open_feature_for_fixlb() -> None:
+    assert required_experiment_ohlcv_features() == ("Close", "Open")
+    assert required_experiment_ohlcv_features(signal_config=SignalConfig()) == ("Close", "Open")
+
+
+def test_same_close_signal_timing_does_not_require_open_feature() -> None:
+    assert required_experiment_ohlcv_features(
+        signal_config=SignalConfig(execution_timing="same_close")
+    ) == ("Close",)
+
+
+def test_next_open_preserves_high_low_label_feature_requirements() -> None:
+    label_config = LabelConfig(generator=LabelGeneratorConfig(kind="trendlb"))
+
+    assert required_experiment_ohlcv_features(label_config, SignalConfig()) == (
+        "Close",
+        "High",
+        "Low",
+        "Open",
+    )
+
+
+def test_next_open_feature_requirement_rejects_close_only_data(tmp_path: Path) -> None:
+    path = tmp_path / "close_only.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"]),
+        required_features=required_experiment_ohlcv_features(signal_config=SignalConfig()),
+    )
+
+    assert result.quality.state == "rejected"
+    assert "required feature 'Open' is unavailable" in result.quality.reasons
+
+
+def test_same_close_feature_requirement_allows_close_only_data(tmp_path: Path) -> None:
+    path = tmp_path / "close_only.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"]),
+        required_features=required_experiment_ohlcv_features(
+            signal_config=SignalConfig(execution_timing="same_close")
+        ),
+    )
+
+    assert result.quality.state == "healthy"
 
 
 def test_high_low_label_requirement_rejects_close_only_data(tmp_path: Path) -> None:
