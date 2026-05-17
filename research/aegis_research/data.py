@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Protocol
@@ -350,32 +351,42 @@ def _remote_adapter(source: str, data_cls, config: DataConfig) -> MarketDataAdap
 
 
 def _read_csv(config: DataConfig) -> pd.DataFrame:
-    flat = _localize_csv_index(pd.read_csv(Path(config.path or ""), index_col=0, parse_dates=True))
-    if _flat_csv_has_features(flat, config):
-        return flat
-    try:
-        multi = pd.read_csv(Path(config.path or ""), header=[0, 1], index_col=0, parse_dates=True)
-    except (pd.errors.ParserError, ValueError):
-        return flat
-    multi = _localize_csv_index(multi)
-    if isinstance(multi.columns, pd.MultiIndex) and not any(
-        str(value).startswith("Unnamed") for value in multi.columns.get_level_values(1)
-    ):
-        return multi
-    return flat
+    path = Path(config.path or "")
+    if _csv_looks_multiindex(path, config):
+        return _localize_csv_index(
+            pd.read_csv(path, header=[0, 1], index_col=0, parse_dates=True)
+        )
+    return _localize_csv_index(pd.read_csv(path, index_col=0, parse_dates=True))
+
+
+def _csv_looks_multiindex(path: Path, config: DataConfig) -> bool:
+    rows = _csv_probe_rows(path, limit=2)
+    if len(rows) < 2:
+        return False
+    source_names = {_source_feature_name(feature, config.feature_map) for feature in OHLCV_FEATURES}
+    if set(map(str, rows[0][1:])) & source_names:
+        return False
+    second_header = rows[1][1:]
+    return bool(second_header) and not any(
+        str(value).startswith("Unnamed") for value in second_header
+    )
+
+
+def _csv_probe_rows(path: Path, *, limit: int) -> list[list[str]]:
+    rows: list[list[str]] = []
+    with path.open(newline="") as handle:
+        reader = csv.reader(handle)
+        for row in reader:
+            rows.append(row)
+            if len(rows) == limit:
+                break
+    return rows
 
 
 def _localize_csv_index(frame: pd.DataFrame) -> pd.DataFrame:
     if isinstance(frame.index, pd.DatetimeIndex) and frame.index.tz is None:
         frame.index = frame.index.tz_localize("UTC")
     return frame
-
-
-def _flat_csv_has_features(frame: pd.DataFrame, config: DataConfig) -> bool:
-    if isinstance(frame.columns, pd.MultiIndex):
-        return False
-    source_names = {_source_feature_name(feature, config.feature_map) for feature in OHLCV_FEATURES}
-    return bool(set(map(str, frame.columns)) & source_names)
 
 
 def _csv_feature_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.DataFrame]:

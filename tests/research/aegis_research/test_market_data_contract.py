@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
+from research.aegis_research import data as data_module
 from research.aegis_research.config import DataConfig
 from research.aegis_research.data import (
     MarketDataAdapterResult,
@@ -70,6 +72,38 @@ def test_csv_multiindex_symbol_feature_layout_preserves_symbols(tmp_path: Path) 
 
     assert result.quality.state == "healthy"
     assert list(result.feature("Close").columns) == ["AAA", "BBB"]
+
+
+def test_csv_multiindex_layout_uses_one_full_pandas_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "multi.csv"
+    index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="time")
+    frame = pd.DataFrame(
+        {
+            ("AAA", "Close"): [1.0, 2.0, 3.0],
+            ("BBB", "Close"): [4.0, 5.0, 6.0],
+        },
+        index=index,
+    )
+    frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["symbol", "feature"])
+    frame.to_csv(path)
+    read_headers = []
+    read_csv = data_module.pd.read_csv
+
+    def spy_read_csv(*args, **kwargs):
+        read_headers.append(kwargs.get("header"))
+        return read_csv(*args, **kwargs)
+
+    monkeypatch.setattr(data_module.pd, "read_csv", spy_read_csv)
+
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["AAA", "BBB"])
+    )
+
+    assert result.quality.state == "healthy"
+    assert read_headers == [[0, 1]]
 
 
 def test_missing_required_feature_marks_quality_rejected(tmp_path: Path) -> None:
