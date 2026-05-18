@@ -86,6 +86,8 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     assert portfolio_diagnostics["execution"]["timing"] == "next_open"
     assert metrics["metric_scope"] == "shared_cash_group"
     assert metrics["metric_assumptions"]["benchmark_status"] == "none"
+    assert metrics["metric_evidence"]["sharpe_ratio"]["source"]["identity"] == "sharpe_ratio"
+    assert metrics["metric_roles"]["total_return_pct"]["required_gate_input"] is False
     assert portfolio_sidecar["metadata"]["signal_diagnostics"]["set_name"] == "test"
     assert portfolio_sidecar["metadata"]["portfolio_diagnostics"]["execution"]["timing"] == (
         "next_open"
@@ -154,14 +156,15 @@ def test_purged_run_writes_per_split_models_and_links_aggregates(tmp_path: Path)
     assert artifacts["validation.split_0.portfolio_diagnostics.test"]["schema_version"] == (
         "portfolio_diagnostics.v2"
     )
-    assert artifacts["validation.split_0.metrics.test"]["schema_version"] == "metrics.v2"
+    assert artifacts["validation.split_0.metrics.test"]["schema_version"] == "metrics.v3"
     assert artifacts["validation.split_metrics"]["schema_version"] == "split_metrics.v2"
-    assert artifacts["report.survival"]["schema_version"] == "survival_report.v3"
+    assert artifacts["report.survival"]["schema_version"] == "survival_report.v4"
     assert artifacts["validation.portfolio_diagnostics"]["upstream_artifact_ids"] == [
         f"validation.split_{index}.portfolio_diagnostics.test" for index in range(5)
     ]
     assert artifacts["report.survival"]["upstream_artifact_ids"] == [
         "validation.split_metrics",
+        *[f"validation.split_{index}.metrics.test" for index in range(5)],
         "splits.evidence",
         "labels.compatibility",
     ]
@@ -184,6 +187,33 @@ def test_purged_run_writes_per_split_models_and_links_aggregates(tmp_path: Path)
         aggregate_portfolio_diagnostics["splits"]["split_0"]["test"]["execution"]["timing"]
         == "next_open"
     )
+    report = json.loads((run_dir / "survival_report.json").read_text())
+    split_metrics = (run_dir / "split_metrics.csv").read_text()
+    split_metrics_payload = json.loads(
+        (run_dir / "splits" / "split_0" / "metrics_test.json").read_text()
+    )
+    assert report["decision_policy"]["metrics"]["sharpe_ratio"]["policy"] == "all_splits_pass"
+    assert report["metric_roles"]["gate_evidence"] == "per_split_test_metrics"
+    assert report["gate_outcomes"]
+    metric_gate = next(gate for gate in report["gate_outcomes"] if gate["metric"] is not None)
+    assert {
+        "name",
+        "metric",
+        "source_scope",
+        "split",
+        "actual_value",
+        "availability",
+        "threshold",
+        "comparator",
+        "status",
+        "reason",
+        "required",
+    } <= set(metric_gate)
+    assert metric_gate["evidence"]["source"]["identity"]
+    assert "warnings" in metric_gate["evidence"]
+    assert report["metric_evidence_summary"]["metrics"]["sharpe_ratio"]["splits"]
+    assert split_metrics_payload["metric_evidence"]["sharpe_ratio"]
+    assert "metric_evidence" not in split_metrics.splitlines()[0]
 
 
 def test_failed_split_run_preserves_prior_completed_split_artifacts(

@@ -159,11 +159,12 @@ def run_experiment(
             validation.train_metrics,
             validation.test_metrics,
             config.report,
-            validation.validation_metadata,
+            split_metric_evidence=validation.split_metric_evidence,
+            validation_metadata=validation.validation_metadata,
         )
 
         artifacts.write_validation_aggregates(validation, split_metric_ids=split_metric_ids)
-        artifacts.write_report_artifact(report)
+        artifacts.write_report_artifact(report, split_metric_ids=split_metric_ids)
         recorder.mark_run_completed()
 
         return {

@@ -478,7 +478,10 @@ class ExperimentArtifactWriter:
             upstream_artifact_ids=split_metric_ids,
         )
 
-    def write_report_artifact(self, report: dict[str, Any]) -> None:
+    def write_report_artifact(self, report: dict[str, Any], *, split_metric_ids: list[str]) -> None:
+        test_metric_ids = [
+            artifact_id for artifact_id in split_metric_ids if artifact_id.endswith(".test")
+        ]
         _write_json_artifact(
             self.recorder,
             artifact_id="report.survival",
@@ -486,9 +489,10 @@ class ExperimentArtifactWriter:
             producer_stage="report",
             path="survival_report.json",
             payload=report,
-            schema_version="survival_report.v3",
+            schema_version="survival_report.v4",
             upstream_artifact_ids=[
                 "validation.split_metrics",
+                *test_metric_ids,
                 "splits.evidence",
                 "labels.compatibility",
             ],

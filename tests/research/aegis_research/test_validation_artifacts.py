@@ -27,6 +27,7 @@ def test_validation_result_exposes_complete_split_child_shape() -> None:
     result = _evaluate("research/configs/experiments/synthetic_purged_fixlb_baseline.yaml")
 
     assert len(result.split_results) == 5
+    assert len(result.split_metric_evidence) == 10
     assert result.validation_metadata["n_splits"] == 5
     assert result.validation_metadata["decision_grade"] is True
     assert result.validation_metadata["split_metadata"]["purging_applied"] is True
@@ -63,8 +64,17 @@ def test_validation_result_exposes_complete_split_child_shape() -> None:
         assert split.test_metrics["metric_scope"] == "shared_cash_group"
         assert split.test_metrics["metric_assumptions"]["freq"] == "1D"
         assert split.test_metrics["metric_assumptions"]["benchmark_status"] == "none"
+        assert split.test_metrics["metric_evidence"]["sharpe_ratio"]["availability"] in {
+            "available",
+            "unavailable_metric",
+        }
     assert result.test_metrics["metric_scope"] == "shared_cash_group"
     assert result.test_metrics["metric_assumptions"]["year_freq"] == "252D"
+    test_evidence = [row for row in result.split_metric_evidence if row["set"] == "test"]
+    assert test_evidence[0]["metric_evidence"]["sharpe_ratio"]["source"]["identity"] == (
+        "sharpe_ratio"
+    )
+    assert "metric_evidence" not in result.split_metrics.columns
 
 
 def test_decision_grade_requires_split_purging_proof() -> None:

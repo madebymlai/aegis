@@ -16,7 +16,11 @@ from research.aegis_research.models import (
     train_model,
 )
 from research.aegis_research.portfolios import simulate_portfolio
-from research.aegis_research.reports import portfolio_metric_assumptions, portfolio_metrics
+from research.aegis_research.reports import (
+    portfolio_metric_assumptions,
+    portfolio_metrics,
+    split_metric_evidence_row,
+)
 from research.aegis_research.signals import probabilities_to_signals
 from research.aegis_research.splits import ValidationSplit, split_purging_passed
 
@@ -53,6 +57,7 @@ class ValidationResult:
     exits: pd.DataFrame
     train_metrics: dict[str, Any]
     test_metrics: dict[str, Any]
+    split_metric_evidence: list[dict[str, Any]]
     split_metrics: pd.DataFrame
     signal_diagnostics: dict[str, Any]
     portfolio_diagnostics: dict[str, Any]
@@ -87,6 +92,7 @@ def evaluate_validation_splits(
     compatibility = compatibility or {}
 
     split_rows: list[dict[str, Any]] = []
+    split_metric_evidence: list[dict[str, Any]] = []
     probability_frames: dict[str, pd.DataFrame] = {}
     entry_frames: dict[str, pd.DataFrame] = {}
     exit_frames: dict[str, pd.DataFrame] = {}
@@ -163,10 +169,13 @@ def evaluate_validation_splits(
 
         train_metrics = portfolio_metrics(train_pf, config.report)
         test_metrics = portfolio_metrics(test_pf, config.report)
+        train_metric_evidence = split_metric_evidence_row(split.label, "train", train_metrics)
+        test_metric_evidence = split_metric_evidence_row(split.label, "test", test_metrics)
+        split_metric_evidence.extend([train_metric_evidence, test_metric_evidence])
         split_rows.extend(
             [
-                {"split": split.label, "set": "train", **train_metrics},
-                {"split": split.label, "set": "test", **test_metrics},
+                {"split": split.label, "set": "train", **_split_metrics_row(train_metrics)},
+                {"split": split.label, "set": "test", **_split_metrics_row(test_metrics)},
             ]
         )
         probability_frames[split.label] = test_probabilities
@@ -230,6 +239,7 @@ def evaluate_validation_splits(
         exits=exits,
         train_metrics=train_metrics,
         test_metrics=test_metrics,
+        split_metric_evidence=split_metric_evidence,
         split_metrics=split_metrics,
         signal_diagnostics=_aggregate_signal_diagnostics(split_results),
         portfolio_diagnostics=_aggregate_portfolio_diagnostics(split_results),
@@ -295,6 +305,20 @@ def _aggregate_metrics(metrics: pd.DataFrame) -> dict[str, Any]:
         metrics["metric_assumptions"],
     )
     return aggregated
+
+
+def _split_metrics_row(metrics: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "total_return_pct": metrics.get("total_return_pct"),
+        "sharpe_ratio": metrics.get("sharpe_ratio"),
+        "max_drawdown_pct": metrics.get("max_drawdown_pct"),
+        "total_trades": metrics.get("total_trades"),
+        "win_rate_pct": metrics.get("win_rate_pct"),
+        "total_fees_paid": metrics.get("total_fees_paid"),
+        "metric_scope": metrics.get("metric_scope"),
+        "metric_assumptions": metrics.get("metric_assumptions"),
+        "per_symbol": metrics.get("per_symbol"),
+    }
 
 
 def _slice_optional_panel(

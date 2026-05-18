@@ -48,6 +48,10 @@ def test_synthetic_baseline_experiment_runs(tmp_path: Path) -> None:
     assert result["report"]["validation"]["kind"] == "purged_kfold"
     assert result["report"]["validation"]["n_splits"] == 5
     assert result["report"]["status"] in REPORT_STATUSES
+    assert result["report"]["decision_policy"]["metrics"]["total_trades"]["policy"] == (
+        "sum_across_test_splits"
+    )
+    assert result["report"]["gate_outcomes"]
 
 
 def test_synthetic_purged_fixlb_experiment_is_decision_grade(tmp_path: Path) -> None:
@@ -69,6 +73,7 @@ def test_synthetic_purged_fixlb_experiment_is_decision_grade(tmp_path: Path) -> 
     assert validation["kind"] == "purged_kfold"
     assert validation["decision_grade"] is True
     assert validation["decision_grade_scope"] == "label_window_purging"
+    assert result["report"]["metric_roles"]["gate_evidence"] == "per_split_test_metrics"
     assert split_evidence["purging_applied"] is True
     assert split_evidence["leakage_invariant"]["passed"] is True
     assert split_evidence["time_validation"]["pred_times_explicit"] is True
