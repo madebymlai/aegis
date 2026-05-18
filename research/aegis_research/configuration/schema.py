@@ -70,9 +70,8 @@ INDICATOR_INLINE_CODE_KEYS = {
     "module",
     "python",
 }
-LANES = {"play", "run", "train"}
+LANES = {"run", "train"}
 SOURCE_KINDS = {"component", "playbook"}
-PLAY_STAGES = {"labels", "indicators", "strategies"}
 RANKING_DIRECTIONS = {"asc", "desc"}
 LANE_EXECUTABLE_DENIED_KEYS = {
     "artifact_path",
@@ -322,26 +321,6 @@ class RankingConfig:
 
 
 @dataclass(frozen=True)
-class PlayConfig:
-    stages: list[str]
-    indicator_refs: list[SourceRefConfig]
-    ranking: RankingConfig
-    backup_last_run: bool = False
-
-
-@dataclass(frozen=True)
-class PlayLaneConfig:
-    name: str
-    schema_version: int = CONFIG_SCHEMA_VERSION
-    lane: str = "play"
-    data: DataConfig = field(default_factory=DataConfig)
-    portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
-    report: ReportConfig = field(default_factory=ReportConfig)
-    play: PlayConfig | None = None
-    output_dir: str = "runs"
-
-
-@dataclass(frozen=True)
 class StrategyRunLaneConfig:
     name: str
     strategy: SourceRefConfig
@@ -371,7 +350,7 @@ class TrainLaneConfig:
     output_dir: str = "runs"
 
 
-LaneConfig = PlayLaneConfig | StrategyRunLaneConfig | TrainLaneConfig
+LaneConfig = StrategyRunLaneConfig | TrainLaneConfig
 
 
 @dataclass(frozen=True)

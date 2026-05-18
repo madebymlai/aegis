@@ -19,10 +19,10 @@ def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
 
     output = capsys.readouterr()
     assert "usage: aerd" in output.out
-    assert "play" in output.out
     assert "run" in output.out
     assert "train" in output.out
-    assert "exp" in output.out
+    assert "play" not in output.out
+    assert "exp" not in output.out
 
 
 def test_package_metadata_exposes_aerd_script() -> None:

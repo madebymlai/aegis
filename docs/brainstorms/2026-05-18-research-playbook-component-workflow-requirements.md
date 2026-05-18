@@ -7,7 +7,7 @@ topic: research-playbook-component-workflow
 
 ## Summary
 
-Add a three-lane research workflow: `aerd play` runs repo-controlled exploratory playbooks by stable ID, `aerd run` runs reproducible strategy sweeps over promoted components, and `aerd train` runs reproducible ML training over promoted or validated labels, indicator-derived features, and model plugins. Labels, indicators, and strategies become file-scoped plugin-like components that are easy to add, remove, review, and discover without editing central runtime code.
+Add a two-command research workflow: `aerd run` runs strategy and research sweeps over explicitly selected repo-controlled playbooks or promoted components, and `aerd train` runs reproducible ML training over promoted or validated labels, indicator-derived features, and model plugins. Labels, indicators, and strategies become file-scoped plugin-like components that are easy to add, remove, review, and discover without editing central runtime code.
 
 ---
 
@@ -19,12 +19,11 @@ This creates the wrong pressure at both ends of the research loop. Early explora
 
 ```mermaid
 flowchart TB
-    Play["aerd play <config>\nrepo-controlled exploratory playbook"]
+    Run["aerd run <config>\nstrategy sweep over playbook or component refs"]
     Promote["manual promotion\nreviewed component file"]
-    Run["aerd run <config>\nstrategy sweep over promoted components"]
     Train["aerd train <config>\nML training over validated components"]
 
-    Play -->|promising idea| Promote
+    Run -->|promising playbook idea| Promote
     Promote --> Run
     Promote --> Train
 ```
@@ -45,23 +44,23 @@ Prose is authoritative if this diagram and the requirements disagree.
 
 ## Key Flows
 
-- F1. Exploratory playbook run
-  - **Trigger:** A researcher calls `aerd play <config>`.
+- F1. Playbook-backed strategy run
+  - **Trigger:** A researcher calls `aerd run <config>` with playbook strategy or indicator source refs.
   - **Actors:** A1, A5
-  - **Steps:** The config selects a repo-controlled playbook by stable ID, chooses stages and sweep inputs, runs playbook-local exploratory logic, computes configured VectorBT metrics, and writes exploratory play artifacts.
-  - **Outcome:** The researcher gets a last-run exploratory artifact and top-10 sweep leaderboard without creating reusable runtime dependencies.
+  - **Steps:** The config selects repo-controlled playbook IDs by explicit source refs, chooses sweep inputs, runs playbook-local exploratory logic through the run lane, computes configured VectorBT metrics, and writes run artifacts that identify playbook-backed evidence.
+  - **Outcome:** The researcher gets a top-10 sweep leaderboard without creating reusable runtime dependencies or executing arbitrary notebook paths.
   - **Covered by:** R1, R2, R3, R4, R5, R6, R7, R8, R9, R10
 - F2. Manual promotion
-  - **Trigger:** A play result or manual experiment produces logic worth reusing.
+  - **Trigger:** A playbook-backed run result or manual experiment produces logic worth reusing.
   - **Actors:** A1, A2
   - **Steps:** The author moves reusable logic into a reviewed label, indicator, or strategy component file with stable ID, metadata, callable behavior, and declared compatibility assumptions.
   - **Outcome:** Reusable research logic becomes a promoted component that `run` or `train` can reference reproducibly.
   - **Covered by:** R11, R12, R13, R14
-- F3. Reproducible strategy sweep
+- F3. Component-backed strategy sweep
   - **Trigger:** A reviewer calls `aerd run <config>`.
   - **Actors:** A2, A3, A5
-  - **Steps:** The run config selects promoted indicator and strategy components by stable IDs, provides sweep parameters and portfolio assumptions, evaluates strategy variants, and records metrics and variant identity as reproducible run evidence.
-  - **Outcome:** Strategy results are reproducible from promoted components and config, not from playbook or notebook state.
+  - **Steps:** The run config selects promoted indicator and strategy components by stable IDs, provides sweep parameters and portfolio assumptions, evaluates strategy variants, and records metrics, source kinds, and variant identity as reproducible run evidence.
+  - **Outcome:** Strategy results can be audited from explicit component source refs and config-owned portfolio assumptions.
   - **Covered by:** R13, R14, R15, R16, R17
 - F4. Reproducible ML training
   - **Trigger:** A reviewer calls `aerd train <config>`.
@@ -75,56 +74,56 @@ Prose is authoritative if this diagram and the requirements disagree.
 ## Requirements
 
 **Lane contract**
-- R1. The CLI must expose `aerd play <config>` as the exploratory playbook lane, `aerd run <config>` as the reproducible strategy-sweep lane, and `aerd train <config>` as the reproducible ML training lane.
-- R2. Each lane must make its evidence type visible: `play` produces exploratory evidence, `run` produces reproducible strategy-sweep evidence, and `train` produces reproducible ML-training evidence.
+- R1. The CLI must expose `aerd run <config>` as the strategy/research sweep command and `aerd train <config>` as the reproducible ML training command.
+- R2. Each command must make its evidence type and source mode visible: `run` records whether strategy and indicator evidence came from playbooks or components, and `train` records ML-training evidence.
 - R3. `run` and `train` must not execute playbook notebooks, playbook scripts, inline Python from config, arbitrary external scripts, or unreviewed filesystem paths.
 - R4. Configs may select IDs, stages, parameters, sweeps, ranking metrics, data inputs, and portfolio assumptions, but executable research logic must live in repo-controlled playbooks or promoted components.
 
-**Playbook workflow**
-- R5. `aerd play <config>` must select a repo-controlled playbook by stable ID, not by an arbitrary notebook or script path.
-- R6. Playbooks may contain temporary exploratory label, indicator, threshold, strategy, or baseline ideas without requiring promotion up front.
-- R7. A playbook run must write a lane-specific last-run exploratory artifact that is overwritten by the next run by default; an explicit backup option must preserve the previous artifact instead of replacing it.
-- R8. Play sweep artifacts must include a top-10 leaderboard of sweep configurations ranked by one config-selected allowed VectorBT metric and direction.
-- R9. A sweep configuration leaderboard row must identify the full configuration that was evaluated, including relevant indicator parameters, thresholds, strategy parameters, and portfolio assumptions used by the playbook.
-- R10. When a playbook defines a playbook-local baseline, ranking may use direct delta versus that baseline on the configured primary metric; otherwise ranking uses the raw configured metric.
+**Playbook-backed run workflow**
+- R5. `aerd run <config>` must select repo-controlled strategy or indicator playbooks by stable ID through explicit `source: playbook` refs, not by arbitrary notebook or script paths.
+- R6. Playbooks may contain temporary exploratory indicator, threshold, strategy, or baseline ideas without requiring promotion up front.
+- R7. Run sweep artifacts must include a top-10 leaderboard of sweep configurations ranked by one config-selected allowed VectorBT metric and direction.
+- R8. A sweep configuration leaderboard row must identify the full configuration that was evaluated, including relevant indicator source kind, indicator ID, indicator parameters, thresholds, strategy source kind, strategy ID, strategy parameters, and portfolio assumptions.
+- R9. Run configs may select playbook indicator IDs, explicit component indicator IDs, and all component indicators in the same run; each indicator playbook ID represents one indicator idea/family and may sweep parameters inside that family.
+- R10. When an indicator playbook declares one component indicator baseline and emits baseline evidence, ranking may use direct delta versus that baseline on the configured primary metric; otherwise ranking uses the raw configured metric.
 
 **Promoted components**
 - R11. Labels, indicators, and strategies must be promoted as file-scoped plugin-like components with stable IDs, metadata, and callable behavior.
 - R12. Adding or removing a promoted label, indicator, or strategy must be component-file-scoped and autodiscovered from project-controlled component locations, not require unrelated central registry edits.
 - R13. Promoted component metadata must expose enough identity and compatibility information for reproducibility, including source kind, parameters, outputs, supported role, and relevant alignment or lookahead assumptions.
-- R14. Promotion in v1 is manual: the researcher or component author moves reusable logic into a reviewed component file; play artifacts must not be promoted implicitly.
+- R14. Promotion in v1 is manual: the researcher or component author moves reusable logic into a reviewed component file; run artifacts must not be promoted implicitly.
 
 **Strategy sweeps**
-- R15. `aerd run <config>` must select promoted strategy components by stable ID; it must not accept temporary playbook strategy logic or inline strategy rules as reproducible run behavior.
+- R15. `aerd run <config>` must select strategy source refs by stable ID, where each strategy ref declares `source: playbook` or `source: component`; it must not accept inline strategy rules or arbitrary external paths.
 - R16. Strategy components must represent reusable signal or rule logic over data, labels, and indicator outputs; portfolio assumptions such as sizing, costs, execution timing, cash sharing, and direction are owned by config.
-- R17. Run artifacts must preserve enough variant identity to compare promoted strategy IDs, consumed indicator IDs, parameter values, portfolio assumptions, VectorBT metrics, and ranking or survival outcomes.
+- R17. Run artifacts must preserve enough variant identity to compare strategy source kinds, strategy IDs, consumed indicator source kinds, consumed indicator IDs, parameter values, portfolio assumptions, VectorBT metrics, and ranking or survival outcomes.
 
 **ML training lane**
 - R18. `aerd train <config>` must be the explicit ML lane for model-plugin training, separate from strategy sweeps.
-- R19. `train` must consume promoted or validated labels, indicator-derived model features, and model plugins; it must not depend on notebook, playbook, or prior `play` run state.
+- R19. `train` must consume promoted or validated labels, indicator-derived model features, and model plugins; it must not depend on notebook, playbook, or prior `run` artifact state.
 - R20. Features are not a separate first-class component family in v1; indicator outputs and transforms are the promoted source that can become model features for `train`.
 
 ---
 
 ## Acceptance Examples
 
-- AE1. **Covers R1, R2, R5, R6.** Given a valid play config selecting a known playbook ID and sweep inputs, when a researcher runs `aerd play <config>`, the playbook executes as exploratory research and records that its outputs are exploratory evidence.
-- AE2. **Covers R3, R5.** Given a play config that attempts to execute an arbitrary notebook or script path, when `aerd play` validates the config, it rejects the config instead of executing the path.
-- AE3. **Covers R7, R8, R9.** Given a playbook sweep over indicator windows and strategy thresholds, when the run completes, the last-run exploratory artifact contains a top-10 leaderboard ranked by the configured VectorBT metric and each row identifies the evaluated sweep configuration.
-- AE4. **Covers R7.** Given an existing last-run play artifact, when `aerd play` runs again without backup, the last-run artifact is replaced; when backup is requested, the previous artifact is preserved before the new last-run artifact is written.
+- AE1. **Covers R1, R2, R5, R6.** Given a valid run config selecting known playbook strategy or indicator IDs and sweep inputs, when a researcher runs `aerd run <config>`, the playbook-backed logic executes through the run lane and records playbook source evidence.
+- AE2. **Covers R3, R5.** Given a run config that attempts to execute an arbitrary notebook or script path, when `aerd run` validates the config, it rejects the config instead of executing the path.
+- AE3. **Covers R7, R8, R9.** Given a run sweep over indicator windows and strategy thresholds, when the run completes, the run artifact contains a top-10 leaderboard ranked by the configured VectorBT metric and each row identifies the evaluated source refs, parameters, and portfolio assumptions.
+- AE4. **Covers R9.** Given a run config with playbook indicator refs, explicit component indicator refs, and an all-components selector, when `aerd run` resolves indicators, it evaluates the combined indicator set and records each row's indicator source kind and ID.
 - AE5. **Covers R10.** Given a playbook with a local baseline, when leaderboard ranking is requested, the ranked metric can be the delta from that baseline; given no baseline, ranking uses the raw configured metric.
 - AE6. **Covers R11, R12, R13, R14.** Given a useful exploratory indicator, when it is promoted, it becomes a reviewed component file with stable ID and metadata and is discovered without editing unrelated label or strategy definitions.
 - AE7. **Covers R15, R16, R17.** Given a run config selecting a promoted strategy ID and portfolio assumptions, when `aerd run` executes, it evaluates promoted strategy variants and records strategy/component IDs, parameters, portfolio assumptions, and metrics in reproducible artifacts.
-- AE8. **Covers R18, R19, R20.** Given a train config selecting validated labels, indicator-derived features, and a model plugin, when `aerd train` executes, model training runs without depending on prior playbook state or a play artifact.
+- AE8. **Covers R18, R19, R20.** Given a train config selecting validated labels, indicator-derived features, and a model plugin, when `aerd train` executes, model training runs without depending on prior playbook state or a run artifact.
 
 ---
 
 ## Success Criteria
 
-- Researchers can do VectorBT-style sweep exploration without editing central source files or promoting every idea before trying it.
+- Researchers can do VectorBT-style sweep exploration through `aerd run` without editing central source files or promoting every idea before trying it.
 - Promoted labels, indicators, and strategies are easy to add, review, remove, and discover as small component files.
-- `play`, `run`, and `train` outputs make it obvious which evidence is exploratory, which is reproducible strategy-sweep evidence, and which is ML-training evidence.
-- A promising play result has a clear manual promotion path into a stable component, followed by reproducible validation through `run` or `train`.
+- `run` and `train` outputs make it obvious which evidence is playbook-backed, which evidence is component-backed strategy-sweep evidence, and which evidence is ML-training evidence.
+- A promising playbook-backed run result has a clear manual promotion path into a stable component, followed by reproducible validation through `run` or `train`.
 - A planner can implement the lane split without inventing product behavior around playbook selection, promotion, leaderboard ranking, component families, or portfolio ownership.
 
 ---
@@ -133,20 +132,20 @@ Prose is authoritative if this diagram and the requirements disagree.
 
 - No arbitrary notebook/script execution from config; playbooks are selected by stable ID from repo-controlled playbook definitions.
 - No inline Python, formulas, or strategy rules in YAML/config for reproducible `run` or `train` behavior.
-- No implicit promotion from a play artifact into a component; promotion is manual and reviewed in v1.
+- No implicit promotion from a run artifact into a component; promotion is manual and reviewed in v1.
 - No separate first-class feature component registry in v1; indicator outputs/transforms serve the feature role for `train`.
-- No composite ranking score in v1; play leaderboards rank by one allowed VectorBT metric selected in config.
-- No requirement to make play artifacts decision-grade survival evidence; they remain exploratory even when they include useful metrics.
+- No composite ranking score in v1; run leaderboards rank by one allowed VectorBT metric selected in config.
+- No requirement to treat playbook-backed run artifacts as promoted-component validation evidence; they remain source-labeled as playbook-backed even when they include useful metrics.
 - No GUI research builder, optimizer, AutoML system, or automatic strategy tuning in this issue.
 
 ---
 
 ## Key Decisions
 
-- Three-lane split: `play`, `run`, and `train` need explicit commands because exploration, reproducible strategy sweeps, and ML training have different evidence contracts.
+- Two-command split: `run` owns strategy/research sweeps over explicit playbook or component source refs, while `train` owns ML training.
 - Stable playbook IDs: Config-selected playbook IDs preserve ergonomics without opening arbitrary filesystem execution.
 - File-scoped promoted components: Component files match the model-plugin mental model better than central registry edits.
-- Manual promotion: A human-reviewed component file is the reproducibility boundary between exploratory play and reusable run/train behavior.
+- Manual promotion: A human-reviewed component file is the reproducibility boundary between playbook-backed exploration and reusable component-backed run/train behavior.
 - Config-owned portfolio assumptions: Strategies produce reusable signal/rule logic, while configs own sizing, fees, slippage, timing, cash sharing, and direction so the same strategy can be evaluated under different assumptions.
 - Single ranking metric first: VectorBT provides rich metrics and custom stats hooks, but v1 should rank by one validated metric rather than inventing a composite score prematurely.
 
@@ -156,10 +155,10 @@ Prose is authoritative if this diagram and the requirements disagree.
 
 - Issue #23 establishes the need for `aerd run` to support reproducible strategy sweeps without forcing model training.
 - Existing indicator and label contracts in `docs/brainstorms/2026-05-17-vectorbt-indicator-contract-requirements.md` and `docs/brainstorms/2026-05-17-vectorbt-label-contract-requirements.md` define native-first metadata and lookahead/alignment expectations this workflow should preserve.
-- Current CLI wiring in `research/aegis_research/cli.py` exposes `run` and `exp`, but not `play` or `train`.
+- Current CLI wiring in `research/aegis_research/cli.py` exposes `run`; this work adds `train` and removes the legacy `exp` workflow.
 - Current run orchestration in `research/aegis_research/experiments.py` is still model-training-shaped and requires a model registry.
 - Current indicator registration in `research/aegis_research/indicator_registry.py` is a central in-code registry, not file-scoped component autodiscovery.
-- VectorBT PRO supports portfolio metrics and custom stats APIs that can supply the ranking metrics for play leaderboards.
+- VectorBT PRO supports portfolio metrics and custom stats APIs that can supply the ranking metrics for run leaderboards.
 
 ---
 
@@ -169,5 +168,5 @@ Prose is authoritative if this diagram and the requirements disagree.
 
 - [Affects R5, R11, R12][Technical] What exact project-controlled locations and discovery protocol should playbooks and promoted components use?
 - [Affects R8, R10][Technical] Which VectorBT metrics should be allowed for v1 leaderboard ranking, and how should metric direction be validated?
-- [Affects R7, R17][Technical] What artifact layout and retention behavior should distinguish exploratory play artifacts from reproducible run/train artifacts while staying consistent with existing manifest/provenance conventions?
+- [Affects R7, R17][Technical] What artifact layout should distinguish playbook-backed run evidence, component-backed run evidence, and train evidence while staying consistent with existing manifest/provenance conventions?
 - [Affects R18, R19][Technical] How should the existing `run_experiment` path be split or reused so `run` becomes strategy-sweep oriented and `train` owns model-plugin training?

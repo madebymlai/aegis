@@ -16,18 +16,15 @@ from research.aegis_research.config import (
 def test_valid_lane_configs_resolve_with_lane_identity(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
 
-    play = resolve_lane_config(_play_config(), component_registry=registry)
     run = resolve_lane_config(_run_config(), component_registry=registry)
     train = resolve_lane_config(_train_config(), component_registry=registry)
 
-    assert play.lane == "play"
-    assert play.config.play.ranking.metric == "total_return_pct"
     assert run.lane == "run"
     assert run.config.strategy.id == "demo.strategy"
     assert train.lane == "train"
     assert train.config.label.id == "demo.label"
     assert train.config.model.plugin_id == "tests.sklearn_logistic"
-    assert play.manifest()["lane"] == "play"
+    assert run.manifest()["lane"] == "run"
 
 
 def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
@@ -36,10 +33,10 @@ def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
         "\n".join(
             [
                 f"schema_version: {CONFIG_SCHEMA_VERSION}",
-                "lane: play",
+                "lane: run",
                 "name: duplicate_lane",
-                "play: {}",
-                "play: {}",
+                "strategy: {}",
+                "strategy: {}",
                 "portfolio:",
                 "  entry_budget: 1.0",
             ]
@@ -53,11 +50,10 @@ def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("lane", "mutations", "expected_path"),
     [
-        ("play", {"play": {"notebook_path": "../unsafe.ipynb"}}, "play.notebook_path"),
-        ("play", {"play": {"formula": "close > close.rolling(5).mean()"}}, "play.formula"),
         ("run", {"strategy": {"source": "component", "id": "demo.strategy", "import": "x.y"}}, "strategy.import"),
         ("run", {"strategy": {"source": "component", "id": "demo.strategy", "path": "strategy.py"}}, "strategy.path"),
-        ("train", {"label": {"source": "component", "id": "demo.label", "artifact_path": "runs/play/last-run"}}, "label.artifact_path"),
+        ("run", {"indicator_refs": [{"source": "playbook", "id": "ma_explore", "notebook_path": "../unsafe.ipynb"}]}, "indicator_refs[0].notebook_path"),
+        ("train", {"label": {"source": "component", "id": "demo.label", "artifact_path": "runs/previous-run/strategy_run.json"}}, "label.artifact_path"),
         ("train", {"label": {"source": "component", "id": "demo.label", "python": "lambda x: x"}}, "label.python"),
     ],
 )
@@ -68,7 +64,7 @@ def test_lane_configs_reject_inline_code_and_arbitrary_paths(
     expected_path: str,
 ) -> None:
     registry = _component_registry(tmp_path)
-    raw = {"play": _play_config(), "run": _run_config(), "train": _train_config()}[lane]
+    raw = {"run": _run_config(), "train": _train_config()}[lane]
     raw = _merge(raw, mutations)
 
     with pytest.raises(ConfigValidationError) as error:
@@ -156,20 +152,25 @@ def test_lane_csv_source_rejects_non_project_relative_path(
     assert "relative path" in str(error.value)
 
 
-def test_play_lane_rejects_component_refs_until_component_play_execution_exists(
+def test_run_lane_accepts_playbook_and_component_indicator_refs_together(
     tmp_path: Path,
 ) -> None:
     registry = _component_registry(tmp_path)
     raw = _merge(
-        _play_config(),
-        {"play": {"indicator_refs": [{"source": "component", "id": "all"}]}},
+        _run_config(),
+        {
+            "strategy": {"source": "playbook", "id": "strategy_explore"},
+            "indicator_refs": [
+                {"source": "playbook", "id": "ma_explore"},
+                {"source": "component", "id": "all"},
+            ],
+        },
     )
 
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_lane_config(raw, component_registry=registry)
+    resolved = resolve_lane_config(raw, component_registry=registry)
 
-    assert "play.indicator_refs[0].source" in str(error.value)
-    assert "playbook" in str(error.value)
+    assert resolved.config.strategy.source == "playbook"
+    assert [ref.source for ref in resolved.config.indicator_refs] == ["playbook", "component"]
 
 
 def test_train_rejects_strategy_sweep_config_with_missing_training_contract(tmp_path: Path) -> None:
@@ -203,28 +204,13 @@ def test_lane_ranking_metric_and_direction_validation(
     expected: str,
 ) -> None:
     registry = _component_registry(tmp_path)
-    raw = _play_config()
-    raw["play"]["ranking"] = ranking  # type: ignore[index]
+    raw = _run_config()
+    raw["ranking"] = ranking
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_lane_config(raw, component_registry=registry)
 
     assert expected in str(error.value)
-
-
-def _play_config() -> dict[str, object]:
-    return {
-        "schema_version": CONFIG_SCHEMA_VERSION,
-        "lane": "play",
-        "name": "play_demo",
-        "data": {"source": "synthetic", "rows": 50},
-        "portfolio": {"entry_budget": 1.0},
-        "play": {
-            "stages": ["indicators"],
-            "indicator_refs": [{"source": "playbook", "id": "ma_explore"}],
-            "ranking": {"metric": "total_return_pct", "direction": "desc"},
-        },
-    }
 
 
 def _run_config() -> dict[str, object]:

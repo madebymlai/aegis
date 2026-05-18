@@ -1,6 +1,6 @@
 # Components
 
-Promoted components are reviewed Python files under `research/components/{labels,indicators,strategies}/`. Reproducible `run` configs select strategy and indicator components by explicit source ref:
+Promoted components are reviewed Python files under `research/components/{labels,indicators,strategies}/`. `run` configs select strategy and indicator components by explicit source ref; playbook refs use the same source-ref shape with `source: playbook`:
 
 ```yaml
 strategy:

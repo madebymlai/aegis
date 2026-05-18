@@ -19,13 +19,18 @@ from research.aegis_research.cli_support.output import (
 )
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.config import ConfigValidationError, load_lane_config, redact_text
+from research.aegis_research.playbook_registry import (
+    PlaybookRegistryError,
+    PlaybookSelection,
+    discover_playbook_registry,
+)
 from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.strategy_runs import run_strategy_sweep
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = subparsers.add_parser("run", help="Run a promoted strategy sweep config")
-    parser.add_argument("config", nargs="?", help="Path to strategy-run YAML")
+    parser = subparsers.add_parser("run", help="Run a strategy sweep config")
+    parser.add_argument("config", nargs="?", help="Path to run YAML")
     parser.add_argument(
         "--json",
         action="store_true",
@@ -54,12 +59,14 @@ def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> 
         if _looks_like_model_training_config(config_path):
             raise ConfigCliError("model training configs are no longer accepted by aerd run; use aerd train")
         component_registry = discover_component_registry()
+        playbook_registry = discover_playbook_registry(component_registry=component_registry)
         resolved = load_lane_config(
             config_path,
             component_registry=component_registry,
             expected_lane="run",
         )
-    except ConfigValidationError as error:
+        _validate_run_playbook_refs(resolved.config, playbook_registry)
+    except (ConfigValidationError, PlaybookRegistryError) as error:
         raise ConfigCliError(str(error)) from error
     except (OSError, yaml.YAMLError) as error:
         raise ConfigCliError(str(error)) from error
@@ -68,6 +75,7 @@ def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> 
         result = run_strategy_sweep(
             resolved,
             component_registry=component_registry,
+            playbook_registry=playbook_registry,
             rerun_mode=args.rerun_mode,
             run_id=args.run_id,
             parent_run_id=args.parent_run_id,
@@ -97,6 +105,22 @@ def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> 
 def _looks_like_model_training_config(path: Path) -> bool:
     raw = yaml.safe_load(path.read_text())
     return isinstance(raw, dict) and raw.get("lane") != "run" and "model" in raw
+
+
+def _validate_run_playbook_refs(config: Any, playbook_registry: Any) -> None:
+    if config.strategy.source == "playbook":
+        definition = playbook_registry.get(PlaybookSelection("strategies", config.strategy.id))
+        _require_playbook_stage(definition.manifest.stages, "strategies", config.strategy.id)
+    for ref in config.indicator_refs:
+        if ref.source != "playbook":
+            continue
+        definition = playbook_registry.get(PlaybookSelection("indicators", ref.id))
+        _require_playbook_stage(definition.manifest.stages, "indicators", ref.id)
+
+
+def _require_playbook_stage(stages: tuple[str, ...], stage: str, playbook_id: str) -> None:
+    if stage not in stages:
+        raise PlaybookRegistryError(f"playbook {playbook_id!r} does not support {stage} runs")
 
 
 def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[str, Any]:

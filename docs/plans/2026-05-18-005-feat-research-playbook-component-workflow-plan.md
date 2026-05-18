@@ -11,26 +11,25 @@ deepened: 2026-05-18
 
 ## Summary
 
-Implement the three-lane research workflow by introducing deterministic component/playbook registries, lane-specific config validation, `aerd play` exploratory artifacts, a strategy-sweep `aerd run`, and an explicit ML `aerd train` command. The plan reuses existing config, CLI, portfolio, metric, model-plugin, and artifact patterns while splitting the current ML-shaped run path into reusable stage helpers.
+Implement the two-command research workflow by introducing deterministic component/playbook registries, run config source refs for playbook or component strategies/indicators, a strategy/research-sweep `aerd run`, and an explicit ML `aerd train` command. The plan reuses existing config, CLI, portfolio, metric, model-plugin, and artifact patterns while splitting the current ML-shaped run path into reusable stage helpers.
 
 ---
 
 ## Problem Frame
 
-The current codebase has strong contracts for ML-shaped experiment runs, but the execution path still makes `run` train models and keeps indicators/labels mostly centralized. The origin document defines the product split; this plan defines the technical path to separate exploration, reproducible strategy sweeps, and ML training without opening the config surface to arbitrary code.
+The current codebase has strong contracts for ML-shaped experiment runs, but the execution path still makes `run` train models and keeps indicators/labels mostly centralized. The origin document defines the product split; this plan defines the technical path to let `run` select playbook or component research sources explicitly while keeping ML training separate and without opening the config surface to arbitrary code.
 
 ---
 
 ## Requirements
 
-- R1. Add `aerd play <config>`, strategy-oriented `aerd run <config>`, and `aerd train <config>` command behavior. Origin: R1, F1, F3, F4, AE1, AE7, AE8.
-- R2. Preserve explicit evidence lanes so CLI output and artifacts distinguish exploratory play evidence, reproducible strategy-sweep evidence, and ML-training evidence. Origin: R2, A3, A4, A5.
+- R1. Add strategy/research-oriented `aerd run <config>` and explicit `aerd train <config>` command behavior. Origin: R1, F1, F3, F4, AE1, AE7, AE8.
+- R2. Preserve explicit evidence so CLI output and artifacts distinguish playbook-backed run evidence, component-backed strategy-sweep evidence, and ML-training evidence. Origin: R2, A3, A4, A5.
 - R3. Keep configs inert: no inline Python, formulas, arbitrary notebook/script paths, external import strings, or playbook state in reproducible `run`/`train`. Origin: R3, R4, R5, R15, R19, AE2.
 - R4. Add file-scoped, plugin-like promoted component discovery for labels, indicators, and strategies with stable IDs, non-executing metadata discovery, callable behavior loaded only after validation, deterministic ordering, duplicate-ID rejection, and source identity. Origin: R11, R12, R13, R14, F2, AE6.
 - R5. Add repo-controlled, family-scoped notebook playbook selection by stable ID under `research/playbooks/{labels,indicators,strategies}/`, with playbook-local temporary exploratory logic and no promotion side effects. Origin: R5, R6, R14, F1, AE1.
-- R6. Add play last-run exploratory artifacts with default atomic replacement, optional backup, and protection for the prior successful last-run on failed play execution. Origin: R7, AE3, AE4.
-- R7. Add top-10 sweep leaderboards ranked by one validated VectorBT metric/direction, including variant identity, primary metric value, optional indicator-baseline metric/delta fields, optional baseline-delta ranking, attempted/succeeded/failed counts, failure-gating status, and sanitized failed-variant evidence. Origin: R8, R9, R10, AE3, AE5.
-- R8. Make `aerd run` evaluate explicit strategy source refs over config-owned portfolio assumptions and record strategy, indicator, parameter, portfolio, metric, ranking, and survival evidence. Origin: R15, R16, R17, F3, AE7.
+- R6. Add top-10 run leaderboards ranked by one validated VectorBT metric/direction, including variant identity, primary metric value, optional indicator-baseline metric/delta fields, optional baseline-delta ranking, attempted/succeeded/failed counts, failure-gating status, and sanitized failed-variant evidence. Origin: R7, R8, R9, R10, AE3, AE5.
+- R7. Make `aerd run` evaluate explicit strategy and indicator source refs over config-owned portfolio assumptions and record strategy source, indicator source, parameters, portfolio, metric, ranking, and survival evidence. Origin: R15, R16, R17, F3, AE7.
 - R9. Make `aerd train` own the existing model-plugin training lane over explicit label source refs, indicator-derived model features, and model plugins. Origin: R18, R19, R20, F4, AE8.
 - R10. Keep fixed repo-controlled component roots under `research/components/` and notebook playbook roots under `research/playbooks/` gitignored except for tracked README placeholders so proprietary or local research logic is not committed accidentally. Origin: user correction during planning.
 
@@ -38,19 +37,19 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 
 **Origin flows:** F1 exploratory playbook run, F2 manual promotion, F3 reproducible strategy sweep, F4 reproducible ML training.
 
-**Origin acceptance examples:** AE1 playbook execution, AE2 arbitrary path rejection, AE3 top-10 leaderboard, AE4 play backup/overwrite, AE5 baseline delta, AE6 file-scoped promotion, AE7 strategy run, AE8 train lane.
+**Origin acceptance examples:** AE1 playbook-backed run execution, AE2 arbitrary path rejection, AE3 top-10 leaderboard, AE4 mixed indicator source selection, AE5 baseline delta, AE6 file-scoped promotion, AE7 strategy run, AE8 train lane.
 
 ---
 
 ## Scope Boundaries
 
-- No arbitrary notebook/script execution from config; `aerd play` executes only repo-controlled notebook playbooks discovered under `research/playbooks/` and selected by stable ID.
+- No arbitrary notebook/script execution from config; `aerd run` executes only repo-controlled notebook playbooks discovered under `research/playbooks/` and selected by stable ID source refs.
 - No inline Python, formula DSL, import strings, or temporary strategy rules in reproducible `run`/`train` configs.
-- No prior `play` artifact paths, last-run refs, leaderboard-row refs, generated exploratory state, arbitrary notebook paths, or arbitrary scripts as inputs to reproducible `run`/`train`; stable playbook source refs are allowed only when the lane config explicitly selects `source: playbook` by ID.
-- No automatic promotion from play artifacts into component files.
-- No separate first-class feature component family in v1; indicator outputs/transforms remain the feature source. Each indicator playbook represents one indicator idea/family. Play configs can run multiple indicator playbooks by ID, component indicators by explicit ID list, and all component indicators by `all`/empty-string selection together; if a baseline exists, it is defined by the indicator playbook as one component indicator ID and emitted by the playbook, not selected as a separate config ref.
+- No prior run artifact paths, last-run refs, leaderboard-row refs, generated exploratory state, arbitrary notebook paths, or arbitrary scripts as inputs to `run`/`train`; stable playbook source refs are allowed only when the run config explicitly selects `source: playbook` by ID.
+- No automatic promotion from run artifacts into component files.
+- No separate first-class feature component family in v1; indicator outputs/transforms remain the feature source. Run configs can select multiple indicator playbooks by ID, component indicators by explicit ID list, and all component indicators by `all`/empty-string selection. Each indicator playbook represents one indicator idea/family; if a baseline exists, it is defined by the indicator playbook as one component indicator ID and emitted by the playbook, not selected as a separate config ref.
 - No composite score in v1; ranking uses one validated VectorBT metric and direction.
-- No GUI research builder, optimizer, AutoML behavior, or automatic threshold optimization; user-configured exploratory threshold sweeps in `play` remain in scope.
+- No GUI research builder, optimizer, AutoML behavior, or automatic threshold optimization; user-configured exploratory threshold sweeps through playbook-backed `run` remain in scope.
 - No backward-compatibility shim that keeps ML training silently available under `aerd run`; model-shaped configs should fail fast there and point to `aerd train`.
 - No automatic commit path for user-created labels, indicators, or strategies; the scaffold should track instructions/placeholders, not private strategy code.
 
@@ -59,7 +58,7 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 - Rich notebook execution features beyond the controlled playbook contract: v1 supports only repo-controlled notebook playbooks selected by stable ID, not arbitrary notebook paths, ad hoc scripts, or user-supplied import strings.
 - Composite or registered ranking scores: revisit after single-metric leaderboards produce enough evidence about desired scoring recipes.
 - Broader strategy side support: keep current long-only portfolio constraints unless a future side-specific signal/strategy contract expands them.
-- Lane defaults for `play`, `run`, and `train`: v1 requires explicit config paths for all three new lanes unless a later lane-aware defaults feature is designed; existing experiment defaults remain legacy-scoped and must not be silently consumed by strategy `run` or `train`.
+- Lane defaults for `run` and `train`: v1 requires explicit config paths for both commands; there is no local default experiment workflow.
 - Portable source snapshots for sharing private `run`/`train` artifacts: v1 records component IDs, manifests, and source hashes but does not embed component source; future work can add optional source bundles if reviewers need artifacts to be self-contained across machines.
 
 ---
@@ -68,7 +67,7 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 
 ### Relevant Code and Patterns
 
-- `research/aegis_research/cli.py` is a thin argparse dispatcher that currently registers `run` and `exp`; new commands should follow the `cli_commands/*` pattern from `docs/plans/2026-05-18-004-feat-modular-aerd-cli-runner-plan.md`.
+- `research/aegis_research/cli.py` is a thin argparse dispatcher that registers active commands under `cli_commands/*`.
 - `research/aegis_research/cli_commands/run.py` currently validates configs with `make_default_model_registry()` and calls `run_experiment(...)`; this command must become strategy-sweep oriented while ML behavior moves to `train`.
 - `research/aegis_research/config.py` owns schema-versioned, path-aware, side-effect-free config validation and already rejects inline indicator code keys.
 - `research/aegis_research/model_contracts.py`, `research/aegis_research/model_registry.py`, and `research/aegis_research/model_plugins/sklearn_logistic.py` provide the declaration, registry, frozen fingerprint, and validation model to mirror for promoted components.
@@ -76,7 +75,7 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 - `research/aegis_research/labels.py` already uses VectorBT-native label generators (`vbt.FIXLB`, `vbt.TRENDLB`, `vbt.PIVOTLB`) and preserves native label semantics, target schemas, lookahead, target role, and split-safety metadata; label components/playbooks should reuse that path where possible.
 - `research/aegis_research/signals.py` and `research/aegis_research/portfolios.py` centralize VectorBT-native signal/portfolio boundaries (`vbt.SignalsAccessor.clean`, `vbt.Portfolio.from_signals`), config-owned sizing/cost/timing/direction, and portfolio diagnostics; strategy components should feed this boundary rather than own portfolio assumptions.
 - `research/aegis_research/reports.py` exposes `PORTFOLIO_METRIC_CATALOG`, `portfolio_metrics(...)`, optional diagnostics, and metric assumptions; use this as the v1 ranking allowlist source before adding custom score recipes.
-- `research/aegis_research/provenance/manifest.py`, `recorder.py`, `run_store.py`, and `experiment_artifacts.py` provide manifest-backed reproducible artifact patterns; play last-run artifacts need a deliberately separate overwrite/backup pattern.
+- `research/aegis_research/provenance/manifest.py`, `recorder.py`, `run_store.py`, and `experiment_artifacts.py` provide manifest-backed reproducible artifact patterns for run/train evidence.
 
 ### Institutional Learnings
 
@@ -97,18 +96,18 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 
 ## Key Technical Decisions
 
-- Use lane-specific config envelopes rather than forcing all commands through one `ExperimentConfig`: `play`, strategy `run`, and `train` share common data/portfolio/report sections but have different executable contracts.
+- Use lane-specific config envelopes rather than forcing all commands through one `ExperimentConfig`: `run` and `train` share common data/portfolio/report sections but have different executable contracts.
 - Move current ML-shaped `run_experiment(...)` behind `aerd train`: this is the forward-first split required by the origin document and prevents `run` from staying ambiguously ML-first.
 - Create shared component declarations before lane orchestration: labels, indicators, and strategies need one registry/discovery model so config validation can fail before side effects.
 - Keep package code limited to registry/validation/execution infrastructure; source definitions live outside the package under `research/components/` for component refs and `research/playbooks/` for playbook refs. Indicator and label implementations should use reusable VectorBT-native helpers, while strategies should produce signal states for the existing VectorBT portfolio boundary rather than reimplementing execution.
 - Treat local component discovery as a reviewed source-code extension mechanism with a non-executing metadata phase: discovery roots are fixed, repo-controlled, non-symlinked locations; configs cannot provide paths or import strings, and registry snapshots must not import arbitrary component Python.
 - Use family-scoped component identity: labels, indicators, and strategies each have their own ID namespace, while artifacts record both family and ID to avoid ambiguous cross-family references.
-- Require lane configs to declare source kind explicitly wherever more than one source is legal. Strategy refs choose `source: component` or `source: playbook` plus an ID; label refs choose a component labeler ID or a label playbook ID; play indicator refs may include playbook indicator IDs, component indicator IDs, and an all-components selector in the same run. Indicator baselines are optional playbook-owned metadata/results; when present, they name exactly one component indicator ID.
+- Require run configs to declare source kind explicitly wherever more than one source is legal. Strategy refs choose `source: component` or `source: playbook` plus an ID; label refs choose a component labeler ID or a label playbook ID; run indicator refs may include playbook indicator IDs, component indicator IDs, and an all-components selector in the same run. Indicator baselines are optional playbook-owned metadata/results; when present, they name exactly one component indicator ID.
 - Keep user/project component and playbook roots gitignored except README placeholders: local research strategy/indicator/label files and notebooks should not be committed by default.
 - Record component source identity simply: `run`/`train` artifacts use component family, component ID, manifest fingerprint, and implementation source hash; Git tracked/dirty status is not a validity condition.
 - Classify artifact source fields as public or private with a field-level allowlist: public CLI JSON and shared artifacts use only family, component ID, manifest fingerprint, and implementation hash, while repo-relative paths, local filenames, manifest locations, and detailed source metadata remain local/private or redacted by default.
-- Carry lane identity and schema/version evidence in every resolved config envelope: `play`, `run`, and `train` loaders reject mismatched lane intent instead of reinterpreting one another's configs.
-- Store play artifacts under the configured run root, defaulting to `runs/play/`: reproducible run/train manifests remain immutable run evidence, while play uses lane-scoped atomic last-run replacement plus optional backups under the same top-level `runs/` area.
+- Carry lane identity and schema/version evidence in every resolved config envelope: `run` and `train` loaders reject mismatched lane intent instead of reinterpreting one another's configs.
+- Store playbook-backed and component-backed run artifacts under immutable run directories; do not add a separate mutable play last-run store.
 - Rank only variants that pass failure gating by a validated scalar metric: config validation failures fail the whole command; per-variant runtime failures are recorded as sanitized typed evidence, included in success-ratio summaries, and can invalidate the sweep when thresholds or strict-mode rules are violated.
 - Preserve portfolio ownership in config: strategy components output aligned signal/rule results; portfolio settings, execution timing, costs, sizing, and direction stay with config.
 - Validate sweep scale twice: static variant-count limits run during config resolution, then data-shape/order-record/memory budgets are checked after data loading but before `Portfolio.from_signals`.
@@ -122,16 +121,13 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 
 - What discovery locations should the plan target? Use package-owned registry modules plus fixed repo-controlled roots under `research/components/` and family-scoped `research/playbooks/`; configs still cannot add paths or imports.
 - Should old ML-shaped `aerd run` remain accepted? No. `run` should reject model-training configs and direct the user to `aerd train`.
-- Which metric source should rank play sweeps? Start with `PORTFOLIO_METRIC_CATALOG` and explicit metric direction; do not include custom/composite scores in v1.
-- Should per-variant runtime failures fail the whole sweep? Static config/component failures fail the command; per-variant runtime failures are sanitized, summarized, and controlled by strict/failure-gating policy before any leaderboard is treated as valid.
-- How should failed play runs interact with last-run artifacts? Use atomic write-to-staging and promote only after successful artifact validation; previous successful last-run survives failed attempts.
+- Which metric source should rank run sweeps? Start with `PORTFOLIO_METRIC_CATALOG` and explicit metric direction; do not include custom/composite scores in v1.
+- Should per-variant runtime failures fail the whole sweep? Static config/component/playbook failures fail the command; per-variant runtime failures are sanitized, summarized, and controlled by strict/failure-gating policy before any leaderboard is treated as valid.
 
 ### Deferred to Implementation
 
 - Exact component file layout and helper names: the plan fixes package-owned discovery and registry semantics, but final module names should be chosen while implementing tests.
-- Exact play artifact filenames and backup naming under `runs/play/`: preserve atomic semantics and machine-readable summaries, but settle secondary names during implementation.
 - Exact JSON response field names beyond lane/evidence summaries: keep command outputs stable and additive, but avoid over-specifying secondary fields in the plan.
-- Exact retention count/age defaults for play backups: implement bounded retention, but choose final numeric defaults while adding artifact tests.
 
 ---
 
@@ -140,7 +136,6 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 ```text
 research/aegis_research/
   cli_commands/
-    play.py
     train.py
     run.py
   component_registry/
@@ -150,7 +145,6 @@ research/aegis_research/
   playbook_registry/
     contracts.py
     registry.py
-  play.py
   strategy_runs.py
   training.py
 research/components/
@@ -170,7 +164,7 @@ docs/examples/
   strategy_playbook_example.ipynb
 ```
 
-This tree is directional. The implementing agent may adjust names if tests reveal a clearer shape, but the plan expects separate component, playbook, play execution, strategy-run, and training boundaries.
+This tree is directional. The implementing agent may adjust names if tests reveal a clearer shape, but the plan expects separate component, playbook registry, strategy-run, and training boundaries.
 
 ---
 
@@ -181,34 +175,30 @@ This tree is directional. The implementing agent may adjust names if tests revea
 ```mermaid
 flowchart TB
     CLI[aerd CLI]
-    PlayCmd[play command]
     RunCmd[run command]
     TrainCmd[train command]
     Config[Lane config validation]
     Components[Component registry snapshot]
     Playbooks[Playbook registry]
-    PlayStore[Exploratory last-run store]
     StrategyRun[Strategy sweep orchestration]
     TrainRun[ML training orchestration]
     Artifacts[Manifest-backed reproducible artifacts]
 
-    CLI --> PlayCmd
     CLI --> RunCmd
     CLI --> TrainCmd
-    PlayCmd --> Config
     RunCmd --> Config
     TrainCmd --> Config
     Config --> Components
-    PlayCmd --> Playbooks
-    Playbooks --> PlayStore
+    RunCmd --> Playbooks
     RunCmd --> StrategyRun
     Components --> StrategyRun
+    Playbooks --> StrategyRun
     Components --> TrainRun
     StrategyRun --> Artifacts
     TrainRun --> Artifacts
 ```
 
-The key separation is artifact semantics: `play` writes exploratory last-run outputs, while `run` and `train` write reproducible evidence from promoted components and validated configs.
+The key separation is source semantics: `run` writes immutable sweep evidence that identifies playbook-backed and component-backed sources, while `train` writes ML-training evidence from validated configs.
 
 ---
 
@@ -219,7 +209,7 @@ flowchart TB
     U1[U1 Component contracts]
     U2[U2 Lane config validation]
     U3[U3 Playbook registry]
-    U4[U4 Play artifacts and leaderboard]
+    U4[U4 Run leaderboard]
     U5[U5 Train lane]
     U6[U6 Strategy run lane]
     U7[U7 CLI and JSON outputs]
@@ -280,7 +270,7 @@ flowchart TB
 - Treat Python component files as executable implementation code, not metadata; discovery reads manifests only, and tests should prove registry snapshot creation does not run component module top-level code.
 - Scope duplicate-ID checks by component family, and persist artifact identity as `{family, id}` so label, indicator, and strategy IDs cannot be confused.
 - Add root `.gitignore` rules so everything under `research/components/{labels,indicators,strategies}/` is ignored by default except each directory's tracked `README.md` placeholder.
-- Write component README placeholders using the same behavior as `research/configs/experiments/README.md`: tracked local component files are intentionally absent, the README points to the relevant `docs/examples/*_component_example.py`, local component files are ignored by git, ignored files are not secret management, and force-adds should be intentionally reviewed.
+- Write component README placeholders using the same warning pattern as local config READMEs: tracked local component files are intentionally absent, the README points to the relevant `docs/examples/*_component_example.py`, local component files are ignored by git, ignored files are not secret management, and force-adds should be intentionally reviewed.
 - Define only the shared strategy component declaration shell here; U6 owns the concrete `StrategyInputBundle`, signal-only output contract, and portfolio-boundary validation where the strategy-run consumer exists.
 - Record `run`/`train` source identity during registry selection without consulting Git tracked/dirty status: component family, component ID, manifest fingerprint, and implementation source hash.
 
@@ -317,9 +307,9 @@ flowchart TB
 - Component discovery is deterministic, non-executing, and safe enough to use from config validation.
 - Component-source resolution depends only on files discovered under `research/components/`.
 
-### U2. Add Lane-Specific Config Contracts
+### U2. Add Run/Train Config Contracts
 
-**Goal:** Add side-effect-free config validation for `play`, strategy `run`, and `train`, sharing existing data/portfolio/report validation while enforcing lane-specific executable boundaries.
+**Goal:** Add side-effect-free config validation for strategy/research `run` and `train`, sharing existing data/portfolio/report validation while enforcing command-specific executable boundaries.
 
 **Requirements:** R1, R2, R3, R5, R7, R8, R9; origin R1, R2, R3, R4, R5, R8, R15, R16, R18, R19, R20, AE1, AE2, AE7, AE8.
 
@@ -328,8 +318,6 @@ flowchart TB
 **Files:**
 - Modify: `research/aegis_research/config.py`
 - Modify: `research/aegis_research/cli_support/output.py`
-- Modify: `research/aegis_research/cli_support/defaults.py`
-- Modify: `research/aegis_research/cli_commands/exp.py`
 - Create: `tests/integration/research/aegis_research/test_lane_config_contract.py`
 - Modify: `tests/integration/research/aegis_research/test_config_contract.py`
 - Modify: `tests/integration/research/aegis_research/test_cli_docs.py`
@@ -338,18 +326,17 @@ flowchart TB
 - Add lane-aware config loading/resolution helpers rather than widening `ExperimentConfig` until it has unrelated optional fields for all lanes.
 - Require every resolved lane config to carry lane identity and schema/version evidence; each command rejects mismatched lane intent with stable diagnostics.
 - Reuse existing validation helpers for data, indicators, labels, signals, portfolio, report, duplicate keys, unknown fields, path-safe names, secret redaction, and finite numeric checks.
-- For `play`, require stable family-scoped playbook IDs, stage selection, sweep params, ranking metric/direction, and output scope; reject notebook/script path keys and inline code recursively.
-- Add a shared `SourceRef` config contract. Strategy refs must declare `source: component` or `source: playbook` plus an ID. Label refs must declare a component labeler ID or a label playbook ID. Play indicator selection can include playbook indicator refs, component indicator ID lists, and `all` or empty-string component selection for all component indicators in the same config. Indicator baseline selection is not a config source ref; each indicator playbook may declare exactly one component indicator ID as its baseline and emit baseline evidence for it.
-- For strategy `run`, require explicit strategy source refs and validated indicator inputs; reject model plugin fields, ambiguous source refs, play artifact paths, last-run refs, leaderboard-row refs, and generated play state as inputs.
-- For `train`, require model plugin selection plus explicit label source refs and indicator-derived model features; reject play artifact references as inputs.
-- Make no-config behavior explicit in lane config resolution: `play`, strategy `run`, and `train` require config paths in v1; legacy experiment defaults remain scoped to the `exp`/legacy workflow and are never silently applied to the new lanes.
+- Add a shared `SourceRef` config contract. Strategy refs must declare `source: component` or `source: playbook` plus an ID. Label refs must declare a component labeler ID or a label playbook ID. Run indicator selection can include playbook indicator refs, component indicator ID lists, and `all` or empty-string component selection for all component indicators in the same config. Indicator baseline selection is not a config source ref; each indicator playbook may declare exactly one component indicator ID as its baseline and emit baseline evidence for it.
+- For strategy `run`, require explicit strategy source refs and validated indicator inputs; reject model plugin fields, ambiguous source refs, run artifact paths, last-run refs, leaderboard-row refs, generated state, arbitrary notebook/script path keys, and inline code recursively.
+- For `train`, require model plugin selection plus explicit label source refs and indicator-derived model features; reject run artifact references as inputs.
+- Make no-config behavior explicit in lane config resolution: strategy/research `run` and `train` require config paths in v1, with no local default fallback.
 - Validate ranking metrics against an allowlist derived from the existing portfolio metric catalog, with explicit direction and unavailable metric rules.
 - Define YAML inertness at the parser boundary: safe loader only, no custom object tags, duplicate keys rejected, merge keys/anchors/aliases bounded or rejected, and size/depth limits enforced where practical.
 - Validate artifact/output roots for all lanes: reject absolute paths, parent traversal, symlink escapes, device paths, and final/staging/backup paths outside approved roots.
 - Establish the minimal shared success/error payload helpers here so later lane CLI handlers do not invent incompatible output shapes before U7 hardens them.
 - Do not wire root parser command behavior in U2; U3, U5, and U6 own the first executable CLI path for their respective lanes.
 
-**Execution note:** Start with failing integration tests that assert invalid configs fail before run/play/train artifact creation.
+**Execution note:** Start with failing integration tests that assert invalid configs fail before run/train artifact creation.
 
 **Patterns to follow:**
 - `ConfigValidationIssue` and `ConfigValidationError` in `research/aegis_research/config.py`
@@ -357,21 +344,21 @@ flowchart TB
 - Config safety guidance in `docs/solutions/architecture-patterns/config-contract-security-reproducibility-2026-05-16.md`
 
 **Test scenarios:**
-- Happy path: valid play, strategy-run, and train configs resolve through side-effect-free validation.
-- Covers AE2. Error path: play config with notebook/script path keys fails before execution.
+- Happy path: valid run and train configs resolve through side-effect-free validation.
+- Covers AE2. Error path: run config with notebook/script path keys fails before execution.
 - Error path: any lane config with inline Python/formula/import/function keys fails with a path-aware issue.
 - Error path: malicious YAML tags, unsafe constructors, duplicate keys, merge keys/aliases, or resource-heavy YAML structures are rejected or bounded before dataclass construction.
-- Error path: play, run, and train configs with arbitrary script/notebook/import path fields fail before data loading or artifact creation.
+- Error path: run and train configs with arbitrary script/notebook/import path fields fail before data loading or artifact creation.
 - Error path: `aerd run` receiving a model-training config fails fast and directs users toward `aerd train`.
 - Error path: `aerd train` receiving a strategy-sweep-only config fails fast and explains the missing training contract.
 - Error path: missing or ambiguous component source refs fail before data loading.
-- Error path: play config references unknown playbook indicator IDs, unknown component indicator IDs, or invalid all-components selectors and fails before execution.
-- Error path: `aerd run` receiving play last-run refs, play artifact paths, leaderboard-row refs, or generated play state fails before data loading.
+- Error path: run config references unknown playbook indicator IDs, unknown component indicator IDs, or invalid all-components selectors and fails before execution.
+- Error path: `aerd run` receiving run artifact paths, last-run refs, leaderboard-row refs, or generated state fails before data loading.
 - Error path: unknown component or playbook IDs fail before data loading.
-- Error path: invalid ranking metric or direction fails before play execution.
+- Error path: invalid ranking metric or direction fails before run execution.
 - Error path: output, staging, or backup roots that escape approved artifact roots fail before writes.
 - Edge case: fewer than ten successful variants remains valid because leaderboard size is “up to 10,” not exactly 10.
-- Edge case: `aerd play`, strategy `aerd run`, and `aerd train` without explicit config fail in v1 rather than consuming the existing experiment default.
+- Edge case: strategy/research `aerd run` and `aerd train` without explicit config fail in v1.
 
 **Verification:**
 - Each lane has a clear resolved config object or envelope before side effects.
@@ -379,7 +366,7 @@ flowchart TB
 
 ### U3. Add Repo-Controlled Notebook Playbook Registry
 
-**Goal:** Add the stable-ID notebook playbook execution boundary for repo-controlled notebooks under `research/playbooks/`, without shipping a built-in playbook implementation.
+**Goal:** Add the stable-ID notebook playbook execution boundary for `aerd run` to select repo-controlled notebooks under `research/playbooks/`, without shipping a built-in playbook implementation.
 
 **Requirements:** R1, R2, R3, R5, R7; origin R1, R2, R3, R4, R5, R6, R8, R9, R10, AE1, AE2, AE3, AE5.
 
@@ -393,8 +380,8 @@ flowchart TB
 - Create: `research/playbooks/indicators/README.md`
 - Create: `research/playbooks/strategies/README.md`
 - Modify: `.gitignore`
-- Create: `research/aegis_research/play.py`
-- Modify: `research/aegis_research/cli_commands/play.py`
+- Modify: `research/aegis_research/strategy_runs.py`
+- Modify: `research/aegis_research/cli_commands/run.py`
 - Modify: `research/aegis_research/cli.py`
 - Test: `tests/unit/research/aegis_research/test_playbooks.py`
 - Test: `tests/integration/research/aegis_research/test_play_cli.py`
@@ -402,17 +389,17 @@ flowchart TB
 **Approach:**
 - Define a notebook playbook declaration with family, stable ID, notebook filename, supported stages, accepted inputs, optional baseline component indicator ID, and expected result schema.
 - For `research/playbooks/indicators/`, enforce one indicator idea/family per playbook ID: a notebook playbook may sweep parameters for that indicator, but it must not hide multiple unrelated indicator definitions behind one ID. If it has a baseline, the declaration names exactly one component indicator ID from `research/components/indicators/`.
-- Keep executable exploratory logic inside repo-controlled notebooks under `research/playbooks/{labels,indicators,strategies}/`; configs select playbook family, ID, and parameters only.
+- Keep executable exploratory logic inside repo-controlled notebooks under `research/playbooks/{labels,indicators,strategies}/`; run configs select playbook family, ID, and parameters only through source refs.
 - Keep playbook discovery simpler than local component discovery: playbooks are trusted repo-controlled notebook declarations registered by family-scoped stable ID, with duplicate-ID rejection and config validation before the selected notebook executes. Configs still cannot provide playbook paths, modules, arbitrary notebook paths, scripts, or import strings.
 - Do not ship a built-in playbook in v1; playbook integration tests create notebook fixtures under isolated `research/playbooks/{labels,indicators,strategies}/` fixture roots.
 - Add root `.gitignore` rules so notebook files under `research/playbooks/{labels,indicators,strategies}/` are ignored by default except each directory's tracked `README.md` placeholder.
-- Write playbook README placeholders using the same behavior as `research/configs/experiments/README.md`: tracked local playbook notebooks are intentionally absent, each README points to the corresponding `docs/examples/*_playbook_example.ipynb`, local notebooks are ignored by git, ignored files are not secret management, and force-adds should be intentionally reviewed.
-- A project notebook playbook can implement the exploratory MVP outside package code: load data, build temporary playbook-local label/indicator/threshold/strategy variants, optionally compute and emit its declared component-indicator baseline, run VectorBT portfolio metrics, and emit variant rows for the artifact unit.
+- Write playbook README placeholders using the same warning pattern as local config READMEs: tracked local playbook notebooks are intentionally absent, each README points to the corresponding `docs/examples/*_playbook_example.ipynb`, local notebooks are ignored by git, ignored files are not secret management, and force-adds should be intentionally reviewed.
+- A project notebook playbook can implement the exploratory MVP outside package code: build temporary playbook-local indicator/threshold/strategy variants, optionally compute and emit its declared component-indicator baseline, run VectorBT portfolio metrics, and emit variant rows for the run artifact unit.
 - Treat playbook-local ideas as temporary: they can inform manual promotion, but the playbook must not create, mutate, or register promoted component files.
-- Keep arbitrary notebook-path support out of the CLI path; the CLI executes only discovered playbook IDs from `research/playbooks/`.
-- Register enough thin CLI behavior here for play integration tests to call the domain path through `aerd play`; U7 can still harden output and docs globally.
+- Keep arbitrary notebook-path support out of the CLI path; the CLI executes only discovered playbook IDs from `research/playbooks/` through `aerd run` source refs.
+- Register enough thin run behavior here for integration tests to call playbook-backed execution through `aerd run`; U7 can still harden output and docs globally.
 
-**Execution note:** Add unit coverage for playbook ID lookup and capability validation before writing integration-level play runs.
+**Execution note:** Add unit coverage for playbook ID lookup and capability validation before writing integration-level playbook-backed runs.
 
 **Patterns to follow:**
 - Model plugin declaration/registry pattern in `research/aegis_research/model_plugins/`
@@ -420,9 +407,9 @@ flowchart TB
 - VectorBT sweep guidance in `docs/solutions/best-practices/vectorbt-combine-params-conditions-levels-2026-05-17.md`
 
 **Test scenarios:**
-- Covers AE1. Happy path: a valid play config selects a notebook playbook ID from a test fixture and runs selected exploratory stages.
+- Covers AE1. Happy path: a valid run config selects a notebook playbook ID from a test fixture and runs selected exploratory logic through `aerd run`.
 - Happy path: a playbook-owned baseline is consumed when the notebook declares one component indicator ID and emits baseline evidence for it.
-- Happy path: a notebook playbook fixture includes at least one playbook-local label or target-threshold dimension so label exploration is not deferred.
+- Happy path: a notebook playbook fixture includes at least one playbook-local target-threshold or strategy dimension so exploration is not deferred.
 - Error path: unknown playbook ID fails before data loading.
 - Error path: requesting an unsupported stage fails during config validation.
 - Error path: playbook registry rejects duplicate, malformed, or missing notebook playbook declarations before data loading.
@@ -431,33 +418,30 @@ flowchart TB
 - Integration: `research/playbooks/{labels,indicators,strategies}/` are gitignored except README placeholders.
 - Docs integration: playbook READMEs point to their docs example notebooks and include the ignored-files-not-secret-management warning.
 - Error path: playbook attempts to promote or mutate component files is not part of the execution contract and has no code path.
-- Integration: notebook playbook fixture can run a small synthetic sweep over windows/thresholds and produce variant records for ranking.
+- Integration: notebook playbook fixture can run a small synthetic sweep over windows/thresholds and produce variant records for run ranking.
 
 **Verification:**
-- `aerd play` has a repo-controlled executable target by stable ID.
-- Playbook execution can produce metrics and variant identities while optionally combining playbook indicator outputs with component indicator selections; any baseline evidence comes from the playbook-declared single component indicator baseline.
+- `aerd run` has repo-controlled playbook executable targets by stable ID.
+- Playbook execution can produce metrics and variant identities while optionally combining playbook indicator refs with component indicator selections; any baseline evidence comes from the playbook-declared single component indicator baseline.
 
-### U4. Implement Play Last-Run Artifacts And Leaderboards
+### U4. Implement Run Leaderboards
 
-**Goal:** Persist exploratory play outputs as a last-run artifact with atomic replacement, optional backup, failed-run preservation, and top-10 metric ranking.
+**Goal:** Persist run sweep outputs in immutable run artifacts with top-10 metric ranking across playbook-backed and component-backed variant records.
 
 **Requirements:** R2, R6, R7; origin R2, R7, R8, R9, R10, AE3, AE4, AE5.
 
 **Dependencies:** U2, U3.
 
 **Files:**
-- Create: `research/aegis_research/play_artifacts.py`
-- Modify: `research/aegis_research/play.py`
-- Modify: `research/aegis_research/cli_commands/play.py`
+- Create: `research/aegis_research/run_leaderboard.py`
+- Modify: `research/aegis_research/strategy_runs.py`
+- Modify: `research/aegis_research/cli_commands/run.py`
 - Modify: `research/aegis_research/cli_support/output.py`
-- Test: `tests/unit/research/aegis_research/test_play_artifacts.py`
-- Test: `tests/integration/research/aegis_research/test_play_cli.py`
+- Test: `tests/unit/research/aegis_research/test_run_leaderboard.py`
+- Test: `tests/integration/research/aegis_research/test_run_playbook_sources.py`
 
 **Approach:**
-- Create a play artifact writer that uses the existing configured output root, defaulting to `runs/`, with a lane-scoped layout such as `runs/play/last-run`, `runs/play/.staging/<attempt-id>`, and `runs/play/backups/`; keep it separate from immutable run/train manifest directories under the same root.
-- Write new play results to `runs/play/.staging/<attempt-id>` and atomically promote them to `runs/play/last-run` only after all required files validate.
-- Preserve the prior last-run on failed play execution; when backup is requested, copy or move the prior completed last-run into a backup location before promoting the new result.
-- When a play attempt fails, write bounded failure evidence only to a failed-attempt/staging location under `runs/play/` if available; never replace the successful last-run pointer with failed evidence. Retention count/age policy is hardening, not required for the MVP.
+- Write playbook-backed and component-backed sweep results into the normal immutable run directory and manifest, not a mutable last-run location.
 - Rank successful variants by the configured metric/direction; record evaluated, succeeded, failed, and excluded counts.
 - For every evaluated indicator variant, record an indicator source field (`playbook` or `component`), indicator ID, configured primary metric value, and any source-specific evidence needed to distinguish who computed it.
 - If the indicator playbook declares and emits baseline evidence, record the configured primary metric value, baseline primary metric value, raw delta, baseline component indicator ID, and direction-adjusted delta as informational leaderboard fields. Rank by the configured primary metric unless the config explicitly selects baseline-delta ranking; if no baseline exists, record that no baseline was applied and rank by the primary metric.
@@ -466,10 +450,9 @@ flowchart TB
 - Cap failure evidence using representative sanitized examples so large failed sweeps do not produce unbounded public JSON. Deeper grouped failure analytics are follow-up hardening.
 - Use bounded variant batches for sweeps; merge compact ranking/metric evidence instead of requiring one giant portfolio object for every configuration.
 - Compute the configured ranking metric for all variants, then write richer metric evidence only for top-ranked variants or configured diagnostics.
-- Add minimal lock behavior for concurrent play executions targeting the same `runs/play/last-run` root; backup pruning/retention policy can remain follow-up hardening.
 - Use existing safe path/redaction helpers for CLI output, artifact metadata, diagnostics, exception summaries, failure samples, and JSON stderr; never persist raw tracebacks, raw `repr(exception)`, environment variables, credential-bearing URLs, raw config fragments, or unredacted filesystem paths.
 
-**Execution note:** Start with artifact-retention tests because the data-loss behavior is the highest-risk part of `play`.
+**Execution note:** Start with leaderboard shape and source-evidence tests because source confusion is the highest-risk part of merging playbooks into `run`.
 
 **Patterns to follow:**
 - `research/aegis_research/provenance/manifest.py` safe path and completion validation concepts
@@ -478,18 +461,13 @@ flowchart TB
 - Metric catalog in `research/aegis_research/reports.py`
 
 **Test scenarios:**
-- Covers AE3. Happy path: successful play writes `runs/play/last-run` with a top-10 leaderboard, variant identities, metric values, and evidence type marked exploratory.
-- Happy path: play config evaluates playbook indicators and component indicators in the same run, including an all-components selector, and leaderboard rows identify `indicator_source` for each metric row.
-- Covers AE4. Happy path: second play without backup replaces last-run only after successful completion.
-- Covers AE4. Happy path: play with backup preserves the previous completed last-run before the new one is promoted.
-- Error path: failed play does not destroy the previous successful last-run.
-- Error path: backup target collision or unwritable backup path fails clearly before replacing last-run.
+- Covers AE3. Happy path: successful run writes an immutable run artifact with a top-10 leaderboard, variant identities, metric values, and source evidence.
+- Covers AE4. Happy path: run config evaluates playbook indicators and component indicators in the same run, including an all-components selector, and leaderboard rows identify `indicator_source` for each metric row.
+- Happy path: run config selects a playbook strategy by stable ID and records strategy source evidence in the run artifact.
 - Error path: all variants fail and the command fails with failed-variant evidence.
-- Error path: all variants fail and previous successful last-run remains the default last-run pointer.
-- Error path: all variants fail or all ranking metrics are unavailable and the command fails without replacing the previous successful last-run.
+- Error path: all variants fail or all ranking metrics are unavailable and the command fails while marking only the current run failed.
 - Error path: runtime exception messages containing secret-like values, raw local paths, or private strategy names are redacted in artifacts and JSON stderr.
-- Error path: interrupted play leaves previous successful last-run intact and cleans or marks staging safely.
-- Error path: concurrent play runs targeting the same last-run root serialize safely or one fails with a clear lock diagnostic.
+- Error path: interrupted run marks the immutable run manifest interrupted.
 - Error path: non-finite, unavailable, or warning-producing ranking metrics are excluded with evidence; all-unavailable rankings fail clearly.
 - Edge case: fewer than 10 successful variants emits all successful variants and correct counts.
 - Edge case: metric ties are sorted deterministically using variant identity as the stable tie-breaker.
@@ -499,8 +477,8 @@ flowchart TB
 - Integration: JSON success output points to the exploratory artifact without dumping large leaderboard payloads.
 
 **Verification:**
-- `runs/play/last-run` artifacts are safe for repeated local exploration.
-- Leaderboards are reproducible from the play config and artifact content even though they are not decision-grade run/train evidence.
+- Run artifacts are safe for repeated local exploration because each attempt writes a separate immutable run directory.
+- Leaderboards are reproducible from the run config and artifact content while preserving whether rows came from playbooks or components.
 
 ### U5. Move Existing ML Experiment Execution To `aerd train`
 
@@ -546,7 +524,7 @@ flowchart TB
 - Covers AE8. Happy path: valid train config runs the current ML pipeline and records training lane evidence.
 - Integration: train command uses the default model registry and rejects unknown model plugin IDs before run artifacts.
 - Integration: train config selects a label source ref and indicator-derived model features; artifacts record label source identity and indicator feature evidence.
-- Error path: train config references a play artifact as input and validation rejects it.
+- Error path: train config references a run artifact as input and validation rejects it.
 - Error path: train config attempts to use a first-class feature component or import path and validation rejects it.
 - Error path: train config selects a component outside approved roots or without source hash evidence and fails before model fitting.
 - Error path: unsupported label target/model compatibility fails before model fitting.
@@ -560,7 +538,7 @@ flowchart TB
 
 ### U6. Implement Promoted Strategy Sweep `aerd run`
 
-**Goal:** Replace `aerd run` with a reproducible strategy-sweep lane over promoted components and config-owned portfolio assumptions.
+**Goal:** Replace `aerd run` with a strategy/research-sweep command over explicit playbook or component source refs and config-owned portfolio assumptions.
 
 **Requirements:** R1, R2, R3, R4, R8; origin R1, R2, R3, R4, R11, R12, R13, R15, R16, R17, F3, AE7.
 
@@ -580,9 +558,9 @@ flowchart TB
 - Test: `tests/integration/research/aegis_research/test_provenance_manifest.py`
 
 **Approach:**
-- Define the v1 strategy callable boundary around `StrategyInputBundle`: market data fields available to strategies, raw indicator outputs, optional transformed indicator-derived model features only when declared, parameter-combination identity, and index/symbol alignment metadata.
+- Define the v1 component strategy callable boundary around `StrategyInputBundle`: market data fields available to strategies, raw indicator outputs, optional transformed indicator-derived model features only when declared, parameter-combination identity, and index/symbol alignment metadata.
 - Resolve the configured strategy source ref explicitly: `source: component` loads a strategy from `research/components/strategies/` by ID, while `source: playbook` loads a strategy notebook declaration from `research/playbooks/strategies/` by ID.
-- Treat indicator inputs for strategy experimentation as a combined play selection in v1: configs may include playbook indicator refs, explicit component indicator ID lists, and `all`/empty-string component selectors in the same run. Metrics must record whether each indicator result was computed by a playbook or a component; baseline evidence is emitted by playbooks that declare exactly one component indicator baseline.
+- Treat indicator inputs for strategy experimentation as a combined run selection in v1: configs may include playbook indicator refs, explicit component indicator ID lists, and `all`/empty-string component selectors in the same run. Metrics must record whether each indicator result was computed by a playbook or a component; baseline evidence is emitted by playbooks that declare exactly one component indicator baseline.
 - Define the v1 strategy output boundary as aligned boolean/enum entries/exits or equivalent signal states over the same timestamp/symbol panel as market data; outputs must not include size, cost, slippage, direction, execution timing, or portfolio construction fields.
 - Reject strategy component metadata, manifests, config, or output schemas that attempt to own portfolio sizing, costs, slippage, direction, execution timing, or non-signal portfolio behavior.
 - Add runtime signal diagnostics that record entry/exit counts, alignment checks, declared lag/timing assumptions, direction exposure implied by emitted states, and the external portfolio config applied.
@@ -596,7 +574,7 @@ flowchart TB
 - Fail static config/component errors before data loading; record per-variant runtime failures as typed sanitized evidence and apply strict failure gating before ranking.
 - Default reproducible `run` to strict mode where unexpected variant execution failures fail the command; all runs record attempted/succeeded/failed counts, success ratio, and failure-gating status. Allowed-exclusion policies and correlated-failure invalidation are follow-up hardening, not MVP behavior.
 - Reject model-training configs under `aerd run` with a clear validation diagnostic pointing to `aerd train`.
-- Reject play artifacts, last-run refs, leaderboard-row refs, generated exploratory state, arbitrary notebook paths, and script refs under `aerd run`; only explicit source refs plus config-owned parameters and portfolio assumptions are valid inputs.
+- Reject run artifact refs, last-run refs, leaderboard-row refs, generated exploratory state, arbitrary notebook paths, and script refs under `aerd run`; only explicit source refs plus config-owned parameters and portfolio assumptions are valid inputs.
 - Record component source identity before selected strategy/indicator callables execute.
 
 **Execution note:** Implement the strategy output boundary test-first; it is the guardrail that prevents strategy components from swallowing portfolio semantics.
@@ -612,7 +590,7 @@ flowchart TB
 - Covers AE7. Happy path: valid run config selects an explicit strategy source ref, mixed playbook/component indicator inputs, sweep params, and portfolio assumptions; artifacts record variant identity, indicator source, and metrics.
 - Test setup: run happy-path tests create temporary component files and notebook playbook fixtures under isolated `research/components/` and `research/playbooks/` fixture roots.
 - Error path: run config omits strategy source kind, selects an unknown strategy ID, or references the wrong family and fails before execution.
-- Error path: run config selects a play artifact, last-run ref, leaderboard-row ref, or generated playbook state and fails before execution.
+- Error path: run config selects a run artifact, last-run ref, leaderboard-row ref, or generated playbook state and fails before execution.
 - Error path: run config contains inline strategy logic and fails validation.
 - Error path: strategy component attempts to declare portfolio assumptions as owned behavior and registry validation rejects it.
 - Error path: strategy output includes size/cost/timing/direction fields, forbidden timing metadata, or misdeclared pre-shifted execution semantics and fails before portfolio simulation.
@@ -632,7 +610,7 @@ flowchart TB
 
 ### U7. Harden CLI Output, Errors, And Docs-Backed Contracts
 
-**Goal:** Stabilize cross-lane JSON/human output, errors, defaults, and docs-backed CLI contracts after each lane unit has added its minimal executable command path.
+**Goal:** Stabilize cross-lane JSON/human output, errors, explicit-config behavior, and docs-backed CLI contracts after each lane unit has added its minimal executable command path.
 
 **Requirements:** R1, R2, R3, R5, R6, R7, R8, R9; origin all acceptance examples.
 
@@ -642,19 +620,16 @@ flowchart TB
 - Modify: `research/aegis_research/cli.py`
 - Modify: `research/aegis_research/cli_support/output.py`
 - Modify: `research/aegis_research/cli_support/errors.py`
-- Modify: `research/aegis_research/cli_support/defaults.py`
 - Modify: `research/aegis_research/cli_commands/__init__.py`
-- Modify: `research/aegis_research/cli_commands/exp.py`
 - Modify: `tests/integration/research/aegis_research/test_cli.py`
 - Modify: `tests/integration/research/aegis_research/test_cli_docs.py`
-- Modify: `tests/integration/research/aegis_research/test_cli_defaults.py`
 
 **Approach:**
-- Audit the minimal CLI handlers added by U3, U5, and U6 and normalize parser help, JSON envelopes, human output, and error categories across `play`, strategy `run`, `train`, and existing `exp`.
+- Audit the minimal CLI handlers added by U3, U5, and U6 and normalize parser help, JSON envelopes, human output, and error categories across strategy/research `run` and `train`.
 - Keep command handlers thin: parse CLI args, resolve lane config, call domain API, render success/failure.
 - Extend success payload helpers so each lane emits safe refs, lane/evidence summaries, and artifact pointers without dumping large tables, raw configs, secrets, private source paths, or private native state.
-- Extend error categories only if existing config/execution categories cannot describe play artifact failures or discovery failures clearly.
-- Preserve existing default config behavior only for its legacy scope; update `defaults.py` and `exp.py` so legacy experiment defaults are not silently applied to `play`, strategy `run`, or `train`.
+- Extend error categories only if existing config/execution categories cannot describe run artifact failures or discovery failures clearly.
+- Remove legacy default config behavior from the active CLI; `run` and `train` must require explicit config paths.
 - Route every stored error, failure sample, diagnostic, and JSON stderr payload through the same redaction/safe-value pipeline as success payloads.
 - Treat the `aerd run` semantic cutover as incomplete until this unit and U8 migration docs/diagnostics land with U5/U6; avoid merging a state where `run` rejects ML configs before `train` guidance and examples are in place.
 
@@ -667,22 +642,21 @@ flowchart TB
 - `tests/integration/research/aegis_research/test_cli.py`
 
 **Test scenarios:**
-- Happy path: root help lists `play`, `run`, `train`, and `exp`.
+- Happy path: root help lists `run` and `train`, but not `play` or `exp`.
 - Happy path: each lane emits a safe JSON success envelope with command, lane/evidence summary, and artifact refs.
 - Happy path: human success output includes the lane and evidence type without printing large leaderboards or private artifact contents.
 - Error path: config validation failures use structured JSON stderr in JSON mode.
-- Error path: post-artifact failures include safe refs for reproducible `run`/`train`; play failures include safe exploratory artifact refs only when available.
+- Error path: post-artifact failures include safe refs for `run`/`train`.
 - Error path: exception text, tracebacks, credential-bearing URLs, environment variable values, raw filesystem paths, and private component metadata are not persisted in failure artifacts or JSON stderr.
 - Integration: docs tests reject examples that imply YAML can execute inline Python, arbitrary scripts, or model training via `run`.
-- Edge case: existing `aerd exp defaults set` tests still pass or are updated only where the command semantics intentionally changed.
-- Edge case: a legacy experiment default exists and bare `aerd run` still refuses to consume it for the new strategy lane.
+- Edge case: bare `aerd run` and bare `aerd train` fail with explicit-config guidance.
 
 **Verification:**
 - CLI behavior is stable enough for automation agents to distinguish lane results without scraping human text.
 
 ### U8. Update Documentation, Example Configs, And Migration Guidance
 
-**Goal:** Document the three-lane workflow, component authoring/promotion, play artifacts, leaderboard semantics, and the `run` to `train` migration.
+**Goal:** Document the two-command workflow, component authoring/promotion, playbook-backed run artifacts, leaderboard semantics, and the `run` to `train` migration.
 
 **Requirements:** R1, R2, R3, R4, R5, R6, R7, R8, R9, R10; origin success criteria and scope boundaries.
 
@@ -706,40 +680,37 @@ flowchart TB
 - Modify: `research/playbooks/labels/README.md`
 - Modify: `research/playbooks/indicators/README.md`
 - Modify: `research/playbooks/strategies/README.md`
-- Modify: `research/configs/experiments/README.md`
-- Create: `research/configs/play/README.md`
 - Create: `research/configs/runs/README.md`
 - Create: `research/configs/train/README.md`
 - Test: `tests/integration/research/aegis_research/test_cli_docs.py`
 
 **Approach:**
-- Update public docs to use the new command meanings: `play` for exploration, `run` for promoted strategy sweeps, `train` for model-plugin training.
+- Update public docs to use the new command meanings: `run` for playbook-backed or component-backed strategy/research sweeps, `train` for model-plugin training.
 - Document manual promotion as a reviewed component-file workflow, not a command that mutates source files.
 - Document that local labels, indicators, strategies, and notebook playbooks live under `research/components/` and `research/playbooks/`, where each local-work directory tracks only a placeholder `README.md` and ignores everything else by default.
-- Make each placeholder README mirror `research/configs/experiments/README.md`: point to its public docs/example path, explain local ignored files are private drafts, warn ignored files are not secret management, and discourage force-adding local research unless intentionally reviewed.
+- Make each placeholder README point to its public docs/example path, explain local ignored files are private drafts, warn ignored files are not secret management, and discourage force-adding local research unless intentionally reviewed.
 - Document source identity semantics: `run`/`train` record component IDs, manifest fingerprints, and source hashes; Git tracked/dirty status is not a validity condition.
-- Document play artifacts as exploratory evidence under `runs/play/` with last-run overwrite and backup behavior.
+- Document playbook-backed run artifacts as source-labeled evidence under immutable run directories.
 - Document leaderboard ranking by a single allowed VectorBT metric, including indicator baseline fields shown alongside the primary metric and baseline-delta behavior when explicitly selected.
 - Document component metadata expectations and the no-inline-code/no-arbitrary-path security boundary.
 - Document explicit source refs with examples for component-backed strategy/label refs, playbook-backed strategy/label refs, one-indicator-per-playbook indicator refs, mixed playbook/component indicator selections, `all`/empty-string component indicator selection, playbook-owned single component baseline IDs, and indicator source fields in metric rows.
 - Document that indicator components/playbooks should prefer the existing VectorBT-native helper path for MA/RSI/custom `vbt.IF`/primitive indicators, label components/playbooks should prefer `vbt.FIXLB`/`vbt.TRENDLB`/`vbt.PIVOTLB` helpers, and strategy components/playbooks should emit signals for the existing `Portfolio.from_signals` boundary so research definitions stay thin while execution remains consistent.
-- Move or rename example config docs so ML examples point at `train`, strategy examples point at `run`, and exploratory examples point at `play`.
+- Move or rename example config docs so ML examples point at `train` and strategy/playbook exploration examples point at `run`.
 
 **Patterns to follow:**
 - `docs/vectorbt-scaffold.md`
 - `docs/model-plugins.md`
-- `research/configs/experiments/README.md`
 - `tests/integration/research/aegis_research/test_cli_docs.py`
 
 **Test scenarios:**
-- Docs integration: active docs mention `aerd play`, strategy `aerd run`, and `aerd train` with the correct lane meanings.
+- Docs integration: active docs mention `aerd run` and `aerd train` with the correct command meanings and do not mention `aerd play` as active CLI.
 - Docs integration: docs do not imply YAML can load arbitrary code, arbitrary paths, or notebooks.
 - Docs integration: docs show source refs explicitly, including mixed indicator selections and metric source fields, and do not imply the CLI guesses between component and playbook sources.
 - Docs integration: indicator playbook docs state that each indicator playbook ID represents one indicator idea/family, parameter sweeps inside that family are allowed, and any baseline is exactly one component indicator ID declared by the playbook.
 - Docs integration: indicator examples use the VectorBT-native helper path rather than duplicating indicator execution logic inline.
 - Docs integration: label examples use the VectorBT-native label helper path, and strategy examples show signal output feeding the existing portfolio boundary rather than embedding portfolio simulation.
 - Docs integration: ML model-plugin docs point to `aerd train` for model training.
-- Docs integration: component and playbook placeholder READMEs point to their docs/examples learning paths and carry the same ignored-files warning pattern as `research/configs/experiments/README.md`.
+- Docs integration: component and playbook placeholder READMEs point to their docs/examples learning paths and carry the ignored-files warning pattern.
 - Test expectation: no runtime behavior beyond docs assertions; feature behavior is covered by U1-U7 tests.
 
 **Verification:**
@@ -749,9 +720,9 @@ flowchart TB
 
 ## System-Wide Impact
 
-- **Interaction graph:** CLI parsing routes to three lane-specific command modules; config validation consults component/playbook registries; play writes exploratory artifacts; run/train write reproducible evidence.
+- **Interaction graph:** CLI parsing routes to run/train command modules; config validation consults component/playbook registries; run/train write immutable evidence.
 - **Error propagation:** Static config, component, playbook, metric, and registry failures must surface as path-aware validation errors before data/artifact side effects.
-- **State lifecycle risks:** Play last-run overwrite is intentionally mutable and must be isolated from immutable run/train manifests; failed play attempts must not delete previous successful artifacts.
+- **State lifecycle risks:** Playbook-backed exploration now writes normal run manifests, so failed attempts must mark their own run failed without mutating prior evidence.
 - **Resource lifecycle risks:** Sweeps need static variant checks, post-data budget checks, bounded batching, bounded failure evidence, and public artifact byte limits.
 - **API surface parity:** JSON and human CLI output should preserve the existing envelope style while adding lane-specific summaries.
 - **Integration coverage:** Unit tests alone will not prove lane separation; integration tests must cover CLI-to-config-to-artifact paths for all three commands.
@@ -765,7 +736,7 @@ flowchart TB
 |------|------------|--------|------------|
 | `aerd run` semantic migration breaks expectations | High | High | Make the change forward-first, update docs/tests, and provide clear validation directing ML configs to `aerd train`. |
 | Component autodiscovery becomes arbitrary code loading | Medium | High | Use non-executing manifest discovery from fixed package-owned and repo-controlled roots only; configs cannot provide paths/imports, and callable imports occur only after validation. |
-| Play last-run overwrites useful exploratory evidence on failure | Medium | Medium | Use staging plus atomic promotion; keep prior successful last-run until the new artifact is complete. |
+| Playbook-backed exploration is confused with promoted-component validation | Medium | Medium | Record strategy and indicator source kinds in run artifacts and leaderboard rows. |
 | Artifact paths escape approved roots | Low | High | Validate final, staging, and backup paths against approved roots; reject absolute paths, traversal, symlink escapes, and cross-root promotion. |
 | Strategy components smuggle portfolio assumptions | Medium | High | Validate manifests/config/output schemas, enforce `StrategyInputBundle` and signal-only outputs, record signal diagnostics, and test malicious timing/sizing/direction fixtures. |
 | Sweep variants explode memory or runtime | Medium | Medium | Add sweep-size validation, variant counts, failed-variant evidence, and reuse VectorBT grid guidance. |
@@ -780,8 +751,8 @@ flowchart TB
 ### Phase 1: Contracts First
 - Land U1 and U2 so all later execution paths share safe component discovery, lane config validation, and the minimal shared CLI/output envelope.
 
-### Phase 2: Exploration Lane
-- Land U3 and U4 so researchers get the fast `play` loop and exploratory leaderboard without waiting for the full `run`/`train` split.
+### Phase 2: Playbook-Backed Run
+- Land U3 and U4 so researchers get playbook-backed `run` sweeps and leaderboards without waiting for the full component-backed `run`/`train` split.
 
 ### Phase 3: Reproducible Lanes
 - Land U5 first so existing ML behavior is available through `train`; land U6 only after that so strategy sweeps can become the default `run` behavior without stranding model-training users.
@@ -796,7 +767,7 @@ flowchart TB
 - Update docs in the same PR as command behavior because the command meanings are public API.
 - Keep old ML example configs available only if they are clearly documented as train configs or moved into a train-specific config directory.
 - Treat this as a breaking command-semantics change for local users; there is no persistence migration, but docs and errors must make the new command choice obvious.
-- Do not commit generated play/run/train artifacts beyond intentional fixture files; runtime output directories should remain local evidence.
+- Do not commit generated run/train artifacts beyond intentional fixture files; runtime output directories should remain local evidence.
 
 ---
 

@@ -18,12 +18,18 @@ from research.aegis_research.config import (
     to_builtin,
 )
 from research.aegis_research.data import load_market_data_result
-from research.aegis_research.play_artifacts import build_play_leaderboard
+from research.aegis_research.playbook_registry import (
+    FrozenPlaybookRegistry,
+    PlaybookSelection,
+    discover_playbook_registry,
+)
+from research.aegis_research.playbook_registry.registry import execute_notebook_playbook
 from research.aegis_research.portfolios import simulate_portfolio
 from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
 from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.reports import portfolio_metrics
+from research.aegis_research.run_leaderboard import build_run_leaderboard
 
 STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v1"
 STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
@@ -59,6 +65,7 @@ def run_strategy_sweep(
     resolved_config: ResolvedLaneConfig,
     *,
     component_registry: FrozenComponentRegistry,
+    playbook_registry: FrozenPlaybookRegistry | None = None,
     rerun_mode: str = RerunMode.NEW,
     run_id: str | None = None,
     parent_run_id: str | None = None,
@@ -68,6 +75,7 @@ def run_strategy_sweep(
     config = resolved_config.config
     if config.lane != "run":
         raise ValueError("run_strategy_sweep requires a run lane config")
+    playbooks = playbook_registry or discover_playbook_registry(component_registry=component_registry)
 
     recorder = RunStore(config.output_dir).start_run(
         run_label=config.name,
@@ -81,6 +89,7 @@ def run_strategy_sweep(
         "lane": "run",
         "evidence_type": "strategy_sweep",
         "component_registry_fingerprint": component_registry.fingerprint,
+        "playbook_registry_fingerprint": playbooks.fingerprint,
     }
     recorder.persist()
     if on_run_started is not None:
@@ -91,48 +100,28 @@ def run_strategy_sweep(
         data_result.assert_usable()
         close = data_result.feature("Close")
         open_prices = data_result.feature("Open")
-        indicators, indicator_evidence = _resolve_indicator_refs(
+        indicators, indicator_evidence, playbook_variant_records = _resolve_indicator_refs(
             config.indicator_refs,
             component_registry=component_registry,
+            playbook_registry=playbooks,
             close=close,
         )
 
-        definition = component_registry.get(ComponentSelection("strategies", config.strategy.id))
-        strategy_callable = definition.load_callable()
-        bundle = StrategyInputBundle(
-            close=close,
-            indicators=indicators,
-            params=config.strategy.params,
-            metadata={
-                "strategy_id": config.strategy.id,
-                "component_source_hash": definition.identity.source_hash,
-                "indicator_ids": [item["id"] for item in indicator_evidence],
-            },
+        strategy_evidence, strategy_variant_records, signal_diagnostics, portfolio_diagnostics = (
+            _resolve_strategy_ref(
+                config.strategy,
+                component_registry=component_registry,
+                playbook_registry=playbooks,
+                close=close,
+                open_prices=open_prices,
+                indicators=indicators,
+                indicator_evidence=indicator_evidence,
+                portfolio_config=config.portfolio,
+                report_config=config.report,
+            )
         )
-        signal_result = validate_strategy_output(strategy_callable(bundle), bundle)
-        signal_config = SignalConfig()
-        portfolio = simulate_portfolio(
-            close,
-            signal_result.entries,
-            signal_result.exits,
-            config.portfolio,
-            signal_config,
-            open_prices=open_prices,
-            market_index=close.index,
-        )
-        metrics = portfolio_metrics(portfolio.portfolio, config.report)
-        variant_record = {
-            "variant_id": config.strategy.id,
-            "strategy_source": "component",
-            "strategy_id": config.strategy.id,
-            "component_source_hash": definition.identity.source_hash,
-            "indicators": indicator_evidence,
-            "metrics": metrics,
-            "params": config.strategy.params,
-            "portfolio": to_builtin(asdict(config.portfolio)),
-        }
-        leaderboard = build_play_leaderboard(
-            [variant_record],
+        leaderboard = build_run_leaderboard(
+            [*strategy_variant_records, *playbook_variant_records],
             metric=config.ranking.metric,
             direction=config.ranking.direction,
             rank_by=config.ranking.rank_by,
@@ -141,16 +130,11 @@ def run_strategy_sweep(
             "schema_version": STRATEGY_ARTIFACT_SCHEMA_VERSION,
             "lane": "run",
             "evidence_type": "strategy_sweep",
-            "strategy": {
-                "source": "component",
-                "id": config.strategy.id,
-                "version": definition.manifest.version,
-                "source_hash": definition.identity.source_hash,
-            },
+            "strategy": strategy_evidence,
             "indicators": indicator_evidence,
             "leaderboard": leaderboard,
-            "signal_diagnostics": signal_result.diagnostics,
-            "portfolio_diagnostics": portfolio.diagnostics,
+            "signal_diagnostics": signal_diagnostics,
+            "portfolio_diagnostics": portfolio_diagnostics,
         }
         _write_strategy_artifact(recorder, payload)
         recorder.mark_run_completed()
@@ -173,30 +157,172 @@ def _resolve_indicator_refs(
     refs: list[SourceRefConfig],
     *,
     component_registry: FrozenComponentRegistry,
+    playbook_registry: FrozenPlaybookRegistry,
     close: pd.DataFrame,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     indicators: dict[str, Any] = {}
     evidence: list[dict[str, Any]] = []
+    variant_records: list[dict[str, Any]] = []
     for ref in refs:
-        if ref.source != "component":
-            raise ValueError("run indicator refs must use source: component")
-        component_ids = component_registry.ids("indicators") if ref.id == "all" else (ref.id,)
-        for component_id in component_ids:
-            if component_id in indicators:
-                raise ValueError(f"duplicate indicator component ref: {component_id}")
-            definition = component_registry.get(ComponentSelection("indicators", component_id))
-            output = definition.load_callable()(close, params=ref.params)
-            indicators[component_id] = _validate_indicator_output(output, close, component_id)
-            evidence.append(
-                {
-                    "source": "component",
-                    "id": component_id,
-                    "version": definition.manifest.version,
-                    "source_hash": definition.identity.source_hash,
-                    "params": ref.params,
-                }
+        if ref.source == "component":
+            component_ids = component_registry.ids("indicators") if ref.id == "all" else (ref.id,)
+            for component_id in component_ids:
+                if component_id in indicators:
+                    raise ValueError(f"duplicate indicator component ref: {component_id}")
+                definition = component_registry.get(ComponentSelection("indicators", component_id))
+                output = definition.load_callable()(close, params=ref.params)
+                indicators[component_id] = _validate_indicator_output(output, close, component_id)
+                evidence.append(
+                    {
+                        "source": "component",
+                        "id": component_id,
+                        "version": definition.manifest.version,
+                        "source_hash": definition.identity.source_hash,
+                        "params": ref.params,
+                    }
+                )
+            continue
+
+        definition = playbook_registry.get(PlaybookSelection("indicators", ref.id))
+        result = execute_notebook_playbook(definition, params=ref.params)
+        evidence.append(
+            {
+                "source": "playbook",
+                "id": definition.id,
+                "version": definition.manifest.version,
+                "source_hash": definition.identity.source_hash,
+                "params": ref.params,
+                "indicator_family": definition.manifest.indicator_family,
+                "baseline_component_indicator_id": definition.manifest.baseline_component_indicator_id,
+            }
+        )
+        variant_records.extend(
+            _playbook_variant_records(
+                result,
+                source_field="indicator_source",
+                id_field="indicator_id",
+                source="playbook",
+                source_id=definition.id,
+                source_hash=definition.identity.source_hash,
+                params=ref.params,
+                baseline_component_indicator_id=definition.manifest.baseline_component_indicator_id,
             )
-    return indicators, evidence
+        )
+    return indicators, evidence, variant_records
+
+
+def _resolve_strategy_ref(
+    ref: SourceRefConfig,
+    *,
+    component_registry: FrozenComponentRegistry,
+    playbook_registry: FrozenPlaybookRegistry,
+    close: pd.DataFrame,
+    open_prices: pd.DataFrame,
+    indicators: dict[str, Any],
+    indicator_evidence: list[dict[str, Any]],
+    portfolio_config: Any,
+    report_config: Any,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    if ref.source == "playbook":
+        definition = playbook_registry.get(PlaybookSelection("strategies", ref.id))
+        result = execute_notebook_playbook(definition, params=ref.params)
+        return (
+            {
+                "source": "playbook",
+                "id": definition.id,
+                "version": definition.manifest.version,
+                "source_hash": definition.identity.source_hash,
+            },
+            _playbook_variant_records(
+                result,
+                source_field="strategy_source",
+                id_field="strategy_id",
+                source="playbook",
+                source_id=definition.id,
+                source_hash=definition.identity.source_hash,
+                params=ref.params,
+            ),
+            {},
+            {},
+        )
+
+    definition = component_registry.get(ComponentSelection("strategies", ref.id))
+    strategy_callable = definition.load_callable()
+    bundle = StrategyInputBundle(
+        close=close,
+        indicators=indicators,
+        params=ref.params,
+        metadata={
+            "strategy_id": ref.id,
+            "component_source_hash": definition.identity.source_hash,
+            "indicator_ids": [item["id"] for item in indicator_evidence],
+        },
+    )
+    signal_result = validate_strategy_output(strategy_callable(bundle), bundle)
+    signal_config = SignalConfig()
+    portfolio = simulate_portfolio(
+        close,
+        signal_result.entries,
+        signal_result.exits,
+        portfolio_config,
+        signal_config,
+        open_prices=open_prices,
+        market_index=close.index,
+    )
+    metrics = portfolio_metrics(portfolio.portfolio, report_config)
+    return (
+        {
+            "source": "component",
+            "id": ref.id,
+            "version": definition.manifest.version,
+            "source_hash": definition.identity.source_hash,
+        },
+        [
+            {
+                "variant_id": ref.id,
+                "strategy_source": "component",
+                "strategy_id": ref.id,
+                "component_source_hash": definition.identity.source_hash,
+                "indicators": indicator_evidence,
+                "metrics": metrics,
+                "params": ref.params,
+                "portfolio": to_builtin(asdict(portfolio_config)),
+            }
+        ],
+        signal_result.diagnostics,
+        portfolio.diagnostics,
+    )
+
+
+def _playbook_variant_records(
+    result: dict[str, Any],
+    *,
+    source_field: str,
+    id_field: str,
+    source: str,
+    source_id: str,
+    source_hash: str,
+    params: dict[str, Any],
+    baseline_component_indicator_id: str | None = None,
+) -> list[dict[str, Any]]:
+    variants = result.get("variant_records")
+    if not isinstance(variants, list):
+        raise TypeError(f"playbook {source_id!r} result variant_records must be a list")
+    records: list[dict[str, Any]] = []
+    for index, item in enumerate(variants):
+        if not isinstance(item, dict):
+            raise TypeError(
+                f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
+            )
+        record = dict(item)
+        record.setdefault(source_field, source)
+        record.setdefault(id_field, source_id)
+        record.setdefault("source_hash", source_hash)
+        record.setdefault("params", params)
+        if baseline_component_indicator_id is not None:
+            record.setdefault("baseline_component_indicator_id", baseline_component_indicator_id)
+        records.append(record)
+    return records
 
 
 def _validate_indicator_output(output: Any, close: pd.DataFrame, component_id: str) -> Any:

@@ -8,7 +8,7 @@ Aegis RD is a research operating system for turning market hypotheses into repro
 
 It gives every idea the same audit trail: source data, feature construction, labels, splits, model behavior, signal rules, execution assumptions, costs, reports, and the final decision about whether the idea survived. The result is a research process that can be rerun, inspected, rejected, or promoted without relying on memory, notebooks, or hand-waved assumptions.
 
-Each valid reproducible run writes a local `manifest.json` that records lifecycle status, config evidence, environment and Git evidence, artifact hashes, schema versions, and lineage. Failed runs remain inspectable, and walk-forward validation keeps per-split artifacts separate from aggregate reports. Exploratory `play` outputs are separate mutable last-run evidence under `runs/play/`.
+Each valid run writes a local `manifest.json` that records lifecycle status, config evidence, environment and Git evidence, artifact hashes, schema versions, and lineage. Failed runs remain inspectable, and walk-forward validation keeps per-split artifacts separate from aggregate reports. Playbook-backed exploration and promoted-component sweeps both write source-labeled immutable run evidence.
 
 ## What It Does
 
@@ -25,11 +25,10 @@ Aegis RD gives each research loop a clear contract:
 
 ## Research Lanes
 
-- `aerd play <config>` runs repo-controlled notebook playbooks by stable ID for exploratory evidence and a mutable `runs/play/last-run` leaderboard.
-- `aerd run <config>` runs promoted strategy components/playbooks as reproducible strategy sweeps. It does not train models.
+- `aerd run <config>` runs strategy/research sweeps over explicit playbook or component strategy/indicator refs. It does not train models.
 - `aerd train <config>` runs the ML model-plugin training lane and preserves the existing split-local model, probability, signal, portfolio, and report artifacts.
 
-Configs stay inert across all lanes: YAML selects trusted IDs and parameters only. It cannot import Python, execute formulas, point at arbitrary notebooks/scripts, or reference generated play artifacts as reproducible inputs.
+Configs stay inert across all lanes: YAML selects trusted IDs and parameters only. It cannot import Python, execute formulas, point at arbitrary notebooks/scripts, or reference generated run artifacts as reproducible inputs.
 
 ## Market Data Contract
 

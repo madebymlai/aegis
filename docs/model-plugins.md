@@ -19,7 +19,7 @@ Model training is split-local batch validation in v1. There are no user-selectab
 
 Trusted code constructs a `ModelRegistry`, registers `ModelPluginDefinition` objects, freezes the registry, and passes that snapshot into config resolution or `run_training`/`run_experiment`.
 
-Core Aegis ships a default registry with the baseline `aegis.sklearn_logistic` plugin. Use `make_default_model_registry()` from `research.aegis_research.model_plugins` in Python runners; the `aerd` CLI registers this default registry automatically for `aerd train` and `aerd exp defaults set` validation. `aerd run` is reserved for promoted strategy sweeps and rejects model-training configs with guidance to use `aerd train`.
+Core Aegis ships a default registry with the baseline `aegis.sklearn_logistic` plugin. Use `make_default_model_registry()` from `research.aegis_research.model_plugins` in Python runners; the `aerd` CLI registers this default registry automatically for `aerd train` validation. `aerd run` is reserved for playbook-backed or component-backed strategy/research sweeps and rejects model-training configs with guidance to use `aerd train`.
 
 Plugins declare:
 

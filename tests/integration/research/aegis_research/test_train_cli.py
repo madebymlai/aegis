@@ -43,7 +43,7 @@ def test_train_requires_explicit_config_path(capsys: pytest.CaptureFixture[str])
     assert payload["error"]["category"] == "invocation"
 
 
-def test_train_rejects_play_artifact_source_refs_before_run_directory(
+def test_train_rejects_run_artifact_source_refs_before_run_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -60,7 +60,7 @@ def test_train_rejects_play_artifact_source_refs_before_run_directory(
                 "label": {
                     "source": "component",
                     "id": "missing",
-                    "artifact_path": "runs/play/last-run",
+                    "artifact_path": "runs/previous-run/strategy_run.json",
                 },
                 "model": {"plugin_id": "tests.sklearn_logistic"},
             },

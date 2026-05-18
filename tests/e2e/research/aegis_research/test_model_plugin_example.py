@@ -96,8 +96,8 @@ def test_sklearn_model_plugin_notebook_executes() -> None:
     _execute_notebook(str(notebook_path), notebook_path.parent)
 
 
-def test_experiment_config_directory_is_generic_readme_pointer() -> None:
-    readme = Path("research/configs/experiments/README.md").read_text()
+def test_train_config_directory_is_generic_readme_pointer() -> None:
+    readme = Path("research/configs/train/README.md").read_text()
     gitignore = Path(".gitignore").read_text()
 
     assert "docs/examples/scaffold_experiment_walkthrough.ipynb" in readme
@@ -109,20 +109,20 @@ def test_experiment_config_directory_is_generic_readme_pointer() -> None:
     assert "environment-backed secret references" in readme
     assert "git add -f" not in readme
     assert "etf_cspx_dtla_sgln_yfinance_ml" not in readme
-    assert "research/configs/experiments/*" in gitignore
-    assert "!research/configs/experiments/README.md" in gitignore
+    assert "research/configs/train/*" in gitignore
+    assert "!research/configs/train/README.md" in gitignore
     for old_path in OLD_SYNTHETIC_CONFIG_PATHS:
         _assert_not_tracked(old_path)
 
 
-def test_experiment_config_directory_ignore_rules_keep_only_readme_trackable() -> None:
+def test_train_config_directory_ignore_rules_keep_only_readme_trackable() -> None:
     ignored_yaml = subprocess.run(
         [
             "git",
             "check-ignore",
             "--no-index",
             "--quiet",
-            "research/configs/experiments/example.yaml",
+            "research/configs/train/example.yaml",
         ],
         check=False,
     )
@@ -132,12 +132,12 @@ def test_experiment_config_directory_ignore_rules_keep_only_readme_trackable() -
             "check-ignore",
             "--no-index",
             "--quiet",
-            "research/configs/experiments/README.md",
+            "research/configs/train/README.md",
         ],
         check=False,
     )
     tracked_files = subprocess.run(
-        ["git", "ls-files", "research/configs/experiments"],
+        ["git", "ls-files", "research/configs/train"],
         check=True,
         capture_output=True,
         text=True,
@@ -145,7 +145,7 @@ def test_experiment_config_directory_ignore_rules_keep_only_readme_trackable() -
 
     assert ignored_yaml.returncode == 0
     assert ignored_readme.returncode == 1
-    assert tracked_files.stdout.splitlines() == ["research/configs/experiments/README.md"]
+    assert tracked_files.stdout.splitlines() == ["research/configs/train/README.md"]
 
 
 def test_active_docs_do_not_reference_old_synthetic_experiment_configs() -> None:

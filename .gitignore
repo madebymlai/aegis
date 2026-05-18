@@ -24,10 +24,7 @@ data/
 runs/*
 !runs/.gitkeep
 
-research/configs/experiments/*
-!research/configs/experiments/README.md
-research/configs/play/*
-!research/configs/play/README.md
+research/configs/experiments/
 research/configs/runs/*
 !research/configs/runs/README.md
 research/configs/train/*

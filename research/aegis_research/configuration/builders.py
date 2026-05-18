@@ -14,8 +14,6 @@ from research.aegis_research.configuration.schema import (
     LabelTargetSelectionConfig,
     LabelTargetTransformConfig,
     ModelConfig,
-    PlayConfig,
-    PlayLaneConfig,
     PortfolioConfig,
     RankingConfig,
     ReportConfig,
@@ -25,25 +23,6 @@ from research.aegis_research.configuration.schema import (
     StrategyRunLaneConfig,
     TrainLaneConfig,
 )
-
-
-def _build_play_lane_config(raw: dict[str, Any]) -> PlayLaneConfig:
-    play_raw = raw["play"]
-    return PlayLaneConfig(
-        name=raw["name"],
-        schema_version=raw["schema_version"],
-        lane="play",
-        data=_build_data_config(raw.get("data", {})),
-        portfolio=PortfolioConfig(**raw.get("portfolio", {})),
-        report=ReportConfig(**raw.get("report", {})),
-        play=PlayConfig(
-            stages=list(play_raw["stages"]),
-            indicator_refs=[_build_source_ref(item) for item in play_raw["indicator_refs"]],
-            ranking=_build_ranking(play_raw["ranking"]),
-            backup_last_run=play_raw.get("backup_last_run", False),
-        ),
-        output_dir=raw.get("output_dir", "runs"),
-    )
 
 
 def _build_strategy_run_lane_config(raw: dict[str, Any]) -> StrategyRunLaneConfig:

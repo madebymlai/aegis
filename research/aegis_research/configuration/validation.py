@@ -32,7 +32,6 @@ from research.aegis_research.configuration.schema import (
     MISSING_POLICIES,
     MODEL_DENIED_KEYS,
     OHLCV_FEATURE_MAP_KEYS,
-    PLAY_STAGES,
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
     RANKING_DIRECTIONS,
@@ -94,9 +93,7 @@ def _validate_raw_lane_config(
     _validate_portfolio(portfolio, issues)
     _validate_report(report, issues)
 
-    if lane == "play":
-        _validate_play_lane(raw, issues, component_registry=component_registry)
-    elif lane == "run":
+    if lane == "run":
         _validate_strategy_run_lane(raw, issues, component_registry=component_registry)
     elif lane == "train":
         _validate_train_lane(raw, issues, component_registry=component_registry)
@@ -104,14 +101,11 @@ def _validate_raw_lane_config(
 
 def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
     common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir"}
-    if lane == "play":
-        return common | {"play"}
     if lane == "run":
         return common | {"strategy", "indicator_refs", "ranking"}
     if lane == "train":
         return common | {"label", "indicators", "split", "model", "signals"}
     return common | {
-        "play",
         "strategy",
         "indicator_refs",
         "ranking",
@@ -121,32 +115,6 @@ def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
         "model",
         "signals",
     }
-
-
-def _validate_play_lane(
-    raw: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-    *,
-    component_registry: FrozenComponentRegistry,
-) -> None:
-    play = _section(
-        raw,
-        "play",
-        {"stages", "indicator_refs", "ranking", "backup_last_run"},
-        issues,
-    )
-    _validate_no_lane_executable_keys("play", play, issues)
-    _validate_play_stages(play, issues)
-    _validate_source_ref_list(
-        "play.indicator_refs",
-        play.get("indicator_refs"),
-        "indicators",
-        issues,
-        component_registry=component_registry,
-        allowed_sources={"playbook"},
-    )
-    _validate_ranking("play.ranking", play.get("ranking"), issues)
-    _optional_bool("play.backup_last_run", play, issues)
 
 
 def _validate_strategy_run_lane(
@@ -162,7 +130,7 @@ def _validate_strategy_run_lane(
         "strategies",
         issues,
         component_registry=component_registry,
-        allowed_sources={"component"},
+        allowed_sources={"component", "playbook"},
     )
     _validate_source_ref_list(
         "indicator_refs",
@@ -171,7 +139,7 @@ def _validate_strategy_run_lane(
         issues,
         component_registry=component_registry,
         allow_component_all=True,
-        allowed_sources={"component"},
+        allowed_sources={"component", "playbook"},
     )
     _validate_expanded_component_ref_duplicates(
         "indicator_refs",
@@ -232,17 +200,6 @@ def _validate_training_fields_absent(
                     key,
                     "model training fields are not valid for strategy run; use aerd train",
                 )
-            )
-
-
-def _validate_play_stages(play: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    stages = play.get("stages")
-    if not _require_str_list("play.stages", stages, issues, non_empty=True):
-        return
-    for index, stage in enumerate(stages):
-        if stage not in PLAY_STAGES:
-            issues.append(
-                ConfigValidationIssue(f"play.stages[{index}]", f"must be one of {sorted(PLAY_STAGES)}")
             )
 
 

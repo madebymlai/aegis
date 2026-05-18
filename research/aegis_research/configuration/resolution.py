@@ -15,7 +15,6 @@ from research.aegis_research.configuration.builders import (
     _build_data_config,
     _build_indicator_config,
     _build_label_config,
-    _build_play_lane_config,
     _build_strategy_run_lane_config,
     _build_train_lane_config,
 )
@@ -27,7 +26,6 @@ from research.aegis_research.configuration.schema import (
     ExperimentConfig,
     LaneConfig,
     ModelConfig,
-    PlayLaneConfig,
     PortfolioConfig,
     ReportConfig,
     SignalConfig,
@@ -231,7 +229,7 @@ def resolve_lane_config(
         return value
 
     registry = component_registry or discover_component_registry()
-    if isinstance(value, PlayLaneConfig | StrategyRunLaneConfig | TrainLaneConfig):
+    if isinstance(value, StrategyRunLaneConfig | TrainLaneConfig):
         raw = to_builtin(asdict(value))
         raw_text = yaml.safe_dump(raw, sort_keys=False)
         return _build_resolved_lane_config(
@@ -314,10 +312,8 @@ def _build_resolved_lane_config(
         raise ConfigValidationError(issues)
 
     lane = str(raw["lane"])
-    if lane == "play":
-        config: LaneConfig = _build_play_lane_config(raw)
-    elif lane == "run":
-        config = _build_strategy_run_lane_config(raw)
+    if lane == "run":
+        config: LaneConfig = _build_strategy_run_lane_config(raw)
     elif lane == "train":
         config = _build_train_lane_config(raw)
     else:

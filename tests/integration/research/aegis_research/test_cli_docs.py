@@ -6,11 +6,11 @@ from pathlib import Path
 def test_active_cli_docs_use_aerd_contract() -> None:
     docs = Path("docs/vectorbt-scaffold.md").read_text()
 
-    assert "aerd play <config>" in docs
     assert "aerd run <config>" in docs
     assert "aerd train <config>" in docs
-    assert "aerd exp defaults set <experiment-config>" in docs
-    assert "New `play`, strategy `run`, and `train` lanes require explicit config paths" in docs
+    assert "aerd play" not in docs
+    assert "aerd exp" not in docs
+    assert "strategy/research `run` and `train` lanes require explicit config paths" in docs
     assert "rejected` or `needs_more_evidence` report still exits `0`" in docs
     assert "| `execution_failure` | 10 |" in docs
     assert "aegis-research run" not in docs
@@ -22,7 +22,7 @@ def test_model_plugin_docs_keep_yaml_inert_and_aerd_registry_explicit() -> None:
 
     assert "Experiment YAML selects a stable `model.plugin_id`; it never imports Python code" in docs
     assert "aerd train" in docs
-    assert "`aerd run` is reserved for promoted strategy sweeps" in docs
+    assert "`aerd run` is reserved for playbook-backed or component-backed strategy/research sweeps" in docs
 
 
 def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() -> None:
