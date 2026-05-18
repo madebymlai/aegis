@@ -1,7 +1,7 @@
 ---
 title: feat: Add Signal Generation Contract
 type: feat
-status: active
+status: completed
 date: 2026-05-17
 origin: docs/brainstorms/2026-05-17-signal-generation-conflict-semantics-requirements.md
 ---

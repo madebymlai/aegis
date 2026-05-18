@@ -74,6 +74,7 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     portfolio_diagnostics = json.loads(
         (run_dir / "splits" / "split_0" / "portfolio_diagnostics_test.json").read_text()
     )
+    metrics = json.loads((run_dir / "splits" / "split_0" / "metrics_test.json").read_text())
     portfolio_sidecar = json.loads(
         (run_dir / "native" / "portfolios" / "split_0_test.pkl.metadata.json").read_text()
     )
@@ -83,6 +84,8 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     assert signal_diagnostics["policy"]["name"] == "long_only_hysteresis"
     assert signal_diagnostics["cleaned_diagnostics"]["diagnostics_only"] is True
     assert portfolio_diagnostics["execution"]["timing"] == "next_open"
+    assert metrics["metric_scope"] == "shared_cash_group"
+    assert metrics["metric_assumptions"]["benchmark_status"] == "none"
     assert portfolio_sidecar["metadata"]["signal_diagnostics"]["set_name"] == "test"
     assert portfolio_sidecar["metadata"]["portfolio_diagnostics"]["execution"]["timing"] == (
         "next_open"
@@ -146,8 +149,14 @@ def test_purged_run_writes_per_split_models_and_links_aggregates(tmp_path: Path)
         f"validation.split_{index}.signal_diagnostics.test" for index in range(5)
     ]
     assert artifacts["validation.portfolio_diagnostics"]["schema_version"] == (
-        "validation_portfolio_diagnostics.v1"
+        "validation_portfolio_diagnostics.v2"
     )
+    assert artifacts["validation.split_0.portfolio_diagnostics.test"]["schema_version"] == (
+        "portfolio_diagnostics.v2"
+    )
+    assert artifacts["validation.split_0.metrics.test"]["schema_version"] == "metrics.v2"
+    assert artifacts["validation.split_metrics"]["schema_version"] == "split_metrics.v2"
+    assert artifacts["report.survival"]["schema_version"] == "survival_report.v3"
     assert artifacts["validation.portfolio_diagnostics"]["upstream_artifact_ids"] == [
         f"validation.split_{index}.portfolio_diagnostics.test" for index in range(5)
     ]

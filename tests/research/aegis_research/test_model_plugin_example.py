@@ -5,11 +5,9 @@ from pathlib import Path
 
 
 def test_sklearn_model_plugin_notebook_is_valid_explicit_registration_example() -> None:
-    notebook_path = Path("examples/model_plugins/sklearn_logistic_plugin.ipynb")
+    notebook_path = Path("docs/examples/model_plugins/sklearn_logistic_plugin.ipynb")
     payload = json.loads(notebook_path.read_text())
-    source = "\n".join(
-        "".join(cell.get("source", [])) for cell in payload.get("cells", [])
-    )
+    source = "\n".join("".join(cell.get("source", [])) for cell in payload.get("cells", []))
 
     assert payload["nbformat"] == 4
     assert "ModelRegistry" in source
@@ -20,7 +18,7 @@ def test_sklearn_model_plugin_notebook_is_valid_explicit_registration_example() 
 
 
 def test_model_plugin_docs_include_pure_python_adaptation_path() -> None:
-    readme = Path("examples/model_plugins/README.md").read_text()
+    readme = Path("docs/examples/model_plugins/README.md").read_text()
     docs = Path("docs/model-plugins.md").read_text()
 
     assert "pure Python" in readme

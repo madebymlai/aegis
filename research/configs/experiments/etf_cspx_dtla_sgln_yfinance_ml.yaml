@@ -1,14 +1,17 @@
 schema_version: 2
-name: synthetic_purged_fixlb_baseline
+name: etf_cspx_dtla_sgln_yfinance_ml
 output_dir: runs
 
 data:
-  source: synthetic
-  symbols: [SYN]
+  source: yfinance
+  symbols: [CSPX.L, DTLA.L, SGLN.L]
   start: "2020-01-01"
+  end: "2026-05-18"
   timeframe: "1D"
-  rows: 360
-  seed: 42
+  missing_index: raise
+  missing_columns: raise
+  tz_convert: UTC
+  silence_warnings: false
 
 indicators:
   invalid_value_policy: drop_rows
@@ -66,12 +69,12 @@ split:
   purge_td: 0D
   embargo_td: 0D
   max_splits: 5
-  max_estimated_output_cells: 500000
+  max_estimated_output_cells: 1000000
   max_public_artifact_bytes: 5000000
 
 model:
   plugin_id: tests.sklearn_logistic
-  min_train_samples: 50
+  min_train_samples: 100
   params:
     max_iter: 1000
     random_state: 42

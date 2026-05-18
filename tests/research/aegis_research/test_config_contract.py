@@ -39,13 +39,18 @@ def test_baseline_configs_load_with_schema_metadata() -> None:
         assert config.config.signals.long_entry_threshold == 0.55
         assert config.config.signals.long_exit_threshold == 0.50
         assert config.config.signals.execution_timing == "next_open"
+        assert config.config.portfolio.entry_budget == 1.0
         assert config.raw_config_hash
         assert config.redacted_resolved_config()["report"]["freq"] == "1D"
 
 
 def test_minimal_dict_config_uses_report_defaults() -> None:
     config = resolve_experiment_config(
-        {"schema_version": config_module.CONFIG_SCHEMA_VERSION, "name": "minimal_defaults"}
+        {
+            "schema_version": config_module.CONFIG_SCHEMA_VERSION,
+            "name": "minimal_defaults",
+            "portfolio": {"entry_budget": 1.0},
+        }
     )
 
     assert config.config.report.freq == "1D"
@@ -55,7 +60,11 @@ def test_minimal_dict_config_uses_report_defaults() -> None:
 
 def test_minimal_dict_config_uses_signal_contract_defaults() -> None:
     config = resolve_experiment_config(
-        {"schema_version": config_module.CONFIG_SCHEMA_VERSION, "name": "signal_defaults"}
+        {
+            "schema_version": config_module.CONFIG_SCHEMA_VERSION,
+            "name": "signal_defaults",
+            "portfolio": {"entry_budget": 1.0},
+        }
     )
 
     assert config.config.signals.policy == "long_only_hysteresis"
@@ -165,6 +174,56 @@ def test_csv_source_requires_path(tmp_path: Path) -> None:
     assert "data.path" in str(error.value)
 
 
+def test_portfolio_requires_explicit_entry_budget(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, portfolio=None)
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "portfolio.entry_budget" in str(error.value)
+    assert "is required" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("entry_budget", "expected_message"),
+    [
+        (0, "positive"),
+        (-0.1, "positive"),
+        (1.1, "at most 1"),
+        ("1.0", "must be a number"),
+        (float("nan"), "finite"),
+        (float("inf"), "finite"),
+    ],
+)
+def test_portfolio_entry_budget_must_be_valid_share(
+    tmp_path: Path,
+    entry_budget: object,
+    expected_message: str,
+) -> None:
+    path = _write_config(tmp_path, portfolio={"entry_budget": entry_budget})
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert "portfolio.entry_budget" in str(error.value)
+    assert expected_message in str(error.value)
+
+
+@pytest.mark.parametrize("field", ["size", "size_type"])
+def test_portfolio_rejects_removed_public_sizing_fields(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    value = 1.0 if field == "size" else "valuepercent"
+    path = _write_config(tmp_path, portfolio={field: value})
+
+    with pytest.raises(ConfigValidationError) as error:
+        load_experiment_config(path)
+
+    assert f"portfolio.{field}" in str(error.value)
+    assert "was removed" in str(error.value)
+
+
 def test_portfolio_rejects_target_size_types(tmp_path: Path) -> None:
     path = _write_config(tmp_path, portfolio={"size_type": "targetpercent"})
 
@@ -172,7 +231,7 @@ def test_portfolio_rejects_target_size_types(tmp_path: Path) -> None:
         load_experiment_config(path)
 
     assert "portfolio.size_type" in str(error.value)
-    assert "target size types" in str(error.value)
+    assert "target allocation sizing is deferred" in str(error.value)
 
 
 @pytest.mark.parametrize(
@@ -491,6 +550,7 @@ def test_missing_model_registry_fails_before_run_directory(tmp_path: Path) -> No
             "name": "missing_registry",
             "output_dir": str(tmp_path),
             "model": model_config_dict(),
+            "portfolio": {"entry_budget": 1.0},
         }
     )
 
@@ -965,9 +1025,13 @@ def _write_config(tmp_path: Path, **overrides) -> Path:
         "name": "contract_test",
         "output_dir": str(tmp_path / "runs"),
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 50, "timeframe": "1D"},
+        "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
     }
     for key, value in overrides.items():
+        if value is None:
+            config.pop(key, None)
+            continue
         if isinstance(value, dict) and isinstance(config.get(key), dict):
             config[key] = {**config[key], **value}
         else:
