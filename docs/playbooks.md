@@ -3,7 +3,6 @@
 Notebook playbooks are repo-controlled exploratory notebooks under `research/playbooks/{labels,indicators,strategies}/`. `aerd run` selects them by stable ID from notebook metadata, not by path:
 
 ```yaml
-lane: run
 strategy:
   source: playbook
   id: ma_strategy_explore
@@ -27,6 +26,6 @@ Each indicator playbook ID represents one indicator idea/family. Parameter sweep
 
 Run artifacts are immutable evidence under the configured run root. Playbook-backed rows remain source-labeled as playbook evidence; manual promotion into `research/components/` is still a reviewed source-code step, not an automatic command that mutates component files.
 
-Configs cannot provide arbitrary notebook paths, scripts, imports, inline Python, formulas, generated run state, last-run refs, or leaderboard-row refs as reproducible `run`/`train` inputs.
+Configs cannot provide arbitrary notebook paths, scripts, imports, inline Python, formulas, generated run state, last-run refs, or leaderboard-row refs as reproducible run inputs.
 
 Public playbook examples live under `docs/examples/playbooks/`.

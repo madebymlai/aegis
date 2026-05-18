@@ -126,7 +126,7 @@ def test_run_rejects_model_training_config_and_points_to_train(
     output = capsys.readouterr()
     assert output.out == ""
     message = json.loads(output.err)["error"]["message"]
-    assert "aerd train" in message
+    assert "aerd run --train" in message
     assert not (tmp_path / "runs" / "should-not-exist").exists()
 
 
@@ -155,7 +155,6 @@ def _write_run_config(
         yaml.safe_dump(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
-                "lane": "run",
                 "name": "strategy_run_contract",
                 "output_dir": "runs",
                 "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80},

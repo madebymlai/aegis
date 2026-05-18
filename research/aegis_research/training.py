@@ -13,6 +13,7 @@ def run_training(
     config: ResolvedExperimentConfig | ExperimentConfig | dict[str, Any],
     *,
     model_registry: ModelRegistry | FrozenModelRegistry | None = None,
+    label_result_builder: Callable[..., Any] | None = None,
     rerun_mode: str = RerunMode.NEW,
     run_id: str | None = None,
     parent_run_id: str | None = None,
@@ -22,6 +23,7 @@ def run_training(
     result = run_experiment(
         config,
         model_registry=model_registry,
+        label_result_builder=label_result_builder,
         rerun_mode=rerun_mode,
         run_id=run_id,
         parent_run_id=parent_run_id,

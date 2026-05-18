@@ -567,13 +567,29 @@ def test_missing_model_registry_fails_before_run_directory(tmp_path: Path) -> No
 
 def test_cli_rejects_unregistered_model_before_train_run_directory(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    path = _write_config(
-        tmp_path,
-        model={**model_config_dict(), "plugin_id": "unknown.model"},
+    monkeypatch.chdir(tmp_path)
+    _write_train_label_component(tmp_path / "research/components/labels/fixlb.py")
+    path = tmp_path / "train.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": config_module.CONFIG_SCHEMA_VERSION,
+                "name": "unknown_model_train",
+                "output_dir": "runs",
+                "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120},
+                "portfolio": {"entry_budget": 1.0},
+                "train": {
+                    "label": {"source": "component", "id": "demo.fixlb"},
+                    "model": {"source": "plugin", "id": "unknown.model"},
+                },
+            },
+            sort_keys=False,
+        )
     )
-    assert cli.main(["train", str(path), "--run-id", "cli-missing-registry"]) == 6
+    assert cli.main(["run", "--train", str(path), "--run-id", "cli-missing-registry"]) == 6
     assert "unknown registered model plugin id" in capsys.readouterr().err
     assert not (tmp_path / "runs" / "cli-missing-registry").exists()
 
@@ -1036,6 +1052,21 @@ def _write_config(tmp_path: Path, **overrides) -> Path:
     path = tmp_path / "experiment.yaml"
     path.write_text(yaml.safe_dump(config, sort_keys=False))
     return path
+
+
+def _write_train_label_component(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "from research.aegis_research.config import LabelConfig\n"
+        "from research.aegis_research.labels import build_label_result\n"
+        "COMPONENT_MANIFEST = {"
+        "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
+        "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
+        "'output_names': ['labels']}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "def run(close, *, params):\n"
+        "    return build_label_result(close, LabelConfig())\n"
+    )
 
 
 def _expected_trendlb_transform(mode: str) -> str:

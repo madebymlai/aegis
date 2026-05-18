@@ -11,46 +11,47 @@ deepened: 2026-05-18
 
 ## Summary
 
-Implement the two-command research workflow by introducing deterministic component/playbook registries, run config source refs for playbook or component strategies/indicators, a strategy/research-sweep `aerd run`, and an explicit ML `aerd train` command. The plan reuses existing config, CLI, portfolio, metric, model-plugin, and artifact patterns while splitting the current ML-shaped run path into reusable stage helpers.
+Implement the single-command research workflow by introducing deterministic component/playbook registries, run config source refs for playbook or component strategies/indicators, a strategy/research-sweep `aerd run`, and an explicit ML training mode through `aerd run --train`. The plan reuses existing config, CLI, portfolio, metric, model-plugin, and artifact patterns while moving train-specific settings under a required `train:` section for train mode.
 
 ---
 
 ## Problem Frame
 
-The current codebase has strong contracts for ML-shaped experiment runs, but the execution path still makes `run` train models and keeps indicators/labels mostly centralized. The origin document defines the product split; this plan defines the technical path to let `run` select playbook or component research sources explicitly while keeping ML training separate and without opening the config surface to arbitrary code.
+The current codebase has strong contracts for ML-shaped experiment runs, but the execution path still makes default `run` train models and keeps indicators/labels mostly centralized. The origin document defines the product split; this plan defines the technical path to let `run` select playbook or component research sources explicitly while keeping ML training behind an explicit `--train` mode and without opening the config surface to arbitrary code.
 
 ---
 
 ## Requirements
 
-- R1. Add strategy/research-oriented `aerd run <config>` and explicit `aerd train <config>` command behavior. Origin: R1, F1, F3, F4, AE1, AE7, AE8.
+- R1. Add strategy/research-oriented `aerd run <config>` and explicit ML `aerd run --train <config>` / `aerd run -t <config>` behavior under the single active `run` command. Origin: R1, F1, F3, F4, AE1, AE7, AE8.
 - R2. Preserve explicit evidence so CLI output and artifacts distinguish playbook-backed run evidence, component-backed strategy-sweep evidence, and ML-training evidence. Origin: R2, A3, A4, A5.
-- R3. Keep configs inert: no inline Python, formulas, arbitrary notebook/script paths, external import strings, or playbook state in reproducible `run`/`train`. Origin: R3, R4, R5, R15, R19, AE2.
+- R3. Keep configs inert: no inline Python, formulas, arbitrary notebook/script paths, external import strings, or playbook state in reproducible `run` modes. Origin: R3, R4, R5, R15, R19, AE2.
 - R4. Add file-scoped, plugin-like promoted component discovery for labels, indicators, and strategies with stable IDs, non-executing metadata discovery, callable behavior loaded only after validation, deterministic ordering, duplicate-ID rejection, and source identity. Origin: R11, R12, R13, R14, F2, AE6.
 - R5. Add repo-controlled, family-scoped notebook playbook selection by stable ID under `research/playbooks/{labels,indicators,strategies}/`, with playbook-local temporary exploratory logic and no promotion side effects. Origin: R5, R6, R14, F1, AE1.
 - R6. Add top-10 run leaderboards ranked by one validated VectorBT metric/direction, including variant identity, primary metric value, optional indicator-baseline metric/delta fields, optional baseline-delta ranking, attempted/succeeded/failed counts, failure-gating status, and sanitized failed-variant evidence. Origin: R7, R8, R9, R10, AE3, AE5.
 - R7. Make `aerd run` evaluate explicit strategy and indicator source refs over config-owned portfolio assumptions and record strategy source, indicator source, parameters, portfolio, metric, ranking, and survival evidence. Origin: R15, R16, R17, F3, AE7.
-- R9. Make `aerd train` own the existing model-plugin training lane over explicit label source refs, indicator-derived model features, and model plugins. Origin: R18, R19, R20, F4, AE8.
+- R9. Make `aerd run --train` own the existing model-plugin training mode over explicit train-section label source refs, indicator-derived model features, and model refs. Model refs retain `source`, but only `source: plugin` is accepted in v1. Origin: R18, R19, R20, F4, AE8.
 - R10. Keep fixed repo-controlled component roots under `research/components/` and notebook playbook roots under `research/playbooks/` gitignored except for tracked README placeholders so proprietary or local research logic is not committed accidentally. Origin: user correction during planning.
 
 **Origin actors:** A1 researcher, A2 component author, A3 strategy run reviewer, A4 ML training reviewer, A5 automation agent.
 
 **Origin flows:** F1 exploratory playbook run, F2 manual promotion, F3 reproducible strategy sweep, F4 reproducible ML training.
 
-**Origin acceptance examples:** AE1 playbook-backed run execution, AE2 arbitrary path rejection, AE3 top-10 leaderboard, AE4 mixed indicator source selection, AE5 baseline delta, AE6 file-scoped promotion, AE7 strategy run, AE8 train lane.
+**Origin acceptance examples:** AE1 playbook-backed run execution, AE2 arbitrary path rejection, AE3 top-10 leaderboard, AE4 mixed indicator source selection, AE5 baseline delta, AE6 file-scoped promotion, AE7 strategy run, AE8 train mode.
 
 ---
 
 ## Scope Boundaries
 
 - No arbitrary notebook/script execution from config; `aerd run` executes only repo-controlled notebook playbooks discovered under `research/playbooks/` and selected by stable ID source refs.
-- No inline Python, formula DSL, import strings, or temporary strategy rules in reproducible `run`/`train` configs.
-- No prior run artifact paths, last-run refs, leaderboard-row refs, generated exploratory state, arbitrary notebook paths, or arbitrary scripts as inputs to `run`/`train`; stable playbook source refs are allowed only when the run config explicitly selects `source: playbook` by ID.
+- No inline Python, formula DSL, import strings, or temporary strategy rules in reproducible `run` configs.
+- No prior run artifact paths, last-run refs, leaderboard-row refs, generated exploratory state, arbitrary notebook paths, or arbitrary scripts as inputs to either `run` mode; stable playbook source refs are allowed only when the run config explicitly selects `source: playbook` by ID.
 - No automatic promotion from run artifacts into component files.
 - No separate first-class feature component family in v1; indicator outputs/transforms remain the feature source. Run configs can select multiple indicator playbooks by ID, component indicators by explicit ID list, and all component indicators by `all`/empty-string selection. Each indicator playbook represents one indicator idea/family; if a baseline exists, it is defined by the indicator playbook as one component indicator ID and emitted by the playbook, not selected as a separate config ref.
 - No composite score in v1; ranking uses one validated VectorBT metric and direction.
 - No GUI research builder, optimizer, AutoML behavior, or automatic threshold optimization; user-configured exploratory threshold sweeps through playbook-backed `run` remain in scope.
-- No backward-compatibility shim that keeps ML training silently available under `aerd run`; model-shaped configs should fail fast there and point to `aerd train`.
+- No backward-compatibility shim that keeps ML training silently available under default `aerd run`; model-shaped configs should fail fast unless `--train` is passed and train-specific settings are under `train:`.
+- No `source: local` model file execution in v1; model refs keep `source` for future local model support, but only `source: plugin` is accepted until a safe repo-relative file contract exists.
 - No automatic commit path for user-created labels, indicators, or strategies; the scaffold should track instructions/placeholders, not private strategy code.
 
 ### Deferred to Follow-Up Work
@@ -58,8 +59,8 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 - Rich notebook execution features beyond the controlled playbook contract: v1 supports only repo-controlled notebook playbooks selected by stable ID, not arbitrary notebook paths, ad hoc scripts, or user-supplied import strings.
 - Composite or registered ranking scores: revisit after single-metric leaderboards produce enough evidence about desired scoring recipes.
 - Broader strategy side support: keep current long-only portfolio constraints unless a future side-specific signal/strategy contract expands them.
-- Lane defaults for `run` and `train`: v1 requires explicit config paths for both commands; there is no local default experiment workflow.
-- Portable source snapshots for sharing private `run`/`train` artifacts: v1 records component IDs, manifests, and source hashes but does not embed component source; future work can add optional source bundles if reviewers need artifacts to be self-contained across machines.
+- Run defaults: v1 requires explicit config paths for `aerd run` in both default and `--train` modes; there is no local default experiment workflow.
+- Portable source snapshots for sharing private run artifacts: v1 records component IDs, manifests, and source hashes but does not embed component source; future work can add optional source bundles if reviewers need artifacts to be self-contained across machines.
 
 ---
 
@@ -68,14 +69,14 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 ### Relevant Code and Patterns
 
 - `research/aegis_research/cli.py` is a thin argparse dispatcher that registers active commands under `cli_commands/*`.
-- `research/aegis_research/cli_commands/run.py` currently validates configs with `make_default_model_registry()` and calls `run_experiment(...)`; this command must become strategy-sweep oriented while ML behavior moves to `train`.
+- `research/aegis_research/cli_commands/run.py` currently validates configs with `make_default_model_registry()` and calls `run_experiment(...)`; this command must become strategy-sweep oriented by default while ML behavior moves behind `--train`.
 - `research/aegis_research/config.py` owns schema-versioned, path-aware, side-effect-free config validation and already rejects inline indicator code keys.
 - `research/aegis_research/model_contracts.py`, `research/aegis_research/model_registry.py`, and `research/aegis_research/model_plugins/sklearn_logistic.py` provide the declaration, registry, frozen fingerprint, and validation model to mirror for promoted components.
 - `research/aegis_research/indicator_registry.py` is a central in-code registry; source refs should move to deterministic discovery from `research/components/` for component sources and `research/playbooks/` for playbook sources, while preserving the existing VectorBT-native execution patterns (`vbt.MA`, `vbt.RSI`, primitive returns/volatility, and `vbt.IF` custom indicators) as reusable infrastructure.
 - `research/aegis_research/labels.py` already uses VectorBT-native label generators (`vbt.FIXLB`, `vbt.TRENDLB`, `vbt.PIVOTLB`) and preserves native label semantics, target schemas, lookahead, target role, and split-safety metadata; label components/playbooks should reuse that path where possible.
 - `research/aegis_research/signals.py` and `research/aegis_research/portfolios.py` centralize VectorBT-native signal/portfolio boundaries (`vbt.SignalsAccessor.clean`, `vbt.Portfolio.from_signals`), config-owned sizing/cost/timing/direction, and portfolio diagnostics; strategy components should feed this boundary rather than own portfolio assumptions.
 - `research/aegis_research/reports.py` exposes `PORTFOLIO_METRIC_CATALOG`, `portfolio_metrics(...)`, optional diagnostics, and metric assumptions; use this as the v1 ranking allowlist source before adding custom score recipes.
-- `research/aegis_research/provenance/manifest.py`, `recorder.py`, `run_store.py`, and `experiment_artifacts.py` provide manifest-backed reproducible artifact patterns for run/train evidence.
+- `research/aegis_research/provenance/manifest.py`, `recorder.py`, `run_store.py`, and `experiment_artifacts.py` provide manifest-backed reproducible artifact patterns for run evidence.
 
 ### Institutional Learnings
 
@@ -96,17 +97,17 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 
 ## Key Technical Decisions
 
-- Use lane-specific config envelopes rather than forcing all commands through one `ExperimentConfig`: `run` and `train` share common data/portfolio/report sections but have different executable contracts.
-- Move current ML-shaped `run_experiment(...)` behind `aerd train`: this is the forward-first split required by the origin document and prevents `run` from staying ambiguously ML-first.
+- Use one run config envelope with mode-specific sections rather than forcing all behavior through one `ExperimentConfig`: default `run` requires strategy/indicator/ranking refs, while `run --train` requires a `train:` section.
+- Move current ML-shaped `run_experiment(...)` behind `aerd run --train`: this is the forward-first split required by the origin document and prevents default `run` from staying ambiguously ML-first.
 - Create shared component declarations before lane orchestration: labels, indicators, and strategies need one registry/discovery model so config validation can fail before side effects.
 - Keep package code limited to registry/validation/execution infrastructure; source definitions live outside the package under `research/components/` for component refs and `research/playbooks/` for playbook refs. Indicator and label implementations should use reusable VectorBT-native helpers, while strategies should produce signal states for the existing VectorBT portfolio boundary rather than reimplementing execution.
 - Treat local component discovery as a reviewed source-code extension mechanism with a non-executing metadata phase: discovery roots are fixed, repo-controlled, non-symlinked locations; configs cannot provide paths or import strings, and registry snapshots must not import arbitrary component Python.
 - Use family-scoped component identity: labels, indicators, and strategies each have their own ID namespace, while artifacts record both family and ID to avoid ambiguous cross-family references.
 - Require run configs to declare source kind explicitly wherever more than one source is legal. Strategy refs choose `source: component` or `source: playbook` plus an ID; label refs choose a component labeler ID or a label playbook ID; run indicator refs may include playbook indicator IDs, component indicator IDs, and an all-components selector in the same run. Indicator baselines are optional playbook-owned metadata/results; when present, they name exactly one component indicator ID.
 - Keep user/project component and playbook roots gitignored except README placeholders: local research strategy/indicator/label files and notebooks should not be committed by default.
-- Record component source identity simply: `run`/`train` artifacts use component family, component ID, manifest fingerprint, and implementation source hash; Git tracked/dirty status is not a validity condition.
+- Record component source identity simply: run artifacts use component family, component ID, manifest fingerprint, and implementation source hash; Git tracked/dirty status is not a validity condition.
 - Classify artifact source fields as public or private with a field-level allowlist: public CLI JSON and shared artifacts use only family, component ID, manifest fingerprint, and implementation hash, while repo-relative paths, local filenames, manifest locations, and detailed source metadata remain local/private or redacted by default.
-- Carry lane identity and schema/version evidence in every resolved config envelope: `run` and `train` loaders reject mismatched lane intent instead of reinterpreting one another's configs.
+- Carry mode identity and schema/version evidence in every resolved config envelope: `aerd run` and `aerd run --train` reject missing mode-specific sections instead of reinterpreting one another's configs.
 - Store playbook-backed and component-backed run artifacts under immutable run directories; do not add a separate mutable play last-run store.
 - Rank only variants that pass failure gating by a validated scalar metric: config validation failures fail the whole command; per-variant runtime failures are recorded as sanitized typed evidence, included in success-ratio summaries, and can invalidate the sweep when thresholds or strict-mode rules are violated.
 - Preserve portfolio ownership in config: strategy components output aligned signal/rule results; portfolio settings, execution timing, costs, sizing, and direction stay with config.
@@ -120,7 +121,7 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 ### Resolved During Planning
 
 - What discovery locations should the plan target? Use package-owned registry modules plus fixed repo-controlled roots under `research/components/` and family-scoped `research/playbooks/`; configs still cannot add paths or imports.
-- Should old ML-shaped `aerd run` remain accepted? No. `run` should reject model-training configs and direct the user to `aerd train`.
+- Should old ML-shaped default `aerd run` remain accepted? No. Default `run` should reject model-training configs and direct the user to `aerd run --train` with a `train:` section.
 - Which metric source should rank run sweeps? Start with `PORTFOLIO_METRIC_CATALOG` and explicit metric direction; do not include custom/composite scores in v1.
 - Should per-variant runtime failures fail the whole sweep? Static config/component/playbook failures fail the command; per-variant runtime failures are sanitized, summarized, and controlled by strict/failure-gating policy before any leaderboard is treated as valid.
 
@@ -136,7 +137,6 @@ The current codebase has strong contracts for ML-shaped experiment runs, but the
 ```text
 research/aegis_research/
   cli_commands/
-    train.py
     run.py
   component_registry/
     contracts.py
@@ -155,6 +155,8 @@ research/playbooks/
   labels/README.md
   indicators/README.md
   strategies/README.md
+research/configs/
+  README.md
 docs/examples/
   label_component_example.py
   indicator_component_example.py
@@ -176,8 +178,8 @@ This tree is directional. The implementing agent may adjust names if tests revea
 flowchart TB
     CLI[aerd CLI]
     RunCmd[run command]
-    TrainCmd[train command]
-    Config[Lane config validation]
+    TrainMode[run --train mode]
+    Config[Run config validation]
     Components[Component registry snapshot]
     Playbooks[Playbook registry]
     StrategyRun[Strategy sweep orchestration]
@@ -185,20 +187,21 @@ flowchart TB
     Artifacts[Manifest-backed reproducible artifacts]
 
     CLI --> RunCmd
-    CLI --> TrainCmd
     RunCmd --> Config
-    TrainCmd --> Config
+    RunCmd --> TrainMode
+    TrainMode --> Config
     Config --> Components
     RunCmd --> Playbooks
     RunCmd --> StrategyRun
     Components --> StrategyRun
     Playbooks --> StrategyRun
     Components --> TrainRun
+    TrainMode --> TrainRun
     StrategyRun --> Artifacts
     TrainRun --> Artifacts
 ```
 
-The key separation is source semantics: `run` writes immutable sweep evidence that identifies playbook-backed and component-backed sources, while `train` writes ML-training evidence from validated configs.
+The key separation is source semantics: default `run` writes immutable sweep evidence that identifies playbook-backed and component-backed sources, while `run --train` writes ML-training evidence from the config's `train:` section.
 
 ---
 
@@ -207,11 +210,11 @@ The key separation is source semantics: `run` writes immutable sweep evidence th
 ```mermaid
 flowchart TB
     U1[U1 Component contracts]
-    U2[U2 Lane config validation]
+    U2[U2 Run config mode validation]
     U3[U3 Playbook registry]
     U4[U4 Run leaderboard]
-    U5[U5 Train lane]
-    U6[U6 Strategy run lane]
+    U5[U5 Train mode]
+    U6[U6 Strategy run mode]
     U7[U7 CLI and JSON outputs]
     U8[U8 Docs and examples]
 
@@ -258,13 +261,13 @@ flowchart TB
 - Use one concrete static metadata format for Python component files: a top-level `COMPONENT_MANIFEST = {...}` literal and `COMPONENT_CALLABLE = "symbol_name"` literal parsed through `ast`/literal validation only. Discovery rejects expressions, calls, imports, interpolation, decorators-as-metadata, or computed metadata; the callable symbol is imported only after selected component IDs pass lane validation.
 - Share only registry plumbing across component families; define separate `LabelManifest`, `IndicatorManifest`, and `StrategyManifest` validators so lookahead/split-safety, indicator output/feature semantics, and signal-only strategy constraints stay family-specific.
 - Build a frozen component registry snapshot with deterministic ordering and a fingerprint derived from manifest metadata plus source identity; constructing the snapshot must not execute component callables or arbitrary module top-level code.
-- Import callable implementations only after a selected component ID has passed lane config validation, path/root checks, source-hash checks, and reproducibility policy checks.
+- Import callable implementations only after a selected component ID has passed run config validation, path/root checks, source-hash checks, and reproducibility policy checks.
 - Migrate component-source selection away from the central in-code indicator registry; component definitions come only from files under `research/components/`.
 - Extract or preserve reusable VectorBT-native indicator execution helpers from the existing registry/pipeline so component and playbook indicator code can use `vbt.MA`, `vbt.RSI`, `vbt.IF` custom indicators, primitive returns, volatility, output normalization, transforms, lineage, and native-output handling without central package-side component definitions.
 - Preserve reusable VectorBT-native label execution helpers so label components/playbooks can use `vbt.FIXLB`, `vbt.TRENDLB`, `vbt.PIVOTLB`, target selection, target schema, split-safety, and evaluation-evidence handling without duplicating label semantics.
 - Preserve reusable VectorBT-native strategy execution boundaries so strategy components/playbooks emit signal states that flow through existing signal diagnostics, `vbt.SignalsAccessor.clean`, `simulate_portfolio(...)`, and `vbt.Portfolio.from_signals` rather than embedding portfolio execution.
 - Add strategy and label component declaration types even if the initial scaffold has no tracked component implementations; later units depend on these contracts for config validation.
-- Validate component manifests at discovery time, before any lane loads data or writes artifacts, using static parsing rather than Python import side effects.
+- Validate component manifests at discovery time, before any run mode loads data or writes artifacts, using static parsing rather than Python import side effects.
 - Discover components only from the fixed repo-controlled `research/components/` root; configs never provide discovery paths, module names, or import strings.
 - Reject symlinked discovery roots or files that resolve outside approved roots; source identity should use canonical repo-relative paths and source hashes.
 - Treat Python component files as executable implementation code, not metadata; discovery reads manifests only, and tests should prove registry snapshot creation does not run component module top-level code.
@@ -272,7 +275,7 @@ flowchart TB
 - Add root `.gitignore` rules so everything under `research/components/{labels,indicators,strategies}/` is ignored by default except each directory's tracked `README.md` placeholder.
 - Write component README placeholders using the same warning pattern as local config READMEs: tracked local component files are intentionally absent, the README points to the relevant `docs/examples/*_component_example.py`, local component files are ignored by git, ignored files are not secret management, and force-adds should be intentionally reviewed.
 - Define only the shared strategy component declaration shell here; U6 owns the concrete `StrategyInputBundle`, signal-only output contract, and portfolio-boundary validation where the strategy-run consumer exists.
-- Record `run`/`train` source identity during registry selection without consulting Git tracked/dirty status: component family, component ID, manifest fingerprint, and implementation source hash.
+- Record run-mode source identity during registry selection without consulting Git tracked/dirty status: component family, component ID, manifest fingerprint, and implementation source hash.
 
 **Execution note:** Implement registry behavior test-first because duplicate IDs and source fingerprints are reproducibility boundaries.
 
@@ -296,7 +299,7 @@ flowchart TB
 - Error path: a component declaring unsupported role/output/alignment assumptions is rejected before config resolution succeeds.
 - Error path: symlinked or path-escaping component roots/files are rejected before discovery.
 - Error path: a component Python file with top-level side effects is not executed during discovery; the test plants a side-effecting fixture and asserts registry snapshot creation remains side-effect-free.
-- Error path: a reproducible `run`/`train` selection outside approved roots, without a valid manifest, or without source hash evidence fails before execution.
+- Error path: a reproducible run-mode selection outside approved roots, without a valid manifest, or without source hash evidence fails before execution.
 - Integration: adding a component file makes its ID discoverable without editing unrelated central registry code; removing the file removes the ID.
 - Integration: registry fingerprint changes when component manifest or selected source hash changes.
 - Integration: local component roots are gitignored except README placeholders.
@@ -307,9 +310,9 @@ flowchart TB
 - Component discovery is deterministic, non-executing, and safe enough to use from config validation.
 - Component-source resolution depends only on files discovered under `research/components/`.
 
-### U2. Add Run/Train Config Contracts
+### U2. Add Run Config Mode Contracts
 
-**Goal:** Add side-effect-free config validation for strategy/research `run` and `train`, sharing existing data/portfolio/report validation while enforcing command-specific executable boundaries.
+**Goal:** Add side-effect-free config validation for default strategy/research `run` and `run --train`, sharing existing data/portfolio/report validation while enforcing mode-specific executable boundaries.
 
 **Requirements:** R1, R2, R3, R5, R7, R8, R9; origin R1, R2, R3, R4, R5, R8, R15, R16, R18, R19, R20, AE1, AE2, AE7, AE8.
 
@@ -323,20 +326,21 @@ flowchart TB
 - Modify: `tests/integration/research/aegis_research/test_cli_docs.py`
 
 **Approach:**
-- Add lane-aware config loading/resolution helpers rather than widening `ExperimentConfig` until it has unrelated optional fields for all lanes.
-- Require every resolved lane config to carry lane identity and schema/version evidence; each command rejects mismatched lane intent with stable diagnostics.
+- Add mode-aware config loading/resolution helpers rather than widening `ExperimentConfig` until it has unrelated optional fields for all modes.
+- Require every resolved run config to carry mode identity and schema/version evidence; `aerd run` chooses the mode from `--train` rather than from subdirectories or a top-level lane field.
 - Reuse existing validation helpers for data, indicators, labels, signals, portfolio, report, duplicate keys, unknown fields, path-safe names, secret redaction, and finite numeric checks.
 - Add a shared `SourceRef` config contract. Strategy refs must declare `source: component` or `source: playbook` plus an ID. Label refs must declare a component labeler ID or a label playbook ID. Run indicator selection can include playbook indicator refs, component indicator ID lists, and `all` or empty-string component selection for all component indicators in the same config. Indicator baseline selection is not a config source ref; each indicator playbook may declare exactly one component indicator ID as its baseline and emit baseline evidence for it.
 - For strategy `run`, require explicit strategy source refs and validated indicator inputs; reject model plugin fields, ambiguous source refs, run artifact paths, last-run refs, leaderboard-row refs, generated state, arbitrary notebook/script path keys, and inline code recursively.
-- For `train`, require model plugin selection plus explicit label source refs and indicator-derived model features; reject run artifact references as inputs.
-- Make no-config behavior explicit in lane config resolution: strategy/research `run` and `train` require config paths in v1, with no local default fallback.
+- For `run --train`, require a `train:` section with model source selection, explicit label source refs, and indicator-derived model features; reject run artifact references as inputs.
+- Model refs keep `source` because future local model files may need a controlled source boundary, but v1 accepts only `source: plugin`.
+- Make no-config behavior explicit in run config resolution: both default `run` and `run --train` require config paths in v1, with no local default fallback.
 - Validate ranking metrics against an allowlist derived from the existing portfolio metric catalog, with explicit direction and unavailable metric rules.
 - Define YAML inertness at the parser boundary: safe loader only, no custom object tags, duplicate keys rejected, merge keys/anchors/aliases bounded or rejected, and size/depth limits enforced where practical.
-- Validate artifact/output roots for all lanes: reject absolute paths, parent traversal, symlink escapes, device paths, and final/staging/backup paths outside approved roots.
-- Establish the minimal shared success/error payload helpers here so later lane CLI handlers do not invent incompatible output shapes before U7 hardens them.
-- Do not wire root parser command behavior in U2; U3, U5, and U6 own the first executable CLI path for their respective lanes.
+- Validate artifact/output roots for all modes: reject absolute paths, parent traversal, symlink escapes, device paths, and final/staging/backup paths outside approved roots.
+- Establish the minimal shared success/error payload helpers here so later mode handlers do not invent incompatible output shapes before U7 hardens them.
+- Do not wire root parser command behavior in U2; U3, U5, and U6 own the first executable CLI path for their respective modes.
 
-**Execution note:** Start with failing integration tests that assert invalid configs fail before run/train artifact creation.
+**Execution note:** Start with failing integration tests that assert invalid configs fail before run artifact creation.
 
 **Patterns to follow:**
 - `ConfigValidationIssue` and `ConfigValidationError` in `research/aegis_research/config.py`
@@ -344,13 +348,13 @@ flowchart TB
 - Config safety guidance in `docs/solutions/architecture-patterns/config-contract-security-reproducibility-2026-05-16.md`
 
 **Test scenarios:**
-- Happy path: valid run and train configs resolve through side-effect-free validation.
+- Happy path: valid default run and train-mode configs resolve through side-effect-free validation.
 - Covers AE2. Error path: run config with notebook/script path keys fails before execution.
-- Error path: any lane config with inline Python/formula/import/function keys fails with a path-aware issue.
+- Error path: any run config with inline Python/formula/import/function keys fails with a path-aware issue.
 - Error path: malicious YAML tags, unsafe constructors, duplicate keys, merge keys/aliases, or resource-heavy YAML structures are rejected or bounded before dataclass construction.
-- Error path: run and train configs with arbitrary script/notebook/import path fields fail before data loading or artifact creation.
-- Error path: `aerd run` receiving a model-training config fails fast and directs users toward `aerd train`.
-- Error path: `aerd train` receiving a strategy-sweep-only config fails fast and explains the missing training contract.
+- Error path: run configs with arbitrary script/notebook/import path fields fail before data loading or artifact creation.
+- Error path: default `aerd run` receiving a model-training config fails fast and directs users toward `aerd run --train` with a `train:` section.
+- Error path: `aerd run --train` receiving a strategy-sweep-only config fails fast and explains the missing `train:` contract.
 - Error path: missing or ambiguous component source refs fail before data loading.
 - Error path: run config references unknown playbook indicator IDs, unknown component indicator IDs, or invalid all-components selectors and fails before execution.
 - Error path: `aerd run` receiving run artifact paths, last-run refs, leaderboard-row refs, or generated state fails before data loading.
@@ -358,10 +362,10 @@ flowchart TB
 - Error path: invalid ranking metric or direction fails before run execution.
 - Error path: output, staging, or backup roots that escape approved artifact roots fail before writes.
 - Edge case: fewer than ten successful variants remains valid because leaderboard size is “up to 10,” not exactly 10.
-- Edge case: strategy/research `aerd run` and `aerd train` without explicit config fail in v1.
+- Edge case: `aerd run` and `aerd run --train` without explicit config fail in v1.
 
 **Verification:**
-- Each lane has a clear resolved config object or envelope before side effects.
+- Each mode has a clear resolved config object or envelope before side effects.
 - Existing config tests still pass for train-compatible ML configs after migration.
 
 ### U3. Add Repo-Controlled Notebook Playbook Registry
@@ -480,16 +484,16 @@ flowchart TB
 - Run artifacts are safe for repeated local exploration because each attempt writes a separate immutable run directory.
 - Leaderboards are reproducible from the run config and artifact content while preserving whether rows came from playbooks or components.
 
-### U5. Move Existing ML Experiment Execution To `aerd train`
+### U5. Move Existing ML Experiment Execution To `aerd run --train`
 
-**Goal:** Preserve the existing ML-shaped pipeline under an explicit training lane and keep train artifacts distinct from strategy sweeps.
+**Goal:** Preserve the existing ML-shaped pipeline under an explicit training mode and keep train artifacts distinct from strategy sweeps.
 
 **Requirements:** R1, R2, R3, R9; origin R1, R2, R3, R18, R19, R20, F4, AE8.
 
-**Dependencies:** U2 for the train command migration checkpoint; U1 before the promoted-component train integration checkpoint.
+**Dependencies:** U2 for the train-mode migration checkpoint; U1 before the promoted-component train integration checkpoint.
 
 **Files:**
-- Modify: `research/aegis_research/cli_commands/train.py`
+- Modify: `research/aegis_research/cli_commands/run.py`
 - Create: `research/aegis_research/training.py`
 - Modify: `research/aegis_research/experiments.py`
 - Modify: `research/aegis_research/labels.py`
@@ -502,12 +506,12 @@ flowchart TB
 - Test: `tests/e2e/research/aegis_research/test_experiment_provenance.py`
 
 **Approach:**
-- Extract or wrap the current `run_experiment(...)` behavior as the train lane without changing core label/indicator/model/split/portfolio semantics more than necessary.
-- Register `train` in the root CLI and keep the command handler thin: resolve train config, attach selection evidence, call domain training orchestration, render success/failure through shared output helpers.
+- Extract or wrap the current `run_experiment(...)` behavior as train mode without changing core label/indicator/model/split/portfolio semantics more than necessary.
+- Register `--train` / `-t` on the `run` command and keep the command handler thin: resolve the shared config in train mode, attach selection evidence, call domain training orchestration, render success/failure through shared output helpers.
 - Preserve model registry validation, target compatibility, split-local model fitting, positive-class probability mapping, and existing artifact writers.
-- Add train-specific lane/evidence metadata to outputs and manifests so reviewers do not confuse training evidence with strategy-sweep evidence.
-- Update tests and docs that currently treat `aerd run` as ML training to use `aerd train` where the behavior is explicitly about model plugins.
-- Deliver this unit in two checkpoints: first expose the existing ML pipeline through `aerd train` with characterization coverage, then integrate explicit label source refs and indicator-derived features without adding a separate feature registry.
+- Add train-specific mode/evidence metadata to outputs and manifests so reviewers do not confuse training evidence with strategy-sweep evidence.
+- Update tests and docs that currently treat default `aerd run` as ML training to use `aerd run --train` where the behavior is explicitly about model plugins.
+- Deliver this unit in two checkpoints: first expose the existing ML pipeline through `aerd run --train` with characterization coverage, then integrate explicit label source refs and indicator-derived features without adding a separate feature registry.
 - Record the same component source identity evidence as strategy `run` before training artifacts are written.
 - Add lightweight resource/timing evidence around the extracted training stages so the refactor does not hide duplicate data loading, duplicate indicator computation, or split/model fitting costs.
 
@@ -521,22 +525,22 @@ flowchart TB
 - `docs/solutions/architecture-patterns/model-plugin-target-probability-contract-2026-05-17.md`
 
 **Test scenarios:**
-- Covers AE8. Happy path: valid train config runs the current ML pipeline and records training lane evidence.
-- Integration: train command uses the default model registry and rejects unknown model plugin IDs before run artifacts.
-- Integration: train config selects a label source ref and indicator-derived model features; artifacts record label source identity and indicator feature evidence.
-- Error path: train config references a run artifact as input and validation rejects it.
-- Error path: train config attempts to use a first-class feature component or import path and validation rejects it.
-- Error path: train config selects a component outside approved roots or without source hash evidence and fails before model fitting.
+- Covers AE8. Happy path: valid `train:` section runs the current ML pipeline through `aerd run --train` and records training mode evidence.
+- Integration: train mode uses the default model registry and rejects unknown model plugin IDs before run artifacts.
+- Integration: train mode selects a label source ref and indicator-derived model features; artifacts record label source identity and indicator feature evidence.
+- Error path: train mode config references a run artifact as input and validation rejects it.
+- Error path: train mode config attempts to use a first-class feature component or import path and validation rejects it.
+- Error path: train mode config selects a component outside approved roots or without source hash evidence and fails before model fitting.
 - Error path: unsupported label target/model compatibility fails before model fitting.
 - Edge case: train extraction does not duplicate data loading or indicator/model feature computation relative to the current pipeline.
 - Integration: existing provenance artifacts for labels, indicators, splits, models, probabilities, signals, portfolios, metrics, and reports still exist for train runs.
-- CLI: train JSON success uses the same stable envelope pattern as run success.
+- CLI: train-mode JSON success uses the same stable envelope pattern as run success.
 
 **Verification:**
-- Existing ML behavior is available through `aerd train` and no longer depends on `aerd run` semantics.
+- Existing ML behavior is available through `aerd run --train` and no longer depends on default `aerd run` semantics.
 - Train artifacts are visibly ML-training evidence.
 
-### U6. Implement Promoted Strategy Sweep `aerd run`
+### U6. Implement Promoted Strategy Sweep Default `aerd run`
 
 **Goal:** Replace `aerd run` with a strategy/research-sweep command over explicit playbook or component source refs and config-owned portfolio assumptions.
 
@@ -573,7 +577,7 @@ flowchart TB
 - Keep public strategy-run artifacts bounded: full detail for top-ranked or selected variants, compact attempted/succeeded/failed counts for non-survivors, sanitized representative failures, and explicit truncation metadata when limits are reached.
 - Fail static config/component errors before data loading; record per-variant runtime failures as typed sanitized evidence and apply strict failure gating before ranking.
 - Default reproducible `run` to strict mode where unexpected variant execution failures fail the command; all runs record attempted/succeeded/failed counts, success ratio, and failure-gating status. Allowed-exclusion policies and correlated-failure invalidation are follow-up hardening, not MVP behavior.
-- Reject model-training configs under `aerd run` with a clear validation diagnostic pointing to `aerd train`.
+- Reject model-training configs under default `aerd run` with a clear validation diagnostic pointing to `aerd run --train` and the `train:` section.
 - Reject run artifact refs, last-run refs, leaderboard-row refs, generated exploratory state, arbitrary notebook paths, and script refs under `aerd run`; only explicit source refs plus config-owned parameters and portfolio assumptions are valid inputs.
 - Record component source identity before selected strategy/indicator callables execute.
 
@@ -595,7 +599,7 @@ flowchart TB
 - Error path: strategy component attempts to declare portfolio assumptions as owned behavior and registry validation rejects it.
 - Error path: strategy output includes size/cost/timing/direction fields, forbidden timing metadata, or misdeclared pre-shifted execution semantics and fails before portfolio simulation.
 - Error path: strategy output has misaligned timestamps or symbols and fails before portfolio simulation.
-- Error path: model-training config passed to `aerd run` fails fast and directs users to `aerd train`.
+- Error path: model-training config passed to default `aerd run` fails fast and directs users to `aerd run --train`.
 - Error path: component source outside approved roots or without source hash evidence is selected and fails before execution.
 - Error path: unexpected variant failures in strict mode fail the reproducible run instead of producing a survivor-biased leaderboard.
 - Edge case: some variants fail at runtime; failed variants are recorded as sanitized evidence, and ranking proceeds only if strict failure policy permits it.
@@ -610,7 +614,7 @@ flowchart TB
 
 ### U7. Harden CLI Output, Errors, And Docs-Backed Contracts
 
-**Goal:** Stabilize cross-lane JSON/human output, errors, explicit-config behavior, and docs-backed CLI contracts after each lane unit has added its minimal executable command path.
+**Goal:** Stabilize cross-mode JSON/human output, errors, explicit-config behavior, and docs-backed CLI contracts after each mode unit has added its minimal executable command path.
 
 **Requirements:** R1, R2, R3, R5, R6, R7, R8, R9; origin all acceptance examples.
 
@@ -625,13 +629,13 @@ flowchart TB
 - Modify: `tests/integration/research/aegis_research/test_cli_docs.py`
 
 **Approach:**
-- Audit the minimal CLI handlers added by U3, U5, and U6 and normalize parser help, JSON envelopes, human output, and error categories across strategy/research `run` and `train`.
-- Keep command handlers thin: parse CLI args, resolve lane config, call domain API, render success/failure.
-- Extend success payload helpers so each lane emits safe refs, lane/evidence summaries, and artifact pointers without dumping large tables, raw configs, secrets, private source paths, or private native state.
+- Audit the minimal CLI handlers added by U3, U5, and U6 and normalize parser help, JSON envelopes, human output, and error categories across default `run` and `run --train`.
+- Keep command handlers thin: parse CLI args, resolve run config, call domain API, render success/failure.
+- Extend success payload helpers so each mode emits safe refs, mode/evidence summaries, and artifact pointers without dumping large tables, raw configs, secrets, private source paths, or private native state.
 - Extend error categories only if existing config/execution categories cannot describe run artifact failures or discovery failures clearly.
-- Remove legacy default config behavior from the active CLI; `run` and `train` must require explicit config paths.
+- Remove legacy default config behavior from the active CLI; `run` must require explicit config paths in both default and `--train` modes.
 - Route every stored error, failure sample, diagnostic, and JSON stderr payload through the same redaction/safe-value pipeline as success payloads.
-- Treat the `aerd run` semantic cutover as incomplete until this unit and U8 migration docs/diagnostics land with U5/U6; avoid merging a state where `run` rejects ML configs before `train` guidance and examples are in place.
+- Treat the `aerd run` semantic cutover as incomplete until this unit and U8 migration docs/diagnostics land with U5/U6; avoid merging a state where default `run` rejects ML configs before `run --train` guidance and examples are in place.
 
 **Execution note:** Characterize current CLI JSON/human output before extending helpers to avoid breaking existing automation shape unnecessarily.
 
@@ -642,21 +646,21 @@ flowchart TB
 - `tests/integration/research/aegis_research/test_cli.py`
 
 **Test scenarios:**
-- Happy path: root help lists `run` and `train`, but not `play` or `exp`.
-- Happy path: each lane emits a safe JSON success envelope with command, lane/evidence summary, and artifact refs.
-- Happy path: human success output includes the lane and evidence type without printing large leaderboards or private artifact contents.
+- Happy path: root help lists `run`, but not `play`, `train`, or `exp`; run help lists `--train` / `-t`.
+- Happy path: each mode emits a safe JSON success envelope with command, mode/evidence summary, and artifact refs.
+- Happy path: human success output includes the mode and evidence type without printing large leaderboards or private artifact contents.
 - Error path: config validation failures use structured JSON stderr in JSON mode.
-- Error path: post-artifact failures include safe refs for `run`/`train`.
+- Error path: post-artifact failures include safe refs for both run modes.
 - Error path: exception text, tracebacks, credential-bearing URLs, environment variable values, raw filesystem paths, and private component metadata are not persisted in failure artifacts or JSON stderr.
 - Integration: docs tests reject examples that imply YAML can execute inline Python, arbitrary scripts, or model training via `run`.
-- Edge case: bare `aerd run` and bare `aerd train` fail with explicit-config guidance.
+- Edge case: bare `aerd run` and bare `aerd run --train` fail with explicit-config guidance.
 
 **Verification:**
 - CLI behavior is stable enough for automation agents to distinguish lane results without scraping human text.
 
 ### U8. Update Documentation, Example Configs, And Migration Guidance
 
-**Goal:** Document the two-command workflow, component authoring/promotion, playbook-backed run artifacts, leaderboard semantics, and the `run` to `train` migration.
+**Goal:** Document the single-command workflow, component authoring/promotion, playbook-backed run artifacts, leaderboard semantics, and the `run --train` migration.
 
 **Requirements:** R1, R2, R3, R4, R5, R6, R7, R8, R9, R10; origin success criteria and scope boundaries.
 
@@ -680,12 +684,11 @@ flowchart TB
 - Modify: `research/playbooks/labels/README.md`
 - Modify: `research/playbooks/indicators/README.md`
 - Modify: `research/playbooks/strategies/README.md`
-- Create: `research/configs/runs/README.md`
-- Create: `research/configs/train/README.md`
+- Create: `research/configs/README.md`
 - Test: `tests/integration/research/aegis_research/test_cli_docs.py`
 
 **Approach:**
-- Update public docs to use the new command meanings: `run` for playbook-backed or component-backed strategy/research sweeps, `train` for model-plugin training.
+- Update public docs to use the new command meanings: `run` for playbook-backed or component-backed strategy/research sweeps, `run --train` for model-plugin training.
 - Document manual promotion as a reviewed component-file workflow, not a command that mutates source files.
 - Document that local labels, indicators, strategies, and notebook playbooks live under `research/components/` and `research/playbooks/`, where each local-work directory tracks only a placeholder `README.md` and ignores everything else by default.
 - Make each placeholder README point to its public docs/example path, explain local ignored files are private drafts, warn ignored files are not secret management, and discourage force-adding local research unless intentionally reviewed.
@@ -695,7 +698,7 @@ flowchart TB
 - Document component metadata expectations and the no-inline-code/no-arbitrary-path security boundary.
 - Document explicit source refs with examples for component-backed strategy/label refs, playbook-backed strategy/label refs, one-indicator-per-playbook indicator refs, mixed playbook/component indicator selections, `all`/empty-string component indicator selection, playbook-owned single component baseline IDs, and indicator source fields in metric rows.
 - Document that indicator components/playbooks should prefer the existing VectorBT-native helper path for MA/RSI/custom `vbt.IF`/primitive indicators, label components/playbooks should prefer `vbt.FIXLB`/`vbt.TRENDLB`/`vbt.PIVOTLB` helpers, and strategy components/playbooks should emit signals for the existing `Portfolio.from_signals` boundary so research definitions stay thin while execution remains consistent.
-- Move or rename example config docs so ML examples point at `train` and strategy/playbook exploration examples point at `run`.
+- Move or rename example config docs so ML examples point at `run --train` and strategy/playbook exploration examples point at default `run`.
 
 **Patterns to follow:**
 - `docs/vectorbt-scaffold.md`
@@ -703,13 +706,13 @@ flowchart TB
 - `tests/integration/research/aegis_research/test_cli_docs.py`
 
 **Test scenarios:**
-- Docs integration: active docs mention `aerd run` and `aerd train` with the correct command meanings and do not mention `aerd play` as active CLI.
+- Docs integration: active docs mention `aerd run` and `aerd run --train` with the correct mode meanings and do not mention `aerd play`, `aerd train`, or `aerd exp` as active CLI.
 - Docs integration: docs do not imply YAML can load arbitrary code, arbitrary paths, or notebooks.
 - Docs integration: docs show source refs explicitly, including mixed indicator selections and metric source fields, and do not imply the CLI guesses between component and playbook sources.
 - Docs integration: indicator playbook docs state that each indicator playbook ID represents one indicator idea/family, parameter sweeps inside that family are allowed, and any baseline is exactly one component indicator ID declared by the playbook.
 - Docs integration: indicator examples use the VectorBT-native helper path rather than duplicating indicator execution logic inline.
 - Docs integration: label examples use the VectorBT-native label helper path, and strategy examples show signal output feeding the existing portfolio boundary rather than embedding portfolio simulation.
-- Docs integration: ML model-plugin docs point to `aerd train` for model training.
+- Docs integration: ML model-plugin docs point to `aerd run --train` for model training.
 - Docs integration: component and playbook placeholder READMEs point to their docs/examples learning paths and carry the ignored-files warning pattern.
 - Test expectation: no runtime behavior beyond docs assertions; feature behavior is covered by U1-U7 tests.
 
@@ -720,12 +723,12 @@ flowchart TB
 
 ## System-Wide Impact
 
-- **Interaction graph:** CLI parsing routes to run/train command modules; config validation consults component/playbook registries; run/train write immutable evidence.
+- **Interaction graph:** CLI parsing routes to the run command and optional train mode; config validation consults component/playbook registries; both modes write immutable evidence.
 - **Error propagation:** Static config, component, playbook, metric, and registry failures must surface as path-aware validation errors before data/artifact side effects.
 - **State lifecycle risks:** Playbook-backed exploration now writes normal run manifests, so failed attempts must mark their own run failed without mutating prior evidence.
 - **Resource lifecycle risks:** Sweeps need static variant checks, post-data budget checks, bounded batching, bounded failure evidence, and public artifact byte limits.
-- **API surface parity:** JSON and human CLI output should preserve the existing envelope style while adding lane-specific summaries.
-- **Integration coverage:** Unit tests alone will not prove lane separation; integration tests must cover CLI-to-config-to-artifact paths for all three commands.
+- **API surface parity:** JSON and human CLI output should preserve the existing envelope style while adding mode-specific summaries.
+- **Integration coverage:** Unit tests alone will not prove mode separation; integration tests must cover CLI-to-config-to-artifact paths for default `run` and `run --train`.
 - **Unchanged invariants:** YAML remains inert; model plugin training remains trusted-ID-based; portfolio assumptions remain config-owned; native VectorBT state remains private/local where applicable.
 
 ---
@@ -734,7 +737,7 @@ flowchart TB
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| `aerd run` semantic migration breaks expectations | High | High | Make the change forward-first, update docs/tests, and provide clear validation directing ML configs to `aerd train`. |
+| `aerd run` semantic migration breaks expectations | High | High | Make the change forward-first, update docs/tests, and provide clear validation directing ML configs to `aerd run --train`. |
 | Component autodiscovery becomes arbitrary code loading | Medium | High | Use non-executing manifest discovery from fixed package-owned and repo-controlled roots only; configs cannot provide paths/imports, and callable imports occur only after validation. |
 | Playbook-backed exploration is confused with promoted-component validation | Medium | Medium | Record strategy and indicator source kinds in run artifacts and leaderboard rows. |
 | Artifact paths escape approved roots | Low | High | Validate final, staging, and backup paths against approved roots; reject absolute paths, traversal, symlink escapes, and cross-root promotion. |
@@ -742,20 +745,20 @@ flowchart TB
 | Sweep variants explode memory or runtime | Medium | Medium | Add sweep-size validation, variant counts, failed-variant evidence, and reuse VectorBT grid guidance. |
 | Failed-variant evidence or metrics artifacts become too large or leak private data | Medium | Medium | Cap public artifact bytes, group failures, store representative sanitized examples, apply redaction to diagnostics/stderr, and emit truncation evidence. |
 | Ranking metric semantics are ambiguous | Medium | Medium | Use an allowlist from the portfolio metric catalog with explicit direction, availability, tie, and baseline-delta handling. |
-| Train/run share too much duplicated orchestration | Medium | Medium | Extract shared data/label/indicator/portfolio helpers while preserving behavior through characterization tests. |
+| Train/default-run share too much duplicated orchestration | Medium | Medium | Extract shared data/label/indicator/portfolio helpers while preserving behavior through characterization tests. |
 
 ---
 
 ## Phased Delivery
 
 ### Phase 1: Contracts First
-- Land U1 and U2 so all later execution paths share safe component discovery, lane config validation, and the minimal shared CLI/output envelope.
+- Land U1 and U2 so all later execution paths share safe component discovery, run config validation, and the minimal shared CLI/output envelope.
 
 ### Phase 2: Playbook-Backed Run
 - Land U3 and U4 so researchers get playbook-backed `run` sweeps and leaderboards without waiting for the full component-backed `run`/`train` split.
 
-### Phase 3: Reproducible Lanes
-- Land U5 first so existing ML behavior is available through `train`; land U6 only after that so strategy sweeps can become the default `run` behavior without stranding model-training users.
+### Phase 3: Reproducible Modes
+- Land U5 first so existing ML behavior is available through `run --train`; land U6 only after that so strategy sweeps can become the default `run` behavior without stranding model-training users.
 
 ### Phase 4: CLI/Docs Hardening
 - Land U7 and U8 atomically with the `run` semantic cutover if phases are split across PRs; docs, examples, and migration diagnostics must not lag behind the breaking command meaning.
@@ -765,9 +768,9 @@ flowchart TB
 ## Documentation / Operational Notes
 
 - Update docs in the same PR as command behavior because the command meanings are public API.
-- Keep old ML example configs available only if they are clearly documented as train configs or moved into a train-specific config directory.
-- Treat this as a breaking command-semantics change for local users; there is no persistence migration, but docs and errors must make the new command choice obvious.
-- Do not commit generated run/train artifacts beyond intentional fixture files; runtime output directories should remain local evidence.
+- Keep old ML example configs available only if they are clearly documented as `run --train` configs with train-specific settings under `train:`.
+- Treat this as a breaking command-semantics change for local users; there is no persistence migration, but docs and errors must make the `--train` mode choice obvious.
+- Do not commit generated run artifacts beyond intentional fixture files; runtime output directories should remain local evidence.
 
 ---
 

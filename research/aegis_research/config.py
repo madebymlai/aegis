@@ -24,6 +24,7 @@ from research.aegis_research.configuration.schema import (
     LANES,
     MISSING_POLICIES,
     MODEL_DENIED_KEYS,
+    MODEL_SOURCE_KINDS,
     OHLCV_FEATURE_MAP_KEYS,
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
@@ -63,6 +64,7 @@ from research.aegis_research.configuration.schema import (
     SplitConfig,
     StrategyRunLaneConfig,
     TrainLaneConfig,
+    TrainModelConfig,
 )
 from research.aegis_research.configuration.secrets import (
     known_config_secret_values,
@@ -98,6 +100,7 @@ __all__ = [
     "LOCAL_DATA_SOURCES",
     "MISSING_POLICIES",
     "MODEL_DENIED_KEYS",
+    "MODEL_SOURCE_KINDS",
     "OHLCV_FEATURE_MAP_KEYS",
     "PORTFOLIO_DIRECTIONS",
     "PORTFOLIO_TARGET_SIZE_TYPES",
@@ -140,6 +143,7 @@ __all__ = [
     "SplitConfig",
     "StrategyRunLaneConfig",
     "TrainLaneConfig",
+    "TrainModelConfig",
     "indicator_registry",
     "known_config_secret_values",
     "load_experiment_config",

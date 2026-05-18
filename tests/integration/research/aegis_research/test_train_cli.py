@@ -19,9 +19,10 @@ def test_train_json_runs_existing_ml_pipeline_with_training_lane_evidence(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    _write_label_component(tmp_path / "research/components/labels/fixlb.py")
     config_path = _write_config(tmp_path)
 
-    assert cli.main(["train", str(config_path), "--json", "--run-id", "train-json-run"]) == 0
+    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "train-json-run"]) == 0
 
     output = capsys.readouterr()
     assert output.err == ""
@@ -35,12 +36,12 @@ def test_train_json_runs_existing_ml_pipeline_with_training_lane_evidence(
 
 
 def test_train_requires_explicit_config_path(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["train", "--json"]) == 2
+    assert cli.main(["run", "--train", "--json"]) == 6
 
     output = capsys.readouterr()
     assert output.out == ""
     payload = json.loads(output.err)
-    assert payload["error"]["category"] == "invocation"
+    assert payload["error"]["category"] == "config_validation"
 
 
 def test_train_rejects_run_artifact_source_refs_before_run_directory(
@@ -54,21 +55,22 @@ def test_train_rejects_run_artifact_source_refs_before_run_directory(
         yaml.safe_dump(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
-                "lane": "train",
                 "name": "bad_train",
                 "portfolio": {"entry_budget": 1.0},
-                "label": {
-                    "source": "component",
-                    "id": "missing",
-                    "artifact_path": "runs/previous-run/strategy_run.json",
+                "train": {
+                    "label": {
+                        "source": "component",
+                        "id": "missing",
+                        "artifact_path": "runs/previous-run/strategy_run.json",
+                    },
+                    "model": {"source": "plugin", "id": "tests.sklearn_logistic"},
                 },
-                "model": {"plugin_id": "tests.sklearn_logistic"},
             },
             sort_keys=False,
         )
     )
 
-    assert cli.main(["train", str(path), "--json", "--run-id", "bad-train"]) == 6
+    assert cli.main(["run", "--train", str(path), "--json", "--run-id", "bad-train"]) == 6
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -77,14 +79,23 @@ def test_train_rejects_run_artifact_source_refs_before_run_directory(
 
 
 def _write_config(tmp_path: Path, **overrides: Any) -> Path:
+    model = model_config_dict(min_train_samples=1)
     config: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "train_contract",
         "output_dir": "runs",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "timeframe": "1D"},
-        "model": model_config_dict(min_train_samples=1),
         "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
+        "train": {
+            "label": {"source": "component", "id": "demo.fixlb"},
+            "model": {
+                "source": "plugin",
+                "id": model["plugin_id"],
+                "min_train_samples": model["min_train_samples"],
+                "params": model["params"],
+            },
+        },
     }
     for key, value in overrides.items():
         if isinstance(value, dict) and isinstance(config.get(key), dict):
@@ -94,3 +105,18 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
     path = tmp_path / "experiment.yaml"
     path.write_text(yaml.safe_dump(config, sort_keys=False))
     return path
+
+
+def _write_label_component(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "from research.aegis_research.config import LabelConfig\n"
+        "from research.aegis_research.labels import build_label_result\n"
+        "COMPONENT_MANIFEST = {"
+        "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
+        "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
+        "'output_names': ['labels']}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "def run(close, *, params):\n"
+        "    return build_label_result(close, LabelConfig())\n"
+    )

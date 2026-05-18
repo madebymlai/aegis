@@ -20,8 +20,8 @@ def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
     output = capsys.readouterr()
     assert "usage: aerd" in output.out
     assert "run" in output.out
-    assert "train" in output.out
     assert "play" not in output.out
+    assert "train" not in output.out
     assert "exp" not in output.out
 
 
@@ -55,7 +55,7 @@ def test_train_json_executes_valid_config_and_rejected_verdict_exits_zero(
     monkeypatch.chdir(tmp_path)
     config_path = _write_config(tmp_path, report={"min_oos_sharpe": 999.0})
 
-    assert cli.main(["train", str(config_path), "--json", "--run-id", "cli-json-run"]) == 0
+    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "cli-json-run"]) == 0
 
     output = capsys.readouterr()
     assert output.err == ""
@@ -96,7 +96,7 @@ def test_json_post_manifest_failure_includes_safe_run_refs(
         fail_after_manifest,
     )
 
-    assert cli.main(["train", str(config_path), "--json", "--run-id", "post-manifest"]) == 10
+    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "post-manifest"]) == 10
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -144,9 +144,9 @@ def test_train_keyboard_interrupt_json_preserves_run_refs(
         )
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("research.aegis_research.cli_commands.train.run_training", interrupt_run)
+    monkeypatch.setattr("research.aegis_research.cli_commands.run.run_training", interrupt_run)
 
-    assert cli.main(["train", str(config_path), "--json", "--run-id", "interrupted-run"]) == 130
+    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "interrupted-run"]) == 130
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -163,7 +163,7 @@ def test_train_records_explicit_config_selection_in_manifest(
     monkeypatch.chdir(tmp_path)
     config_path = _write_config(tmp_path)
 
-    assert cli.main(["train", str(config_path), "--json", "--run-id", "selection-run"]) == 0
+    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "selection-run"]) == 0
 
     capsys.readouterr()
     manifest = json.loads((tmp_path / "runs" / "selection-run" / "manifest.json").read_text())
@@ -201,14 +201,24 @@ def test_safe_path_hides_relative_paths_that_escape_cwd(
 
 
 def _write_config(tmp_path: Path, **overrides: Any) -> Path:
+    _write_label_component(tmp_path / "research/components/labels/fixlb.py")
+    model = model_config_dict(min_train_samples=1)
     config: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "cli_contract",
         "output_dir": "runs",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "timeframe": "1D"},
-        "model": model_config_dict(min_train_samples=1),
         "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
+        "train": {
+            "label": {"source": "component", "id": "demo.fixlb"},
+            "model": {
+                "source": "plugin",
+                "id": model["plugin_id"],
+                "min_train_samples": model["min_train_samples"],
+                "params": model["params"],
+            },
+        },
     }
     for key, value in overrides.items():
         if isinstance(value, dict) and isinstance(config.get(key), dict):
@@ -218,3 +228,18 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
     path = tmp_path / "experiment.yaml"
     path.write_text(yaml.safe_dump(config, sort_keys=False))
     return path
+
+
+def _write_label_component(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "from research.aegis_research.config import LabelConfig\n"
+        "from research.aegis_research.labels import build_label_result\n"
+        "COMPONENT_MANIFEST = {"
+        "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
+        "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
+        "'output_names': ['labels']}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "def run(close, *, params):\n"
+        "    return build_label_result(close, LabelConfig())\n"
+    )

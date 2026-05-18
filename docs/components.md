@@ -22,6 +22,16 @@ YAML never imports Python, names modules, embeds formulas, or points at arbitrar
 
 Indicator components should use the same VectorBT-native helper path as built-ins (`vbt.MA`, `vbt.RSI`, custom `vbt.IF`, primitive returns/volatility normalization). Label components should preserve the native label path (`vbt.FIXLB`, `vbt.TRENDLB`, `vbt.PIVOTLB`) and target lineage. Strategy components should emit aligned `entries` and `exits` only; portfolio sizing, costs, direction, and timing remain config-owned.
 
-`aerd train` currently executes the existing ML experiment config contract. `lane: train` component label refs are validated as a forward contract, but component-backed training execution is not enabled yet.
+`aerd run --train` uses the same source-ref shape in its `train:` section. Model refs keep a `source` field for future extension, but v1 accepts only `source: plugin`:
+
+```yaml
+train:
+  label:
+    source: component
+    id: demo.fixlb
+  model:
+    source: plugin
+    id: aegis.sklearn_logistic
+```
 
 Local component files are ignored by git by default except the placeholder READMEs. Ignored files are not secret management; do not store credentials in local research code. Public component examples live under `docs/examples/components/`.

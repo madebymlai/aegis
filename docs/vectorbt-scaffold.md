@@ -7,7 +7,7 @@ This scaffold follows the VectorBT PRO docs around data classes, indicator pipel
 ```text
 data fetch/load
 -> strategy/research sweep over playbooks or components (`aerd run`)
--> ML model-plugin training (`aerd train`)
+-> ML model-plugin training (`aerd run --train`)
 -> VectorBT PRO portfolio evidence
 -> reports and leaderboards
 ```
@@ -27,26 +27,26 @@ data fetch/load
 - `reports.py`: turns IS/OOS portfolio stats into a blunt survival verdict.
 - `strategy_runs.py`: playbook-backed and component-backed strategy-sweep orchestration.
 - `training.py` and `experiments.py`: ML model-plugin training orchestration.
-- `cli.py`: lane-aware `aerd` dispatcher.
+- `cli.py`: mode-aware `aerd` dispatcher.
 
-## Lanes
+## Run Modes
 
 Use `docs/examples/scaffold_experiment_walkthrough.ipynb` for the public runnable training walkthrough. It uses deterministic synthetic OHLCV data, an inline config, and explicit model registry setup, so it is safe for learning the scaffold and does not require exchange credentials.
 
-Use the lane-specific CLI commands for local work:
+Use the single CLI command for local work:
 
 ```text
 aerd run <strategy-run-config>
-aerd train <training-config>
+aerd run --train <config>
 ```
 
-`aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research sweep evidence. `aerd train` owns ML model-plugin training; model-shaped configs passed to `aerd run` fail with guidance to use `aerd train`.
+Default `aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research sweep evidence. `aerd run --train` owns ML model-plugin training through the config's `train:` section; model-shaped configs passed to default `aerd run` fail with guidance to use `aerd run --train`.
 
 The walkthrough is scaffold evidence only. It is not validated trading methodology, empirical edge, or investment advice.
 
 ## Config Contract
 
-YAML is a versioned public contract. Every config must declare `schema_version: 2` and is validated before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write. Lane configs also declare `lane: run` or `lane: train`. This in-repo schema v2 contract is forward-first: older draft v2 configs that used non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
+YAML is a versioned public contract. Every config must declare `schema_version: 2` and is validated before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write. Mode is selected by the CLI (`aerd run` or `aerd run --train`), not by config subdirectories or a top-level lane field. This in-repo schema v2 contract is forward-first: older draft v2 configs that used non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
 
 Validation is strict by default:
 
@@ -54,7 +54,7 @@ Validation is strict by default:
 - Wrong scalar/list/mapping/null shapes fail without broad coercion.
 - Config errors include the offending config path.
 - Inline credential-like values are rejected; use environment-backed secret references for provider credentials.
-- Inline Python, formulas, import strings, arbitrary script paths, arbitrary notebook paths, run artifact paths, last-run refs, and leaderboard-row refs are rejected from lane configs.
+- Inline Python, formulas, import strings, arbitrary script paths, arbitrary notebook paths, run artifact paths, last-run refs, and leaderboard-row refs are rejected from run configs.
 
 Remote provider configs keep scaffold-owned fields first-class (`source`, `symbols`, `start`, `end`, `timeframe`) and put provider-specific VectorBT kwargs behind named passthrough maps. Public artifacts store redacted config evidence only; runtime-expanded secret values are never serialized.
 
@@ -78,7 +78,7 @@ CSV input supports flat OHLCV columns for one configured symbol and documented M
 
 ## Indicator Contract
 
-Training configs reference project registry ids for built-in indicators. Strategy/research `run` configs use explicit `source: component` or `source: playbook` refs for strategies and indicators, including component `id: all` selection for indicators. They do not define inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths. `lane: train` component label refs are validated as a forward contract, but executable `aerd train` still uses the existing ML experiment config contract.
+Train-mode configs reference project registry ids for built-in indicators inside `train.indicators`. Strategy/research `run` configs use explicit `source: component` or `source: playbook` refs for strategies and indicators, including component `id: all` selection for indicators. They do not define inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths. `aerd run --train` requires `train.label` and `train.model`; model refs keep `source`, but v1 accepts only `source: plugin`.
 
 ```yaml
 indicators:
@@ -197,9 +197,9 @@ Public artifacts and metadata are redacted. `data.metadata` is written after dat
 
 Native VectorBT artifacts are private local artifacts by default, version-sensitive, and paired with portable metadata sidecars so manifest validation does not require loading pickles. Unsafe private native persistence fails the run closed after safe public metadata has been recorded.
 
-The canonical CLI is `aerd`. Use `aerd run <config>` for playbook-backed or component-backed strategy/research sweeps, and `aerd train <config>` for model-plugin training. Use `--json` for agent/CI automation; successful JSON is written to stdout, structured errors are written to stderr, and `run`/`train` manifests remain the detailed artifact inventory.
+The canonical CLI is `aerd`. Use `aerd run <config>` for playbook-backed or component-backed strategy/research sweeps, and `aerd run --train <config>` for model-plugin training. Use `--json` for agent/CI automation; successful JSON is written to stdout, structured errors are written to stderr, and run manifests remain the detailed artifact inventory.
 
-New strategy/research `run` and `train` lanes require explicit config paths in v1. There is no local default experiment workflow.
+Both run modes require explicit config paths in v1. Local configs live flat under `research/configs/`; there is no local default experiment workflow and no mode inference from subdirectories.
 
 Completed survival verdicts are research outcomes, not process failures. A completed `rejected` or `needs_more_evidence` report still exits `0`; automation should parse the JSON report status when it needs verdict gating.
 

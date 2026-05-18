@@ -23,12 +23,12 @@ Aegis RD gives each research loop a clear contract:
 - Simulate shared-cash portfolios with explicit entry budgets, costs, execution timing, direction, metric scope, and benchmark assumptions.
 - Produce reports that separate per-split evidence, aggregate summaries, survival gates, and uncertainty.
 
-## Research Lanes
+## Research Command
 
 - `aerd run <config>` runs strategy/research sweeps over explicit playbook or component strategy/indicator refs. It does not train models.
-- `aerd train <config>` runs the ML model-plugin training lane and preserves the existing split-local model, probability, signal, portfolio, and report artifacts.
+- `aerd run --train <config>` runs the ML training mode from the same config contract and preserves the existing split-local model, probability, signal, portfolio, and report artifacts.
 
-Configs stay inert across all lanes: YAML selects trusted IDs and parameters only. It cannot import Python, execute formulas, point at arbitrary notebooks/scripts, or reference generated run artifacts as reproducible inputs.
+Configs stay inert across both modes: YAML selects trusted IDs and parameters only. It cannot import Python, execute formulas, point at arbitrary notebooks/scripts, or reference generated run artifacts as reproducible inputs. Train-specific settings live under `train:` and are required only when `--train` is passed.
 
 ## Market Data Contract
 

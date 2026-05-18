@@ -31,6 +31,7 @@ from research.aegis_research.configuration.schema import (
     LANES,
     MISSING_POLICIES,
     MODEL_DENIED_KEYS,
+    MODEL_SOURCE_KINDS,
     OHLCV_FEATURE_MAP_KEYS,
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
@@ -68,15 +69,22 @@ def _validate_raw_lane_config(
     component_registry: FrozenComponentRegistry,
     expected_lane: str | None,
 ) -> None:
-    lane = raw.get("lane")
+    lane = _effective_run_mode(raw, expected_lane)
     _validate_known_keys("$", raw, _lane_allowed_top_level_keys(lane), issues)
     _require_int("schema_version", raw, issues, positive=True)
     if raw.get("schema_version") != CONFIG_SCHEMA_VERSION:
         issues.append(ConfigValidationIssue("schema_version", f"must be {CONFIG_SCHEMA_VERSION}"))
-    if _require_str("lane", raw, issues) and lane not in LANES:
-        issues.append(ConfigValidationIssue("lane", f"must be one of {sorted(LANES)}"))
-    if expected_lane is not None and lane != expected_lane:
-        issues.append(ConfigValidationIssue("lane", f"must be {expected_lane!r}"))
+    authored_lane = raw.get("lane")
+    if authored_lane is not None:
+        if not isinstance(authored_lane, str) or authored_lane not in LANES:
+            issues.append(ConfigValidationIssue("lane", f"must be one of {sorted(LANES)}"))
+        elif expected_lane is not None and authored_lane != expected_lane:
+            issues.append(
+                ConfigValidationIssue(
+                    "lane",
+                    "does not select run mode; use or omit --train instead",
+                )
+            )
     if _require_str("name", raw, issues):
         _validate_experiment_name(raw["name"], issues)
     _validate_output_dir(raw, issues)
@@ -99,21 +107,23 @@ def _validate_raw_lane_config(
         _validate_train_lane(raw, issues, component_registry=component_registry)
 
 
+def _effective_run_mode(raw: dict[str, Any], expected_lane: str | None) -> str:
+    if expected_lane is not None:
+        return expected_lane
+    authored_lane = raw.get("lane")
+    if isinstance(authored_lane, str) and authored_lane in LANES:
+        return authored_lane
+    if "train" in raw and not {"strategy", "indicator_refs", "ranking"}.intersection(raw):
+        return "train"
+    return "run"
+
+
 def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
-    common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir"}
-    if lane == "run":
-        return common | {"strategy", "indicator_refs", "ranking"}
-    if lane == "train":
-        return common | {"label", "indicators", "split", "model", "signals"}
+    common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir", "train"}
     return common | {
         "strategy",
         "indicator_refs",
         "ranking",
-        "label",
-        "indicators",
-        "split",
-        "model",
-        "signals",
     }
 
 
@@ -157,48 +167,86 @@ def _validate_train_lane(
     *,
     component_registry: FrozenComponentRegistry,
 ) -> None:
-    if "strategy" in raw or "ranking" in raw or "indicator_refs" in raw:
+    if "train" not in raw:
         issues.append(
             ConfigValidationIssue(
-                "strategy",
-                "strategy sweep config belongs to aerd run; train requires a training contract",
+                "train",
+                "is required for train mode; pass strategy sweeps to aerd run without --train",
             )
         )
+        return
+    train = _section(
+        raw,
+        "train",
+        {"label", "model", "indicators", "split", "signals"},
+        issues,
+    )
     _validate_source_ref(
-        "label",
-        raw.get("label"),
+        "train.label",
+        train.get("label"),
         "labels",
         issues,
         component_registry=component_registry,
         allowed_sources={"component"},
     )
-    indicators = _section(raw, "indicators", set(IndicatorConfig.__dataclass_fields__), issues)
-    split = _section(raw, "split", set(SplitConfig.__dataclass_fields__), issues)
-    model = _section(raw, "model", set(ModelConfig.__dataclass_fields__), issues)
-    signals = _section(raw, "signals", set(SignalConfig.__dataclass_fields__), issues)
+    indicators = _section(train, "indicators", set(IndicatorConfig.__dataclass_fields__), issues)
+    split = _section(train, "split", set(SplitConfig.__dataclass_fields__), issues)
+    signals = _section(train, "signals", set(SignalConfig.__dataclass_fields__), issues)
     _validate_indicators(indicators, issues)
     _validate_split(split, issues)
-    _validate_model(model, issues, model_registry=None)
     _validate_signals(signals, issues)
-    if not isinstance(model.get("plugin_id"), str) or not model.get("plugin_id"):
+    _validate_train_model_ref("train.model", train.get("model"), issues)
+
+
+def _validate_train_model_ref(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_known_keys(path, value, {"source", "id", "min_train_samples", "params"}, issues)
+    _validate_no_lane_executable_keys(path, value, issues)
+    source = value.get("source")
+    if not isinstance(source, str) or source not in MODEL_SOURCE_KINDS:
         issues.append(
             ConfigValidationIssue(
-                "model.plugin_id",
-                "is required for train lane training contract",
+                f"{path}.source",
+                f"must be one of {sorted(MODEL_SOURCE_KINDS)}",
             )
         )
+    model_id = value.get("id")
+    if not isinstance(model_id, str) or not model_id:
+        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty model id"))
+    elif not EXPERIMENT_NAME_RE.fullmatch(model_id):
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.id",
+                "must contain only letters, numbers, dots, underscores, and hyphens",
+            )
+        )
+    _optional_int(f"{path}.min_train_samples", value, issues, positive=True)
+    params = value.get("params", {})
+    if not isinstance(params, dict):
+        issues.append(ConfigValidationIssue(f"{path}.params", "must be a mapping"))
+    else:
+        _validate_json_like(f"{path}.params", params, issues)
+        _validate_no_inline_secrets(f"{path}.params", params, issues)
+        _validate_no_denied_model_keys(f"{path}.params", params, issues)
+        _validate_no_lane_executable_keys(f"{path}.params", params, issues)
 
 
 def _validate_training_fields_absent(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
 ) -> None:
-    for key in ("model", "labels", "label", "split"):
+    for key in ("model", "labels", "label", "split", "signals", "indicators"):
         if key in raw:
             issues.append(
                 ConfigValidationIssue(
                     key,
-                    "model training fields are not valid for strategy run; use aerd train",
+                    "model training fields are not valid at top level; use aerd run --train with a train section",
                 )
             )
 
@@ -330,7 +378,7 @@ def _validate_no_lane_executable_keys(
                 issues.append(
                     ConfigValidationIssue(
                         child_path,
-                        "is not allowed in lane config; select trusted component or playbook IDs",
+                        "is not allowed in run config; select trusted component or playbook IDs",
                     )
                 )
             _validate_no_lane_executable_keys(child_path, item, issues)

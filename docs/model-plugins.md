@@ -1,25 +1,27 @@
 # Model Plugins
 
-Aegis model execution is plugin-only. Experiment YAML selects a stable `model.plugin_id`; it never imports Python code, defines estimators, or requests mutable model-state updates.
+Aegis model execution is plugin-only in v1. Run YAML selects a stable train-mode model ref; it never imports Python code, defines estimators, or requests mutable model-state updates.
 
 ## Config Contract
 
 ```yaml
-model:
-  plugin_id: aegis.sklearn_logistic
-  min_train_samples: 100
-  params:
-    max_iter: 1000
-    random_state: 42
+train:
+  model:
+    source: plugin
+    id: aegis.sklearn_logistic
+    min_train_samples: 100
+    params:
+      max_iter: 1000
+      random_state: 42
 ```
 
-Model training is split-local batch validation in v1. There are no user-selectable training modes; this repo does not implement live updates, incremental fitting, or runtime importer behavior.
+Model training is split-local batch validation in v1. The `source` field is retained so future model sources can be added deliberately, but `plugin` is the only accepted source today. This repo does not implement live updates, incremental fitting, local model file loading, or runtime importer behavior.
 
 ## Registration Contract
 
 Trusted code constructs a `ModelRegistry`, registers `ModelPluginDefinition` objects, freezes the registry, and passes that snapshot into config resolution or `run_training`/`run_experiment`.
 
-Core Aegis ships a default registry with the baseline `aegis.sklearn_logistic` plugin. Use `make_default_model_registry()` from `research.aegis_research.model_plugins` in Python runners; the `aerd` CLI registers this default registry automatically for `aerd train` validation. `aerd run` is reserved for playbook-backed or component-backed strategy/research sweeps and rejects model-training configs with guidance to use `aerd train`.
+Core Aegis ships a default registry with the baseline `aegis.sklearn_logistic` plugin. Use `make_default_model_registry()` from `research.aegis_research.model_plugins` in Python runners; the `aerd` CLI registers this default registry automatically for `aerd run --train` validation. Default `aerd run` is reserved for playbook-backed or component-backed strategy/research sweeps and rejects model-training configs with guidance to use `aerd run --train`.
 
 Plugins declare:
 

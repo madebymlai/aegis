@@ -138,7 +138,6 @@ def _write_run_config(
         yaml.safe_dump(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
-                "lane": "run",
                 "name": "run_playbook_source_test",
                 "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80},
                 "portfolio": {"entry_budget": 1.0},

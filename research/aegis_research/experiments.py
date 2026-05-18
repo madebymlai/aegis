@@ -41,6 +41,7 @@ def run_experiment(
     config: ResolvedExperimentConfig | ExperimentConfig | dict[str, Any],
     *,
     model_registry: ModelRegistry | FrozenModelRegistry | None = None,
+    label_result_builder: Callable[..., Any] | None = None,
     rerun_mode: str = RerunMode.NEW,
     run_id: str | None = None,
     parent_run_id: str | None = None,
@@ -90,7 +91,10 @@ def run_experiment(
         open_prices = data_result.feature("Open") if "Open" in required_features else None
         high = data_result.feature("High") if "High" in required_features else None
         low = data_result.feature("Low") if "Low" in required_features else None
-        label_result = build_label_result(close, config.labels, high=high, low=low)
+        if label_result_builder is None:
+            label_result = build_label_result(close, config.labels, high=high, low=low)
+        else:
+            label_result = label_result_builder(close, high=high, low=low)
         artifacts.write_label_artifacts(
             label_result,
             max_public_artifact_bytes=config.split.max_public_artifact_bytes,

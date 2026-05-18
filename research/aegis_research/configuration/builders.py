@@ -13,7 +13,6 @@ from research.aegis_research.configuration.schema import (
     LabelTargetConfig,
     LabelTargetSelectionConfig,
     LabelTargetTransformConfig,
-    ModelConfig,
     PortfolioConfig,
     RankingConfig,
     ReportConfig,
@@ -22,6 +21,7 @@ from research.aegis_research.configuration.schema import (
     SplitConfig,
     StrategyRunLaneConfig,
     TrainLaneConfig,
+    TrainModelConfig,
 )
 
 
@@ -41,19 +41,29 @@ def _build_strategy_run_lane_config(raw: dict[str, Any]) -> StrategyRunLaneConfi
 
 
 def _build_train_lane_config(raw: dict[str, Any]) -> TrainLaneConfig:
+    train = raw["train"]
     return TrainLaneConfig(
         name=raw["name"],
         schema_version=raw["schema_version"],
         lane="train",
         data=_build_data_config(raw.get("data", {})),
-        indicators=_build_indicator_config(raw.get("indicators", {})),
-        split=SplitConfig(**raw.get("split", {})),
-        signals=SignalConfig(**raw.get("signals", {})),
+        indicators=_build_indicator_config(train.get("indicators", {})),
+        split=SplitConfig(**train.get("split", {})),
+        signals=SignalConfig(**train.get("signals", {})),
         portfolio=PortfolioConfig(**raw.get("portfolio", {})),
         report=ReportConfig(**raw.get("report", {})),
-        label=_build_source_ref(raw["label"]),
-        model=ModelConfig(**raw["model"]),
+        label=_build_source_ref(train["label"]),
+        model=_build_train_model(train["model"]),
         output_dir=raw.get("output_dir", "runs"),
+    )
+
+
+def _build_train_model(raw: dict[str, Any]) -> TrainModelConfig:
+    return TrainModelConfig(
+        source=raw["source"],
+        id=raw["id"],
+        min_train_samples=raw.get("min_train_samples", 100),
+        params=dict(raw.get("params", {})),
     )
 
 

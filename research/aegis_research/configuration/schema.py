@@ -72,6 +72,7 @@ INDICATOR_INLINE_CODE_KEYS = {
 }
 LANES = {"run", "train"}
 SOURCE_KINDS = {"component", "playbook"}
+MODEL_SOURCE_KINDS = {"plugin"}
 RANKING_DIRECTIONS = {"asc", "desc"}
 LANE_EXECUTABLE_DENIED_KEYS = {
     "artifact_path",
@@ -321,6 +322,14 @@ class RankingConfig:
 
 
 @dataclass(frozen=True)
+class TrainModelConfig:
+    source: str
+    id: str
+    min_train_samples: int = 100
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class StrategyRunLaneConfig:
     name: str
     strategy: SourceRefConfig
@@ -338,7 +347,7 @@ class StrategyRunLaneConfig:
 class TrainLaneConfig:
     name: str
     label: SourceRefConfig
-    model: ModelConfig
+    model: TrainModelConfig
     schema_version: int = CONFIG_SCHEMA_VERSION
     lane: str = "train"
     data: DataConfig = field(default_factory=DataConfig)

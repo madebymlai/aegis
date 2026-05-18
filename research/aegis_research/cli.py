@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 from typing import TextIO
 
-from research.aegis_research.cli_commands import run, train
+from research.aegis_research.cli_commands import run
 from research.aegis_research.cli_support.errors import (
     CliError,
     InternalCliError,
@@ -77,7 +77,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     run.register(subparsers)
-    train.register(subparsers)
     return parser
 
 

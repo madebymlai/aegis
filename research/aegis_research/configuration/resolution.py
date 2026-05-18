@@ -36,6 +36,7 @@ from research.aegis_research.configuration.schema import (
 from research.aegis_research.configuration.secrets import redact_config, to_builtin
 from research.aegis_research.configuration.validation import (
     _assert_model_config_registered,
+    _effective_run_mode,
     _validate_raw_config,
     _validate_raw_lane_config,
 )
@@ -311,7 +312,7 @@ def _build_resolved_lane_config(
     if issues:
         raise ConfigValidationError(issues)
 
-    lane = str(raw["lane"])
+    lane = _effective_run_mode(raw, expected_lane)
     if lane == "run":
         config: LaneConfig = _build_strategy_run_lane_config(raw)
     elif lane == "train":
