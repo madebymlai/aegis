@@ -27,7 +27,7 @@ def _notebook_source(path: str) -> tuple[dict[str, object], str]:
     return payload, source
 
 
-def _execute_notebook(path: str) -> None:
+def _execute_notebook(path: str, execution_path: Path | str) -> None:
     notebook_path = Path(path)
     notebook = nbformat.read(notebook_path, as_version=4)
 
@@ -35,7 +35,7 @@ def _execute_notebook(path: str) -> None:
         notebook,
         timeout=300,
         kernel_name="python3",
-        resources={"metadata": {"path": str(notebook_path.parent)}},
+        resources={"metadata": {"path": str(execution_path)}},
     ).execute()
 
 
@@ -83,13 +83,17 @@ def test_scaffold_walkthrough_notebook_is_valid_runnable_example() -> None:
 
 
 def test_scaffold_walkthrough_notebook_executes() -> None:
-    _execute_notebook("docs/examples/scaffold_experiment_walkthrough.ipynb")
-    _execute_notebook("docs/examples/scaffold_experiment_walkthrough.ipynb")
+    notebook_path = Path("docs/examples/scaffold_experiment_walkthrough.ipynb")
+
+    _execute_notebook(str(notebook_path), Path.cwd())
+    _execute_notebook(str(notebook_path), notebook_path.parent)
 
 
 def test_sklearn_model_plugin_notebook_executes() -> None:
-    _execute_notebook("docs/examples/model_plugins/sklearn_logistic_plugin.ipynb")
-    _execute_notebook("docs/examples/model_plugins/sklearn_logistic_plugin.ipynb")
+    notebook_path = Path("docs/examples/model_plugins/sklearn_logistic_plugin.ipynb")
+
+    _execute_notebook(str(notebook_path), Path.cwd())
+    _execute_notebook(str(notebook_path), notebook_path.parent)
 
 
 def test_experiment_config_directory_is_generic_readme_pointer() -> None:

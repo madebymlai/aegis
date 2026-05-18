@@ -103,11 +103,15 @@ def _plugin_identity(plugin: Any) -> dict[str, Any]:
     }
     try:
         source_name = inspect.getsourcefile(plugin_type)
-    except (OSError, TypeError):
+    except (OSError, TypeError) as error:
+        identity["source_unavailable_reason"] = type(error).__name__
         return identity
     if not source_name:
+        identity["source_unavailable_reason"] = "missing_source_file"
         return identity
     source_path = Path(source_name)
     if source_path.is_file():
         identity["source_hash"] = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    else:
+        identity["source_unavailable_reason"] = "source_file_not_found"
     return identity
