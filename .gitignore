@@ -26,6 +26,12 @@ runs/*
 
 research/configs/experiments/*
 !research/configs/experiments/README.md
+research/configs/play/*
+!research/configs/play/README.md
+research/configs/runs/*
+!research/configs/runs/README.md
+research/configs/train/*
+!research/configs/train/README.md
 
 research/components/labels/*
 !research/components/labels/README.md

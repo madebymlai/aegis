@@ -1,0 +1,25 @@
+# Components
+
+Promoted components are reviewed Python files under `research/components/{labels,indicators,strategies}/`. Reproducible `run` and `train` configs select them by explicit source ref:
+
+```yaml
+strategy:
+  source: component
+  id: demo.cross
+
+indicator_refs:
+  - source: component
+    id: all
+  - source: component
+    id: demo.ma
+
+label:
+  source: component
+  id: demo.fixlb
+```
+
+YAML never imports Python, names modules, embeds formulas, or points at arbitrary files. Discovery reads only literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` metadata without executing the component file. Callable code loads only after validation selects a known ID under the fixed component root.
+
+Indicator components should use the same VectorBT-native helper path as built-ins (`vbt.MA`, `vbt.RSI`, custom `vbt.IF`, primitive returns/volatility normalization). Label components should preserve the native label path (`vbt.FIXLB`, `vbt.TRENDLB`, `vbt.PIVOTLB`) and target lineage. Strategy components should emit aligned `entries` and `exits` only; portfolio sizing, costs, direction, and timing remain config-owned.
+
+Local component files are ignored by git by default except the placeholder READMEs. Ignored files are not secret management; do not store credentials in local research code.
