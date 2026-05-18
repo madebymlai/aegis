@@ -12,6 +12,12 @@ import pandas as pd
 import yaml
 
 from research.aegis_research.indicator_registry import indicator_registry
+from research.aegis_research.component_registry import (
+    ComponentRegistryError,
+    ComponentSelection,
+    FrozenComponentRegistry,
+    discover_component_registry,
+)
 from research.aegis_research.model_registry import (
     FrozenModelRegistry,
     ModelRegistry,
@@ -85,6 +91,29 @@ INDICATOR_INLINE_CODE_KEYS = {
     "import",
     "module",
     "python",
+}
+LANES = {"play", "run", "train"}
+SOURCE_KINDS = {"component", "playbook"}
+PLAY_STAGES = {"labels", "indicators", "strategies"}
+RANKING_DIRECTIONS = {"asc", "desc"}
+LANE_EXECUTABLE_DENIED_KEYS = {
+    "artifact_path",
+    "callable",
+    "class",
+    "code",
+    "formula",
+    "function",
+    "import",
+    "last_run",
+    "leaderboard_row",
+    "load",
+    "module",
+    "notebook",
+    "notebook_path",
+    "path",
+    "python",
+    "script",
+    "script_path",
 }
 
 SECRET_KEY_RE = re.compile(
@@ -328,6 +357,73 @@ class ExperimentConfig:
 
 
 @dataclass(frozen=True)
+class SourceRefConfig:
+    source: str
+    id: str
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RankingConfig:
+    metric: str
+    direction: str
+    rank_by: str = "primary_metric"
+
+
+@dataclass(frozen=True)
+class PlayConfig:
+    stages: list[str]
+    indicator_refs: list[SourceRefConfig]
+    ranking: RankingConfig
+    backup_last_run: bool = False
+
+
+@dataclass(frozen=True)
+class PlayLaneConfig:
+    name: str
+    schema_version: int = CONFIG_SCHEMA_VERSION
+    lane: str = "play"
+    data: DataConfig = field(default_factory=DataConfig)
+    portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
+    report: ReportConfig = field(default_factory=ReportConfig)
+    play: PlayConfig | None = None
+    output_dir: str = "runs"
+
+
+@dataclass(frozen=True)
+class StrategyRunLaneConfig:
+    name: str
+    strategy: SourceRefConfig
+    indicator_refs: list[SourceRefConfig]
+    ranking: RankingConfig
+    schema_version: int = CONFIG_SCHEMA_VERSION
+    lane: str = "run"
+    data: DataConfig = field(default_factory=DataConfig)
+    portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
+    report: ReportConfig = field(default_factory=ReportConfig)
+    output_dir: str = "runs"
+
+
+@dataclass(frozen=True)
+class TrainLaneConfig:
+    name: str
+    label: SourceRefConfig
+    model: ModelConfig
+    schema_version: int = CONFIG_SCHEMA_VERSION
+    lane: str = "train"
+    data: DataConfig = field(default_factory=DataConfig)
+    indicators: IndicatorConfig = field(default_factory=IndicatorConfig)
+    split: SplitConfig = field(default_factory=SplitConfig)
+    signals: SignalConfig = field(default_factory=SignalConfig)
+    portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
+    report: ReportConfig = field(default_factory=ReportConfig)
+    output_dir: str = "runs"
+
+
+LaneConfig = PlayLaneConfig | StrategyRunLaneConfig | TrainLaneConfig
+
+
+@dataclass(frozen=True)
 class ConfigSelectionEvidence:
     source: str
     config_path: str | None = None
@@ -360,6 +456,36 @@ class ResolvedExperimentConfig:
             "raw_config_hash": self.raw_config_hash,
             "source_path": self.source_path,
             "selection": self.selection.manifest() if self.selection else None,
+        }
+
+
+@dataclass(frozen=True)
+class ResolvedLaneConfig:
+    config: LaneConfig
+    raw_config_hash: str
+    authored_config: dict[str, Any]
+    source_path: str | None = None
+    component_registry: FrozenComponentRegistry | None = None
+
+    @property
+    def lane(self) -> str:
+        return self.config.lane
+
+    def redacted_authored_config(self) -> dict[str, Any]:
+        return redact_config(self.authored_config)
+
+    def redacted_resolved_config(self) -> dict[str, Any]:
+        return redact_config(to_builtin(asdict(self.config)))
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.config.schema_version,
+            "lane": self.config.lane,
+            "raw_config_hash": self.raw_config_hash,
+            "source_path": self.source_path,
+            "component_registry_fingerprint": (
+                self.component_registry.fingerprint if self.component_registry else None
+            ),
         }
 
 
@@ -434,6 +560,60 @@ def resolve_experiment_config(
     )
 
 
+def load_lane_config(
+    path: str | Path,
+    *,
+    component_registry: FrozenComponentRegistry | None = None,
+    expected_lane: str | None = None,
+) -> ResolvedLaneConfig:
+    config_path = Path(path)
+    raw_text = config_path.read_text()
+    raw = yaml.load(raw_text, Loader=_UniqueKeySafeLoader)
+    return resolve_lane_config(
+        raw,
+        raw_text=raw_text,
+        source_path=str(path),
+        component_registry=component_registry,
+        expected_lane=expected_lane,
+    )
+
+
+def resolve_lane_config(
+    value: ResolvedLaneConfig | LaneConfig | dict[str, Any],
+    *,
+    raw_text: str | None = None,
+    source_path: str | None = None,
+    component_registry: FrozenComponentRegistry | None = None,
+    expected_lane: str | None = None,
+) -> ResolvedLaneConfig:
+    if isinstance(value, ResolvedLaneConfig):
+        if expected_lane is not None and value.lane != expected_lane:
+            raise ConfigValidationError(
+                [ConfigValidationIssue("lane", f"must be {expected_lane!r}")]
+            )
+        return value
+
+    registry = component_registry or discover_component_registry()
+    if isinstance(value, PlayLaneConfig | StrategyRunLaneConfig | TrainLaneConfig):
+        raw = to_builtin(asdict(value))
+        raw_text = yaml.safe_dump(raw, sort_keys=False)
+        return _build_resolved_lane_config(
+            raw,
+            raw_text=raw_text,
+            source_path=source_path,
+            component_registry=registry,
+            expected_lane=expected_lane,
+        )
+
+    return _build_resolved_lane_config(
+        value,
+        raw_text=raw_text,
+        source_path=source_path,
+        component_registry=registry,
+        expected_lane=expected_lane,
+    )
+
+
 def _build_resolved_config(
     raw: dict[str, Any],
     *,
@@ -472,6 +652,114 @@ def _build_resolved_config(
         source_path=source_path,
         model_registry=model_registry,
         selection=None,
+    )
+
+
+def _build_resolved_lane_config(
+    raw: dict[str, Any],
+    *,
+    raw_text: str | None,
+    source_path: str | None,
+    component_registry: FrozenComponentRegistry,
+    expected_lane: str | None,
+) -> ResolvedLaneConfig:
+    if not isinstance(raw, dict):
+        raise ConfigValidationError([ConfigValidationIssue("$", "lane config must be a mapping")])
+
+    issues: list[ConfigValidationIssue] = []
+    _validate_raw_lane_config(
+        raw,
+        issues,
+        component_registry=component_registry,
+        expected_lane=expected_lane,
+    )
+    if issues:
+        raise ConfigValidationError(issues)
+
+    lane = str(raw["lane"])
+    if lane == "play":
+        config: LaneConfig = _build_play_lane_config(raw)
+    elif lane == "run":
+        config = _build_strategy_run_lane_config(raw)
+    elif lane == "train":
+        config = _build_train_lane_config(raw)
+    else:
+        raise ConfigValidationError([ConfigValidationIssue("lane", f"must be one of {sorted(LANES)}")])
+
+    text_for_hash = raw_text if raw_text is not None else yaml.safe_dump(raw, sort_keys=False)
+    return ResolvedLaneConfig(
+        config=config,
+        raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
+        authored_config=to_builtin(raw),
+        source_path=source_path,
+        component_registry=component_registry,
+    )
+
+
+def _build_play_lane_config(raw: dict[str, Any]) -> PlayLaneConfig:
+    play_raw = raw["play"]
+    return PlayLaneConfig(
+        name=raw["name"],
+        schema_version=raw["schema_version"],
+        lane="play",
+        data=_build_data_config(raw.get("data", {})),
+        portfolio=PortfolioConfig(**raw.get("portfolio", {})),
+        report=ReportConfig(**raw.get("report", {})),
+        play=PlayConfig(
+            stages=list(play_raw["stages"]),
+            indicator_refs=[_build_source_ref(item) for item in play_raw["indicator_refs"]],
+            ranking=_build_ranking(play_raw["ranking"]),
+            backup_last_run=play_raw.get("backup_last_run", False),
+        ),
+        output_dir=raw.get("output_dir", "runs"),
+    )
+
+
+def _build_strategy_run_lane_config(raw: dict[str, Any]) -> StrategyRunLaneConfig:
+    return StrategyRunLaneConfig(
+        name=raw["name"],
+        schema_version=raw["schema_version"],
+        lane="run",
+        data=_build_data_config(raw.get("data", {})),
+        portfolio=PortfolioConfig(**raw.get("portfolio", {})),
+        report=ReportConfig(**raw.get("report", {})),
+        strategy=_build_source_ref(raw["strategy"]),
+        indicator_refs=[_build_source_ref(item) for item in raw["indicator_refs"]],
+        ranking=_build_ranking(raw["ranking"]),
+        output_dir=raw.get("output_dir", "runs"),
+    )
+
+
+def _build_train_lane_config(raw: dict[str, Any]) -> TrainLaneConfig:
+    return TrainLaneConfig(
+        name=raw["name"],
+        schema_version=raw["schema_version"],
+        lane="train",
+        data=_build_data_config(raw.get("data", {})),
+        indicators=_build_indicator_config(raw.get("indicators", {})),
+        split=SplitConfig(**raw.get("split", {})),
+        signals=SignalConfig(**raw.get("signals", {})),
+        portfolio=PortfolioConfig(**raw.get("portfolio", {})),
+        report=ReportConfig(**raw.get("report", {})),
+        label=_build_source_ref(raw["label"]),
+        model=ModelConfig(**raw["model"]),
+        output_dir=raw.get("output_dir", "runs"),
+    )
+
+
+def _build_source_ref(raw: dict[str, Any]) -> SourceRefConfig:
+    return SourceRefConfig(
+        source=raw["source"],
+        id=raw["id"],
+        params=dict(raw.get("params", {})),
+    )
+
+
+def _build_ranking(raw: dict[str, Any]) -> RankingConfig:
+    return RankingConfig(
+        metric=raw["metric"],
+        direction=raw["direction"],
+        rank_by=raw.get("rank_by", "primary_metric"),
     )
 
 
@@ -576,6 +864,323 @@ def _default_label_transform_params(transform_name: str) -> dict[str, Any]:
     if transform_name in {"identity_binary", "positive_event"}:
         return {"positive_value": 1}
     return {}
+
+
+def _validate_raw_lane_config(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+    expected_lane: str | None,
+) -> None:
+    lane = raw.get("lane")
+    _validate_known_keys("$", raw, _lane_allowed_top_level_keys(lane), issues)
+    _require_int("schema_version", raw, issues, positive=True)
+    if raw.get("schema_version") != CONFIG_SCHEMA_VERSION:
+        issues.append(ConfigValidationIssue("schema_version", f"must be {CONFIG_SCHEMA_VERSION}"))
+    if _require_str("lane", raw, issues) and lane not in LANES:
+        issues.append(ConfigValidationIssue("lane", f"must be one of {sorted(LANES)}"))
+    if expected_lane is not None and lane != expected_lane:
+        issues.append(ConfigValidationIssue("lane", f"must be {expected_lane!r}"))
+    if _require_str("name", raw, issues):
+        _validate_experiment_name(raw["name"], issues)
+    _validate_output_dir(raw, issues)
+
+    data = _section(raw, "data", set(DataConfig.__dataclass_fields__), issues)
+    portfolio = _section(
+        raw,
+        "portfolio",
+        set(PortfolioConfig.__dataclass_fields__) | {"size", "size_type"},
+        issues,
+    )
+    report = _section(raw, "report", set(ReportConfig.__dataclass_fields__), issues)
+    _validate_data(data, issues)
+    _validate_portfolio(portfolio, issues)
+    _validate_report(report, issues)
+
+    if lane == "play":
+        _validate_play_lane(raw, issues, component_registry=component_registry)
+    elif lane == "run":
+        _validate_strategy_run_lane(raw, issues, component_registry=component_registry)
+    elif lane == "train":
+        _validate_train_lane(raw, issues, component_registry=component_registry)
+
+
+def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
+    common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir"}
+    if lane == "play":
+        return common | {"play"}
+    if lane == "run":
+        return common | {"strategy", "indicator_refs", "ranking", "failure_policy"}
+    if lane == "train":
+        return common | {"label", "indicators", "split", "model", "signals"}
+    return common | {
+        "play",
+        "strategy",
+        "indicator_refs",
+        "ranking",
+        "label",
+        "indicators",
+        "split",
+        "model",
+        "signals",
+    }
+
+
+def _validate_play_lane(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+) -> None:
+    play = _section(
+        raw,
+        "play",
+        {"stages", "indicator_refs", "ranking", "backup_last_run"},
+        issues,
+    )
+    _validate_no_lane_executable_keys("play", play, issues)
+    _validate_play_stages(play, issues)
+    _validate_source_ref_list(
+        "play.indicator_refs",
+        play.get("indicator_refs"),
+        "indicators",
+        issues,
+        component_registry=component_registry,
+        allow_component_all=True,
+    )
+    _validate_ranking("play.ranking", play.get("ranking"), issues)
+    _optional_bool("play.backup_last_run", play, issues)
+
+
+def _validate_strategy_run_lane(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+) -> None:
+    _validate_training_fields_absent(raw, issues)
+    _validate_source_ref(
+        "strategy",
+        raw.get("strategy"),
+        "strategies",
+        issues,
+        component_registry=component_registry,
+    )
+    _validate_source_ref_list(
+        "indicator_refs",
+        raw.get("indicator_refs"),
+        "indicators",
+        issues,
+        component_registry=component_registry,
+        allow_component_all=True,
+    )
+    _validate_ranking("ranking", raw.get("ranking"), issues)
+
+
+def _validate_train_lane(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+) -> None:
+    if "strategy" in raw or "ranking" in raw or "indicator_refs" in raw:
+        issues.append(
+            ConfigValidationIssue(
+                "strategy",
+                "strategy sweep config belongs to aerd run; train requires a training contract",
+            )
+        )
+    _validate_source_ref(
+        "label",
+        raw.get("label"),
+        "labels",
+        issues,
+        component_registry=component_registry,
+    )
+    indicators = _section(raw, "indicators", set(IndicatorConfig.__dataclass_fields__), issues)
+    split = _section(raw, "split", set(SplitConfig.__dataclass_fields__), issues)
+    model = _section(raw, "model", set(ModelConfig.__dataclass_fields__), issues)
+    signals = _section(raw, "signals", set(SignalConfig.__dataclass_fields__), issues)
+    _validate_indicators(indicators, issues)
+    _validate_split(split, issues)
+    _validate_model(model, issues, model_registry=None)
+    _validate_signals(signals, issues)
+    if not isinstance(model.get("plugin_id"), str) or not model.get("plugin_id"):
+        issues.append(
+            ConfigValidationIssue(
+                "model.plugin_id",
+                "is required for train lane training contract",
+            )
+        )
+
+
+def _validate_training_fields_absent(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    for key in ("model", "labels", "label", "split"):
+        if key in raw:
+            issues.append(
+                ConfigValidationIssue(
+                    key,
+                    "model training fields are not valid for strategy run; use aerd train",
+                )
+            )
+
+
+def _validate_play_stages(play: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
+    stages = play.get("stages")
+    if not _require_str_list("play.stages", stages, issues, non_empty=True):
+        return
+    for index, stage in enumerate(stages):
+        if stage not in PLAY_STAGES:
+            issues.append(
+                ConfigValidationIssue(f"play.stages[{index}]", f"must be one of {sorted(PLAY_STAGES)}")
+            )
+
+
+def _validate_source_ref_list(
+    path: str,
+    value: Any,
+    family: str,
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+    allow_component_all: bool = False,
+) -> None:
+    if not isinstance(value, list) or not value:
+        issues.append(ConfigValidationIssue(path, "must be a non-empty list"))
+        return
+    for index, item in enumerate(value):
+        _validate_source_ref(
+            f"{path}[{index}]",
+            item,
+            family,
+            issues,
+            component_registry=component_registry,
+            allow_component_all=allow_component_all,
+        )
+
+
+def _validate_source_ref(
+    path: str,
+    value: Any,
+    family: str,
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+    allow_component_all: bool = False,
+) -> None:
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_known_keys(path, value, {"source", "id", "params"}, issues)
+    _validate_no_lane_executable_keys(path, value, issues)
+    source = value.get("source")
+    if not isinstance(source, str) or source not in SOURCE_KINDS:
+        issues.append(ConfigValidationIssue(f"{path}.source", f"must be one of {sorted(SOURCE_KINDS)}"))
+        return
+    component_id = value.get("id")
+    if not isinstance(component_id, str):
+        issues.append(ConfigValidationIssue(f"{path}.id", "must be a string"))
+        return
+    if component_id == "" or component_id == "all":
+        if source == "component" and allow_component_all:
+            return
+        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
+        return
+    if not EXPERIMENT_NAME_RE.fullmatch(component_id):
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.id",
+                "must contain only letters, numbers, dots, underscores, and hyphens",
+            )
+        )
+    params = value.get("params", {})
+    if not isinstance(params, dict):
+        issues.append(ConfigValidationIssue(f"{path}.params", "must be a mapping"))
+    else:
+        _validate_json_like(f"{path}.params", params, issues)
+        _validate_no_lane_executable_keys(f"{path}.params", params, issues)
+    if source == "component":
+        try:
+            component_registry.get(ComponentSelection(family, component_id))
+        except ComponentRegistryError:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}.id",
+                    f"unknown {family[:-1] if family.endswith('s') else family} component id",
+                )
+            )
+
+
+def _validate_ranking(path: str, value: Any, issues: list[ConfigValidationIssue]) -> None:
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_known_keys(path, value, {"metric", "direction", "rank_by"}, issues)
+    metric = value.get("metric")
+    if not isinstance(metric, str) or not metric:
+        issues.append(ConfigValidationIssue(f"{path}.metric", "must be a non-empty string"))
+    elif metric not in _portfolio_metric_ids():
+        issues.append(
+            ConfigValidationIssue(f"{path}.metric", f"must be one of {sorted(_portfolio_metric_ids())}")
+        )
+    direction = value.get("direction")
+    if not isinstance(direction, str) or direction not in RANKING_DIRECTIONS:
+        issues.append(
+            ConfigValidationIssue(f"{path}.direction", f"must be one of {sorted(RANKING_DIRECTIONS)}")
+        )
+    rank_by = value.get("rank_by", "primary_metric")
+    if rank_by not in {"primary_metric", "baseline_delta"}:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.rank_by",
+                "must be one of ['baseline_delta', 'primary_metric']",
+            )
+        )
+
+
+def _portfolio_metric_ids() -> set[str]:
+    from research.aegis_research.reports import PORTFOLIO_METRIC_CATALOG
+
+    return set(PORTFOLIO_METRIC_CATALOG)
+
+
+def _validate_no_lane_executable_keys(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child_path = f"{path}.{key}"
+            if str(key).lower() in LANE_EXECUTABLE_DENIED_KEYS:
+                issues.append(
+                    ConfigValidationIssue(
+                        child_path,
+                        "is not allowed in lane config; select trusted component or playbook IDs",
+                    )
+                )
+            _validate_no_lane_executable_keys(child_path, item, issues)
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_no_lane_executable_keys(f"{path}[{index}]", item, issues)
+
+
+def _validate_output_dir(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
+    if not _optional_str("output_dir", raw, issues):
+        return
+    output_dir = raw.get("output_dir")
+    if output_dir is None:
+        return
+    path = Path(str(output_dir))
+    if path.is_absolute() or ".." in path.parts:
+        issues.append(
+            ConfigValidationIssue("output_dir", "must be a relative path under the project root")
+        )
 
 
 def _validate_raw_config(
