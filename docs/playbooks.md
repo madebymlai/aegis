@@ -6,13 +6,11 @@ Notebook playbooks are repo-controlled exploratory notebooks under `research/pla
 lane: play
 play:
   stages: [indicators]
-  indicator_refs:
-    - source: playbook
-      id: ma_explore
-      params:
-        window: 10
-    - source: component
-      id: all
+    indicator_refs:
+      - source: playbook
+        id: ma_explore
+        params:
+          window: 10
   ranking:
     metric: total_return_pct
     direction: desc
@@ -23,3 +21,7 @@ Each indicator playbook ID represents one indicator idea/family. Parameter sweep
 Play artifacts are exploratory evidence under `runs/play/`: successful runs replace `last-run` after staging validation, optional backup preserves the previous completed last-run, and failed attempts never replace the prior successful last-run. Play artifacts can inform manual promotion, but there is no automatic command that mutates component files.
 
 Configs cannot provide arbitrary notebook paths, scripts, imports, inline Python, formulas, generated play state, last-run refs, or leaderboard-row refs as reproducible `run`/`train` inputs.
+
+Current `aerd play` execution accepts playbook indicator refs. Component indicator refs are used by promoted strategy `run` configs; playbooks that need component baselines should declare and emit that baseline evidence in the playbook result.
+
+Public playbook examples live under `docs/examples/playbooks/`.

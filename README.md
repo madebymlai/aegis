@@ -33,7 +33,7 @@ Configs stay inert across all lanes: YAML selects trusted IDs and parameters onl
 
 ## Market Data Contract
 
-Market data is loaded as native VectorBT `Data` for every supported source: `synthetic`, `csv`, `yfinance`, `binance`, and `ccxt`. Downstream stages consume explicit derived OHLCV panels where timestamps are rows and symbols are columns; single-symbol runs are still one-column panels, not squeezed Series.
+Market data is loaded as native VectorBT `Data` for every supported source: `synthetic`, `csv`, `yf`, `binance`, and `ccxt`. Downstream stages consume explicit derived OHLCV panels where timestamps are rows and symbols are columns; single-symbol runs are still one-column panels, not squeezed Series.
 
 Each run writes public `data.metadata` with safe provider metadata, requested and observed symbols, canonical feature availability, per-symbol diagnostics, quality state, timezone and index evidence, and omitted metadata fields. Private `data.native` preserves VectorBT-native state after public metadata succeeds and remains secret-scanned and fail-closed.
 

@@ -48,11 +48,11 @@ def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> 
     if args.config is None:
         raise ConfigCliError("aerd run requires an explicit strategy config; use aerd train for ML training")
     config_path = Path(args.config)
-    if _looks_like_model_training_config(config_path):
-        raise ConfigCliError("model training configs are no longer accepted by aerd run; use aerd train")
 
     run_refs: dict[str, Any] = {}
     try:
+        if _looks_like_model_training_config(config_path):
+            raise ConfigCliError("model training configs are no longer accepted by aerd run; use aerd train")
         component_registry = discover_component_registry()
         resolved = load_lane_config(
             config_path,
@@ -72,6 +72,7 @@ def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> 
             run_id=args.run_id,
             parent_run_id=args.parent_run_id,
             supersedes_run_id=args.supersedes_run_id,
+            on_run_started=run_refs.update,
         )
         run_refs.update(result)
     except KeyboardInterrupt as error:

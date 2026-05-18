@@ -27,12 +27,35 @@ def test_playbook_registry_discovers_stable_ids_and_executes_selected_notebook(t
     assert result["variant_records"] == [{"id": "ma_explore", "window": 5}]
 
 
+def test_notebook_playbook_params_support_json_booleans_and_nulls(tmp_path) -> None:
+    root = tmp_path / "research" / "playbooks"
+    notebook = root / "indicators" / "ma_explore.ipynb"
+    _write_notebook(notebook, "indicators", "ma_explore")
+    registry = discover_playbook_registry(root=root, repo_root=tmp_path)
+    definition = registry.get(PlaybookSelection("indicators", "ma_explore"))
+
+    result = execute_notebook_playbook(
+        definition,
+        params={"enabled": True, "disabled": False, "window": None},
+    )
+
+    assert result["variant_records"] == [{"id": "ma_explore", "window": None}]
+
+
 def test_playbook_registry_rejects_duplicate_ids(tmp_path) -> None:
     root = tmp_path / "research" / "playbooks"
     _write_notebook(root / "indicators" / "one.ipynb", "indicators", "duplicate")
     _write_notebook(root / "indicators" / "two.ipynb", "indicators", "duplicate")
 
     with pytest.raises(PlaybookRegistryError, match="duplicate playbook id"):
+        discover_playbook_registry(root=root, repo_root=tmp_path)
+
+
+def test_playbook_registry_rejects_ids_that_lane_configs_cannot_reference(tmp_path) -> None:
+    root = tmp_path / "research" / "playbooks"
+    _write_notebook(root / "indicators" / "bad.ipynb", "indicators", "bad/id")
+
+    with pytest.raises(PlaybookRegistryError, match="letters, numbers"):
         discover_playbook_registry(root=root, repo_root=tmp_path)
 
 

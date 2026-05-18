@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import math
 import os
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.cli_support.output import safe_message
+from research.aegis_research.market_data.loading import assert_public_metadata_safe
 
 PLAY_ARTIFACT_SCHEMA_VERSION = "play_artifacts.v1"
 MAX_LEADERBOARD_ROWS = 10
@@ -65,6 +67,8 @@ class PlayArtifactStore:
             "leaderboard_summary": leaderboard["summary"],
             "metadata": dict(metadata or {}),
         }
+        _assert_public_payload_safe(summary)
+        _assert_public_payload_safe(leaderboard)
 
         with self._locked():
             staging.mkdir(parents=True, exist_ok=False)
@@ -72,9 +76,7 @@ class PlayArtifactStore:
             _write_json(staging / "leaderboard.json", leaderboard)
             _assert_required_files(staging, ("summary.json", "leaderboard.json"))
             backup_path = self._backup_existing(attempt_id) if backup and self.last_run_dir.exists() else None
-            if self.last_run_dir.exists():
-                shutil.rmtree(self.last_run_dir)
-            staging.replace(self.last_run_dir)
+            self._publish_last_run(staging, attempt_id)
 
         return {
             "attempt_id": attempt_id,
@@ -110,15 +112,19 @@ class PlayArtifactStore:
     @contextmanager
     def _locked(self):
         self.play_dir.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(self.lock_path, os.O_CREAT | os.O_WRONLY)
         try:
-            descriptor = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError as error:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            os.close(descriptor)
             raise PlayArtifactError("another play run is already writing last-run artifacts") from error
         try:
+            os.ftruncate(descriptor, 0)
             os.write(descriptor, _now_iso().encode())
-            os.close(descriptor)
             yield
         finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
             self.lock_path.unlink(missing_ok=True)
 
     def _backup_existing(self, attempt_id: str) -> Path:
@@ -128,6 +134,23 @@ class PlayArtifactStore:
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.last_run_dir, backup_path)
         return backup_path
+
+    def _publish_last_run(self, staging: Path, attempt_id: str) -> None:
+        previous = self.play_dir / f".previous-{attempt_id}"
+        if previous.exists():
+            raise PlayArtifactError("play previous-last-run staging target already exists")
+        if self.last_run_dir.exists():
+            self.last_run_dir.replace(previous)
+        try:
+            staging.replace(self.last_run_dir)
+        except BaseException:
+            if previous.exists():
+                if self.last_run_dir.exists():
+                    shutil.rmtree(self.last_run_dir)
+                previous.replace(self.last_run_dir)
+            raise
+        if previous.exists():
+            shutil.rmtree(previous)
 
 
 def build_play_leaderboard(
@@ -154,7 +177,7 @@ def build_play_leaderboard(
         row["_sort_value"] = _sort_value(row, direction=direction, rank_by=rank_by)
         rows.append(row)
 
-    reverse = True if rank_by == "baseline_delta" else direction == "desc"
+    reverse = rank_by == "baseline_delta" or direction == "desc"
     rows = sorted(rows, key=lambda row: (row["_sort_value"], row["variant_id"]), reverse=reverse)
     rows = [{key: value for key, value in row.items() if key != "_sort_value"} for row in rows]
     attempted = len(variant_records)
@@ -192,6 +215,7 @@ def _leaderboard_row(
         "primary_metric_value": value,
         "indicator_source": record.get("indicator_source"),
         "indicator_id": record.get("indicator_id"),
+        "indicators": record.get("indicators", []),
         "params": record.get("params", {}),
         "portfolio": record.get("portfolio", {}),
     }
@@ -232,7 +256,16 @@ def _finite_float(value: Any) -> float | None:
 def _sort_value(row: Mapping[str, Any], *, direction: str, rank_by: str) -> float:
     if rank_by == "baseline_delta" and row.get("direction_adjusted_delta") is not None:
         return float(row["direction_adjusted_delta"])
+    if rank_by == "baseline_delta" and direction == "asc":
+        return -float(row["primary_metric_value"])
     return float(row["primary_metric_value"])
+
+
+def _assert_public_payload_safe(payload: Mapping[str, Any]) -> None:
+    try:
+        assert_public_metadata_safe(payload)
+    except ValueError as error:
+        raise PlayArtifactError("play artifact payload contains unsafe public metadata") from error
 
 
 def _variant_id(record: Mapping[str, Any], index: int) -> str:

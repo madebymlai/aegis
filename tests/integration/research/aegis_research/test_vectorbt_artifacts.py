@@ -241,7 +241,7 @@ def test_remote_native_artifact_scans_resolved_remote_secrets(
             output_dir=str(tmp_path),
             model=ModelConfig(**model_config_dict(min_train_samples=50)),
             data=DataConfig(
-                source="yfinance",
+                source="yf",
                 symbols=["SYN"],
                 start="2020-01-01",
                 end="2021-01-01",

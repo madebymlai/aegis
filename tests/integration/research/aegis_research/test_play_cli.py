@@ -50,6 +50,49 @@ def test_play_cli_unknown_playbook_fails_before_artifacts(
     assert not (tmp_path / "runs" / "play").exists()
 
 
+def test_play_cli_reports_failed_attempt_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_failing_notebook(tmp_path / "research/playbooks/indicators/bad.ipynb", "bad")
+    config_path = _write_play_config(tmp_path, "bad")
+
+    assert cli.main(["play", str(config_path), "--json"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    failure_artifact = payload["error"]["details"]["failure_artifact"]
+    assert failure_artifact["failure_path"].startswith("runs/play/failed/")
+    assert (tmp_path / failure_artifact["failure_path"]).is_file()
+    assert not (tmp_path / "runs" / "play" / "last-run").exists()
+
+
+def test_play_cli_rejects_playbook_that_does_not_support_requested_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_notebook(
+        tmp_path / "research/playbooks/indicators/labels_only.ipynb",
+        "labels_only",
+        stages=["labels"],
+    )
+    config_path = _write_play_config(tmp_path, "labels_only")
+
+    assert cli.main(["play", str(config_path), "--json"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert "does not support stages" in payload["error"]["message"]
+    assert payload["error"]["details"]["failure_artifact"]["failure_path"].startswith(
+        "runs/play/failed/"
+    )
+    assert not (tmp_path / "runs" / "play" / "last-run").exists()
+
+
 def test_playbook_roots_ignore_local_notebooks_except_readme_placeholders() -> None:
     for family in ("labels", "indicators", "strategies"):
         assert Path(f"research/playbooks/{family}/README.md").is_file()
@@ -101,7 +144,7 @@ def _write_play_config(tmp_path: Path, playbook_id: str) -> Path:
     return path
 
 
-def _write_notebook(path: Path, playbook_id: str) -> None:
+def _write_notebook(path: Path, playbook_id: str, *, stages: list[str] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     nb = nbformat.v4.new_notebook(
         metadata={
@@ -109,7 +152,7 @@ def _write_notebook(path: Path, playbook_id: str) -> None:
                 "family": "indicators",
                 "id": playbook_id,
                 "version": "1.0.0",
-                "stages": ["indicators"],
+                "stages": stages or ["indicators"],
                 "accepted_inputs": ["close"],
                 "indicator_family": "ma",
                 "result_schema": "playbook_result.v1",
@@ -124,5 +167,24 @@ def _write_notebook(path: Path, playbook_id: str) -> None:
                 "'metrics': {'total_return_pct': 1.5}}]}"
             )
         ],
+    )
+    nbformat.write(nb, path)
+
+
+def _write_failing_notebook(path: Path, playbook_id: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    nb = nbformat.v4.new_notebook(
+        metadata={
+            "aegis_playbook": {
+                "family": "indicators",
+                "id": playbook_id,
+                "version": "1.0.0",
+                "stages": ["indicators"],
+                "accepted_inputs": ["close"],
+                "indicator_family": "ma",
+                "result_schema": "playbook_result.v1",
+            }
+        },
+        cells=[nbformat.v4.new_code_cell("raise RuntimeError('boom token=secret')")],
     )
     nbformat.write(nb, path)

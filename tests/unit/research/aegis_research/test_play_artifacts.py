@@ -60,6 +60,23 @@ def test_build_play_leaderboard_records_baseline_delta_direction() -> None:
     assert row["direction_adjusted_delta"] == pytest.approx(0.1)
 
 
+def test_baseline_delta_fallback_preserves_ascending_metric_direction() -> None:
+    leaderboard = build_play_leaderboard(
+        [
+            {"variant_id": "higher_drawdown", "metrics": {"max_drawdown_pct": 0.4}},
+            {"variant_id": "lower_drawdown", "metrics": {"max_drawdown_pct": 0.1}},
+        ],
+        metric="max_drawdown_pct",
+        direction="asc",
+        rank_by="baseline_delta",
+    )
+
+    assert [row["variant_id"] for row in leaderboard["rows"]] == [
+        "lower_drawdown",
+        "higher_drawdown",
+    ]
+
+
 def test_play_artifact_success_writes_last_run_and_replaces_after_validation(tmp_path) -> None:
     store = PlayArtifactStore(tmp_path)
     first = store.write_success(
@@ -123,3 +140,49 @@ def test_failed_play_attempt_does_not_replace_previous_last_run(tmp_path) -> Non
     failure_summary = json.loads((tmp_path / failure["failure_path"]).read_text())
     assert "<tmp>" in failure_summary["message"]
     assert "token=" not in failure_summary["message"]
+
+
+def test_play_artifact_success_rejects_unsafe_public_payload(tmp_path) -> None:
+    store = PlayArtifactStore(tmp_path)
+
+    with pytest.raises(PlayArtifactError, match="unsafe public metadata"):
+        store.write_success(
+            play_name="unsafe",
+            ranking={"metric": "total_return_pct", "direction": "desc", "rank_by": "primary_metric"},
+            variant_records=[
+                {
+                    "variant_id": "winner",
+                    "metrics": {"total_return_pct": 1.0},
+                    "params": {"api_token": "super-secret-token"},
+                }
+            ],
+        )
+
+    assert not (tmp_path / "play" / "last-run").exists()
+
+
+def test_failed_last_run_publish_restores_previous_success(tmp_path, monkeypatch) -> None:
+    store = PlayArtifactStore(tmp_path)
+    store.write_success(
+        play_name="successful",
+        ranking={"metric": "total_return_pct", "direction": "desc", "rank_by": "primary_metric"},
+        variant_records=[{"variant_id": "winner", "metrics": {"total_return_pct": 1.0}}],
+    )
+    original_replace = type(tmp_path).replace
+
+    def failing_replace(self, target):
+        if self.parent.name == ".staging" and target == tmp_path / "play" / "last-run":
+            raise RuntimeError("publish failed")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(type(tmp_path), "replace", failing_replace)
+
+    with pytest.raises(RuntimeError, match="publish failed"):
+        store.write_success(
+            play_name="failed_publish",
+            ranking={"metric": "total_return_pct", "direction": "desc", "rank_by": "primary_metric"},
+            variant_records=[{"variant_id": "new", "metrics": {"total_return_pct": 2.0}}],
+        )
+
+    summary = json.loads((tmp_path / "play" / "last-run" / "summary.json").read_text())
+    assert summary["play_name"] == "successful"

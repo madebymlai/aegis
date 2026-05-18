@@ -176,7 +176,7 @@ def test_failed_run_diagnostic_redacts_config_secret_values(
             output_dir=str(tmp_path),
             model=ModelConfig(**model_config_dict(min_train_samples=50)),
             data=DataConfig(
-                source="yfinance",
+                source="yf",
                 symbols=["SYN"],
                 start="2020-01-01",
                 end="2021-01-01",

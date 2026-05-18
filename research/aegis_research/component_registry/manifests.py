@@ -16,11 +16,11 @@ from research.aegis_research.component_registry.contracts import (
     LabelManifest,
     StrategyManifest,
 )
+from research.aegis_research.configuration.schema import LABEL_TARGET_ROLES
 
 COMPONENT_MANIFEST_NAME = "COMPONENT_MANIFEST"
 COMPONENT_CALLABLE_NAME = "COMPONENT_CALLABLE"
 COMPONENT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-LABEL_TARGET_ROLES = {"supervised_target", "regime"}
 LABEL_TARGET_KINDS = {"binary_classification", "continuous", "regime", "sparse_event"}
 STRATEGY_SIGNAL_OUTPUTS = {"entries", "exits"}
 STRATEGY_FORBIDDEN_KEYS = {

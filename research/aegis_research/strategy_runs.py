@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,12 @@ from research.aegis_research.component_registry import (
     ComponentSelection,
     FrozenComponentRegistry,
 )
-from research.aegis_research.config import ResolvedLaneConfig, SignalConfig, to_builtin
+from research.aegis_research.config import (
+    ResolvedLaneConfig,
+    SignalConfig,
+    SourceRefConfig,
+    to_builtin,
+)
 from research.aegis_research.data import load_market_data_result
 from research.aegis_research.play_artifacts import build_play_leaderboard
 from research.aegis_research.portfolios import simulate_portfolio
@@ -57,6 +63,7 @@ def run_strategy_sweep(
     run_id: str | None = None,
     parent_run_id: str | None = None,
     supersedes_run_id: str | None = None,
+    on_run_started: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     config = resolved_config.config
     if config.lane != "run":
@@ -76,22 +83,30 @@ def run_strategy_sweep(
         "component_registry_fingerprint": component_registry.fingerprint,
     }
     recorder.persist()
+    if on_run_started is not None:
+        on_run_started(_run_refs(recorder))
 
     try:
         data_result = load_market_data_result(config.data, required_features=("Close", "Open"))
         data_result.assert_usable()
         close = data_result.feature("Close")
         open_prices = data_result.feature("Open")
+        indicators, indicator_evidence = _resolve_indicator_refs(
+            config.indicator_refs,
+            component_registry=component_registry,
+            close=close,
+        )
 
         definition = component_registry.get(ComponentSelection("strategies", config.strategy.id))
         strategy_callable = definition.load_callable()
         bundle = StrategyInputBundle(
             close=close,
-            indicators={},
+            indicators=indicators,
             params=config.strategy.params,
             metadata={
                 "strategy_id": config.strategy.id,
                 "component_source_hash": definition.identity.source_hash,
+                "indicator_ids": [item["id"] for item in indicator_evidence],
             },
         )
         signal_result = validate_strategy_output(strategy_callable(bundle), bundle)
@@ -111,6 +126,7 @@ def run_strategy_sweep(
             "strategy_source": "component",
             "strategy_id": config.strategy.id,
             "component_source_hash": definition.identity.source_hash,
+            "indicators": indicator_evidence,
             "metrics": metrics,
             "params": config.strategy.params,
             "portfolio": to_builtin(asdict(config.portfolio)),
@@ -131,6 +147,7 @@ def run_strategy_sweep(
                 "version": definition.manifest.version,
                 "source_hash": definition.identity.source_hash,
             },
+            "indicators": indicator_evidence,
             "leaderboard": leaderboard,
             "signal_diagnostics": signal_result.diagnostics,
             "portfolio_diagnostics": portfolio.diagnostics,
@@ -138,20 +155,76 @@ def run_strategy_sweep(
         _write_strategy_artifact(recorder, payload)
         recorder.mark_run_completed()
         return {
-            "run_id": recorder.manifest.run_id,
-            "run_dir": str(recorder.run_dir),
-            "manifest_path": str(recorder.manifest_path),
-            "status": recorder.manifest.status,
-            "started_at": recorder.manifest.started_at,
-            "finished_at": recorder.manifest.finished_at,
+            **_run_refs(recorder),
             "lane": "run",
             "evidence_type": "strategy_sweep",
             "strategy_artifact_id": "strategy.run",
             "leaderboard": leaderboard,
         }
+    except KeyboardInterrupt:
+        recorder.mark_run_interrupted(diagnostic={"error_type": "KeyboardInterrupt", "message": "interrupted"})
+        raise
     except Exception as error:
         recorder.mark_run_failed(diagnostic={"error_type": type(error).__name__, "message": str(error)[:1000]})
         raise
+
+
+def _resolve_indicator_refs(
+    refs: list[SourceRefConfig],
+    *,
+    component_registry: FrozenComponentRegistry,
+    close: pd.DataFrame,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    indicators: dict[str, Any] = {}
+    evidence: list[dict[str, Any]] = []
+    for ref in refs:
+        if ref.source != "component":
+            raise ValueError("run indicator refs must use source: component")
+        component_ids = component_registry.ids("indicators") if ref.id == "all" else (ref.id,)
+        for component_id in component_ids:
+            if component_id in indicators:
+                raise ValueError(f"duplicate indicator component ref: {component_id}")
+            definition = component_registry.get(ComponentSelection("indicators", component_id))
+            output = definition.load_callable()(close, params=ref.params)
+            indicators[component_id] = _validate_indicator_output(output, close, component_id)
+            evidence.append(
+                {
+                    "source": "component",
+                    "id": component_id,
+                    "version": definition.manifest.version,
+                    "source_hash": definition.identity.source_hash,
+                    "params": ref.params,
+                }
+            )
+    return indicators, evidence
+
+
+def _validate_indicator_output(output: Any, close: pd.DataFrame, component_id: str) -> Any:
+    frame = output.to_frame() if isinstance(output, pd.Series) else output
+    if isinstance(frame, pd.DataFrame):
+        _assert_indicator_frame(frame, close, component_id)
+        return frame
+    result_frame = getattr(output, "frame", None)
+    if isinstance(result_frame, pd.DataFrame):
+        _assert_indicator_frame(result_frame, close, component_id)
+        return output
+    raise TypeError(f"indicator component {component_id!r} must return a pandas object or IndicatorResult")
+
+
+def _assert_indicator_frame(frame: pd.DataFrame, close: pd.DataFrame, component_id: str) -> None:
+    if not frame.index.equals(close.index):
+        raise ValueError(f"indicator component {component_id!r} has misaligned timestamps")
+
+
+def _run_refs(recorder) -> dict[str, Any]:
+    return {
+        "run_id": recorder.manifest.run_id,
+        "run_dir": str(recorder.run_dir),
+        "manifest_path": str(recorder.manifest_path),
+        "status": recorder.manifest.status,
+        "started_at": recorder.manifest.started_at,
+        "finished_at": recorder.manifest.finished_at,
+    }
 
 
 def validate_strategy_output(output: Any, bundle: StrategyInputBundle) -> StrategySignalResult:

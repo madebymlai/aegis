@@ -1,6 +1,6 @@
 # Components
 
-Promoted components are reviewed Python files under `research/components/{labels,indicators,strategies}/`. Reproducible `run` and `train` configs select them by explicit source ref:
+Promoted components are reviewed Python files under `research/components/{labels,indicators,strategies}/`. Reproducible `run` configs select strategy and indicator components by explicit source ref:
 
 ```yaml
 strategy:
@@ -22,4 +22,6 @@ YAML never imports Python, names modules, embeds formulas, or points at arbitrar
 
 Indicator components should use the same VectorBT-native helper path as built-ins (`vbt.MA`, `vbt.RSI`, custom `vbt.IF`, primitive returns/volatility normalization). Label components should preserve the native label path (`vbt.FIXLB`, `vbt.TRENDLB`, `vbt.PIVOTLB`) and target lineage. Strategy components should emit aligned `entries` and `exits` only; portfolio sizing, costs, direction, and timing remain config-owned.
 
-Local component files are ignored by git by default except the placeholder READMEs. Ignored files are not secret management; do not store credentials in local research code.
+`aerd train` currently executes the existing ML experiment config contract. `lane: train` component label refs are validated as a forward contract, but component-backed training execution is not enabled yet.
+
+Local component files are ignored by git by default except the placeholder READMEs. Ignored files are not secret management; do not store credentials in local research code. Public component examples live under `docs/examples/components/`.

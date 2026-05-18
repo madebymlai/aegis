@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from research.aegis_research.configuration.schema import PLAY_STAGES
+
 PlaybookFamily = Literal["labels", "indicators", "strategies"]
 PLAYBOOK_FAMILIES: tuple[PlaybookFamily, ...] = ("labels", "indicators", "strategies")
-PLAYBOOK_STAGES = {"labels", "indicators", "strategies"}
+PLAYBOOK_STAGES = PLAY_STAGES
 
 
 class PlaybookRegistryError(ValueError):

@@ -12,6 +12,12 @@ from research.aegis_research.playbook_registry import (
 from research.aegis_research.playbook_registry.registry import execute_notebook_playbook
 
 
+class PlayExecutionError(RuntimeError):
+    def __init__(self, message: str, *, failure_refs: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.failure_refs = failure_refs
+
+
 def run_play(
     resolved_config: ResolvedLaneConfig,
     *,
@@ -27,6 +33,11 @@ def run_play(
     store = PlayArtifactStore(config.output_dir)
     results: list[dict[str, Any]] = []
     playbooks: list[dict[str, Any]] = []
+    ranking = {
+        "metric": play_config.ranking.metric,
+        "direction": play_config.ranking.direction,
+        "rank_by": play_config.ranking.rank_by,
+    }
     try:
         for ref in play_config.indicator_refs:
             if ref.source != "playbook":
@@ -45,11 +56,7 @@ def run_play(
             )
         artifact_refs = store.write_success(
             play_name=config.name,
-            ranking={
-                "metric": play_config.ranking.metric,
-                "direction": play_config.ranking.direction,
-                "rank_by": play_config.ranking.rank_by,
-            },
+            ranking=ranking,
             variant_records=_variant_records(results),
             backup=play_config.backup_last_run,
             metadata={"playbooks": playbooks},
@@ -57,8 +64,8 @@ def run_play(
     except PlaybookRegistryError:
         raise
     except Exception as error:
-        store.write_failed_attempt(config.name, error)
-        raise
+        failure_refs = store.write_failed_attempt(config.name, error)
+        raise PlayExecutionError(str(error), failure_refs=failure_refs) from error
 
     return {
         "lane": "play",
@@ -67,11 +74,7 @@ def run_play(
         "playbooks": playbooks,
         "results": results,
         "artifacts": artifact_refs,
-        "ranking": {
-            "metric": play_config.ranking.metric,
-            "direction": play_config.ranking.direction,
-            "rank_by": play_config.ranking.rank_by,
-        },
+        "ranking": ranking,
     }
 
 
@@ -87,8 +90,14 @@ def _assert_stage_supported(
 
 def _variant_records(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    for result in results:
-        variants = result.get("variant_records", [])
-        if isinstance(variants, list):
-            records.extend(item for item in variants if isinstance(item, dict))
+    for result_index, result in enumerate(results):
+        variants = result.get("variant_records")
+        if not isinstance(variants, list):
+            raise TypeError(f"playbook result {result_index} variant_records must be a list")
+        for variant_index, item in enumerate(variants):
+            if not isinstance(item, dict):
+                raise TypeError(
+                    f"playbook result {result_index} variant_records[{variant_index}] must be a mapping"
+                )
+            records.append(item)
     return records

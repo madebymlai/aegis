@@ -13,6 +13,7 @@ from nbclient import NotebookClient
 
 from research.aegis_research.component_registry import ComponentSelection, FrozenComponentRegistry
 from research.aegis_research.component_registry.contracts import ComponentRegistryError
+from research.aegis_research.component_registry.manifests import COMPONENT_ID_RE
 from research.aegis_research.playbook_registry.contracts import (
     PLAYBOOK_FAMILIES,
     PLAYBOOK_STAGES,
@@ -89,8 +90,9 @@ def execute_notebook_playbook(
     timeout: int = 60,
 ) -> dict[str, Any]:
     notebook = nbformat.read(definition.file_path, as_version=4)
+    params_json = json.dumps(dict(params or {}), sort_keys=True)
     setup = nbformat.v4.new_code_cell(
-        "AEGIS_PLAYBOOK_PARAMS = " + json.dumps(dict(params or {}), sort_keys=True)
+        "import json\n" f"AEGIS_PLAYBOOK_PARAMS = json.loads({params_json!r})"
     )
     capture = nbformat.v4.new_code_cell(
         "import json\n"
@@ -160,6 +162,10 @@ def _build_manifest(
     playbook_id = metadata.get("id")
     if not isinstance(playbook_id, str) or not playbook_id:
         raise PlaybookRegistryError(f"{path}: playbook id must be a non-empty string")
+    if not COMPONENT_ID_RE.fullmatch(playbook_id) or playbook_id in {".", ".."}:
+        raise PlaybookRegistryError(
+            f"{path}: playbook id must contain only letters, numbers, dots, underscores, and hyphens"
+        )
     version = metadata.get("version")
     if not isinstance(version, str) or not version:
         raise PlaybookRegistryError(f"{path}: playbook version must be a non-empty string")

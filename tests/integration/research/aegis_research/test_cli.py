@@ -78,7 +78,7 @@ def test_json_post_manifest_failure_includes_safe_run_refs(
     config_path = _write_config(
         tmp_path,
         data={
-            "source": "yfinance",
+            "source": "yf",
             "symbols": ["SYN"],
             "start": "2020-01-01",
             "end": "2021-01-01",

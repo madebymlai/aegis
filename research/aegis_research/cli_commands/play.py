@@ -10,7 +10,7 @@ from research.aegis_research.cli_support.errors import ConfigCliError, Execution
 from research.aegis_research.cli_support.output import CommandResult, safe_path, write_success
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.config import ConfigValidationError, load_lane_config
-from research.aegis_research.play import run_play
+from research.aegis_research.play import PlayExecutionError, run_play
 from research.aegis_research.playbook_registry import (
     PlaybookRegistryError,
     discover_playbook_registry,
@@ -47,6 +47,11 @@ def handle_play(args: argparse.Namespace, *, json_mode: bool, **streams: Any) ->
         result = run_play(resolved, playbook_registry=playbook_registry)
     except PlaybookRegistryError as error:
         raise ConfigCliError(str(error)) from error
+    except PlayExecutionError as error:
+        raise ExecutionFailureError(
+            str(error),
+            details={"failure_artifact": error.failure_refs},
+        ) from error
     except Exception as error:
         raise ExecutionFailureError(str(error)) from error
 

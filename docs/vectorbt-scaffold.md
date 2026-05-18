@@ -61,7 +61,7 @@ Validation is strict by default:
 
 Remote provider configs keep scaffold-owned fields first-class (`source`, `symbols`, `start`, `end`, `timeframe`) and put provider-specific VectorBT kwargs behind named passthrough maps. Public artifacts store redacted config evidence only; runtime-expanded secret values are never serialized.
 
-Market data sources are selected from the approved in-code adapter registry: `synthetic`, `csv`, `yfinance`, `binance`, and `ccxt`. Configs cannot import arbitrary provider classes. Tests can use a controlled fake-adapter seam to exercise future provider shapes without adding a public import surface.
+Market data sources are selected from local sources (`synthetic`, `csv`) plus installed VectorBT `*Data` classes. Remote source IDs are derived from the VectorBT class name, for example `YFData` becomes `yf`, `BinanceData` becomes `binance`, and `CCXTData` becomes `ccxt`. Configs cannot import arbitrary provider classes; they can only select providers already exposed by VectorBT. Tests can use a controlled fake-adapter seam to exercise future provider shapes without adding a public import surface.
 
 Provider-native symbols are passed through as authored in `data.symbols`. The scaffold does not normalize tickers, exchange symbols, or aliases in schema v2 because hidden normalization would make evidence hard to audit.
 
@@ -81,7 +81,7 @@ CSV input supports flat OHLCV columns for one configured symbol and documented M
 
 ## Indicator Contract
 
-Training configs reference project registry ids for built-in indicators. Promoted run/play lane configs reference source refs explicitly, for example `source: component` or `source: playbook` plus an ID. They do not define inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths.
+Training configs reference project registry ids for built-in indicators. Promoted strategy `run` configs use `source: component` refs; exploratory `play` configs use `source: playbook` refs. They do not define inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths. `lane: train` component label refs are validated as a forward contract, but executable `aerd train` still uses the existing ML experiment config contract.
 
 ```yaml
 indicators:
@@ -223,9 +223,9 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 ## Components And Playbooks
 
-Promoted components live under `research/components/{labels,indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after lane validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/*_component_example.py`.
+Promoted components live under `research/components/{labels,indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after lane validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/components/*_component_example.py`.
 
-Notebook playbooks live under `research/playbooks/{labels,indicators,strategies}/` and are selected by stable ID from notebook metadata, not by path. Indicator playbook IDs represent one indicator idea/family; parameter sweeps inside that family are allowed, and a baseline may name exactly one component indicator ID. See `docs/playbooks.md` and `docs/examples/*_playbook_example.ipynb`.
+Notebook playbooks live under `research/playbooks/{labels,indicators,strategies}/` and are selected by stable ID from notebook metadata, not by path. Indicator playbook IDs represent one indicator idea/family; parameter sweeps inside that family are allowed, and a baseline may name exactly one component indicator ID. See `docs/playbooks.md` and `docs/examples/playbooks/*_playbook_example.ipynb`.
 
 ## Validation Modes
 

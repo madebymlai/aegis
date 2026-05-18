@@ -95,6 +95,83 @@ def test_strategy_run_rejects_model_training_config_with_train_guidance(tmp_path
     assert "aerd train" in str(error.value)
 
 
+def test_run_all_component_indicator_ref_still_validates_params(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(
+        _run_config(),
+        {"indicator_refs": [{"source": "component", "id": "all", "params": {"path": "x.py"}}]},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry)
+
+    assert "indicator_refs[0].params.path" in str(error.value)
+    assert "not allowed" in str(error.value)
+
+
+def test_run_all_component_indicator_ref_rejects_expanded_duplicates(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(
+        _run_config(),
+        {
+            "indicator_refs": [
+                {"source": "component", "id": "all"},
+                {"source": "component", "id": "demo.indicator"},
+            ]
+        },
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry)
+
+    assert "indicator_refs[1].id" in str(error.value)
+    assert "duplicates expanded component id" in str(error.value)
+
+
+def test_run_lane_rejects_unimplemented_failure_policy(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(_run_config(), {"failure_policy": "continue"})
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry)
+
+    assert "failure_policy" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "csv_path",
+    ["/tmp/prices.csv", "../prices.csv", "~/prices.csv", "~user/prices.csv", "C:\\prices.csv"],
+)
+def test_lane_csv_source_rejects_non_project_relative_path(
+    tmp_path: Path,
+    csv_path: str,
+) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(_train_config(), {"data": {"source": "csv", "path": csv_path}})
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry)
+
+    assert "data.path" in str(error.value)
+    assert "relative path" in str(error.value)
+
+
+def test_play_lane_rejects_component_refs_until_component_play_execution_exists(
+    tmp_path: Path,
+) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(
+        _play_config(),
+        {"play": {"indicator_refs": [{"source": "component", "id": "all"}]}},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry)
+
+    assert "play.indicator_refs[0].source" in str(error.value)
+    assert "playbook" in str(error.value)
+
+
 def test_train_rejects_strategy_sweep_config_with_missing_training_contract(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     raw = {

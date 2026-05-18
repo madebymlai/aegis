@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -101,7 +102,12 @@ def load_component_callable(definition: ComponentDefinition) -> Any:
     if spec is None or spec.loader is None:
         raise ComponentRegistryError(f"could not import component file: {definition.file_path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
     try:
         component_callable = getattr(module, definition.callable_name)
     except AttributeError as error:

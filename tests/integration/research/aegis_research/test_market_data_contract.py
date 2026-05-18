@@ -9,11 +9,16 @@ import pytest
 from research.aegis_research import data as data_module
 from research.aegis_research.config import DataConfig, LabelConfig, LabelGeneratorConfig
 from research.aegis_research.data import (
+    LOGICAL_FEATURES,
+    OHLCV_FEATURES,
+    QUALITY_HEALTHY,
+    REMOTE_DATA_CLASSES,
     MarketDataAdapterResult,
     close_from_ohlcv,
     load_market_data_result,
     required_ohlcv_features,
 )
+from research.aegis_research.market_data.sources import vbt_data_source_classes
 
 
 def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
@@ -24,6 +29,36 @@ def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
     assert {row["symbol"] for row in result.diagnostics} == {"AAA", "BBB"}
     assert result.metadata["quality"]["state"] == "healthy"
     assert close_from_ohlcv(result).shape == (10, 2)
+
+
+def test_data_facade_preserves_public_market_data_constants() -> None:
+    assert OHLCV_FEATURES == ("Open", "High", "Low", "Close", "Volume")
+    assert LOGICAL_FEATURES["close"] == "Close"
+    assert QUALITY_HEALTHY == "healthy"
+    assert "yf" in REMOTE_DATA_CLASSES
+
+
+def test_dynamic_vbt_source_discovery_uses_current_vbt_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(data_module.vbt, "DemoData", _DemoRemoteData, raising=False)
+    monkeypatch.setattr(data_module.vbt, "DemoNoPullData", object, raising=False)
+
+    source_classes = vbt_data_source_classes()
+    result = load_market_data_result(
+        DataConfig(
+            source="demo",
+            symbols=["SYN"],
+            start="2020-01-01",
+            end="2020-01-03",
+            timeframe="1D",
+        )
+    )
+
+    assert source_classes["demo"] is _DemoRemoteData
+    assert "demonopull" not in source_classes
+    assert result.quality.state == "healthy"
+    assert result.metadata["source"] == "demo"
 
 
 def test_csv_feature_map_wraps_non_standard_flat_columns(tmp_path: Path) -> None:
@@ -158,3 +193,32 @@ def test_required_features_follow_label_kind() -> None:
         "High",
         "Low",
     )
+
+
+class _DemoRemoteData:
+    def __init__(self, symbols: list[str]) -> None:
+        self.symbols = symbols
+        self.index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
+        self.features = ["Open", "High", "Low", "Close", "Volume"]
+
+    @classmethod
+    def pull(cls, symbols, **_kwargs):
+        return cls(list(symbols))
+
+    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
+        frame = pd.DataFrame(
+            {
+                "Open": [1.0, 2.0, 3.0],
+                "High": [1.1, 2.1, 3.1],
+                "Low": [0.9, 1.9, 2.9],
+                "Close": [1.0, 2.0, 3.0],
+                "Volume": [100.0, 100.0, 100.0],
+            },
+            index=self.index,
+        )
+        frame.columns = pd.MultiIndex.from_product(
+            [self.symbols, frame.columns], names=["symbol", "feature"]
+        )
+        if feature is None:
+            return frame
+        return frame.xs(feature, axis=1, level="feature")

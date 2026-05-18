@@ -122,6 +122,25 @@ def test_component_callable_loads_only_after_selection(tmp_path) -> None:
     assert definition.load_callable()() == "loadable"
 
 
+def test_component_callable_module_is_registered_while_loading(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    path = root / "indicators" / "registered.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'registered')!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "import sys\n"
+        "MODULE_REGISTERED = __name__ in sys.modules\n"
+        "def run():\n"
+        "    return MODULE_REGISTERED\n"
+    )
+
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    definition = registry.get(ComponentSelection("indicators", "registered"))
+
+    assert definition.load_callable()() is True
+
+
 def _write_component(path, family: str, component_id: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest = _manifest_for(family, component_id)
