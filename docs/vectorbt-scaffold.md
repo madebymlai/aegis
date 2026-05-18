@@ -188,6 +188,25 @@ Public artifacts and metadata are redacted. `data.metadata` is written after dat
 
 Native VectorBT artifacts are private local artifacts by default, version-sensitive, and paired with portable metadata sidecars so manifest validation does not require loading pickles. Unsafe private native persistence fails the run closed after safe public metadata has been recorded.
 
+The canonical CLI is `aerd`. Use `aerd run <experiment-config>` to train, evaluate, write artifacts, and produce the survival report through the full run pipeline. Use `aerd run <experiment-config> --json` for agent/CI automation; successful JSON is written to stdout, structured errors are written to stderr, and `manifest.json` remains the detailed artifact inventory.
+
+`aerd exp defaults set <experiment-config>` stores a private repo-scoped local default in Git-local metadata for the current worktree. It validates the config before storing the selector and never edits experiment YAML. `aerd run --json` uses that local default when no config argument is supplied. An explicit config argument always wins over a local default, and missing or stale defaults fail before run artifacts are created.
+
+Completed survival verdicts are research outcomes, not process failures. A completed `rejected` or `needs_more_evidence` report still exits `0`; automation should parse the JSON report status when it needs verdict gating.
+
+JSON error categories use stable process exits:
+
+| Category | Exit |
+|---|---:|
+| `invocation` | 2 |
+| `missing_default` | 3 |
+| `default_resolution` | 4 |
+| `default_storage` | 5 |
+| `config_validation` | 6 |
+| `execution_failure` | 10 |
+| `interrupted` | 130 |
+| `internal_error` | 1 |
+
 The CLI exposes explicit rerun intent with `--rerun-mode` and optional run lineage flags. The default creates a fresh immutable physical run. Overwrite mode creates a new superseding physical run rather than mutating prior evidence in place.
 
 ## Validation Modes

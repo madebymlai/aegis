@@ -146,6 +146,25 @@ def test_run_experiment_initializes_manifest_before_data_loading(
     assert manifest["stages"][0]["status"] == "failed"
 
 
+def test_run_experiment_marks_failed_when_run_started_callback_fails(tmp_path: Path) -> None:
+    registry = make_model_registry()
+    resolved = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
+    resolved = resolve_experiment_config(
+        replace(resolved.config, output_dir=str(tmp_path)), model_registry=registry
+    )
+
+    def fail_callback(_refs):
+        raise RuntimeError("callback failed")
+
+    with pytest.raises(RuntimeError, match="callback failed"):
+        run_experiment(resolved, run_id="callback-failed-run", on_run_started=fail_callback)
+
+    manifest = json.loads((tmp_path / "callback-failed-run" / "manifest.json").read_text())
+    assert manifest["run"]["status"] == RunStatus.FAILED
+    assert manifest["stages"][0]["id"] == "run"
+    assert manifest["stages"][0]["status"] == "failed"
+
+
 def test_failed_run_diagnostic_redacts_config_secret_values(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

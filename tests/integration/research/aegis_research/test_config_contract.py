@@ -1,4 +1,3 @@
-import sys
 import traceback
 from pathlib import Path
 from typing import ClassVar
@@ -568,23 +567,13 @@ def test_missing_model_registry_fails_before_run_directory(tmp_path: Path) -> No
 
 def test_cli_rejects_unregistered_model_before_run_directory(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     path = _write_config(
         tmp_path,
         model={**model_config_dict(), "plugin_id": "unknown.model"},
     )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["aegis-research", "run", str(path), "--run-id", "cli-missing-registry"],
-    )
-
-    with pytest.raises(SystemExit) as error:
-        cli.main()
-
-    assert error.value.code == 2
+    assert cli.main(["run", str(path), "--run-id", "cli-missing-registry"]) == 6
     assert "unknown registered model plugin id" in capsys.readouterr().err
     assert not (tmp_path / "runs" / "cli-missing-registry").exists()
 

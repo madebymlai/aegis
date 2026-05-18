@@ -70,7 +70,7 @@ def capture_run_start_evidence(
 
 
 def capture_config_evidence(config: ResolvedExperimentConfig) -> dict[str, Any]:
-    return {
+    evidence = {
         "schema_version": config.config.schema_version,
         "source_path": _sanitize_text(config.source_path) if config.source_path else None,
         "authored_config_hash": canonical_hash(config.redacted_authored_config()),
@@ -80,6 +80,12 @@ def capture_config_evidence(config: ResolvedExperimentConfig) -> dict[str, Any]:
             "visibility": ArtifactVisibility.PRIVATE,
         },
     }
+    if config.selection is not None:
+        evidence["selection"] = {
+            key: _sanitize_text(value) if isinstance(value, str) else value
+            for key, value in config.selection.manifest().items()
+        }
+    return evidence
 
 
 def capture_environment_evidence() -> dict[str, Any]:

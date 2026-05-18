@@ -328,12 +328,25 @@ class ExperimentConfig:
 
 
 @dataclass(frozen=True)
+class ConfigSelectionEvidence:
+    source: str
+    config_path: str | None = None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "config_path": self.config_path,
+        }
+
+
+@dataclass(frozen=True)
 class ResolvedExperimentConfig:
     config: ExperimentConfig
     raw_config_hash: str
     authored_config: dict[str, Any]
     source_path: str | None = None
     model_registry: FrozenModelRegistry | None = None
+    selection: ConfigSelectionEvidence | None = None
 
     def redacted_authored_config(self) -> dict[str, Any]:
         return redact_config(self.authored_config)
@@ -346,7 +359,24 @@ class ResolvedExperimentConfig:
             "schema_version": self.config.schema_version,
             "raw_config_hash": self.raw_config_hash,
             "source_path": self.source_path,
+            "selection": self.selection.manifest() if self.selection else None,
         }
+
+
+def with_config_selection(
+    config: ResolvedExperimentConfig,
+    selection: ConfigSelectionEvidence,
+    *,
+    source_path: str | None = None,
+) -> ResolvedExperimentConfig:
+    return ResolvedExperimentConfig(
+        config=config.config,
+        raw_config_hash=config.raw_config_hash,
+        authored_config=config.authored_config,
+        source_path=config.source_path if source_path is None else source_path,
+        model_registry=config.model_registry,
+        selection=selection,
+    )
 
 
 def load_experiment_config(
@@ -382,6 +412,7 @@ def resolve_experiment_config(
                 authored_config=value.authored_config,
                 source_path=value.source_path,
                 model_registry=frozen_registry,
+                selection=value.selection,
             )
         return value
 
@@ -440,6 +471,7 @@ def _build_resolved_config(
         authored_config=to_builtin(raw),
         source_path=source_path,
         model_registry=model_registry,
+        selection=None,
     )
 
 
@@ -1877,6 +1909,27 @@ def redact_text(text: str, secrets: list[str] | tuple[str, ...] = ()) -> str:
         if secret:
             redacted = redacted.replace(secret, "<redacted>")
     return SECRET_VALUE_RE.sub("<redacted>", redacted)
+
+
+def known_config_secret_values(value: Any) -> tuple[str, ...]:
+    secrets: list[str] = []
+    _collect_known_config_secret_values(value, secrets)
+    return tuple(secrets)
+
+
+def _collect_known_config_secret_values(value: Any, secrets: list[str]) -> None:
+    if isinstance(value, dict) and set(value) == {"env"}:
+        secret = os.environ.get(str(value["env"]), "")
+        if secret:
+            secrets.append(secret)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _collect_known_config_secret_values(item, secrets)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_known_config_secret_values(item, secrets)
 
 
 def to_builtin(value: Any) -> Any:

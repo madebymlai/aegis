@@ -1,7 +1,7 @@
 ---
 title: feat: Add Modular Aerd CLI Runner
 type: feat
-status: active
+status: completed
 date: 2026-05-18
 origin: docs/brainstorms/2026-05-18-cli-runner-agent-ux-contract-requirements.md
 deepened: 2026-05-18

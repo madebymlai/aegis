@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import re
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +10,7 @@ from research.aegis_research.config import (
     ConfigValidationIssue,
     ExperimentConfig,
     ResolvedExperimentConfig,
+    known_config_secret_values,
     redact_text,
     resolve_experiment_config,
 )
@@ -44,6 +45,7 @@ def run_experiment(
     run_id: str | None = None,
     parent_run_id: str | None = None,
     supersedes_run_id: str | None = None,
+    on_run_started: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, object]:
     resolved_config = resolve_experiment_config(config, model_registry=model_registry)
     if resolved_config.model_registry is None:
@@ -55,7 +57,7 @@ def run_experiment(
             ]
         )
     config = resolved_config.config
-    known_secrets = _known_config_secret_values(resolved_config.authored_config)
+    known_secrets = known_config_secret_values(resolved_config.authored_config)
     run_start_evidence = capture_run_start_evidence(resolved_config, repo_path=Path.cwd())
     recorder = RunStore(config.output_dir).start_run(
         run_label=config.name,
@@ -69,8 +71,10 @@ def run_experiment(
         key: value for key, value in run_start_evidence.items() if key != "config"
     }
     recorder.manifest.evidence["seed_policy"] |= apply_seed_policy(config.data.seed)
-    recorder.persist()
     try:
+        recorder.persist()
+        if on_run_started is not None:
+            on_run_started(_run_refs(recorder))
         artifacts = ExperimentArtifactWriter(recorder)
         artifacts.write_config_artifacts(resolved_config)
 
@@ -185,6 +189,17 @@ def run_experiment(
         raise
 
 
+def _run_refs(recorder) -> dict[str, Any]:
+    return {
+        "run_id": recorder.manifest.run_id,
+        "run_dir": str(recorder.run_dir),
+        "manifest_path": str(recorder.manifest_path),
+        "status": recorder.manifest.status,
+        "started_at": recorder.manifest.started_at,
+        "finished_at": recorder.manifest.finished_at,
+    }
+
+
 def _redacted_diagnostic(error: Exception, known_secrets: tuple[str, ...]) -> dict[str, str]:
     message = _redact_nonportable_paths(redact_text(str(error), known_secrets))
     return {
@@ -222,24 +237,3 @@ def _pre_split_compatibility_failure(
 def _redact_nonportable_paths(value: str) -> str:
     value = value.replace(str(Path.home()), "~")
     return re.sub(r"(?<!\w)/(?:[^\s'\"]+/)*[^\s'\"]+", "<path>", value)
-
-
-def _known_config_secret_values(value: Any) -> tuple[str, ...]:
-    secrets: list[str] = []
-    _collect_config_secret_values(value, secrets)
-    return tuple(secrets)
-
-
-def _collect_config_secret_values(value: Any, secrets: list[str]) -> None:
-    if isinstance(value, dict) and set(value) == {"env"}:
-        secret = os.environ.get(str(value["env"]), "")
-        if secret:
-            secrets.append(secret)
-        return
-    if isinstance(value, dict):
-        for item in value.values():
-            _collect_config_secret_values(item, secrets)
-        return
-    if isinstance(value, list):
-        for item in value:
-            _collect_config_secret_values(item, secrets)

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "aegis-rd"
 version = "0.1.0"
@@ -14,6 +18,12 @@ dependencies = [
   "vectorbtpro",
   "yfinance>=0.2.56",
 ]
+
+[project.scripts]
+aerd = "research.aegis_research.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["research*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

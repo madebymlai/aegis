@@ -1,51 +1,85 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from collections.abc import Sequence
+from typing import TextIO
 
-from research.aegis_research.config import ConfigValidationError, load_experiment_config
-from research.aegis_research.experiments import run_experiment
-from research.aegis_research.model_plugins import make_default_model_registry
-from research.aegis_research.provenance.recorder import RerunMode
+from research.aegis_research.cli_commands import exp, run
+from research.aegis_research.cli_support.errors import (
+    CliError,
+    InternalCliError,
+    InterruptedCliError,
+    InvocationError,
+    ParserExit,
+)
+from research.aegis_research.cli_support.output import json_requested, write_error
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(prog="aegis-research")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+class AerdArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise InvocationError(message)
 
-    run_parser = subparsers.add_parser("run", help="Run an experiment config")
-    run_parser.add_argument("config", help="Path to experiment YAML")
-    run_parser.add_argument(
-        "--rerun-mode",
-        choices=[RerunMode.NEW, RerunMode.DUPLICATE, RerunMode.FORK, RerunMode.OVERWRITE],
-        default=RerunMode.NEW,
-        help="Explicit run creation mode",
-    )
-    run_parser.add_argument("--run-id", help="Optional physical run id")
-    run_parser.add_argument("--parent-run-id", help="Parent run id for forked runs")
-    run_parser.add_argument("--supersedes-run-id", help="Prior run id superseded by overwrite mode")
+    def exit(self, status: int = 0, message: str | None = None) -> None:
+        if message:
+            self._print_message(message, sys.stderr)
+        raise ParserExit(status, message)
 
-    args = parser.parse_args()
-    if args.command == "run":
-        registry = make_default_model_registry()
-        try:
-            config = load_experiment_config(args.config, model_registry=registry)
-            result = run_experiment(
-                config,
-                rerun_mode=args.rerun_mode,
-                run_id=args.run_id,
-                parent_run_id=args.parent_run_id,
-                supersedes_run_id=args.supersedes_run_id,
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    return _main(args, stdout=sys.stdout, stderr=sys.stderr)
+
+
+def _main(argv: Sequence[str], *, stdout: TextIO, stderr: TextIO) -> int:
+    json_mode = json_requested(argv)
+    command_name: str | None = None
+    try:
+        parser = build_parser()
+        parsed = parser.parse_args(list(argv))
+        command_name = getattr(parsed, "command_name", None)
+        handler = getattr(parsed, "handler", None)
+        if handler is None:
+            return write_error(
+                InvocationError("missing command"),
+                command=command_name,
+                json_mode=json_mode,
+                stderr=stderr,
             )
-        except ConfigValidationError as error:
-            parser.error(str(error))
-        report = result.get("report", {})
-        print(f"Run: {result['run_dir']}")
-        print(f"Status: {result['status']}")
-        if report:
-            print("Reason:")
-            for reason in report["reasons"]:
-                print(f"- {reason}")
+        return handler(parsed, json_mode=json_mode, stdout=stdout, stderr=stderr)
+    except ParserExit as exit_error:
+        return exit_error.status
+    except KeyboardInterrupt:
+        return write_error(
+            InterruptedCliError("command interrupted"),
+            command=command_name,
+            json_mode=json_mode,
+            stderr=stderr,
+        )
+    except CliError as error:
+        return write_error(error, command=command_name, json_mode=json_mode, stderr=stderr)
+    except Exception as error:
+        return write_error(
+            InternalCliError(str(error)),
+            command=command_name,
+            json_mode=json_mode,
+            stderr=stderr,
+        )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = AerdArgumentParser(prog="aerd")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Emit structured JSON where supported",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    run.register(subparsers)
+    exp.register(subparsers)
+    return parser
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
