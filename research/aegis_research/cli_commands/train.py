@@ -61,9 +61,7 @@ def handle_train(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -
     try:
         if _is_lane_train_config(Path(args.config)):
             load_lane_config(args.config, expected_lane="train")
-            raise ConfigCliError(
-                "train lane source refs are validated, but component-backed training execution is not enabled yet"
-            )
+            _raise_component_backed_train_not_enabled()
         resolved = load_experiment_config(args.config, model_registry=registry)
         resolved = with_config_selection(
             resolved,
@@ -118,6 +116,12 @@ def handle_train(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -
 def _is_lane_train_config(path: Path) -> bool:
     raw = yaml.safe_load(path.read_text())
     return isinstance(raw, dict) and raw.get("lane") == "train"
+
+
+def _raise_component_backed_train_not_enabled() -> None:
+    raise ConfigCliError(
+        "train lane source refs are validated, but component-backed training execution is not enabled yet"
+    )
 
 
 def _human_train_lines(result: dict[str, Any]) -> tuple[str, ...]:

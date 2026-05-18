@@ -11,13 +11,13 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from research.aegis_research.indicator_registry import indicator_registry
 from research.aegis_research.component_registry import (
     ComponentRegistryError,
     ComponentSelection,
     FrozenComponentRegistry,
     discover_component_registry,
 )
+from research.aegis_research.indicator_registry import indicator_registry
 from research.aegis_research.model_registry import (
     FrozenModelRegistry,
     ModelRegistry,

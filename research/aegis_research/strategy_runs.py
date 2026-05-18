@@ -156,7 +156,7 @@ def run_strategy_sweep(
 
 def validate_strategy_output(output: Any, bundle: StrategyInputBundle) -> StrategySignalResult:
     if not isinstance(output, dict):
-        raise ValueError("strategy output must be a mapping")
+        raise TypeError("strategy output must be a mapping")
     forbidden = sorted(set(output) & STRATEGY_OUTPUT_FORBIDDEN_KEYS)
     if forbidden:
         raise ValueError(f"strategy output must not contain portfolio fields: {forbidden}")
@@ -179,7 +179,7 @@ def validate_strategy_output(output: Any, bundle: StrategyInputBundle) -> Strate
 def _signal_frame(value: Any, close: pd.DataFrame, name: str) -> pd.DataFrame:
     frame = value.to_frame() if isinstance(value, pd.Series) else value
     if not isinstance(frame, pd.DataFrame):
-        raise ValueError(f"strategy output {name} must be a pandas DataFrame")
+        raise TypeError(f"strategy output {name} must be a pandas DataFrame")
     if not frame.index.equals(close.index):
         raise ValueError(f"strategy output {name} has misaligned timestamps")
     if list(map(str, frame.columns)) != list(map(str, close.columns)):

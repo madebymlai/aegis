@@ -11,7 +11,10 @@ from research.aegis_research.cli_support.output import CommandResult, safe_path,
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.config import ConfigValidationError, load_lane_config
 from research.aegis_research.play import run_play
-from research.aegis_research.playbook_registry import PlaybookRegistryError, discover_playbook_registry
+from research.aegis_research.playbook_registry import (
+    PlaybookRegistryError,
+    discover_playbook_registry,
+)
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
