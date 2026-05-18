@@ -565,7 +565,7 @@ def test_missing_model_registry_fails_before_run_directory(tmp_path: Path) -> No
     assert not (tmp_path / "missing-registry-run").exists()
 
 
-def test_cli_rejects_unregistered_model_before_run_directory(
+def test_cli_rejects_unregistered_model_before_train_run_directory(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -573,7 +573,7 @@ def test_cli_rejects_unregistered_model_before_run_directory(
         tmp_path,
         model={**model_config_dict(), "plugin_id": "unknown.model"},
     )
-    assert cli.main(["run", str(path), "--run-id", "cli-missing-registry"]) == 6
+    assert cli.main(["train", str(path), "--run-id", "cli-missing-registry"]) == 6
     assert "unknown registered model plugin id" in capsys.readouterr().err
     assert not (tmp_path / "runs" / "cli-missing-registry").exists()
 

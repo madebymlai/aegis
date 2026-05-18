@@ -7,7 +7,6 @@ from typing import Any
 
 import yaml
 
-from research.aegis_research.cli_support.defaults import DefaultSelection, resolve_default
 from research.aegis_research.cli_support.errors import (
     ConfigCliError,
     ExecutionFailureError,
@@ -15,26 +14,18 @@ from research.aegis_research.cli_support.errors import (
 )
 from research.aegis_research.cli_support.output import (
     CommandResult,
-    run_success_payload,
     safe_path,
     write_success,
 )
-from research.aegis_research.config import (
-    ConfigSelectionEvidence,
-    ConfigValidationError,
-    known_config_secret_values,
-    load_experiment_config,
-    redact_text,
-    with_config_selection,
-)
-from research.aegis_research.experiments import run_experiment
-from research.aegis_research.model_plugins import make_default_model_registry
+from research.aegis_research.component_registry import discover_component_registry
+from research.aegis_research.config import ConfigValidationError, load_lane_config, redact_text
 from research.aegis_research.provenance.recorder import RerunMode
+from research.aegis_research.strategy_runs import run_strategy_sweep
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = subparsers.add_parser("run", help="Run an experiment config")
-    parser.add_argument("config", nargs="?", help="Path to experiment YAML")
+    parser = subparsers.add_parser("run", help="Run a promoted strategy sweep config")
+    parser.add_argument("config", nargs="?", help="Path to strategy-run YAML")
     parser.add_argument(
         "--json",
         action="store_true",
@@ -54,50 +45,47 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 
 def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> int:
-    registry = make_default_model_registry()
-    selection = _select_config(args.config)
-    run_refs: dict[str, Any] = {}
+    if args.config is None:
+        raise ConfigCliError("aerd run requires an explicit strategy config; use aerd train for ML training")
+    config_path = Path(args.config)
+    if _looks_like_model_training_config(config_path):
+        raise ConfigCliError("model training configs are no longer accepted by aerd run; use aerd train")
 
+    run_refs: dict[str, Any] = {}
     try:
-        resolved = load_experiment_config(selection.config_path, model_registry=registry)
-        resolved = with_config_selection(
-            resolved,
-            ConfigSelectionEvidence(
-                source=selection.source,
-                config_path=selection.display_path,
-            ),
-            source_path=selection.display_path,
+        component_registry = discover_component_registry()
+        resolved = load_lane_config(
+            config_path,
+            component_registry=component_registry,
+            expected_lane="run",
         )
     except ConfigValidationError as error:
         raise ConfigCliError(str(error)) from error
     except (OSError, yaml.YAMLError) as error:
         raise ConfigCliError(str(error)) from error
 
-    known_secrets = known_config_secret_values(resolved.authored_config)
     try:
-        result = run_experiment(
+        result = run_strategy_sweep(
             resolved,
+            component_registry=component_registry,
             rerun_mode=args.rerun_mode,
             run_id=args.run_id,
             parent_run_id=args.parent_run_id,
             supersedes_run_id=args.supersedes_run_id,
-            on_run_started=run_refs.update,
         )
+        run_refs.update(result)
     except KeyboardInterrupt as error:
         raise InterruptedCliError(
-            "experiment run interrupted",
+            "strategy run interrupted",
             run_refs=_refreshed_run_refs(run_refs),
         ) from error
     except Exception as error:
-        raise ExecutionFailureError(
-            redact_text(str(error), known_secrets),
-            run_refs=_refreshed_run_refs(run_refs),
-        ) from error
+        raise ExecutionFailureError(redact_text(str(error)), run_refs=_refreshed_run_refs(run_refs)) from error
 
     return write_success(
         CommandResult(
             command="run",
-            payload=run_success_payload(result, selection=selection.summary()),
+            payload=_run_payload(result, selection={"source": "explicit", "config_path": safe_path(config_path)}),
             human_lines=_human_run_lines(result),
         ),
         json_mode=json_mode,
@@ -105,27 +93,40 @@ def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> 
     )
 
 
-def _select_config(config: str | None) -> DefaultSelection:
-    if config is None:
-        return resolve_default()
-    path = Path(config)
-    return DefaultSelection(
-        config_path=path,
-        display_path=safe_path(path) or str(config),
-        source="explicit",
-    )
+def _looks_like_model_training_config(path: Path) -> bool:
+    raw = yaml.safe_load(path.read_text())
+    return isinstance(raw, dict) and raw.get("lane") != "run" and "model" in raw
+
+
+def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[str, Any]:
+    leaderboard = result.get("leaderboard", {})
+    return {
+        "lane": "run",
+        "evidence_type": "strategy_sweep",
+        "selection": selection,
+        "run": {
+            "id": result.get("run_id"),
+            "status": result.get("status"),
+            "run_dir": safe_path(result.get("run_dir")),
+            "manifest_path": safe_path(result.get("manifest_path")),
+            "started_at": result.get("started_at"),
+            "finished_at": result.get("finished_at"),
+        },
+        "artifacts": {"strategy_artifact_id": result.get("strategy_artifact_id")},
+        "leaderboard": {
+            "summary": leaderboard.get("summary"),
+            "top_rows": leaderboard.get("rows", [])[:10],
+        },
+    }
 
 
 def _human_run_lines(result: dict[str, Any]) -> tuple[str, ...]:
-    report = result.get("report", {})
-    lines = [f"Run: {safe_path(result.get('run_dir'))}", f"Status: {result.get('status')}"]
-    if isinstance(report, dict):
-        lines.append(f"Verdict: {report.get('status')}")
-        reasons = report.get("reasons", [])
-        if reasons:
-            lines.append("Reason:")
-            lines.extend(f"- {reason}" for reason in reasons)
-    return tuple(lines)
+    return (
+        f"Run: {safe_path(result.get('run_dir'))}",
+        "Lane: run",
+        "Evidence: strategy_sweep",
+        f"Status: {result.get('status')}",
+    )
 
 
 def _refreshed_run_refs(run_refs: dict[str, Any]) -> dict[str, Any]:

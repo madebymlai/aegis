@@ -37,7 +37,7 @@ def test_defaults_set_json_persists_git_local_selector(
     assert "provider_kwargs" not in json.dumps(state)
 
 
-def test_run_uses_default_from_nested_directory(
+def test_run_refuses_legacy_default_from_nested_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -50,28 +50,18 @@ def test_run_uses_default_from_nested_directory(
     assert cli.main(["exp", "defaults", "set", str(config_path)]) == 0
     capsys.readouterr()
 
-    captured: dict[str, Any] = {}
-
-    def fake_run(config, **kwargs):
-        captured["config"] = config
-        return _fake_run_result(nested, kwargs.get("run_id") or "default-run")
-
-    monkeypatch.setattr("research.aegis_research.cli_commands.run.run_experiment", fake_run)
     monkeypatch.chdir(nested)
 
-    assert cli.main(["run", "--json", "--run-id", "default-run"]) == 0
+    assert cli.main(["run", "--json", "--run-id", "default-run"]) == 6
 
     output = capsys.readouterr()
-    payload = json.loads(output.out)
-    resolved = captured["config"]
-    assert isinstance(resolved, ResolvedExperimentConfig)
-    assert resolved.selection is not None
-    assert resolved.selection.source == "local_default"
-    assert resolved.selection.config_path == "experiment.yaml"
-    assert payload["selection"]["source"] == "local_default"
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "explicit strategy config" in payload["error"]["message"]
+    assert not (repo / "runs").exists()
 
 
-def test_default_backed_run_records_selection_in_manifest(
+def test_default_backed_run_is_not_consumed_by_strategy_lane(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -82,17 +72,12 @@ def test_default_backed_run_records_selection_in_manifest(
     assert cli.main(["exp", "defaults", "set", str(config_path)]) == 0
     capsys.readouterr()
 
-    assert cli.main(["run", "--json", "--run-id", "default-selection-run"]) == 0
-    capsys.readouterr()
-
-    manifest = json.loads((repo / "runs" / "default-selection-run" / "manifest.json").read_text())
-    assert manifest["config"]["selection"] == {
-        "source": "local_default",
-        "config_path": "experiment.yaml",
-    }
+    assert cli.main(["run", "--json", "--run-id", "default-selection-run"]) == 6
+    assert json.loads(capsys.readouterr().err)["error"]["category"] == "config_validation"
+    assert not (repo / "runs" / "default-selection-run").exists()
 
 
-def test_explicit_config_ignores_stale_default(
+def test_explicit_train_config_ignores_stale_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -112,9 +97,9 @@ def test_explicit_config_ignores_stale_default(
         captured["config"] = config
         return _fake_run_result(repo, kwargs.get("run_id") or "explicit-run")
 
-    monkeypatch.setattr("research.aegis_research.cli_commands.run.run_experiment", fake_run)
+    monkeypatch.setattr("research.aegis_research.cli_commands.train.run_training", fake_run)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "explicit-run"]) == 0
+    assert cli.main(["train", str(config_path), "--json", "--run-id", "explicit-run"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     resolved = captured["config"]
@@ -124,7 +109,7 @@ def test_explicit_config_ignores_stale_default(
     assert payload["selection"]["source"] == "explicit"
 
 
-def test_missing_default_fails_before_run_artifacts(
+def test_bare_run_requires_explicit_strategy_config_before_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -132,12 +117,13 @@ def test_missing_default_fails_before_run_artifacts(
     repo = _git_repo(tmp_path / "repo")
     monkeypatch.chdir(repo)
 
-    assert cli.main(["run", "--json"]) == 3
+    assert cli.main(["run", "--json"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
     assert output.out == ""
-    assert payload["error"]["category"] == "missing_default"
+    assert payload["error"]["category"] == "config_validation"
+    assert "explicit strategy config" in payload["error"]["message"]
     assert not (repo / "runs").exists()
 
 
@@ -222,8 +208,8 @@ def test_default_storage_is_isolated_per_git_worktree(
     capsys.readouterr()
 
     monkeypatch.chdir(second)
-    assert cli.main(["run", "--json"]) == 3
-    assert json.loads(capsys.readouterr().err)["error"]["category"] == "missing_default"
+    assert cli.main(["run", "--json"]) == 6
+    assert json.loads(capsys.readouterr().err)["error"]["category"] == "config_validation"
 
 
 @pytest.mark.parametrize(
@@ -235,7 +221,7 @@ def test_default_storage_is_isolated_per_git_worktree(
         json.dumps({"schema_version": 1, "selected_config": "missing.yaml"}),
     ],
 )
-def test_corrupt_or_stale_default_state_fails_before_run_artifacts(
+def test_bare_run_ignores_corrupt_or_stale_default_state_before_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -247,11 +233,11 @@ def test_corrupt_or_stale_default_state_fails_before_run_artifacts(
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(state_text + "\n")
 
-    assert cli.main(["run", "--json"]) == 4
+    assert cli.main(["run", "--json"]) == 6
 
     output = capsys.readouterr()
     assert output.out == ""
-    assert json.loads(output.err)["error"]["category"] == "default_resolution"
+    assert json.loads(output.err)["error"]["category"] == "config_validation"
     assert not (repo / "runs").exists()
 
 

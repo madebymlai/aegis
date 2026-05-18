@@ -45,7 +45,7 @@ def test_json_invocation_error_is_structured(
     assert payload["error"]["category"] == "invocation"
 
 
-def test_run_json_executes_valid_config_and_rejected_verdict_exits_zero(
+def test_train_json_executes_valid_config_and_rejected_verdict_exits_zero(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -53,12 +53,13 @@ def test_run_json_executes_valid_config_and_rejected_verdict_exits_zero(
     monkeypatch.chdir(tmp_path)
     config_path = _write_config(tmp_path, report={"min_oos_sharpe": 999.0})
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "cli-json-run"]) == 0
+    assert cli.main(["train", str(config_path), "--json", "--run-id", "cli-json-run"]) == 0
 
     output = capsys.readouterr()
     assert output.err == ""
     payload = json.loads(output.out)
     assert payload["status"] == "success"
+    assert payload["lane"] == "train"
     assert payload["selection"]["source"] == "explicit"
     assert payload["run"]["id"] == "cli-json-run"
     assert payload["run"]["status"] == RunStatus.COMPLETED
@@ -93,7 +94,7 @@ def test_json_post_manifest_failure_includes_safe_run_refs(
         fail_after_manifest,
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "post-manifest"]) == 10
+    assert cli.main(["train", str(config_path), "--json", "--run-id", "post-manifest"]) == 10
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -122,7 +123,7 @@ def test_top_level_keyboard_interrupt_json_is_structured(
     assert payload["error"]["category"] == "interrupted"
 
 
-def test_run_keyboard_interrupt_json_preserves_run_refs(
+def test_train_keyboard_interrupt_json_preserves_run_refs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -141,9 +142,9 @@ def test_run_keyboard_interrupt_json_preserves_run_refs(
         )
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("research.aegis_research.cli_commands.run.run_experiment", interrupt_run)
+    monkeypatch.setattr("research.aegis_research.cli_commands.train.run_training", interrupt_run)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "interrupted-run"]) == 130
+    assert cli.main(["train", str(config_path), "--json", "--run-id", "interrupted-run"]) == 130
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -152,7 +153,7 @@ def test_run_keyboard_interrupt_json_preserves_run_refs(
     assert payload["run"]["id"] == "interrupted-run"
 
 
-def test_run_records_explicit_config_selection_in_manifest(
+def test_train_records_explicit_config_selection_in_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -160,7 +161,7 @@ def test_run_records_explicit_config_selection_in_manifest(
     monkeypatch.chdir(tmp_path)
     config_path = _write_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "selection-run"]) == 0
+    assert cli.main(["train", str(config_path), "--json", "--run-id", "selection-run"]) == 0
 
     capsys.readouterr()
     manifest = json.loads((tmp_path / "runs" / "selection-run" / "manifest.json").read_text())
