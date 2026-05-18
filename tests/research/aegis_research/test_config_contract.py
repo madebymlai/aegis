@@ -566,7 +566,10 @@ def test_cli_rejects_unregistered_model_before_run_directory(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    path = _write_config(tmp_path, model=model_config_dict())
+    path = _write_config(
+        tmp_path,
+        model={**model_config_dict(), "plugin_id": "unknown.model"},
+    )
     monkeypatch.setattr(
         sys,
         "argv",

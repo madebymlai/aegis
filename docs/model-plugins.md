@@ -6,7 +6,7 @@ Aegis model execution is plugin-only. Experiment YAML selects a stable `model.pl
 
 ```yaml
 model:
-  plugin_id: examples.sklearn_logistic
+  plugin_id: aegis.sklearn_logistic
   min_train_samples: 100
   params:
     max_iter: 1000
@@ -18,6 +18,8 @@ Model training is split-local batch validation in v1. There are no user-selectab
 ## Registration Contract
 
 Trusted code constructs a `ModelRegistry`, registers `ModelPluginDefinition` objects, freezes the registry, and passes that snapshot into config resolution or `run_experiment`.
+
+Core Aegis ships a default registry with the baseline `aegis.sklearn_logistic` plugin. Use `make_default_model_registry()` from `research.aegis_research.model_plugins` in Python runners; the CLI registers this default registry automatically.
 
 Plugins declare:
 
@@ -47,4 +49,4 @@ Probability output must be selected by class mapping. A plugin may return class-
 
 Use `export_model_bundle(run_dir, model_artifact_id=..., output_dir=...)` to produce an immutable prediction-only bundle for another project. The bundle includes public compatibility metadata plus a trusted native state copy. The consuming project must register reviewed plugin code and validate metadata before loading native state.
 
-See `examples/model_plugins/sklearn_logistic_plugin.ipynb` for a runnable explicit-registration example and `examples/model_plugins/README.md` for a pure-Python adaptation path.
+See `docs/examples/model_plugins/sklearn_logistic_plugin.ipynb` for a runnable explicit-registration example and `docs/examples/model_plugins/README.md` for a pure-Python adaptation path.

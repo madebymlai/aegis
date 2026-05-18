@@ -4,7 +4,7 @@ import argparse
 
 from research.aegis_research.config import ConfigValidationError, load_experiment_config
 from research.aegis_research.experiments import run_experiment
-from research.aegis_research.model_registry import empty_model_registry
+from research.aegis_research.model_plugins import make_default_model_registry
 from research.aegis_research.provenance.recorder import RerunMode
 
 
@@ -26,7 +26,7 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "run":
-        registry = empty_model_registry().freeze()
+        registry = make_default_model_registry()
         try:
             config = load_experiment_config(args.config, model_registry=registry)
             result = run_experiment(

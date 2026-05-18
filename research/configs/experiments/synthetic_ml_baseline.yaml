@@ -70,7 +70,7 @@ split:
   max_public_artifact_bytes: 5000000
 
 model:
-  plugin_id: tests.sklearn_logistic
+  plugin_id: aegis.sklearn_logistic
   min_train_samples: 100
   params:
     max_iter: 1000

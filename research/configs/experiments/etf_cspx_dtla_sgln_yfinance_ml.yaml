@@ -8,8 +8,8 @@ data:
   start: "2020-01-01"
   end: "2026-05-18"
   timeframe: "1D"
-  missing_index: raise
-  missing_columns: raise
+  missing_index: drop
+  missing_columns: drop
   tz_convert: UTC
   silence_warnings: false
 
@@ -73,7 +73,7 @@ split:
   max_public_artifact_bytes: 5000000
 
 model:
-  plugin_id: tests.sklearn_logistic
+  plugin_id: aegis.sklearn_logistic
   min_train_samples: 100
   params:
     max_iter: 1000

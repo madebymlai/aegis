@@ -14,6 +14,7 @@ from research.aegis_research.model_export import (
     ModelExportError,
     export_model_bundle,
 )
+from research.aegis_research.model_plugins import SKLEARN_LOGISTIC_PLUGIN_ID
 from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
 from tests.research.aegis_research.model_plugin_fixtures import make_model_registry
 
@@ -35,7 +36,7 @@ def test_model_export_bundle_contains_prediction_contract(tmp_path: Path) -> Non
     assert payload["model_metadata"]["probability"]["output_name"] == "positive_class_probability"
     assert payload["model_metadata"]["probability"]["calibrated"] is False
     assert set(payload["model_metadata"]["diagnostics"]) == {"dataset"}
-    assert payload["consumer_contract"]["must_register_plugin_id"] == "tests.sklearn_logistic"
+    assert payload["consumer_contract"]["must_register_plugin_id"] == SKLEARN_LOGISTIC_PLUGIN_ID
     assert payload["consumer_contract"]["native_state_loading_is_trusted_code"] is True
     assert (bundle_dir / "native" / "model_state.pkl").exists()
     assert "/home/" not in json.dumps(payload)

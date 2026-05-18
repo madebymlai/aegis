@@ -10,3 +10,5 @@
 For pure Python, copy the plugin class and `build_registry()` function from the notebook into a normal module, import that module from your runner script, then call `resolve_experiment_config(..., model_registry=registry)` before `run_experiment(...)`.
 
 Do not put import paths, estimator definitions, or plugin code in YAML.
+
+For ordinary Aegis runs, prefer the built-in `aegis.sklearn_logistic` plugin from `research.aegis_research.model_plugins` instead of copying this example.
