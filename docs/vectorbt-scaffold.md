@@ -143,8 +143,11 @@ signals:
   execution_timing: next_open
 
 portfolio:
+  entry_budget: 1.0
   direction: longonly
 ```
+
+`portfolio.entry_budget` is required. It states the total portfolio-value share available to executable entry signals on a bar. If two symbols emit executable entries on the same bar with `entry_budget: 0.6`, each receives `0.3` `valuepercent` sizing. Raw signals that cannot execute in the current split, such as terminal `next_open` signals or market-index gap signals, remain diagnostic evidence but receive no generated size.
 
 `long_only_hysteresis` uses strict threshold comparisons. A probability greater than `long_entry_threshold` emits a raw entry state. A probability less than `long_exit_threshold` emits a raw exit state. Equality with either threshold is part of the hold band and emits no raw signal. Legacy `signals.long_threshold` and `signals.exit_threshold` are rejected so configs must state the action-specific fields.
 
@@ -154,7 +157,7 @@ Default portfolio execution uses `price="nextopen"` with an aligned Open panel a
 
 The only accepted v1 timing modes are `next_open` and explicit `same_close`. `same_close` records the research override and does not require Open. `next_close`, custom timing modes, and valid-price skipping are deferred until separate contracts pin their artifact semantics.
 
-Portfolio simulation stays array-based through `vbt.Portfolio.from_signals`. The scaffold passes only long-relevant resolved settings into VBT and public portfolio diagnostics: `direction: longonly`, accumulation disabled, long-signal conflict handling set to `ignore`, short-side conflict/opposite-entry settings marked `not_applicable_long_only_v1`, one-order-per-bar limitation noted, execution timing, terminal non-executable counts, order counts, and trade counts. Private native portfolios remain local artifacts with public metadata sidecars; reviewers should be able to audit the signal/portfolio contract from public JSON and CSV artifacts without loading VBT pickles.
+Portfolio simulation stays array-based through `vbt.Portfolio.from_signals`. The scaffold generates the `valuepercent` size panel internally from executable entry states, uses one shared cash pool across all configured symbols with `cash_sharing=True` and `group_by=True`, and applies `call_seq="auto"` so sells can be ordered before buys inside the shared group. This is still event-style signal execution: entries open exposure and exits close exposure; existing positions are not automatically resized into equal weights, ranked top-N allocations, or target weights. VectorBT automatic call sequencing uses predetermined prices and is not a custom path-dependent execution engine. Public portfolio diagnostics record these sizing, grouping, timing, cost, order-count, trade-count, and caveat fields. Private native portfolios remain local artifacts with public metadata sidecars; reviewers should be able to audit the signal/portfolio contract from public JSON and CSV artifacts without loading VBT pickles.
 
 Quality states are fail-fast:
 
@@ -209,7 +212,7 @@ split:
 
 Purged validation passes explicit prediction and evaluation time `Series` into `vbt.Splitter.from_purged_kfold`. `purge_td` is added to evaluation times when purging overlapping training samples; `embargo_td` excludes training predictions too close after the latest test evaluation time. Neither setting replaces concrete label evaluation times.
 
-Decision-grade in this scaffold means label-window purging and split/set identity were proven. It does not certify feature causality, portfolio execution timing, or strategy profitability. The report records `decision_grade_scope: label_window_purging`, keeps feature causality marked unchecked, and treats current aggregate metrics as descriptive summaries; per-split test metrics remain the decision evidence.
+Decision-grade in this scaffold means label-window purging and split/set identity were proven. It does not certify feature causality, portfolio execution timing, or strategy profitability. The report records `decision_grade_scope: label_window_purging`, keeps feature causality marked unchecked, and treats current aggregate metrics as descriptive summaries; per-split test metrics remain the decision evidence. Portfolio headline metrics are shared-cash group metrics, not means of independent per-symbol portfolios, and metrics artifacts record `freq`, `year_freq`, benchmark status, and metric scope.
 
 Purged validation writes one child artifact set per split: model, train/test probabilities, train/test raw threshold-state signals, train/test signal diagnostics, train/test portfolio diagnostics, private train/test portfolio artifacts, train/test metrics, and metadata. Aggregate probability, raw signal, signal diagnostic, portfolio diagnostic, metric, and report artifacts link back to those child artifacts. There is no generic top-level `artifacts/model.joblib` for split validation because it would imply deployment readiness.
 
@@ -289,7 +292,7 @@ Configs that request non-purged split kinds fail at config validation. Purged ru
 ## VectorBT PRO Notes
 
 - Use approved `YFData`, `BinanceData`, or `CCXTData` adapters for real fetches once an experiment needs external data.
-- For schema v2, `Portfolio.from_signals` sizing accepts `amount`, `value`, `percent`, `percent100`, `valuepercent`, and `valuepercent100`; target size types are intentionally rejected.
+- For schema v2, public portfolio sizing is `portfolio.entry_budget`; the baseline `Portfolio.from_signals` path resolves internal `valuepercent` sizing. Public `size`, `size_type`, and target-allocation sizing are rejected until a separate allocation-mode contract exists.
 - Portfolio direction is fixed to `longonly` in schema v2 while signals consume only `positive_class_probability`; `shortonly` and `both` are rejected until a future side-specific signal contract exists.
 - `TRENDLB` config accepts `binary`, `binary_cont`, `binary_cont_sat`, `pct_change`, and `pct_change_norm`; only `binary` is compatible with the current binary classifier target path.
 - Keep high-cardinality parameter sweeps inside VectorBT indicator/portfolio/splitter objects instead of Python loops where possible.

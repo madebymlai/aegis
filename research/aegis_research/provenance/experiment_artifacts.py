@@ -22,6 +22,7 @@ from research.aegis_research.provenance.manifest import (
 )
 from research.aegis_research.provenance.native import NativeArtifactWriter
 from research.aegis_research.provenance.recorder import RunRecorder
+from research.aegis_research.reports import METRICS_SCHEMA_VERSION
 from research.aegis_research.signals import SIGNAL_DIAGNOSTICS_SCHEMA_VERSION
 from research.aegis_research.splits import ValidationSplitsResult
 from research.aegis_research.validation import (
@@ -387,7 +388,7 @@ class ExperimentArtifactWriter:
                 producer_stage="validation",
                 path=f"{directory}/metrics_{set_name}.json",
                 payload=metrics,
-                schema_version="metrics.v1",
+                schema_version=METRICS_SCHEMA_VERSION,
                 upstream_artifact_ids=[portfolio_diagnostic_id],
             )
             metric_ids.append(metric_id)
@@ -473,7 +474,7 @@ class ExperimentArtifactWriter:
             producer_stage="validation",
             path="split_metrics.csv",
             frame=validation.split_metrics,
-            schema_version="split_metrics.v1",
+            schema_version="split_metrics.v2",
             upstream_artifact_ids=split_metric_ids,
         )
 
@@ -485,7 +486,7 @@ class ExperimentArtifactWriter:
             producer_stage="report",
             path="survival_report.json",
             payload=report,
-            schema_version="survival_report.v2",
+            schema_version="survival_report.v3",
             upstream_artifact_ids=[
                 "validation.split_metrics",
                 "splits.evidence",

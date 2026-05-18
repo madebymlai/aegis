@@ -1,7 +1,72 @@
 from __future__ import annotations
 
-from research.aegis_research.config import REPORT_STATUS_NEEDS_MORE_EVIDENCE, ReportConfig
-from research.aegis_research.reports import build_survival_report
+import pandas as pd
+import pytest
+from vectorbtpro import vbt
+
+from research.aegis_research.config import (
+    REPORT_STATUS_NEEDS_MORE_EVIDENCE,
+    PortfolioConfig,
+    ReportConfig,
+    SignalConfig,
+)
+from research.aegis_research.portfolios import simulate_portfolio
+from research.aegis_research.reports import build_survival_report, portfolio_metrics
+
+
+def test_portfolio_metrics_use_shared_cash_group_scope() -> None:
+    index = pd.date_range("2024-01-01", periods=5)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0, 14.0], "B": [20.0, 21.0, 22.0, 23.0, 24.0]},
+        index=index,
+    )
+    entries = pd.DataFrame(
+        {"A": [True, False, False, False, False], "B": [True, False, False, False, False]},
+        index=index,
+    )
+    exits = pd.DataFrame(False, index=index, columns=close.columns)
+    simulation = simulate_portfolio(
+        close,
+        entries,
+        exits,
+        PortfolioConfig(entry_budget=0.6, fees=0, slippage=0),
+        SignalConfig(execution_timing="same_close"),
+    )
+
+    metrics = portfolio_metrics(simulation.portfolio, ReportConfig(freq="1D", year_freq="252D"))
+
+    assert metrics["metric_scope"] == "shared_cash_group"
+    assert metrics["metric_assumptions"] == {
+        "scope": "shared_cash_group",
+        "scope_detail": "one shared cash group across configured symbols",
+        "freq": "1D",
+        "year_freq": "252D",
+        "benchmark_status": "none",
+        "benchmark_source": None,
+    }
+    assert metrics["total_return_pct"] == pytest.approx(18.0)
+    assert metrics["per_symbol"]["total_return_pct"]["A"] == pytest.approx(12.0)
+    assert metrics["per_symbol"]["total_return_pct"]["B"] == pytest.approx(6.0)
+
+
+def test_portfolio_metrics_fail_fast_without_single_shared_cash_group() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    close = pd.DataFrame({"A": [10.0, 11.0, 12.0], "B": [20.0, 21.0, 22.0]}, index=index)
+    entries = pd.DataFrame({"A": [True, False, False], "B": [True, False, False]}, index=index)
+    exits = pd.DataFrame(False, index=index, columns=close.columns)
+    pf = vbt.Portfolio.from_signals(
+        close=close,
+        entries=entries,
+        exits=exits,
+        init_cash=10_000,
+        size=0.5,
+        size_type="valuepercent",
+        fees=0,
+        slippage=0,
+    )
+
+    with pytest.raises(ValueError, match="exactly one group"):
+        portfolio_metrics(pf, ReportConfig())
 
 
 def test_non_decision_grade_validation_cannot_survive_by_metrics() -> None:

@@ -8,11 +8,22 @@ from vectorbtpro import vbt
 
 from research.aegis_research.config import PortfolioConfig, SignalConfig
 
-PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v1"
+PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v2"
+VBT_PORTFOLIO_FACTORY = "Portfolio.from_signals"
+VBT_RESOLVED_SIZE_TYPE = "valuepercent"
 VBT_LONG_SIGNAL_SETTINGS = {
     "accumulate": False,
     "upon_long_conflict": "ignore",
 }
+VBT_SHARED_CASH_SETTINGS = {
+    "cash_sharing": True,
+    "group_by": True,
+    "call_seq": "auto",
+}
+VBT_CALL_SEQUENCE_CAVEAT = (
+    "VectorBT automatic call sequencing sorts approximate order value using predetermined "
+    "prices; it is not a custom path-dependent execution engine."
+)
 VBT_SHORT_SIDE_SETTINGS_NOT_APPLICABLE = {
     "upon_short_conflict": "not_applicable_long_only_v1",
     "upon_dir_conflict": "not_applicable_long_only_v1",
@@ -52,6 +63,9 @@ def simulate_portfolio(
         simulation_exits,
         non_executable_diagnostics,
     )
+    size = _entry_size_frame(simulation_entries, config.entry_budget)
+    _assert_same_index("generated size", close, size)
+    _assert_same_columns("generated size", close, size)
     pf = vbt.Portfolio.from_signals(
         close=close,
         entries=simulation_entries,
@@ -59,10 +73,11 @@ def simulate_portfolio(
         init_cash=config.init_cash,
         fees=config.fees,
         slippage=config.slippage,
-        size=config.size,
-        size_type=config.size_type,
+        size=size,
+        size_type=VBT_RESOLVED_SIZE_TYPE,
         direction=config.direction,
         **VBT_LONG_SIGNAL_SETTINGS,
+        **VBT_SHARED_CASH_SETTINGS,
         **timing_kwargs,
     )
     return PortfolioSimulationResult(
@@ -74,6 +89,7 @@ def simulate_portfolio(
             exits,
             simulation_entries,
             simulation_exits,
+            size,
             config,
             execution_diagnostics,
         ),
@@ -130,6 +146,7 @@ def _portfolio_diagnostics(
     exits: pd.DataFrame,
     simulation_entries: pd.DataFrame,
     simulation_exits: pd.DataFrame,
+    size: pd.DataFrame,
     config: PortfolioConfig,
     execution_diagnostics: dict[str, Any],
 ) -> dict[str, Any]:
@@ -137,14 +154,36 @@ def _portfolio_diagnostics(
         "schema_version": PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION,
         "execution": execution_diagnostics,
         "vbt_settings": {
+            "factory": VBT_PORTFOLIO_FACTORY,
             "direction": config.direction,
+            "size_type": VBT_RESOLVED_SIZE_TYPE,
+            "cash_sharing": VBT_SHARED_CASH_SETTINGS["cash_sharing"],
+            "group_by": VBT_SHARED_CASH_SETTINGS["group_by"],
+            "call_seq": VBT_SHARED_CASH_SETTINGS["call_seq"],
+            "call_sequence_semantics": "sell_before_buy_within_shared_cash_group",
+            "call_sequence_caveat": VBT_CALL_SEQUENCE_CAVEAT,
+            "fees": config.fees,
+            "slippage": config.slippage,
             **VBT_LONG_SIGNAL_SETTINGS,
             "one_order_per_bar": True,
         },
         "contract": {
             "direction_scope": "long_only_v1",
+            "allocation_mode": "event_style_signals",
+            "entry_budget": config.entry_budget,
+            "entry_budget_interpretation": (
+                "total portfolio-value share split across executable same-bar entries"
+            ),
+            "rebalances_existing_positions": False,
             "not_applicable_vbt_settings": dict(VBT_SHORT_SIDE_SETTINGS_NOT_APPLICABLE),
         },
+        "grouping": {
+            "cash_sharing": VBT_SHARED_CASH_SETTINGS["cash_sharing"],
+            "group_by": VBT_SHARED_CASH_SETTINGS["group_by"],
+            "group_count": 1,
+            "group_scope": "all_symbols_single_cash_pool",
+        },
+        "sizing": _sizing_summary(size, simulation_entries, config.entry_budget),
         "shape": {
             "rows": len(close.index),
             "symbols": [str(column) for column in close.columns],
@@ -206,6 +245,39 @@ def _simulation_signals(
     )
 
 
+def _entry_size_frame(entries: pd.DataFrame, entry_budget: float) -> pd.DataFrame:
+    active_entries = entries.sum(axis=1)
+    per_entry = pd.Series(0.0, index=entries.index)
+    active_rows = active_entries > 0
+    per_entry.loc[active_rows] = entry_budget / active_entries.loc[active_rows]
+    return entries.astype(float).mul(per_entry, axis=0)
+
+
+def _sizing_summary(
+    size: pd.DataFrame,
+    entries: pd.DataFrame,
+    entry_budget: float,
+) -> dict[str, Any]:
+    active_entries = entries.sum(axis=1)
+    nonzero_count = int(active_entries.sum())
+    nonzero_sizes = entry_budget / active_entries[active_entries > 0]
+    return {
+        "entry_budget": entry_budget,
+        "size_type": VBT_RESOLVED_SIZE_TYPE,
+        "budget_basis": "portfolio_value",
+        "budget_split": "equally_across_executable_same_bar_entries",
+        "active_entry_rows": int((active_entries > 0).sum()),
+        "max_entries_per_row": int(active_entries.max()) if len(active_entries) else 0,
+        "nonzero_size_cells": nonzero_count,
+        "min_nonzero_valuepercent": (
+            float(nonzero_sizes.min()) if len(nonzero_sizes) else None
+        ),
+        "max_nonzero_valuepercent": (
+            float(nonzero_sizes.max()) if len(nonzero_sizes) else None
+        ),
+    }
+
+
 def _next_open_executable_mask(
     index: pd.Index,
     columns: pd.Index,
@@ -238,13 +310,17 @@ def _broadcast_mask(mask: pd.Series, columns: pd.Index) -> pd.DataFrame:
 
 
 def portfolio_record_counts(pf: vbt.Portfolio) -> dict[str, Any]:
-    order_counts = _count_map(pf.orders.count())
-    trade_counts = _count_map(pf.trades.count())
+    group_order_counts = _count_map(pf.orders.count())
+    group_trade_counts = _count_map(pf.trades.count())
+    symbol_order_counts = _count_map(pf.orders.count(group_by=False))
+    symbol_trade_counts = _count_map(pf.trades.count(group_by=False))
     return {
-        "order_count": _sum_counts(order_counts),
-        "trade_count": _sum_counts(trade_counts),
-        "orders_per_symbol": order_counts,
-        "trades_per_symbol": trade_counts,
+        "order_count": _sum_counts(group_order_counts),
+        "trade_count": _sum_counts(group_trade_counts),
+        "orders_per_group": group_order_counts,
+        "trades_per_group": group_trade_counts,
+        "orders_per_symbol": symbol_order_counts,
+        "trades_per_symbol": symbol_trade_counts,
     }
 
 

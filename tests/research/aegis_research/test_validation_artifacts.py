@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from research.aegis_research.config import load_experiment_config
@@ -14,7 +15,11 @@ from research.aegis_research.indicators import build_indicator_result, build_mod
 from research.aegis_research.labels import build_label_result
 from research.aegis_research.models import target_model_compatibility
 from research.aegis_research.splits import build_validation_splits_result
-from research.aegis_research.validation import _decision_grade, evaluate_validation_splits
+from research.aegis_research.validation import (
+    _aggregate_metrics,
+    _decision_grade,
+    evaluate_validation_splits,
+)
 from tests.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
@@ -27,6 +32,10 @@ def test_validation_result_exposes_complete_split_child_shape() -> None:
     assert result.validation_metadata["split_metadata"]["purging_applied"] is True
     assert result.validation_metadata["portfolio_execution_timing_checked"] is True
     assert result.validation_metadata["signal_policy"]["name"] == "long_only_hysteresis"
+    assert result.validation_metadata["portfolio_metric_assumptions"]["scope"] == (
+        "shared_cash_group"
+    )
+    assert result.validation_metadata["portfolio_metric_assumptions"]["benchmark_status"] == "none"
     assert result.signal_diagnostics["splits"]
     assert result.portfolio_diagnostics["splits"]
     for split in result.split_results:
@@ -51,6 +60,11 @@ def test_validation_result_exposes_complete_split_child_shape() -> None:
         assert split.metadata["portfolios"]["test"]["execution"]["timing"] == "next_open"
         assert split.metadata["sets"]["train"]["rows"] > 0
         assert split.metadata["sets"]["test"]["rows"] > 0
+        assert split.test_metrics["metric_scope"] == "shared_cash_group"
+        assert split.test_metrics["metric_assumptions"]["freq"] == "1D"
+        assert split.test_metrics["metric_assumptions"]["benchmark_status"] == "none"
+    assert result.test_metrics["metric_scope"] == "shared_cash_group"
+    assert result.test_metrics["metric_assumptions"]["year_freq"] == "252D"
 
 
 def test_decision_grade_requires_split_purging_proof() -> None:
@@ -66,6 +80,43 @@ def test_decision_grade_requires_split_purging_proof() -> None:
         )
         is True
     )
+
+
+def test_aggregate_metrics_rejects_mixed_metric_assumptions() -> None:
+    metrics = _metrics_frame(
+        [
+            {"scope": "shared_cash_group", "year_freq": "252D"},
+            {"scope": "shared_cash_group", "year_freq": "365D"},
+        ]
+    )
+
+    with pytest.raises(ValueError, match="metric_assumptions"):
+        _aggregate_metrics(metrics)
+
+
+def test_aggregate_metrics_rejects_mixed_metric_scope() -> None:
+    metrics = _metrics_frame(
+        [
+            {"scope": "shared_cash_group", "year_freq": "252D"},
+            {"scope": "other", "year_freq": "252D"},
+        ]
+    )
+    metrics.loc["split_1", "metric_scope"] = "other"
+
+    with pytest.raises(ValueError, match="metric_scope"):
+        _aggregate_metrics(metrics)
+
+
+def test_aggregate_metrics_requires_metric_metadata_for_every_row() -> None:
+    metrics = _metrics_frame(
+        [
+            {"scope": "shared_cash_group", "year_freq": "252D"},
+            None,
+        ]
+    )
+
+    with pytest.raises(ValueError, match="metric_assumptions"):
+        _aggregate_metrics(metrics)
 
 
 def test_validation_requires_open_prices_for_default_next_open() -> None:
@@ -119,4 +170,20 @@ def _evaluate(config_path: str, *, pass_open_prices: bool = True):
         split_metadata=splits_result.metadata,
         compatibility=compatibility,
         model_registry=registry,
+    )
+
+
+def _metrics_frame(metric_assumptions: list[dict[str, object] | None]):
+    return pd.DataFrame(
+        {
+            "total_return_pct": [1.0, 2.0],
+            "sharpe_ratio": [1.0, 2.0],
+            "max_drawdown_pct": [1.0, 2.0],
+            "total_trades": [1, 2],
+            "win_rate_pct": [50.0, 60.0],
+            "total_fees_paid": [0.0, 0.0],
+            "metric_scope": ["shared_cash_group", "shared_cash_group"],
+            "metric_assumptions": metric_assumptions,
+        },
+        index=["split_0", "split_1"],
     )

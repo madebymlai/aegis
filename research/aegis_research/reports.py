@@ -15,33 +15,63 @@ from research.aegis_research.config import (
 )
 from research.aegis_research.splits import split_purging_passed
 
+PORTFOLIO_METRIC_SCOPE = "shared_cash_group"
+METRICS_SCHEMA_VERSION = "metrics.v2"
+PORTFOLIO_STATS_METRICS = (
+    "total_return",
+    "max_dd",
+    "total_trades",
+    "win_rate",
+    "total_fees_paid",
+)
+
 
 def portfolio_metrics(pf: Any, config: ReportConfig) -> dict[str, Any]:
-    stats = pf.stats(
-        metrics=["total_return", "max_dd", "total_trades", "win_rate", "total_fees_paid"],
+    sharpe_kwargs = {
+        "freq": pd.Timedelta(config.freq),
+        "year_freq": pd.Timedelta(config.year_freq),
+    }
+    stats = pf.stats(metrics=list(PORTFOLIO_STATS_METRICS), agg_func=None)
+    per_symbol_stats = pf.stats(
+        metrics=list(PORTFOLIO_STATS_METRICS),
         agg_func=None,
+        group_by=False,
     )
+    sharpe_ratio = pf.get_sharpe_ratio(**sharpe_kwargs)
     per_symbol = {
-        "total_return_pct": _metric_map(stats, "Total Return [%]"),
-        "max_drawdown_pct": _metric_map(stats, "Max Drawdown [%]"),
-        "total_trades": _metric_map(stats, "Total Trades"),
-        "win_rate_pct": _metric_map(stats, "Win Rate [%]"),
-        "total_fees_paid": _metric_map(stats, "Total Fees Paid"),
+        "total_return_pct": _metric_map(per_symbol_stats, "Total Return [%]"),
+        "max_drawdown_pct": _metric_map(per_symbol_stats, "Max Drawdown [%]"),
+        "total_trades": _metric_map(per_symbol_stats, "Total Trades"),
+        "win_rate_pct": _metric_map(per_symbol_stats, "Win Rate [%]"),
+        "total_fees_paid": _metric_map(per_symbol_stats, "Total Fees Paid"),
         "sharpe_ratio": _value_map(
             pf.get_sharpe_ratio(
-                freq=pd.Timedelta(config.freq),
-                year_freq=pd.Timedelta(config.year_freq),
+                **sharpe_kwargs,
+                group_by=False,
             )
         ),
     }
     return {
-        "total_return_pct": _mean_metric(per_symbol["total_return_pct"]),
-        "sharpe_ratio": _mean_metric(per_symbol["sharpe_ratio"]),
-        "max_drawdown_pct": _max_metric(per_symbol["max_drawdown_pct"]),
-        "total_trades": _sum_metric(per_symbol["total_trades"]),
-        "win_rate_pct": _mean_metric(per_symbol["win_rate_pct"]),
-        "total_fees_paid": _sum_metric(per_symbol["total_fees_paid"]),
+        "total_return_pct": _headline_metric(stats, "Total Return [%]"),
+        "sharpe_ratio": _headline_value(sharpe_ratio),
+        "max_drawdown_pct": _headline_metric(stats, "Max Drawdown [%]"),
+        "total_trades": _headline_metric(stats, "Total Trades"),
+        "win_rate_pct": _headline_metric(stats, "Win Rate [%]"),
+        "total_fees_paid": _headline_metric(stats, "Total Fees Paid"),
+        "metric_scope": PORTFOLIO_METRIC_SCOPE,
+        "metric_assumptions": portfolio_metric_assumptions(config),
         "per_symbol": per_symbol,
+    }
+
+
+def portfolio_metric_assumptions(config: ReportConfig) -> dict[str, Any]:
+    return {
+        "scope": PORTFOLIO_METRIC_SCOPE,
+        "scope_detail": "one shared cash group across configured symbols",
+        "freq": config.freq,
+        "year_freq": config.year_freq,
+        "benchmark_status": "none",
+        "benchmark_source": None,
     }
 
 
@@ -108,6 +138,20 @@ def _metric_map(stats: Any, name: str) -> dict[str, Any]:
     return {"portfolio": _scalar_metric(stats.get(name))}
 
 
+def _headline_metric(stats: Any, name: str) -> Any:
+    return _headline_from_values(_metric_map(stats, name))
+
+
+def _headline_value(value: Any) -> Any:
+    return _headline_from_values(_value_map(value))
+
+
+def _headline_from_values(values: dict[str, Any]) -> Any:
+    if len(values) != 1:
+        raise ValueError("shared-cash headline metrics must resolve to exactly one group")
+    return next(iter(values.values()))
+
+
 def _value_map(value: Any) -> dict[str, Any]:
     if isinstance(value, pd.DataFrame):
         return {
@@ -117,25 +161,6 @@ def _value_map(value: Any) -> dict[str, Any]:
     if isinstance(value, pd.Series):
         return {str(key): _scalar_metric(item) for key, item in value.items()}
     return {"portfolio": _scalar_metric(value)}
-
-
-def _mean_metric(values: dict[str, Any]) -> Any:
-    numbers = _numeric_values(values)
-    return sum(numbers) / len(numbers) if numbers else None
-
-
-def _sum_metric(values: dict[str, Any]) -> Any:
-    numbers = _numeric_values(values)
-    return sum(numbers) if numbers else None
-
-
-def _max_metric(values: dict[str, Any]) -> Any:
-    numbers = _numeric_values(values)
-    return max(numbers) if numbers else None
-
-
-def _numeric_values(values: dict[str, Any]) -> list[float]:
-    return [float(value) for value in values.values() if value is not None]
 
 
 def _scalar_metric(value: Any) -> Any:

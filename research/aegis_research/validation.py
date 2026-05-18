@@ -16,12 +16,12 @@ from research.aegis_research.models import (
     train_model,
 )
 from research.aegis_research.portfolios import simulate_portfolio
-from research.aegis_research.reports import portfolio_metrics
+from research.aegis_research.reports import portfolio_metric_assumptions, portfolio_metrics
 from research.aegis_research.signals import probabilities_to_signals
 from research.aegis_research.splits import ValidationSplit, split_purging_passed
 
 VALIDATION_SIGNAL_DIAGNOSTICS_SCHEMA_VERSION = "validation_signal_diagnostics.v1"
-VALIDATION_PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "validation_portfolio_diagnostics.v1"
+VALIDATION_PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "validation_portfolio_diagnostics.v2"
 
 
 @dataclass(frozen=True)
@@ -258,6 +258,7 @@ def evaluate_validation_splits(
             },
             "aggregate_metrics_role": "descriptive_summary",
             "aggregation_methods": _aggregation_methods(),
+            "portfolio_metric_assumptions": portfolio_metric_assumptions(config.report),
         },
     )
 
@@ -272,6 +273,9 @@ def _aggregate_metrics(metrics: pd.DataFrame) -> dict[str, Any]:
     trades = numeric_column("total_trades")
     win_rate = numeric_column("win_rate_pct")
     fees = numeric_column("total_fees_paid")
+    for name in ("metric_scope", "metric_assumptions"):
+        if name not in metrics:
+            raise ValueError(f"{name} is required for split metric aggregation")
     aggregated = {
         "total_return_pct": total_return.mean() if len(total_return) else None,
         "sharpe_ratio": sharpe.mean() if len(sharpe) else None,
@@ -282,6 +286,14 @@ def _aggregate_metrics(metrics: pd.DataFrame) -> dict[str, Any]:
     }
     if "per_symbol" in metrics:
         aggregated["per_symbol"] = _aggregate_per_symbol_metrics(metrics["per_symbol"])
+    aggregated["metric_scope"] = _consistent_non_null(
+        "metric_scope",
+        metrics["metric_scope"],
+    )
+    aggregated["metric_assumptions"] = _consistent_non_null(
+        "metric_assumptions",
+        metrics["metric_assumptions"],
+    )
     return aggregated
 
 
@@ -387,6 +399,20 @@ def _aggregate_symbol_values(metric_name: str, values: list[float]) -> Any:
     if metric_name == "max_drawdown_pct":
         return max(values)
     return sum(values) / len(values)
+
+
+def _consistent_non_null(name: str, values: pd.Series) -> Any:
+    selected: Any = None
+    for value in values:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            raise ValueError(f"{name} is required for every split metric row")
+        if selected is None:
+            selected = value
+        elif value != selected:
+            raise ValueError(f"{name} must be consistent across split metric rows")
+    if selected is None:
+        raise ValueError(f"{name} is required for split metric aggregation")
+    return selected
 
 
 def _concat_split_frames(

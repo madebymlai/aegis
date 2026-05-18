@@ -20,7 +20,7 @@ Aegis RD gives each research loop a clear contract:
 - Split data with validation windows that make leakage and embargo assumptions visible.
 - Train models with explicit target, class, probability, calibration, and artifact metadata.
 - Convert `positive_class_probability` into long-only hysteresis signals with documented threshold, timing, cleaning, and conflict rules.
-- Simulate portfolios with stated sizing, costs, execution timing, direction, cash, and benchmark assumptions.
+- Simulate shared-cash portfolios with explicit entry budgets, costs, execution timing, direction, metric scope, and benchmark assumptions.
 - Produce reports that separate per-split evidence, aggregate summaries, survival gates, and uncertainty.
 
 ## Market Data Contract
@@ -29,7 +29,7 @@ Market data is loaded as native VectorBT `Data` for every supported source: `syn
 
 Each run writes public `data.metadata` with safe provider metadata, requested and observed symbols, canonical feature availability, per-symbol diagnostics, quality state, timezone and index evidence, and omitted metadata fields. Private `data.native` preserves VectorBT-native state after public metadata succeeds and remains secret-scanned and fail-closed.
 
-Default signal execution is `next_open`, so Open prices are required unless a config explicitly opts into `signals.execution_timing: same_close`. Shorting and `portfolio.direction: both` are out of scope for the v1 signal contract.
+Default signal execution is `next_open`, so Open prices are required unless a config explicitly opts into `signals.execution_timing: same_close`. Portfolio configs must declare `portfolio.entry_budget`, which is split across executable same-bar entries in one shared cash pool. Shorting, `portfolio.direction: both`, equal-weight rebalancing, ranked allocation, and target-weight sizing are out of scope for the v1 signal contract.
 
 Non-standard OHLCV names use `data.feature_map`, with logical keys such as `close` and `volume` mapped to provider or CSV feature names. Market-data symbols are not normalized in schema v1: configs must use the market data provider's exact symbol format, such as `BTC-USD` for Yahoo Finance, `BTCUSDT` for Binance, or `BTC/USDT` for CCXT. This is intentional rather than bad; hidden alias mapping would make evidence ambiguous. The caveat is that switching market data providers may require changing symbols until a documented normalization table exists.
 

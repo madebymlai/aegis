@@ -86,8 +86,7 @@ portfolio:
   init_cash: 10000.0
   fees: 0.001
   slippage: 0.0005
-  size: 1.0
-  size_type: valuepercent
+  entry_budget: 1.0
   direction: longonly
 
 report:
