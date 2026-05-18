@@ -27,6 +27,13 @@ runs/*
 research/configs/experiments/*
 !research/configs/experiments/README.md
 
+research/components/labels/*
+!research/components/labels/README.md
+research/components/indicators/*
+!research/components/indicators/README.md
+research/components/strategies/*
+!research/components/strategies/README.md
+
 .env
 .env.*
 !.env.example
