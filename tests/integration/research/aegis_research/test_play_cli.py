@@ -28,7 +28,8 @@ def test_play_cli_executes_repo_controlled_playbook_by_id(
     assert payload["status"] == "success"
     assert payload["lane"] == "play"
     assert payload["playbooks"][0]["id"] == "ma_explore"
-    assert payload["results"][0]["variant_records"] == [{"id": "ma_explore", "window": 5}]
+    assert payload["artifacts"]["leaderboard_summary"]["succeeded"] == 1
+    assert (tmp_path / "runs" / "play" / "last-run" / "leaderboard.json").is_file()
 
 
 def test_play_cli_unknown_playbook_fails_before_artifacts(
@@ -119,7 +120,8 @@ def _write_notebook(path: Path, playbook_id: str) -> None:
                 "AEGIS_PLAYBOOK_RESULT = {"
                 "'variant_records': [{'id': '"
                 + playbook_id
-                + "', 'window': AEGIS_PLAYBOOK_PARAMS['window']}]}"
+                + "', 'window': AEGIS_PLAYBOOK_PARAMS['window'], "
+                "'metrics': {'total_return_pct': 1.5}}]}"
             )
         ],
     )
