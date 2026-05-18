@@ -24,7 +24,7 @@ from research.aegis_research.provenance.native import (
     NativeArtifactSafetyError,
     NativeArtifactWriter,
 )
-from tests.research.aegis_research.model_plugin_fixtures import (
+from tests.support.research.aegis_research.model_plugin_fixtures import (
     make_model_registry,
     model_config_dict,
 )

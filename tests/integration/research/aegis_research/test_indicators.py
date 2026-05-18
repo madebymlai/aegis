@@ -13,7 +13,7 @@ from research.aegis_research.config import (
 from research.aegis_research.indicator_registry import IndicatorDefinition
 from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
 from research.aegis_research.models import train_model
-from tests.research.aegis_research.model_plugin_fixtures import (
+from tests.support.research.aegis_research.model_plugin_fixtures import (
     make_model_registry,
     model_config_dict,
 )

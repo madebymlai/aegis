@@ -16,17 +16,19 @@ from research.aegis_research.config import (
     resolve_experiment_config,
 )
 from research.aegis_research.experiments import run_experiment
-from tests.research.aegis_research.model_plugin_fixtures import (
+from tests.support.research.aegis_research.experiment_config_fixtures import (
+    SYNTHETIC_ML_SCAFFOLD_CONFIG,
+    SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+)
+from tests.support.research.aegis_research.model_plugin_fixtures import (
     make_model_registry,
     model_config_dict,
 )
 
 
-def test_synthetic_baseline_experiment_runs(tmp_path: Path) -> None:
+def test_synthetic_scaffold_fixture_experiment_runs(tmp_path: Path) -> None:
     registry = make_model_registry()
-    config = load_experiment_config(
-        "research/configs/experiments/synthetic_ml_baseline.yaml", model_registry=registry
-    )
+    config = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
     config = resolve_experiment_config(
         replace(config.config, output_dir=str(tmp_path)), model_registry=registry
     )
@@ -57,7 +59,7 @@ def test_synthetic_baseline_experiment_runs(tmp_path: Path) -> None:
 def test_synthetic_purged_fixlb_experiment_is_decision_grade(tmp_path: Path) -> None:
     registry = make_model_registry()
     config = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
     )
     config = resolve_experiment_config(
@@ -91,7 +93,7 @@ def test_purged_public_evidence_enforces_actual_byte_cap_before_split_outputs(
 ) -> None:
     registry = make_model_registry()
     resolved = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
     )
     experiment = replace(
@@ -111,9 +113,7 @@ def test_purged_public_evidence_enforces_actual_byte_cap_before_split_outputs(
 
 def test_synthetic_purged_experiment_preserves_multi_asset_axis(tmp_path: Path) -> None:
     registry = make_model_registry()
-    config = load_experiment_config(
-        "research/configs/experiments/synthetic_ml_baseline.yaml", model_registry=registry
-    )
+    config = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
     experiment = replace(
         config.config,
         output_dir=str(tmp_path),

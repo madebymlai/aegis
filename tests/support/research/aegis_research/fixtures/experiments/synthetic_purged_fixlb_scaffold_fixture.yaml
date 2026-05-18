@@ -1,5 +1,5 @@
 schema_version: 2
-name: synthetic_ml_baseline
+name: synthetic_purged_fixlb_scaffold_fixture
 output_dir: runs
 
 data:
@@ -7,7 +7,7 @@ data:
   symbols: [SYN]
   start: "2020-01-01"
   timeframe: "1D"
-  rows: 750
+  rows: 360
   seed: 42
 
 indicators:
@@ -66,12 +66,12 @@ split:
   purge_td: 0D
   embargo_td: 0D
   max_splits: 5
-  max_estimated_output_cells: 1000000
+  max_estimated_output_cells: 500000
   max_public_artifact_bytes: 5000000
 
 model:
   plugin_id: aegis.sklearn_logistic
-  min_train_samples: 100
+  min_train_samples: 50
   params:
     max_iter: 1000
     random_state: 42

@@ -5,6 +5,9 @@ from research.aegis_research.model_plugins import (
     SKLEARN_LOGISTIC_PLUGIN_ID,
     make_default_model_registry,
 )
+from tests.support.research.aegis_research.experiment_config_fixtures import (
+    SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+)
 
 
 def test_default_model_registry_contains_sklearn_logistic_plugin() -> None:
@@ -16,11 +19,11 @@ def test_default_model_registry_contains_sklearn_logistic_plugin() -> None:
     assert "positive_class_probability" in definition.declaration.prediction_outputs
 
 
-def test_baseline_config_resolves_against_default_model_registry() -> None:
+def test_scaffold_fixture_config_resolves_against_default_model_registry() -> None:
     registry = make_default_model_registry()
 
     resolved = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
     )
 

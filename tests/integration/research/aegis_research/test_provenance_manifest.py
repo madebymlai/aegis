@@ -24,6 +24,9 @@ from research.aegis_research.provenance.manifest import (
     hash_file,
     validate_manifest,
 )
+from tests.support.research.aegis_research.experiment_config_fixtures import (
+    SYNTHETIC_ML_SCAFFOLD_CONFIG,
+)
 
 
 def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
@@ -320,7 +323,7 @@ def test_git_evidence_includes_staged_and_untracked_content_identity(tmp_path: P
 
 
 def test_run_start_evidence_uses_public_redacted_config_hashes() -> None:
-    config = load_experiment_config("research/configs/experiments/synthetic_ml_baseline.yaml")
+    config = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG)
 
     evidence = capture_run_start_evidence(config, repo_path=Path.cwd())
 

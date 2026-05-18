@@ -17,7 +17,10 @@ from research.aegis_research.experiments import run_experiment
 from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus, hash_file
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
-from tests.research.aegis_research.model_plugin_fixtures import (
+from tests.support.research.aegis_research.experiment_config_fixtures import (
+    SYNTHETIC_ML_SCAFFOLD_CONFIG,
+)
+from tests.support.research.aegis_research.model_plugin_fixtures import (
     make_model_registry,
     model_config_dict,
 )
@@ -120,9 +123,7 @@ def test_run_experiment_initializes_manifest_before_data_loading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = make_model_registry()
-    resolved = load_experiment_config(
-        "research/configs/experiments/synthetic_ml_baseline.yaml", model_registry=registry
-    )
+    resolved = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
     resolved = resolve_experiment_config(
         replace(resolved.config, output_dir=str(tmp_path)), model_registry=registry
     )

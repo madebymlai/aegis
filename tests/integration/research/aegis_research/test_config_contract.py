@@ -20,21 +20,26 @@ from research.aegis_research.experiments import run_experiment
 from research.aegis_research.indicator_registry import IndicatorDefinition, indicator_registry
 from research.aegis_research.model_contracts import ModelPluginDeclaration, ModelPluginDefinition
 from research.aegis_research.model_registry import ModelRegistry, ModelRegistryError
-from tests.research.aegis_research.model_plugin_fixtures import (
+from tests.support.research.aegis_research.experiment_config_fixtures import (
+    SYNTHETIC_ML_SCAFFOLD_CONFIG,
+    SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+)
+from tests.support.research.aegis_research.model_plugin_fixtures import (
     SklearnLogisticTestPlugin,
     make_model_registry,
     model_config_dict,
 )
 
 
-def test_baseline_configs_load_with_schema_metadata() -> None:
+def test_scaffold_fixture_configs_load_with_schema_metadata() -> None:
     for path in [
-        "research/configs/experiments/synthetic_ml_baseline.yaml",
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        SYNTHETIC_ML_SCAFFOLD_CONFIG,
+        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
     ]:
         config = load_experiment_config(path)
 
         assert config.config.schema_version == config_module.CONFIG_SCHEMA_VERSION
+        assert "baseline" not in config.config.name
         assert config.config.signals.policy == "long_only_hysteresis"
         assert config.config.signals.long_entry_threshold == 0.55
         assert config.config.signals.long_exit_threshold == 0.50

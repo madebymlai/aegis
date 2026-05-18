@@ -16,7 +16,10 @@ from research.aegis_research.model_export import (
 )
 from research.aegis_research.model_plugins import SKLEARN_LOGISTIC_PLUGIN_ID
 from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
-from tests.research.aegis_research.model_plugin_fixtures import make_model_registry
+from tests.support.research.aegis_research.experiment_config_fixtures import (
+    SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+)
+from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_model_export_bundle_contains_prediction_contract(tmp_path: Path) -> None:
@@ -129,7 +132,7 @@ def test_model_export_failure_does_not_leave_immutable_output_dir(
 def _run_experiment(tmp_path: Path) -> Path:
     registry = make_model_registry()
     resolved = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
     )
     resolved = resolve_experiment_config(

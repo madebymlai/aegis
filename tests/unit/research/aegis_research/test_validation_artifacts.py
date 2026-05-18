@@ -20,11 +20,14 @@ from research.aegis_research.validation import (
     _decision_grade,
     evaluate_validation_splits,
 )
-from tests.research.aegis_research.model_plugin_fixtures import make_model_registry
+from tests.support.research.aegis_research.experiment_config_fixtures import (
+    SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+)
+from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_validation_result_exposes_complete_split_child_shape() -> None:
-    result = _evaluate("research/configs/experiments/synthetic_purged_fixlb_baseline.yaml")
+    result = _evaluate(SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG)
 
     assert len(result.split_results) == 5
     assert len(result.split_metric_evidence) == 10
@@ -132,7 +135,7 @@ def test_aggregate_metrics_requires_metric_metadata_for_every_row() -> None:
 def test_validation_requires_open_prices_for_default_next_open() -> None:
     with pytest.raises(ValueError, match="open prices"):
         _evaluate(
-            "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+            SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
             pass_open_prices=False,
         )
 

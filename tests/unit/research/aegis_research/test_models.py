@@ -13,7 +13,7 @@ from research.aegis_research.models import (
     train_model,
 )
 from research.aegis_research.splits import ValidationSplit
-from tests.research.aegis_research.model_plugin_fixtures import (
+from tests.support.research.aegis_research.model_plugin_fixtures import (
     make_model_registry,
     model_config_dict,
 )

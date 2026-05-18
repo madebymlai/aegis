@@ -103,7 +103,7 @@ def _plugin_identity(plugin: Any) -> dict[str, Any]:
     }
     try:
         source_name = inspect.getsourcefile(plugin_type)
-    except TypeError:
+    except (OSError, TypeError):
         return identity
     if not source_name:
         return identity

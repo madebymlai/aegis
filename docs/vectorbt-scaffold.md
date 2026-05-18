@@ -32,11 +32,9 @@ data fetch/load
 
 ## Run
 
-```bash
-python -m research.aegis_research.cli run research/configs/experiments/synthetic_ml_baseline.yaml
-```
+Use `docs/examples/scaffold_experiment_walkthrough.ipynb` for the public runnable walkthrough. It uses deterministic synthetic OHLCV data, an inline config, and explicit model registry setup, so it is safe for learning the scaffold and does not require exchange credentials.
 
-The default config uses deterministic synthetic OHLCV data, so it is safe for CI and does not require exchange credentials.
+The walkthrough is scaffold evidence only. It is not validated trading methodology, empirical edge, or investment advice.
 
 ## Config Contract
 

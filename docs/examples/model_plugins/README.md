@@ -11,4 +11,6 @@ For pure Python, copy the plugin class and `build_registry()` function from the 
 
 Do not put import paths, estimator definitions, or plugin code in YAML.
 
+For a runnable end-to-end scaffold experiment walkthrough, use `docs/examples/scaffold_experiment_walkthrough.ipynb`. That notebook uses an inline config and explicit registry setup rather than a tracked baseline YAML.
+
 For ordinary Aegis runs, prefer the built-in `aegis.sklearn_logistic` plugin from `research.aegis_research.model_plugins` instead of copying this example.

@@ -15,14 +15,16 @@ from research.aegis_research.experiments import run_experiment
 from research.aegis_research.provenance import artifacts, experiment_artifacts, manifest
 from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus, validate_manifest
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
-from tests.research.aegis_research.model_plugin_fixtures import make_model_registry
+from tests.support.research.aegis_research.experiment_config_fixtures import (
+    SYNTHETIC_ML_SCAFFOLD_CONFIG,
+    SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+)
+from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None:
     registry = make_model_registry()
-    config = load_experiment_config(
-        "research/configs/experiments/synthetic_ml_baseline.yaml", model_registry=registry
-    )
+    config = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
     config = resolve_experiment_config(
         replace(config.config, output_dir=str(tmp_path)), model_registry=registry
     )
@@ -125,7 +127,7 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
 def test_purged_run_writes_per_split_models_and_links_aggregates(tmp_path: Path) -> None:
     registry = make_model_registry()
     config = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
     )
     config = resolve_experiment_config(
@@ -222,7 +224,7 @@ def test_failed_split_run_preserves_prior_completed_split_artifacts(
 ) -> None:
     registry = make_model_registry()
     config = load_experiment_config(
-        "research/configs/experiments/synthetic_purged_fixlb_baseline.yaml",
+        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
     )
     config = resolve_experiment_config(

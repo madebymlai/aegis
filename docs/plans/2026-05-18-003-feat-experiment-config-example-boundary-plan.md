@@ -26,7 +26,7 @@ The origin requirements identify a perception bug: deterministic scaffold YAMLs 
 - R2. Preserve deterministic regression coverage for the moved synthetic fixture configs. Origin: R2, F1, AE1.
 - R3. Rename or document fixture identity so test-facing assets are scaffold fixtures, not methodology baselines. Origin: R3, success criteria.
 - R4. Make `research/configs/experiments/` tracked README-only for future files, while preserving local untracked experiment configs. Origin: R4, R5, user planning decision.
-- R5. Add a generic README pointer in `research/configs/experiments/` that directs readers to the notebook walkthrough. Origin: R5, R6, F2, AE2; user planning decision.
+- R5. Add a generic README pointer in `research/configs/experiments/` that directs readers to the notebook walkthrough and carries scaffold-only and secret-handling caveats without ETF-specific explanation. Origin: R5, R6, R10, F2, AE2, AE4; user planning decision.
 - R6. Add a runnable notebook walkthrough under `docs/examples/` that uses inline config and explicit model registry setup. Origin: R7, R8, R9, F3, AE3.
 - R7. Notebook and docs must frame scaffold outputs as educational scaffold evidence only, not validated trading methodology, empirical edge, or investment advice. Origin: R10, R11, AE4.
 - R8. Update active tests, docs, and notebooks that reference the old synthetic config paths. Origin: R12, R13, AE1, AE2, AE5.
@@ -45,7 +45,7 @@ The origin requirements identify a perception bug: deterministic scaffold YAMLs 
 - Do not add methodology metadata to the experiment config schema.
 - Do not add provider-backed public examples, proprietary symbols, credentialed examples, or empirical performance claims.
 - Do not turn the synthetic example into a research candidate, strategy template, or trading recommendation.
-- Do not fix the CLI model-registry path; docs should route synthetic walkthroughs through explicit-registry notebook/Python flow.
+- Do not add new CLI model-registry behavior; docs should route synthetic walkthroughs through explicit-registry notebook/Python flow to avoid recreating a public baseline YAML path.
 - Do not create a second docs-owned YAML baseline file for the notebook.
 - Do not retroactively rewrite archived plans and brainstorms unless they function as current user-facing instructions.
 - Do not add special explanatory text about the existing provider-backed ETF config in the generic experiment README; the directory-level README should stay a generic pointer.
@@ -53,7 +53,7 @@ The origin requirements identify a perception bug: deterministic scaffold YAMLs 
 ### Deferred to Follow-Up Work
 
 - Provider-backed config policy: decide separately whether local/provider experiment configs need their own private examples area, fixture story, or methodology metadata.
-- CLI registry UX: resolve separately so future docs can safely include CLI-run examples with registered plugins.
+- CLI tutorial UX: decide separately whether future docs should include tracked CLI-run examples and how those examples avoid baseline-strategy framing.
 
 ---
 
@@ -63,9 +63,9 @@ The origin requirements identify a perception bug: deterministic scaffold YAMLs 
 
 - Current synthetic configs are `research/configs/experiments/synthetic_ml_baseline.yaml` and `research/configs/experiments/synthetic_purged_fixlb_baseline.yaml`.
 - A provider-backed config currently exists at `research/configs/experiments/etf_cspx_dtla_sgln_yfinance_ml.yaml`; planning resolved to remove it from tracking while preserving it locally.
-- Tests currently load old synthetic config paths in `tests/research/aegis_research/test_config_contract.py`, `tests/research/aegis_research/test_experiment_provenance.py`, `tests/research/aegis_research/test_experiments_purged.py`, `tests/research/aegis_research/test_validation_artifacts.py`, `tests/research/aegis_research/test_model_export.py`, `tests/research/aegis_research/test_run_lifecycle.py`, and `tests/research/aegis_research/test_provenance_manifest.py`.
+- Tests currently load old synthetic config paths in `tests/research/aegis_research/test_config_contract.py`, `tests/research/aegis_research/test_experiment_provenance.py`, `tests/research/aegis_research/test_experiments_purged.py`, `tests/research/aegis_research/test_validation_artifacts.py`, `tests/research/aegis_research/test_model_export.py`, `tests/research/aegis_research/test_model_plugins.py`, `tests/research/aegis_research/test_run_lifecycle.py`, and `tests/research/aegis_research/test_provenance_manifest.py`.
 - Existing model plugin docs test parses notebook JSON in `tests/research/aegis_research/test_model_plugin_example.py`; extend this source-level pattern for the new walkthrough and old-path absence checks.
-- `docs/vectorbt-scaffold.md` currently shows a CLI command for the synthetic config; this must become a notebook pointer because CLI uses an empty model registry.
+- `docs/vectorbt-scaffold.md` currently shows a CLI command for the synthetic config; this must become a notebook pointer because the public synthetic YAML path is being removed and the notebook is the selected learning path.
 - `docs/examples/model_plugins/sklearn_logistic_plugin.ipynb` currently loads the old synthetic config path; it should be updated to keep the plugin example explicit without depending on public baseline YAML.
 - `.gitignore` already uses allowlist exceptions for directories such as `runs/*` with `!runs/.gitkeep`; mirror that pattern for `research/configs/experiments/` and `README.md`.
 
@@ -88,9 +88,9 @@ The origin requirements identify a perception bug: deterministic scaffold YAMLs 
 - Use `tests/research/aegis_research/fixtures/experiments/` for moved synthetic configs: this is close to the tests that consume them and clearly test-owned.
 - Rename moved fixture filenames and config `name` values away from `baseline`: use scaffold/fixture wording so generated run labels and manifests do not keep implying methodology status.
 - Add shared fixture path constants in test support: this avoids repeated raw strings and makes future fixture movement cheap.
-- Make `research/configs/experiments/` tracked README-only: `.gitignore` ignores files in that directory except `README.md`, and tracked non-README configs are removed from git tracking while local copies can remain.
-- Keep the README generic: it should point readers to the notebook walkthrough and explain local configs are intentionally not tracked, without special discussion of the ETF config.
-- Use `docs/examples/scaffold_experiment_walkthrough.ipynb` for the new notebook: "scaffold" matches the teaching goal better than "baseline."
+- Make `research/configs/experiments/` tracked README-only: `.gitignore` ignores files in that directory except `README.md`, and tracked non-README configs are removed from git tracking.
+- Keep the README generic: it should point readers to the notebook walkthrough, explain local configs are intentionally not tracked, warn that ignored files are not a safe place for secrets, and avoid special discussion of the ETF config.
+- Use `docs/examples/scaffold_experiment_walkthrough.ipynb` for the new notebook: "scaffold" matches the teaching goal better than "baseline".
 - Keep notebook config inline and disposable: the notebook should resolve an inline config with an explicit registry and use a temporary or otherwise throwaway output location so repeated runs do not collide or dirty tracked files.
 
 ---
@@ -99,14 +99,15 @@ The origin requirements identify a perception bug: deterministic scaffold YAMLs 
 
 ### Resolved During Planning
 
-- Should the ETF/YFinance config stay tracked? No. Remove it from tracking while preserving it locally, and ignore future non-README files under `research/configs/experiments/`.
+- Should the ETF/YFinance config stay tracked? No. Remove it from tracking using a local-preserving untracking workflow for the implementing checkout, and ignore future non-README files under `research/configs/experiments/`.
 - Should the experiment README explain the ETF config? No. Keep the README generic and point to the notebook walkthrough.
 - Should the synthetic fixture files keep "baseline" names? No. Rename toward scaffold/fixture wording.
 
 ### Deferred to Implementation
 
-- Exact notebook prose and cell order: choose the smallest readable walkthrough that remains runnable and clear.
+- Exact notebook prose and cell order: choose the smallest readable walkthrough that remains runnable and clear, with caveats adjacent to any metrics or gate outputs.
 - Exact fixture constant names: pick names that fit test helper conventions once the implementation touches the test files.
+- Notebook execution tooling: prefer executing the notebook in tests; add a dev-only notebook execution dependency if implementation confirms one is needed and acceptable.
 
 ---
 
@@ -181,6 +182,7 @@ docs/examples/
 - Modify: `tests/research/aegis_research/test_experiments_purged.py`
 - Modify: `tests/research/aegis_research/test_validation_artifacts.py`
 - Modify: `tests/research/aegis_research/test_model_export.py`
+- Modify: `tests/research/aegis_research/test_model_plugins.py`
 - Modify: `tests/research/aegis_research/test_run_lifecycle.py`
 - Modify: `tests/research/aegis_research/test_provenance_manifest.py`
 
@@ -196,6 +198,7 @@ docs/examples/
 **Test scenarios:**
 - Happy path: `test_synthetic_baseline_experiment_runs` equivalent still completes from the moved scaffold fixture.
 - Happy path: purged FIXLB fixture remains decision-grade and writes split evidence, metrics, gate outcomes, and manifest-backed artifacts.
+- Happy path: default model registry tests resolve the moved purged fixture through the shared fixture constant.
 - Error path: public evidence byte-cap and default next-open Open-price failures still fail through the same paths after fixture movement.
 - Integration: run-start provenance still records config hashes and private raw config identity without depending on the old public path.
 
@@ -221,8 +224,10 @@ docs/examples/
 
 **Approach:**
 - Add ignore rules for all files under `research/configs/experiments/` except `README.md`.
-- Remove currently tracked non-README experiment configs from git tracking without requiring local deletion.
-- Keep README language generic: direct readers to the scaffold notebook and explain that local experiment configs are intentionally untracked.
+- Remove currently tracked non-README experiment configs from git tracking using a workflow that preserves the implementing checkout's local copy, while acknowledging that clean clones and other checkouts will no longer receive those files after the change.
+- Inspect the tracked provider-backed config before untracking; if credential-like values are found, stop for credential rotation/history-remediation rather than treating untracking as sufficient.
+- Keep README language generic: direct readers to the scaffold notebook, explain that local experiment configs are intentionally untracked, state that ignored YAMLs are not a safe place for API keys or provider tokens, and point users to environment-backed secret references.
+- Tell users not to force-add local experiment configs unless they intentionally want a reviewed tracked artifact.
 - Avoid special ETF/YFinance commentary per the user's planning correction.
 
 **Patterns to follow:**
@@ -231,13 +236,17 @@ docs/examples/
 
 **Test scenarios:**
 - Happy path: `research/configs/experiments/README.md` exists and points to the scaffold walkthrough notebook.
+- Covers AE4. README includes a concise scaffold-only caveat and does not imply validated methodology, empirical edge, or investment advice.
+- Happy path: README warns that local ignored experiment configs must not contain inline credentials and should use environment-backed secret references.
 - Happy path: `.gitignore` contains an ignore rule for the experiment config directory and an exception for `README.md`.
 - Edge case: source-level test confirms the two synthetic YAML filenames are absent from `research/configs/experiments/`.
-- Integration: tracked-file review confirms non-README experiment YAMLs are not part of the committed tree after implementation.
+- Integration: tracked-file verification confirms non-README experiment YAMLs are not part of the committed tree after implementation.
+- Integration: Git ignore behavior verification confirms representative YAML files under `research/configs/experiments/` are ignored while `README.md` remains trackable.
 
 **Verification:**
 - Fresh experiment YAMLs created under `research/configs/experiments/` remain local by default.
 - The only planned tracked file under `research/configs/experiments/` is `README.md`.
+- The plan does not promise local preservation for clean clones or other checkouts that pull the tracked-file removal.
 
 ---
 
@@ -253,13 +262,16 @@ docs/examples/
 - Create: `docs/examples/scaffold_experiment_walkthrough.ipynb`
 - Modify: `docs/examples/model_plugins/sklearn_logistic_plugin.ipynb`
 - Modify: `docs/examples/model_plugins/README.md`
+- Modify if needed: `pyproject.toml`
 - Test: `tests/research/aegis_research/test_model_plugin_example.py`
 
 **Approach:**
 - Build the new notebook around a compact inline config that mirrors the scaffold fixture shape without loading any YAML from `research/configs/experiments/`.
 - Register the example sklearn logistic plugin explicitly before config resolution, following the model-plugin notebook pattern.
 - Use disposable output handling for notebook runs so repeated execution does not collide with prior runs or dirty tracked files.
-- Explain the limitations prominently: synthetic data, fixed label/target shape, example plugin, uncalibrated probabilities, fixed thresholds, execution assumptions, portfolio sizing, and report gates.
+- Avoid fixed persistent output directories and fixed run ids in both the new scaffold notebook and the existing model-plugin notebook.
+- Explain the limitations prominently and next to any metrics, gate, or report output cells: synthetic data, fixed label/target shape, example plugin, uncalibrated probabilities, fixed thresholds, execution assumptions, portfolio sizing, and report gates.
+- Add secret-handling caveats to notebook prose: do not place API keys or provider tokens in notebooks or YAML; use environment-backed references and clear committed outputs.
 - Update the existing model-plugin notebook so it no longer loads the old synthetic baseline YAML; keep it focused on plugin registration and point to the scaffold walkthrough for full experiment context when useful.
 
 **Execution note:** Add notebook source-contract tests before or alongside notebook edits so old path references and missing registry setup are caught mechanically.
@@ -273,8 +285,10 @@ docs/examples/
 - Covers AE3. Notebook source contains inline config construction, `ModelRegistry`, and `model_registry=registry`.
 - Covers AE3. Notebook source does not contain old `research/configs/experiments/synthetic_*.yaml` paths.
 - Covers AE4. Notebook source contains scaffold-only, not validated methodology, and not investment recommendation caveat language.
-- Happy path: a notebook-equivalent smoke test resolves an inline config with an explicit registry and runs with temporary output.
-- Edge case: repeated notebook-equivalent execution does not require reusing a fixed run id or persistent tracked output path.
+- Happy path: the new notebook executes in an isolated temporary output context with explicit registry setup.
+- Happy path: a notebook-equivalent smoke test resolves an inline config with an explicit registry and runs with temporary output when full notebook execution is not enough to cover assertions cheaply.
+- Edge case: repeated execution of both notebooks does not require reusing a fixed run id or persistent tracked output path.
+- Edge case: committed notebook outputs are empty or safe, with no provider data, local paths, or environment-derived values.
 
 **Verification:**
 - A reader can follow the notebook without relying on public baseline YAMLs or hidden CLI registry behavior.
@@ -297,7 +311,7 @@ docs/examples/
 
 **Approach:**
 - Replace the old synthetic CLI command in `docs/vectorbt-scaffold.md` with a pointer to the scaffold notebook walkthrough.
-- Avoid replacing the old command with a different CLI config command, because CLI registry support is outside this issue.
+- Avoid replacing the old command with a different tracked experiment YAML command, because issue #13 is removing the public synthetic YAML learning path in favor of the notebook.
 - Leave archived planning and brainstorm references historical unless they are current user-facing instructions.
 - Add source-level tests that distinguish active docs/notebooks from archived docs when checking for old public synthetic paths.
 
@@ -324,7 +338,7 @@ docs/examples/
 - **State lifecycle risks:** Notebook runs should use disposable output to avoid dirtying `runs/` or colliding with prior run ids.
 - **API surface parity:** No config schema, CLI flag, model registry API, or experiment runtime API changes are planned.
 - **Integration coverage:** Existing experiment/provenance tests prove fixture movement does not weaken scaffold regression coverage; notebook-equivalent smoke coverage proves the new human path can run.
-- **Unchanged invariants:** YAML must not define model code or import paths, and model-bearing configs still require explicit trusted registry setup outside the CLI path.
+- **Unchanged invariants:** YAML must not define model code or import paths, and notebook/Python examples should make trusted registry setup explicit even though the CLI may provide default registry behavior for built-in plugins.
 
 ---
 
@@ -332,10 +346,11 @@ docs/examples/
 
 | Risk | Mitigation |
 |------|------------|
-| Local provider config removal from tracking surprises users who had relied on it as a shared file. | README points to the notebook for tracked examples, `.gitignore` preserves local experiment configs, and provider-config policy is deferred explicitly. |
+| Local provider config removal from tracking surprises users who had relied on it as a shared file. | README points to the notebook for tracked examples, `.gitignore` preserves future local experiment configs, and the plan states clean clones/checkouts will no longer receive the removed tracked file. |
 | Renaming fixture config `name` values causes test churn in run labels or manifest evidence. | Keep semantic config fields unchanged and update only assertions that intentionally depend on fixture identity. |
-| Notebook source tests pass while the notebook is not actually runnable. | Add a notebook-equivalent smoke test using inline config, explicit registry, and temporary output. |
-| Active docs accidentally reintroduce CLI commands that fail because the registry is empty. | Add docs source checks for old synthetic paths and route synthetic tutorial docs through the notebook. |
+| Notebook source tests pass while the notebook is not actually runnable. | Execute the notebook in an isolated output context and keep source-contract tests for static guarantees. |
+| Active docs accidentally reintroduce tracked synthetic YAML examples. | Add docs source checks for old synthetic paths and route synthetic tutorial docs through the notebook. |
+| Ignored local YAMLs encourage unsafe inline secrets. | README and notebook must say ignored files are not a secret store, environment-backed secret references remain required, and local configs should not be force-added without review. |
 | README wording becomes too specific despite user correction. | Keep README generic and avoid special ETF/YFinance commentary. |
 
 ---
@@ -345,6 +360,7 @@ docs/examples/
 - The new notebook is the public learning path for scaffold mechanics.
 - `research/configs/experiments/README.md` is a pointer, not a strategy catalog.
 - Local experiment YAMLs under `research/configs/experiments/` are intentionally ignored so users can keep private experiments without committing them.
+- Ignored local experiment YAMLs are not a secret-management mechanism; provider credentials should use environment-backed references and committed notebooks should not retain sensitive outputs.
 - No migration path is needed for old public synthetic config paths; this is a forward-first cleanup.
 
 ---
