@@ -149,7 +149,7 @@ def test_purged_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:
         SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=make_model_registry(),
         output_dir=str(tmp_path / "runs"),
-        data={"source": "csv", "path": str(csv_path), "symbols": ["SYN"]},
+        data={"source": "csv", "path": str(csv_path), "symbols": ["SYN"], "arrays": ["Close"]},
         split={"n_folds": 3, "max_splits": 3},
         signals={"execution_timing": "same_close"},
     )

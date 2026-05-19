@@ -8,6 +8,7 @@ import yaml
 
 from research.aegis_research import cli, strategy_runs
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
+from research.aegis_research.market_data.contracts import MarketDataBundle
 from research.aegis_research.provenance.manifest import RunStatus
 from research.aegis_research.strategy_runs import StrategyInputBundle, validate_strategy_output
 from tests.support.research.aegis_research.model_plugin_fixtures import model_config_dict
@@ -15,14 +16,13 @@ from tests.support.research.aegis_research.model_plugin_fixtures import model_co
 
 def test_strategy_output_boundary_rejects_portfolio_fields() -> None:
     bundle = StrategyInputBundle(
-        close=_frame(),
+        data=MarketDataBundle(close=_frame()),
         indicators={},
-        params={},
         metadata={},
     )
     output = {
-        "entries": bundle.close > 1,
-        "exits": bundle.close < 1,
+        "entries": bundle.data.close > 1,
+        "exits": bundle.data.close < 1,
         "size": 0.5,
     }
 
@@ -100,6 +100,27 @@ def test_strategy_run_expands_all_component_indicators_to_strategy(
     ]
 
 
+def test_strategy_run_preflights_component_input_arrays_before_data_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+    strategy_path = tmp_path / "research/components/strategies/cross.py"
+    strategy_path.write_text(strategy_path.read_text().replace("['Close']", "['FundingRate']"))
+    config_path = _write_run_config(tmp_path, arrays=["Close", "Open"])
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-strategy-arrays"]) == 6
+
+    payload = json.loads(capsys.readouterr().err)
+    manifest = json.loads((tmp_path / "runs" / "bad-strategy-arrays" / "manifest.json").read_text())
+    assert payload["error"]["category"] == "config_validation"
+    assert "missing required data arrays" in payload["error"]["message"]
+    assert manifest["run"]["status"] == RunStatus.FAILED
+    assert not (tmp_path / "runs" / "bad-strategy-arrays" / "strategy_run.json").exists()
+
+
 def test_strategy_run_keyboard_interrupt_marks_manifest_interrupted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -173,6 +194,7 @@ def _write_run_config(
     *,
     strategy_id: str = "demo.cross",
     indicators: list[dict[str, object]] | None = None,
+    arrays: list[str] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
@@ -181,7 +203,12 @@ def _write_run_config(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "strategy_run_contract",
                 "output_dir": "runs",
-                "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80},
+                "data": {
+                    "source": "synthetic",
+                    "symbols": ["SYN"],
+                    "rows": 80,
+                    "arrays": arrays or ["OHLCV"],
+                },
                 "portfolio": {"entry_budget": 1.0},
                 "strategy": {"source": "component", "id": strategy_id},
                 "indicators": indicators or [{"source": "component", "ids": "all"}],
@@ -198,11 +225,13 @@ def _write_strategy_component(path: Path) -> None:
     path.write_text(
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.cross', 'version': '1.0.0', "
+        "'input_names': ['Close'], "
         "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(bundle):\n"
-        "    entries = bundle.close > bundle.close.rolling(3).mean()\n"
-        "    exits = bundle.close < bundle.close.rolling(3).mean()\n"
+        "    close = bundle.data.close\n"
+        "    entries = close > close.rolling(3).mean()\n"
+        "    exits = close < close.rolling(3).mean()\n"
         "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
     )
 
@@ -212,14 +241,13 @@ def _write_indicator_component(path: Path) -> None:
     path.write_text(
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
-        "'input_names': ['close'], 'param_names': ['window'], 'output_names': ['ma'], "
+        "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma'], "
         "'default_outputs': ['ma'], "
         "'default_model_features': [{'output': 'ma', 'transform': 'identity'}], "
         "'supported_transforms': ['identity']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
-        "def run(close, *, params):\n"
-        "    window = int(params.get('window', 2))\n"
-        "    return close.rolling(window).mean().bfill()\n"
+        "def run(data):\n"
+        "    return data.close.rolling(2).mean().bfill()\n"
     )
 
 
@@ -228,13 +256,13 @@ def _write_named_indicator_component(path: Path, component_id: str) -> None:
     path.write_text(
         "COMPONENT_MANIFEST = {"
         f"'family': 'indicators', 'id': {component_id!r}, 'version': '1.0.0', "
-        "'input_names': ['close'], 'param_names': [], 'output_names': ['value'], "
+        "'input_names': ['Close'], 'param_names': [], 'output_names': ['value'], "
         "'default_outputs': ['value'], "
         "'default_model_features': [{'output': 'value', 'transform': 'identity'}], "
         "'supported_transforms': ['identity']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
-        "def run(close, *, params):\n"
-        "    return close.rolling(2).mean().bfill()\n"
+        "def run(data):\n"
+        "    return data.close.rolling(2).mean().bfill()\n"
     )
 
 
@@ -243,12 +271,13 @@ def _write_indicator_strategy_component(path: Path) -> None:
     path.write_text(
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.uses_ma', 'version': '1.0.0', "
+        "'input_names': ['Close'], "
         "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(bundle):\n"
         "    ma = bundle.indicators['demo.ma']\n"
-        "    entries = bundle.close > ma\n"
-        "    exits = bundle.close < ma\n"
+        "    entries = bundle.data.close > ma\n"
+        "    exits = bundle.data.close < ma\n"
         "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
     )
 
@@ -258,6 +287,7 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
     path.write_text(
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.uses_all', 'version': '1.0.0', "
+        "'input_names': ['Close'], "
         "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(bundle):\n"

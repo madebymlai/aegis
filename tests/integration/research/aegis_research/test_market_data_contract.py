@@ -14,22 +14,53 @@ from research.aegis_research.data import (
     QUALITY_HEALTHY,
     REMOTE_DATA_CLASSES,
     MarketDataAdapterResult,
+    MarketDataBundle,
+    RemoteDataPullError,
     close_from_ohlcv,
     load_market_data_result,
+    market_data_bundle,
     required_ohlcv_features,
 )
-from research.aegis_research.market_data.sources import vbt_data_source_classes
 from research.aegis_research.labels import LabelConfig, LabelGeneratorConfig
+from research.aegis_research.market_data.sources import vbt_data_source_classes
 
 
 def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
     result = load_market_data_result(DataConfig(rows=10, symbols=["AAA", "BBB"]))
+    bundle = market_data_bundle(result)
 
     assert result.native_data.feature_oriented
     assert result.quality.state == "healthy"
     assert {row["symbol"] for row in result.diagnostics} == {"AAA", "BBB"}
     assert result.metadata["quality"]["state"] == "healthy"
     assert close_from_ohlcv(result).shape == (10, 2)
+    assert bundle.close.equals(result.feature("Close"))
+
+
+def test_market_data_bundle_can_resolve_named_features() -> None:
+    index = pd.date_range("2020-01-01", periods=2, tz="UTC")
+    close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
+    factor = pd.DataFrame({"SYN": [10.0, 20.0]}, index=index)
+    bundle = MarketDataBundle(
+        close=close,
+        loaded_features=("Close", "Factor"),
+        feature_getter=lambda feature: factor,
+    )
+
+    assert bundle.feature("Factor").equals(factor)
+
+
+def test_market_data_bundle_rejects_unloaded_features() -> None:
+    index = pd.date_range("2020-01-01", periods=2, tz="UTC")
+    close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
+    bundle = MarketDataBundle(
+        close=close,
+        loaded_features=("Close",),
+        feature_getter=lambda feature: close,
+    )
+
+    with pytest.raises(ValueError, match="was not loaded"):
+        bundle.feature("FundingRate")
 
 
 def test_data_facade_preserves_public_market_data_constants() -> None:
@@ -62,13 +93,56 @@ def test_dynamic_vbt_source_discovery_uses_current_vbt_classes(
     assert result.metadata["source"] == "demo"
 
 
-def test_csv_feature_map_wraps_non_standard_flat_columns(tmp_path: Path) -> None:
+def test_provider_shaped_source_loads_dynamic_feature_arrays() -> None:
+    native_data = _DemoRemoteData(["SYN"], features=["Close", "FundingRate"])
+
+    result = load_market_data_result(
+        DataConfig(source="future", symbols=["SYN"], arrays=["Close", "FundingRate"]),
+        adapters={"future": lambda _config: MarketDataAdapterResult(native_data=native_data)},
+    )
+    bundle = market_data_bundle(result)
+
+    assert result.quality.state == "healthy"
+    assert result.metadata["loaded_arrays"] == ["Close", "FundingRate"]
+    assert result.feature("FundingRate").iloc[-1, 0] == 0.03
+    assert bundle.feature("FundingRate").equals(result.feature("FundingRate"))
+
+
+def test_bundle_can_serve_dynamic_feature_without_close() -> None:
+    native_data = _DemoRemoteData(["SYN"], features=["FundingRate"])
+
+    result = load_market_data_result(
+        DataConfig(source="future", symbols=["SYN"], arrays=["FundingRate"]),
+        adapters={"future": lambda _config: MarketDataAdapterResult(native_data=native_data)},
+    )
+    bundle = market_data_bundle(result)
+
+    assert bundle.close is None
+    assert bundle.feature("FundingRate").iloc[-1, 0] == 0.03
+
+
+def test_provider_failure_metadata_preserves_required_arrays() -> None:
+    def fail(_config: DataConfig) -> MarketDataAdapterResult:
+        raise RemoteDataPullError("future", "network unavailable")
+
+    result = load_market_data_result(
+        DataConfig(source="future", symbols=["SYN"], arrays=["Close"]),
+        required_features=("OpenInterest",),
+        adapters={"future": fail},
+    )
+
+    assert result.quality.state == "provider_failed"
+    assert result.metadata["required_arrays"] == ["Close", "OpenInterest"]
+    assert result.metadata["unavailable_arrays"] == ["Close", "OpenInterest"]
+
+
+def test_csv_flat_vbt_feature_names_load_without_mapping(tmp_path: Path) -> None:
     path = tmp_path / "prices.csv"
     index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="time")
     frame = pd.DataFrame(
         {
-            "my_open": [1.0, 2.0, 3.0],
-            "my_close": [1.5, 2.5, 3.5],
+            "Open": [1.0, 2.0, 3.0],
+            "Close": [1.5, 2.5, 3.5],
         },
         index=index,
     )
@@ -79,7 +153,7 @@ def test_csv_feature_map_wraps_non_standard_flat_columns(tmp_path: Path) -> None
             source="csv",
             path=str(path),
             symbols=["SYN"],
-            feature_map={"open": "my_open", "close": "my_close"},
+            arrays=["Open", "Close"],
         )
     )
 
@@ -87,6 +161,59 @@ def test_csv_feature_map_wraps_non_standard_flat_columns(tmp_path: Path) -> None
     assert list(result.feature("Close").columns) == ["SYN"]
     assert result.metadata["ohlc_available"]["Close"] is True
     assert str(path) not in json.dumps(result.metadata)
+
+
+def test_csv_non_standard_flat_columns_fail_without_mapping(tmp_path: Path) -> None:
+    path = tmp_path / "prices.csv"
+    frame = pd.DataFrame(
+        {"my_close": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+    )
+
+    assert result.quality.state == "rejected"
+    assert "required feature 'Close' is unavailable" in result.quality.reasons
+
+
+def test_csv_extra_vbt_feature_loads_through_dynamic_access(tmp_path: Path) -> None:
+    path = tmp_path / "funding.csv"
+    frame = pd.DataFrame(
+        {
+            "Close": [1.0, 2.0, 3.0],
+            "FundingRate": [0.01, 0.02, 0.03],
+        },
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close", "FundingRate"])
+    )
+
+    assert result.quality.state == "healthy"
+    assert result.feature("FundingRate").iloc[-1, 0] == 0.03
+    assert result.metadata["loaded_arrays"] == ["Close", "FundingRate"]
+
+
+def test_configured_unused_array_must_still_load(tmp_path: Path) -> None:
+    path = tmp_path / "missing_funding.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close", "FundingRate"])
+    )
+
+    assert result.quality.state == "rejected"
+    assert "required feature 'FundingRate' is unavailable" in result.quality.reasons
+    assert result.metadata["unavailable_arrays"] == ["FundingRate"]
 
 
 def test_csv_multiindex_symbol_feature_layout_preserves_symbols(tmp_path: Path) -> None:
@@ -105,7 +232,7 @@ def test_csv_multiindex_symbol_feature_layout_preserves_symbols(tmp_path: Path) 
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["AAA", "BBB"])
+        DataConfig(source="csv", path=str(path), symbols=["AAA", "BBB"], arrays=["Close", "High"])
     )
 
     assert result.quality.state == "healthy"
@@ -137,7 +264,7 @@ def test_csv_multiindex_layout_uses_one_full_pandas_read(
     monkeypatch.setattr(data_module.pd, "read_csv", spy_read_csv)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["AAA", "BBB"])
+        DataConfig(source="csv", path=str(path), symbols=["AAA", "BBB"], arrays=["Close"])
     )
 
     assert result.quality.state == "healthy"
@@ -152,7 +279,9 @@ def test_missing_required_feature_marks_quality_rejected(tmp_path: Path) -> None
     )
     frame.to_csv(path)
 
-    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+    )
 
     assert result.quality.state == "rejected"
     assert "required feature 'Close' is unavailable" in result.quality.reasons
@@ -166,7 +295,9 @@ def test_non_numeric_required_feature_marks_quality_rejected(tmp_path: Path) -> 
     )
     frame.to_csv(path)
 
-    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+    )
 
     assert result.quality.state == "rejected"
     assert "required feature 'Close' has non-numeric symbols ['SYN']" in result.quality.reasons
@@ -197,10 +328,10 @@ def test_required_features_follow_label_kind() -> None:
 
 
 class _DemoRemoteData:
-    def __init__(self, symbols: list[str]) -> None:
+    def __init__(self, symbols: list[str], *, features: list[str] | None = None) -> None:
         self.symbols = symbols
         self.index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
-        self.features = ["Open", "High", "Low", "Close", "Volume"]
+        self.features = features or ["Open", "High", "Low", "Close", "Volume"]
 
     @classmethod
     def pull(cls, symbols, **_kwargs):
@@ -214,9 +345,11 @@ class _DemoRemoteData:
                 "Low": [0.9, 1.9, 2.9],
                 "Close": [1.0, 2.0, 3.0],
                 "Volume": [100.0, 100.0, 100.0],
+                "FundingRate": [0.01, 0.02, 0.03],
             },
             index=self.index,
         )
+        frame = frame.loc[:, self.features]
         frame.columns = pd.MultiIndex.from_product(
             [self.symbols, frame.columns], names=["symbol", "feature"]
         )

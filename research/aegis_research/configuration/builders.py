@@ -62,11 +62,7 @@ def _build_train_model(raw: dict[str, Any]) -> TrainModelConfig:
 
 
 def _build_source_ref(raw: dict[str, Any]) -> SourceRefConfig:
-    return SourceRefConfig(
-        source=raw["source"],
-        id=raw["id"],
-        params=dict(raw.get("params", {})),
-    )
+    return SourceRefConfig(source=raw["source"], id=raw["id"])
 
 
 def _build_run_source_ref(raw: dict[str, Any]) -> RunSourceRefConfig:

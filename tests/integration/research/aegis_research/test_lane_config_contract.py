@@ -70,16 +70,49 @@ def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("lane", "mutations", "expected_path"),
     [
-        ("run", {"strategy": {"source": "component", "id": "demo.strategy", "import": "x.y"}}, "strategy.import"),
-        ("run", {"strategy": {"source": "component", "id": "demo.strategy", "path": "strategy.py"}}, "strategy.path"),
-        ("run", {"strategy": {"source": "component", "id": "demo.strategy", "params": {"window": 5}}}, "strategy.params"),
+        (
+            "run",
+            {"strategy": {"source": "component", "id": "demo.strategy", "import": "x.y"}},
+            "strategy.import",
+        ),
+        (
+            "run",
+            {"strategy": {"source": "component", "id": "demo.strategy", "path": "strategy.py"}},
+            "strategy.path",
+        ),
+        (
+            "run",
+            {"strategy": {"source": "component", "id": "demo.strategy", "params": {"window": 5}}},
+            "strategy.params",
+        ),
         (
             "run",
             {"indicators": [{"source": "playbook", "ids": ["ma_explore"], "notebook_path": "../unsafe.ipynb"}]},
             "indicators[0].notebook_path",
         ),
-        ("train", {"train": {"label": {"source": "component", "id": "demo.label", "artifact_path": "runs/previous-run/strategy_run.json"}}}, "train.label.artifact_path"),
-        ("train", {"train": {"label": {"source": "component", "id": "demo.label", "python": "lambda x: x"}}}, "train.label.python"),
+        (
+            "train",
+            {"train": {"label": {"source": "component", "id": "demo.label", "params": {"n": 5}}}},
+            "train.label.params",
+        ),
+        (
+            "train",
+            {
+                "train": {
+                    "label": {
+                        "source": "component",
+                        "id": "demo.label",
+                        "artifact_path": "runs/previous-run/strategy_run.json",
+                    }
+                }
+            },
+            "train.label.artifact_path",
+        ),
+        (
+            "train",
+            {"train": {"label": {"source": "component", "id": "demo.label", "python": "lambda x: x"}}},
+            "train.label.python",
+        ),
     ],
 )
 def test_lane_configs_reject_inline_code_and_arbitrary_paths(
@@ -241,7 +274,7 @@ def _run_config() -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "strategy_demo",
-        "data": {"source": "synthetic", "rows": 50},
+        "data": {"source": "synthetic", "rows": 50, "arrays": ["OHLCV"]},
         "portfolio": {"entry_budget": 1.0},
         "strategy": {"source": "component", "id": "demo.strategy"},
         "indicators": [{"source": "component", "ids": ["demo.indicator"]}],
@@ -253,7 +286,7 @@ def _train_config() -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "train_demo",
-        "data": {"source": "synthetic", "rows": 50},
+        "data": {"source": "synthetic", "rows": 50, "arrays": ["OHLCV"]},
         "portfolio": {"entry_budget": 1.0},
         "indicators": [{"source": "component", "ids": ["demo.indicator"]}],
         "train": {
@@ -287,6 +320,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
     if family == "labels":
         return {
             **base,
+            "input_names": ["Close"],
             "target_role": "supervised_target",
             "target_kind": "binary_classification",
             "output_names": ["labels"],
@@ -295,7 +329,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
     if family == "indicators":
         return {
             **base,
-            "input_names": ["close"],
+            "input_names": ["Close"],
             "param_names": ["window"],
             "output_names": ["value"],
             "default_outputs": ["value"],
@@ -305,6 +339,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
     if family == "strategies":
         return {
             **base,
+            "input_names": ["Close"],
             "signal_outputs": ["entries", "exits"],
             "owns_portfolio": False,
         }

@@ -4,8 +4,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 3
+CONFIG_SCHEMA_VERSION = 4
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
+# This is intentionally a shortcut catalog, not a universal feature catalog.
+# Full VBT feature names are source-specific and discovered from native_data.features.
+DATA_ARRAY_SHORTCUTS = {"OHLCV": OHLCV_ARRAYS}
 
 LABEL_KINDS = {"fixlb", "trendlb", "pivotlb"}
 TRENDLB_MODES = {"binary", "binary_cont", "binary_cont_sat", "pct_change", "pct_change_norm"}
@@ -44,7 +48,6 @@ PORTFOLIO_DIRECTIONS = {"longonly"}
 SIGNAL_POLICIES = {"long_only_hysteresis"}
 SIGNAL_EXECUTION_TIMINGS = {"next_open", "same_close"}
 MISSING_POLICIES = {"nan", "drop", "raise"}
-OHLCV_FEATURE_MAP_KEYS = {"open", "high", "low", "close", "volume"}
 DATA_QUALITY_DEGRADATIONS = {
     "duplicate_index",
     "missing_rows",
@@ -131,6 +134,7 @@ class DataQualityConfig:
 @dataclass(frozen=True)
 class DataConfig:
     source: str = "synthetic"
+    arrays: list[str] = field(default_factory=lambda: ["OHLCV"])
     symbols: list[str] = field(default_factory=lambda: ["SYN"])
     start: str | None = None
     end: str | None = None
@@ -144,11 +148,33 @@ class DataConfig:
     tz_convert: str | bool | None = None
     skip_on_error: bool = False
     silence_warnings: bool = False
-    feature_map: dict[str, str] = field(default_factory=dict)
     quality: DataQualityConfig = field(default_factory=DataQualityConfig)
     wrapper_kwargs: dict[str, Any] = field(default_factory=dict)
     provider_kwargs: dict[str, Any] = field(default_factory=dict)
     execution_kwargs: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def effective_arrays(self) -> tuple[str, ...]:
+        return expand_data_arrays(self.arrays)
+
+
+def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    tokens = tuple(arrays)
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        for feature in DATA_ARRAY_SHORTCUTS.get(token, (token,)):
+            if feature in seen:
+                continue
+            expanded.append(feature)
+            seen.add(feature)
+    return tuple(expanded)
+
+
+def has_data_array_token_shape(value: str) -> bool:
+    return bool(value) and value.strip() == value and not any(
+        char in "\t\n\r" for char in value
+    )
 
 
 @dataclass(frozen=True)
@@ -193,7 +219,6 @@ class ReportConfig:
 class SourceRefConfig:
     source: str
     id: str
-    params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

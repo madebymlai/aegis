@@ -45,7 +45,7 @@ The walkthrough is scaffold evidence only. It is not validated trading methodolo
 
 ## Config Contract
 
-YAML is a versioned public contract. Every config must declare `schema_version: 3`; canonical configs also declare `lane: run` or `lane: train`. The CLI command must agree with the lane (`aerd run` for strategy/research sweeps, `aerd run --train` for ML training), and validation runs before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write. This in-repo schema v3 contract is forward-first: older draft configs that used top-level `labels`, top-level `model`, deprecated run indicator refs, or non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
+YAML is a versioned public contract. Every config must declare `schema_version: 4`; canonical configs also declare `lane: run` or `lane: train`. The CLI command must agree with the lane (`aerd run` for strategy/research sweeps, `aerd run --train` for ML training), and static config validation runs before any run directory exists. Data-array contract failures discovered from selected components happen before provider data is loaded and mark the run failed with manifest evidence. This in-repo schema v4 contract is forward-first: older draft configs that used top-level `labels`, top-level `model`, deprecated run indicator refs, removed feature-map fields, or non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
 
 Validation is strict by default:
 
@@ -59,21 +59,21 @@ Remote provider configs keep scaffold-owned fields first-class (`source`, `symbo
 
 Market data sources are selected from local sources (`synthetic`, `csv`) plus installed VectorBT `*Data` classes. Remote source IDs are derived from the VectorBT class name, for example `YFData` becomes `yf`, `BinanceData` becomes `binance`, and `CCXTData` becomes `ccxt`. Configs cannot import arbitrary provider classes; they can only select providers already exposed by VectorBT. Tests can use a controlled fake-adapter seam to exercise future provider shapes without adding a public import surface.
 
-Provider-native symbols are passed through as authored in `data.symbols`. The scaffold does not normalize tickers, exchange symbols, or aliases in schema v3 because hidden normalization would make evidence hard to audit.
+Provider-native symbols are passed through as authored in `data.symbols`. The scaffold does not normalize tickers, exchange symbols, or aliases in schema v4 because hidden normalization would make evidence hard to audit.
 
-Use `data.feature_map` when a source uses non-standard OHLCV feature names. The map uses logical scaffold keys and source feature names:
+Configs declare raw data dependencies in `data.arrays`. This field is always a list, even for one entry. `OHLCV` is a shortcut token that expands to `Open`, `High`, `Low`, `Close`, and `Volume`; extra entries must be exact VBT feature names:
 
 ```yaml
 data:
   source: csv
   path: prices.csv
   symbols: [BTCUSDT]
-  feature_map:
-    close: close_price
-    volume: base_volume
+  arrays: [OHLCV, FundingRate]
 ```
 
-CSV input supports flat OHLCV columns for one configured symbol and documented MultiIndex layouts that include separate symbol and feature levels, such as `(symbol, feature)` columns. Ambiguous local layouts, missing mapped source columns, and multi-symbol flat CSV input fail at the data boundary instead of guessing.
+Run configs do not provide feature or column mapping. Non-standard local columns must be normalized before ingestion or inside a source adapter. CSV input supports flat VBT feature-name columns for one configured symbol and documented MultiIndex layouts that include separate symbol and feature levels, such as `(symbol, feature)` columns. Ambiguous local layouts, missing requested feature columns, and multi-symbol flat CSV input fail at the data boundary instead of guessing.
+
+There is no universal catalog of all possible `data.arrays` values in Aegis. VectorBT exposes feature names per loaded data object through `Data.features` and retrieves them with `Data.get(feature=...)`. Aegis code documents only its shortcut catalog in `research/aegis_research/configuration/schema.py`: `OHLCV_ARRAYS` and `DATA_ARRAY_SHORTCUTS`. All other `data.arrays` entries are exact VBT feature names provided by the selected source. For example, VBT Yahoo Finance data commonly exposes `Open`, `High`, `Low`, `Close`, `Volume`, `Dividends`, and `Stock Splits`; local CSV/Parquet-style data exposes the feature columns present in that file. To discover available arrays for a source, load or pull a small sample and inspect `native_data.features`, or inspect completed run metadata fields `features`, `effective_arrays`, `loaded_arrays`, and `unavailable_arrays`.
 
 ## Indicator Contract
 
@@ -85,9 +85,9 @@ indicators:
     ids: [returns, ma, rsi]
 ```
 
-Indicator components own their default params, sweep grids, selected outputs, and model-feature transforms. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels. Cartesian products and constrained grids belong inside reviewed component code or playbooks, not in run/train YAML.
+Indicator components own their default params, sweep grids, selected outputs, and model-feature transforms. Component callables receive a market-data bundle, so close-only indicators use `data.close` and OHLCV indicators can use `data.open`, `data.high`, `data.low`, and `data.volume` when those inputs are declared by the manifest. Other source/provider features are requested explicitly with `data.feature("FeatureName")`. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels. Cartesian products and constrained grids belong inside reviewed component code or playbooks, not in run/train YAML.
 
-Primitive features such as returns and rolling volatility stay local in schema v3, but they still produce the same lineage, feature mapping, invalid-value diagnostics, and artifact metadata as VectorBT-backed indicators. Reusable/domain transforms should graduate to a reviewed registry definition when they need first-class indicator identity or repeated use.
+Primitive features such as returns and rolling volatility stay local in schema v4, but they still produce the same lineage, feature mapping, invalid-value diagnostics, and artifact metadata as VectorBT-backed indicators. Reusable/domain transforms should graduate to a reviewed registry definition when they need first-class indicator identity or repeated use.
 
 Trusted custom indicators are added in project code, usually with `vbt.IF(...).with_apply_func(...)`, and then referenced by stable id from config:
 
@@ -97,15 +97,15 @@ indicators:
     ids: [custom_retvol]
 ```
 
-Custom `IndicatorFactory` outputs must be bar-aligned in schema v3: each selected output preserves the input index and symbol shape. Shape-changing transforms such as Renko bricks, event lists, compressed bars, trades, or arbitrary objects belong in a separate future pipeline, such as a `vbt.parameterized` workflow, not the experiment indicator stage.
+Custom `IndicatorFactory` outputs must be bar-aligned in schema v4: each selected output preserves the input index and symbol shape. Shape-changing transforms such as Renko bricks, event lists, compressed bars, trades, or arbitrary objects belong in a separate future pipeline, such as a `vbt.parameterized` workflow, not the experiment indicator stage.
 
 The indicator stage keeps native VectorBT objects private until the modeling boundary. Public artifacts write portable `indicators.metadata`, `indicators.lineage`, `indicators.diagnostics`, and `indicators.features.schema`. Private native indicator objects and native outputs are stored as `indicators.native` with a public metadata sidecar. sklearn receives only the derived model-feature matrix with deterministic feature names and reversible mapping; native VectorBT objects never enter sklearn internals.
 
 ## Native Data Lifecycle
 
-Every source returns a `MarketDataResult` with native `vbt.Data`, safe metadata, asset diagnostics, quality state, and known-secret evidence. Derived feature views are requested with `result.feature("Close")` or the OHLC helpers and always return timestamp-by-symbol DataFrames. Orchestration does not select a first symbol or squeeze single-symbol panels.
+Every source returns a `MarketDataResult` with native `vbt.Data`, safe metadata, asset diagnostics, quality state, and known-secret evidence. Derived feature views are requested with `result.feature("Close")`, through the OHLC helpers, or through the component-facing market-data bundle fields such as `data.close` and `data.high`; they always return timestamp-by-symbol DataFrames. Orchestration does not select a first symbol or squeeze single-symbol panels.
 
-Required OHLCV features are derived from the experiment config. `fixlb` needs close only. `trendlb` and `pivotlb` need close, high, and low. The default signal timing `next_open` also requires Open; explicit `same_close` is the only v1 timing override that allows close-only data. Volume is optional until a stage explicitly requires it.
+Required data arrays come from the explicit config, selected component `input_names`, and pipeline needs. `fixlb` label components usually declare `Close`; trend and pivot labels declare `High`, `Low`, and `Close`. The default signal timing `next_open` also requires `Open`; explicit `same_close` is the only v1 timing override that allows close-only portfolio validation. Every configured array is loaded and validated, even if no selected component consumes it.
 
 ## Signal And Portfolio Contract
 
@@ -140,14 +140,14 @@ Quality states are fail-fast:
 
 | State | Meaning | Downstream allowed |
 |---|---|---|
-| `healthy` | Required symbols, features, index evidence, coverage, and numeric checks pass. Optional missing OHLCV features may appear as warnings. | Yes |
+| `healthy` | Required symbols, configured features, index evidence, coverage, and numeric checks pass. | Yes |
 | `degraded_allowed` | A named degradation such as `missing_rows`, `duplicate_index`, `non_monotonic_index`, or `skipped_symbols` was explicitly allowed by `data.quality.allowed_degradations`. | Yes |
 | `rejected` | Loaded data violates required feature, symbol, missingness, index, or numeric requirements without an explicit policy. | No |
 | `provider_failed` | A provider adapter failed before usable native data was available. The error is redacted into public-safe metadata. | No |
 
 `skip_on_error` defaults to `false`. If provider partial fetch behavior is needed, set both `data.skip_on_error: true` and `data.quality.allowed_degradations: [skipped_symbols]`; otherwise skipped configured symbols are rejected.
 
-Cache and update behavior is metadata-only in schema v3. Public metadata records update support and uses `cache_policy: disabled_in_schema_v2`; cache paths, sessions, clients, proxies, and private transport objects remain denied passthrough fields.
+Cache and update behavior is metadata-only in schema v4. Public metadata records update support and uses `cache_policy: disabled_in_schema_v2`; cache paths, sessions, clients, proxies, and private transport objects remain denied passthrough fields.
 
 ## Run Manifest And Artifacts
 
@@ -229,7 +229,7 @@ train:
 
 Use VectorBT PRO `FIXLB` fixed look-ahead labels through a reviewed label component. That component owns the native generator params, target selection, target transform, split-safety metadata, and output names.
 
-The lower-level label builder can preserve VectorBT PRO `TRENDLB` trend labels and `PIVOTLB` pivot labels, but schema v3 training configs should expose them only through reviewed components that fail closed until a confirmation-time oracle provides exact evaluation times.
+The lower-level label builder can preserve VectorBT PRO `TRENDLB` trend labels and `PIVOTLB` pivot labels, but schema v4 training configs should expose them only through reviewed components that fail closed until a confirmation-time oracle provides exact evaluation times.
 
 Label generation is native-first. Runs preserve the native VectorBT object and raw `.labels` separately from the selected model target. The current runnable training path accepts only `FIXLB` with `role: supervised_target` binary classification targets; continuous `TRENDLB` modes, sparse-event targets, and regime targets are lower-level label-builder capabilities that require future estimator support in #9 and confirmation-time oracle support before training.
 
@@ -240,8 +240,8 @@ Configs that request non-purged split kinds fail at config validation. Purged ru
 ## VectorBT PRO Notes
 
 - Use approved `YFData`, `BinanceData`, or `CCXTData` adapters for real fetches once an experiment needs external data.
-- For schema v3, public portfolio sizing is `portfolio.entry_budget`; the baseline `Portfolio.from_signals` path resolves internal `valuepercent` sizing. Public `size`, `size_type`, and target-allocation sizing are rejected until a separate allocation-mode contract exists.
-- Portfolio direction is fixed to `longonly` in schema v3 while signals consume only `positive_class_probability`; `shortonly` and `both` are rejected until a future side-specific signal contract exists.
+- For schema v4, public portfolio sizing is `portfolio.entry_budget`; the baseline `Portfolio.from_signals` path resolves internal `valuepercent` sizing. Public `size`, `size_type`, and target-allocation sizing are rejected until a separate allocation-mode contract exists.
+- Portfolio direction is fixed to `longonly` in schema v4 while signals consume only `positive_class_probability`; `shortonly` and `both` are rejected until a future side-specific signal contract exists.
 - `TRENDLB` config accepts `binary`, `binary_cont`, `binary_cont_sat`, `pct_change`, and `pct_change_norm`; only `binary` is compatible with the current binary classifier target path.
 - Keep high-cardinality parameter sweeps inside VectorBT indicator/portfolio/splitter objects instead of Python loops where possible.
 - Use `Portfolio.from_signals` for the first loop; move to `from_order_func` only when signal arrays cannot express the execution model.

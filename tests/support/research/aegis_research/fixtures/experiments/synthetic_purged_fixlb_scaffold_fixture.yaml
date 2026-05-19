@@ -1,10 +1,11 @@
-schema_version: 3
+schema_version: 4
 lane: train
 name: synthetic_purged_fixlb_scaffold_fixture
 output_dir: runs
 
 data:
   source: synthetic
+  arrays: [OHLCV]
   symbols: [SYN]
   start: "2020-01-01"
   timeframe: "1D"

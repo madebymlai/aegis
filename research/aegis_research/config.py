@@ -8,6 +8,7 @@ from research.aegis_research.configuration.resolution import (
 )
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
+    DATA_ARRAY_SHORTCUTS,
     DATA_QUALITY_DEGRADATIONS,
     DENIED_PASSTHROUGH_KEYS,
     EXPERIMENT_NAME_RE,
@@ -19,7 +20,7 @@ from research.aegis_research.configuration.schema import (
     MISSING_POLICIES,
     MODEL_DENIED_KEYS,
     MODEL_SOURCE_KINDS,
-    OHLCV_FEATURE_MAP_KEYS,
+    OHLCV_ARRAYS,
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
     RANKING_DIRECTIONS,
@@ -51,6 +52,7 @@ from research.aegis_research.configuration.schema import (
     StrategyRunLaneConfig,
     TrainLaneConfig,
     TrainModelConfig,
+    expand_data_arrays,
 )
 from research.aegis_research.configuration.secrets import (
     known_config_secret_values,
@@ -70,6 +72,7 @@ REMOTE_DATA_SOURCES = remote_data_sources()
 
 __all__ = [
     "CONFIG_SCHEMA_VERSION",
+    "DATA_ARRAY_SHORTCUTS",
     "DATA_QUALITY_DEGRADATIONS",
     "DATA_SOURCES",
     "DENIED_PASSTHROUGH_KEYS",
@@ -83,7 +86,7 @@ __all__ = [
     "MISSING_POLICIES",
     "MODEL_DENIED_KEYS",
     "MODEL_SOURCE_KINDS",
-    "OHLCV_FEATURE_MAP_KEYS",
+    "OHLCV_ARRAYS",
     "PORTFOLIO_DIRECTIONS",
     "PORTFOLIO_TARGET_SIZE_TYPES",
     "RANKING_DIRECTIONS",
@@ -117,6 +120,7 @@ __all__ = [
     "StrategyRunLaneConfig",
     "TrainLaneConfig",
     "TrainModelConfig",
+    "expand_data_arrays",
     "known_config_secret_values",
     "load_lane_config",
     "redact_config",

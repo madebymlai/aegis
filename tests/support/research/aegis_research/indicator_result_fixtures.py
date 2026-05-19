@@ -10,6 +10,7 @@ from vectorbtpro import vbt
 
 from research.aegis_research.data_schema import table_shape
 from research.aegis_research.indicators import FEATURE_COLUMN_NAMES, IndicatorResult
+from research.aegis_research.market_data.contracts import MarketDataBundle
 
 
 def returns_indicator_result(close: pd.DataFrame, windows: Sequence[int] = (1,)) -> IndicatorResult:
@@ -42,7 +43,8 @@ def ma_indicator_result(close: pd.DataFrame, windows: Sequence[int] = (3,)) -> I
     )
 
 
-def native_indicator_result(close: pd.DataFrame) -> IndicatorResult:
+def native_indicator_result(data: MarketDataBundle | pd.DataFrame) -> IndicatorResult:
+    close = data if isinstance(data, pd.DataFrame) else data.close
     ma = vbt.MA.run(
         close,
         window=[10, 30],

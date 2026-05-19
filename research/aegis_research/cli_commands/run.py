@@ -135,6 +135,8 @@ def _handle_strategy_run(
             "strategy run interrupted",
             run_refs=_refreshed_run_refs(run_refs),
         ) from error
+    except ConfigValidationError as error:
+        raise ConfigCliError(str(error), run_refs=_refreshed_run_refs(run_refs)) from error
     except Exception as error:
         raise ExecutionFailureError(redact_text(str(error)), run_refs=_refreshed_run_refs(run_refs)) from error
 
@@ -195,6 +197,11 @@ def _handle_train_run(
             "training run interrupted",
             run_refs=_refreshed_run_refs(run_refs),
         ) from error
+    except ConfigValidationError as error:
+        raise ConfigCliError(
+            redact_text(str(error), known_secrets),
+            run_refs=_refreshed_run_refs(run_refs),
+        ) from error
     except Exception as error:
         raise ExecutionFailureError(
             redact_text(str(error), known_secrets),
@@ -232,10 +239,9 @@ def _label_result_builder(
     config = resolved.config
     definition = component_registry.get(ComponentSelection("labels", config.label.id))
     label_callable = definition.load_callable()
-    params = dict(config.label.params)
 
-    def build(close: Any, **_kwargs: Any) -> Any:
-        result = label_callable(close, params=params)
+    def build(data: Any) -> Any:
+        result = label_callable(data)
         metadata = dict(getattr(result, "metadata", {}))
         metadata["source"] = {"kind": "component", "id": config.label.id}
         return replace(result, metadata=metadata)
@@ -250,9 +256,9 @@ def _indicator_result_builder(
     config = resolved.config
     refs = list(config.indicators)
 
-    def build(close: Any) -> Any:
+    def build(data: Any) -> Any:
         return build_component_indicator_result(
-            close,
+            data,
             refs,
             component_registry=component_registry,
         )

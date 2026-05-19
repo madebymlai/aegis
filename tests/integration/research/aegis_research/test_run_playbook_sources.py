@@ -189,7 +189,7 @@ def _write_run_config(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "run_playbook_source_test",
-                "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80},
+                "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80, "arrays": ["OHLCV"]},
                 "portfolio": {"entry_budget": 1.0},
                 "strategy": {"source": strategy_source, "id": strategy_id},
                 "indicators": indicators
@@ -228,7 +228,7 @@ def _write_notebook(
                 "AEGIS_PLAYBOOK_RESULT = {"
                 "'variant_records': [{'variant_id': '"
                 + playbook_id
-                + "', 'params': AEGIS_PLAYBOOK_PARAMS, "
+                + "', 'params': {'window': 5}, "
                 "'metrics': {'total_return_pct': 1.5}}]}"
             )
         ],

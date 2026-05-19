@@ -86,19 +86,14 @@ def discover_playbook_registry(
 def execute_notebook_playbook(
     definition: NotebookPlaybookDefinition,
     *,
-    params: Mapping[str, Any] | None = None,
     timeout: int = 60,
 ) -> dict[str, Any]:
     notebook = nbformat.read(definition.file_path, as_version=4)
-    params_json = json.dumps(dict(params or {}), sort_keys=True)
-    setup = nbformat.v4.new_code_cell(
-        "import json\n" f"AEGIS_PLAYBOOK_PARAMS = json.loads({params_json!r})"
-    )
     capture = nbformat.v4.new_code_cell(
         "import json\n"
         "print('AEGIS_PLAYBOOK_RESULT_JSON=' + json.dumps(AEGIS_PLAYBOOK_RESULT, sort_keys=True))"
     )
-    notebook.cells = [setup, *notebook.cells, capture]
+    notebook.cells = [*notebook.cells, capture]
     client = NotebookClient(notebook, timeout=timeout, kernel_name="python3")
     executed = client.execute()
     outputs = executed.cells[-1].get("outputs", [])

@@ -16,7 +16,10 @@ from research.aegis_research.component_registry.contracts import (
     LabelManifest,
     StrategyManifest,
 )
-from research.aegis_research.configuration.schema import LABEL_TARGET_ROLES
+from research.aegis_research.configuration.schema import (
+    LABEL_TARGET_ROLES,
+    has_data_array_token_shape,
+)
 
 COMPONENT_MANIFEST_NAME = "COMPONENT_MANIFEST"
 COMPONENT_CALLABLE_NAME = "COMPONENT_CALLABLE"
@@ -131,6 +134,7 @@ def _validate_common(payload: dict[str, Any], *, expected_family: str, path: Pat
 
 
 def _label_manifest(payload: dict[str, Any], path: Path) -> LabelManifest:
+    input_names = _required_input_names(payload, path)
     target_role = _required_string(payload, "target_role", path)
     target_kind = _required_string(payload, "target_kind", path)
     if target_role not in LABEL_TARGET_ROLES:
@@ -143,6 +147,7 @@ def _label_manifest(payload: dict[str, Any], path: Path) -> LabelManifest:
         id=payload["id"],
         version=payload["version"],
         payload=payload,
+        input_names=input_names,
         target_role=target_role,
         target_kind=target_kind,
         output_names=output_names,
@@ -150,7 +155,7 @@ def _label_manifest(payload: dict[str, Any], path: Path) -> LabelManifest:
 
 
 def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifest:
-    input_names = _required_string_tuple(payload, "input_names", path, allow_empty=True)
+    input_names = _required_input_names(payload, path)
     param_names = _required_string_tuple(payload, "param_names", path, allow_empty=True)
     output_names = _required_string_tuple(payload, "output_names", path)
     default_outputs = _required_string_tuple(payload, "default_outputs", path)
@@ -177,6 +182,7 @@ def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifes
 
 
 def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
+    input_names = _required_input_names(payload, path)
     signal_outputs = _required_string_tuple(payload, "signal_outputs", path)
     if unsupported := sorted(set(signal_outputs) - STRATEGY_SIGNAL_OUTPUTS):
         raise ComponentRegistryError(f"{path}: unsupported strategy outputs: {unsupported}")
@@ -193,6 +199,7 @@ def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
         id=payload["id"],
         version=payload["version"],
         payload=payload,
+        input_names=input_names,
         signal_outputs=signal_outputs,
         owns_portfolio=False,
     )
@@ -223,6 +230,17 @@ def _default_model_features(
             )
         rows.append({"output": output, "transform": transform})
     return tuple(rows)
+
+
+def _required_input_names(payload: dict[str, Any], path: Path) -> tuple[str, ...]:
+    input_names = _required_string_tuple(payload, "input_names", path)
+    invalid = [name for name in input_names if not has_data_array_token_shape(name)]
+    if invalid:
+        raise ComponentRegistryError(
+            f"{path}: input_names must contain VBT feature names without surrounding "
+            f"whitespace or control characters: {invalid}"
+        )
+    return input_names
 
 
 def _required_string(payload: dict[str, Any], key: str, path: Path) -> str:

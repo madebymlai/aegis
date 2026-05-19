@@ -8,7 +8,11 @@ import pytest
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.component_registry.contracts import ComponentRegistryError
 from research.aegis_research.config import RunIndicatorSourceConfig, TrainModelConfig
-from research.aegis_research.indicators import build_component_indicator_result, build_model_feature_matrix
+from research.aegis_research.indicators import (
+    build_component_indicator_result,
+    build_model_feature_matrix,
+)
+from research.aegis_research.market_data.contracts import MarketDataBundle
 from research.aegis_research.models import train_model
 from tests.support.research.aegis_research.indicator_result_fixtures import (
     ma_indicator_result,
@@ -28,8 +32,8 @@ def test_component_indicator_preserves_vbt_param_lineage(tmp_path: Path) -> None
         close,
         _indicator_manifest("demo.ma", param_names=["window", "wtype"]),
         "from vectorbtpro import vbt\n"
-        "def run(close, *, params):\n"
-        "    ma = vbt.MA.run(close, window=[2, 3], wtype='simple', "
+        "def run(data):\n"
+        "    ma = vbt.MA.run(data.close, window=[2, 3], wtype='simple', "
         "hide_params=None, hide_default=False)\n"
         "    return ma.ma\n",
     )
@@ -64,8 +68,8 @@ def test_component_indicator_records_cartesian_vbt_grid(tmp_path: Path) -> None:
         close,
         _indicator_manifest("demo.ma", param_names=["window", "wtype"]),
         "from vectorbtpro import vbt\n"
-        "def run(close, *, params):\n"
-        "    ma = vbt.MA.run(close, window=[2, 3], wtype=['simple', 'wilder'], "
+        "def run(data):\n"
+        "    ma = vbt.MA.run(data.close, window=[2, 3], wtype=['simple', 'wilder'], "
         "param_product=True, hide_params=None, hide_default=False)\n"
         "    return ma.ma\n",
     )
@@ -96,8 +100,8 @@ def test_custom_indicator_factory_component_matches_builtin_lineage_shape(tmp_pa
         "    return close.pct_change().rolling(window).std()\n"
         "RETVOL = vbt.IF(input_names=['close'], param_names=['window'], "
         "output_names=['retvol']).with_apply_func(_retvol_apply, keep_pd=True)\n"
-        "def run(close, *, params):\n"
-        "    return RETVOL.run(close, window=[3], hide_params=None, hide_default=False).retvol\n",
+        "def run(data):\n"
+        "    return RETVOL.run(data.close, window=[3], hide_params=None, hide_default=False).retvol\n",
     )
 
     symbols = {item["symbol"] for item in result.lineage}
@@ -105,6 +109,28 @@ def test_custom_indicator_factory_component_matches_builtin_lineage_shape(tmp_pa
     assert result.native_outputs["demo.retvol"]["retvol"].columns.names[-1] == "symbol"
     assert symbols == {"AAA", "BBB"}
     assert all(item["indicator_id"] == "demo.retvol" for item in result.lineage)
+
+
+def test_component_indicator_reads_ohlcv_bundle_fields(tmp_path: Path) -> None:
+    close = _close_frame(symbols=["SYN"])
+    high = close + 2.0
+
+    result = _component_result(
+        tmp_path,
+        close,
+        _indicator_manifest(
+            "demo.high_gap",
+            input_names=["High", "Close"],
+            output_name="high_gap",
+            transforms=["identity"],
+        ),
+        "def run(data):\n"
+        "    return data.high - data.close\n",
+        high=high,
+    )
+
+    assert result.frame.iloc[-1, 0] == 2.0
+    assert result.lineage[0]["output"] == "high_gap"
 
 
 def test_component_indicator_rejects_default_model_feature_for_unknown_output(tmp_path: Path) -> None:
@@ -116,8 +142,8 @@ def test_component_indicator_rejects_default_model_feature_for_unknown_output(tm
             tmp_path,
             close,
             manifest,
-            "def run(close, *, params):\n"
-            "    return close.rolling(2).mean()\n",
+            "def run(data):\n"
+            "    return data.close.rolling(2).mean()\n",
         )
 
 
@@ -129,8 +155,8 @@ def test_component_indicator_rejects_shape_changing_outputs(tmp_path: Path) -> N
             tmp_path,
             close,
             _indicator_manifest("demo.bad"),
-            "def run(close, *, params):\n"
-            "    return close.iloc[1:]\n",
+            "def run(data):\n"
+            "    return data.close.iloc[1:]\n",
         )
 
 
@@ -228,6 +254,8 @@ def _component_result(
     close: pd.DataFrame,
     manifest: dict[str, object],
     source: str,
+    *,
+    high: pd.DataFrame | None = None,
 ):
     root = tmp_path / "research" / "components"
     path = root / "indicators" / "indicator.py"
@@ -239,7 +267,7 @@ def _component_result(
     )
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     return build_component_indicator_result(
-        close,
+        MarketDataBundle(close=close, high=high),
         [RunIndicatorSourceConfig(source="component", ids=[str(manifest["id"])])],
         component_registry=registry,
     )
@@ -258,6 +286,7 @@ def _train_model_config(min_train_samples: int) -> TrainModelConfig:
 def _indicator_manifest(
     component_id: str,
     *,
+    input_names: list[str] | None = None,
     param_names: list[str] | None = None,
     output_name: str = "ma",
     model_output: str | None = None,
@@ -268,7 +297,7 @@ def _indicator_manifest(
         "family": "indicators",
         "id": component_id,
         "version": "1.0.0",
-        "input_names": ["close"],
+        "input_names": input_names or ["Close"],
         "param_names": param_names or [],
         "output_names": [output_name],
         "default_outputs": [output_name],

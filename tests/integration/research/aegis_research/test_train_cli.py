@@ -57,6 +57,7 @@ def test_train_rejects_run_artifact_source_refs_before_run_directory(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "bad_train",
+                "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
                 "portfolio": {"entry_budget": 1.0},
                 "indicators": [{"source": "component", "ids": ["demo.returns"]}],
                 "train": {
@@ -80,6 +81,30 @@ def test_train_rejects_run_artifact_source_refs_before_run_directory(
     assert not (tmp_path / "runs" / "bad-train").exists()
 
 
+def test_train_preflights_component_input_arrays_before_data_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_label_component(tmp_path / "research/components/labels/fixlb.py")
+    config_path = _write_config(
+        tmp_path,
+        data={"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["Close", "Open"]},
+    )
+    indicator_path = tmp_path / "research/components/indicators/returns.py"
+    indicator_path.write_text(indicator_path.read_text().replace("['Close']", "['High']"))
+
+    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "bad-arrays"]) == 6
+
+    payload = json.loads(capsys.readouterr().err)
+    manifest = json.loads((tmp_path / "runs" / "bad-arrays" / "manifest.json").read_text())
+    assert payload["error"]["category"] == "config_validation"
+    assert "missing required data arrays" in payload["error"]["message"]
+    assert manifest["run"]["status"] == RunStatus.FAILED
+    assert not (tmp_path / "runs" / "bad-arrays" / "data_metadata.json").exists()
+
+
 def _write_config(tmp_path: Path, **overrides: Any) -> Path:
     model = model_config_dict(min_train_samples=1)
     _write_indicator_component(tmp_path / "research/components/indicators/returns.py")
@@ -87,7 +112,13 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "train_contract",
         "output_dir": "runs",
-        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "timeframe": "1D"},
+        "data": {
+            "source": "synthetic",
+            "symbols": ["SYN"],
+            "rows": 120,
+            "timeframe": "1D",
+            "arrays": ["OHLCV"],
+        },
         "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
         "indicators": [{"source": "component", "ids": ["demo.returns"]}],
@@ -117,11 +148,12 @@ def _write_label_component(path: Path) -> None:
         "from research.aegis_research.labels import LabelConfig, build_label_result\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
+        "'input_names': ['Close'], "
         "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
         "'output_names': ['labels']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
-        "def run(close, *, params):\n"
-        "    return build_label_result(close, LabelConfig())\n"
+        "def run(data):\n"
+        "    return build_label_result(data.close, LabelConfig())\n"
     )
 
 
@@ -130,11 +162,11 @@ def _write_indicator_component(path: Path) -> None:
     path.write_text(
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.returns', 'version': '1.0.0', "
-        "'input_names': ['close'], 'param_names': [], 'output_names': ['returns'], "
+        "'input_names': ['Close'], 'param_names': [], 'output_names': ['returns'], "
         "'default_outputs': ['returns'], "
         "'default_model_features': [{'output': 'returns', 'transform': 'identity'}], "
         "'supported_transforms': ['identity']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
-        "def run(close, *, params):\n"
-        "    return close.pct_change().fillna(0.0)\n"
+        "def run(data):\n"
+        "    return data.close.pct_change().fillna(0.0)\n"
     )

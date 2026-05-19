@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
 import pandas as pd
 
-from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.configuration.schema import OHLCV_ARRAYS, DataConfig
 from research.aegis_research.configuration.secrets import to_builtin
 
-OHLCV_FEATURES = ("Open", "High", "Low", "Close", "Volume")
+OHLCV_FEATURES = OHLCV_ARRAYS
 LOGICAL_FEATURES = {
     "open": "Open",
     "high": "High",
@@ -92,3 +93,50 @@ class MarketDataResult:
     def assert_usable(self) -> None:
         if not self.quality.usable:
             raise MarketDataQualityError(self.quality)
+
+
+@dataclass(frozen=True)
+class MarketDataBundle:
+    close: pd.DataFrame | None = None
+    open: pd.DataFrame | None = None
+    high: pd.DataFrame | None = None
+    low: pd.DataFrame | None = None
+    volume: pd.DataFrame | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    native_data: Any | None = None
+    loaded_features: tuple[str, ...] = ()
+    feature_getter: Callable[[str], pd.DataFrame] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+    def feature(self, feature: str) -> pd.DataFrame:
+        if self.loaded_features and feature not in self.loaded_features:
+            raise ValueError(f"market data feature {feature!r} was not loaded for this run")
+        panel = getattr(self, feature.lower(), None) if feature in OHLCV_FEATURES else None
+        if panel is not None:
+            return panel
+        if self.feature_getter is not None:
+            return self.feature_getter(feature)
+        raise ValueError(f"market data feature {feature!r} is not available")
+
+
+def market_data_bundle(result: MarketDataResult) -> MarketDataBundle:
+    result.assert_usable()
+    available = result.metadata.get("ohlc_available", {})
+
+    def optional_feature(feature: str) -> pd.DataFrame | None:
+        return result.feature(feature) if available.get(feature) else None
+
+    return MarketDataBundle(
+        close=optional_feature("Close"),
+        open=optional_feature("Open"),
+        high=optional_feature("High"),
+        low=optional_feature("Low"),
+        volume=optional_feature("Volume"),
+        metadata=result.metadata,
+        native_data=result.native_data,
+        loaded_features=tuple(result.metadata.get("loaded_arrays", ())),
+        feature_getter=result.feature,
+    )

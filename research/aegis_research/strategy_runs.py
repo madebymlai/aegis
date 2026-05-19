@@ -12,13 +12,25 @@ from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
 )
 from research.aegis_research.config import (
+    ConfigValidationError,
     ResolvedLaneConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
     SignalConfig,
     to_builtin,
 )
-from research.aegis_research.data import load_market_data_result
+from research.aegis_research.data import (
+    MarketDataBundle,
+    load_market_data_result,
+    market_data_bundle,
+)
+from research.aegis_research.data_arrays import (
+    DataArrayContract,
+    build_data_array_contract,
+    data_array_evidence_payload,
+    merge_data_arrays,
+    with_data_array_contract_metadata,
+)
 from research.aegis_research.playbook_registry import (
     FrozenPlaybookRegistry,
     PlaybookSelection,
@@ -49,9 +61,8 @@ STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
 
 @dataclass(frozen=True)
 class StrategyInputBundle:
-    close: pd.DataFrame
+    data: MarketDataBundle
     indicators: dict[str, Any]
-    params: dict[str, Any]
     metadata: dict[str, Any]
 
 
@@ -76,6 +87,7 @@ def run_strategy_sweep(
     config = resolved_config.config
     if config.lane != "run":
         raise ValueError("run_strategy_sweep requires a run lane config")
+    array_contract = _strategy_data_array_contract(config, component_registry)
     playbooks = playbook_registry or discover_playbook_registry(component_registry=component_registry)
 
     recorder = RunStore(config.output_dir).start_run(
@@ -91,21 +103,27 @@ def run_strategy_sweep(
         "evidence_type": "strategy_sweep",
         "component_registry_fingerprint": component_registry.fingerprint,
         "playbook_registry_fingerprint": playbooks.fingerprint,
+        "data_arrays": array_contract.metadata(),
     }
     recorder.persist()
     if on_run_started is not None:
         on_run_started(_run_refs(recorder))
 
     try:
-        data_result = load_market_data_result(config.data, required_features=("Close", "Open"))
+        array_contract.assert_configured()
+        data_result = load_market_data_result(
+            config.data,
+            required_features=array_contract.required_arrays,
+        )
+        data_result = with_data_array_contract_metadata(data_result, array_contract)
         data_result.assert_usable()
-        close = data_result.feature("Close")
-        open_prices = data_result.feature("Open")
+        data_bundle = market_data_bundle(data_result)
+        open_prices = data_bundle.feature("Open")
         indicators, indicator_evidence, playbook_variant_records = _resolve_indicator_refs(
             config.indicators,
             component_registry=component_registry,
             playbook_registry=playbooks,
-            close=close,
+            data=data_bundle,
         )
 
         strategy_evidence, strategy_variant_records, signal_diagnostics, portfolio_diagnostics = (
@@ -113,7 +131,7 @@ def run_strategy_sweep(
                 config.strategy,
                 component_registry=component_registry,
                 playbook_registry=playbooks,
-                close=close,
+                data=data_bundle,
                 open_prices=open_prices,
                 indicators=indicators,
                 indicator_evidence=indicator_evidence,
@@ -133,6 +151,7 @@ def run_strategy_sweep(
             "evidence_type": "strategy_sweep",
             "strategy": strategy_evidence,
             "indicators": indicator_evidence,
+            "data": data_array_evidence_payload(data_result, array_contract),
             "leaderboard": leaderboard,
             "signal_diagnostics": signal_diagnostics,
             "portfolio_diagnostics": portfolio_diagnostics,
@@ -149,6 +168,9 @@ def run_strategy_sweep(
     except KeyboardInterrupt:
         recorder.mark_run_interrupted(diagnostic={"error_type": "KeyboardInterrupt", "message": "interrupted"})
         raise
+    except ConfigValidationError as error:
+        recorder.mark_run_failed(diagnostic={"error_type": type(error).__name__, "message": str(error)[:1000]})
+        raise
     except Exception as error:
         recorder.mark_run_failed(diagnostic={"error_type": type(error).__name__, "message": str(error)[:1000]})
         raise
@@ -159,7 +181,7 @@ def _resolve_indicator_refs(
     *,
     component_registry: FrozenComponentRegistry,
     playbook_registry: FrozenPlaybookRegistry,
-    close: pd.DataFrame,
+    data: MarketDataBundle,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     indicators: dict[str, Any] = {}
     evidence: list[dict[str, Any]] = []
@@ -172,8 +194,8 @@ def _resolve_indicator_refs(
                 if component_id in indicators:
                     raise ValueError(f"duplicate indicator component ref: {component_id}")
                 definition = component_registry.get(ComponentSelection("indicators", component_id))
-                output = definition.load_callable()(close, params={})
-                indicators[component_id] = _validate_indicator_output(output, close, component_id)
+                output = definition.load_callable()(data)
+                indicators[component_id] = _validate_indicator_output(output, data.close, component_id)
                 evidence.append(
                     {
                         "source": "component",
@@ -215,12 +237,42 @@ def _resolve_indicator_refs(
     return indicators, evidence, variant_records
 
 
+def _strategy_data_array_contract(
+    config: Any,
+    component_registry: FrozenComponentRegistry,
+) -> DataArrayContract:
+    return build_data_array_contract(
+        configured_arrays=config.data.effective_arrays,
+        component_required_arrays=_strategy_component_required_arrays(config, component_registry),
+        pipeline_required_arrays=("Close", "Open"),
+    )
+
+
+def _strategy_component_required_arrays(
+    config: Any,
+    component_registry: FrozenComponentRegistry,
+) -> tuple[str, ...]:
+    required: list[tuple[str, ...]] = []
+    if config.strategy.source == "component":
+        required.append(
+            component_registry.get(ComponentSelection("strategies", config.strategy.id)).input_names
+        )
+    for ref in config.indicators:
+        if ref.source != "component":
+            continue
+        for component_id in ref.expanded_ids(component_registry.ids("indicators")):
+            required.append(
+                component_registry.get(ComponentSelection("indicators", component_id)).input_names
+            )
+    return merge_data_arrays(*required)
+
+
 def _resolve_strategy_ref(
     ref: RunSourceRefConfig,
     *,
     component_registry: FrozenComponentRegistry,
     playbook_registry: FrozenPlaybookRegistry,
-    close: pd.DataFrame,
+    data: MarketDataBundle,
     open_prices: pd.DataFrame,
     indicators: dict[str, Any],
     indicator_evidence: list[dict[str, Any]],
@@ -252,9 +304,8 @@ def _resolve_strategy_ref(
     definition = component_registry.get(ComponentSelection("strategies", ref.id))
     strategy_callable = definition.load_callable()
     bundle = StrategyInputBundle(
-        close=close,
+        data=data,
         indicators=indicators,
-        params={},
         metadata={
             "strategy_id": ref.id,
             "component_source_hash": definition.identity.source_hash,
@@ -264,13 +315,13 @@ def _resolve_strategy_ref(
     signal_result = validate_strategy_output(strategy_callable(bundle), bundle)
     signal_config = SignalConfig()
     portfolio = simulate_portfolio(
-        close,
+        data.close,
         signal_result.entries,
         signal_result.exits,
         portfolio_config,
         signal_config,
         open_prices=open_prices,
-        market_index=close.index,
+        market_index=data.close.index,
     )
     metrics = portfolio_metrics(portfolio.portfolio, report_config)
     return (
@@ -361,8 +412,8 @@ def validate_strategy_output(output: Any, bundle: StrategyInputBundle) -> Strate
         raise ValueError(f"strategy output must not contain portfolio fields: {forbidden}")
     if "entries" not in output or "exits" not in output:
         raise ValueError("strategy output must include entries and exits")
-    entries = _signal_frame(output["entries"], bundle.close, "entries")
-    exits = _signal_frame(output["exits"], bundle.close, "exits")
+    entries = _signal_frame(output["entries"], bundle.data.close, "entries")
+    exits = _signal_frame(output["exits"], bundle.data.close, "exits")
     diagnostics = {
         "schema_version": "strategy_signal_diagnostics.v1",
         "entry_states": _true_count(entries),

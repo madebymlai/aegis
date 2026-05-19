@@ -17,6 +17,23 @@ def test_active_cli_docs_use_aerd_contract() -> None:
     assert "python -m research.aegis_research.cli" not in docs
 
 
+def test_active_docs_use_vbt_data_arrays_not_feature_map() -> None:
+    docs = "\n".join(
+        [
+            Path("README.md").read_text(),
+            Path("docs/components.md").read_text(),
+            Path("docs/playbooks.md").read_text(),
+            Path("docs/vectorbt-scaffold.md").read_text(),
+        ]
+    )
+
+    assert "data.arrays" in docs
+    assert "arrays: [OHLCV" in docs
+    assert "Data.features" in docs
+    assert "DATA_ARRAY_SHORTCUTS" in docs
+    assert "data.feature_map" not in docs
+
+
 def test_model_plugin_docs_keep_yaml_inert_and_aerd_registry_explicit() -> None:
     docs = Path("docs/model-plugins.md").read_text()
 

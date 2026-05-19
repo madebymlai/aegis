@@ -14,6 +14,7 @@ from research.aegis_research.component_registry.contracts import (
 )
 from research.aegis_research.config import RunIndicatorSourceConfig
 from research.aegis_research.data_schema import index_identity, table_shape
+from research.aegis_research.market_data.contracts import MarketDataBundle
 
 FEATURE_COLUMN_NAMES = ["feature", "indicator", "output", "transform", "params", "symbol"]
 
@@ -40,14 +41,14 @@ class ModelFeatureMatrix:
 
 
 def build_component_indicator_result(
-    close: pd.DataFrame,
+    data: MarketDataBundle,
     refs: list[RunIndicatorSourceConfig],
     *,
     component_registry: FrozenComponentRegistry,
     invalid_value_policy: str = "drop_rows",
 ) -> IndicatorResult:
     component_results = [
-        _run_component_indicator(close, definition)
+        _run_component_indicator(data, definition)
         for definition in _expanded_component_indicator_definitions(refs, component_registry)
     ]
     if not component_results:
@@ -166,15 +167,15 @@ def _expanded_component_indicator_definitions(
     return definitions
 
 
-def _run_component_indicator(close: pd.DataFrame, definition: ComponentDefinition) -> IndicatorResult:
+def _run_component_indicator(data: MarketDataBundle, definition: ComponentDefinition) -> IndicatorResult:
     if not isinstance(definition.manifest, IndicatorManifest):
         raise TypeError(f"component {definition.id!r} is not an indicator")
-    output = definition.load_callable()(close, params={})
+    output = definition.load_callable()(data)
     if isinstance(output, IndicatorResult):
         return _source_component_indicator_result(output, definition)
     output_name = _single_component_output_name(definition.manifest)
-    frame = _component_output_frame(output, close, definition.id, output_name)
-    return _component_frame_indicator_result(close, frame, definition, output_name)
+    frame = _component_output_frame(output, data.close, definition.id, output_name)
+    return _component_frame_indicator_result(data.close, frame, definition, output_name)
 
 
 def _source_component_indicator_result(

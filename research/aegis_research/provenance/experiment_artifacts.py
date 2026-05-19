@@ -84,7 +84,7 @@ class ExperimentArtifactWriter:
             producer_stage="data",
             path="data_metadata.json",
             payload=data_result.metadata,
-            schema_version="data_metadata.v1",
+            schema_version="data_metadata.v2",
         )
 
     def write_data_native_artifact(self, data_result: MarketDataResult) -> None:

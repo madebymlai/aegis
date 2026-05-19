@@ -14,10 +14,12 @@ from research.aegis_research.market_data.contracts import (
     SAFE_RETURNED_KWARG_KEYS,
     MarketDataAdapter,
     MarketDataAdapterResult,
+    MarketDataBundle,
     MarketDataQuality,
     MarketDataQualityError,
     MarketDataResult,
     RemoteDataPullError,
+    market_data_bundle,
 )
 from research.aegis_research.market_data.loading import (
     _pull_remote,
@@ -45,6 +47,7 @@ __all__ = [
     "SAFE_RETURNED_KWARG_KEYS",
     "MarketDataAdapter",
     "MarketDataAdapterResult",
+    "MarketDataBundle",
     "MarketDataQuality",
     "MarketDataQualityError",
     "MarketDataResult",
@@ -57,6 +60,7 @@ __all__ = [
     "load_market_data",
     "load_market_data_result",
     "low_from_ohlcv",
+    "market_data_bundle",
     "pd",
     "required_experiment_ohlcv_features",
     "required_ohlcv_features",

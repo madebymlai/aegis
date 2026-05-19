@@ -4,7 +4,7 @@ COMPONENT_MANIFEST = {
     "family": "indicators",
     "id": "example.ma",
     "version": "1.0.0",
-    "input_names": ["close"],
+    "input_names": ["Close"],
     "param_names": ["window", "wtype"],
     "output_names": ["ma"],
     "default_outputs": ["ma"],
@@ -14,9 +14,9 @@ COMPONENT_MANIFEST = {
 COMPONENT_CALLABLE = "run"
 
 
-def run(close, *, params):
+def run(data):
     ma = vbt.MA.run(
-        close,
+        data.close,
         window=[10, 30],
         wtype="simple",
         hide_params=None,

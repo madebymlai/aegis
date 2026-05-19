@@ -208,7 +208,13 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "cli_contract",
         "output_dir": "runs",
-        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "timeframe": "1D"},
+        "data": {
+            "source": "synthetic",
+            "symbols": ["SYN"],
+            "rows": 120,
+            "timeframe": "1D",
+            "arrays": ["OHLCV"],
+        },
         "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
         "indicators": [{"source": "component", "ids": ["demo.returns"]}],
@@ -238,11 +244,12 @@ def _write_label_component(path: Path) -> None:
         "from research.aegis_research.labels import LabelConfig, build_label_result\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
+        "'input_names': ['Close'], "
         "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
         "'output_names': ['labels']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
-        "def run(close, *, params):\n"
-        "    return build_label_result(close, LabelConfig())\n"
+        "def run(data):\n"
+        "    return build_label_result(data.close, LabelConfig())\n"
     )
 
 
@@ -251,11 +258,11 @@ def _write_indicator_component(path: Path) -> None:
     path.write_text(
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.returns', 'version': '1.0.0', "
-        "'input_names': ['close'], 'param_names': [], 'output_names': ['returns'], "
+        "'input_names': ['Close'], 'param_names': [], 'output_names': ['returns'], "
         "'default_outputs': ['returns'], "
         "'default_model_features': [{'output': 'returns', 'transform': 'identity'}], "
         "'supported_transforms': ['identity']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
-        "def run(close, *, params):\n"
-        "    return close.pct_change().fillna(0.0)\n"
+        "def run(data):\n"
+        "    return data.close.pct_change().fillna(0.0)\n"
     )

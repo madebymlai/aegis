@@ -13,6 +13,7 @@ from research.aegis_research.component_registry import (
 )
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
+    DATA_ARRAY_SHORTCUTS,
     DATA_QUALITY_DEGRADATIONS,
     DENIED_PASSTHROUGH_KEYS,
     EXPERIMENT_NAME_RE,
@@ -21,7 +22,6 @@ from research.aegis_research.configuration.schema import (
     MISSING_POLICIES,
     MODEL_DENIED_KEYS,
     MODEL_SOURCE_KINDS,
-    OHLCV_FEATURE_MAP_KEYS,
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
     RANKING_DIRECTIONS,
@@ -29,7 +29,6 @@ from research.aegis_research.configuration.schema import (
     SIGNAL_POLICIES,
     SOURCE_KINDS,
     SPLIT_KINDS,
-    ConfigValidationError,
     ConfigValidationIssue,
     DataConfig,
     DataQualityConfig,
@@ -37,6 +36,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     SignalConfig,
     SplitConfig,
+    has_data_array_token_shape,
 )
 from research.aegis_research.configuration.secrets import _validate_no_inline_secrets
 from research.aegis_research.market_data.sources import LOCAL_DATA_SOURCES, remote_data_sources
@@ -397,7 +397,7 @@ def _validate_source_ref(
     if not isinstance(value, dict):
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
-    _validate_known_keys(path, value, {"source", "id", "params"}, issues)
+    _validate_known_keys(path, value, {"source", "id"}, issues)
     _validate_no_lane_executable_keys(path, value, issues)
     source = value.get("source")
     allowed_source_values = allowed_sources or SOURCE_KINDS
@@ -410,13 +410,6 @@ def _validate_source_ref(
     if not isinstance(component_id, str):
         issues.append(ConfigValidationIssue(f"{path}.id", "must be a string"))
         return
-    params = value.get("params", {})
-    if not isinstance(params, dict):
-        issues.append(ConfigValidationIssue(f"{path}.params", "must be a mapping"))
-    else:
-        _validate_json_like(f"{path}.params", params, issues)
-        _validate_no_inline_secrets(f"{path}.params", params, issues)
-        _validate_no_lane_executable_keys(f"{path}.params", params, issues)
     if component_id == "" or component_id == "all":
         issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
         return
@@ -553,7 +546,7 @@ def _validate_data(
     _optional_str_bool_none("data.tz_convert", data, issues)
     _optional_bool("data.skip_on_error", data, issues)
     _optional_bool("data.silence_warnings", data, issues)
-    _validate_feature_map(data.get("feature_map", {}), issues)
+    _validate_data_arrays(data, issues)
     _validate_quality_policy(data.get("quality", {}), issues)
     _validate_passthrough("data.wrapper_kwargs", data.get("wrapper_kwargs", {}), issues)
     _validate_passthrough("data.provider_kwargs", data.get("provider_kwargs", {}), issues)
@@ -599,22 +592,35 @@ def _is_absolute_or_user_path(value: str) -> bool:
         return False
 
 
-def _validate_feature_map(value: Any, issues: list[ConfigValidationIssue]) -> None:
-    path = "data.feature_map"
-    if not isinstance(value, dict):
-        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+def _validate_data_arrays(data: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
+    path = "data.arrays"
+    if "arrays" not in data:
+        issues.append(ConfigValidationIssue(path, "is required"))
         return
-    for key, item in value.items():
-        child_path = f"{path}.{key}"
-        if key not in OHLCV_FEATURE_MAP_KEYS:
-            issues.append(
-                ConfigValidationIssue(
-                    child_path, f"must be one of {sorted(OHLCV_FEATURE_MAP_KEYS)}"
-                )
+    value = data["arrays"]
+    if not isinstance(value, list):
+        issues.append(ConfigValidationIssue(path, "must be a non-empty list of VBT feature names"))
+        return
+    if not value:
+        issues.append(ConfigValidationIssue(path, "must not be empty"))
+        return
+    for index, item in enumerate(value):
+        _validate_data_array_token(f"{path}[{index}]", item, issues)
+
+
+def _validate_data_array_token(path: str, value: Any, issues: list[ConfigValidationIssue]) -> None:
+    if not isinstance(value, str) or not value:
+        issues.append(ConfigValidationIssue(path, "must be a non-empty string"))
+        return
+    if value in DATA_ARRAY_SHORTCUTS:
+        return
+    if not has_data_array_token_shape(value):
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                "must be a VBT feature name without surrounding whitespace or control characters",
             )
-            continue
-        if not isinstance(item, str) or not item:
-            issues.append(ConfigValidationIssue(child_path, "must be a non-empty string"))
+        )
 
 
 def _validate_quality_policy(value: Any, issues: list[ConfigValidationIssue]) -> None:

@@ -29,7 +29,9 @@ def test_duplicate_csv_index_is_rejected_before_vectorbt_normalizes(tmp_path: Pa
     )
     frame.to_csv(path)
 
-    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+    )
 
     assert result.quality.state == "rejected"
     assert "raw data index contains duplicate timestamps" in result.quality.reasons
@@ -44,7 +46,9 @@ def test_non_monotonic_csv_index_is_rejected_before_vectorbt_sorts(tmp_path: Pat
     )
     frame.to_csv(path)
 
-    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+    )
 
     assert result.quality.state == "rejected"
     assert "raw data index is not monotonic increasing" in result.quality.reasons
@@ -58,7 +62,9 @@ def test_missing_required_rows_are_rejected_by_default(tmp_path: Path) -> None:
     )
     frame.to_csv(path)
 
-    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+    )
 
     assert result.quality.state == "rejected"
     assert "required feature 'Close' contains missing values" in result.quality.reasons
@@ -77,6 +83,7 @@ def test_allowed_missing_rows_are_degraded_allowed(tmp_path: Path) -> None:
             source="csv",
             path=str(path),
             symbols=["SYN"],
+            arrays=["Close"],
             quality=DataQualityConfig(allowed_degradations=["missing_rows"]),
         )
     )
@@ -85,7 +92,7 @@ def test_allowed_missing_rows_are_degraded_allowed(tmp_path: Path) -> None:
     assert "required feature 'Close' contains missing values" in result.quality.warnings
 
 
-def test_close_only_fixlb_requirement_allows_missing_optional_features(tmp_path: Path) -> None:
+def test_close_only_array_does_not_require_unconfigured_ohlcv_features(tmp_path: Path) -> None:
     path = tmp_path / "close_only.csv"
     frame = pd.DataFrame(
         {"Close": [1.0, 2.0, 3.0]},
@@ -93,10 +100,12 @@ def test_close_only_fixlb_requirement_allows_missing_optional_features(tmp_path:
     )
     frame.to_csv(path)
 
-    result = load_market_data_result(DataConfig(source="csv", path=str(path), symbols=["SYN"]))
+    result = load_market_data_result(
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+    )
 
     assert result.quality.state == "healthy"
-    assert "optional OHLCV features unavailable" in result.quality.warnings[0]
+    assert result.quality.warnings == ()
 
 
 def test_next_open_signal_timing_requires_open_feature_for_fixlb() -> None:
@@ -130,7 +139,7 @@ def test_next_open_feature_requirement_rejects_close_only_data(tmp_path: Path) -
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"]),
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
         required_features=required_experiment_ohlcv_features(signal_config=SignalConfig()),
     )
 
@@ -147,7 +156,7 @@ def test_same_close_feature_requirement_allows_close_only_data(tmp_path: Path) -
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"]),
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
         required_features=required_experiment_ohlcv_features(
             signal_config=SignalConfig(execution_timing="same_close")
         ),
@@ -165,7 +174,7 @@ def test_high_low_label_requirement_rejects_close_only_data(tmp_path: Path) -> N
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"]),
+        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
         required_features=("Close", "High", "Low"),
     )
 

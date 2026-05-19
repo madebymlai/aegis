@@ -14,12 +14,15 @@ from research.aegis_research.configuration.schema import (
     SECRET_VALUE_RE,
     DataConfig,
     SignalConfig,
+    has_data_array_token_shape,
 )
 from research.aegis_research.configuration.secrets import (
     redact_text,
     resolve_secret_refs,
     to_builtin,
 )
+from research.aegis_research.data_arrays import merge_data_arrays
+from research.aegis_research.labels import LabelConfig
 from research.aegis_research.market_data.contracts import (
     OHLCV_FEATURES,
     QUALITY_DEGRADED_ALLOWED,
@@ -37,7 +40,6 @@ from research.aegis_research.market_data.contracts import (
 from research.aegis_research.market_data.sources import (
     vbt_data_source_classes,
 )
-from research.aegis_research.labels import LabelConfig
 
 
 def load_market_data(config: DataConfig) -> Any:
@@ -57,13 +59,14 @@ def load_market_data_result(
     source_loaders = {**_default_source_loaders(), **(adapters or {})}
     if source not in source_loaders:
         raise ValueError(f"Unsupported data source: {config.source}")
+    requested = config.effective_arrays
+    required = merge_data_arrays(requested, required_features or ())
 
     try:
         adapter_result = source_loaders[source](config)
     except RemoteDataPullError as error:
-        return _provider_failed_result(config, error)
-    required = required_features or ("Close",)
-    panels = _available_feature_panels(adapter_result.native_data, config)
+        return _provider_failed_result(config, error, required_features=required)
+    panels = _available_feature_panels(adapter_result.native_data, requested)
     diagnostics, quality = _evaluate_quality(
         config,
         adapter_result.native_data,
@@ -79,6 +82,7 @@ def load_market_data_result(
         quality=quality,
         source_metadata=adapter_result.source_metadata,
         evidence=adapter_result.evidence,
+        required_features=required,
     )
     assert_public_metadata_safe(metadata, known_secrets=adapter_result.known_secrets)
     return MarketDataResult(
@@ -90,7 +94,12 @@ def load_market_data_result(
     )
 
 
-def _provider_failed_result(config: DataConfig, error: RemoteDataPullError) -> MarketDataResult:
+def _provider_failed_result(
+    config: DataConfig,
+    error: RemoteDataPullError,
+    *,
+    required_features: tuple[str, ...],
+) -> MarketDataResult:
     reason = f"{config.source} provider failed before usable native data was available"
     quality = MarketDataQuality(
         state=QUALITY_PROVIDER_FAILED,
@@ -108,7 +117,7 @@ def _provider_failed_result(config: DataConfig, error: RemoteDataPullError) -> M
         for symbol in config.symbols
     )
     metadata: dict[str, Any] = {
-        "schema_version": "market_data.v1",
+        "schema_version": "market_data.v2",
         "source": config.source,
         "provider_class": None,
         "native_class": None,
@@ -116,7 +125,11 @@ def _provider_failed_result(config: DataConfig, error: RemoteDataPullError) -> M
         "symbols": [],
         "features": [],
         "canonical_features": [],
-        "feature_map": dict(config.feature_map),
+        "authored_arrays": to_builtin(config.arrays),
+        "effective_arrays": list(config.effective_arrays),
+        "required_arrays": list(required_features),
+        "loaded_arrays": [],
+        "unavailable_arrays": list(required_features),
         "timeframe": config.timeframe,
         "shape": {"rows": 0, "symbols": 0, "features": 0, "columns": 0},
         "ohlc_available": dict.fromkeys(OHLCV_FEATURES, False),
@@ -183,11 +196,10 @@ def low_from_ohlcv(data: Any) -> pd.DataFrame:
 def feature_from_ohlcv(data: Any, feature: str) -> pd.DataFrame:
     if isinstance(data, MarketDataResult):
         data.assert_usable()
-        return _canonical_feature_panel(
-            data.native_data,
-            feature,
-            data.metadata.get("feature_map", {}),
-        )
+        loaded = tuple(data.metadata.get("loaded_arrays", ()))
+        if loaded and feature not in loaded:
+            raise ValueError(f"market data feature {feature!r} was not loaded for this run")
+        return _canonical_feature_panel(data.native_data, feature)
     if hasattr(data, "get") and not isinstance(data, pd.DataFrame):
         return _feature_panel(data, feature, role=feature)
     return _feature_from_frame(data, feature)
@@ -311,13 +323,15 @@ def _csv_looks_multiindex(path: Path, config: DataConfig) -> bool:
     rows = _csv_probe_rows(path, limit=2)
     if len(rows) < 2:
         return False
-    source_names = {_source_feature_name(feature, config.feature_map) for feature in OHLCV_FEATURES}
-    if set(map(str, rows[0][1:])) & source_names:
+    first_header = set(map(str, rows[0][1:]))
+    if first_header & set(config.effective_arrays):
         return False
     second_header = rows[1][1:]
-    return bool(second_header) and not any(
-        str(value).startswith("Unnamed") for value in second_header
-    )
+    second_values = set(map(str, second_header))
+    multiindex_markers = set(config.symbols) | set(config.effective_arrays)
+    return bool(second_header) and bool(
+        (first_header | second_values) & multiindex_markers
+    ) and not any(str(value).startswith("Unnamed") for value in second_header)
 
 
 def _csv_probe_rows(path: Path, *, limit: int) -> list[list[str]]:
@@ -345,15 +359,14 @@ def _csv_feature_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.D
 
 def _flat_csv_feature_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.DataFrame]:
     if len(config.symbols) != 1:
-        raise ValueError("flat CSV OHLCV input requires exactly one configured symbol")
+        raise ValueError("flat CSV feature input requires exactly one configured symbol")
     symbol = config.symbols[0]
     feature_data = {}
-    for feature in OHLCV_FEATURES:
-        source_feature = _source_feature_name(feature, config.feature_map)
-        if source_feature in frame.columns:
-            feature_data[feature] = frame[[source_feature]].rename(columns={source_feature: symbol})
+    for feature in _csv_feature_candidates(map(str, frame.columns), config):
+        if feature in frame.columns:
+            feature_data[feature] = frame[[feature]].rename(columns={feature: symbol})
     if not feature_data:
-        raise ValueError("CSV data must contain at least one OHLCV feature column")
+        raise ValueError("CSV data must contain at least one requested VBT feature column")
     return feature_data
 
 
@@ -363,18 +376,17 @@ def _multiindex_csv_feature_data(
     symbol_level, feature_level = _csv_multiindex_levels(frame, config)
     feature_data = {}
     feature_values = set(map(str, frame.columns.get_level_values(feature_level)))
-    for feature in OHLCV_FEATURES:
-        source_feature = _source_feature_name(feature, config.feature_map)
-        if source_feature not in feature_values:
+    for feature in _csv_feature_candidates(frame.columns.get_level_values(feature_level), config):
+        if feature not in feature_values:
             continue
-        panel = frame.xs(source_feature, axis=1, level=feature_level)
+        panel = frame.xs(feature, axis=1, level=feature_level)
         if isinstance(panel.columns, pd.MultiIndex):
             panel.columns = panel.columns.get_level_values(symbol_level)
         panel = panel.loc[:, [symbol for symbol in config.symbols if symbol in panel.columns]]
         if not panel.empty:
             feature_data[feature] = panel
     if not feature_data:
-        raise ValueError("CSV MultiIndex data must contain at least one mapped OHLCV feature")
+        raise ValueError("CSV MultiIndex data must contain at least one requested VBT feature")
     return feature_data
 
 
@@ -387,9 +399,13 @@ def _csv_multiindex_levels(frame: pd.DataFrame, config: DataConfig) -> tuple[int
     symbol_levels = [
         index for index, values in enumerate(level_values) if configured_symbols & values
     ]
-    source_features = {
-        _source_feature_name(feature, config.feature_map) for feature in OHLCV_FEATURES
-    }
+    source_features = set(config.effective_arrays)
+    source_features.update(
+        value
+        for values in level_values
+        for value in values
+        if value not in configured_symbols and _looks_like_vbt_feature_name(value)
+    )
     feature_levels = [
         index for index, values in enumerate(level_values) if source_features & values
     ]
@@ -402,6 +418,19 @@ def _csv_multiindex_levels(frame: pd.DataFrame, config: DataConfig) -> tuple[int
     if symbol_level == feature_level:
         raise ValueError("CSV MultiIndex symbol and feature levels must be distinct")
     return symbol_level, feature_level
+
+
+def _csv_feature_candidates(values: Any, config: DataConfig) -> tuple[str, ...]:
+    candidates = tuple(
+        value
+        for value in dict.fromkeys(map(str, values))
+        if value not in config.symbols and _looks_like_vbt_feature_name(value)
+    )
+    return merge_data_arrays(config.effective_arrays, candidates)
+
+
+def _looks_like_vbt_feature_name(value: str) -> bool:
+    return has_data_array_token_shape(value)
 
 
 def _csv_layout(frame: pd.DataFrame) -> str:
@@ -447,11 +476,11 @@ def _pull_remote(data_cls, config: DataConfig) -> tuple[Any, tuple[str, ...]]:
     raise RemoteDataPullError(config.source, error_message)
 
 
-def _available_feature_panels(native_data: Any, config: DataConfig) -> dict[str, pd.DataFrame]:
+def _available_feature_panels(native_data: Any, requested_features: tuple[str, ...]) -> dict[str, pd.DataFrame]:
     panels = {}
-    for feature in OHLCV_FEATURES:
+    for feature in requested_features:
         try:
-            panels[feature] = _canonical_feature_panel(native_data, feature, config.feature_map)
+            panels[feature] = _canonical_feature_panel(native_data, feature)
         except (KeyError, ValueError, TypeError):
             continue
     return panels
@@ -460,15 +489,8 @@ def _available_feature_panels(native_data: Any, config: DataConfig) -> dict[str,
 def _canonical_feature_panel(
     native_data: Any,
     feature: str,
-    feature_map: dict[str, str],
 ) -> pd.DataFrame:
-    try:
-        return _feature_panel(native_data, feature, role=feature)
-    except (KeyError, ValueError, TypeError):
-        source_feature = _source_feature_name(feature, feature_map)
-        if source_feature == feature:
-            raise
-        return _feature_panel(native_data, source_feature, role=feature)
+    return _feature_panel(native_data, feature, role=feature)
 
 
 def _evaluate_quality(
@@ -554,15 +576,6 @@ def _evaluate_quality(
         if non_numeric:
             reasons.append(f"required feature {feature!r} has non-numeric symbols {non_numeric}")
 
-    missing_optional = [
-        feature
-        for feature in OHLCV_FEATURES
-        if feature not in required_features and feature not in panels
-    ]
-    if missing_optional:
-        warnings.append(f"optional OHLCV features unavailable: {missing_optional}")
-        degradations.add("missing_optional_features")
-
     if reasons:
         state = QUALITY_REJECTED
     elif degradations & allowed:
@@ -603,7 +616,7 @@ def _symbol_diagnostics(
     diagnostics = []
     for symbol in symbols:
         feature_diagnostics = {}
-        for feature in OHLCV_FEATURES:
+        for feature in config.effective_arrays:
             panel = panels.get(feature)
             if panel is None or symbol not in panel.columns:
                 feature_diagnostics[feature] = {"available": False}
@@ -652,13 +665,14 @@ def _data_metadata(
     quality: MarketDataQuality,
     source_metadata: dict[str, Any],
     evidence: dict[str, Any],
+    required_features: tuple[str, ...],
 ) -> dict[str, Any]:
     index = _native_index(native_data)
     features = _native_features(native_data)
     symbols = _native_symbols(native_data, fallback=config.symbols)
     provider_metadata = _safe_native_data_metadata(native_data, source=config.source)
     metadata: dict[str, Any] = {
-        "schema_version": "market_data.v1",
+        "schema_version": "market_data.v2",
         "source": config.source,
         "provider_class": type(native_data).__name__,
         "native_class": type(native_data).__name__,
@@ -666,7 +680,11 @@ def _data_metadata(
         "symbols": symbols,
         "features": features,
         "canonical_features": list(panels),
-        "feature_map": dict(config.feature_map),
+        "authored_arrays": to_builtin(config.arrays),
+        "effective_arrays": list(config.effective_arrays),
+        "required_arrays": list(required_features),
+        "loaded_arrays": list(panels),
+        "unavailable_arrays": [feature for feature in required_features if feature not in panels],
         "timeframe": config.timeframe,
         "shape": {
             "rows": len(index),
@@ -725,7 +743,7 @@ def _frame_features(frame: pd.DataFrame) -> list[str]:
             "feature" if "feature" in frame.columns.names else -1
         )
         return sorted(set(map(str, values)))
-    return [feature for feature in OHLCV_FEATURES if feature in frame.columns]
+    return list(map(str, frame.columns))
 
 
 def _native_symbols(native_data: Any, *, fallback: list[str]) -> list[str]:
@@ -876,11 +894,6 @@ def _overrides_vectorbt_update_method(native_data: Any, method_name: str) -> boo
     method = getattr(type(native_data), method_name, None)
     base_method = getattr(vbt.Data, method_name, None)
     return callable(getattr(native_data, method_name, None)) and method is not base_method
-
-
-def _source_feature_name(feature: str, feature_map: dict[str, str]) -> str:
-    logical = feature.lower()
-    return feature_map.get(logical, feature)
 
 
 def _index_evidence(index: pd.Index, *, source: str) -> dict[str, Any]:

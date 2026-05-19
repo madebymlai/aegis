@@ -81,7 +81,7 @@ def test_component_discovery_does_not_execute_top_level_code(tmp_path) -> None:
         "    'family': 'indicators',\n"
         "    'id': 'safe.static',\n"
         "    'version': '1.0.0',\n"
-        "    'input_names': ['close'],\n"
+        "    'input_names': ['Close'],\n"
         "    'param_names': ['window'],\n"
         "    'output_names': ['value'],\n"
         "    'default_outputs': ['value'],\n"
@@ -122,6 +122,29 @@ def test_component_callable_loads_only_after_selection(tmp_path) -> None:
     assert definition.load_callable()() == "loadable"
 
 
+def test_component_manifest_exposes_input_names_for_all_families(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_component(root / "labels" / "labeler.py", "labels", "demo.label")
+    _write_component(root / "indicators" / "indicator.py", "indicators", "demo.indicator")
+    _write_component(root / "strategies" / "strategy.py", "strategies", "demo.strategy")
+
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+
+    assert registry.get(ComponentSelection("labels", "demo.label")).input_names == ("Close",)
+    assert registry.get(ComponentSelection("indicators", "demo.indicator")).input_names == ("Close",)
+    assert registry.get(ComponentSelection("strategies", "demo.strategy")).input_names == ("Close",)
+
+
+def test_component_manifest_rejects_malformed_input_names(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_component(root / "indicators" / "indicator.py", "indicators", "demo.bad")
+    path = root / "indicators" / "indicator.py"
+    path.write_text(path.read_text().replace("'Close'", "'Close '"))
+
+    with pytest.raises(ComponentRegistryError, match="without surrounding whitespace"):
+        discover_component_registry(root=root, repo_root=tmp_path)
+
+
 def test_component_callable_module_is_registered_while_loading(tmp_path) -> None:
     root = tmp_path / "research" / "components"
     path = root / "indicators" / "registered.py"
@@ -157,6 +180,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
     if family == "labels":
         return {
             **base,
+            "input_names": ["Close"],
             "target_role": "supervised_target",
             "target_kind": "binary_classification",
             "output_names": ["labels"],
@@ -165,7 +189,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
     if family == "indicators":
         return {
             **base,
-            "input_names": ["close"],
+            "input_names": ["Close"],
             "param_names": ["window"],
             "output_names": ["value"],
             "default_outputs": ["value"],
@@ -175,6 +199,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
     if family == "strategies":
         return {
             **base,
+            "input_names": ["Close"],
             "signal_outputs": ["entries", "exits"],
             "owns_portfolio": False,
         }

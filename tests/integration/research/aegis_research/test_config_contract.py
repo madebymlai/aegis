@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import yaml
 
 from research.aegis_research import config as config_module
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
+    OHLCV_ARRAYS,
     ConfigValidationError,
     DataConfig,
     load_lane_config,
@@ -38,6 +38,129 @@ def test_train_lane_config_resolves_model_registry_contract(tmp_path: Path) -> N
     assert resolved.lane == "train"
     assert resolved.config.model.plugin_id == "aegis.sklearn_logistic"
     assert resolved.model_registry is not None
+
+
+def test_data_arrays_single_ohlcv_resolves_effective_set(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+
+    resolved = resolve_lane_config(
+        _train_config(),
+        component_registry=registry,
+        model_registry=make_model_registry(),
+        expected_lane="train",
+    )
+
+    assert resolved.config.data.arrays == ["OHLCV"]
+    assert resolved.config.data.effective_arrays == OHLCV_ARRAYS
+
+
+def test_data_arrays_mixed_shortcut_dedupes_deterministically(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["data"] = {
+        "source": "synthetic",
+        "symbols": ["SYN"],
+        "rows": 120,
+        "arrays": ["FundingRate", "OHLCV", "Close", "FundingRate"],
+    }
+
+    resolved = resolve_lane_config(
+        raw,
+        component_registry=registry,
+        model_registry=make_model_registry(),
+        expected_lane="train",
+    )
+
+    assert resolved.config.data.effective_arrays == (
+        "FundingRate",
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume",
+    )
+
+
+def test_data_arrays_accept_source_specific_vbt_feature_names(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["data"] = {
+        "source": "synthetic",
+        "symbols": ["SYN"],
+        "rows": 120,
+        "arrays": ["Close", "Stock Splits", "close"],
+    }
+
+    resolved = resolve_lane_config(
+        raw,
+        component_registry=registry,
+        model_registry=make_model_registry(),
+        expected_lane="train",
+    )
+
+    assert resolved.config.data.effective_arrays == ("Close", "Stock Splits", "close")
+
+
+def test_lane_config_requires_explicit_data_arrays(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["data"] = {"source": "synthetic", "symbols": ["SYN"], "rows": 120}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane="train",
+        )
+
+    assert "data.arrays" in str(error.value)
+    assert "required" in str(error.value)
+
+
+def test_lane_config_rejects_removed_feature_map(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["data"] = {
+        "source": "synthetic",
+        "symbols": ["SYN"],
+        "rows": 120,
+        "arrays": ["OHLCV"],
+        "feature_map": {"close": "price"},
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane="train",
+        )
+
+    assert "data.feature_map" in str(error.value)
+    assert "unknown field" in str(error.value)
+
+
+@pytest.mark.parametrize("arrays", ["OHLCV", ["Close "], [""], [1], []])
+def test_lane_config_rejects_invalid_data_arrays(tmp_path: Path, arrays: object) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["data"] = {
+        "source": "synthetic",
+        "symbols": ["SYN"],
+        "rows": 120,
+        "arrays": arrays,
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane="train",
+        )
+
+    assert "data.arrays" in str(error.value)
 
 
 def test_train_lane_config_rejects_unknown_model_with_registry(tmp_path: Path) -> None:
@@ -128,7 +251,7 @@ def _train_config() -> dict[str, object]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "lane": "train",
         "name": "canonical_train",
-        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120},
+        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
         "portfolio": {"entry_budget": 1.0},
         "indicators": [{"source": "component", "ids": ["demo.returns"]}],
         "train": {
@@ -154,10 +277,11 @@ def _write_label_component(path: Path) -> None:
     path.write_text(
         "COMPONENT_MANIFEST = {"
         "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
+        "'input_names': ['Close'], "
         "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
         "'output_names': ['labels']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
-        "def run(close, *, params):\n"
+        "def run(data):\n"
         "    raise RuntimeError('not executed during config tests')\n"
     )
 
@@ -167,11 +291,11 @@ def _write_indicator_component(path: Path) -> None:
     path.write_text(
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.returns', 'version': '1.0.0', "
-        "'input_names': ['close'], 'param_names': [], 'output_names': ['returns'], "
+        "'input_names': ['Close'], 'param_names': [], 'output_names': ['returns'], "
         "'default_outputs': ['returns'], "
         "'default_model_features': [{'output': 'returns', 'transform': 'identity'}], "
         "'supported_transforms': ['identity']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
-        "def run(close, *, params):\n"
-        "    return close.pct_change().fillna(0.0)\n"
+        "def run(data):\n"
+        "    return data.close.pct_change().fillna(0.0)\n"
     )

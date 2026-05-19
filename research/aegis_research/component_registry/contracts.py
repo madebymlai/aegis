@@ -44,6 +44,7 @@ class ComponentManifest:
 
 @dataclass(frozen=True)
 class LabelManifest(ComponentManifest):
+    input_names: tuple[str, ...]
     target_role: str
     target_kind: str
     output_names: tuple[str, ...]
@@ -62,6 +63,7 @@ class IndicatorManifest(ComponentManifest):
 
 @dataclass(frozen=True)
 class StrategyManifest(ComponentManifest):
+    input_names: tuple[str, ...]
     signal_outputs: tuple[str, ...]
     owns_portfolio: bool = False
 
@@ -80,6 +82,10 @@ class ComponentDefinition:
     @property
     def id(self) -> str:
         return self.manifest.id
+
+    @property
+    def input_names(self) -> tuple[str, ...]:
+        return self.manifest.input_names
 
     def load_callable(self) -> Any:
         from research.aegis_research.component_registry.registry import load_component_callable

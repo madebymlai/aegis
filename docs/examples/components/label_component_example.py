@@ -1,10 +1,10 @@
-from research.aegis_research.config import LabelConfig
-from research.aegis_research.labels import build_label_result
+from research.aegis_research.labels import LabelConfig, build_label_result
 
 COMPONENT_MANIFEST = {
     "family": "labels",
     "id": "example.fixlb_binary",
     "version": "1.0.0",
+    "input_names": ["Close"],
     "target_role": "supervised_target",
     "target_kind": "binary_classification",
     "output_names": ["labels"],
@@ -13,6 +13,6 @@ COMPONENT_MANIFEST = {
 COMPONENT_CALLABLE = "run"
 
 
-def run(close, *, params):
+def run(data):
     config = LabelConfig()
-    return build_label_result(close, config)
+    return build_label_result(data.close, config)
