@@ -16,8 +16,7 @@ data fetch/load
 
 - `data.py`: native VectorBT market data adapters, feature-panel views, data quality gates, and public metadata safety.
 - `data_schema.py`: shared OHLC selection, availability, index identity, and shape helpers.
-- `indicator_registry.py`: project-owned built-in, primitive, and trusted custom indicator definitions.
-- `indicators.py`: VectorBT-native indicator stage, model-feature boundary, lineage, and diagnostics.
+- `indicators.py`: component-backed indicator stage, model-feature boundary, lineage, and diagnostics.
 - `labels.py`: VectorBT PRO `FIXLB`, `TRENDLB`, and `PIVOTLB` label wrappers.
 - `models.py`: training and `joblib` export boundary.
 - `signals.py`: converts `positive_class_probability` panels into long-only raw threshold-state entries/exits plus compact diagnostics.
@@ -46,7 +45,7 @@ The walkthrough is scaffold evidence only. It is not validated trading methodolo
 
 ## Config Contract
 
-YAML is a versioned public contract. Every config must declare `schema_version: 2` and is validated before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write. Mode is selected by the CLI (`aerd run` or `aerd run --train`), not by config subdirectories or a top-level lane field. This in-repo schema v2 contract is forward-first: older draft v2 configs that used non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
+YAML is a versioned public contract. Every config must declare `schema_version: 3`; canonical configs also declare `lane: run` or `lane: train`. The CLI command must agree with the lane (`aerd run` for strategy/research sweeps, `aerd run --train` for ML training), and validation runs before any run directory, data fetch, model training, portfolio simulation, report generation, or artifact write. This in-repo schema v3 contract is forward-first: older draft configs that used top-level `labels`, top-level `model`, deprecated run indicator refs, or non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
 
 Validation is strict by default:
 
@@ -60,7 +59,7 @@ Remote provider configs keep scaffold-owned fields first-class (`source`, `symbo
 
 Market data sources are selected from local sources (`synthetic`, `csv`) plus installed VectorBT `*Data` classes. Remote source IDs are derived from the VectorBT class name, for example `YFData` becomes `yf`, `BinanceData` becomes `binance`, and `CCXTData` becomes `ccxt`. Configs cannot import arbitrary provider classes; they can only select providers already exposed by VectorBT. Tests can use a controlled fake-adapter seam to exercise future provider shapes without adding a public import surface.
 
-Provider-native symbols are passed through as authored in `data.symbols`. The scaffold does not normalize tickers, exchange symbols, or aliases in schema v2 because hidden normalization would make evidence hard to audit.
+Provider-native symbols are passed through as authored in `data.symbols`. The scaffold does not normalize tickers, exchange symbols, or aliases in schema v3 because hidden normalization would make evidence hard to audit.
 
 Use `data.feature_map` when a source uses non-standard OHLCV feature names. The map uses logical scaffold keys and source feature names:
 
@@ -78,57 +77,27 @@ CSV input supports flat OHLCV columns for one configured symbol and documented M
 
 ## Indicator Contract
 
-Train-mode configs reference project registry ids for built-in indicators inside `train.indicators`. Strategy/research `run` configs use explicit `source: component` or `source: playbook` refs for strategies and indicators, including component `id: all` selection for indicators. They do not define inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths. `aerd run --train` requires `train.label` and `train.model`; model refs keep `source`, but v1 accepts only `source: plugin`.
+Train-mode configs reference promoted indicator component IDs in the top-level `indicators` section. Strategy/research `run` configs use the same top-level `indicators` section for grouped source blocks with `ids: all` or explicit ID lists. Source selection does not define params, inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths. `aerd run --train` requires `train.label` and `train.model`; model refs use `source` plus stable `id`, and v1 accepts only `source: plugin`.
 
 ```yaml
 indicators:
-  invalid_value_policy: drop_rows
-  specs:
-    - id: returns
-      params:
-        window: [1, 5, 20]
-      outputs: [returns]
-      model_features:
-        - output: returns
-
-    - id: ma
-      params:
-        window: [10, 30]
-        wtype: simple
-      grid: zipped
-      outputs: [ma]
-      model_features:
-        - output: ma
-          transform: distance_to_close
-
-    - id: rsi
-      params:
-        window: [14]
-        wtype: wilder
-      outputs: [rsi]
-      model_features:
-        - output: rsi
-          transform: scale_0_1
+  - source: component
+    ids: [returns, ma, rsi]
 ```
 
-Built-in VectorBT indicators run through their indicator class `.run(...)` methods with visible params. MA and RSI preserve effective `window` and `wtype` levels in native outputs by using visible parameter settings rather than hiding params. Ordinary sweeps use parameter lists. Zipped lists are the default. Cartesian products require both `grid: product` and `param_product: true` so grid expansion is explicit in config and metadata.
+Indicator components own their default params, sweep grids, selected outputs, and model-feature transforms. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels. Cartesian products and constrained grids belong inside reviewed component code or playbooks, not in run/train YAML.
 
-Primitive features such as returns and rolling volatility stay local in schema v2, but they still produce the same lineage, feature mapping, invalid-value diagnostics, and artifact metadata as VectorBT-backed indicators. Reusable/domain transforms should graduate to a reviewed registry definition when they need first-class indicator identity or repeated use.
+Primitive features such as returns and rolling volatility stay local in schema v3, but they still produce the same lineage, feature mapping, invalid-value diagnostics, and artifact metadata as VectorBT-backed indicators. Reusable/domain transforms should graduate to a reviewed registry definition when they need first-class indicator identity or repeated use.
 
 Trusted custom indicators are added in project code, usually with `vbt.IF(...).with_apply_func(...)`, and then referenced by stable id from config:
 
 ```yaml
 indicators:
-  specs:
-    - id: custom_retvol
-      params:
-        window: [5]
-      outputs: [retvol]
-      model_features:
-        - output: retvol
+  - source: component
+    ids: [custom_retvol]
 ```
 
-Custom `IndicatorFactory` outputs must be bar-aligned in schema v2: each selected output preserves the input index and symbol shape. Shape-changing transforms such as Renko bricks, event lists, compressed bars, trades, or arbitrary objects belong in a separate future pipeline, such as a `vbt.parameterized` workflow, not the experiment indicator stage.
+Custom `IndicatorFactory` outputs must be bar-aligned in schema v3: each selected output preserves the input index and symbol shape. Shape-changing transforms such as Renko bricks, event lists, compressed bars, trades, or arbitrary objects belong in a separate future pipeline, such as a `vbt.parameterized` workflow, not the experiment indicator stage.
 
 The indicator stage keeps native VectorBT objects private until the modeling boundary. Public artifacts write portable `indicators.metadata`, `indicators.lineage`, `indicators.diagnostics`, and `indicators.features.schema`. Private native indicator objects and native outputs are stored as `indicators.native` with a public metadata sidecar. sklearn receives only the derived model-feature matrix with deterministic feature names and reversible mapping; native VectorBT objects never enter sklearn internals.
 
@@ -143,11 +112,12 @@ Required OHLCV features are derived from the experiment config. `fixlb` needs cl
 The runnable v1 signal contract is long-only. Model plugins emit `positive_class_probability`; the signal stage interprets that probability only as evidence for entering or exiting a long position. It does not derive shorts, reversals, bearish leverage, or `direction: both` behavior from one positive-class score.
 
 ```yaml
-signals:
-  policy: long_only_hysteresis
-  long_entry_threshold: 0.55
-  long_exit_threshold: 0.50
-  execution_timing: next_open
+train:
+  signals:
+    policy: long_only_hysteresis
+    long_entry_threshold: 0.55
+    long_exit_threshold: 0.50
+    execution_timing: next_open
 
 portfolio:
   entry_budget: 1.0
@@ -177,7 +147,7 @@ Quality states are fail-fast:
 
 `skip_on_error` defaults to `false`. If provider partial fetch behavior is needed, set both `data.skip_on_error: true` and `data.quality.allowed_degradations: [skipped_symbols]`; otherwise skipped configured symbols are rejected.
 
-Cache and update behavior is metadata-only in schema v2. Public metadata records update support and uses `cache_policy: disabled_in_schema_v2`; cache paths, sessions, clients, proxies, and private transport objects remain denied passthrough fields.
+Cache and update behavior is metadata-only in schema v3. Public metadata records update support and uses `cache_policy: disabled_in_schema_v2`; cache paths, sessions, clients, proxies, and private transport objects remain denied passthrough fields.
 
 ## Run Manifest And Artifacts
 
@@ -219,24 +189,25 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 Promoted components live under `research/components/{labels,indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after lane validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/components/*_component_example.py`.
 
-Notebook playbooks live under `research/playbooks/{labels,indicators,strategies}/` and are selected by stable ID from notebook metadata, not by path. Indicator playbook IDs represent one indicator idea/family; parameter sweeps inside that family are allowed, and a baseline may name exactly one component indicator ID. See `docs/playbooks.md` and `docs/examples/playbooks/*_playbook_example.ipynb`.
+Notebook playbooks live under `research/playbooks/{labels,indicators,strategies}/` and are selected by stable ID from notebook metadata, not by path. Indicator playbook IDs represent one indicator idea/family; the notebook owns its default parameters and sweeps, and a baseline may name exactly one component indicator ID. See `docs/playbooks.md` and `docs/examples/playbooks/*_playbook_example.ipynb`.
 
 ## Validation Modes
 
-Schema v2 supports one experiment validation mode: VectorBT PRO purged K-fold with one test fold per split. Chronological holdout, ordinary rolling validation, and overlapping CPCV-style test-fold combinations are not exposed because all current label generators are look-ahead targets, and duplicated or unpurged look-ahead metrics are not written as survival evidence.
+Schema v3 supports one training validation mode: VectorBT PRO purged K-fold with one test fold per split. Chronological holdout, ordinary rolling validation, and overlapping CPCV-style test-fold combinations are not exposed because all current label generators are look-ahead targets, and duplicated or unpurged look-ahead metrics are not written as survival evidence.
 
 Use purged K-fold as the decision-grade path for supervised look-ahead labels when exact label evaluation times are available:
 
 ```yaml
-split:
-  kind: purged_kfold
-  n_folds: 5
-  n_test_folds: 1
-  purge_td: 0D
-  embargo_td: 0D
-  max_splits: 5
-  max_estimated_output_cells: 500000
-  max_public_artifact_bytes: 5000000
+train:
+  split:
+    kind: purged_kfold
+    n_folds: 5
+    n_test_folds: 1
+    purge_td: 0D
+    embargo_td: 0D
+    max_splits: 5
+    max_estimated_output_cells: 500000
+    max_public_artifact_bytes: 5000000
 ```
 
 Purged validation passes explicit prediction and evaluation time `Series` into `vbt.Splitter.from_purged_kfold`. `purge_td` is added to evaluation times when purging overlapping training samples; `embargo_td` excludes training predictions too close after the latest test evaluation time. Neither setting replaces concrete label evaluation times.
@@ -247,72 +218,20 @@ Purged validation writes one child artifact set per split: model, train/test pro
 
 ## Label Modes
 
-Use VectorBT PRO `FIXLB` fixed look-ahead labels:
+Training configs select reviewed label components; they do not author generator params, target selection, transforms, formulas, imports, or notebook paths inline. A train lane references the selected component by stable id:
 
 ```yaml
-labels:
-  generator:
-    kind: fixlb
-    params:
-      n: 5
-  target:
-    role: supervised_target
-    source_output: labels
-    select:
-      params:
-        n: 5
-    transform:
-      name: threshold_future_return
-      version: 1
-      params:
-        threshold: 0.0
+train:
+  label:
+    source: component
+    id: aegis.fixlb
 ```
 
-The lower-level label builder can preserve VectorBT PRO `TRENDLB` trend labels, but schema v2 experiment configs reject them until a confirmation-time oracle provides exact evaluation times:
+Use VectorBT PRO `FIXLB` fixed look-ahead labels through a reviewed label component. That component owns the native generator params, target selection, target transform, split-safety metadata, and output names.
 
-```yaml
-labels:
-  generator:
-    kind: trendlb
-    params:
-      up_th: 0.08
-      down_th: 0.08
-      mode: binary
-  target:
-    role: supervised_target
-    source_output: labels
-    select:
-      params:
-        up_th: 0.08
-        down_th: 0.08
-        mode: binary
-    transform:
-      name: identity_binary
-      version: 1
-      params:
-        positive_value: 1
-```
+The lower-level label builder can preserve VectorBT PRO `TRENDLB` trend labels and `PIVOTLB` pivot labels, but schema v3 training configs should expose them only through reviewed components that fail closed until a confirmation-time oracle provides exact evaluation times.
 
-The lower-level label builder can preserve VectorBT PRO `PIVOTLB` pivot labels, but schema v2 experiment configs reject them until a confirmation-time oracle provides exact evaluation times:
-
-```yaml
-labels:
-  generator:
-    kind: pivotlb
-    params:
-      up_th: 0.08
-      down_th: 0.08
-  target:
-    role: supervised_target
-    source_output: labels
-    transform:
-      name: positive_event
-      version: 1
-      params:
-        positive_value: -1
-```
-
-Label generation is native-first. Runs preserve the native VectorBT object and raw `.labels` separately from the selected model target. The current runnable experiment path accepts only `FIXLB` with `role: supervised_target` binary classification targets; continuous `TRENDLB` modes, sparse-event targets, and regime targets are lower-level label-builder capabilities that require future estimator support in #9 and confirmation-time oracle support before training.
+Label generation is native-first. Runs preserve the native VectorBT object and raw `.labels` separately from the selected model target. The current runnable training path accepts only `FIXLB` with `role: supervised_target` binary classification targets; continuous `TRENDLB` modes, sparse-event targets, and regime targets are lower-level label-builder capabilities that require future estimator support in #9 and confirmation-time oracle support before training.
 
 Label functions use future information and are target generators, not predictor features. `FIXLB` fixed-horizon labels can produce exact evaluation times from the actual future row timestamps, including irregular datetime indexes. `TRENDLB` and `PIVOTLB` remain fail-closed for decision-grade validation unless a confirmation-time oracle proves when each historical label became knowable; label-value parity alone is not enough because VectorBT pivot/trend labels are written on historical rows using future confirmation.
 
@@ -321,8 +240,8 @@ Configs that request non-purged split kinds fail at config validation. Purged ru
 ## VectorBT PRO Notes
 
 - Use approved `YFData`, `BinanceData`, or `CCXTData` adapters for real fetches once an experiment needs external data.
-- For schema v2, public portfolio sizing is `portfolio.entry_budget`; the baseline `Portfolio.from_signals` path resolves internal `valuepercent` sizing. Public `size`, `size_type`, and target-allocation sizing are rejected until a separate allocation-mode contract exists.
-- Portfolio direction is fixed to `longonly` in schema v2 while signals consume only `positive_class_probability`; `shortonly` and `both` are rejected until a future side-specific signal contract exists.
+- For schema v3, public portfolio sizing is `portfolio.entry_budget`; the baseline `Portfolio.from_signals` path resolves internal `valuepercent` sizing. Public `size`, `size_type`, and target-allocation sizing are rejected until a separate allocation-mode contract exists.
+- Portfolio direction is fixed to `longonly` in schema v3 while signals consume only `positive_class_probability`; `shortonly` and `both` are rejected until a future side-specific signal contract exists.
 - `TRENDLB` config accepts `binary`, `binary_cont`, `binary_cont_sat`, `pct_change`, and `pct_change_norm`; only `binary` is compatible with the current binary classifier target path.
 - Keep high-cardinality parameter sweeps inside VectorBT indicator/portfolio/splitter objects instead of Python loops where possible.
 - Use `Portfolio.from_signals` for the first loop; move to `from_order_func` only when signal arrays cannot express the execution model.

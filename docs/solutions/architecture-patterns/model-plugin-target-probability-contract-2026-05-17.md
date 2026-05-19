@@ -36,12 +36,14 @@ The durable boundary is now plugin-only model execution. Core Aegis owns the tru
 Keep experiment YAML declarative and inert. YAML may select a registered plugin id and JSON-like params, but it must not import Python code, define estimators, reference classes, request mutable state updates, or choose hidden built-in model kinds.
 
 ```yaml
-model:
-  plugin_id: examples.sklearn_logistic
-  min_train_samples: 100
-  params:
-    max_iter: 1000
-    random_state: 42
+train:
+  model:
+    source: plugin
+    id: examples.sklearn_logistic
+    min_train_samples: 100
+    params:
+      max_iter: 1000
+      random_state: 42
 ```
 
 Register trusted model code before config resolution. The resolved config should carry a frozen registry snapshot so unknown plugin ids, duplicate plugin ids, malformed declarations, and invalid plugin params fail before run directories or artifacts are created.
@@ -62,7 +64,7 @@ registry.register(
     )
 )
 
-resolved = load_experiment_config(path, model_registry=registry.freeze())
+resolved = load_lane_config(path, expected_lane="train", model_registry=registry.freeze())
 ```
 
 Treat the typed target schema as the source of truth. The shipped v1 plugin path supports supervised binary-classification targets. A binary target schema must define exactly two classes and a `positive_class`; continuous targets, sparse events, regimes, multiclass labels, regression targets, ranking outputs, and distributional outputs should fail closed until a future explicit contract supports them.
@@ -130,11 +132,13 @@ long_probability = estimator.predict_proba(features)[:, 1]
 After, the model is selected by trusted registration and the probability name reflects target semantics:
 
 ```yaml
-model:
-  plugin_id: examples.sklearn_logistic
-  min_train_samples: 100
-  params:
-    max_iter: 1000
+train:
+  model:
+    source: plugin
+    id: examples.sklearn_logistic
+    min_train_samples: 100
+    params:
+      max_iter: 1000
 ```
 
 ```python

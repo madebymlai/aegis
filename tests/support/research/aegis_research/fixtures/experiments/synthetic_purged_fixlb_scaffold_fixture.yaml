@@ -1,4 +1,5 @@
-schema_version: 2
+schema_version: 3
+lane: train
 name: synthetic_purged_fixlb_scaffold_fixture
 output_dir: runs
 
@@ -11,76 +12,34 @@ data:
   seed: 42
 
 indicators:
-  invalid_value_policy: drop_rows
-  specs:
-    - id: returns
-      params:
-        window: [1, 5, 20]
-      outputs: [returns]
-      model_features:
-        - output: returns
-    - id: ma
-      params:
-        window: [10, 30]
-        wtype: simple
-      outputs: [ma]
-      model_features:
-        - output: ma
-          transform: distance_to_close
-    - id: volatility
-      params:
-        window: [20]
-      outputs: [volatility]
-      model_features:
-        - output: volatility
-    - id: rsi
-      params:
-        window: [14]
-        wtype: wilder
-      outputs: [rsi]
-      model_features:
-        - output: rsi
-          transform: scale_0_1
+  - source: component
+    ids: [demo.native_indicators]
 
-labels:
-  generator:
-    kind: fixlb
+train:
+  label:
+    source: component
+    id: demo.fixlb
+  model:
+    source: plugin
+    id: aegis.sklearn_logistic
+    min_train_samples: 50
     params:
-      n: 5
-  target:
-    role: supervised_target
-    source_output: labels
-    select:
-      params:
-        n: 5
-    transform:
-      name: threshold_future_return
-      version: 1
-      params:
-        threshold: 0.0
-
-split:
-  kind: purged_kfold
-  n_folds: 5
-  n_test_folds: 1
-  purge_td: 0D
-  embargo_td: 0D
-  max_splits: 5
-  max_estimated_output_cells: 500000
-  max_public_artifact_bytes: 5000000
-
-model:
-  plugin_id: aegis.sklearn_logistic
-  min_train_samples: 50
-  params:
-    max_iter: 1000
-    random_state: 42
-
-signals:
-  policy: long_only_hysteresis
-  long_entry_threshold: 0.55
-  long_exit_threshold: 0.50
-  execution_timing: next_open
+      max_iter: 1000
+      random_state: 42
+  split:
+    kind: purged_kfold
+    n_folds: 5
+    n_test_folds: 1
+    purge_td: 0D
+    embargo_td: 0D
+    max_splits: 5
+    max_estimated_output_cells: 500000
+    max_public_artifact_bytes: 5000000
+  signals:
+    policy: long_only_hysteresis
+    long_entry_threshold: 0.55
+    long_exit_threshold: 0.50
+    execution_timing: next_open
 
 portfolio:
   init_cash: 10000.0

@@ -28,15 +28,13 @@ from research.aegis_research.component_registry import (
 from research.aegis_research.config import (
     ConfigSelectionEvidence,
     ConfigValidationError,
-    ExperimentConfig,
-    ModelConfig,
-    ResolvedExperimentConfig,
     ResolvedLaneConfig,
     known_config_secret_values,
     load_lane_config,
     redact_text,
-    resolve_experiment_config,
+    with_lane_config_selection,
 )
+from research.aegis_research.indicators import build_component_indicator_result
 from research.aegis_research.model_plugins import make_default_model_registry
 from research.aegis_research.model_registry import freeze_model_registry
 from research.aegis_research.playbook_registry import (
@@ -110,6 +108,10 @@ def _handle_strategy_run(
             component_registry=component_registry,
             expected_lane="run",
         )
+        resolved = with_lane_config_selection(
+            resolved,
+            ConfigSelectionEvidence(source="explicit", config_path=safe_path(config_path)),
+        )
         _validate_run_playbook_refs(resolved.config, playbook_registry)
     except (ConfigValidationError, PlaybookRegistryError) as error:
         raise ConfigCliError(str(error)) from error
@@ -162,14 +164,15 @@ def _handle_train_run(
         resolved = load_lane_config(
             config_path,
             component_registry=component_registry,
+            model_registry=model_registry,
             expected_lane="train",
         )
-        training_config = _training_experiment_config(
+        resolved = with_lane_config_selection(
             resolved,
-            selection=selection,
-            model_registry=model_registry,
+            ConfigSelectionEvidence(source="explicit", config_path=selection["config_path"]),
         )
         label_result_builder = _label_result_builder(resolved, component_registry)
+        indicator_result_builder = _indicator_result_builder(resolved, component_registry)
     except (ConfigValidationError, ComponentRegistryError) as error:
         raise ConfigCliError(str(error)) from error
     except (OSError, yaml.YAMLError) as error:
@@ -178,8 +181,9 @@ def _handle_train_run(
     known_secrets = known_config_secret_values(resolved.authored_config)
     try:
         result = run_training(
-            training_config,
+            resolved,
             label_result_builder=label_result_builder,
+            indicator_result_builder=indicator_result_builder,
             rerun_mode=args.rerun_mode,
             run_id=args.run_id,
             parent_run_id=args.parent_run_id,
@@ -218,46 +222,7 @@ def _looks_like_model_training_config(path: Path) -> bool:
         return False
     if "model" in raw or "labels" in raw or "split" in raw:
         return True
-    return "train" in raw and not {"strategy", "indicator_refs", "ranking"}.intersection(raw)
-
-
-def _training_experiment_config(
-    resolved: ResolvedLaneConfig,
-    *,
-    selection: dict[str, Any],
-    model_registry: Any,
-) -> ResolvedExperimentConfig:
-    config = resolved.config
-    if config.lane != "train":
-        raise ConfigCliError("aerd run --train requires a train-mode config")
-    experiment_config = ExperimentConfig(
-        name=config.name,
-        schema_version=config.schema_version,
-        data=config.data,
-        indicators=config.indicators,
-        split=config.split,
-        model=ModelConfig(
-            plugin_id=config.model.id,
-            min_train_samples=config.model.min_train_samples,
-            params=config.model.params,
-        ),
-        signals=config.signals,
-        portfolio=config.portfolio,
-        report=config.report,
-        output_dir=config.output_dir,
-    )
-    resolve_experiment_config(experiment_config, model_registry=model_registry)
-    return ResolvedExperimentConfig(
-        config=experiment_config,
-        raw_config_hash=resolved.raw_config_hash,
-        authored_config=resolved.authored_config,
-        source_path=resolved.source_path,
-        model_registry=model_registry,
-        selection=ConfigSelectionEvidence(
-            source="explicit",
-            config_path=selection["config_path"],
-        ),
-    )
+    return "train" in raw and not {"strategy", "ranking"}.intersection(raw)
 
 
 def _label_result_builder(
@@ -278,15 +243,41 @@ def _label_result_builder(
     return build
 
 
+def _indicator_result_builder(
+    resolved: ResolvedLaneConfig,
+    component_registry: FrozenComponentRegistry,
+) -> Any:
+    config = resolved.config
+    refs = list(config.indicators)
+
+    def build(close: Any) -> Any:
+        return build_component_indicator_result(
+            close,
+            refs,
+            component_registry=component_registry,
+        )
+
+    return build
+
+
 def _validate_run_playbook_refs(config: Any, playbook_registry: Any) -> None:
     if config.strategy.source == "playbook":
         definition = playbook_registry.get(PlaybookSelection("strategies", config.strategy.id))
         _require_playbook_stage(definition.manifest.stages, "strategies", config.strategy.id)
-    for ref in config.indicator_refs:
+    seen_playbook_ids: dict[str, str] = {}
+    for ref in config.indicators:
         if ref.source != "playbook":
             continue
-        definition = playbook_registry.get(PlaybookSelection("indicators", ref.id))
-        _require_playbook_stage(definition.manifest.stages, "indicators", ref.id)
+        playbook_ids = ref.expanded_ids(playbook_registry.ids("indicators"))
+        for playbook_id in playbook_ids:
+            definition = playbook_registry.get(PlaybookSelection("indicators", playbook_id))
+            _require_playbook_stage(definition.manifest.stages, "indicators", playbook_id)
+            previous = seen_playbook_ids.get(playbook_id)
+            if previous is not None:
+                raise PlaybookRegistryError(
+                    f"duplicate expanded playbook indicator id {playbook_id!r} from {previous}"
+                )
+            seen_playbook_ids[playbook_id] = str(ref.ids)
 
 
 def _require_playbook_stage(stages: tuple[str, ...], stage: str, playbook_id: str) -> None:

@@ -9,8 +9,6 @@ import pytest
 from research.aegis_research.config import (
     DataConfig,
     DataQualityConfig,
-    LabelConfig,
-    LabelGeneratorConfig,
     SignalConfig,
 )
 from research.aegis_research.data import (
@@ -20,6 +18,7 @@ from research.aegis_research.data import (
     load_market_data_result,
     required_experiment_ohlcv_features,
 )
+from research.aegis_research.labels import LabelConfig, LabelGeneratorConfig
 
 
 def test_duplicate_csv_index_is_rejected_before_vectorbt_normalizes(tmp_path: Path) -> None:

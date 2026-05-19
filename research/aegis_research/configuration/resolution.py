@@ -12,9 +12,6 @@ from research.aegis_research.component_registry import (
     discover_component_registry,
 )
 from research.aegis_research.configuration.builders import (
-    _build_data_config,
-    _build_indicator_config,
-    _build_label_config,
     _build_strategy_run_lane_config,
     _build_train_lane_config,
 )
@@ -23,21 +20,13 @@ from research.aegis_research.configuration.schema import (
     ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
-    ExperimentConfig,
     LaneConfig,
-    ModelConfig,
-    PortfolioConfig,
-    ReportConfig,
-    SignalConfig,
-    SplitConfig,
     StrategyRunLaneConfig,
     TrainLaneConfig,
 )
 from research.aegis_research.configuration.secrets import redact_config, to_builtin
 from research.aegis_research.configuration.validation import (
-    _assert_model_config_registered,
     _effective_run_mode,
-    _validate_raw_config,
     _validate_raw_lane_config,
 )
 from research.aegis_research.model_registry import (
@@ -72,36 +61,14 @@ _UniqueKeySafeLoader.add_constructor(
 )
 
 @dataclass(frozen=True)
-class ResolvedExperimentConfig:
-    config: ExperimentConfig
-    raw_config_hash: str
-    authored_config: dict[str, Any]
-    source_path: str | None = None
-    model_registry: FrozenModelRegistry | None = None
-    selection: ConfigSelectionEvidence | None = None
-
-    def redacted_authored_config(self) -> dict[str, Any]:
-        return redact_config(self.authored_config)
-
-    def redacted_resolved_config(self) -> dict[str, Any]:
-        return redact_config(to_builtin(asdict(self.config)))
-
-    def manifest(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.config.schema_version,
-            "raw_config_hash": self.raw_config_hash,
-            "source_path": self.source_path,
-            "selection": self.selection.manifest() if self.selection else None,
-        }
-
-
-@dataclass(frozen=True)
 class ResolvedLaneConfig:
     config: LaneConfig
     raw_config_hash: str
     authored_config: dict[str, Any]
     source_path: str | None = None
     component_registry: FrozenComponentRegistry | None = None
+    model_registry: FrozenModelRegistry | None = None
+    selection: ConfigSelectionEvidence | None = None
 
     @property
     def lane(self) -> str:
@@ -122,77 +89,27 @@ class ResolvedLaneConfig:
             "component_registry_fingerprint": (
                 self.component_registry.fingerprint if self.component_registry else None
             ),
+            "model_registry_fingerprint": (
+                self.model_registry.fingerprint if self.model_registry else None
+            ),
+            "selection": self.selection.manifest() if self.selection else None,
         }
 
 
-def with_config_selection(
-    config: ResolvedExperimentConfig,
+def with_lane_config_selection(
+    config: ResolvedLaneConfig,
     selection: ConfigSelectionEvidence,
     *,
     source_path: str | None = None,
-) -> ResolvedExperimentConfig:
-    return ResolvedExperimentConfig(
+) -> ResolvedLaneConfig:
+    return ResolvedLaneConfig(
         config=config.config,
         raw_config_hash=config.raw_config_hash,
         authored_config=config.authored_config,
         source_path=config.source_path if source_path is None else source_path,
+        component_registry=config.component_registry,
         model_registry=config.model_registry,
         selection=selection,
-    )
-
-
-def load_experiment_config(
-    path: str | Path,
-    *,
-    model_registry: ModelRegistry | FrozenModelRegistry | None = None,
-) -> ResolvedExperimentConfig:
-    config_path = Path(path)
-    raw_text = config_path.read_text()
-    raw = yaml.load(raw_text, Loader=_UniqueKeySafeLoader)
-    return resolve_experiment_config(
-        raw,
-        raw_text=raw_text,
-        source_path=str(path),
-        model_registry=model_registry,
-    )
-
-
-def resolve_experiment_config(
-    value: ResolvedExperimentConfig | ExperimentConfig | dict[str, Any],
-    *,
-    raw_text: str | None = None,
-    source_path: str | None = None,
-    model_registry: ModelRegistry | FrozenModelRegistry | None = None,
-) -> ResolvedExperimentConfig:
-    frozen_registry = freeze_model_registry(model_registry)
-    if isinstance(value, ResolvedExperimentConfig):
-        if frozen_registry is not None:
-            _assert_model_config_registered(value.config.model, frozen_registry)
-            return ResolvedExperimentConfig(
-                config=value.config,
-                raw_config_hash=value.raw_config_hash,
-                authored_config=value.authored_config,
-                source_path=value.source_path,
-                model_registry=frozen_registry,
-                selection=value.selection,
-            )
-        return value
-
-    if isinstance(value, ExperimentConfig):
-        raw = to_builtin(asdict(value))
-        raw_text = yaml.safe_dump(raw, sort_keys=False)
-        return _build_resolved_config(
-            raw,
-            raw_text=raw_text,
-            source_path=source_path,
-            model_registry=frozen_registry,
-        )
-
-    return _build_resolved_config(
-        value,
-        raw_text=raw_text,
-        source_path=source_path,
-        model_registry=frozen_registry,
     )
 
 
@@ -200,6 +117,7 @@ def load_lane_config(
     path: str | Path,
     *,
     component_registry: FrozenComponentRegistry | None = None,
+    model_registry: ModelRegistry | FrozenModelRegistry | None = None,
     expected_lane: str | None = None,
 ) -> ResolvedLaneConfig:
     config_path = Path(path)
@@ -210,6 +128,7 @@ def load_lane_config(
         raw_text=raw_text,
         source_path=str(path),
         component_registry=component_registry,
+        model_registry=model_registry,
         expected_lane=expected_lane,
     )
 
@@ -220,14 +139,32 @@ def resolve_lane_config(
     raw_text: str | None = None,
     source_path: str | None = None,
     component_registry: FrozenComponentRegistry | None = None,
+    model_registry: ModelRegistry | FrozenModelRegistry | None = None,
     expected_lane: str | None = None,
 ) -> ResolvedLaneConfig:
+    frozen_model_registry = freeze_model_registry(model_registry)
     if isinstance(value, ResolvedLaneConfig):
         if expected_lane is not None and value.lane != expected_lane:
             raise ConfigValidationError(
                 [ConfigValidationIssue("lane", f"must be {expected_lane!r}")]
             )
-        return value
+        if frozen_model_registry is None:
+            return value
+        raw = to_builtin(asdict(value.config))
+        _assert_train_model_registered(
+            raw,
+            frozen_model_registry,
+            component_registry=value.component_registry or discover_component_registry(),
+        )
+        return ResolvedLaneConfig(
+            config=value.config,
+            raw_config_hash=value.raw_config_hash,
+            authored_config=value.authored_config,
+            source_path=value.source_path,
+            component_registry=value.component_registry,
+            model_registry=frozen_model_registry,
+            selection=value.selection,
+        )
 
     registry = component_registry or discover_component_registry()
     if isinstance(value, StrategyRunLaneConfig | TrainLaneConfig):
@@ -238,6 +175,7 @@ def resolve_lane_config(
             raw_text=raw_text,
             source_path=source_path,
             component_registry=registry,
+            model_registry=frozen_model_registry,
             expected_lane=expected_lane,
         )
 
@@ -246,48 +184,8 @@ def resolve_lane_config(
         raw_text=raw_text,
         source_path=source_path,
         component_registry=registry,
+        model_registry=frozen_model_registry,
         expected_lane=expected_lane,
-    )
-
-
-def _build_resolved_config(
-    raw: dict[str, Any],
-    *,
-    raw_text: str | None,
-    source_path: str | None,
-    model_registry: FrozenModelRegistry | None,
-) -> ResolvedExperimentConfig:
-    if not isinstance(raw, dict):
-        raise ConfigValidationError(
-            [ConfigValidationIssue("$", "experiment config must be a mapping")]
-        )
-
-    issues: list[ConfigValidationIssue] = []
-    _validate_raw_config(raw, issues, model_registry=model_registry)
-    if issues:
-        raise ConfigValidationError(issues)
-
-    config = ExperimentConfig(
-        name=raw["name"],
-        schema_version=raw["schema_version"],
-        data=_build_data_config(raw.get("data", {})),
-        indicators=_build_indicator_config(raw.get("indicators", {})),
-        labels=_build_label_config(raw.get("labels", {})),
-        split=SplitConfig(**raw.get("split", {})),
-        model=ModelConfig(**raw.get("model", {})),
-        signals=SignalConfig(**raw.get("signals", {})),
-        portfolio=PortfolioConfig(**raw.get("portfolio", {})),
-        report=ReportConfig(**raw.get("report", {})),
-        output_dir=raw.get("output_dir", "runs"),
-    )
-    text_for_hash = raw_text if raw_text is not None else yaml.safe_dump(raw, sort_keys=False)
-    return ResolvedExperimentConfig(
-        config=config,
-        raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
-        authored_config=to_builtin(raw),
-        source_path=source_path,
-        model_registry=model_registry,
-        selection=None,
     )
 
 
@@ -297,6 +195,7 @@ def _build_resolved_lane_config(
     raw_text: str | None,
     source_path: str | None,
     component_registry: FrozenComponentRegistry,
+    model_registry: FrozenModelRegistry | None,
     expected_lane: str | None,
 ) -> ResolvedLaneConfig:
     if not isinstance(raw, dict):
@@ -307,6 +206,7 @@ def _build_resolved_lane_config(
         raw,
         issues,
         component_registry=component_registry,
+        model_registry=model_registry,
         expected_lane=expected_lane,
     )
     if issues:
@@ -327,4 +227,25 @@ def _build_resolved_lane_config(
         authored_config=to_builtin(raw),
         source_path=source_path,
         component_registry=component_registry,
+        model_registry=model_registry,
     )
+
+
+def _assert_train_model_registered(
+    raw: dict[str, Any],
+    model_registry: FrozenModelRegistry,
+    *,
+    component_registry: FrozenComponentRegistry,
+) -> None:
+    if raw.get("lane") != "train":
+        return
+    issues: list[ConfigValidationIssue] = []
+    _validate_raw_lane_config(
+        raw,
+        issues,
+        component_registry=component_registry,
+        model_registry=model_registry,
+        expected_lane="train",
+    )
+    if issues:
+        raise ConfigValidationError(issues)

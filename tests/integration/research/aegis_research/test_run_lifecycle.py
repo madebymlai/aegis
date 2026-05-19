@@ -1,29 +1,19 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from research.aegis_research.config import (
-    DataConfig,
-    ExperimentConfig,
-    ModelConfig,
-    load_experiment_config,
-    resolve_experiment_config,
-)
 from research.aegis_research.experiments import run_experiment
 from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus, hash_file
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
 from tests.support.research.aegis_research.experiment_config_fixtures import (
     SYNTHETIC_ML_SCAFFOLD_CONFIG,
+    load_train_fixture_config,
 )
-from tests.support.research.aegis_research.model_plugin_fixtures import (
-    make_model_registry,
-    model_config_dict,
-)
+from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_run_recorder_starts_and_completes_manifest(tmp_path: Path) -> None:
@@ -123,9 +113,10 @@ def test_run_experiment_initializes_manifest_before_data_loading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = make_model_registry()
-    resolved = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
-    resolved = resolve_experiment_config(
-        replace(resolved.config, output_dir=str(tmp_path)), model_registry=registry
+    resolved = load_train_fixture_config(
+        SYNTHETIC_ML_SCAFFOLD_CONFIG,
+        model_registry=registry,
+        output_dir=str(tmp_path),
     )
 
     def fail_after_manifest(_config, **_kwargs):
@@ -148,9 +139,10 @@ def test_run_experiment_initializes_manifest_before_data_loading(
 
 def test_run_experiment_marks_failed_when_run_started_callback_fails(tmp_path: Path) -> None:
     registry = make_model_registry()
-    resolved = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
-    resolved = resolve_experiment_config(
-        replace(resolved.config, output_dir=str(tmp_path)), model_registry=registry
+    resolved = load_train_fixture_config(
+        SYNTHETIC_ML_SCAFFOLD_CONFIG,
+        model_registry=registry,
+        output_dir=str(tmp_path),
     )
 
     def fail_callback(_refs):
@@ -170,21 +162,18 @@ def test_failed_run_diagnostic_redacts_config_secret_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("REMOTE_TOKEN", "super-secret-token")
-    resolved = resolve_experiment_config(
-        ExperimentConfig(
-            name="secret-diagnostic",
-            output_dir=str(tmp_path),
-            model=ModelConfig(**model_config_dict(min_train_samples=50)),
-            data=DataConfig(
-                source="yf",
-                symbols=["SYN"],
-                start="2020-01-01",
-                end="2021-01-01",
-                timeframe="1D",
-                provider_kwargs={"api_token": {"env": "REMOTE_TOKEN"}},
-            ),
-        ),
+    resolved = load_train_fixture_config(
+        SYNTHETIC_ML_SCAFFOLD_CONFIG,
         model_registry=make_model_registry(),
+        output_dir=str(tmp_path),
+        data={
+            "source": "yf",
+            "symbols": ["SYN"],
+            "start": "2020-01-01",
+            "end": "2021-01-01",
+            "timeframe": "1D",
+            "provider_kwargs": {"api_token": {"env": "REMOTE_TOKEN"}},
+        },
     )
 
     def fail_with_secret(_config, **_kwargs):

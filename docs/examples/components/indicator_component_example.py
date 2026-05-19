@@ -1,5 +1,4 @@
-from research.aegis_research.config import IndicatorConfig, IndicatorFeatureConfig, IndicatorSpecConfig
-from research.aegis_research.indicators import build_indicator_result
+from vectorbtpro import vbt
 
 COMPONENT_MANIFEST = {
     "family": "indicators",
@@ -16,14 +15,11 @@ COMPONENT_CALLABLE = "run"
 
 
 def run(close, *, params):
-    config = IndicatorConfig(
-        specs=[
-            IndicatorSpecConfig(
-                id="ma",
-                params={"window": params.get("window", [10]), "wtype": params.get("wtype", "simple")},
-                outputs=["ma"],
-                model_features=[IndicatorFeatureConfig(output="ma", transform="distance_to_close")],
-            )
-        ]
+    ma = vbt.MA.run(
+        close,
+        window=[10, 30],
+        wtype="simple",
+        hide_params=None,
+        hide_default=False,
     )
-    return build_indicator_result(close, config)
+    return ma.ma

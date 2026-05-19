@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from dataclasses import asdict
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -12,21 +11,11 @@ from research.aegis_research.component_registry import (
     ComponentSelection,
     FrozenComponentRegistry,
 )
-from research.aegis_research.configuration.builders import (
-    _default_label_generator_params,
-    _default_label_transform_name,
-)
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     DATA_QUALITY_DEGRADATIONS,
     DENIED_PASSTHROUGH_KEYS,
     EXPERIMENT_NAME_RE,
-    INDICATOR_GRIDS,
-    INDICATOR_INLINE_CODE_KEYS,
-    INDICATOR_INVALID_VALUE_POLICIES,
-    LABEL_KINDS,
-    LABEL_TARGET_ROLES,
-    LABEL_TARGET_TRANSFORMS,
     LANE_EXECUTABLE_DENIED_KEYS,
     LANES,
     MISSING_POLICIES,
@@ -40,24 +29,16 @@ from research.aegis_research.configuration.schema import (
     SIGNAL_POLICIES,
     SOURCE_KINDS,
     SPLIT_KINDS,
-    TRENDLB_MODES,
     ConfigValidationError,
     ConfigValidationIssue,
     DataConfig,
     DataQualityConfig,
-    IndicatorConfig,
-    LabelConfig,
-    LabelGeneratorConfig,
-    ModelConfig,
     PortfolioConfig,
     ReportConfig,
     SignalConfig,
     SplitConfig,
 )
-from research.aegis_research.configuration.secrets import (
-    _validate_no_inline_secrets,
-    to_builtin,
-)
+from research.aegis_research.configuration.secrets import _validate_no_inline_secrets
 from research.aegis_research.market_data.sources import LOCAL_DATA_SOURCES, remote_data_sources
 from research.aegis_research.model_registry import FrozenModelRegistry
 
@@ -67,6 +48,7 @@ def _validate_raw_lane_config(
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
+    model_registry: FrozenModelRegistry | None,
     expected_lane: str | None,
 ) -> None:
     lane = _effective_run_mode(raw, expected_lane)
@@ -104,7 +86,12 @@ def _validate_raw_lane_config(
     if lane == "run":
         _validate_strategy_run_lane(raw, issues, component_registry=component_registry)
     elif lane == "train":
-        _validate_train_lane(raw, issues, component_registry=component_registry)
+        _validate_train_lane(
+            raw,
+            issues,
+            component_registry=component_registry,
+            model_registry=model_registry,
+        )
 
 
 def _effective_run_mode(raw: dict[str, Any], expected_lane: str | None) -> str:
@@ -113,18 +100,16 @@ def _effective_run_mode(raw: dict[str, Any], expected_lane: str | None) -> str:
     authored_lane = raw.get("lane")
     if isinstance(authored_lane, str) and authored_lane in LANES:
         return authored_lane
-    if "train" in raw and not {"strategy", "indicator_refs", "ranking"}.intersection(raw):
+    if "train" in raw and not {"strategy", "ranking"}.intersection(raw):
         return "train"
     return "run"
 
 
 def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
-    common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir", "train"}
-    return common | {
-        "strategy",
-        "indicator_refs",
-        "ranking",
-    }
+    common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir"}
+    if lane == "train":
+        return common | {"indicators", "train"}
+    return common | {"indicators", "ranking", "strategy", "train"}
 
 
 def _validate_strategy_run_lane(
@@ -134,7 +119,7 @@ def _validate_strategy_run_lane(
     component_registry: FrozenComponentRegistry,
 ) -> None:
     _validate_training_fields_absent(raw, issues)
-    _validate_source_ref(
+    _validate_run_source_ref(
         "strategy",
         raw.get("strategy"),
         "strategies",
@@ -142,21 +127,12 @@ def _validate_strategy_run_lane(
         component_registry=component_registry,
         allowed_sources={"component", "playbook"},
     )
-    _validate_source_ref_list(
-        "indicator_refs",
-        raw.get("indicator_refs"),
+    _validate_indicator_sources(
         "indicators",
+        raw.get("indicators"),
         issues,
         component_registry=component_registry,
-        allow_component_all=True,
         allowed_sources={"component", "playbook"},
-    )
-    _validate_expanded_component_ref_duplicates(
-        "indicator_refs",
-        raw.get("indicator_refs"),
-        "indicators",
-        issues,
-        component_registry=component_registry,
     )
     _validate_ranking("ranking", raw.get("ranking"), issues)
 
@@ -166,6 +142,7 @@ def _validate_train_lane(
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
+    model_registry: FrozenModelRegistry | None,
 ) -> None:
     if "train" not in raw:
         issues.append(
@@ -178,7 +155,7 @@ def _validate_train_lane(
     train = _section(
         raw,
         "train",
-        {"label", "model", "indicators", "split", "signals"},
+        {"label", "model", "split", "signals"},
         issues,
     )
     _validate_source_ref(
@@ -189,19 +166,26 @@ def _validate_train_lane(
         component_registry=component_registry,
         allowed_sources={"component"},
     )
-    indicators = _section(train, "indicators", set(IndicatorConfig.__dataclass_fields__), issues)
+    _validate_indicator_sources(
+        "indicators",
+        raw.get("indicators"),
+        issues,
+        component_registry=component_registry,
+        allowed_sources={"component"},
+    )
     split = _section(train, "split", set(SplitConfig.__dataclass_fields__), issues)
     signals = _section(train, "signals", set(SignalConfig.__dataclass_fields__), issues)
-    _validate_indicators(indicators, issues)
     _validate_split(split, issues)
     _validate_signals(signals, issues)
-    _validate_train_model_ref("train.model", train.get("model"), issues)
+    _validate_train_model_ref("train.model", train.get("model"), issues, model_registry=model_registry)
 
 
 def _validate_train_model_ref(
     path: str,
     value: Any,
     issues: list[ConfigValidationIssue],
+    *,
+    model_registry: FrozenModelRegistry | None,
 ) -> None:
     if not isinstance(value, dict):
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
@@ -226,6 +210,8 @@ def _validate_train_model_ref(
                 "must contain only letters, numbers, dots, underscores, and hyphens",
             )
         )
+    elif model_registry is not None and model_id not in model_registry:
+        issues.append(ConfigValidationIssue(f"{path}.id", "unknown registered model plugin id"))
     _optional_int(f"{path}.min_train_samples", value, issues, positive=True)
     params = value.get("params", {})
     if not isinstance(params, dict):
@@ -235,13 +221,19 @@ def _validate_train_model_ref(
         _validate_no_inline_secrets(f"{path}.params", params, issues)
         _validate_no_denied_model_keys(f"{path}.params", params, issues)
         _validate_no_lane_executable_keys(f"{path}.params", params, issues)
+        if model_registry is not None and isinstance(model_id, str) and model_id in model_registry:
+            definition = model_registry.get(model_id)
+            if definition.validate_params is not None:
+                for param_path, message in definition.validate_params(params).items():
+                    child_path = f"{path}.params.{param_path}" if param_path else f"{path}.params"
+                    issues.append(ConfigValidationIssue(child_path, message))
 
 
 def _validate_training_fields_absent(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
 ) -> None:
-    for key in ("model", "labels", "label", "split", "signals", "indicators"):
+    for key in ("model", "labels", "label", "split", "signals"):
         if key in raw:
             issues.append(
                 ConfigValidationIssue(
@@ -251,29 +243,146 @@ def _validate_training_fields_absent(
             )
 
 
-def _validate_source_ref_list(
+def _validate_indicator_sources(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+    allowed_sources: set[str],
+) -> None:
+    if isinstance(value, dict) and "specs" in value:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                "must use source refs; legacy indicators.specs is not accepted in lane configs",
+            )
+        )
+        return
+    if not isinstance(value, list) or not value:
+        issues.append(ConfigValidationIssue(path, "must be a non-empty list"))
+        return
+
+    seen: dict[tuple[str, str], str] = {}
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, dict):
+            issues.append(ConfigValidationIssue(item_path, "must be a mapping"))
+            continue
+        _validate_known_keys(item_path, item, {"source", "ids"}, issues)
+        _validate_no_lane_executable_keys(item_path, item, issues)
+        source = item.get("source")
+        if not isinstance(source, str) or source not in allowed_sources:
+            issues.append(
+                ConfigValidationIssue(f"{item_path}.source", f"must be one of {sorted(allowed_sources)}")
+            )
+            continue
+        ids = item.get("ids")
+        expanded = _validate_indicator_source_ids(
+            f"{item_path}.ids",
+            ids,
+            source,
+            issues,
+            component_registry=component_registry,
+        )
+        for indicator_id, id_path in expanded:
+            previous = seen.get((source, indicator_id))
+            if previous is not None:
+                issues.append(
+                    ConfigValidationIssue(
+                        id_path,
+                        f"duplicates expanded {source} indicator id {indicator_id!r} from {previous}",
+                    )
+                )
+                continue
+            seen[(source, indicator_id)] = id_path
+
+
+def _validate_indicator_source_ids(
+    path: str,
+    value: Any,
+    source: str,
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+) -> tuple[tuple[str, str], ...]:
+    if value == "all":
+        ids = component_registry.ids("indicators") if source == "component" else ("all",)
+        return tuple((indicator_id, path) for indicator_id in ids)
+    if not isinstance(value, list) or not value:
+        issues.append(ConfigValidationIssue(path, "must be 'all' or a non-empty list of stable ids"))
+        return ()
+
+    expanded: list[tuple[str, str]] = []
+    for index, indicator_id in enumerate(value):
+        id_path = f"{path}[{index}]"
+        if not isinstance(indicator_id, str) or not indicator_id:
+            issues.append(ConfigValidationIssue(id_path, "must be a non-empty stable id"))
+            continue
+        if indicator_id == "all":
+            issues.append(ConfigValidationIssue(id_path, "must use ids: all instead of listing 'all'"))
+            continue
+        if not EXPERIMENT_NAME_RE.fullmatch(indicator_id):
+            issues.append(
+                ConfigValidationIssue(
+                    id_path,
+                    "must contain only letters, numbers, dots, underscores, and hyphens",
+                )
+            )
+            continue
+        if source == "component":
+            try:
+                component_registry.get(ComponentSelection("indicators", indicator_id))
+            except ComponentRegistryError:
+                issues.append(ConfigValidationIssue(id_path, "unknown indicator component id"))
+                continue
+        expanded.append((indicator_id, id_path))
+    return tuple(expanded)
+
+
+def _validate_run_source_ref(
     path: str,
     value: Any,
     family: str,
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
-    allow_component_all: bool = False,
     allowed_sources: set[str] | None = None,
 ) -> None:
-    if not isinstance(value, list) or not value:
-        issues.append(ConfigValidationIssue(path, "must be a non-empty list"))
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
-    for index, item in enumerate(value):
-        _validate_source_ref(
-            f"{path}[{index}]",
-            item,
-            family,
-            issues,
-            component_registry=component_registry,
-            allow_component_all=allow_component_all,
-            allowed_sources=allowed_sources,
+    _validate_known_keys(path, value, {"source", "id"}, issues)
+    _validate_no_lane_executable_keys(path, value, issues)
+    source = value.get("source")
+    allowed_source_values = allowed_sources or SOURCE_KINDS
+    if not isinstance(source, str) or source not in allowed_source_values:
+        issues.append(ConfigValidationIssue(f"{path}.source", f"must be one of {sorted(allowed_source_values)}"))
+        return
+    source_id = value.get("id")
+    if not isinstance(source_id, str) or not source_id:
+        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
+        return
+    if source_id == "all":
+        issues.append(ConfigValidationIssue(f"{path}.id", "must select one strategy id"))
+        return
+    if not EXPERIMENT_NAME_RE.fullmatch(source_id):
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.id",
+                "must contain only letters, numbers, dots, underscores, and hyphens",
+            )
         )
+    if source == "component":
+        try:
+            component_registry.get(ComponentSelection(family, source_id))
+        except ComponentRegistryError:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}.id",
+                    f"unknown {family[:-1] if family.endswith('s') else family} component id",
+                )
+            )
 
 
 def _validate_source_ref(
@@ -283,7 +392,6 @@ def _validate_source_ref(
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
-    allow_component_all: bool = False,
     allowed_sources: set[str] | None = None,
 ) -> None:
     if not isinstance(value, dict):
@@ -310,8 +418,6 @@ def _validate_source_ref(
         _validate_no_inline_secrets(f"{path}.params", params, issues)
         _validate_no_lane_executable_keys(f"{path}.params", params, issues)
     if component_id == "" or component_id == "all":
-        if source == "component" and allow_component_all:
-            return
         issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
         return
     if not EXPERIMENT_NAME_RE.fullmatch(component_id):
@@ -401,95 +507,6 @@ def _validate_output_dir(raw: dict[str, Any], issues: list[ConfigValidationIssue
         )
 
 
-def _validate_raw_config(
-    raw: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-    *,
-    model_registry: FrozenModelRegistry | None,
-) -> None:
-    _validate_known_keys(
-        "$",
-        raw,
-        {
-            "schema_version",
-            "name",
-            "data",
-            "indicators",
-            "labels",
-            "split",
-            "model",
-            "signals",
-            "portfolio",
-            "report",
-            "output_dir",
-        },
-        issues,
-    )
-
-    _require_int("schema_version", raw, issues, positive=True)
-    if raw.get("schema_version") != CONFIG_SCHEMA_VERSION:
-        issues.append(
-            ConfigValidationIssue(
-                "schema_version",
-                f"must be {CONFIG_SCHEMA_VERSION}",
-            )
-        )
-    if _require_str("name", raw, issues):
-        _validate_experiment_name(raw["name"], issues)
-    _optional_str("output_dir", raw, issues)
-
-    data = _section(raw, "data", set(DataConfig.__dataclass_fields__), issues)
-    indicators = _section(raw, "indicators", set(IndicatorConfig.__dataclass_fields__), issues)
-    labels = _section(raw, "labels", set(LabelConfig.__dataclass_fields__), issues)
-    split = _section(raw, "split", set(SplitConfig.__dataclass_fields__), issues)
-    model = _section(raw, "model", set(ModelConfig.__dataclass_fields__), issues)
-    signals = _section(raw, "signals", set(SignalConfig.__dataclass_fields__), issues)
-    portfolio = _section(
-        raw,
-        "portfolio",
-        set(PortfolioConfig.__dataclass_fields__) | {"size", "size_type"},
-        issues,
-    )
-    report = _section(raw, "report", set(ReportConfig.__dataclass_fields__), issues)
-
-    _validate_data(data, issues)
-    _validate_indicators(indicators, issues)
-    _validate_labels(labels, issues)
-    _validate_split(split, issues)
-    _validate_label_split_compatibility(labels, split, issues)
-    _validate_model(model, issues, model_registry=model_registry)
-    _validate_signals(signals, issues)
-    _validate_portfolio(portfolio, issues)
-    _validate_report(report, issues)
-
-
-def _validate_label_split_compatibility(
-    labels: dict[str, Any],
-    split: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    split_kind = split.get("kind", SplitConfig.kind)
-    generator = labels.get("generator", {})
-    if not isinstance(generator, dict):
-        return
-    label_kind = generator.get("kind", "fixlb")
-    if split_kind != "purged_kfold":
-        issues.append(
-            ConfigValidationIssue(
-                "split.kind",
-                f"{label_kind} look-ahead labels require purged_kfold validation",
-            )
-        )
-        return
-    if label_kind in {"trendlb", "pivotlb"}:
-        issues.append(
-            ConfigValidationIssue(
-                "labels.generator.kind",
-                "purged_kfold requires exact evaluation-time evidence; only fixlb is supported until confirmation-time oracles are configured",
-            )
-        )
-
-
 def _validate_data(
     data: dict[str, Any],
     issues: list[ConfigValidationIssue],
@@ -555,38 +572,6 @@ def _validate_data(
                 "requires data.quality.allowed_degradations to include 'skipped_symbols'",
             )
         )
-
-
-def _validate_expanded_component_ref_duplicates(
-    path: str,
-    value: Any,
-    family: str,
-    issues: list[ConfigValidationIssue],
-    *,
-    component_registry: FrozenComponentRegistry,
-) -> None:
-    if not isinstance(value, list):
-        return
-    seen: dict[str, str] = {}
-    for index, item in enumerate(value):
-        if not isinstance(item, dict):
-            continue
-        if item.get("source") != "component" or not isinstance(item.get("id"), str):
-            continue
-        ref_id = item["id"]
-        component_ids = component_registry.ids(family) if ref_id == "all" else (ref_id,)
-        for component_id in component_ids:
-            current_path = f"{path}[{index}].id"
-            previous = seen.get(component_id)
-            if previous is not None:
-                issues.append(
-                    ConfigValidationIssue(
-                        current_path,
-                        f"duplicates expanded component id {component_id!r} from {previous}",
-                    )
-                )
-                continue
-            seen[component_id] = current_path
 
 
 def _validate_relative_project_path(
@@ -670,424 +655,6 @@ def _quality_degradations(data: dict[str, Any]) -> set[str]:
     return {str(item) for item in degradations}
 
 
-def _validate_indicators(indicators: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    _optional_enum(
-        "indicators.invalid_value_policy",
-        indicators,
-        INDICATOR_INVALID_VALUE_POLICIES,
-        issues,
-    )
-    specs = indicators.get("specs")
-    if specs is None:
-        return
-    if not isinstance(specs, list) or not specs:
-        issues.append(ConfigValidationIssue("indicators.specs", "must be a non-empty list"))
-        return
-
-    seen_ids: set[str] = set()
-    registry = _indicator_registry()
-    for index, spec in enumerate(specs):
-        path = f"indicators.specs[{index}]"
-        if not isinstance(spec, dict):
-            issues.append(ConfigValidationIssue(path, "must be a mapping"))
-            continue
-        _validate_known_keys(
-            path,
-            spec,
-            {"id", "params", "outputs", "model_features", "grid", "param_product"},
-            issues,
-        )
-        _validate_no_inline_indicator_code(path, spec, issues)
-        indicator_id = spec.get("id")
-        if not isinstance(indicator_id, str) or not indicator_id:
-            issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty string"))
-            continue
-        if indicator_id in seen_ids:
-            issues.append(
-                ConfigValidationIssue(f"{path}.id", "duplicates another indicator spec id")
-            )
-        seen_ids.add(indicator_id)
-        definition = registry.get(indicator_id)
-        if definition is None:
-            issues.append(ConfigValidationIssue(f"{path}.id", "is not a registered indicator id"))
-            continue
-        if not definition.bar_aligned:
-            issues.append(
-                ConfigValidationIssue(
-                    f"{path}.id",
-                    "must reference a bar-aligned indicator definition in schema v1",
-                )
-            )
-        _validate_indicator_params(path, spec.get("params", {}), definition, issues)
-        _validate_indicator_outputs(path, spec.get("outputs"), definition, issues)
-        _validate_indicator_model_features(path, spec.get("model_features"), definition, issues)
-        _validate_indicator_grid(path, spec, issues)
-
-
-def _validate_no_inline_indicator_code(
-    path: str,
-    value: Any,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            child_path = f"{path}.{key}"
-            if str(key) in INDICATOR_INLINE_CODE_KEYS:
-                issues.append(
-                    ConfigValidationIssue(child_path, "inline code is not allowed in indicators")
-                )
-            _validate_no_inline_indicator_code(child_path, item, issues)
-        return
-    if isinstance(value, list):
-        for index, item in enumerate(value):
-            _validate_no_inline_indicator_code(f"{path}[{index}]", item, issues)
-
-
-def _validate_indicator_params(
-    spec_path: str,
-    params: Any,
-    definition: Any,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    path = f"{spec_path}.params"
-    if not isinstance(params, dict):
-        issues.append(ConfigValidationIssue(path, "must be a mapping"))
-        return
-    _validate_json_like(path, params, issues)
-    for param_name in definition.param_names:
-        if param_name not in params and param_name not in definition.default_params:
-            issues.append(ConfigValidationIssue(f"{path}.{param_name}", "is required"))
-    for key, value in params.items():
-        child_path = f"{path}.{key}"
-        if key not in definition.param_names:
-            issues.append(ConfigValidationIssue(child_path, "is not supported by this indicator"))
-            continue
-        if isinstance(value, list) and not value:
-            issues.append(ConfigValidationIssue(child_path, "must not be empty"))
-            continue
-        values = value if isinstance(value, list) else [value]
-        if key == "window":
-            for value_index, item in enumerate(values):
-                item_path = (
-                    child_path if not isinstance(value, list) else f"{child_path}[{value_index}]"
-                )
-                _validate_int(item_path, item, issues, positive=True)
-        if key in definition.allowed_param_values:
-            allowed = definition.allowed_param_values[key]
-            for value_index, item in enumerate(values):
-                item_path = (
-                    child_path if not isinstance(value, list) else f"{child_path}[{value_index}]"
-                )
-                if item not in allowed:
-                    issues.append(
-                        ConfigValidationIssue(item_path, f"must be one of {sorted(allowed)}")
-                    )
-
-
-def _validate_indicator_outputs(
-    spec_path: str,
-    outputs: Any,
-    definition: Any,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    if outputs is None:
-        return
-    path = f"{spec_path}.outputs"
-    if not _require_str_list(path, outputs, issues, non_empty=True):
-        return
-    for index, output in enumerate(outputs):
-        if output not in definition.output_names:
-            issues.append(
-                ConfigValidationIssue(
-                    f"{path}[{index}]",
-                    f"must be one of {sorted(definition.output_names)}",
-                )
-            )
-
-
-def _validate_indicator_model_features(
-    spec_path: str,
-    model_features: Any,
-    definition: Any,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    if model_features is None:
-        return
-    path = f"{spec_path}.model_features"
-    if not isinstance(model_features, list) or not model_features:
-        issues.append(ConfigValidationIssue(path, "must be a non-empty list"))
-        return
-    for index, feature in enumerate(model_features):
-        feature_path = f"{path}[{index}]"
-        if not isinstance(feature, dict):
-            issues.append(ConfigValidationIssue(feature_path, "must be a mapping"))
-            continue
-        _validate_known_keys(feature_path, feature, {"output", "transform"}, issues)
-        output = feature.get("output")
-        if not isinstance(output, str) or not output:
-            issues.append(
-                ConfigValidationIssue(f"{feature_path}.output", "must be a non-empty string")
-            )
-        elif output not in definition.output_names:
-            issues.append(
-                ConfigValidationIssue(
-                    f"{feature_path}.output",
-                    f"must be one of {sorted(definition.output_names)}",
-                )
-            )
-        transform = feature.get("transform", "identity")
-        if not isinstance(transform, str) or not transform:
-            issues.append(ConfigValidationIssue(f"{feature_path}.transform", "must be a string"))
-        elif transform not in definition.supported_transforms:
-            issues.append(
-                ConfigValidationIssue(
-                    f"{feature_path}.transform",
-                    f"must be one of {sorted(definition.supported_transforms)}",
-                )
-            )
-
-
-def _validate_indicator_grid(
-    spec_path: str,
-    spec: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    _optional_enum(f"{spec_path}.grid", spec, INDICATOR_GRIDS, issues)
-    _optional_bool(f"{spec_path}.param_product", spec, issues)
-    grid = spec.get("grid", "zipped")
-    param_product = spec.get("param_product", False)
-    if grid == "product" and param_product is not True:
-        issues.append(
-            ConfigValidationIssue(
-                f"{spec_path}.param_product",
-                "must be true when grid is 'product'",
-            )
-        )
-    if grid == "zipped" and param_product is True:
-        issues.append(
-            ConfigValidationIssue(
-                f"{spec_path}.grid",
-                "must be 'product' when param_product is true",
-            )
-        )
-    if grid != "zipped":
-        return
-    params = spec.get("params", {})
-    if not isinstance(params, dict):
-        return
-    list_lengths = {
-        len(value) for value in params.values() if isinstance(value, list) and len(value) > 1
-    }
-    if len(list_lengths) > 1:
-        issues.append(
-            ConfigValidationIssue(
-                f"{spec_path}.params",
-                "zipped parameter lists must have matching lengths",
-            )
-        )
-
-
-def _validate_labels(labels: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    generator = labels.get("generator", {})
-    target = labels.get("target", {})
-    if not isinstance(generator, dict):
-        issues.append(ConfigValidationIssue("labels.generator", "must be a mapping"))
-        return
-    if not isinstance(target, dict):
-        issues.append(ConfigValidationIssue("labels.target", "must be a mapping"))
-        return
-
-    _validate_known_keys("labels.generator", generator, {"kind", "params"}, issues)
-    _validate_known_keys(
-        "labels.target",
-        target,
-        {"role", "source_output", "select", "transform"},
-        issues,
-    )
-    if not _optional_enum("labels.generator.kind", generator, LABEL_KINDS, issues):
-        return
-
-    kind = str(generator.get("kind", "fixlb"))
-    params = generator.get("params", {})
-    if not isinstance(params, dict):
-        issues.append(ConfigValidationIssue("labels.generator.params", "must be a mapping"))
-        return
-    _validate_label_generator_params(kind, params, issues)
-    effective_params = {**_default_label_generator_params(kind), **params}
-    _validate_label_target(kind, effective_params, target, issues)
-
-
-def _validate_label_generator_params(
-    kind: str,
-    params: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    if kind == "fixlb":
-        _validate_known_keys("labels.generator.params", params, {"n"}, issues)
-        if "n" in params:
-            _validate_int_or_int_list(
-                "labels.generator.params.n", params["n"], issues, positive=True
-            )
-        return
-
-    if kind == "trendlb":
-        _validate_known_keys(
-            "labels.generator.params",
-            params,
-            {"up_th", "down_th", "mode"},
-            issues,
-        )
-        _optional_number("labels.generator.params.up_th", params, issues, positive=True)
-        _optional_number("labels.generator.params.down_th", params, issues, positive=True)
-        _optional_enum("labels.generator.params.mode", params, TRENDLB_MODES, issues)
-        return
-
-    if kind == "pivotlb":
-        _validate_known_keys("labels.generator.params", params, {"up_th", "down_th"}, issues)
-        _optional_number("labels.generator.params.up_th", params, issues, positive=True)
-        _optional_number("labels.generator.params.down_th", params, issues, positive=True)
-
-
-def _validate_label_target(
-    kind: str,
-    params: dict[str, Any],
-    target: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    _optional_enum("labels.target.role", target, LABEL_TARGET_ROLES, issues)
-    source_output = target.get("source_output", "labels")
-    if "source_output" in target and not isinstance(source_output, str):
-        issues.append(ConfigValidationIssue("labels.target.source_output", "must be a string"))
-    elif source_output != "labels":
-        issues.append(ConfigValidationIssue("labels.target.source_output", "must be 'labels'"))
-
-    select = target.get("select", {})
-    if not isinstance(select, dict):
-        issues.append(ConfigValidationIssue("labels.target.select", "must be a mapping"))
-        return
-    _validate_known_keys("labels.target.select", select, {"params"}, issues)
-    select_params = select.get("params", {})
-    if not isinstance(select_params, dict):
-        issues.append(ConfigValidationIssue("labels.target.select.params", "must be a mapping"))
-        return
-    _validate_target_selection(kind, params, select_params, issues)
-
-    transform = target.get("transform", {})
-    if not isinstance(transform, dict):
-        issues.append(ConfigValidationIssue("labels.target.transform", "must be a mapping"))
-        return
-    _validate_known_keys(
-        "labels.target.transform", transform, {"name", "version", "params"}, issues
-    )
-    _optional_enum("labels.target.transform.name", transform, LABEL_TARGET_TRANSFORMS, issues)
-    _optional_int("labels.target.transform.version", transform, issues, positive=True)
-    transform_name = str(
-        transform.get("name")
-        or _default_label_transform_name(LabelGeneratorConfig(kind=kind, params=params))
-    )
-    transform_params = transform.get("params", {})
-    if not isinstance(transform_params, dict):
-        issues.append(ConfigValidationIssue("labels.target.transform.params", "must be a mapping"))
-        return
-    _validate_label_transform(kind, params, transform_name, transform_params, issues)
-
-
-def _validate_target_selection(
-    kind: str,
-    params: dict[str, Any],
-    select_params: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    parameter_keys = {"n"} if kind == "fixlb" else set(params)
-    _validate_known_keys("labels.target.select.params", select_params, parameter_keys, issues)
-    for key, value in params.items():
-        if isinstance(value, list) and len(value) > 1 and key not in select_params:
-            issues.append(
-                ConfigValidationIssue(
-                    f"labels.target.select.params.{key}",
-                    "is required when generator parameter has multiple values",
-                )
-            )
-    for key, selected in select_params.items():
-        values = params.get(key)
-        if isinstance(values, list):
-            if selected in values:
-                continue
-            issues.append(
-                ConfigValidationIssue(
-                    f"labels.target.select.params.{key}",
-                    f"must be one of {values}",
-                )
-            )
-            continue
-        if values is not None and selected != values:
-            issues.append(
-                ConfigValidationIssue(
-                    f"labels.target.select.params.{key}",
-                    f"must be {values!r}",
-                )
-            )
-
-
-def _validate_label_transform(
-    kind: str,
-    params: dict[str, Any],
-    transform_name: str,
-    transform_params: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    mode = params.get("mode", "binary")
-    if kind == "fixlb" and transform_name != "threshold_future_return":
-        issues.append(
-            ConfigValidationIssue(
-                "labels.target.transform.name",
-                "must be 'threshold_future_return' for fixlb",
-            )
-        )
-    if kind == "trendlb" and mode == "binary" and transform_name != "identity_binary":
-        issues.append(
-            ConfigValidationIssue(
-                "labels.target.transform.name",
-                "must be 'identity_binary' for binary trendlb",
-            )
-        )
-    if kind == "trendlb" and mode != "binary" and transform_name != "continuous_identity":
-        issues.append(
-            ConfigValidationIssue(
-                "labels.target.transform.name",
-                "must be 'continuous_identity' for continuous trendlb modes",
-            )
-        )
-    if kind == "pivotlb" and transform_name != "positive_event":
-        issues.append(
-            ConfigValidationIssue(
-                "labels.target.transform.name",
-                "must be 'positive_event' for pivotlb",
-            )
-        )
-
-    if transform_name == "threshold_future_return":
-        _validate_known_keys(
-            "labels.target.transform.params", transform_params, {"threshold"}, issues
-        )
-        _optional_number("labels.target.transform.params.threshold", transform_params, issues)
-    elif transform_name in {"identity_binary", "positive_event"}:
-        _validate_known_keys(
-            "labels.target.transform.params", transform_params, {"positive_value"}, issues
-        )
-        _optional_int("labels.target.transform.params.positive_value", transform_params, issues)
-        positive_value = transform_params.get("positive_value", 1)
-        if kind == "pivotlb" and positive_value not in {-1, 1}:
-            issues.append(
-                ConfigValidationIssue(
-                    "labels.target.transform.params.positive_value",
-                    "must be -1 or 1 for pivotlb",
-                )
-            )
-    elif transform_name == "continuous_identity":
-        _validate_known_keys("labels.target.transform.params", transform_params, set(), issues)
-
-
 def _validate_split(split: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
     kind = split.get("kind", SplitConfig.kind)
     if not _optional_enum("split.kind", split, SPLIT_KINDS, issues):
@@ -1145,53 +712,6 @@ def _validate_purged_kfold_split(
                 f"must be at least {split_count} for purged_kfold",
             )
         )
-
-
-def _validate_model(
-    model: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-    *,
-    model_registry: FrozenModelRegistry | None,
-) -> None:
-    _optional_str("model.plugin_id", model, issues, allow_none=True)
-    _optional_int("model.min_train_samples", model, issues, positive=True)
-    params = model.get("params", {})
-    if not isinstance(params, dict):
-        issues.append(ConfigValidationIssue("model.params", "must be a mapping"))
-    else:
-        _validate_json_like("model.params", params, issues)
-        _validate_no_inline_secrets("model.params", params, issues)
-    _validate_no_denied_model_keys("model", model, issues)
-    if model_registry is None:
-        return
-    plugin_id = model.get("plugin_id")
-    if not isinstance(plugin_id, str) or not plugin_id:
-        issues.append(ConfigValidationIssue("model.plugin_id", "is required"))
-        return
-    if plugin_id not in model_registry:
-        issues.append(
-            ConfigValidationIssue("model.plugin_id", "unknown registered model plugin id")
-        )
-        return
-    definition = model_registry.get(plugin_id)
-    if definition.validate_params is not None and isinstance(params, dict):
-        for param_path, message in definition.validate_params(params).items():
-            child_path = f"model.params.{param_path}" if param_path else "model.params"
-            issues.append(ConfigValidationIssue(child_path, message))
-
-
-def _assert_model_config_registered(
-    model: ModelConfig,
-    model_registry: FrozenModelRegistry,
-) -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_model(
-        to_builtin(asdict(model)),
-        issues,
-        model_registry=model_registry,
-    )
-    if issues:
-        raise ConfigValidationError(issues)
 
 
 def _validate_signals(signals: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -1693,9 +1213,3 @@ def _is_int(value: Any) -> bool:
 
 def _is_number(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
-
-
-def _indicator_registry():
-    from research.aegis_research import config as config_module
-
-    return config_module.indicator_registry()

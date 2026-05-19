@@ -1,45 +1,45 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
-from research.aegis_research import indicators as indicators_module
-from research.aegis_research.config import (
-    IndicatorConfig,
-    IndicatorFeatureConfig,
-    IndicatorSpecConfig,
-    ModelConfig,
-)
-from research.aegis_research.indicator_registry import IndicatorDefinition
-from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
+from research.aegis_research.component_registry import discover_component_registry
+from research.aegis_research.component_registry.contracts import ComponentRegistryError
+from research.aegis_research.config import RunIndicatorSourceConfig, TrainModelConfig
+from research.aegis_research.indicators import build_component_indicator_result, build_model_feature_matrix
 from research.aegis_research.models import train_model
+from tests.support.research.aegis_research.indicator_result_fixtures import (
+    ma_indicator_result,
+    returns_indicator_result,
+)
 from tests.support.research.aegis_research.model_plugin_fixtures import (
     make_model_registry,
     model_config_dict,
 )
 
 
-def test_ma_sweep_preserves_native_visible_params_and_lineage() -> None:
+def test_component_indicator_preserves_vbt_param_lineage(tmp_path: Path) -> None:
     close = _close_frame(symbols=["SYN"])
-    config = IndicatorConfig(
-        specs=[
-            IndicatorSpecConfig(
-                id="ma",
-                params={"window": [2, 3], "wtype": "simple"},
-                outputs=["ma"],
-                model_features=[
-                    IndicatorFeatureConfig(output="ma", transform="distance_to_close"),
-                ],
-            )
-        ]
+
+    result = _component_result(
+        tmp_path,
+        close,
+        _indicator_manifest("demo.ma", param_names=["window", "wtype"]),
+        "from vectorbtpro import vbt\n"
+        "def run(close, *, params):\n"
+        "    ma = vbt.MA.run(close, window=[2, 3], wtype='simple', "
+        "hide_params=None, hide_default=False)\n"
+        "    return ma.ma\n",
     )
 
-    result = build_indicator_result(close, config)
-
-    assert "ma" in result.native_objects
-    assert result.native_objects["ma"].param_names == ("window", "wtype")
-    assert result.native_outputs["ma"]["ma"].columns.names == ["ma_window", "ma_wtype", "symbol"]
-    assert result.metadata["specs"][0]["parameter_combinations"] == [
+    assert result.native_outputs["demo.ma"]["ma"].columns.names == [
+        "ma_window",
+        "ma_wtype",
+        "symbol",
+    ]
+    assert result.metadata["components"][0]["params"] == [
         {"window": 2, "wtype": "simple"},
         {"window": 3, "wtype": "simple"},
     ]
@@ -51,100 +51,87 @@ def test_ma_sweep_preserves_native_visible_params_and_lineage() -> None:
         "params",
         "symbol",
     ]
-    assert result.lineage[0]["indicator_id"] == "ma"
+    assert result.lineage[0]["indicator_id"] == "demo.ma"
     assert result.lineage[0]["transform"] == "distance_to_close"
+    assert result.lineage[0]["params"] == {"window": 2, "wtype": "simple"}
 
 
-def test_param_product_records_cartesian_grid_without_run_combs() -> None:
+def test_component_indicator_records_cartesian_vbt_grid(tmp_path: Path) -> None:
     close = _close_frame(symbols=["SYN"])
-    config = IndicatorConfig(
-        specs=[
-            IndicatorSpecConfig(
-                id="ma",
-                params={"window": [2, 3], "wtype": ["simple", "wilder"]},
-                outputs=["ma"],
-                model_features=[IndicatorFeatureConfig(output="ma", transform="distance_to_close")],
-                grid="product",
-                param_product=True,
-            )
-        ]
+
+    result = _component_result(
+        tmp_path,
+        close,
+        _indicator_manifest("demo.ma", param_names=["window", "wtype"]),
+        "from vectorbtpro import vbt\n"
+        "def run(close, *, params):\n"
+        "    ma = vbt.MA.run(close, window=[2, 3], wtype=['simple', 'wilder'], "
+        "param_product=True, hide_params=None, hide_default=False)\n"
+        "    return ma.ma\n",
     )
 
-    result = build_indicator_result(close, config)
+    assert len(result.metadata["components"][0]["params"]) == 4
+    assert {tuple(sorted(item["params"].items())) for item in result.lineage} == {
+        (("window", 2), ("wtype", "simple")),
+        (("window", 2), ("wtype", "wilder")),
+        (("window", 3), ("wtype", "simple")),
+        (("window", 3), ("wtype", "wilder")),
+    }
 
-    assert result.metadata["specs"][0]["grid"] == "product"
-    assert result.metadata["specs"][0]["param_product"] is True
-    assert len(result.metadata["specs"][0]["parameter_combinations"]) == 4
-    assert "run_combs" not in result.metadata["specs"][0]
 
-
-def test_custom_indicator_factory_definition_matches_builtin_lineage_shape() -> None:
+def test_custom_indicator_factory_component_matches_builtin_lineage_shape(tmp_path: Path) -> None:
     close = _close_frame(symbols=["AAA", "BBB"])
-    config = IndicatorConfig(
-        specs=[
-            IndicatorSpecConfig(
-                id="custom_retvol",
-                params={"window": [3]},
-                outputs=["retvol"],
-                model_features=[IndicatorFeatureConfig(output="retvol")],
-            )
-        ]
-    )
 
-    result = build_indicator_result(close, config)
+    result = _component_result(
+        tmp_path,
+        close,
+        _indicator_manifest(
+            "demo.retvol",
+            param_names=["window"],
+            output_name="retvol",
+            transforms=["identity"],
+        ),
+        "from vectorbtpro import vbt\n"
+        "def _retvol_apply(close, window):\n"
+        "    return close.pct_change().rolling(window).std()\n"
+        "RETVOL = vbt.IF(input_names=['close'], param_names=['window'], "
+        "output_names=['retvol']).with_apply_func(_retvol_apply, keep_pd=True)\n"
+        "def run(close, *, params):\n"
+        "    return RETVOL.run(close, window=[3], hide_params=None, hide_default=False).retvol\n",
+    )
 
     symbols = {item["symbol"] for item in result.lineage}
 
-    assert "custom_retvol" in result.native_objects
-    assert result.native_outputs["custom_retvol"]["retvol"].columns.names[-1] == "symbol"
+    assert result.native_outputs["demo.retvol"]["retvol"].columns.names[-1] == "symbol"
     assert symbols == {"AAA", "BBB"}
-    assert all(item["indicator_id"] == "custom_retvol" for item in result.lineage)
+    assert all(item["indicator_id"] == "demo.retvol" for item in result.lineage)
 
 
-def test_indicator_stage_fails_fast_for_missing_native_output() -> None:
+def test_component_indicator_rejects_default_model_feature_for_unknown_output(tmp_path: Path) -> None:
     close = _close_frame(symbols=["SYN"])
-    config = IndicatorConfig(
-        specs=[
-            IndicatorSpecConfig(
-                id="ma",
-                params={"window": [2]},
-                outputs=["not_ma"],
-                model_features=[IndicatorFeatureConfig(output="not_ma")],
-            )
-        ]
-    )
+    manifest = _indicator_manifest("demo.bad", model_output="not_ma")
 
-    with pytest.raises(ValueError, match="not_ma"):
-        build_indicator_result(close, config)
+    with pytest.raises(ComponentRegistryError, match="default_model_features"):
+        _component_result(
+            tmp_path,
+            close,
+            manifest,
+            "def run(close, *, params):\n"
+            "    return close.rolling(2).mean()\n",
+        )
 
 
-def test_indicator_stage_rejects_shape_changing_registry_entries(monkeypatch) -> None:
-    definition = IndicatorDefinition(
-        id="shape_changing_test",
-        kind="custom",
-        input_names=("close",),
-        param_names=("window",),
-        output_names=("events",),
-        default_outputs=("events",),
-        default_model_features=({"output": "events", "transform": "identity"},),
-        supported_transforms=("identity",),
-        bar_aligned=False,
-    )
-    monkeypatch.setattr(indicators_module, "get_indicator_definition", lambda _id: definition)
+def test_component_indicator_rejects_shape_changing_outputs(tmp_path: Path) -> None:
     close = _close_frame(symbols=["SYN"])
-    config = IndicatorConfig(
-        specs=[
-            IndicatorSpecConfig(
-                id="shape_changing_test",
-                params={"window": [2]},
-                outputs=["events"],
-                model_features=[IndicatorFeatureConfig(output="events")],
-            )
-        ]
-    )
 
     with pytest.raises(ValueError, match="bar-aligned"):
-        build_indicator_result(close, config)
+        _component_result(
+            tmp_path,
+            close,
+            _indicator_manifest("demo.bad"),
+            "def run(close, *, params):\n"
+            "    return close.iloc[1:]\n",
+        )
 
 
 def test_model_feature_matrix_builds_mapping_and_cleaned_eligible_index() -> None:
@@ -153,17 +140,7 @@ def test_model_feature_matrix_builds_mapping_and_cleaned_eligible_index() -> Non
         {"AAA": [1, 1, 0, 1, 0, 1, 0, None], "BBB": [1, 0, 1, 0, 1, 0, 1, None]},
         index=close.index,
     )
-    config = IndicatorConfig(
-        specs=[
-            IndicatorSpecConfig(
-                id="ma",
-                params={"window": [3], "wtype": "simple"},
-                outputs=["ma"],
-                model_features=[IndicatorFeatureConfig(output="ma", transform="distance_to_close")],
-            )
-        ]
-    )
-    indicators = build_indicator_result(close, config)
+    indicators = ma_indicator_result(close, windows=[3])
 
     matrix = build_model_feature_matrix(indicators, labels, invalid_value_policy="drop_rows")
 
@@ -171,9 +148,7 @@ def test_model_feature_matrix_builds_mapping_and_cleaned_eligible_index() -> Non
     assert matrix.eligible_index[0] == close.index[2]
     assert matrix.eligible_index[-1] == close.index[6]
     assert list(matrix.feature_mapping) == ["ma__ma__distance_to_close__window_3__wtype_simple"]
-    assert matrix.feature_mapping["ma__ma__distance_to_close__window_3__wtype_simple"][
-        "params"
-    ] == {
+    assert matrix.feature_mapping["ma__ma__distance_to_close__window_3__wtype_simple"]["params"] == {
         "window": 3,
         "wtype": "simple",
     }
@@ -186,7 +161,7 @@ def test_model_feature_matrix_builds_mapping_and_cleaned_eligible_index() -> Non
 def test_model_feature_matrix_rejects_label_feature_symbol_mismatch() -> None:
     close = _close_frame(symbols=["AAA"])
     labels = pd.DataFrame({"BBB": [1] * len(close)}, index=close.index)
-    indicators = build_indicator_result(close, IndicatorConfig())
+    indicators = returns_indicator_result(close)
 
     with pytest.raises(ValueError, match="symbol"):
         build_model_feature_matrix(indicators, labels)
@@ -196,17 +171,7 @@ def test_model_feature_matrix_records_inf_values_without_silent_replacement() ->
     index = pd.date_range("2020-01-01", periods=5, freq="1D", tz="UTC", name="Open time")
     close = pd.DataFrame({"SYN": [0.0, 1.0, 2.0, 3.0, 4.0]}, index=index)
     labels = pd.DataFrame({"SYN": [1, 1, 1, 1, 1]}, index=index)
-    config = IndicatorConfig(
-        specs=[
-            IndicatorSpecConfig(
-                id="returns",
-                params={"window": [1]},
-                outputs=["returns"],
-                model_features=[IndicatorFeatureConfig(output="returns")],
-            )
-        ]
-    )
-    indicators = build_indicator_result(close, config)
+    indicators = returns_indicator_result(close)
 
     matrix = build_model_feature_matrix(indicators, labels, invalid_value_policy="drop_rows")
 
@@ -218,17 +183,7 @@ def test_model_feature_matrix_records_inf_values_without_silent_replacement() ->
 def test_model_feature_matrix_raise_policy_rejects_invalid_rows() -> None:
     close = _close_frame(symbols=["SYN"])
     labels = pd.DataFrame({"SYN": [1] * len(close)}, index=close.index)
-    config = IndicatorConfig(
-        specs=[
-            IndicatorSpecConfig(
-                id="ma",
-                params={"window": [3], "wtype": "simple"},
-                outputs=["ma"],
-                model_features=[IndicatorFeatureConfig(output="ma", transform="distance_to_close")],
-            )
-        ]
-    )
-    indicators = build_indicator_result(close, config)
+    indicators = ma_indicator_result(close, windows=[3])
 
     with pytest.raises(ValueError, match="Invalid feature or label values"):
         build_model_feature_matrix(indicators, labels, invalid_value_policy="raise")
@@ -253,7 +208,7 @@ def test_training_boundary_rejects_colliding_feature_names() -> None:
         train_model(
             indicators,
             labels,
-            ModelConfig(**model_config_dict(min_train_samples=1)),
+            _train_model_config(min_train_samples=1),
             model_registry=make_model_registry(),
             target_schema={
                 "target_kind": "binary_classification",
@@ -266,6 +221,62 @@ def test_training_boundary_rejects_colliding_feature_names() -> None:
             },
             split_label="split_0",
         )
+
+
+def _component_result(
+    tmp_path: Path,
+    close: pd.DataFrame,
+    manifest: dict[str, object],
+    source: str,
+):
+    root = tmp_path / "research" / "components"
+    path = root / "indicators" / "indicator.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"COMPONENT_MANIFEST = {manifest!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        f"{source}"
+    )
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    return build_component_indicator_result(
+        close,
+        [RunIndicatorSourceConfig(source="component", ids=[str(manifest["id"])])],
+        component_registry=registry,
+    )
+
+
+def _train_model_config(min_train_samples: int) -> TrainModelConfig:
+    raw = model_config_dict(min_train_samples=min_train_samples)
+    return TrainModelConfig(
+        source="plugin",
+        id=raw["plugin_id"],
+        min_train_samples=raw["min_train_samples"],
+        params=raw["params"],
+    )
+
+
+def _indicator_manifest(
+    component_id: str,
+    *,
+    param_names: list[str] | None = None,
+    output_name: str = "ma",
+    model_output: str | None = None,
+    transforms: list[str] | None = None,
+) -> dict[str, object]:
+    transform = (transforms or ["identity", "distance_to_close"])[-1]
+    return {
+        "family": "indicators",
+        "id": component_id,
+        "version": "1.0.0",
+        "input_names": ["close"],
+        "param_names": param_names or [],
+        "output_names": [output_name],
+        "default_outputs": [output_name],
+        "default_model_features": [
+            {"output": model_output or output_name, "transform": transform}
+        ],
+        "supported_transforms": transforms or ["identity", "distance_to_close"],
+    }
 
 
 def _close_frame(symbols: list[str]) -> pd.DataFrame:

@@ -6,23 +6,19 @@ Notebook playbooks are repo-controlled exploratory notebooks under `research/pla
 strategy:
   source: playbook
   id: ma_strategy_explore
-  params:
-    threshold: 0.01
 
-indicator_refs:
+indicators:
   - source: playbook
-    id: ma_explore
-    params:
-      window: 10
+    ids: [ma_explore]
   - source: component
-    id: all
+    ids: all
 
 ranking:
   metric: total_return_pct
   direction: desc
 ```
 
-Each indicator playbook ID represents one indicator idea/family. Parameter sweeps inside that family are allowed. Run configs may select playbook indicator refs, explicit component indicator refs, and an `id: all` component selector in the same run. If a baseline exists, the playbook declares exactly one component indicator ID and emits baseline metric evidence; leaderboard rows show indicator source, primary metric, optional baseline metric, raw delta, and direction-adjusted delta. Baseline-delta ranking is used only when explicitly selected.
+Each indicator playbook ID represents one indicator idea/family. The selected playbook or component owns its defaults, sweep grids, and variant definitions. Run configs select source blocks only: `ids: all` expands to every discovered indicator for that source, and `ids: [...]` selects explicit stable IDs. If a baseline exists, the playbook declares exactly one component indicator ID and emits baseline metric evidence; leaderboard rows show indicator source, primary metric, optional baseline metric, raw delta, and direction-adjusted delta. Baseline-delta ranking is used only when explicitly selected.
 
 Run artifacts are immutable evidence under the configured run root. Playbook-backed rows remain source-labeled as playbook evidence; manual promotion into `research/components/` is still a reviewed source-code step, not an automatic command that mutates component files.
 

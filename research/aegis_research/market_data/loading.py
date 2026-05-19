@@ -13,7 +13,6 @@ from research.aegis_research.configuration.schema import (
     SECRET_KEY_RE,
     SECRET_VALUE_RE,
     DataConfig,
-    LabelConfig,
     SignalConfig,
 )
 from research.aegis_research.configuration.secrets import (
@@ -38,6 +37,7 @@ from research.aegis_research.market_data.contracts import (
 from research.aegis_research.market_data.sources import (
     vbt_data_source_classes,
 )
+from research.aegis_research.labels import LabelConfig
 
 
 def load_market_data(config: DataConfig) -> Any:

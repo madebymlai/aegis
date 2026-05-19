@@ -1,14 +1,15 @@
 import pandas as pd
 import pytest
 
-from research.aegis_research.config import (
+from research.aegis_research.config import SplitConfig
+from research.aegis_research.labels import (
     LabelConfig,
+    LabelEvaluationEvidence,
     LabelGeneratorConfig,
     LabelTargetConfig,
     LabelTargetTransformConfig,
-    SplitConfig,
+    build_label_result,
 )
-from research.aegis_research.labels import LabelEvaluationEvidence, build_label_result
 from research.aegis_research.splits import (
     ValidationSplit,
     _assert_no_interval_leakage,

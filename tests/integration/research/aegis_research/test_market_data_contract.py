@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from research.aegis_research import data as data_module
-from research.aegis_research.config import DataConfig, LabelConfig, LabelGeneratorConfig
+from research.aegis_research.config import DataConfig
 from research.aegis_research.data import (
     LOGICAL_FEATURES,
     OHLCV_FEATURES,
@@ -19,6 +19,7 @@ from research.aegis_research.data import (
     required_ohlcv_features,
 )
 from research.aegis_research.market_data.sources import vbt_data_source_classes
+from research.aegis_research.labels import LabelConfig, LabelGeneratorConfig
 
 
 def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:

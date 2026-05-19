@@ -1,5 +1,5 @@
 ---
-title: Schema-Versioned Experiment Config Contracts
+title: Schema-Versioned Lane Config Contracts
 date: 2026-05-16
 last_updated: 2026-05-17
 category: architecture-patterns
@@ -22,7 +22,7 @@ tags:
   - vectorbt
 ---
 
-# Schema-Versioned Experiment Config Contracts
+# Schema-Versioned Lane Config Contracts
 
 ## Context
 
@@ -37,11 +37,11 @@ This created several risks:
 - Run artifacts did not preserve enough authored/resolved config evidence for reliable reproduction.
 - Config schema evolution had no explicit version gate.
 
-Issue #7 resolved this by turning config loading into a schema-versioned, fail-fast contract boundary that produces a resolved envelope before experiment execution.
+Issue #7 resolved this by turning config loading into a schema-versioned, fail-fast contract boundary that produces a resolved envelope before lane execution.
 
 ## Guidance
 
-Treat experiment config loading as a public contract, not a dataclass unpacking convenience. The loader should validate raw authored input, reject malformed or unsafe values, and return a resolved envelope that downstream code can trust.
+Treat lane config loading as a public contract, not a dataclass unpacking convenience. The loader should validate raw authored input, reject malformed or unsafe values, and return a resolved envelope that downstream code can trust.
 
 Use a project-owned validation error with machine-readable paths:
 
@@ -63,8 +63,9 @@ Wrap the resolved dataclass with provenance and artifact-safe views:
 
 ```python
 @dataclass(frozen=True)
-class ResolvedExperimentConfig:
-    config: ExperimentConfig
+class ResolvedLaneConfig:
+    config: StrategyRunLaneConfig | TrainLaneConfig
+    lane: str
     raw_config_hash: str
     authored_config: dict[str, Any]
     source_path: str | None = None
@@ -86,15 +87,15 @@ class ResolvedExperimentConfig:
 Resolve configs before side effects:
 
 ```python
-def run_experiment(config: ResolvedExperimentConfig | ExperimentConfig | dict[str, Any]) -> dict[str, object]:
-    resolved_config = resolve_experiment_config(config)
+def run_training(config: ResolvedLaneConfig | TrainLaneConfig | dict[str, Any]) -> dict[str, object]:
+    resolved_config = resolve_lane_config(config, expected_lane="train")
     config = resolved_config.config
 
     data = load_market_data(config.data)
     ...
 ```
 
-Downstream code should accept `ResolvedExperimentConfig` or call `resolve_experiment_config` immediately. Avoid constructing `ExperimentConfig` directly from untrusted YAML.
+Downstream code should accept `ResolvedLaneConfig` or call `resolve_lane_config(...)` immediately. Avoid constructing lane dataclasses directly from untrusted YAML.
 
 Reject ambiguous authored input at the loader boundary:
 
@@ -103,7 +104,7 @@ Reject ambiguous authored input at the loader boundary:
 - Enum-like fields must use canonical values instead of mixed-case aliases.
 - Numeric values must be finite and inside configured bounds.
 - Report frequencies must be positive `Timedelta`-compatible strings.
-- Experiment names must be path-safe filename components.
+- Run names must be path-safe filename components.
 
 Keep passthrough boundaries explicit and source-aware. Provider, wrapper, and execution kwargs are valid only where they are actually consumed. Local sources such as `synthetic` and `csv` should reject ignored passthrough maps instead of accepting inert config.
 
@@ -134,7 +135,7 @@ runs/<timestamp>_<name>/
 
 Store `source_path` only when local path disclosure is acceptable. If paths may reveal usernames or private directory structure, persist a relative path or omit it.
 
-Make third-party library assumptions explicit in the config contract. For VectorBT-based experiments, validate `Portfolio.from_signals`-compatible size types, allowed portfolio directions, label generator/target compatibility, and report frequency assumptions before calling VectorBT. Label configs should distinguish native generator params from target selection and target transforms so `TRENDLB` continuous modes, `PIVOTLB` sparse-event targets, and `FIXLB` threshold targets fail or proceed at the right boundary.
+Make third-party library assumptions explicit in the config contract. For VectorBT-based lanes, validate `Portfolio.from_signals`-compatible sizing, allowed portfolio directions, component-owned label target compatibility, and report frequency assumptions before calling VectorBT. Label components should distinguish native generator params from target selection and target transforms so `TRENDLB` continuous modes, `PIVOTLB` sparse-event targets, and `FIXLB` threshold targets fail or proceed at the right boundary.
 
 ## Why This Matters
 
@@ -178,7 +179,8 @@ report:
 After, the authored config is explicit, canonical, and safe to serialize:
 
 ```yaml
-schema_version: 2
+schema_version: 3
+lane: train
 name: baseline_research
 output_dir: runs
 data:
@@ -190,8 +192,18 @@ data:
   provider_kwargs:
     api_key:
       env: BINANCE_API_KEY
+indicators:
+  - source: component
+    ids: [aegis.returns]
+train:
+  label:
+    source: component
+    id: aegis.fixlb
+  model:
+    source: plugin
+    id: aegis.sklearn_logistic
 portfolio:
-  size_type: valuepercent
+  entry_budget: 1.0
   direction: longonly
 report:
   freq: "1D"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import json
 import re
 from dataclasses import dataclass, field
@@ -8,9 +7,13 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.config import IndicatorConfig, IndicatorSpecConfig
+from research.aegis_research.component_registry import ComponentSelection, FrozenComponentRegistry
+from research.aegis_research.component_registry.contracts import (
+    ComponentDefinition,
+    IndicatorManifest,
+)
+from research.aegis_research.config import RunIndicatorSourceConfig
 from research.aegis_research.data_schema import index_identity, table_shape
-from research.aegis_research.indicator_registry import IndicatorDefinition, get_indicator_definition
 
 FEATURE_COLUMN_NAMES = ["feature", "indicator", "output", "transform", "params", "symbol"]
 
@@ -36,8 +39,48 @@ class ModelFeatureMatrix:
     metadata: dict[str, Any]
 
 
-def build_indicators(close: pd.DataFrame, config: IndicatorConfig) -> pd.DataFrame:
-    return build_indicator_result(close, config).frame
+def build_component_indicator_result(
+    close: pd.DataFrame,
+    refs: list[RunIndicatorSourceConfig],
+    *,
+    component_registry: FrozenComponentRegistry,
+    invalid_value_policy: str = "drop_rows",
+) -> IndicatorResult:
+    component_results = [
+        _run_component_indicator(close, definition)
+        for definition in _expanded_component_indicator_definitions(refs, component_registry)
+    ]
+    if not component_results:
+        raise ValueError("At least one component indicator must be configured")
+
+    frame = pd.concat([result.frame for result in component_results], axis=1)
+    lineage = [item for result in component_results for item in result.lineage]
+    feature_mapping = {
+        key: value for result in component_results for key, value in result.feature_mapping.items()
+    }
+    native_outputs = {
+        key: value for result in component_results for key, value in result.native_outputs.items()
+    }
+    native_objects = {
+        key: value for result in component_results for key, value in result.native_objects.items()
+    }
+    return IndicatorResult(
+        frame=frame,
+        native_objects=native_objects,
+        native_outputs=native_outputs,
+        lineage=lineage,
+        feature_mapping=feature_mapping,
+        diagnostics=_indicator_diagnostics(frame, lineage),
+        metadata={
+            "invalid_value_policy": invalid_value_policy,
+            "source": "component",
+            "components": [result.metadata for result in component_results],
+            "shape": table_shape(frame),
+            "columns": list(map(str, frame.columns)),
+            "feature_count": len(feature_mapping),
+            "native_object_ids": sorted(native_objects),
+        },
+    )
 
 
 def build_model_feature_matrix(
@@ -105,224 +148,177 @@ def build_model_feature_matrix(
     )
 
 
-def build_indicator_result(close: pd.DataFrame, config: IndicatorConfig) -> IndicatorResult:
+def _expanded_component_indicator_definitions(
+    refs: list[RunIndicatorSourceConfig],
+    component_registry: FrozenComponentRegistry,
+) -> list[ComponentDefinition]:
+    definitions: list[ComponentDefinition] = []
+    seen: set[str] = set()
+    for ref in refs:
+        if ref.source != "component":
+            raise ValueError("train indicators must select component sources")
+        component_ids = ref.expanded_ids(component_registry.ids("indicators"))
+        for component_id in component_ids:
+            if component_id in seen:
+                raise ValueError(f"duplicate indicator component ref: {component_id}")
+            seen.add(component_id)
+            definitions.append(component_registry.get(ComponentSelection("indicators", component_id)))
+    return definitions
+
+
+def _run_component_indicator(close: pd.DataFrame, definition: ComponentDefinition) -> IndicatorResult:
+    if not isinstance(definition.manifest, IndicatorManifest):
+        raise TypeError(f"component {definition.id!r} is not an indicator")
+    output = definition.load_callable()(close, params={})
+    if isinstance(output, IndicatorResult):
+        return _source_component_indicator_result(output, definition)
+    output_name = _single_component_output_name(definition.manifest)
+    frame = _component_output_frame(output, close, definition.id, output_name)
+    return _component_frame_indicator_result(close, frame, definition, output_name)
+
+
+def _source_component_indicator_result(
+    result: IndicatorResult,
+    definition: ComponentDefinition,
+) -> IndicatorResult:
+    metadata = {
+        **result.metadata,
+        "id": definition.id,
+        "version": definition.manifest.version,
+        "source_hash": definition.identity.source_hash,
+    }
+    lineage = [{**item, "component_id": definition.id} for item in result.lineage]
+    return IndicatorResult(
+        frame=result.frame,
+        metadata=metadata,
+        native_objects={definition.id: result.native_objects},
+        native_outputs={definition.id: result.native_outputs},
+        lineage=lineage,
+        feature_mapping={
+            key: {**value, "component_id": definition.id}
+            for key, value in result.feature_mapping.items()
+        },
+        diagnostics=result.diagnostics,
+    )
+
+
+def _component_frame_indicator_result(
+    close: pd.DataFrame,
+    output_frame: pd.DataFrame,
+    definition: ComponentDefinition,
+    output_name: str,
+) -> IndicatorResult:
+    manifest = definition.manifest
+    if not isinstance(manifest, IndicatorManifest):
+        raise TypeError(f"component {definition.id!r} is not an indicator")
     model_feature_series: list[pd.Series] = []
     model_feature_columns: list[tuple[str, str, str, str, str, str]] = []
-    native_objects: dict[str, Any] = {}
-    native_outputs: dict[str, dict[str, pd.DataFrame]] = {}
     lineage: list[dict[str, Any]] = []
     feature_mapping: dict[str, dict[str, Any]] = {}
-    spec_metadata: list[dict[str, Any]] = []
-
-    for spec in config.specs:
-        definition = get_indicator_definition(spec.id)
-        if not definition.bar_aligned:
-            raise ValueError(f"Indicator {spec.id!r} must be bar-aligned in schema v1")
-
-        params = {**definition.default_params, **spec.params}
-        combinations = _parameter_combinations(definition, params, spec.param_product)
-        outputs, native_object = _run_indicator_definition(close, spec, definition, params)
-        if native_object is not None:
-            native_objects[spec.id] = native_object
-        native_outputs[spec.id] = outputs
-
-        selected_outputs = spec.outputs or list(definition.default_outputs)
-        for output_name in selected_outputs:
-            if output_name not in outputs:
-                raise ValueError(f"Indicator {spec.id!r} did not produce output {output_name!r}")
-            _assert_bar_aligned(close, outputs[output_name], spec.id, output_name)
-
-        for feature_spec in spec.model_features or _default_model_features(definition):
-            output_name = feature_spec.output
-            if output_name not in outputs:
-                raise ValueError(f"Indicator {spec.id!r} did not produce output {output_name!r}")
-            output_frame = outputs[output_name]
-            for column in output_frame.columns:
-                params_for_column, symbol = _column_lineage_values(column, output_frame, definition)
-                values = _apply_transform(
-                    close,
-                    output_frame[column],
-                    symbol=symbol,
-                    transform=feature_spec.transform,
-                )
-                params_token = _params_token(params_for_column)
-                feature_name = _feature_name(
-                    spec.id,
-                    output_name,
-                    feature_spec.transform,
-                    params_for_column,
-                )
-                model_feature_series.append(values.rename(feature_name))
-                model_feature_columns.append(
-                    (
-                        feature_name,
-                        spec.id,
-                        output_name,
-                        feature_spec.transform,
-                        params_token,
-                        symbol,
-                    )
-                )
-                lineage_record = {
-                    "feature": feature_name,
-                    "indicator_id": spec.id,
-                    "kind": definition.kind,
-                    "output": output_name,
-                    "transform": feature_spec.transform,
-                    "params": params_for_column,
-                    "symbol": symbol,
-                }
-                lineage.append(lineage_record)
-                feature_mapping.setdefault(
-                    feature_name,
-                    {
-                        "indicator_id": spec.id,
-                        "kind": definition.kind,
-                        "output": output_name,
-                        "transform": feature_spec.transform,
-                        "params": params_for_column,
-                    },
-                )
-
-        spec_metadata.append(
-            {
-                "id": spec.id,
-                "kind": definition.kind,
-                "grid": spec.grid,
-                "param_product": spec.param_product,
-                "parameter_combinations": combinations,
-                "grid_size": len(combinations),
-                "outputs": selected_outputs,
-                "model_features": [
-                    {"output": feature.output, "transform": feature.transform}
-                    for feature in spec.model_features or _default_model_features(definition)
-                ],
-                "native_output_shapes": {
-                    output_name: table_shape(output_frame)
-                    for output_name, output_frame in outputs.items()
-                },
+    for feature_spec in manifest.default_model_features:
+        if feature_spec["output"] != output_name:
+            raise ValueError(
+                f"indicator component {definition.id!r} did not produce output {feature_spec['output']!r}"
+            )
+        transform = feature_spec.get("transform", "identity")
+        for column in output_frame.columns:
+            params, symbol = _component_lineage_values(column, output_frame, manifest)
+            values = _apply_transform(close, output_frame[column], symbol=symbol, transform=transform)
+            params_token = _params_token(params)
+            feature_name = _feature_name(definition.id, output_name, transform, params)
+            model_feature_series.append(values.rename(feature_name))
+            model_feature_columns.append(
+                (feature_name, definition.id, output_name, transform, params_token, symbol)
+            )
+            lineage_record = {
+                "feature": feature_name,
+                "indicator_id": definition.id,
+                "component_id": definition.id,
+                "kind": "component",
+                "output": output_name,
+                "transform": transform,
+                "params": params,
+                "symbol": symbol,
             }
-        )
-
-    if not model_feature_series:
-        raise ValueError("At least one model feature must be configured")
-
+            lineage.append(lineage_record)
+            feature_mapping.setdefault(
+                feature_name,
+                {
+                    "indicator_id": definition.id,
+                    "component_id": definition.id,
+                    "kind": "component",
+                    "output": output_name,
+                    "transform": transform,
+                    "params": params,
+                },
+            )
     frame = pd.concat(model_feature_series, axis=1)
     frame.columns = pd.MultiIndex.from_tuples(model_feature_columns, names=FEATURE_COLUMN_NAMES)
-    diagnostics = _indicator_diagnostics(frame, lineage)
-
     return IndicatorResult(
         frame=frame,
-        native_objects=native_objects,
-        native_outputs=native_outputs,
+        metadata={
+            "id": definition.id,
+            "version": manifest.version,
+            "source_hash": definition.identity.source_hash,
+            "outputs": [output_name],
+            "params": _component_output_params(output_frame, manifest),
+            "model_features": list(manifest.default_model_features),
+        },
+        native_outputs={definition.id: {output_name: output_frame}},
         lineage=lineage,
         feature_mapping=feature_mapping,
-        diagnostics=diagnostics,
-        metadata={
-            "invalid_value_policy": config.invalid_value_policy,
-            "specs": spec_metadata,
-            "shape": table_shape(frame),
-            "columns": list(map(str, frame.columns)),
-            "feature_count": len(feature_mapping),
-            "native_object_ids": sorted(native_objects),
-        },
+        diagnostics={},
     )
 
 
-def _run_indicator_definition(
+def _single_component_output_name(manifest: IndicatorManifest) -> str:
+    if len(manifest.default_outputs) != 1:
+        raise ValueError("indicator components with multiple default outputs must return IndicatorResult")
+    return manifest.default_outputs[0]
+
+
+def _component_output_frame(
+    output: Any,
     close: pd.DataFrame,
-    spec: IndicatorSpecConfig,
-    definition: IndicatorDefinition,
-    params: dict[str, Any],
-) -> tuple[dict[str, pd.DataFrame], Any | None]:
-    if definition.kind == "primitive":
-        return _run_primitive_indicator(close, definition, params), None
-    if definition.indicator_class is None:
-        raise ValueError(f"Indicator {definition.id!r} has no VectorBT indicator class")
-
-    run_kwargs = {**definition.default_run_kwargs}
-    if spec.param_product:
-        run_kwargs["param_product"] = True
-    native_object = definition.indicator_class.run(close, **params, **run_kwargs)
-    outputs = {
-        output_name: _normalize_output_frame(
-            getattr(native_object, output_name),
-            close=close,
-            definition=definition,
-        )
-        for output_name in definition.output_names
-        if hasattr(native_object, output_name)
-    }
-    return outputs, native_object
-
-
-def _run_primitive_indicator(
-    close: pd.DataFrame,
-    definition: IndicatorDefinition,
-    params: dict[str, Any],
-) -> dict[str, pd.DataFrame]:
-    frames: dict[str, pd.DataFrame] = {}
-    columns: list[tuple[Any, str]] = []
-    values: list[pd.Series] = []
-    close_returns = close.pct_change() if definition.id == "volatility" else None
-    for combination in _parameter_combinations(definition, params, param_product=False):
-        window = int(combination["window"])
-        if definition.id == "returns":
-            output = close.pct_change(window)
-            output_name = "returns"
-        elif definition.id == "volatility":
-            output = close_returns.rolling(window).std()
-            output_name = "volatility"
-        else:
-            raise ValueError(f"Unsupported primitive indicator: {definition.id}")
-        for symbol in _symbols(close):
-            columns.append((window, str(symbol)))
-            values.append(output[symbol])
-    frame = pd.concat(values, axis=1)
-    frame.columns = pd.MultiIndex.from_tuples(
-        columns,
-        names=[f"{definition.id}_window", "symbol"],
-    )
-    frames[output_name] = frame
-    return frames
-
-
-def _normalize_output_frame(
-    output: pd.Series | pd.DataFrame,
-    *,
-    close: pd.DataFrame,
-    definition: IndicatorDefinition,
+    component_id: str,
+    output_name: str,
 ) -> pd.DataFrame:
-    frame = output.to_frame() if isinstance(output, pd.Series) else output.copy()
+    frame = output.to_frame() if isinstance(output, pd.Series) else output
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError(f"indicator component {component_id!r} output {output_name!r} must be a pandas object")
+    if not frame.index.equals(close.index):
+        raise ValueError(f"indicator component {component_id!r} output {output_name!r} is not bar-aligned")
     if isinstance(frame.columns, pd.MultiIndex):
-        columns = [column if isinstance(column, tuple) else (column,) for column in frame.columns]
-        names = list(frame.columns.names)
-    else:
-        columns = [(column,) for column in frame.columns]
-        names = [frame.columns.name]
+        if "symbol" not in frame.columns.names:
+            close_symbols = set(map(str, close.columns))
+            last_level_symbols = set(map(str, frame.columns.get_level_values(-1)))
+            if last_level_symbols == close_symbols:
+                result = frame.copy()
+                names = list(result.columns.names)
+                names[-1] = "symbol"
+                result.columns = result.columns.set_names(names)
+                return result
+            if len(close.columns) != 1:
+                raise ValueError(f"indicator component {component_id!r} output {output_name!r} is missing symbol level")
+            symbol = str(close.columns[0])
+            result = frame.copy()
+            result.columns = pd.MultiIndex.from_tuples(
+                [(*column, symbol) for column in result.columns],
+                names=[*result.columns.names, "symbol"],
+            )
+            return result
+        return frame
+    if list(map(str, frame.columns)) != list(map(str, close.columns)):
+        raise ValueError(f"indicator component {component_id!r} output {output_name!r} symbols do not match input")
+    result = frame.copy()
+    result.columns = pd.MultiIndex.from_tuples([(str(column),) for column in result.columns], names=["symbol"])
+    return result
 
-    expected_param_levels = len(definition.param_names)
-    if "symbol" not in names:
-        if len(names) == expected_param_levels:
-            if len(_symbols(close)) != 1:
-                raise ValueError(f"Indicator {definition.id!r} output is missing a symbol level")
-            symbol = str(_symbols(close)[0])
-            columns = [(*column, symbol) for column in columns]
-            names = [*names, "symbol"]
-        else:
-            names[-1] = "symbol"
 
-    names = [
-        f"{definition.id}_{name}" if name in definition.param_names else name for name in names
-    ]
-    frame.columns = pd.MultiIndex.from_tuples(columns, names=names)
-    return frame
-
-
-def _column_lineage_values(
+def _component_lineage_values(
     column: Any,
     frame: pd.DataFrame,
-    definition: IndicatorDefinition,
+    manifest: IndicatorManifest,
 ) -> tuple[dict[str, Any], str]:
     values = column if isinstance(column, tuple) else (column,)
     params: dict[str, Any] = {}
@@ -331,13 +327,29 @@ def _column_lineage_values(
         if name == "symbol":
             symbol = str(value)
             continue
-        for param_name in definition.param_names:
-            if name == f"{definition.id}_{param_name}" or name.endswith(f"_{param_name}"):
+        for param_name in manifest.param_names:
+            if name == param_name or name.endswith(f"_{param_name}"):
                 params[param_name] = _native_scalar(value)
                 break
     if symbol is None:
-        raise ValueError(f"Indicator {definition.id!r} output is missing a symbol level")
+        raise ValueError("indicator component output is missing a symbol level")
     return params, symbol
+
+
+def _component_output_params(
+    frame: pd.DataFrame,
+    manifest: IndicatorManifest,
+) -> list[dict[str, Any]]:
+    rows = []
+    seen = set()
+    for column in frame.columns:
+        params, _symbol = _component_lineage_values(column, frame, manifest)
+        token = _params_token(params)
+        if token in seen:
+            continue
+        seen.add(token)
+        rows.append(params)
+    return rows
 
 
 def _apply_transform(
@@ -354,59 +366,6 @@ def _apply_transform(
     if transform == "scale_0_1":
         return values / 100.0
     raise ValueError(f"Unsupported indicator transform: {transform}")
-
-
-def _parameter_combinations(
-    definition: IndicatorDefinition,
-    params: dict[str, Any],
-    param_product: bool,
-) -> list[dict[str, Any]]:
-    missing_params = [name for name in definition.param_names if name not in params]
-    if missing_params:
-        raise ValueError(f"Indicator {definition.id!r} missing params: {missing_params}")
-    value_lists = [_as_list(params[name]) for name in definition.param_names]
-    if param_product:
-        rows = itertools.product(*value_lists)
-    else:
-        length = max(len(values) for values in value_lists)
-        rows = zip(
-            *[values * length if len(values) == 1 else values for values in value_lists],
-            strict=True,
-        )
-    return [
-        {
-            name: _native_scalar(value)
-            for name, value in zip(definition.param_names, row, strict=True)
-        }
-        for row in rows
-    ]
-
-
-def _default_model_features(definition: IndicatorDefinition):
-    from research.aegis_research.config import IndicatorFeatureConfig
-
-    return [
-        IndicatorFeatureConfig(
-            output=feature["output"], transform=feature.get("transform", "identity")
-        )
-        for feature in definition.default_model_features
-    ]
-
-
-def _assert_bar_aligned(
-    close: pd.DataFrame,
-    output: pd.DataFrame,
-    indicator_id: str,
-    output_name: str,
-) -> None:
-    if not output.index.equals(close.index):
-        raise ValueError(f"Indicator {indicator_id!r} output {output_name!r} is not bar-aligned")
-    output_symbols = set(map(str, output.columns.get_level_values("symbol")))
-    input_symbols = set(map(str, _symbols(close)))
-    if output_symbols != input_symbols:
-        raise ValueError(
-            f"Indicator {indicator_id!r} output {output_name!r} symbols do not match input"
-        )
 
 
 def _indicator_diagnostics(frame: pd.DataFrame, lineage: list[dict[str, Any]]) -> dict[str, Any]:
@@ -476,14 +435,6 @@ def _params_token(params: dict[str, Any]) -> str:
 
 def _slug(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_")
-
-
-def _as_list(value: Any) -> list[Any]:
-    return list(value) if isinstance(value, list) else [value]
-
-
-def _symbols(close: pd.DataFrame) -> list[Any]:
-    return list(close.columns)
 
 
 def _native_scalar(value: Any) -> Any:

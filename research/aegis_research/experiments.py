@@ -8,18 +8,17 @@ from typing import Any
 from research.aegis_research.config import (
     ConfigValidationError,
     ConfigValidationIssue,
-    ExperimentConfig,
-    ResolvedExperimentConfig,
+    ResolvedLaneConfig,
+    TrainLaneConfig,
     known_config_secret_values,
     redact_text,
-    resolve_experiment_config,
+    resolve_lane_config,
 )
 from research.aegis_research.data import (
     load_market_data_result,
     required_experiment_ohlcv_features,
 )
-from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
-from research.aegis_research.labels import build_label_result
+from research.aegis_research.indicators import build_model_feature_matrix
 from research.aegis_research.model_registry import FrozenModelRegistry, ModelRegistry
 from research.aegis_research.models import (
     assert_target_model_compatible,
@@ -38,22 +37,27 @@ from research.aegis_research.validation import evaluate_validation_splits
 
 
 def run_experiment(
-    config: ResolvedExperimentConfig | ExperimentConfig | dict[str, Any],
+    config: ResolvedLaneConfig | TrainLaneConfig | dict[str, Any],
     *,
     model_registry: ModelRegistry | FrozenModelRegistry | None = None,
     label_result_builder: Callable[..., Any] | None = None,
+    indicator_result_builder: Callable[..., Any] | None = None,
     rerun_mode: str = RerunMode.NEW,
     run_id: str | None = None,
     parent_run_id: str | None = None,
     supersedes_run_id: str | None = None,
     on_run_started: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, object]:
-    resolved_config = resolve_experiment_config(config, model_registry=model_registry)
+    resolved_config = resolve_lane_config(
+        config,
+        model_registry=model_registry,
+        expected_lane="train",
+    )
     if resolved_config.model_registry is None:
         raise ConfigValidationError(
             [
                 ConfigValidationIssue(
-                    "model.plugin_id", "registered model plugin registry is required"
+                    "train.model.id", "registered model plugin registry is required"
                 )
             ]
         )
@@ -79,7 +83,7 @@ def run_experiment(
         artifacts = ExperimentArtifactWriter(recorder)
         artifacts.write_config_artifacts(resolved_config)
 
-        required_features = required_experiment_ohlcv_features(config.labels, config.signals)
+        required_features = required_experiment_ohlcv_features(None, config.signals)
         data_result = load_market_data_result(
             config.data,
             required_features=required_features,
@@ -92,9 +96,15 @@ def run_experiment(
         high = data_result.feature("High") if "High" in required_features else None
         low = data_result.feature("Low") if "Low" in required_features else None
         if label_result_builder is None:
-            label_result = build_label_result(close, config.labels, high=high, low=low)
-        else:
-            label_result = label_result_builder(close, high=high, low=low)
+            raise ConfigValidationError(
+                [
+                    ConfigValidationIssue(
+                        "train.label",
+                        "component label source refs are required; use aerd run --train or pass a label_result_builder",
+                    )
+                ]
+            )
+        label_result = label_result_builder(close, high=high, low=low)
         artifacts.write_label_artifacts(
             label_result,
             max_public_artifact_bytes=config.split.max_public_artifact_bytes,
@@ -111,12 +121,20 @@ def run_experiment(
             artifacts.write_label_compatibility_artifact(pre_split_compatibility)
             assert_target_model_compatible(pre_split_compatibility)
 
-        indicator_result = build_indicator_result(close, config.indicators)
+        if indicator_result_builder is None:
+            raise ConfigValidationError(
+                [
+                    ConfigValidationIssue(
+                        "indicators",
+                        "component indicator source refs are required; use aerd run --train or pass an indicator_result_builder",
+                    )
+                ]
+            )
+        indicator_result = indicator_result_builder(close)
         try:
             model_features = build_model_feature_matrix(
                 indicator_result,
                 labels,
-                invalid_value_policy=config.indicators.invalid_value_policy,
             )
         except Exception as error:
             artifacts.write_label_compatibility_artifact(

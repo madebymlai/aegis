@@ -8,6 +8,11 @@ from research.aegis_research.component_registry import discover_component_regist
 from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
+    PortfolioConfig,
+    RankingConfig,
+    RunIndicatorSourceConfig,
+    RunSourceRefConfig,
+    StrategyRunLaneConfig,
     load_lane_config,
     resolve_lane_config,
 )
@@ -25,6 +30,21 @@ def test_valid_lane_configs_resolve_with_lane_identity(tmp_path: Path) -> None:
     assert train.config.label.id == "demo.label"
     assert train.config.model.id == "tests.sklearn_logistic"
     assert run.manifest()["lane"] == "run"
+
+
+def test_strategy_run_lane_config_round_trips_through_resolver(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    config = StrategyRunLaneConfig(
+        name="typed_strategy_demo",
+        strategy=RunSourceRefConfig(source="component", id="demo.strategy"),
+        indicators=[RunIndicatorSourceConfig(source="component", ids=["demo.indicator"])],
+        ranking=RankingConfig(metric="sharpe_ratio", direction="desc"),
+        portfolio=PortfolioConfig(entry_budget=1.0),
+    )
+
+    resolved = resolve_lane_config(config, component_registry=registry, expected_lane="run")
+
+    assert resolved.config.indicators[0].ids == ["demo.indicator"]
 
 
 def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
@@ -52,7 +72,12 @@ def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
     [
         ("run", {"strategy": {"source": "component", "id": "demo.strategy", "import": "x.y"}}, "strategy.import"),
         ("run", {"strategy": {"source": "component", "id": "demo.strategy", "path": "strategy.py"}}, "strategy.path"),
-        ("run", {"indicator_refs": [{"source": "playbook", "id": "ma_explore", "notebook_path": "../unsafe.ipynb"}]}, "indicator_refs[0].notebook_path"),
+        ("run", {"strategy": {"source": "component", "id": "demo.strategy", "params": {"window": 5}}}, "strategy.params"),
+        (
+            "run",
+            {"indicators": [{"source": "playbook", "ids": ["ma_explore"], "notebook_path": "../unsafe.ipynb"}]},
+            "indicators[0].notebook_path",
+        ),
         ("train", {"train": {"label": {"source": "component", "id": "demo.label", "artifact_path": "runs/previous-run/strategy_run.json"}}}, "train.label.artifact_path"),
         ("train", {"train": {"label": {"source": "component", "id": "demo.label", "python": "lambda x: x"}}}, "train.label.python"),
     ],
@@ -71,7 +96,7 @@ def test_lane_configs_reject_inline_code_and_arbitrary_paths(
         resolve_lane_config(raw, component_registry=registry, expected_lane=lane)
 
     assert expected_path in str(error.value)
-    assert "not allowed" in str(error.value)
+    assert "not allowed" in str(error.value) or "unknown field" in str(error.value)
 
 
 def test_strategy_run_rejects_model_training_config_with_train_guidance(tmp_path: Path) -> None:
@@ -91,18 +116,18 @@ def test_strategy_run_rejects_model_training_config_with_train_guidance(tmp_path
     assert "aerd run --train" in str(error.value)
 
 
-def test_run_all_component_indicator_ref_still_validates_params(tmp_path: Path) -> None:
+def test_run_indicator_selection_rejects_config_params(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     raw = _merge(
         _run_config(),
-        {"indicator_refs": [{"source": "component", "id": "all", "params": {"path": "x.py"}}]},
+        {"indicators": [{"source": "component", "ids": "all", "params": {"path": "x.py"}}]},
     )
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_lane_config(raw, component_registry=registry, expected_lane="run")
 
-    assert "indicator_refs[0].params.path" in str(error.value)
-    assert "not allowed" in str(error.value)
+    assert "indicators[0].params" in str(error.value)
+    assert "unknown field" in str(error.value)
 
 
 def test_run_all_component_indicator_ref_rejects_expanded_duplicates(tmp_path: Path) -> None:
@@ -110,9 +135,9 @@ def test_run_all_component_indicator_ref_rejects_expanded_duplicates(tmp_path: P
     raw = _merge(
         _run_config(),
         {
-            "indicator_refs": [
-                {"source": "component", "id": "all"},
-                {"source": "component", "id": "demo.indicator"},
+            "indicators": [
+                {"source": "component", "ids": "all"},
+                {"source": "component", "ids": ["demo.indicator"]},
             ]
         },
     )
@@ -120,8 +145,8 @@ def test_run_all_component_indicator_ref_rejects_expanded_duplicates(tmp_path: P
     with pytest.raises(ConfigValidationError) as error:
         resolve_lane_config(raw, component_registry=registry, expected_lane="run")
 
-    assert "indicator_refs[1].id" in str(error.value)
-    assert "duplicates expanded component id" in str(error.value)
+    assert "indicators[1].ids[0]" in str(error.value)
+    assert "duplicates expanded component indicator id" in str(error.value)
 
 
 def test_run_lane_rejects_unimplemented_failure_policy(tmp_path: Path) -> None:
@@ -152,7 +177,7 @@ def test_lane_csv_source_rejects_non_project_relative_path(
     assert "relative path" in str(error.value)
 
 
-def test_run_lane_accepts_playbook_and_component_indicator_refs_together(
+def test_run_lane_accepts_playbook_and_component_indicator_sources_together(
     tmp_path: Path,
 ) -> None:
     registry = _component_registry(tmp_path)
@@ -160,9 +185,9 @@ def test_run_lane_accepts_playbook_and_component_indicator_refs_together(
         _run_config(),
         {
             "strategy": {"source": "playbook", "id": "strategy_explore"},
-            "indicator_refs": [
-                {"source": "playbook", "id": "ma_explore"},
-                {"source": "component", "id": "all"},
+            "indicators": [
+                {"source": "playbook", "ids": ["ma_explore"]},
+                {"source": "component", "ids": "all"},
             ],
         },
     )
@@ -170,7 +195,7 @@ def test_run_lane_accepts_playbook_and_component_indicator_refs_together(
     resolved = resolve_lane_config(raw, component_registry=registry, expected_lane="run")
 
     assert resolved.config.strategy.source == "playbook"
-    assert [ref.source for ref in resolved.config.indicator_refs] == ["playbook", "component"]
+    assert [ref.source for ref in resolved.config.indicators] == ["playbook", "component"]
 
 
 def test_train_rejects_strategy_sweep_config_with_missing_training_contract(tmp_path: Path) -> None:
@@ -219,7 +244,7 @@ def _run_config() -> dict[str, object]:
         "data": {"source": "synthetic", "rows": 50},
         "portfolio": {"entry_budget": 1.0},
         "strategy": {"source": "component", "id": "demo.strategy"},
-        "indicator_refs": [{"source": "component", "id": "demo.indicator"}],
+        "indicators": [{"source": "component", "ids": ["demo.indicator"]}],
         "ranking": {"metric": "sharpe_ratio", "direction": "desc"},
     }
 
@@ -230,18 +255,9 @@ def _train_config() -> dict[str, object]:
         "name": "train_demo",
         "data": {"source": "synthetic", "rows": 50},
         "portfolio": {"entry_budget": 1.0},
+        "indicators": [{"source": "component", "ids": ["demo.indicator"]}],
         "train": {
             "label": {"source": "component", "id": "demo.label"},
-            "indicators": {
-                "specs": [
-                    {
-                        "id": "ma",
-                        "params": {"window": [5], "wtype": "simple"},
-                        "outputs": ["ma"],
-                        "model_features": [{"output": "ma", "transform": "distance_to_close"}],
-                    }
-                ]
-            },
             "model": {"source": "plugin", "id": "tests.sklearn_logistic"},
         },
     }

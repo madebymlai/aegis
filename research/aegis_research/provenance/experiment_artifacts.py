@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from research.aegis_research.config import ResolvedExperimentConfig
+from research.aegis_research.config import ResolvedLaneConfig
 from research.aegis_research.data import MarketDataResult, assert_public_metadata_safe
 from research.aegis_research.data_schema import index_identity, table_shape
 from research.aegis_research.indicators import IndicatorResult, ModelFeatureMatrix
@@ -42,7 +42,7 @@ class ExperimentArtifactWriter:
             persist=recorder.persist,
         )
 
-    def write_config_artifacts(self, config: ResolvedExperimentConfig) -> None:
+    def write_config_artifacts(self, config: ResolvedLaneConfig) -> None:
         _write_text_artifact(
             self.recorder,
             artifact_id="config.resolved",

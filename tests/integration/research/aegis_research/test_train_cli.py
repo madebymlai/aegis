@@ -50,6 +50,7 @@ def test_train_rejects_run_artifact_source_refs_before_run_directory(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    _write_indicator_component(tmp_path / "research/components/indicators/returns.py")
     path = tmp_path / "train.yaml"
     path.write_text(
         yaml.safe_dump(
@@ -57,6 +58,7 @@ def test_train_rejects_run_artifact_source_refs_before_run_directory(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "bad_train",
                 "portfolio": {"entry_budget": 1.0},
+                "indicators": [{"source": "component", "ids": ["demo.returns"]}],
                 "train": {
                     "label": {
                         "source": "component",
@@ -80,6 +82,7 @@ def test_train_rejects_run_artifact_source_refs_before_run_directory(
 
 def _write_config(tmp_path: Path, **overrides: Any) -> Path:
     model = model_config_dict(min_train_samples=1)
+    _write_indicator_component(tmp_path / "research/components/indicators/returns.py")
     config: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "train_contract",
@@ -87,6 +90,7 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "timeframe": "1D"},
         "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
+        "indicators": [{"source": "component", "ids": ["demo.returns"]}],
         "train": {
             "label": {"source": "component", "id": "demo.fixlb"},
             "model": {
@@ -110,8 +114,7 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
 def _write_label_component(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "from research.aegis_research.config import LabelConfig\n"
-        "from research.aegis_research.labels import build_label_result\n"
+        "from research.aegis_research.labels import LabelConfig, build_label_result\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
         "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
@@ -119,4 +122,19 @@ def _write_label_component(path: Path) -> None:
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(close, *, params):\n"
         "    return build_label_result(close, LabelConfig())\n"
+    )
+
+
+def _write_indicator_component(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "COMPONENT_MANIFEST = {"
+        "'family': 'indicators', 'id': 'demo.returns', 'version': '1.0.0', "
+        "'input_names': ['close'], 'param_names': [], 'output_names': ['returns'], "
+        "'default_outputs': ['returns'], "
+        "'default_model_features': [{'output': 'returns', 'transform': 'identity'}], "
+        "'supported_transforms': ['identity']}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "def run(close, *, params):\n"
+        "    return close.pct_change().fillna(0.0)\n"
     )

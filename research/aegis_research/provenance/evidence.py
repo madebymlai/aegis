@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from research.aegis_research.config import (
-    ResolvedExperimentConfig,
+    ResolvedLaneConfig,
     redact_config,
     redact_text,
     to_builtin,
@@ -50,7 +50,7 @@ VBT_SETTINGS_SECTIONS = (
 
 
 def capture_run_start_evidence(
-    config: ResolvedExperimentConfig,
+    config: ResolvedLaneConfig,
     *,
     repo_path: str | Path,
 ) -> dict[str, Any]:
@@ -69,7 +69,7 @@ def capture_run_start_evidence(
     }
 
 
-def capture_config_evidence(config: ResolvedExperimentConfig) -> dict[str, Any]:
+def capture_config_evidence(config: ResolvedLaneConfig) -> dict[str, Any]:
     evidence = {
         "schema_version": config.config.schema_version,
         "source_path": _sanitize_text(config.source_path) if config.source_path else None,

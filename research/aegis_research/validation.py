@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.config import ExperimentConfig
+from research.aegis_research.config import TrainLaneConfig
 from research.aegis_research.data_schema import index_identity
 from research.aegis_research.model_contracts import POSITIVE_CLASS_PROBABILITY
 from research.aegis_research.model_registry import FrozenModelRegistry
@@ -73,7 +73,7 @@ def evaluate_validation_splits(
     indicators: pd.DataFrame,
     labels: pd.DataFrame,
     splits: list[ValidationSplit],
-    config: ExperimentConfig,
+    config: TrainLaneConfig,
     *,
     open_prices: pd.DataFrame | None = None,
     target_schema: dict[str, Any],

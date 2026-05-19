@@ -3,17 +3,18 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from research.aegis_research.config import ExperimentConfig, ResolvedExperimentConfig
+from research.aegis_research.config import ResolvedLaneConfig, TrainLaneConfig
 from research.aegis_research.experiments import run_experiment
 from research.aegis_research.model_registry import FrozenModelRegistry, ModelRegistry
 from research.aegis_research.provenance.recorder import RerunMode
 
 
 def run_training(
-    config: ResolvedExperimentConfig | ExperimentConfig | dict[str, Any],
+    config: ResolvedLaneConfig | TrainLaneConfig | dict[str, Any],
     *,
     model_registry: ModelRegistry | FrozenModelRegistry | None = None,
     label_result_builder: Callable[..., Any] | None = None,
+    indicator_result_builder: Callable[..., Any] | None = None,
     rerun_mode: str = RerunMode.NEW,
     run_id: str | None = None,
     parent_run_id: str | None = None,
@@ -24,6 +25,7 @@ def run_training(
         config,
         model_registry=model_registry,
         label_result_builder=label_result_builder,
+        indicator_result_builder=indicator_result_builder,
         rerun_mode=rerun_mode,
         run_id=run_id,
         parent_run_id=parent_run_id,

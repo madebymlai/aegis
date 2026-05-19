@@ -9,7 +9,7 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.config import ModelConfig, to_builtin
+from research.aegis_research.config import TrainModelConfig, to_builtin
 from research.aegis_research.model_contracts import (
     POSITIVE_CLASS_PROBABILITY,
     ModelDataset,
@@ -43,7 +43,7 @@ class TrainedModel:
 def train_model(
     indicators: pd.DataFrame,
     labels: pd.DataFrame,
-    config: ModelConfig,
+    config: TrainModelConfig,
     *,
     model_registry: FrozenModelRegistry,
     target_schema: Mapping[str, Any],
@@ -145,7 +145,7 @@ def predict_positive_class_probability(
 
 def target_model_compatibility(
     labels: pd.DataFrame,
-    config: ModelConfig,
+    config: TrainModelConfig,
     target_schema: dict[str, Any],
     splits: list[ValidationSplit] | None = None,
     *,
@@ -334,13 +334,13 @@ def _validate_feature_label_symbols(indicators: pd.DataFrame, labels: pd.DataFra
 
 
 def _model_definition(
-    config: ModelConfig,
+    config: TrainModelConfig,
     model_registry: FrozenModelRegistry | None,
 ) -> ModelPluginDefinition:
     if model_registry is None:
         raise ModelRegistryError("registered model plugin registry is required")
-    if config.plugin_id is None:
-        raise ModelRegistryError("model.plugin_id is required")
+    if not config.plugin_id:
+        raise ModelRegistryError("train.model.id is required")
     return model_registry.get(config.plugin_id)
 
 
@@ -492,7 +492,7 @@ def _assert_probability_values(series: pd.Series) -> None:
 def _model_metadata(
     definition: ModelPluginDefinition,
     model_registry: FrozenModelRegistry,
-    config: ModelConfig,
+    config: TrainModelConfig,
     target_schema: Mapping[str, Any],
     *,
     split_label: str,

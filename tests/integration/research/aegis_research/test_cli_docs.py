@@ -36,7 +36,7 @@ def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() 
 
     assert "source: component" in docs
     assert "source: playbook" in docs
-    assert "id: all" in docs
+    assert "ids: all" in docs
     assert "YAML never imports Python" in docs
     assert "arbitrary notebook paths" in docs
     assert "last-run refs" in docs

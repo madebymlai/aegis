@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 2
+CONFIG_SCHEMA_VERSION = 3
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 LABEL_KINDS = {"fixlb", "trendlb", "pivotlb"}
@@ -58,17 +58,6 @@ REPORT_STATUSES = {
     REPORT_STATUS_SURVIVED,
     REPORT_STATUS_REJECTED,
     REPORT_STATUS_NEEDS_MORE_EVIDENCE,
-}
-INDICATOR_INVALID_VALUE_POLICIES = {"drop_rows", "raise"}
-INDICATOR_GRIDS = {"zipped", "product"}
-INDICATOR_INLINE_CODE_KEYS = {
-    "apply_func",
-    "code",
-    "formula",
-    "function",
-    "import",
-    "module",
-    "python",
 }
 LANES = {"run", "train"}
 SOURCE_KINDS = {"component", "playbook"}
@@ -163,91 +152,6 @@ class DataConfig:
 
 
 @dataclass(frozen=True)
-class IndicatorFeatureConfig:
-    output: str
-    transform: str = "identity"
-
-
-@dataclass(frozen=True)
-class IndicatorSpecConfig:
-    id: str
-    params: dict[str, Any] = field(default_factory=dict)
-    outputs: list[str] = field(default_factory=list)
-    model_features: list[IndicatorFeatureConfig] = field(default_factory=list)
-    grid: str = "zipped"
-    param_product: bool = False
-
-
-@dataclass(frozen=True)
-class IndicatorConfig:
-    invalid_value_policy: str = "drop_rows"
-    specs: list[IndicatorSpecConfig] = field(
-        default_factory=lambda: [
-            IndicatorSpecConfig(
-                id="returns",
-                params={"window": [1, 5, 20]},
-                outputs=["returns"],
-                model_features=[IndicatorFeatureConfig(output="returns")],
-            ),
-            IndicatorSpecConfig(
-                id="ma",
-                params={"window": [10, 30], "wtype": "simple"},
-                outputs=["ma"],
-                model_features=[IndicatorFeatureConfig(output="ma", transform="distance_to_close")],
-            ),
-            IndicatorSpecConfig(
-                id="volatility",
-                params={"window": [20]},
-                outputs=["volatility"],
-                model_features=[IndicatorFeatureConfig(output="volatility")],
-            ),
-            IndicatorSpecConfig(
-                id="rsi",
-                params={"window": [14], "wtype": "wilder"},
-                outputs=["rsi"],
-                model_features=[IndicatorFeatureConfig(output="rsi", transform="scale_0_1")],
-            ),
-        ]
-    )
-
-
-@dataclass(frozen=True)
-class LabelGeneratorConfig:
-    kind: str = "fixlb"
-    params: dict[str, Any] = field(default_factory=lambda: {"n": 5})
-
-
-@dataclass(frozen=True)
-class LabelTargetSelectionConfig:
-    params: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class LabelTargetTransformConfig:
-    name: str = "threshold_future_return"
-    version: int = 1
-    params: dict[str, Any] = field(default_factory=lambda: {"threshold": 0.0})
-
-
-@dataclass(frozen=True)
-class LabelTargetConfig:
-    role: str = "supervised_target"
-    source_output: str = "labels"
-    select: LabelTargetSelectionConfig = field(default_factory=LabelTargetSelectionConfig)
-    transform: LabelTargetTransformConfig = field(default_factory=LabelTargetTransformConfig)
-
-
-@dataclass(frozen=True)
-class LabelConfig:
-    generator: LabelGeneratorConfig = field(default_factory=LabelGeneratorConfig)
-    target: LabelTargetConfig = field(default_factory=LabelTargetConfig)
-
-    @property
-    def kind(self) -> str:
-        return self.generator.kind
-
-
-@dataclass(frozen=True)
 class SplitConfig:
     kind: str = "purged_kfold"
     n_folds: int = 5
@@ -257,13 +161,6 @@ class SplitConfig:
     max_splits: int = 100
     max_estimated_output_cells: int = 25_000_000
     max_public_artifact_bytes: int = 10_000_000
-
-
-@dataclass(frozen=True)
-class ModelConfig:
-    plugin_id: str | None = None
-    min_train_samples: int = 100
-    params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -293,25 +190,25 @@ class ReportConfig:
 
 
 @dataclass(frozen=True)
-class ExperimentConfig:
-    name: str
-    schema_version: int = CONFIG_SCHEMA_VERSION
-    data: DataConfig = field(default_factory=DataConfig)
-    indicators: IndicatorConfig = field(default_factory=IndicatorConfig)
-    labels: LabelConfig = field(default_factory=LabelConfig)
-    split: SplitConfig = field(default_factory=SplitConfig)
-    model: ModelConfig = field(default_factory=ModelConfig)
-    signals: SignalConfig = field(default_factory=SignalConfig)
-    portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
-    report: ReportConfig = field(default_factory=ReportConfig)
-    output_dir: str = "runs"
-
-
-@dataclass(frozen=True)
 class SourceRefConfig:
     source: str
     id: str
     params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RunSourceRefConfig:
+    source: str
+    id: str
+
+
+@dataclass(frozen=True)
+class RunIndicatorSourceConfig:
+    source: str
+    ids: str | list[str]
+
+    def expanded_ids(self, available_ids: tuple[str, ...]) -> tuple[str, ...]:
+        return available_ids if self.ids == "all" else tuple(self.ids)
 
 
 @dataclass(frozen=True)
@@ -328,12 +225,16 @@ class TrainModelConfig:
     min_train_samples: int = 100
     params: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def plugin_id(self) -> str:
+        return self.id
+
 
 @dataclass(frozen=True)
 class StrategyRunLaneConfig:
     name: str
-    strategy: SourceRefConfig
-    indicator_refs: list[SourceRefConfig]
+    strategy: RunSourceRefConfig
+    indicators: list[RunIndicatorSourceConfig]
     ranking: RankingConfig
     schema_version: int = CONFIG_SCHEMA_VERSION
     lane: str = "run"
@@ -348,10 +249,10 @@ class TrainLaneConfig:
     name: str
     label: SourceRefConfig
     model: TrainModelConfig
+    indicators: list[RunIndicatorSourceConfig]
     schema_version: int = CONFIG_SCHEMA_VERSION
     lane: str = "train"
     data: DataConfig = field(default_factory=DataConfig)
-    indicators: IndicatorConfig = field(default_factory=IndicatorConfig)
     split: SplitConfig = field(default_factory=SplitConfig)
     signals: SignalConfig = field(default_factory=SignalConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)

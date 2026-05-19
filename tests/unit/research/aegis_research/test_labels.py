@@ -1,13 +1,14 @@
 import pandas as pd
 
-from research.aegis_research.config import (
+from research.aegis_research.labels import (
     LabelConfig,
     LabelGeneratorConfig,
     LabelTargetConfig,
     LabelTargetSelectionConfig,
     LabelTargetTransformConfig,
+    build_label_result,
+    build_labels,
 )
-from research.aegis_research.labels import build_label_result, build_labels
 
 
 def test_fixlb_labels_match_forward_returns() -> None:

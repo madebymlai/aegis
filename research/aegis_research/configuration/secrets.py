@@ -136,7 +136,7 @@ def _collect_known_config_secret_values(value: Any, secrets: list[str]) -> None:
 
 
 def to_builtin(value: Any) -> Any:
-    if value.__class__.__name__ in {"ResolvedExperimentConfig", "ResolvedLaneConfig"}:
+    if value.__class__.__name__ == "ResolvedLaneConfig":
         return to_builtin(asdict(value.config))
     if hasattr(value, "item"):
         return value.item()

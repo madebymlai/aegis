@@ -202,6 +202,7 @@ def test_safe_path_hides_relative_paths_that_escape_cwd(
 
 def _write_config(tmp_path: Path, **overrides: Any) -> Path:
     _write_label_component(tmp_path / "research/components/labels/fixlb.py")
+    _write_indicator_component(tmp_path / "research/components/indicators/returns.py")
     model = model_config_dict(min_train_samples=1)
     config: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
@@ -210,6 +211,7 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "timeframe": "1D"},
         "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
+        "indicators": [{"source": "component", "ids": ["demo.returns"]}],
         "train": {
             "label": {"source": "component", "id": "demo.fixlb"},
             "model": {
@@ -233,8 +235,7 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
 def _write_label_component(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "from research.aegis_research.config import LabelConfig\n"
-        "from research.aegis_research.labels import build_label_result\n"
+        "from research.aegis_research.labels import LabelConfig, build_label_result\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
         "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
@@ -242,4 +243,19 @@ def _write_label_component(path: Path) -> None:
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(close, *, params):\n"
         "    return build_label_result(close, LabelConfig())\n"
+    )
+
+
+def _write_indicator_component(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "COMPONENT_MANIFEST = {"
+        "'family': 'indicators', 'id': 'demo.returns', 'version': '1.0.0', "
+        "'input_names': ['close'], 'param_names': [], 'output_names': ['returns'], "
+        "'default_outputs': ['returns'], "
+        "'default_model_features': [{'output': 'returns', 'transform': 'identity'}], "
+        "'supported_transforms': ['identity']}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "def run(close, *, params):\n"
+        "    return close.pct_change().fillna(0.0)\n"
     )

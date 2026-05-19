@@ -52,7 +52,7 @@ def test_strategy_run_cli_executes_component_strategy_and_writes_manifest(
     assert (tmp_path / "runs" / "strategy-run" / "strategy_run.json").is_file()
 
 
-def test_strategy_run_passes_component_indicator_refs_to_strategy(
+def test_strategy_run_passes_component_indicator_sources_to_strategy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -63,7 +63,7 @@ def test_strategy_run_passes_component_indicator_refs_to_strategy(
     config_path = _write_run_config(
         tmp_path,
         strategy_id="demo.uses_ma",
-        indicator_refs=[{"source": "component", "id": "demo.ma", "params": {"window": 2}}],
+        indicators=[{"source": "component", "ids": ["demo.ma"]}],
     )
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "indicator-run"]) == 0
@@ -74,6 +74,30 @@ def test_strategy_run_passes_component_indicator_refs_to_strategy(
     assert payload["status"] == "success"
     assert artifact["indicators"][0]["id"] == "demo.ma"
     assert artifact["leaderboard"]["rows"][0]["indicators"][0]["id"] == "demo.ma"
+
+
+def test_strategy_run_expands_all_component_indicators_to_strategy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_named_indicator_component(tmp_path / "research/components/indicators/fast.py", "demo.fast")
+    _write_named_indicator_component(tmp_path / "research/components/indicators/slow.py", "demo.slow")
+    _write_two_indicator_strategy_component(tmp_path / "research/components/strategies/uses_all.py")
+    config_path = _write_run_config(tmp_path, strategy_id="demo.uses_all")
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "all-indicators-run"]) == 0
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    artifact = json.loads((tmp_path / "runs" / "all-indicators-run" / "strategy_run.json").read_text())
+    assert payload["status"] == "success"
+    assert [item["id"] for item in artifact["indicators"]] == ["demo.fast", "demo.slow"]
+    assert [item["id"] for item in artifact["leaderboard"]["rows"][0]["indicators"]] == [
+        "demo.fast",
+        "demo.slow",
+    ]
 
 
 def test_strategy_run_keyboard_interrupt_marks_manifest_interrupted(
@@ -148,7 +172,7 @@ def _write_run_config(
     tmp_path: Path,
     *,
     strategy_id: str = "demo.cross",
-    indicator_refs: list[dict[str, object]] | None = None,
+    indicators: list[dict[str, object]] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
@@ -160,7 +184,7 @@ def _write_run_config(
                 "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80},
                 "portfolio": {"entry_budget": 1.0},
                 "strategy": {"source": "component", "id": strategy_id},
-                "indicator_refs": indicator_refs or [{"source": "component", "id": "all"}],
+                "indicators": indicators or [{"source": "component", "ids": "all"}],
                 "ranking": {"metric": "total_return_pct", "direction": "desc"},
             },
             sort_keys=False,
@@ -199,6 +223,21 @@ def _write_indicator_component(path: Path) -> None:
     )
 
 
+def _write_named_indicator_component(path: Path, component_id: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "COMPONENT_MANIFEST = {"
+        f"'family': 'indicators', 'id': {component_id!r}, 'version': '1.0.0', "
+        "'input_names': ['close'], 'param_names': [], 'output_names': ['value'], "
+        "'default_outputs': ['value'], "
+        "'default_model_features': [{'output': 'value', 'transform': 'identity'}], "
+        "'supported_transforms': ['identity']}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "def run(close, *, params):\n"
+        "    return close.rolling(2).mean().bfill()\n"
+    )
+
+
 def _write_indicator_strategy_component(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -210,6 +249,22 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "    ma = bundle.indicators['demo.ma']\n"
         "    entries = bundle.close > ma\n"
         "    exits = bundle.close < ma\n"
+        "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
+    )
+
+
+def _write_two_indicator_strategy_component(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "COMPONENT_MANIFEST = {"
+        "'family': 'strategies', 'id': 'demo.uses_all', 'version': '1.0.0', "
+        "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "def run(bundle):\n"
+        "    fast = bundle.indicators['demo.fast']\n"
+        "    slow = bundle.indicators['demo.slow']\n"
+        "    entries = fast >= slow\n"
+        "    exits = fast < slow\n"
         "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
     )
 

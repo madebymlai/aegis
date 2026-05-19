@@ -13,8 +13,9 @@ from research.aegis_research.component_registry import (
 )
 from research.aegis_research.config import (
     ResolvedLaneConfig,
+    RunIndicatorSourceConfig,
+    RunSourceRefConfig,
     SignalConfig,
-    SourceRefConfig,
     to_builtin,
 )
 from research.aegis_research.data import load_market_data_result
@@ -31,7 +32,7 @@ from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.reports import portfolio_metrics
 from research.aegis_research.run_leaderboard import build_run_leaderboard
 
-STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v1"
+STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v2"
 STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
     "costs",
     "direction",
@@ -101,7 +102,7 @@ def run_strategy_sweep(
         close = data_result.feature("Close")
         open_prices = data_result.feature("Open")
         indicators, indicator_evidence, playbook_variant_records = _resolve_indicator_refs(
-            config.indicator_refs,
+            config.indicators,
             component_registry=component_registry,
             playbook_registry=playbooks,
             close=close,
@@ -154,7 +155,7 @@ def run_strategy_sweep(
 
 
 def _resolve_indicator_refs(
-    refs: list[SourceRefConfig],
+    refs: list[RunIndicatorSourceConfig],
     *,
     component_registry: FrozenComponentRegistry,
     playbook_registry: FrozenPlaybookRegistry,
@@ -163,14 +164,15 @@ def _resolve_indicator_refs(
     indicators: dict[str, Any] = {}
     evidence: list[dict[str, Any]] = []
     variant_records: list[dict[str, Any]] = []
+    seen_playbook_ids: set[str] = set()
     for ref in refs:
         if ref.source == "component":
-            component_ids = component_registry.ids("indicators") if ref.id == "all" else (ref.id,)
+            component_ids = ref.expanded_ids(component_registry.ids("indicators"))
             for component_id in component_ids:
                 if component_id in indicators:
                     raise ValueError(f"duplicate indicator component ref: {component_id}")
                 definition = component_registry.get(ComponentSelection("indicators", component_id))
-                output = definition.load_callable()(close, params=ref.params)
+                output = definition.load_callable()(close, params={})
                 indicators[component_id] = _validate_indicator_output(output, close, component_id)
                 evidence.append(
                     {
@@ -178,41 +180,43 @@ def _resolve_indicator_refs(
                         "id": component_id,
                         "version": definition.manifest.version,
                         "source_hash": definition.identity.source_hash,
-                        "params": ref.params,
                     }
                 )
             continue
 
-        definition = playbook_registry.get(PlaybookSelection("indicators", ref.id))
-        result = execute_notebook_playbook(definition, params=ref.params)
-        evidence.append(
-            {
-                "source": "playbook",
-                "id": definition.id,
-                "version": definition.manifest.version,
-                "source_hash": definition.identity.source_hash,
-                "params": ref.params,
-                "indicator_family": definition.manifest.indicator_family,
-                "baseline_component_indicator_id": definition.manifest.baseline_component_indicator_id,
-            }
-        )
-        variant_records.extend(
-            _playbook_variant_records(
-                result,
-                source_field="indicator_source",
-                id_field="indicator_id",
-                source="playbook",
-                source_id=definition.id,
-                source_hash=definition.identity.source_hash,
-                params=ref.params,
-                baseline_component_indicator_id=definition.manifest.baseline_component_indicator_id,
+        playbook_ids = ref.expanded_ids(playbook_registry.ids("indicators"))
+        for playbook_id in playbook_ids:
+            if playbook_id in seen_playbook_ids:
+                raise ValueError(f"duplicate indicator playbook ref: {playbook_id}")
+            seen_playbook_ids.add(playbook_id)
+            definition = playbook_registry.get(PlaybookSelection("indicators", playbook_id))
+            result = execute_notebook_playbook(definition)
+            evidence.append(
+                {
+                    "source": "playbook",
+                    "id": definition.id,
+                    "version": definition.manifest.version,
+                    "source_hash": definition.identity.source_hash,
+                    "indicator_family": definition.manifest.indicator_family,
+                    "baseline_component_indicator_id": definition.manifest.baseline_component_indicator_id,
+                }
             )
-        )
+            variant_records.extend(
+                _playbook_variant_records(
+                    result,
+                    source_field="indicator_source",
+                    id_field="indicator_id",
+                    source="playbook",
+                    source_id=definition.id,
+                    source_hash=definition.identity.source_hash,
+                    baseline_component_indicator_id=definition.manifest.baseline_component_indicator_id,
+                )
+            )
     return indicators, evidence, variant_records
 
 
 def _resolve_strategy_ref(
-    ref: SourceRefConfig,
+    ref: RunSourceRefConfig,
     *,
     component_registry: FrozenComponentRegistry,
     playbook_registry: FrozenPlaybookRegistry,
@@ -225,7 +229,7 @@ def _resolve_strategy_ref(
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     if ref.source == "playbook":
         definition = playbook_registry.get(PlaybookSelection("strategies", ref.id))
-        result = execute_notebook_playbook(definition, params=ref.params)
+        result = execute_notebook_playbook(definition)
         return (
             {
                 "source": "playbook",
@@ -240,7 +244,6 @@ def _resolve_strategy_ref(
                 source="playbook",
                 source_id=definition.id,
                 source_hash=definition.identity.source_hash,
-                params=ref.params,
             ),
             {},
             {},
@@ -251,7 +254,7 @@ def _resolve_strategy_ref(
     bundle = StrategyInputBundle(
         close=close,
         indicators=indicators,
-        params=ref.params,
+        params={},
         metadata={
             "strategy_id": ref.id,
             "component_source_hash": definition.identity.source_hash,
@@ -285,7 +288,6 @@ def _resolve_strategy_ref(
                 "component_source_hash": definition.identity.source_hash,
                 "indicators": indicator_evidence,
                 "metrics": metrics,
-                "params": ref.params,
                 "portfolio": to_builtin(asdict(portfolio_config)),
             }
         ],
@@ -302,7 +304,6 @@ def _playbook_variant_records(
     source: str,
     source_id: str,
     source_hash: str,
-    params: dict[str, Any],
     baseline_component_indicator_id: str | None = None,
 ) -> list[dict[str, Any]]:
     variants = result.get("variant_records")
@@ -318,7 +319,6 @@ def _playbook_variant_records(
         record.setdefault(source_field, source)
         record.setdefault(id_field, source_id)
         record.setdefault("source_hash", source_hash)
-        record.setdefault("params", params)
         if baseline_component_indicator_id is not None:
             record.setdefault("baseline_component_indicator_id", baseline_component_indicator_id)
         records.append(record)

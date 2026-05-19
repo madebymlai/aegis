@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 
@@ -10,7 +9,6 @@ import pytest
 
 from research.aegis_research import data, indicators, labels, models, portfolios, signals, splits
 from research.aegis_research import validation as validation_module
-from research.aegis_research.config import load_experiment_config, resolve_experiment_config
 from research.aegis_research.experiments import run_experiment
 from research.aegis_research.provenance import artifacts, experiment_artifacts, manifest
 from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus, validate_manifest
@@ -18,18 +16,29 @@ from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from tests.support.research.aegis_research.experiment_config_fixtures import (
     SYNTHETIC_ML_SCAFFOLD_CONFIG,
     SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+    load_train_fixture_config,
 )
 from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
+from tests.support.research.aegis_research.indicator_result_fixtures import (
+    native_indicator_result,
+)
+from tests.support.research.aegis_research.label_result_fixtures import native_label_result
 
 
 def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None:
     registry = make_model_registry()
-    config = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
-    config = resolve_experiment_config(
-        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+    config = load_train_fixture_config(
+        SYNTHETIC_ML_SCAFFOLD_CONFIG,
+        model_registry=registry,
+        output_dir=str(tmp_path),
     )
 
-    result = run_experiment(config, run_id="purged-manifest-run")
+    result = run_experiment(
+        config,
+        run_id="purged-manifest-run",
+        label_result_builder=native_label_result,
+        indicator_result_builder=native_indicator_result,
+    )
 
     run_dir = Path(result["run_dir"])
     manifest = json.loads((run_dir / "manifest.json").read_text())
@@ -126,15 +135,18 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
 
 def test_purged_run_writes_per_split_models_and_links_aggregates(tmp_path: Path) -> None:
     registry = make_model_registry()
-    config = load_experiment_config(
+    config = load_train_fixture_config(
         SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
-    )
-    config = resolve_experiment_config(
-        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+        output_dir=str(tmp_path),
     )
 
-    result = run_experiment(config, run_id="purged-run")
+    result = run_experiment(
+        config,
+        run_id="purged-run",
+        label_result_builder=native_label_result,
+        indicator_result_builder=native_indicator_result,
+    )
 
     run_dir = Path(result["run_dir"])
     manifest = json.loads((run_dir / "manifest.json").read_text())
@@ -223,12 +235,10 @@ def test_failed_split_run_preserves_prior_completed_split_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = make_model_registry()
-    config = load_experiment_config(
+    config = load_train_fixture_config(
         SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
-    )
-    config = resolve_experiment_config(
-        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+        output_dir=str(tmp_path),
     )
     original_train_model = validation_module.train_model
     call_count = 0
@@ -243,7 +253,12 @@ def test_failed_split_run_preserves_prior_completed_split_artifacts(
     monkeypatch.setattr(validation_module, "train_model", fail_on_third_split)
 
     with pytest.raises(RuntimeError, match="split 3 failed"):
-        run_experiment(config, run_id="purged-failed-run")
+        run_experiment(
+            config,
+            run_id="purged-failed-run",
+            label_result_builder=native_label_result,
+            indicator_result_builder=native_indicator_result,
+        )
 
     run_dir = tmp_path / "purged-failed-run"
     payload = json.loads((run_dir / "manifest.json").read_text())

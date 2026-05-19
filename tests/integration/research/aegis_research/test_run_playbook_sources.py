@@ -38,6 +38,30 @@ def test_run_cli_executes_repo_controlled_playbooks_by_id(
     assert artifact["leaderboard"]["rows"][0]["indicator_source"] in {None, "playbook"}
 
 
+def test_run_cli_expands_all_playbook_indicators(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_notebook(tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross")
+    _write_notebook(tmp_path / "research/playbooks/indicators/ma_one.ipynb", "indicators", "ma_one")
+    _write_notebook(tmp_path / "research/playbooks/indicators/ma_two.ipynb", "indicators", "ma_two")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_cross",
+        indicators=[{"source": "playbook", "ids": "all"}],
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "playbook-all-run"]) == 0
+
+    output = capsys.readouterr()
+    assert output.err == ""
+    artifact = json.loads((tmp_path / "runs" / "playbook-all-run" / "strategy_run.json").read_text())
+    assert [item["id"] for item in artifact["indicators"]] == ["ma_one", "ma_two"]
+
+
 def test_run_cli_unknown_playbook_fails_before_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -54,6 +78,32 @@ def test_run_cli_unknown_playbook_fails_before_artifacts(
     assert payload["status"] == "error"
     assert "unknown playbook id" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "should-not-exist").exists()
+
+
+def test_run_cli_rejects_duplicate_expanded_playbook_indicators_before_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_notebook(tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross")
+    _write_notebook(tmp_path / "research/playbooks/indicators/ma_one.ipynb", "indicators", "ma_one")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_cross",
+        indicators=[
+            {"source": "playbook", "ids": "all"},
+            {"source": "playbook", "ids": ["ma_one"]},
+        ],
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "duplicate-playbook"]) == 6
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert "duplicate expanded playbook indicator id" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "duplicate-playbook").exists()
 
 
 def test_run_cli_reports_failed_playbook_execution_on_run_manifest(
@@ -131,7 +181,7 @@ def _write_run_config(
     *,
     strategy_source: str,
     strategy_id: str,
-    indicator_refs: list[dict[str, object]] | None = None,
+    indicators: list[dict[str, object]] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
@@ -141,10 +191,10 @@ def _write_run_config(
                 "name": "run_playbook_source_test",
                 "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80},
                 "portfolio": {"entry_budget": 1.0},
-                "strategy": {"source": strategy_source, "id": strategy_id, "params": {"window": 5}},
-                "indicator_refs": indicator_refs
-                if indicator_refs is not None
-                else [{"source": "playbook", "id": "ma_explore", "params": {"window": 5}}],
+                "strategy": {"source": strategy_source, "id": strategy_id},
+                "indicators": indicators
+                if indicators is not None
+                else [{"source": "playbook", "ids": ["ma_explore"]}],
                 "ranking": {"metric": "total_return_pct", "direction": "desc"},
             },
             sort_keys=False,
