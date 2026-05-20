@@ -6,7 +6,7 @@ from typing import Any
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.batched_candidates import SYMBOL_LEVEL
+from research.aegis_research.candidate_sweeps import SYMBOL_LEVEL
 from research.aegis_research.config import PortfolioConfig, SignalConfig
 
 PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v2"
@@ -227,24 +227,24 @@ def _validate_candidate_signal_frames(entries: pd.DataFrame, exits: pd.DataFrame
     _validate_candidate_columns(entries.columns, field_name="entries")
     _validate_candidate_columns(exits.columns, field_name="exits")
     if not entries.index.equals(exits.index):
-        raise ValueError("batched exits index must match entries index")
+        raise ValueError("sweep exits index must match entries index")
     if not entries.columns.equals(exits.columns):
-        raise ValueError("batched exits columns must match entries columns")
+        raise ValueError("sweep exits columns must match entries columns")
 
 
 def _validate_candidate_columns(columns: pd.Index, *, field_name: str) -> None:
     if not isinstance(columns, pd.MultiIndex):
-        raise TypeError(f"batched {field_name} must use MultiIndex columns")
+        raise TypeError(f"sweep {field_name} must use MultiIndex columns")
     if columns.names.count(SYMBOL_LEVEL) != 1:
-        raise ValueError(f"batched {field_name} must include exactly one {SYMBOL_LEVEL!r} level")
+        raise ValueError(f"sweep {field_name} must include exactly one {SYMBOL_LEVEL!r} level")
     if len(columns.names) < 2:
-        raise ValueError(f"batched {field_name} must include candidate and symbol levels")
+        raise ValueError(f"sweep {field_name} must include candidate and symbol levels")
     if columns.has_duplicates:
-        raise ValueError(f"batched {field_name} must not contain duplicate columns")
+        raise ValueError(f"sweep {field_name} must not contain duplicate columns")
     for candidate_id in _candidate_group_ids(columns):
         mask = _candidate_group_mask(columns, candidate_id)
         if not mask.any():
-            raise ValueError(f"batched {field_name} candidate {candidate_id!r} has no symbols")
+            raise ValueError(f"sweep {field_name} candidate {candidate_id!r} has no symbols")
 
 
 def _execution_timing_kwargs(

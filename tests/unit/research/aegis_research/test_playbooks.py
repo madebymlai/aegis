@@ -22,7 +22,7 @@ def test_playbook_registry_discovers_stable_ids_and_loads_selected_playbook(tmp_
 
     assert registry.ids("indicators") == ("ma_explore",)
     assert definition.identity.repo_relative_path == "research/playbooks/indicators/ma_explore.py"
-    assert result["contract"] == "aegis.batched_playbook.v1"
+    assert result["contract"] == "aegis.playbook_sweep.v1"
     assert result["candidate_axis"] == [{"candidate_id": "ma_explore", "params": {"window": 5}}]
 
 
@@ -35,7 +35,7 @@ def test_playbook_owns_static_params(tmp_path) -> None:
 
     result = definition.load_callable()(None)
 
-    assert result["contract"] == "aegis.batched_playbook.v1"
+    assert result["contract"] == "aegis.playbook_sweep.v1"
     assert result["candidate_axis"] == [{"candidate_id": "ma_explore", "params": {"window": 5}}]
 
 
@@ -127,7 +127,7 @@ def _write_playbook(
         "version": "1.0.0",
         "stages": stages or [family],
         "accepted_inputs": ["Close"],
-        "result_schema": "batched_playbook_result.v1",
+        "result_schema": "playbook_sweep_result.v1",
     }
     if family == "indicators":
         manifest["indicator_family"] = "ma"
@@ -148,7 +148,7 @@ def _write_playbook(
         "def run(_inputs):\n"
         '    """Return one fixture candidate with reproducible params."""\n'
         "    return {"
-        "'contract': 'aegis.batched_playbook.v1', "
+        "'contract': 'aegis.playbook_sweep.v1', "
         "'kind': 'indicator_surface', "
         f"'candidate_axis': [{{'candidate_id': {playbook_id!r}, 'params': {{'window': 5}}}}], "
         "'outputs': {'ma': 'not-materialized'}}\n"
