@@ -6,6 +6,8 @@
 # %% imports
 import pandas as pd
 
+from research.aegis_research.candidate_sweeps import candidate_id_from_params
+
 # %% define playbook metadata
 PLAYBOOK_MANIFEST = {
     "family": "indicators",
@@ -31,7 +33,12 @@ def generate_variants(data):
     for window in (10, 20, 50):
         for wtype in ("simple", "wilder"):
             for threshold in (0.0, 0.01):
-                candidate_id = f"ma-{window}-{wtype}-{threshold}"
+                params = {"window": window, "wtype": wtype, "threshold": threshold}
+                candidate_id = candidate_id_from_params(
+                    "ma",
+                    params,
+                    keys=("window", "wtype", "threshold"),
+                )
                 if wtype == "wilder":
                     average = close.ewm(alpha=1 / window).mean()
                 else:
@@ -47,11 +54,7 @@ def generate_variants(data):
                 candidates.append(
                     {
                         "candidate_id": candidate_id,
-                        "params": {
-                            "window": window,
-                            "wtype": wtype,
-                            "threshold": threshold,
-                        },
+                        "params": params,
                     }
                 )
     return {

@@ -18,7 +18,7 @@ ranking:
   direction: desc
 ```
 
-Each playbook ID represents one research idea/family. Playbooks own sweep grids and candidate axes; components are fixed-param promoted implementations. Run configs select source blocks only: `ids: all` expands to every discovered playbook for that source, and `ids: [...]` selects explicit stable IDs. Playbooks receive runner-provided inputs through the same logical data contract as components, and run configs still declare `data.arrays` for those inputs. Playbooks do not receive run-config params; put VectorBT-native parameter grids in the playbook itself. Run playbooks must use `result_schema: "playbook_sweep_result.v1"` and contract marker `"aegis.playbook_sweep.v1"`. Indicator playbooks emit candidate-indexed output surfaces; strategy playbooks first return a strategy candidate axis, then materialize requested entry/exit signal batches. Candidate metadata must include a `params` mapping containing the swept parameter values needed to reproduce or promote that candidate, for example `{"window": 20, "wtype": "simple", "threshold": 0.01}`. Use `params: {}` when the candidate varies by named logic rather than tunable params. Aegis computes portfolio metrics centrally. Playbook-provided metrics are not accepted as leaderboard metrics.
+Each playbook ID represents one research idea/family. Playbooks own sweep grids and candidate axes; components are fixed-param promoted implementations. Run configs select source blocks only: `ids: all` expands to every discovered playbook for that source, and `ids: [...]` selects explicit stable IDs. Playbooks receive runner-provided inputs through the same logical data contract as components, and run configs still declare `data.arrays` for those inputs. Playbooks do not receive run-config params; put VectorBT-native parameter grids in the playbook itself. Run playbooks must use `result_schema: "playbook_sweep_result.v1"` and contract marker `"aegis.playbook_sweep.v1"`. Indicator playbooks emit candidate-indexed output surfaces; strategy playbooks first return a strategy candidate axis, then materialize requested entry/exit signal batches. Candidate metadata must include a `params` mapping containing the swept parameter values needed to reproduce or promote that candidate, for example `{"window": 20, "wtype": "simple", "threshold": 0.01}`. Every non-empty param value must appear in `candidate_id`; use `candidate_id_from_params` to derive IDs from the same params dictionary rather than duplicating values in literals. The playbook registry rejects literal `candidate_id` values when `params` is non-empty, for both indicator and strategy sweep playbooks. Use `params: {}` when the candidate varies by named logic rather than tunable params. Aegis computes portfolio metrics centrally. Playbook-provided metrics are not accepted as leaderboard metrics.
 
 Indicator playbook candidates become rankable only when a strategy playbook consumes their named surfaces and emits executable signals. Each indicator output is a DataFrame with a `candidate_id` level and a `symbol` level. Strategies read source-scoped surfaces from keys like `inputs.indicators["playbook:ma_explore"]["outputs"]["ma"]`. Aegis fails the run if a selected indicator playbook axis is not consumed by the strategy, because an unused indicator should not appear next to ranked strategy metrics.
 
@@ -26,10 +26,10 @@ Leaderboards rank complete composed strategy candidates, not raw indicators. A r
 
 ```json
 {
-  "composed_candidate_id": "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-20]",
+  "composed_candidate_id": "strategy:playbook:ma_cross:fast-0.01+indicators:[playbook:ma_explore:ma-20]",
   "strategy_source": "playbook",
   "strategy_id": "ma_cross",
-  "strategy_candidate_id": "fast",
+  "strategy_candidate_id": "fast-0.01",
   "strategy_params": {"threshold": 0.01},
   "indicator_candidates": [
     {
@@ -40,10 +40,10 @@ Leaderboards rank complete composed strategy candidates, not raw indicators. A r
       "outputs": ["ma"]
     }
   ],
-  "strategy_candidate_ref": "strategy:playbook:ma_cross:fast",
+  "strategy_candidate_ref": "strategy:playbook:ma_cross:fast-0.01",
   "indicator_candidate_refs": ["indicator:playbook:ma_explore:ma-20"],
   "chunk_ref": "batch-000000",
-  "metric_ref": "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-20]",
+  "metric_ref": "strategy:playbook:ma_cross:fast-0.01+indicators:[playbook:ma_explore:ma-20]",
   "metric_source": "central_portfolio",
   "primary_metric": "total_return_pct"
 }

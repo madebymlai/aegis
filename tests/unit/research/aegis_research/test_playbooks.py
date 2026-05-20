@@ -23,7 +23,7 @@ def test_playbook_registry_discovers_stable_ids_and_loads_selected_playbook(tmp_
     assert registry.ids("indicators") == ("ma_explore",)
     assert definition.identity.repo_relative_path == "research/playbooks/indicators/ma_explore.py"
     assert result["contract"] == "aegis.playbook_sweep.v1"
-    assert result["candidate_axis"] == [{"candidate_id": "ma_explore", "params": {"window": 5}}]
+    assert result["candidate_axis"] == [{"candidate_id": "ma_explore-5", "params": {"window": 5}}]
 
 
 def test_playbook_owns_static_params(tmp_path) -> None:
@@ -36,7 +36,7 @@ def test_playbook_owns_static_params(tmp_path) -> None:
     result = definition.load_callable()(None)
 
     assert result["contract"] == "aegis.playbook_sweep.v1"
-    assert result["candidate_axis"] == [{"candidate_id": "ma_explore", "params": {"window": 5}}]
+    assert result["candidate_axis"] == [{"candidate_id": "ma_explore-5", "params": {"window": 5}}]
 
 
 def test_playbook_registry_rejects_duplicate_ids(tmp_path) -> None:
@@ -46,6 +46,39 @@ def test_playbook_registry_rejects_duplicate_ids(tmp_path) -> None:
 
     with pytest.raises(PlaybookRegistryError, match="duplicate playbook id"):
         discover_playbook_registry(root=root, repo_root=tmp_path)
+
+
+def test_indicator_playbook_rejects_literal_candidate_id_with_params(tmp_path) -> None:
+    root = tmp_path / "research" / "playbooks"
+    _write_literal_candidate_id_playbook(root / "indicators" / "bad_indicator.py", "indicators")
+
+    with pytest.raises(PlaybookRegistryError, match="candidate_id values with params"):
+        discover_playbook_registry(root=root, repo_root=tmp_path)
+
+
+def test_strategy_playbook_rejects_literal_candidate_id_with_params(tmp_path) -> None:
+    root = tmp_path / "research" / "playbooks"
+    _write_literal_candidate_id_playbook(root / "strategies" / "bad_strategy.py", "strategies")
+
+    with pytest.raises(PlaybookRegistryError, match="candidate_id values with params"):
+        discover_playbook_registry(root=root, repo_root=tmp_path)
+
+
+@pytest.mark.parametrize("family", ["indicators", "strategies"])
+def test_playbook_allows_literal_candidate_id_for_named_logic_without_params(
+    tmp_path,
+    family: str,
+) -> None:
+    root = tmp_path / "research" / "playbooks"
+    _write_literal_candidate_id_playbook(
+        root / family / "named_logic.py",
+        family,
+        params="{}",
+    )
+
+    registry = discover_playbook_registry(root=root, repo_root=tmp_path)
+
+    assert registry.ids(family) == (f"bad_{family}",)
 
 
 def test_playbook_registry_rejects_ids_that_lane_configs_cannot_reference(tmp_path) -> None:
@@ -145,11 +178,46 @@ def _write_playbook(
         "PLAYBOOK_CALLABLE = 'run'\n"
         "\n"
         "# %% main compute\n"
+        "from research.aegis_research.candidate_sweeps import candidate_id_from_params\n"
+        "\n"
         "def run(_inputs):\n"
         '    """Return one fixture candidate with reproducible params."""\n'
+        "    params = {'window': 5}\n"
+        f"    candidate_id = candidate_id_from_params({playbook_id!r}, params)\n"
         "    return {"
         "'contract': 'aegis.playbook_sweep.v1', "
         "'kind': 'indicator_surface', "
-        f"'candidate_axis': [{{'candidate_id': {playbook_id!r}, 'params': {{'window': 5}}}}], "
+        "'candidate_axis': [{'candidate_id': candidate_id, 'params': params}], "
         "'outputs': {'ma': 'not-materialized'}}\n"
+    )
+
+
+def _write_literal_candidate_id_playbook(path, family: str, *, params: str = "{'window': 5}") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "family": family,
+        "id": f"bad_{family}",
+        "version": "1.0.0",
+        "stages": [family],
+        "accepted_inputs": ["Close"],
+        "result_schema": "playbook_sweep_result.v1",
+    }
+    if family == "indicators":
+        manifest["indicator_family"] = "ma"
+    kind = "indicator_surface" if family == "indicators" else "strategy_axis"
+    path.write_text(
+        "# %% playbook overview\n"
+        "# Bad fixture with hard-coded candidate ID.\n"
+        "\n"
+        "# %% define playbook metadata\n"
+        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
+        "PLAYBOOK_CALLABLE = 'run'\n"
+        "\n"
+        "# %% main compute\n"
+        "def run(_inputs):\n"
+        '    """Return a candidate whose ID can drift from params."""\n'
+        "    return {"
+        "'contract': 'aegis.playbook_sweep.v1', "
+        f"'kind': {kind!r}, "
+        "'candidate_axis': [{'candidate_id': 'literal-5', 'params': " + params + "}]}\n"
     )

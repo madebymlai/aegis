@@ -28,6 +28,7 @@ from research.aegis_research.playbook_registry.contracts import (
 DEFAULT_PLAYBOOK_ROOT = Path("research/playbooks")
 PLAYBOOK_MANIFEST_NAME = "PLAYBOOK_MANIFEST"
 PLAYBOOK_CALLABLE_NAME = "PLAYBOOK_CALLABLE"
+PLAYBOOK_SWEEP_RESULT_SCHEMA = "playbook_sweep_result.v1"
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,7 @@ def _read_python_playbook_declaration(path: Path, source: str) -> tuple[dict[str
         raise PlaybookRegistryError(f"{path}: {PLAYBOOK_MANIFEST_NAME} must be a literal mapping")
     if not isinstance(callable_name, str) or not callable_name:
         raise PlaybookRegistryError(f"{path}: {PLAYBOOK_CALLABLE_NAME} must be a literal string")
+    _assert_dynamic_sweep_candidate_ids(path, tree, manifest)
     return manifest, callable_name
 
 
@@ -194,6 +196,45 @@ def _literal_value(path: Path, name: str, node: ast.AST) -> Any:
         return ast.literal_eval(node)
     except (SyntaxError, ValueError) as error:
         raise PlaybookRegistryError(f"{path}: {name} must be a Python literal") from error
+
+
+def _assert_dynamic_sweep_candidate_ids(
+    path: Path,
+    tree: ast.AST,
+    manifest: Mapping[str, Any],
+) -> None:
+    if manifest.get("result_schema") != PLAYBOOK_SWEEP_RESULT_SCHEMA:
+        return
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values, strict=True):
+            if _literal_dict_key(key) != "candidate_id":
+                continue
+            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                continue
+            params_node = _dict_value(node, "params")
+            if params_node is None or _is_empty_literal_dict(params_node):
+                continue
+            raise PlaybookRegistryError(
+                f"{path}: sweep candidate_id values with params must be derived from params; "
+                "use candidate_id_from_params instead of string literals"
+            )
+
+
+def _literal_dict_key(node: ast.AST | None) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _dict_value(node: ast.Dict, key_name: str) -> ast.AST | None:
+    for key, value in zip(node.keys, node.values, strict=True):
+        if _literal_dict_key(key) == key_name:
+            return value
+    return None
+
+
+def _is_empty_literal_dict(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Dict) and not node.keys
 
 
 def _build_manifest(

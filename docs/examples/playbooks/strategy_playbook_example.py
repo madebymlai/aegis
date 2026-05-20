@@ -6,6 +6,8 @@
 # %% imports
 import pandas as pd
 
+from research.aegis_research.candidate_sweeps import candidate_id_from_params
+
 # %% define playbook metadata
 PLAYBOOK_MANIFEST = {
     "family": "strategies",
@@ -25,6 +27,15 @@ def generate_candidates(inputs):
     close = inputs.data.feature("Close")
     ma_source = inputs.indicators["playbook:example_ma_explore"]
     ma_surface = ma_source["outputs"]["ma"]
+    candidate_axis = []
+    for threshold in (0.0, 0.01):
+        params = {"threshold": threshold}
+        candidate_axis.append(
+            {
+                "candidate_id": candidate_id_from_params("strategy-ma-threshold", params),
+                "params": params,
+            }
+        )
 
     def materialize_signals(request):
         entry_frames = []
@@ -52,10 +63,7 @@ def generate_candidates(inputs):
     return {
         "contract": "aegis.playbook_sweep.v1",
         "kind": "strategy_axis",
-        "candidate_axis": [
-            {"candidate_id": "strategy-ma-threshold-0", "params": {"threshold": 0.0}},
-            {"candidate_id": "strategy-ma-threshold-1", "params": {"threshold": 0.01}},
-        ],
+        "candidate_axis": candidate_axis,
         "materialize_signals": materialize_signals,
     }
 
