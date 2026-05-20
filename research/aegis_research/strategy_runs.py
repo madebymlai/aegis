@@ -68,13 +68,8 @@ PLAYBOOK_METRIC_SOURCE_KEYS = {
     "metric_source",
     "metrics",
 }
-DEPRECATED_PLAYBOOK_METRIC_PROVENANCE_KEYS = {
-    "baseline_metric_authority",
-    "metric_authority",
-}
 INDICATOR_CANDIDATE_FORBIDDEN_KEYS = (
     PLAYBOOK_METRIC_SOURCE_KEYS
-    | DEPRECATED_PLAYBOOK_METRIC_PROVENANCE_KEYS
     | STRATEGY_OUTPUT_FORBIDDEN_KEYS
     | {
         "entries",
@@ -1000,11 +995,7 @@ def _strategy_playbook_candidate_records(
         raise ValueError(f"playbook {source_id!r} must emit at least one executable candidate")
     records: list[dict[str, Any]] = []
     seen_variant_ids: set[str] = set()
-    forbidden_fields = (
-        STRATEGY_OUTPUT_FORBIDDEN_KEYS
-        | PLAYBOOK_METRIC_SOURCE_KEYS
-        | DEPRECATED_PLAYBOOK_METRIC_PROVENANCE_KEYS
-    )
+    forbidden_fields = STRATEGY_OUTPUT_FORBIDDEN_KEYS | PLAYBOOK_METRIC_SOURCE_KEYS
     for index, item in enumerate(variants):
         if not isinstance(item, Mapping):
             raise TypeError(
@@ -1058,8 +1049,7 @@ def _reject_playbook_metric_records(result: Any, *, source_id: str) -> None:
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
             )
-        forbidden_fields = PLAYBOOK_METRIC_SOURCE_KEYS | DEPRECATED_PLAYBOOK_METRIC_PROVENANCE_KEYS
-        forbidden = sorted(set(item) & forbidden_fields)
+        forbidden = sorted(set(item) & PLAYBOOK_METRIC_SOURCE_KEYS)
         if forbidden:
             raise ValueError(
                 f"playbook {source_id!r} result variant_records[{index}] must not contain "
