@@ -528,7 +528,9 @@ def _model_metadata(
         "probability": {
             "output_name": POSITIVE_CLASS_PROBABILITY,
             "class_probability_columns": probability_mapping,
-            "observed_classes": [_canonical_class_label(value) for value in fit_result.observed_classes],
+            "observed_classes": [
+                _canonical_class_label(value) for value in fit_result.observed_classes
+            ],
             "calibrated": False,
             "threshold_tuned": False,
         },

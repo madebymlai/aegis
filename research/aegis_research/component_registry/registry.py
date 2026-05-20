@@ -76,9 +76,7 @@ def discover_component_registry(
         family_root = root_path / family
         if not family_root.exists():
             continue
-        _assert_component_directory(family_root, root_path)
-        for component_file in sorted(family_root.rglob("*.py")):
-            _assert_component_file(component_file, root_path)
+        for component_file in _component_files(family_root, root_path):
             definition = parse_component_file(
                 component_file,
                 family=family,
@@ -86,9 +84,7 @@ def discover_component_registry(
             )
             family_definitions = definitions[family]
             if definition.id in family_definitions:
-                raise ComponentRegistryError(
-                    f"duplicate component id in {family}: {definition.id}"
-                )
+                raise ComponentRegistryError(f"duplicate component id in {family}: {definition.id}")
             family_definitions[definition.id] = definition
     return _freeze(definitions)
 
@@ -122,33 +118,37 @@ def load_component_callable(definition: ComponentDefinition) -> Any:
 
 
 def _resolve_root(root: Path, *, repo_root: Path) -> Path:
-    return root.resolve(strict=False) if root.is_absolute() else (repo_root / root).resolve(strict=False)
+    return (
+        root.resolve(strict=False)
+        if root.is_absolute()
+        else (repo_root / root).resolve(strict=False)
+    )
 
 
-def _assert_component_directory(path: Path, root: Path) -> None:
+def _component_files(path: Path, root: Path) -> tuple[Path, ...]:
     if path.is_symlink():
         raise ComponentRegistryError(f"{path}: component directory must not be a symlink")
     _assert_inside_root(path, root)
+    files = []
     for child in path.rglob("*"):
         if child.is_symlink():
             _assert_inside_root(child.resolve(strict=True), root)
-            raise ComponentRegistryError(f"{child}: component symlink resolves outside approved root")
-
-
-def _assert_component_file(path: Path, root: Path) -> None:
-    if path.is_symlink():
-        _assert_inside_root(path.resolve(strict=True), root)
-        raise ComponentRegistryError(f"{path}: component symlink resolves outside approved root")
-    if not path.is_file():
-        return
-    _assert_inside_root(path, root)
+            raise ComponentRegistryError(
+                f"{child}: component symlink resolves outside approved root"
+            )
+        if child.suffix == ".py" and child.is_file():
+            _assert_inside_root(child, root)
+            files.append(child)
+    return tuple(sorted(files))
 
 
 def _assert_inside_root(path: Path, root: Path) -> None:
     try:
         path.resolve(strict=False).relative_to(root.resolve(strict=False))
     except ValueError as error:
-        raise ComponentRegistryError(f"{path}: component file resolves outside approved root") from error
+        raise ComponentRegistryError(
+            f"{path}: component file resolves outside approved root"
+        ) from error
 
 
 def _freeze(

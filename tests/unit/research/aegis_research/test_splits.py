@@ -48,8 +48,12 @@ def test_purged_kfold_builds_membership_evidence_from_fixlb_eval_times() -> None
     assert result.metadata["time_validation"]["pred_times_explicit"] is True
     assert len(result.metadata["sample_intervals"]) == len(eligible_index)
     assert result.metadata["sample_intervals"][0]["timestamp"] == eligible_index[0].isoformat()
-    assert result.metadata["sample_intervals"][0]["prediction_time"] == eligible_index[0].isoformat()
-    assert result.metadata["sample_intervals"][0]["evaluation_time"] == eligible_index[2].isoformat()
+    assert (
+        result.metadata["sample_intervals"][0]["prediction_time"] == eligible_index[0].isoformat()
+    )
+    assert (
+        result.metadata["sample_intervals"][0]["evaluation_time"] == eligible_index[2].isoformat()
+    )
     assert "membership" in result.metadata["splits"][0]["train"]
     assert "membership" in result.metadata["splits"][0]["test"]
     assert all(split.train_index.intersection(split.test_index).empty for split in result.splits)

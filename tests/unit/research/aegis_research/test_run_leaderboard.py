@@ -7,8 +7,7 @@ from research.aegis_research.run_leaderboard import build_run_leaderboard
 
 def test_build_run_leaderboard_ranks_top_10_with_counts() -> None:
     records = [
-        {"variant_id": f"v{i:02d}", "metrics": {"total_return_pct": float(i)}}
-        for i in range(12)
+        {"variant_id": f"v{i:02d}", "metrics": {"total_return_pct": float(i)}} for i in range(12)
     ]
     records.append({"variant_id": "failed", "error": {"code": "runtime", "message": "bad"}})
 

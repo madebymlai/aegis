@@ -10,6 +10,10 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.provenance.manifest import RunStatus
+from tests.support.research.aegis_research.component_fixtures import (
+    write_indicator_component,
+    write_label_component,
+)
 from tests.support.research.aegis_research.model_plugin_fixtures import model_config_dict
 
 
@@ -19,10 +23,12 @@ def test_train_json_runs_existing_ml_pipeline_with_training_lane_evidence(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_label_component(tmp_path / "research/components/labels/fixlb.py")
+    write_label_component(tmp_path / "research/components/labels/fixlb.py")
     config_path = _write_config(tmp_path)
 
-    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "train-json-run"]) == 0
+    assert (
+        cli.main(["run", "--train", str(config_path), "--json", "--run-id", "train-json-run"]) == 0
+    )
 
     output = capsys.readouterr()
     assert output.err == ""
@@ -50,14 +56,19 @@ def test_train_rejects_run_artifact_source_refs_before_run_directory(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_indicator_component(tmp_path / "research/components/indicators/returns.py")
+    write_indicator_component(tmp_path / "research/components/indicators/returns.py")
     path = tmp_path / "train.yaml"
     path.write_text(
         yaml.safe_dump(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "bad_train",
-                "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
+                "data": {
+                    "source": "synthetic",
+                    "symbols": ["SYN"],
+                    "rows": 120,
+                    "arrays": ["OHLCV"],
+                },
                 "portfolio": {"entry_budget": 1.0},
                 "indicators": [{"source": "component", "ids": ["demo.returns"]}],
                 "train": {
@@ -87,7 +98,7 @@ def test_train_preflights_component_input_arrays_before_data_load(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_label_component(tmp_path / "research/components/labels/fixlb.py")
+    write_label_component(tmp_path / "research/components/labels/fixlb.py")
     config_path = _write_config(
         tmp_path,
         data={"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["Close", "Open"]},
@@ -107,7 +118,7 @@ def test_train_preflights_component_input_arrays_before_data_load(
 
 def _write_config(tmp_path: Path, **overrides: Any) -> Path:
     model = model_config_dict(min_train_samples=1)
-    _write_indicator_component(tmp_path / "research/components/indicators/returns.py")
+    write_indicator_component(tmp_path / "research/components/indicators/returns.py")
     config: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "train_contract",
@@ -140,33 +151,3 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
     path = tmp_path / "experiment.yaml"
     path.write_text(yaml.safe_dump(config, sort_keys=False))
     return path
-
-
-def _write_label_component(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "from research.aegis_research.labels import LabelConfig, build_label_result\n"
-        "COMPONENT_MANIFEST = {"
-        "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
-        "'input_names': ['Close'], "
-        "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
-        "'output_names': ['labels']}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
-        "def run(data):\n"
-        "    return build_label_result(data.feature('Close'), LabelConfig())\n"
-    )
-
-
-def _write_indicator_component(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "COMPONENT_MANIFEST = {"
-        "'family': 'indicators', 'id': 'demo.returns', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': [], 'output_names': ['returns'], "
-        "'default_outputs': ['returns'], "
-        "'default_model_features': [{'output': 'returns', 'transform': 'identity'}], "
-        "'supported_transforms': ['identity']}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
-        "def run(data):\n"
-        "    return data.feature('Close').pct_change().fillna(0.0)\n"
-    )

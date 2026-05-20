@@ -15,6 +15,10 @@ from research.aegis_research.config import (
     resolve_lane_config,
     resolve_secret_refs,
 )
+from tests.support.research.aegis_research.component_fixtures import (
+    write_indicator_component,
+    write_label_component,
+)
 from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
@@ -223,7 +227,9 @@ def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ConfigValidationError) as error:
-        load_lane_config(path, component_registry=_component_registry(tmp_path), expected_lane="train")
+        load_lane_config(
+            path, component_registry=_component_registry(tmp_path), expected_lane="train"
+        )
 
     assert "data" in str(error.value)
     assert "duplicate mapping key" in str(error.value)
@@ -267,35 +273,9 @@ def _train_config() -> dict[str, object]:
 
 def _component_registry(tmp_path: Path):
     root = tmp_path / "research" / "components"
-    _write_label_component(root / "labels" / "fixlb.py")
-    _write_indicator_component(root / "indicators" / "returns.py")
+    write_label_component(
+        root / "labels" / "fixlb.py",
+        body="def run(data):\n    raise RuntimeError('not executed during config tests')\n",
+    )
+    write_indicator_component(root / "indicators" / "returns.py")
     return discover_component_registry(root=root, repo_root=tmp_path)
-
-
-def _write_label_component(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "COMPONENT_MANIFEST = {"
-        "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
-        "'input_names': ['Close'], "
-        "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
-        "'output_names': ['labels']}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
-        "def run(data):\n"
-        "    raise RuntimeError('not executed during config tests')\n"
-    )
-
-
-def _write_indicator_component(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "COMPONENT_MANIFEST = {"
-        "'family': 'indicators', 'id': 'demo.returns', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': [], 'output_names': ['returns'], "
-        "'default_outputs': ['returns'], "
-        "'default_model_features': [{'output': 'returns', 'transform': 'identity'}], "
-        "'supported_transforms': ['identity']}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
-        "def run(data):\n"
-        "    return data.feature('Close').pct_change().fillna(0.0)\n"
-    )

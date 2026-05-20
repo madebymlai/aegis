@@ -83,8 +83,12 @@ def test_strategy_run_expands_all_component_indicators_to_strategy(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_named_indicator_component(tmp_path / "research/components/indicators/fast.py", "demo.fast")
-    _write_named_indicator_component(tmp_path / "research/components/indicators/slow.py", "demo.slow")
+    _write_named_indicator_component(
+        tmp_path / "research/components/indicators/fast.py", "demo.fast"
+    )
+    _write_named_indicator_component(
+        tmp_path / "research/components/indicators/slow.py", "demo.slow"
+    )
     _write_two_indicator_strategy_component(tmp_path / "research/components/strategies/uses_all.py")
     config_path = _write_run_config(tmp_path, strategy_id="demo.uses_all")
 
@@ -92,7 +96,9 @@ def test_strategy_run_expands_all_component_indicators_to_strategy(
 
     output = capsys.readouterr()
     payload = json.loads(output.out)
-    artifact = json.loads((tmp_path / "runs" / "all-indicators-run" / "strategy_run.json").read_text())
+    artifact = json.loads(
+        (tmp_path / "runs" / "all-indicators-run" / "strategy_run.json").read_text()
+    )
     assert payload["status"] == "success"
     assert [item["id"] for item in artifact["indicators"]] == ["demo.fast", "demo.slow"]
     assert [item["id"] for item in artifact["leaderboard"]["rows"][0]["indicators"]] == [

@@ -106,7 +106,9 @@ def run_experiment(
         data_bundle = market_data_bundle(data_result)
         close_prices = data_bundle.feature("Close")
         execution_open_prices = (
-            data_bundle.feature("Open") if "Open" in array_contract.pipeline_required_arrays else None
+            data_bundle.feature("Open")
+            if "Open" in array_contract.pipeline_required_arrays
+            else None
         )
         if label_result_builder is None:
             _raise_missing_label_result_builder()

@@ -18,11 +18,11 @@ from tests.support.research.aegis_research.experiment_config_fixtures import (
     SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
     load_train_fixture_config,
 )
-from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 from tests.support.research.aegis_research.indicator_result_fixtures import (
     native_indicator_result,
 )
 from tests.support.research.aegis_research.label_result_fixtures import native_label_result
+from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_model_export_bundle_contains_prediction_contract(tmp_path: Path) -> None:
@@ -148,7 +148,9 @@ def _run_experiment(tmp_path: Path) -> Path:
     return Path(result["run_dir"])
 
 
-def _rewrite_json_artifact(path: Path, artifact: dict[str, object], payload: dict[str, object]) -> None:
+def _rewrite_json_artifact(
+    path: Path, artifact: dict[str, object], payload: dict[str, object]
+) -> None:
     atomic_write_json(path, payload)
     artifact["hash"] = hash_file(path)
     artifact["size"] = path.stat().st_size

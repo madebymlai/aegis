@@ -124,8 +124,7 @@ def test_component_indicator_reads_declared_bundle_features(tmp_path: Path) -> N
             output_name="high_gap",
             transforms=["identity"],
         ),
-        "def run(data):\n"
-        "    return data.feature('High') - data.feature('Close')\n",
+        "def run(data):\n    return data.feature('High') - data.feature('Close')\n",
         high=high,
     )
 
@@ -133,7 +132,9 @@ def test_component_indicator_reads_declared_bundle_features(tmp_path: Path) -> N
     assert result.lineage[0]["output"] == "high_gap"
 
 
-def test_component_indicator_rejects_default_model_feature_for_unknown_output(tmp_path: Path) -> None:
+def test_component_indicator_rejects_default_model_feature_for_unknown_output(
+    tmp_path: Path,
+) -> None:
     close = _close_frame(symbols=["SYN"])
     manifest = _indicator_manifest("demo.bad", model_output="not_ma")
 
@@ -142,8 +143,7 @@ def test_component_indicator_rejects_default_model_feature_for_unknown_output(tm
             tmp_path,
             close,
             manifest,
-            "def run(data):\n"
-            "    return data.feature('Close').rolling(2).mean()\n",
+            "def run(data):\n    return data.feature('Close').rolling(2).mean()\n",
         )
 
 
@@ -155,8 +155,7 @@ def test_component_indicator_rejects_shape_changing_outputs(tmp_path: Path) -> N
             tmp_path,
             close,
             _indicator_manifest("demo.bad"),
-            "def run(data):\n"
-            "    return data.feature('Close').iloc[1:]\n",
+            "def run(data):\n    return data.feature('Close').iloc[1:]\n",
         )
 
 
@@ -174,7 +173,9 @@ def test_model_feature_matrix_builds_mapping_and_cleaned_eligible_index() -> Non
     assert matrix.eligible_index[0] == close.index[2]
     assert matrix.eligible_index[-1] == close.index[6]
     assert list(matrix.feature_mapping) == ["ma__ma__distance_to_close__window_3__wtype_simple"]
-    assert matrix.feature_mapping["ma__ma__distance_to_close__window_3__wtype_simple"]["params"] == {
+    assert matrix.feature_mapping["ma__ma__distance_to_close__window_3__wtype_simple"][
+        "params"
+    ] == {
         "window": 3,
         "wtype": "simple",
     }
@@ -260,11 +261,7 @@ def _component_result(
     root = tmp_path / "research" / "components"
     path = root / "indicators" / "indicator.py"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
-        f"{source}"
-    )
+    path.write_text(f"COMPONENT_MANIFEST = {manifest!r}\nCOMPONENT_CALLABLE = 'run'\n{source}")
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     features = {"Close": close}
     if high is not None:
@@ -304,9 +301,7 @@ def _indicator_manifest(
         "param_names": param_names or [],
         "output_names": [output_name],
         "default_outputs": [output_name],
-        "default_model_features": [
-            {"output": model_output or output_name, "transform": transform}
-        ],
+        "default_model_features": [{"output": model_output or output_name, "transform": transform}],
         "supported_transforms": transforms or ["identity", "distance_to_close"],
     }
 

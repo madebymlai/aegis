@@ -30,7 +30,9 @@ def export_model_bundle(
     run_path = Path(run_dir)
     bundle_path = Path(output_dir)
     if bundle_path.exists():
-        raise ModelExportError("export bundle output_dir already exists; model exports are immutable")
+        raise ModelExportError(
+            "export bundle output_dir already exists; model exports are immutable"
+        )
 
     manifest = _load_manifest(run_path)
     artifacts = {artifact["id"]: artifact for artifact in manifest["artifacts"]}

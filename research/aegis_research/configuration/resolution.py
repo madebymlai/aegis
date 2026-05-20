@@ -60,6 +60,7 @@ _UniqueKeySafeLoader.add_constructor(
     _construct_unique_mapping,
 )
 
+
 @dataclass(frozen=True)
 class ResolvedLaneConfig:
     config: LaneConfig
@@ -218,7 +219,9 @@ def _build_resolved_lane_config(
     elif lane == "train":
         config = _build_train_lane_config(raw)
     else:
-        raise ConfigValidationError([ConfigValidationIssue("lane", f"must be one of {sorted(LANES)}")])
+        raise ConfigValidationError(
+            [ConfigValidationIssue("lane", f"must be one of {sorted(LANES)}")]
+        )
 
     text_for_hash = raw_text if raw_text is not None else yaml.safe_dump(raw, sort_keys=False)
     return ResolvedLaneConfig(

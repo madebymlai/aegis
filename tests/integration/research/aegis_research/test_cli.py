@@ -11,6 +11,10 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.provenance.manifest import RunStatus
+from tests.support.research.aegis_research.component_fixtures import (
+    write_indicator_component,
+    write_label_component,
+)
 from tests.support.research.aegis_research.model_plugin_fixtures import model_config_dict
 
 
@@ -96,7 +100,9 @@ def test_json_post_manifest_failure_includes_safe_run_refs(
         fail_after_manifest,
     )
 
-    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "post-manifest"]) == 10
+    assert (
+        cli.main(["run", "--train", str(config_path), "--json", "--run-id", "post-manifest"]) == 10
+    )
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -146,7 +152,10 @@ def test_train_keyboard_interrupt_json_preserves_run_refs(
 
     monkeypatch.setattr("research.aegis_research.cli_commands.run.run_training", interrupt_run)
 
-    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "interrupted-run"]) == 130
+    assert (
+        cli.main(["run", "--train", str(config_path), "--json", "--run-id", "interrupted-run"])
+        == 130
+    )
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -163,7 +172,9 @@ def test_train_records_explicit_config_selection_in_manifest(
     monkeypatch.chdir(tmp_path)
     config_path = _write_config(tmp_path)
 
-    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "selection-run"]) == 0
+    assert (
+        cli.main(["run", "--train", str(config_path), "--json", "--run-id", "selection-run"]) == 0
+    )
 
     capsys.readouterr()
     manifest = json.loads((tmp_path / "runs" / "selection-run" / "manifest.json").read_text())
@@ -178,10 +189,13 @@ def test_output_helper_normalizes_nonstandard_json_numbers(
 ) -> None:
     from research.aegis_research.cli_support.output import CommandResult, write_success
 
-    assert write_success(
-        CommandResult(command="test", payload={"value": float("nan")}),
-        json_mode=True,
-    ) == 0
+    assert (
+        write_success(
+            CommandResult(command="test", payload={"value": float("nan")}),
+            json_mode=True,
+        )
+        == 0
+    )
 
     assert json.loads(capsys.readouterr().out)["value"] is None
 
@@ -201,8 +215,8 @@ def test_safe_path_hides_relative_paths_that_escape_cwd(
 
 
 def _write_config(tmp_path: Path, **overrides: Any) -> Path:
-    _write_label_component(tmp_path / "research/components/labels/fixlb.py")
-    _write_indicator_component(tmp_path / "research/components/indicators/returns.py")
+    write_label_component(tmp_path / "research/components/labels/fixlb.py")
+    write_indicator_component(tmp_path / "research/components/indicators/returns.py")
     model = model_config_dict(min_train_samples=1)
     config: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
@@ -236,33 +250,3 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
     path = tmp_path / "experiment.yaml"
     path.write_text(yaml.safe_dump(config, sort_keys=False))
     return path
-
-
-def _write_label_component(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "from research.aegis_research.labels import LabelConfig, build_label_result\n"
-        "COMPONENT_MANIFEST = {"
-        "'family': 'labels', 'id': 'demo.fixlb', 'version': '1.0.0', "
-        "'input_names': ['Close'], "
-        "'target_role': 'supervised_target', 'target_kind': 'binary_classification', "
-        "'output_names': ['labels']}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
-        "def run(data):\n"
-        "    return build_label_result(data.feature('Close'), LabelConfig())\n"
-    )
-
-
-def _write_indicator_component(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "COMPONENT_MANIFEST = {"
-        "'family': 'indicators', 'id': 'demo.returns', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': [], 'output_names': ['returns'], "
-        "'default_outputs': ['returns'], "
-        "'default_model_features': [{'output': 'returns', 'transform': 'identity'}], "
-        "'supported_transforms': ['identity']}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
-        "def run(data):\n"
-        "    return data.feature('Close').pct_change().fillna(0.0)\n"
-    )

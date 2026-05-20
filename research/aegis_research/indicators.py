@@ -163,11 +163,15 @@ def _expanded_component_indicator_definitions(
             if component_id in seen:
                 raise ValueError(f"duplicate indicator component ref: {component_id}")
             seen.add(component_id)
-            definitions.append(component_registry.get(ComponentSelection("indicators", component_id)))
+            definitions.append(
+                component_registry.get(ComponentSelection("indicators", component_id))
+            )
     return definitions
 
 
-def _run_component_indicator(data: MarketDataBundle, definition: ComponentDefinition) -> IndicatorResult:
+def _run_component_indicator(
+    data: MarketDataBundle, definition: ComponentDefinition
+) -> IndicatorResult:
     if not isinstance(definition.manifest, IndicatorManifest):
         raise TypeError(f"component {definition.id!r} is not an indicator")
     output = definition.load_callable()(data)
@@ -225,7 +229,9 @@ def _component_frame_indicator_result(
         transform = feature_spec.get("transform", "identity")
         for column in output_frame.columns:
             params, symbol = _component_lineage_values(column, output_frame, manifest)
-            values = _apply_transform(close, output_frame[column], symbol=symbol, transform=transform)
+            values = _apply_transform(
+                close, output_frame[column], symbol=symbol, transform=transform
+            )
             params_token = _params_token(params)
             feature_name = _feature_name(definition.id, output_name, transform, params)
             model_feature_series.append(values.rename(feature_name))
@@ -275,7 +281,9 @@ def _component_frame_indicator_result(
 
 def _single_component_output_name(manifest: IndicatorManifest) -> str:
     if len(manifest.default_outputs) != 1:
-        raise ValueError("indicator components with multiple default outputs must return IndicatorResult")
+        raise ValueError(
+            "indicator components with multiple default outputs must return IndicatorResult"
+        )
     return manifest.default_outputs[0]
 
 
@@ -287,9 +295,13 @@ def _component_output_frame(
 ) -> pd.DataFrame:
     frame = output.to_frame() if isinstance(output, pd.Series) else output
     if not isinstance(frame, pd.DataFrame):
-        raise TypeError(f"indicator component {component_id!r} output {output_name!r} must be a pandas object")
+        raise TypeError(
+            f"indicator component {component_id!r} output {output_name!r} must be a pandas object"
+        )
     if not frame.index.equals(close.index):
-        raise ValueError(f"indicator component {component_id!r} output {output_name!r} is not bar-aligned")
+        raise ValueError(
+            f"indicator component {component_id!r} output {output_name!r} is not bar-aligned"
+        )
     if isinstance(frame.columns, pd.MultiIndex):
         if "symbol" not in frame.columns.names:
             close_symbols = set(map(str, close.columns))
@@ -301,7 +313,9 @@ def _component_output_frame(
                 result.columns = result.columns.set_names(names)
                 return result
             if len(close.columns) != 1:
-                raise ValueError(f"indicator component {component_id!r} output {output_name!r} is missing symbol level")
+                raise ValueError(
+                    f"indicator component {component_id!r} output {output_name!r} is missing symbol level"
+                )
             symbol = str(close.columns[0])
             result = frame.copy()
             result.columns = pd.MultiIndex.from_tuples(
@@ -311,9 +325,13 @@ def _component_output_frame(
             return result
         return frame
     if list(map(str, frame.columns)) != list(map(str, close.columns)):
-        raise ValueError(f"indicator component {component_id!r} output {output_name!r} symbols do not match input")
+        raise ValueError(
+            f"indicator component {component_id!r} output {output_name!r} symbols do not match input"
+        )
     result = frame.copy()
-    result.columns = pd.MultiIndex.from_tuples([(str(column),) for column in result.columns], names=["symbol"])
+    result.columns = pd.MultiIndex.from_tuples(
+        [(str(column),) for column in result.columns], names=["symbol"]
+    )
     return result
 
 

@@ -269,12 +269,8 @@ def _sizing_summary(
         "active_entry_rows": int((active_entries > 0).sum()),
         "max_entries_per_row": int(active_entries.max()) if len(active_entries) else 0,
         "nonzero_size_cells": nonzero_count,
-        "min_nonzero_valuepercent": (
-            float(nonzero_sizes.min()) if len(nonzero_sizes) else None
-        ),
-        "max_nonzero_valuepercent": (
-            float(nonzero_sizes.max()) if len(nonzero_sizes) else None
-        ),
+        "min_nonzero_valuepercent": (float(nonzero_sizes.min()) if len(nonzero_sizes) else None),
+        "max_nonzero_valuepercent": (float(nonzero_sizes.max()) if len(nonzero_sizes) else None),
     }
 
 

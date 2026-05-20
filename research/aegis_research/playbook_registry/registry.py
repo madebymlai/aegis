@@ -67,9 +67,7 @@ def discover_playbook_registry(
         family_root = root_path / family
         if not family_root.exists():
             continue
-        _assert_playbook_directory(family_root, root_path)
-        for notebook_path in sorted(family_root.rglob("*.ipynb")):
-            _assert_playbook_file(notebook_path, root_path)
+        for notebook_path in _playbook_files(family_root, root_path):
             definition = _parse_notebook_playbook(
                 notebook_path,
                 family=family,
@@ -118,7 +116,8 @@ def _parse_notebook_playbook(
     component_registry: FrozenComponentRegistry | None,
 ) -> NotebookPlaybookDefinition:
     try:
-        notebook = nbformat.read(path, as_version=4)
+        source_bytes = path.read_bytes()
+        notebook = nbformat.reads(source_bytes.decode(), as_version=4)
     except Exception as error:
         raise PlaybookRegistryError(f"{path}: invalid notebook") from error
     metadata = notebook.metadata.get(PLAYBOOK_METADATA_KEY)
@@ -137,7 +136,11 @@ def _parse_notebook_playbook(
     return NotebookPlaybookDefinition(
         manifest=manifest,
         file_path=path,
-        identity=_source_identity(path, repo_root=repo_root),
+        identity=_source_identity(
+            path,
+            repo_root=repo_root,
+            source_hash=hashlib.sha256(source_bytes).hexdigest(),
+        ),
     )
 
 
@@ -197,7 +200,9 @@ def _indicator_family(metadata: dict[str, Any], family: str, path: Path) -> str 
     if "indicator_families" in metadata:
         families = metadata["indicator_families"]
         if not isinstance(families, list) or len(families) != 1:
-            raise PlaybookRegistryError(f"{path}: indicator playbooks must describe one indicator family")
+            raise PlaybookRegistryError(
+                f"{path}: indicator playbooks must describe one indicator family"
+            )
         value = families[0]
         if not isinstance(value, str) or not value:
             raise PlaybookRegistryError(f"{path}: indicator family must be a non-empty string")
@@ -224,43 +229,49 @@ def _string_tuple(
 
 
 def _resolve_root(root: Path, *, repo_root: Path) -> Path:
-    return root.resolve(strict=False) if root.is_absolute() else (repo_root / root).resolve(strict=False)
+    return (
+        root.resolve(strict=False)
+        if root.is_absolute()
+        else (repo_root / root).resolve(strict=False)
+    )
 
 
-def _assert_playbook_directory(path: Path, root: Path) -> None:
+def _playbook_files(path: Path, root: Path) -> tuple[Path, ...]:
     if path.is_symlink():
         raise PlaybookRegistryError(f"{path}: playbook directory must not be a symlink")
     _assert_inside_root(path, root)
+    files = []
     for child in path.rglob("*"):
         if child.is_symlink():
             _assert_inside_root(child.resolve(strict=True), root)
             raise PlaybookRegistryError(f"{child}: playbook symlink resolves outside approved root")
-
-
-def _assert_playbook_file(path: Path, root: Path) -> None:
-    if path.is_symlink():
-        _assert_inside_root(path.resolve(strict=True), root)
-        raise PlaybookRegistryError(f"{path}: playbook symlink resolves outside approved root")
-    _assert_inside_root(path, root)
+        if child.suffix == ".ipynb" and child.is_file():
+            _assert_inside_root(child, root)
+            files.append(child)
+    return tuple(sorted(files))
 
 
 def _assert_inside_root(path: Path, root: Path) -> None:
     try:
         path.resolve(strict=False).relative_to(root.resolve(strict=False))
     except ValueError as error:
-        raise PlaybookRegistryError(f"{path}: playbook file resolves outside approved root") from error
+        raise PlaybookRegistryError(
+            f"{path}: playbook file resolves outside approved root"
+        ) from error
 
 
-def _source_identity(path: Path, *, repo_root: Path) -> PlaybookSourceIdentity:
+def _source_identity(path: Path, *, repo_root: Path, source_hash: str) -> PlaybookSourceIdentity:
     resolved_repo = repo_root.resolve(strict=False)
     resolved_path = path.resolve(strict=True)
     try:
         repo_relative = resolved_path.relative_to(resolved_repo).as_posix()
     except ValueError as error:
-        raise PlaybookRegistryError(f"{path}: playbook file resolves outside approved root") from error
+        raise PlaybookRegistryError(
+            f"{path}: playbook file resolves outside approved root"
+        ) from error
     return PlaybookSourceIdentity(
         repo_relative_path=repo_relative,
-        source_hash=hashlib.sha256(resolved_path.read_bytes()).hexdigest(),
+        source_hash=source_hash,
     )
 
 

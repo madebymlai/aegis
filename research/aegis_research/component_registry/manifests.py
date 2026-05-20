@@ -46,13 +46,18 @@ def parse_component_file(
     family: ComponentFamily,
     repo_root: Path,
 ) -> ComponentDefinition:
-    manifest_payload, callable_name = _read_static_declaration(path)
+    source_bytes = path.read_bytes()
+    manifest_payload, callable_name = _read_static_declaration(path, source_bytes.decode())
     manifest = build_manifest(manifest_payload, expected_family=family, path=path)
     return ComponentDefinition(
         manifest=manifest,
         callable_name=callable_name,
         file_path=path,
-        identity=_source_identity(path, repo_root=repo_root),
+        identity=_source_identity(
+            path,
+            repo_root=repo_root,
+            source_hash=hashlib.sha256(source_bytes).hexdigest(),
+        ),
     )
 
 
@@ -76,9 +81,9 @@ def build_manifest(
     raise ComponentRegistryError(f"{path}: component family must be one of {COMPONENT_FAMILIES}")
 
 
-def _read_static_declaration(path: Path) -> tuple[dict[str, Any], str]:
+def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], str]:
     try:
-        tree = ast.parse(path.read_text(), filename=str(path))
+        tree = ast.parse(source, filename=str(path))
     except SyntaxError as error:
         raise ComponentRegistryError(f"{path}: invalid Python syntax") from error
 
@@ -116,7 +121,9 @@ def _literal_value(path: Path, name: str, node: ast.AST) -> Any:
 def _validate_common(payload: dict[str, Any], *, expected_family: str, path: Path) -> None:
     family = payload.get("family")
     if family not in COMPONENT_FAMILIES:
-        raise ComponentRegistryError(f"{path}: component family must be one of {COMPONENT_FAMILIES}")
+        raise ComponentRegistryError(
+            f"{path}: component family must be one of {COMPONENT_FAMILIES}"
+        )
     if family != expected_family:
         raise ComponentRegistryError(
             f"{path}: component family {family!r} does not match {expected_family!r} directory"
@@ -161,8 +168,12 @@ def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifes
     default_outputs = _required_string_tuple(payload, "default_outputs", path)
     supported_transforms = _required_string_tuple(payload, "supported_transforms", path)
     if missing := sorted(set(default_outputs) - set(output_names)):
-        raise ComponentRegistryError(f"{path}: default_outputs not declared in output_names: {missing}")
-    default_model_features = _default_model_features(payload, output_names, supported_transforms, path)
+        raise ComponentRegistryError(
+            f"{path}: default_outputs not declared in output_names: {missing}"
+        )
+    default_model_features = _default_model_features(
+        payload, output_names, supported_transforms, path
+    )
     bar_aligned = payload.get("bar_aligned", True)
     if bar_aligned is not True:
         raise ComponentRegistryError(f"{path}: indicator components must be bar-aligned in v1")
@@ -213,11 +224,15 @@ def _default_model_features(
 ) -> tuple[dict[str, str], ...]:
     raw = payload.get("default_model_features")
     if not isinstance(raw, list) or not raw:
-        raise ComponentRegistryError(f"{path}: default_model_features must be a non-empty literal list")
+        raise ComponentRegistryError(
+            f"{path}: default_model_features must be a non-empty literal list"
+        )
     rows: list[dict[str, str]] = []
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
-            raise ComponentRegistryError(f"{path}: default_model_features[{index}] must be a mapping")
+            raise ComponentRegistryError(
+                f"{path}: default_model_features[{index}] must be a mapping"
+            )
         output = item.get("output")
         transform = item.get("transform", "identity")
         if not isinstance(output, str) or output not in output_names:
@@ -267,14 +282,16 @@ def _required_string_tuple(
     return tuple(value)
 
 
-def _source_identity(path: Path, *, repo_root: Path) -> ComponentSourceIdentity:
+def _source_identity(path: Path, *, repo_root: Path, source_hash: str) -> ComponentSourceIdentity:
     resolved_repo = repo_root.resolve(strict=False)
     resolved_path = path.resolve(strict=True)
     try:
         repo_relative = resolved_path.relative_to(resolved_repo).as_posix()
     except ValueError as error:
-        raise ComponentRegistryError(f"{path}: component file resolves outside approved root") from error
+        raise ComponentRegistryError(
+            f"{path}: component file resolves outside approved root"
+        ) from error
     return ComponentSourceIdentity(
         repo_relative_path=repo_relative,
-        source_hash=hashlib.sha256(resolved_path.read_bytes()).hexdigest(),
+        source_hash=source_hash,
     )

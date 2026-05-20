@@ -6,9 +6,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from research.aegis_research.config import (
-    DataConfig,
-)
 from research.aegis_research.experiments import run_experiment
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
@@ -24,11 +21,11 @@ from tests.support.research.aegis_research.experiment_config_fixtures import (
     SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
     load_train_fixture_config,
 )
-from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 from tests.support.research.aegis_research.indicator_result_fixtures import (
     native_indicator_result,
 )
 from tests.support.research.aegis_research.label_result_fixtures import native_label_result
+from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_native_writer_persists_private_artifact_and_public_metadata(tmp_path: Path) -> None:

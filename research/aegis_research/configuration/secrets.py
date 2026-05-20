@@ -43,6 +43,7 @@ def _validate_no_inline_secrets(path: str, value: Any, issues: list[ConfigValida
             ConfigValidationIssue(path, "secret-like values must be expressed as env references")
         )
 
+
 def _is_secret_ref(value: Any) -> bool:
     return isinstance(value, dict) and set(value) == {"env"}
 

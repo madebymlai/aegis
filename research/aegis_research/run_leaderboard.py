@@ -4,11 +4,20 @@ import json
 import math
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 RUN_LEADERBOARD_SCHEMA_VERSION = "run_leaderboard.v1"
 MAX_LEADERBOARD_ROWS = 10
 MAX_FAILURE_SAMPLES = 10
+
+
+@dataclass(frozen=True)
+class _RankedRow:
+    sort_value: float
+    variant_id: str
+    index: int
+    row: dict[str, Any]
 
 
 def build_run_leaderboard(
@@ -18,36 +27,45 @@ def build_run_leaderboard(
     direction: str,
     rank_by: str = "primary_metric",
 ) -> dict[str, Any]:
-    rows: list[dict[str, Any]] = []
+    ranked_rows: list[_RankedRow] = []
     failures: list[dict[str, str]] = []
+    reverse = rank_by == "baseline_delta" or direction == "desc"
+    succeeded = 0
+    failed = 0
     excluded = 0
     for index, record in enumerate(variant_records):
         variant_id = _variant_id(record, index)
         if "error" in record:
-            failures.append(_failure_sample(variant_id, record["error"]))
+            failed += 1
+            _append_failure_sample(failures, variant_id, record["error"])
             continue
         value = _metric_value(record, metric)
         if value is None:
             excluded += 1
-            failures.append(_failure_sample(variant_id, f"metric {metric!r} unavailable"))
+            _append_failure_sample(failures, variant_id, f"metric {metric!r} unavailable")
             continue
         row = _leaderboard_row(record, variant_id, metric, value, direction)
-        row["_sort_value"] = _sort_value(row, direction=direction, rank_by=rank_by)
-        rows.append(row)
+        ranked_rows.append(
+            _RankedRow(
+                sort_value=_sort_value(row, direction=direction, rank_by=rank_by),
+                variant_id=row["variant_id"],
+                index=index,
+                row=row,
+            )
+        )
+        ranked_rows.sort(key=lambda item: _ranked_row_key(item, reverse=reverse), reverse=reverse)
+        if len(ranked_rows) > MAX_LEADERBOARD_ROWS:
+            ranked_rows.pop()
+        succeeded += 1
 
-    reverse = rank_by == "baseline_delta" or direction == "desc"
-    rows = sorted(rows, key=lambda row: (row["_sort_value"], row["variant_id"]), reverse=reverse)
-    rows = [{key: value for key, value in row.items() if key != "_sort_value"} for row in rows]
     attempted = len(variant_records)
-    failed = len(failures) - excluded
-    succeeded = len(rows)
     return {
         "schema_version": RUN_LEADERBOARD_SCHEMA_VERSION,
         "metric": metric,
         "direction": direction,
         "rank_by": rank_by,
-        "rows": rows[:MAX_LEADERBOARD_ROWS],
-        "failure_samples": failures[:MAX_FAILURE_SAMPLES],
+        "rows": [ranked.row for ranked in ranked_rows],
+        "failure_samples": failures,
         "summary": {
             "attempted": attempted,
             "succeeded": succeeded,
@@ -99,7 +117,9 @@ def _metric_value(record: Mapping[str, Any], metric: str) -> float | None:
 
 def _baseline_metric_value(record: Mapping[str, Any], metric: str) -> float | None:
     metrics = record.get("baseline_metrics", {})
-    value = metrics.get(metric) if isinstance(metrics, Mapping) else record.get("baseline_metric_value")
+    value = (
+        metrics.get(metric) if isinstance(metrics, Mapping) else record.get("baseline_metric_value")
+    )
     return _finite_float(value)
 
 
@@ -121,6 +141,14 @@ def _sort_value(row: Mapping[str, Any], *, direction: str, rank_by: str) -> floa
     return float(row["primary_metric_value"])
 
 
+def _ranked_row_key(
+    item: _RankedRow,
+    *,
+    reverse: bool,
+) -> tuple[float, str, int]:
+    return item.sort_value, item.variant_id, -item.index if reverse else item.index
+
+
 def _variant_id(record: Mapping[str, Any], index: int) -> str:
     value = record.get("variant_id") or record.get("id")
     if isinstance(value, str) and value:
@@ -138,3 +166,8 @@ def _failure_sample(variant_id: str, error: Any) -> dict[str, str]:
         code = "runtime"
         message = str(error)[:300]
     return {"variant_id": variant_id, "code": code, "message": message}
+
+
+def _append_failure_sample(failures: list[dict[str, str]], variant_id: str, error: Any) -> None:
+    if len(failures) < MAX_FAILURE_SAMPLES:
+        failures.append(_failure_sample(variant_id, error))

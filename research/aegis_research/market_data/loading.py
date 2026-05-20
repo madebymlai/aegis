@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -21,6 +21,7 @@ from research.aegis_research.configuration.secrets import (
     resolve_secret_refs,
     to_builtin,
 )
+from research.aegis_research.configuration.validation import _is_absolute_or_user_path
 from research.aegis_research.data_arrays import merge_data_arrays
 from research.aegis_research.labels import LabelConfig
 from research.aegis_research.market_data.contracts import (
@@ -216,7 +217,7 @@ def assert_public_metadata_safe(
             value
         ):
             raise ValueError(f"public data metadata contains secret material at {path}")
-        if _looks_like_absolute_path(value):
+        if _is_absolute_or_user_path(value):
             raise ValueError(f"public data metadata contains a non-portable path at {path}")
         return
     if value is None or isinstance(value, bool | int | float):
@@ -241,11 +242,13 @@ def _default_source_loaders() -> dict[str, MarketDataAdapter]:
         "synthetic": _load_synthetic_source,
         "csv": _load_csv_source,
         **{
-            source: (lambda config, source=source, data_cls=data_cls: _load_vbt_remote_source(
-                source,
-                data_cls,
-                config,
-            ))
+            source: (
+                lambda config, source=source, data_cls=data_cls: _load_vbt_remote_source(
+                    source,
+                    data_cls,
+                    config,
+                )
+            )
             for source, data_cls in vbt_data_source_classes().items()
         },
     }
@@ -329,9 +332,11 @@ def _csv_looks_multiindex(path: Path, config: DataConfig) -> bool:
     second_header = rows[1][1:]
     second_values = set(map(str, second_header))
     multiindex_markers = set(config.symbols) | set(config.effective_arrays)
-    return bool(second_header) and bool(
-        (first_header | second_values) & multiindex_markers
-    ) and not any(str(value).startswith("Unnamed") for value in second_header)
+    return (
+        bool(second_header)
+        and bool((first_header | second_values) & multiindex_markers)
+        and not any(str(value).startswith("Unnamed") for value in second_header)
+    )
 
 
 def _csv_probe_rows(path: Path, *, limit: int) -> list[list[str]]:
@@ -476,7 +481,9 @@ def _pull_remote(data_cls, config: DataConfig) -> tuple[Any, tuple[str, ...]]:
     raise RemoteDataPullError(config.source, error_message)
 
 
-def _available_feature_panels(native_data: Any, requested_features: tuple[str, ...]) -> dict[str, pd.DataFrame]:
+def _available_feature_panels(
+    native_data: Any, requested_features: tuple[str, ...]
+) -> dict[str, pd.DataFrame]:
     panels = {}
     for feature in requested_features:
         try:
@@ -840,7 +847,7 @@ def _safe_public_value(value: Any, *, omitted: list[dict[str, str]], path: str) 
         if SECRET_VALUE_RE.search(value):
             omitted.append({"path": path, "reason": "secret-like value"})
             return _OMITTED
-        if _looks_like_absolute_path(value):
+        if _is_absolute_or_user_path(value):
             omitted.append({"path": path, "reason": "non-portable absolute path"})
             return _OMITTED
         return value
@@ -865,21 +872,6 @@ def _safe_public_value(value: Any, *, omitted: list[dict[str, str]], path: str) 
         return projected
     omitted.append({"path": path, "reason": f"unsupported type {type(value).__name__}"})
     return _OMITTED
-
-
-def _looks_like_absolute_path(value: str) -> bool:
-    if "://" in value:
-        return False
-    if value == "~" or value.startswith("~"):
-        return True
-    try:
-        return (
-            Path(value).is_absolute()
-            or PurePosixPath(value).is_absolute()
-            or PureWindowsPath(value).is_absolute()
-        )
-    except ValueError:
-        return False
 
 
 def _supports_update(native_data: Any) -> bool:

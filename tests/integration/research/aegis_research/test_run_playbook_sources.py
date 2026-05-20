@@ -18,8 +18,12 @@ def test_run_cli_executes_repo_controlled_playbooks_by_id(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_notebook(tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross")
-    _write_notebook(tmp_path / "research/playbooks/indicators/ma_explore.ipynb", "indicators", "ma_explore")
+    _write_notebook(
+        tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross"
+    )
+    _write_notebook(
+        tmp_path / "research/playbooks/indicators/ma_explore.ipynb", "indicators", "ma_explore"
+    )
     config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "playbook-run"]) == 0
@@ -44,7 +48,9 @@ def test_run_cli_expands_all_playbook_indicators(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_notebook(tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross")
+    _write_notebook(
+        tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross"
+    )
     _write_notebook(tmp_path / "research/playbooks/indicators/ma_one.ipynb", "indicators", "ma_one")
     _write_notebook(tmp_path / "research/playbooks/indicators/ma_two.ipynb", "indicators", "ma_two")
     config_path = _write_run_config(
@@ -58,7 +64,9 @@ def test_run_cli_expands_all_playbook_indicators(
 
     output = capsys.readouterr()
     assert output.err == ""
-    artifact = json.loads((tmp_path / "runs" / "playbook-all-run" / "strategy_run.json").read_text())
+    artifact = json.loads(
+        (tmp_path / "runs" / "playbook-all-run" / "strategy_run.json").read_text()
+    )
     assert [item["id"] for item in artifact["indicators"]] == ["ma_one", "ma_two"]
 
 
@@ -86,7 +94,9 @@ def test_run_cli_rejects_duplicate_expanded_playbook_indicators_before_artifacts
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_notebook(tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross")
+    _write_notebook(
+        tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross"
+    )
     _write_notebook(tmp_path / "research/playbooks/indicators/ma_one.ipynb", "indicators", "ma_one")
     config_path = _write_run_config(
         tmp_path,
@@ -112,8 +122,12 @@ def test_run_cli_reports_failed_playbook_execution_on_run_manifest(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_failing_notebook(tmp_path / "research/playbooks/strategies/bad.ipynb", "strategies", "bad")
-    _write_notebook(tmp_path / "research/playbooks/indicators/ma_explore.ipynb", "indicators", "ma_explore")
+    _write_failing_notebook(
+        tmp_path / "research/playbooks/strategies/bad.ipynb", "strategies", "bad"
+    )
+    _write_notebook(
+        tmp_path / "research/playbooks/indicators/ma_explore.ipynb", "indicators", "ma_explore"
+    )
     config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="bad")
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "failed-playbook"]) == 10
@@ -132,7 +146,9 @@ def test_run_cli_rejects_playbook_variant_without_params(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_notebook(tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross")
+    _write_notebook(
+        tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross"
+    )
     _write_notebook(
         tmp_path / "research/playbooks/indicators/ma_explore.ipynb",
         "indicators",
@@ -214,7 +230,12 @@ def _write_run_config(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "run_playbook_source_test",
-                "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80, "arrays": ["OHLCV"]},
+                "data": {
+                    "source": "synthetic",
+                    "symbols": ["SYN"],
+                    "rows": 80,
+                    "arrays": ["OHLCV"],
+                },
                 "portfolio": {"entry_budget": 1.0},
                 "strategy": {"source": strategy_source, "id": strategy_id},
                 "indicators": indicators

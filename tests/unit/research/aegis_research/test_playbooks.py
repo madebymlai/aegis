@@ -23,7 +23,9 @@ def test_playbook_registry_discovers_stable_ids_and_executes_selected_notebook(t
     result = execute_notebook_playbook(definition)
 
     assert registry.ids("indicators") == ("ma_explore",)
-    assert definition.identity.repo_relative_path == "research/playbooks/indicators/ma_explore.ipynb"
+    assert (
+        definition.identity.repo_relative_path == "research/playbooks/indicators/ma_explore.ipynb"
+    )
     assert result["variant_records"] == [{"id": "ma_explore", "params": {"window": 5}}]
 
 
@@ -130,9 +132,7 @@ def _write_notebook(
         cells=[
             nbformat.v4.new_code_cell(
                 "AEGIS_PLAYBOOK_RESULT = {"
-                "'variant_records': [{'id': '"
-                + playbook_id
-                + "', 'params': {'window': 5}}]}"
+                "'variant_records': [{'id': '" + playbook_id + "', 'params': {'window': 5}}]}"
             )
         ],
     )

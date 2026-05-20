@@ -39,7 +39,10 @@ def test_model_plugin_docs_keep_yaml_inert_and_aerd_registry_explicit() -> None:
 
     assert "Run YAML selects a stable train-mode model ref; it never imports Python code" in docs
     assert "aerd run --train" in docs
-    assert "Default `aerd run` is reserved for playbook-backed or component-backed strategy/research sweeps" in docs
+    assert (
+        "Default `aerd run` is reserved for playbook-backed or component-backed strategy/research sweeps"
+        in docs
+    )
 
 
 def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() -> None:

@@ -88,7 +88,9 @@ def run_strategy_sweep(
     if config.lane != "run":
         raise ValueError("run_strategy_sweep requires a run lane config")
     array_contract = _strategy_data_array_contract(config, component_registry)
-    playbooks = playbook_registry or discover_playbook_registry(component_registry=component_registry)
+    playbooks = playbook_registry or discover_playbook_registry(
+        component_registry=component_registry
+    )
 
     recorder = RunStore(config.output_dir).start_run(
         run_label=config.name,
@@ -166,13 +168,19 @@ def run_strategy_sweep(
             "leaderboard": leaderboard,
         }
     except KeyboardInterrupt:
-        recorder.mark_run_interrupted(diagnostic={"error_type": "KeyboardInterrupt", "message": "interrupted"})
+        recorder.mark_run_interrupted(
+            diagnostic={"error_type": "KeyboardInterrupt", "message": "interrupted"}
+        )
         raise
     except ConfigValidationError as error:
-        recorder.mark_run_failed(diagnostic={"error_type": type(error).__name__, "message": str(error)[:1000]})
+        recorder.mark_run_failed(
+            diagnostic={"error_type": type(error).__name__, "message": str(error)[:1000]}
+        )
         raise
     except Exception as error:
-        recorder.mark_run_failed(diagnostic={"error_type": type(error).__name__, "message": str(error)[:1000]})
+        recorder.mark_run_failed(
+            diagnostic={"error_type": type(error).__name__, "message": str(error)[:1000]}
+        )
         raise
 
 
@@ -395,7 +403,9 @@ def _validate_indicator_output(output: Any, close: pd.DataFrame, component_id: s
     if isinstance(result_frame, pd.DataFrame):
         _assert_indicator_frame(result_frame, close, component_id)
         return output
-    raise TypeError(f"indicator component {component_id!r} must return a pandas object or IndicatorResult")
+    raise TypeError(
+        f"indicator component {component_id!r} must return a pandas object or IndicatorResult"
+    )
 
 
 def _assert_indicator_frame(frame: pd.DataFrame, close: pd.DataFrame, component_id: str) -> None:

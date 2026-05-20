@@ -87,7 +87,15 @@ def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
         ),
         (
             "run",
-            {"indicators": [{"source": "playbook", "ids": ["ma_explore"], "notebook_path": "../unsafe.ipynb"}]},
+            {
+                "indicators": [
+                    {
+                        "source": "playbook",
+                        "ids": ["ma_explore"],
+                        "notebook_path": "../unsafe.ipynb",
+                    }
+                ]
+            },
             "indicators[0].notebook_path",
         ),
         (
@@ -110,7 +118,11 @@ def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
         ),
         (
             "train",
-            {"train": {"label": {"source": "component", "id": "demo.label", "python": "lambda x: x"}}},
+            {
+                "train": {
+                    "label": {"source": "component", "id": "demo.label", "python": "lambda x: x"}
+                }
+            },
             "train.label.python",
         ),
     ],
@@ -308,10 +320,7 @@ def _write_component(path: Path, family: str, component_id: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest = _manifest_for(family, component_id)
     path.write_text(
-        f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
-        "def run():\n"
-        "    pass\n"
+        f"COMPONENT_MANIFEST = {manifest!r}\nCOMPONENT_CALLABLE = 'run'\ndef run():\n    pass\n"
     )
 
 

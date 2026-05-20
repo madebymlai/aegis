@@ -114,6 +114,7 @@ DENIED_PASSTHROUGH_KEYS = {
     "cache_dir",
 }
 
+
 @dataclass(frozen=True)
 class ConfigValidationIssue:
     path: str
@@ -125,6 +126,7 @@ class ConfigValidationError(ValueError):
         self.issues = tuple(issues)
         details = "; ".join(f"{issue.path}: {issue.message}" for issue in self.issues)
         super().__init__(f"Invalid experiment config: {details}")
+
 
 @dataclass(frozen=True)
 class DataQualityConfig:
@@ -172,9 +174,7 @@ def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:
 
 
 def has_data_array_token_shape(value: str) -> bool:
-    return bool(value) and value.strip() == value and not any(
-        char in "\t\n\r" for char in value
-    )
+    return bool(value) and value.strip() == value and not any(char in "\t\n\r" for char in value)
 
 
 @dataclass(frozen=True)

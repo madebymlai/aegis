@@ -177,7 +177,9 @@ def _validate_train_lane(
     signals = _section(train, "signals", set(SignalConfig.__dataclass_fields__), issues)
     _validate_split(split, issues)
     _validate_signals(signals, issues)
-    _validate_train_model_ref("train.model", train.get("model"), issues, model_registry=model_registry)
+    _validate_train_model_ref(
+        "train.model", train.get("model"), issues, model_registry=model_registry
+    )
 
 
 def _validate_train_model_ref(
@@ -274,7 +276,9 @@ def _validate_indicator_sources(
         source = item.get("source")
         if not isinstance(source, str) or source not in allowed_sources:
             issues.append(
-                ConfigValidationIssue(f"{item_path}.source", f"must be one of {sorted(allowed_sources)}")
+                ConfigValidationIssue(
+                    f"{item_path}.source", f"must be one of {sorted(allowed_sources)}"
+                )
             )
             continue
         ids = item.get("ids")
@@ -310,7 +314,9 @@ def _validate_indicator_source_ids(
         ids = component_registry.ids("indicators") if source == "component" else ("all",)
         return tuple((indicator_id, path) for indicator_id in ids)
     if not isinstance(value, list) or not value:
-        issues.append(ConfigValidationIssue(path, "must be 'all' or a non-empty list of stable ids"))
+        issues.append(
+            ConfigValidationIssue(path, "must be 'all' or a non-empty list of stable ids")
+        )
         return ()
 
     expanded: list[tuple[str, str]] = []
@@ -320,7 +326,9 @@ def _validate_indicator_source_ids(
             issues.append(ConfigValidationIssue(id_path, "must be a non-empty stable id"))
             continue
         if indicator_id == "all":
-            issues.append(ConfigValidationIssue(id_path, "must use ids: all instead of listing 'all'"))
+            issues.append(
+                ConfigValidationIssue(id_path, "must use ids: all instead of listing 'all'")
+            )
             continue
         if not EXPERIMENT_NAME_RE.fullmatch(indicator_id):
             issues.append(
@@ -349,40 +357,16 @@ def _validate_run_source_ref(
     component_registry: FrozenComponentRegistry,
     allowed_sources: set[str] | None = None,
 ) -> None:
-    if not isinstance(value, dict):
-        issues.append(ConfigValidationIssue(path, "must be a mapping"))
-        return
-    _validate_known_keys(path, value, {"source", "id"}, issues)
-    _validate_no_lane_executable_keys(path, value, issues)
-    source = value.get("source")
-    allowed_source_values = allowed_sources or SOURCE_KINDS
-    if not isinstance(source, str) or source not in allowed_source_values:
-        issues.append(ConfigValidationIssue(f"{path}.source", f"must be one of {sorted(allowed_source_values)}"))
-        return
-    source_id = value.get("id")
-    if not isinstance(source_id, str) or not source_id:
-        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
-        return
-    if source_id == "all":
-        issues.append(ConfigValidationIssue(f"{path}.id", "must select one strategy id"))
-        return
-    if not EXPERIMENT_NAME_RE.fullmatch(source_id):
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.id",
-                "must contain only letters, numbers, dots, underscores, and hyphens",
-            )
-        )
-    if source == "component":
-        try:
-            component_registry.get(ComponentSelection(family, source_id))
-        except ComponentRegistryError:
-            issues.append(
-                ConfigValidationIssue(
-                    f"{path}.id",
-                    f"unknown {family[:-1] if family.endswith('s') else family} component id",
-                )
-            )
+    _validate_source_ref_value(
+        path,
+        value,
+        family,
+        issues,
+        component_registry=component_registry,
+        allowed_sources=allowed_sources,
+        non_string_id_message="must be a non-empty stable id",
+        all_id_message="must select one strategy id",
+    )
 
 
 def _validate_source_ref(
@@ -394,6 +378,29 @@ def _validate_source_ref(
     component_registry: FrozenComponentRegistry,
     allowed_sources: set[str] | None = None,
 ) -> None:
+    _validate_source_ref_value(
+        path,
+        value,
+        family,
+        issues,
+        component_registry=component_registry,
+        allowed_sources=allowed_sources,
+        non_string_id_message="must be a string",
+        all_id_message="must be a non-empty stable id",
+    )
+
+
+def _validate_source_ref_value(
+    path: str,
+    value: Any,
+    family: str,
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+    allowed_sources: set[str] | None,
+    non_string_id_message: str,
+    all_id_message: str,
+) -> None:
     if not isinstance(value, dict):
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
@@ -403,15 +410,20 @@ def _validate_source_ref(
     allowed_source_values = allowed_sources or SOURCE_KINDS
     if not isinstance(source, str) or source not in allowed_source_values:
         issues.append(
-            ConfigValidationIssue(f"{path}.source", f"must be one of {sorted(allowed_source_values)}")
+            ConfigValidationIssue(
+                f"{path}.source", f"must be one of {sorted(allowed_source_values)}"
+            )
         )
         return
     component_id = value.get("id")
     if not isinstance(component_id, str):
-        issues.append(ConfigValidationIssue(f"{path}.id", "must be a string"))
+        issues.append(ConfigValidationIssue(f"{path}.id", non_string_id_message))
         return
-    if component_id == "" or component_id == "all":
+    if component_id == "":
         issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
+        return
+    if component_id == "all":
+        issues.append(ConfigValidationIssue(f"{path}.id", all_id_message))
         return
     if not EXPERIMENT_NAME_RE.fullmatch(component_id):
         issues.append(
@@ -442,12 +454,16 @@ def _validate_ranking(path: str, value: Any, issues: list[ConfigValidationIssue]
         issues.append(ConfigValidationIssue(f"{path}.metric", "must be a non-empty string"))
     elif metric not in _portfolio_metric_ids():
         issues.append(
-            ConfigValidationIssue(f"{path}.metric", f"must be one of {sorted(_portfolio_metric_ids())}")
+            ConfigValidationIssue(
+                f"{path}.metric", f"must be one of {sorted(_portfolio_metric_ids())}"
+            )
         )
     direction = value.get("direction")
     if not isinstance(direction, str) or direction not in RANKING_DIRECTIONS:
         issues.append(
-            ConfigValidationIssue(f"{path}.direction", f"must be one of {sorted(RANKING_DIRECTIONS)}")
+            ConfigValidationIssue(
+                f"{path}.direction", f"must be one of {sorted(RANKING_DIRECTIONS)}"
+            )
         )
     rank_by = value.get("rank_by", "primary_metric")
     if rank_by not in {"primary_metric", "baseline_delta"}:
@@ -574,7 +590,9 @@ def _validate_relative_project_path(
 ) -> None:
     if not isinstance(value, str) or not value:
         return
-    parts = set(Path(value).parts) | set(PurePosixPath(value).parts) | set(PureWindowsPath(value).parts)
+    parts = (
+        set(Path(value).parts) | set(PurePosixPath(value).parts) | set(PureWindowsPath(value).parts)
+    )
     if _is_absolute_or_user_path(value) or ".." in parts:
         issues.append(ConfigValidationIssue(path, "must be a relative path under the project root"))
 
@@ -947,6 +965,8 @@ def _validate_json_like(path: str, value: Any, issues: list[ConfigValidationIssu
             _validate_json_like(f"{path}.{key}", item, issues)
         return
     issues.append(ConfigValidationIssue(path, "must be JSON-serializable"))
+
+
 def _require_str(
     path: str,
     mapping: dict[str, Any],

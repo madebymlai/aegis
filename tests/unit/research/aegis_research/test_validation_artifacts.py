@@ -23,8 +23,8 @@ from tests.support.research.aegis_research.experiment_config_fixtures import (
     SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
     load_train_fixture_config,
 )
-from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 from tests.support.research.aegis_research.indicator_result_fixtures import native_indicator_result
+from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_validation_result_exposes_complete_split_child_shape() -> None:

@@ -111,9 +111,7 @@ def test_fixlb_native_horizon_sweep_selects_one_model_target() -> None:
 
 
 def test_fixlb_records_concrete_future_row_evaluation_times() -> None:
-    index = pd.to_datetime(
-        ["2024-01-01", "2024-01-03", "2024-01-06", "2024-01-10", "2024-01-15"]
-    )
+    index = pd.to_datetime(["2024-01-01", "2024-01-03", "2024-01-06", "2024-01-10", "2024-01-15"])
     close = pd.DataFrame({"SYN": [1.0, 2.0, 3.0, 2.0, 4.0]}, index=index)
 
     result = build_label_result(
@@ -124,8 +122,12 @@ def test_fixlb_records_concrete_future_row_evaluation_times() -> None:
     evidence = result.evaluation_evidence
     assert evidence.metadata["evaluation_time"]["kind"] == "fixed_horizon"
     assert result.split_safety["evaluation_time"]["evidence"] == "label_evaluation_evidence"
-    pd.testing.assert_series_equal(evidence.prediction_times["SYN"], pd.Series(index, index=index, name="SYN"))
-    expected_eval = pd.Series([index[2], index[3], index[4], pd.NaT, pd.NaT], index=index, name="SYN")
+    pd.testing.assert_series_equal(
+        evidence.prediction_times["SYN"], pd.Series(index, index=index, name="SYN")
+    )
+    expected_eval = pd.Series(
+        [index[2], index[3], index[4], pd.NaT, pd.NaT], index=index, name="SYN"
+    )
     pd.testing.assert_series_equal(evidence.evaluation_times["SYN"], expected_eval)
 
 

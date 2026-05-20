@@ -94,7 +94,6 @@ def _handle_strategy_run(
     json_mode: bool,
     **streams: Any,
 ) -> int:
-
     run_refs: dict[str, Any] = {}
     try:
         if _looks_like_model_training_config(config_path):
@@ -138,12 +137,16 @@ def _handle_strategy_run(
     except ConfigValidationError as error:
         raise ConfigCliError(str(error), run_refs=_refreshed_run_refs(run_refs)) from error
     except Exception as error:
-        raise ExecutionFailureError(redact_text(str(error)), run_refs=_refreshed_run_refs(run_refs)) from error
+        raise ExecutionFailureError(
+            redact_text(str(error)), run_refs=_refreshed_run_refs(run_refs)
+        ) from error
 
     return write_success(
         CommandResult(
             command="run",
-            payload=_run_payload(result, selection={"source": "explicit", "config_path": safe_path(config_path)}),
+            payload=_run_payload(
+                result, selection={"source": "explicit", "config_path": safe_path(config_path)}
+            ),
             human_lines=_human_run_lines(result),
         ),
         json_mode=json_mode,

@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-import json
-import re
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.data_schema import table_shape
-from research.aegis_research.indicators import FEATURE_COLUMN_NAMES, IndicatorResult
+from research.aegis_research.indicators import (
+    FEATURE_COLUMN_NAMES,
+    IndicatorResult,
+    _apply_transform,
+    _feature_name,
+    _params_token,
+)
 from research.aegis_research.market_data.contracts import MarketDataBundle
 
 
@@ -97,21 +102,13 @@ def native_indicator_result(data: MarketDataBundle | pd.DataFrame) -> IndicatorR
     return result
 
 
+@dataclass(frozen=True)
 class _Spec:
-    def __init__(
-        self,
-        *,
-        indicator_id: str,
-        output_name: str,
-        transform: str,
-        param_rows: list[dict[str, Any]],
-        values: Callable[[dict[str, Any]], pd.DataFrame],
-    ) -> None:
-        self.indicator_id = indicator_id
-        self.output_name = output_name
-        self.transform = transform
-        self.param_rows = param_rows
-        self.values = values
+    indicator_id: str
+    output_name: str
+    transform: str
+    param_rows: list[dict[str, Any]]
+    values: Callable[[dict[str, Any]], pd.DataFrame]
 
 
 def _indicator_result(
@@ -133,12 +130,23 @@ def _indicator_result(
         for params, raw_values in _iter_param_values(close, spec):
             for symbol in close.columns:
                 symbol_name = str(symbol)
-                values = _apply_transform(close, raw_values[symbol], symbol=symbol_name, transform=spec.transform)
-                feature_name = _feature_name(spec.indicator_id, spec.output_name, spec.transform, params)
+                values = _apply_transform(
+                    close, raw_values[symbol], symbol=symbol_name, transform=spec.transform
+                )
+                feature_name = _feature_name(
+                    spec.indicator_id, spec.output_name, spec.transform, params
+                )
                 params_token = _params_token(params)
                 feature_series.append(values.rename(feature_name))
                 feature_columns.append(
-                    (feature_name, spec.indicator_id, spec.output_name, spec.transform, params_token, symbol_name)
+                    (
+                        feature_name,
+                        spec.indicator_id,
+                        spec.output_name,
+                        spec.transform,
+                        params_token,
+                        symbol_name,
+                    )
                 )
                 lineage_record = {
                     "feature": feature_name,
@@ -223,27 +231,3 @@ def _single_param_output(frame: pd.DataFrame, close: pd.DataFrame) -> pd.DataFra
             matching = [frame.columns[0]]
         values.append(frame[matching[0]].rename(symbol))
     return pd.concat(values, axis=1)
-
-
-def _apply_transform(close: pd.DataFrame, values: pd.Series, *, symbol: str, transform: str) -> pd.Series:
-    if transform == "identity":
-        return values
-    if transform == "distance_to_close":
-        return close[symbol] / values - 1
-    if transform == "scale_0_1":
-        return values / 100.0
-    raise ValueError(f"Unsupported indicator transform: {transform}")
-
-
-def _feature_name(indicator_id: str, output: str, transform: str, params: dict[str, Any]) -> str:
-    parts = [indicator_id, output, transform]
-    parts.extend(f"{key}_{params[key]}" for key in sorted(params))
-    return "__".join(_slug(part) for part in parts)
-
-
-def _params_token(params: dict[str, Any]) -> str:
-    return json.dumps(params, sort_keys=True, separators=(",", ":"))
-
-
-def _slug(value: Any) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_")

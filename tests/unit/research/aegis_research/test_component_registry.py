@@ -40,9 +40,9 @@ def test_component_discovery_is_deterministic_and_fingerprinted(tmp_path) -> Non
     assert first.ids("labels") == ("demo.same",)
     assert first.ids("strategies") == ("demo.same",)
     assert first.get(ComponentSelection("indicators", "demo.first")).identity.source_hash
-    assert first.get(ComponentSelection("indicators", "demo.first")).identity.repo_relative_path == (
-        "research/components/indicators/a_first.py"
-    )
+    assert first.get(
+        ComponentSelection("indicators", "demo.first")
+    ).identity.repo_relative_path == ("research/components/indicators/a_first.py")
 
 
 def test_component_discovery_rejects_duplicate_ids_within_family(tmp_path) -> None:
@@ -131,7 +131,9 @@ def test_component_manifest_exposes_input_names_for_all_families(tmp_path) -> No
     registry = discover_component_registry(root=root, repo_root=tmp_path)
 
     assert registry.get(ComponentSelection("labels", "demo.label")).input_names == ("Close",)
-    assert registry.get(ComponentSelection("indicators", "demo.indicator")).input_names == ("Close",)
+    assert registry.get(ComponentSelection("indicators", "demo.indicator")).input_names == (
+        "Close",
+    )
     assert registry.get(ComponentSelection("strategies", "demo.strategy")).input_names == ("Close",)
 
 
