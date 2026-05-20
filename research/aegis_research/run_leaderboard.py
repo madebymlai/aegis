@@ -10,7 +10,7 @@ from typing import Any
 RUN_LEADERBOARD_SCHEMA_VERSION = "run_leaderboard.v1"
 MAX_LEADERBOARD_ROWS = 10
 MAX_FAILURE_SAMPLES = 10
-METRIC_AUTHORITY_AEGIS = "aegis"
+METRIC_SOURCE_CENTRAL_PORTFOLIO = "central_portfolio"
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,7 @@ class _RankedRow:
 
 
 def build_run_leaderboard(
-    variant_records: Sequence[Mapping[str, Any]],
+    candidate_records: Sequence[Mapping[str, Any]],
     *,
     metric: str,
     direction: str,
@@ -34,13 +34,13 @@ def build_run_leaderboard(
     succeeded = 0
     failed = 0
     excluded = 0
-    for index, record in enumerate(variant_records):
+    for index, record in enumerate(candidate_records):
         variant_id = _variant_id(record, index)
         if "error" in record:
             failed += 1
             _append_failure_sample(failures, variant_id, record["error"])
             continue
-        _assert_aegis_metric_authority(record, variant_id, metric)
+        _assert_central_metric_source(record, variant_id, metric)
         value = _metric_value(record, metric)
         if value is None:
             excluded += 1
@@ -60,7 +60,7 @@ def build_run_leaderboard(
             ranked_rows.pop()
         succeeded += 1
 
-    attempted = len(variant_records)
+    attempted = len(candidate_records)
     return {
         "schema_version": RUN_LEADERBOARD_SCHEMA_VERSION,
         "metric": metric,
@@ -89,16 +89,24 @@ def _leaderboard_row(
 ) -> dict[str, Any]:
     row = {
         "variant_id": variant_id,
+        "composed_candidate_id": record.get("composed_candidate_id"),
         "primary_metric": metric,
         "primary_metric_value": value,
         "strategy_source": record.get("strategy_source"),
         "strategy_id": record.get("strategy_id"),
+        "strategy_candidate_id": record.get("strategy_candidate_id"),
+        "strategy_candidate_ref": record.get("strategy_candidate_ref"),
+        "strategy_params": record.get("strategy_params", record.get("params", {})),
         "indicator_source": record.get("indicator_source"),
         "indicator_id": record.get("indicator_id"),
         "indicators": record.get("indicators", []),
+        "indicator_candidates": record.get("indicator_candidates", []),
+        "indicator_candidate_refs": record.get("indicator_candidate_refs", []),
+        "metric_ref": record.get("metric_ref"),
+        "chunk_ref": record.get("chunk_ref"),
         "params": record.get("params", {}),
         "portfolio": record.get("portfolio", {}),
-        "metric_authority": record.get("metric_authority"),
+        "metric_source": record.get("metric_source"),
         "source_hash": record.get("source_hash"),
         "component_source_hash": record.get("component_source_hash"),
     }
@@ -120,21 +128,23 @@ def _metric_value(record: Mapping[str, Any], metric: str) -> float | None:
     return _finite_float(value)
 
 
-def _assert_aegis_metric_authority(
+def _assert_central_metric_source(
     record: Mapping[str, Any],
     variant_id: str,
     metric: str,
 ) -> None:
-    if record.get("metric_authority") != METRIC_AUTHORITY_AEGIS:
+    if record.get("metric_source") != METRIC_SOURCE_CENTRAL_PORTFOLIO:
         raise ValueError(
-            f"variant {variant_id!r} metric authority must be {METRIC_AUTHORITY_AEGIS!r}"
+            f"variant {variant_id!r} metric source must be "
+            f"{METRIC_SOURCE_CENTRAL_PORTFOLIO!r}"
         )
     baseline_metrics = record.get("baseline_metrics", {})
     has_baseline_metric = isinstance(baseline_metrics, Mapping) and metric in baseline_metrics
     has_baseline_metric = has_baseline_metric or record.get("baseline_metric_value") is not None
-    if has_baseline_metric and record.get("baseline_metric_authority") != METRIC_AUTHORITY_AEGIS:
+    if has_baseline_metric and record.get("baseline_metric_source") != METRIC_SOURCE_CENTRAL_PORTFOLIO:
         raise ValueError(
-            f"variant {variant_id!r} baseline metric authority must be {METRIC_AUTHORITY_AEGIS!r}"
+            f"variant {variant_id!r} baseline metric source must be "
+            f"{METRIC_SOURCE_CENTRAL_PORTFOLIO!r}"
         )
 
 

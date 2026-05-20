@@ -244,6 +244,13 @@ class RankingConfig:
 
 
 @dataclass(frozen=True)
+class CandidateGridConfig:
+    max_candidates: int = 100_000
+    max_estimated_cells: int = 50_000_000
+    batch_size: int = 1_000
+
+
+@dataclass(frozen=True)
 class TrainModelConfig:
     source: str
     id: str
@@ -266,6 +273,7 @@ class StrategyRunLaneConfig:
     data: DataConfig = field(default_factory=DataConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
+    candidate_grid: CandidateGridConfig = field(default_factory=CandidateGridConfig)
     output_dir: str = "runs"
 
 

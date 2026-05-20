@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import ClassVar
 
 import pandas as pd
 import pytest
@@ -106,6 +107,33 @@ def test_provider_shaped_source_loads_dynamic_feature_arrays() -> None:
     assert result.metadata["loaded_arrays"] == ["Close", "FundingRate"]
     assert result.feature("FundingRate").iloc[-1, 0] == 0.03
     assert bundle.feature("FundingRate").equals(result.feature("FundingRate"))
+
+
+def test_remote_source_projects_configured_arrays_before_column_alignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(data_module.vbt, "ProviderExtrasData", _ProviderExtrasData, raising=False)
+
+    result = load_market_data_result(
+        DataConfig(
+            source="providerextras",
+            symbols=["AAA", "BBB"],
+            arrays=["OHLCV"],
+            start="2020-01-01",
+            end="2020-01-03",
+            timeframe="1D",
+            missing_columns="raise",
+        )
+    )
+
+    assert _ProviderExtrasData.last_pull_kwargs["return_raw"] is True
+    assert _ProviderExtrasData.from_data_columns == {
+        "AAA": ["Open", "High", "Low", "Close", "Volume"],
+        "BBB": ["Open", "High", "Low", "Close", "Volume"],
+    }
+    assert _ProviderExtrasData.last_from_data_kwargs["missing_columns"] == "raise"
+    assert result.quality.state == "healthy"
+    assert result.metadata["loaded_arrays"] == ["Open", "High", "Low", "Close", "Volume"]
 
 
 def test_bundle_can_serve_dynamic_feature_without_close() -> None:
@@ -335,8 +363,25 @@ class _DemoRemoteData:
         self.features = features or ["Open", "High", "Low", "Close", "Volume"]
 
     @classmethod
-    def pull(cls, symbols, **_kwargs):
+    def pull(cls, symbols, **kwargs):
+        if kwargs.get("return_raw"):
+            index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
+            frame = pd.DataFrame(
+                {
+                    "Open": [1.0, 2.0, 3.0],
+                    "High": [1.1, 2.1, 3.1],
+                    "Low": [0.9, 1.9, 2.9],
+                    "Close": [1.0, 2.0, 3.0],
+                    "Volume": [100.0, 100.0, 100.0],
+                },
+                index=index,
+            )
+            return [(frame.copy(), {"tz": "UTC", "freq": "1D"}) for _symbol in symbols]
         return cls(list(symbols))
+
+    @classmethod
+    def from_data(cls, data, **_kwargs):
+        return cls(list(data), features=list(next(iter(data.values())).columns))
 
     def get(self, feature=None, **_kwargs) -> pd.DataFrame:
         frame = pd.DataFrame(
@@ -357,3 +402,57 @@ class _DemoRemoteData:
         if feature is None:
             return frame
         return frame.xs(feature, axis=1, level="feature")
+
+
+class _ProviderExtrasData:
+    last_pull_kwargs: ClassVar[dict[str, object]] = {}
+    last_from_data_kwargs: ClassVar[dict[str, object]] = {}
+    from_data_columns: ClassVar[dict[str, list[str]]] = {}
+
+    def __init__(self, data: dict[str, pd.DataFrame]) -> None:
+        self.data = data
+        self.symbols = list(data)
+        self.index = next(iter(data.values())).index
+        self.features = list(next(iter(data.values())).columns)
+
+    @classmethod
+    def pull(cls, symbols, **kwargs):
+        cls.last_pull_kwargs = dict(kwargs)
+        if kwargs.get("return_raw") is not True:
+            raise ValueError("Symbols have mismatching columns")
+        index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
+        outputs = []
+        for symbol in symbols:
+            extra_feature = "Dividends" if symbol == "AAA" else "Capital Gains"
+            columns = ["Open", "High", "Low", "Close", "Volume", extra_feature]
+            frame = pd.DataFrame(
+                {column: [1.0, 2.0, 3.0] for column in columns},
+                index=index,
+            )
+            outputs.append((frame, {"tz": "UTC", "freq": "1D"}))
+        return outputs
+
+    @classmethod
+    def from_data(cls, data, **kwargs):
+        cls.last_from_data_kwargs = dict(kwargs)
+        cls.from_data_columns = {
+            symbol: list(frame.columns) for symbol, frame in data.items()
+        }
+        return cls(data)
+
+    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
+        if feature is None:
+            frames = []
+            for symbol, frame in self.data.items():
+                symbol_frame = frame.copy()
+                symbol_frame.columns = pd.MultiIndex.from_product(
+                    [[symbol], symbol_frame.columns], names=["symbol", "feature"]
+                )
+                frames.append(symbol_frame)
+            return pd.concat(frames, axis=1)
+        if feature not in self.features:
+            raise ValueError(feature)
+        return pd.DataFrame(
+            {symbol: frame[feature] for symbol, frame in self.data.items()},
+            index=self.index,
+        )

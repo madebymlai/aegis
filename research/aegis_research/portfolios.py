@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 from vectorbtpro import vbt
 
+from research.aegis_research.batched_candidates import SYMBOL_LEVEL
 from research.aegis_research.config import PortfolioConfig, SignalConfig
 
 PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v2"
@@ -96,6 +97,118 @@ def simulate_portfolio(
     )
 
 
+def simulate_portfolio_batch(
+    close: pd.DataFrame,
+    entries: pd.DataFrame,
+    exits: pd.DataFrame,
+    config: PortfolioConfig,
+    signal_config: SignalConfig,
+    *,
+    open_prices: pd.DataFrame | None = None,
+    market_index: pd.Index | None = None,
+) -> PortfolioSimulationResult:
+    _validate_candidate_signal_frames(entries, exits)
+    expanded_close = expand_market_frame_to_candidate_columns(
+        close,
+        entries.columns,
+        feature_name="Close",
+    )
+    expanded_open = None
+    if open_prices is not None:
+        expanded_open = expand_market_frame_to_candidate_columns(
+            open_prices,
+            entries.columns,
+            feature_name="Open",
+        )
+    _validate_signal_frames(expanded_close, entries, exits)
+    simulation_entries, simulation_exits, non_executable_diagnostics = _simulation_signals(
+        expanded_close.index,
+        entries,
+        exits,
+        signal_config,
+        market_index=market_index,
+    )
+    timing_kwargs, execution_diagnostics = _execution_timing_kwargs(
+        signal_config,
+        expanded_open,
+        expanded_close,
+        simulation_entries,
+        simulation_exits,
+        non_executable_diagnostics,
+    )
+    size = _candidate_entry_size_frame(simulation_entries, config.entry_budget)
+    _assert_same_index("generated size", expanded_close, size)
+    _assert_same_columns("generated size", expanded_close, size)
+    group_by = vbt.ExceptLevel(SYMBOL_LEVEL)
+    pf = vbt.Portfolio.from_signals(
+        close=expanded_close,
+        entries=simulation_entries,
+        exits=simulation_exits,
+        init_cash=config.init_cash,
+        fees=config.fees,
+        slippage=config.slippage,
+        size=size,
+        size_type=VBT_RESOLVED_SIZE_TYPE,
+        direction=config.direction,
+        **VBT_LONG_SIGNAL_SETTINGS,
+        cash_sharing=True,
+        group_by=group_by,
+        call_seq=VBT_SHARED_CASH_SETTINGS["call_seq"],
+        **timing_kwargs,
+    )
+    diagnostics = _portfolio_diagnostics(
+        pf,
+        expanded_close,
+        entries,
+        exits,
+        simulation_entries,
+        simulation_exits,
+        size,
+        config,
+        execution_diagnostics,
+    )
+    candidate_ids = _candidate_group_ids(entries.columns)
+    diagnostics["grouping"] = {
+        "cash_sharing": True,
+        "group_by": f"except_level:{SYMBOL_LEVEL}",
+        "group_count": len(candidate_ids),
+        "group_scope": "candidate_symbols_single_cash_pool",
+        "candidate_ids": candidate_ids,
+    }
+    diagnostics["shape"] |= {
+        "candidate_count": len(candidate_ids),
+        "column_count": len(expanded_close.columns),
+    }
+    return PortfolioSimulationResult(portfolio=pf, diagnostics=diagnostics)
+
+
+def expand_market_frame_to_candidate_columns(
+    frame: pd.DataFrame,
+    target_columns: pd.MultiIndex,
+    *,
+    feature_name: str,
+) -> pd.DataFrame:
+    _validate_candidate_columns(target_columns, field_name="target columns")
+    if not frame.index.is_unique:
+        raise ValueError(f"{feature_name} input index must be unique")
+    symbol_columns = {str(column): column for column in frame.columns}
+    if len(symbol_columns) != len(frame.columns):
+        raise ValueError(f"{feature_name} input symbols must be unique when stringified")
+    symbol_values = target_columns.get_level_values(SYMBOL_LEVEL)
+    missing_symbols = sorted({str(symbol) for symbol in symbol_values} - set(symbol_columns))
+    if missing_symbols:
+        raise ValueError(f"{feature_name} input is missing symbols for candidate columns: {missing_symbols}")
+    expanded = pd.DataFrame(
+        {
+            column: frame[symbol_columns[str(column[target_columns.names.index(SYMBOL_LEVEL)])]].to_numpy()
+            for column in target_columns
+        },
+        index=frame.index,
+    )
+    expanded.columns = target_columns
+    return expanded
+
+
 def _validate_signal_frames(
     close: pd.DataFrame,
     entries: pd.DataFrame,
@@ -108,6 +221,30 @@ def _validate_signal_frames(
     _assert_same_columns("entries", close, entries)
     _assert_same_columns("exits", close, exits)
     _assert_numeric_non_null("Close", close)
+
+
+def _validate_candidate_signal_frames(entries: pd.DataFrame, exits: pd.DataFrame) -> None:
+    _validate_candidate_columns(entries.columns, field_name="entries")
+    _validate_candidate_columns(exits.columns, field_name="exits")
+    if not entries.index.equals(exits.index):
+        raise ValueError("batched exits index must match entries index")
+    if not entries.columns.equals(exits.columns):
+        raise ValueError("batched exits columns must match entries columns")
+
+
+def _validate_candidate_columns(columns: pd.Index, *, field_name: str) -> None:
+    if not isinstance(columns, pd.MultiIndex):
+        raise TypeError(f"batched {field_name} must use MultiIndex columns")
+    if columns.names.count(SYMBOL_LEVEL) != 1:
+        raise ValueError(f"batched {field_name} must include exactly one {SYMBOL_LEVEL!r} level")
+    if len(columns.names) < 2:
+        raise ValueError(f"batched {field_name} must include candidate and symbol levels")
+    if columns.has_duplicates:
+        raise ValueError(f"batched {field_name} must not contain duplicate columns")
+    for candidate_id in _candidate_group_ids(columns):
+        mask = _candidate_group_mask(columns, candidate_id)
+        if not mask.any():
+            raise ValueError(f"batched {field_name} candidate {candidate_id!r} has no symbols")
 
 
 def _execution_timing_kwargs(
@@ -251,6 +388,33 @@ def _entry_size_frame(entries: pd.DataFrame, entry_budget: float) -> pd.DataFram
     active_rows = active_entries > 0
     per_entry.loc[active_rows] = entry_budget / active_entries.loc[active_rows]
     return entries.astype(float).mul(per_entry, axis=0)
+
+
+def _candidate_entry_size_frame(entries: pd.DataFrame, entry_budget: float) -> pd.DataFrame:
+    size = pd.DataFrame(0.0, index=entries.index, columns=entries.columns)
+    for candidate_id in _candidate_group_ids(entries.columns):
+        mask = _candidate_group_mask(entries.columns, candidate_id)
+        candidate_entries = entries.loc[:, mask]
+        active_entries = candidate_entries.sum(axis=1)
+        per_entry = pd.Series(0.0, index=entries.index)
+        active_rows = active_entries > 0
+        per_entry.loc[active_rows] = entry_budget / active_entries.loc[active_rows]
+        size.loc[:, mask] = candidate_entries.astype(float).mul(per_entry, axis=0)
+    return size
+
+
+def _candidate_group_ids(columns: pd.MultiIndex) -> list[Any]:
+    candidate_levels = [name for name in columns.names if name != SYMBOL_LEVEL]
+    if len(candidate_levels) == 1:
+        return list(dict.fromkeys(columns.get_level_values(candidate_levels[0])))
+    return list(dict.fromkeys(columns.droplevel(SYMBOL_LEVEL)))
+
+
+def _candidate_group_mask(columns: pd.MultiIndex, candidate_id: Any) -> pd.Series:
+    candidate_levels = [name for name in columns.names if name != SYMBOL_LEVEL]
+    if len(candidate_levels) == 1:
+        return pd.Series(columns.get_level_values(candidate_levels[0]) == candidate_id, index=columns)
+    return pd.Series(columns.droplevel(SYMBOL_LEVEL) == candidate_id, index=columns)
 
 
 def _sizing_summary(

@@ -39,7 +39,7 @@ aerd run <strategy-run-config>
 aerd run --train <config>
 ```
 
-Default `aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research evidence. Playbooks may sweep candidates; components are fixed-param promoted implementations. `aerd run --train` owns ML model-plugin training through the config's `train:` section; model-shaped configs passed to default `aerd run` fail with guidance to use `aerd run --train`.
+Default `aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research evidence. Run-lane playbooks use the batched contract: indicator playbooks emit candidate-indexed surfaces, strategy playbooks materialize requested signal batches, and Aegis centrally scores complete composed strategy candidates through VBT chunks. Components are fixed-param promoted implementations and do not emit candidate axes. `aerd run --train` owns ML model-plugin training through the config's `train:` section; model-shaped configs passed to default `aerd run` fail with guidance to use `aerd run --train`.
 
 The walkthrough is scaffold evidence only. It is not validated trading methodology, empirical edge, or investment advice.
 
@@ -189,7 +189,7 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 Promoted components live under `research/components/{labels,indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after lane validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/components/*_component_example.py`.
 
-Playbooks live under `research/playbooks/{labels,indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Indicator playbook IDs represent one indicator idea/family; the playbook owns its default parameters and sweeps, and a baseline may name exactly one component indicator ID. See `docs/playbooks.md` and `docs/examples/playbooks/*_playbook_example.py`.
+Playbooks live under `research/playbooks/{labels,indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Run-lane indicator and strategy playbooks declare `result_schema: "batched_playbook_result.v1"` and return contract marker `"aegis.batched_playbook.v1"`. Indicator playbook IDs represent one indicator idea/family; the playbook owns its default parameters and candidate axis, emits named candidate-indexed outputs for batched strategies to consume, and a baseline may name exactly one component indicator ID. Strategy playbooks expose strategy candidate axes and materialize bounded signal chunks. Train-mode labels currently use fixed label components rather than label playbooks. See `docs/playbooks.md`, `docs/examples/playbooks/indicator_playbook_example.py`, and `docs/examples/playbooks/strategy_playbook_example.py`.
 
 ## Validation Modes
 

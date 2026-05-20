@@ -2,7 +2,12 @@ import pandas as pd
 import pytest
 
 from research.aegis_research.config import PortfolioConfig, SignalConfig
-from research.aegis_research.portfolios import PortfolioSimulationResult, simulate_portfolio
+from research.aegis_research.portfolios import (
+    PortfolioSimulationResult,
+    expand_market_frame_to_candidate_columns,
+    simulate_portfolio,
+    simulate_portfolio_batch,
+)
 
 
 def test_next_open_simulation_uses_open_prices_and_records_diagnostics() -> None:
@@ -95,6 +100,78 @@ def test_entry_budget_is_split_across_same_bar_executable_entries() -> None:
     assert result.diagnostics["records"]["orders_per_group"] == {"portfolio": 2}
     assert result.diagnostics["records"]["orders_per_symbol"] == {"A": 1, "B": 1}
     assert (orders["Size"] * orders["Price"]).tolist() == pytest.approx([3000.0, 3000.0])
+
+
+def test_batched_portfolio_groups_cash_by_candidate() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0], "B": [20.0, 21.0, 22.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["candidate-a", "candidate-b"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    entries = pd.DataFrame(False, index=index, columns=columns)
+    entries.loc[index[0], :] = True
+    exits = pd.DataFrame(False, index=index, columns=columns)
+
+    result = simulate_portfolio_batch(
+        close,
+        entries,
+        exits,
+        PortfolioConfig(entry_budget=1.0, fees=0, slippage=0),
+        SignalConfig(execution_timing="same_close"),
+    )
+    orders = result.portfolio.orders.records_readable
+    order_values = orders["Size"] * orders["Price"]
+
+    assert result.diagnostics["grouping"] == {
+        "cash_sharing": True,
+        "group_by": "except_level:symbol",
+        "group_count": 2,
+        "group_scope": "candidate_symbols_single_cash_pool",
+        "candidate_ids": ["candidate-a", "candidate-b"],
+    }
+    assert result.diagnostics["shape"]["candidate_count"] == 2
+    assert order_values.tolist() == pytest.approx([5000.0, 5000.0, 5000.0, 5000.0])
+
+
+def test_expand_market_frame_to_candidate_columns_preserves_candidate_symbol_order() -> None:
+    close, _open_prices, _entries, _exits = _portfolio_inputs()
+    target_columns = pd.MultiIndex.from_tuples(
+        [("candidate-b", "SYN"), ("candidate-a", "SYN")],
+        names=["candidate_id", "symbol"],
+    )
+
+    expanded = expand_market_frame_to_candidate_columns(
+        close,
+        target_columns,
+        feature_name="Close",
+    )
+
+    assert expanded.columns.equals(target_columns)
+    assert expanded[("candidate-b", "SYN")].tolist() == close["SYN"].tolist()
+    assert expanded[("candidate-a", "SYN")].tolist() == close["SYN"].tolist()
+
+
+def test_batched_portfolio_rejects_missing_open_prices_for_next_open() -> None:
+    close, _open_prices, _entries, _exits = _portfolio_inputs()
+    columns = pd.MultiIndex.from_product(
+        [["candidate-a"], list(close.columns)],
+        names=["candidate_id", "symbol"],
+    )
+    entries = pd.DataFrame(True, index=close.index, columns=columns)
+    exits = pd.DataFrame(False, index=close.index, columns=columns)
+
+    with pytest.raises(ValueError, match="open prices"):
+        simulate_portfolio_batch(
+            close,
+            entries,
+            exits,
+            PortfolioConfig(),
+            SignalConfig(),
+        )
 
 
 def test_single_entry_uses_explicit_entry_budget_not_implicit_full_allocation() -> None:

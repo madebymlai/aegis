@@ -64,6 +64,26 @@ def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() 
     assert "exactly one component indicator ID" in docs
 
 
+def test_docs_describe_composed_strategy_candidates_and_manual_promotion() -> None:
+    docs = "\n".join(
+        [
+            Path("README.md").read_text(),
+            Path("docs/components.md").read_text(),
+            Path("docs/playbooks.md").read_text(),
+            Path("docs/vectorbt-scaffold.md").read_text(),
+        ]
+    )
+
+    assert "complete composed strategy candidates" in docs
+    assert "Indicator playbook candidates become rankable only when a batched strategy playbook consumes" in docs
+    assert "batched_playbook_result.v1" in docs
+    assert "candidate_grid.batch_size" in docs
+    assert "chunks" in docs
+    assert "metric_source" in docs
+    assert "manual promotion" in docs
+    assert "best indicator" not in docs
+
+
 def test_component_and_playbook_placeholders_point_to_examples() -> None:
     paths = [
         "research/components/labels/README.md",

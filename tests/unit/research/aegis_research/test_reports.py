@@ -15,8 +15,12 @@ from research.aegis_research.config import (
     ReportConfig,
     SignalConfig,
 )
-from research.aegis_research.portfolios import simulate_portfolio
-from research.aegis_research.reports import build_survival_report, portfolio_metrics
+from research.aegis_research.portfolios import simulate_portfolio, simulate_portfolio_batch
+from research.aegis_research.reports import (
+    build_survival_report,
+    portfolio_metrics,
+    portfolio_metrics_by_candidate_group,
+)
 
 
 def test_portfolio_metrics_use_shared_cash_group_scope() -> None:
@@ -84,6 +88,79 @@ def test_portfolio_metrics_fail_fast_without_single_shared_cash_group() -> None:
 
     with pytest.raises(ValueError, match="exactly one group"):
         portfolio_metrics(pf, ReportConfig())
+
+
+def test_portfolio_metrics_by_candidate_group_preserves_candidate_scope() -> None:
+    index = pd.date_range("2024-01-01", periods=5)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0, 14.0], "B": [20.0, 21.0, 22.0, 23.0, 24.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["candidate-a", "candidate-b"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    entries = pd.DataFrame(False, index=index, columns=columns)
+    entries.loc[index[0], :] = True
+    exits = pd.DataFrame(False, index=index, columns=columns)
+    simulation = simulate_portfolio_batch(
+        close,
+        entries,
+        exits,
+        PortfolioConfig(entry_budget=0.6, fees=0, slippage=0),
+        SignalConfig(execution_timing="same_close"),
+    )
+
+    metrics = portfolio_metrics_by_candidate_group(
+        simulation.portfolio,
+        ReportConfig(freq="1D", year_freq="252D"),
+        ["candidate-a", "candidate-b"],
+    )
+
+    assert set(metrics) == {"candidate-a", "candidate-b"}
+    assert metrics["candidate-a"]["total_return_pct"] == pytest.approx(18.0)
+    assert metrics["candidate-b"]["total_return_pct"] == pytest.approx(18.0)
+    assert metrics["candidate-a"]["per_symbol"]["total_return_pct"] == {
+        "A": pytest.approx(12.0),
+        "B": pytest.approx(6.0),
+    }
+    assert metrics["candidate-a"]["metric_assumptions"]["scope_detail"] == (
+        "one shared cash group across symbols for each candidate"
+    )
+    assert set(metrics["candidate-a"]["optional_diagnostics"]) == {
+        "probabilistic_sharpe_ratio",
+        "deflated_sharpe_ratio",
+    }
+
+
+def test_portfolio_metrics_by_candidate_group_handles_single_candidate_batch() -> None:
+    index = pd.date_range("2024-01-01", periods=5)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0, 14.0], "B": [20.0, 21.0, 22.0, 23.0, 24.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["candidate-a"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    entries = pd.DataFrame(False, index=index, columns=columns)
+    entries.loc[index[0], :] = True
+    exits = pd.DataFrame(False, index=index, columns=columns)
+    simulation = simulate_portfolio_batch(
+        close,
+        entries,
+        exits,
+        PortfolioConfig(entry_budget=0.6, fees=0, slippage=0),
+        SignalConfig(execution_timing="same_close"),
+    )
+
+    metrics = portfolio_metrics_by_candidate_group(
+        simulation.portfolio,
+        ReportConfig(freq="1D", year_freq="252D"),
+        ["candidate-a"],
+    )
+
+    assert metrics["candidate-a"]["total_return_pct"] == pytest.approx(18.0)
 
 
 def test_portfolio_metrics_records_warning_and_non_finite_evidence() -> None:
