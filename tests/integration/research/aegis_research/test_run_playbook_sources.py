@@ -223,6 +223,30 @@ def test_run_cli_rejects_indicator_playbook_metrics(
     assert manifest["run"]["status"] == RunStatus.FAILED
 
 
+def test_run_cli_rejects_batched_playbook_contract_on_record_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
+    )
+    _write_batched_indicator_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py"
+    )
+    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-rejected"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    manifest = json.loads((tmp_path / "runs" / "batched-rejected" / "manifest.json").read_text())
+    assert payload["error"]["category"] == "execution_failure"
+    assert "batched contract" in payload["error"]["message"]
+    assert manifest["run"]["status"] == RunStatus.FAILED
+
+
 def test_run_cli_rejects_indicator_playbook_signal_or_portfolio_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -752,6 +776,45 @@ def _write_playbook(
         "PLAYBOOK_CALLABLE = 'run'\n"
         "\n"
         "# %% main compute\n" + body
+    )
+
+
+def _write_batched_indicator_playbook(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "family": "indicators",
+        "id": "ma_explore",
+        "version": "1.0.0",
+        "stages": ["indicators"],
+        "accepted_inputs": ["Close"],
+        "result_schema": "batched_playbook_result.v1",
+        "indicator_family": "ma",
+    }
+    path.write_text(
+        "# %% playbook overview\n"
+        "# Batched contract fixture for record-runner rejection.\n"
+        "# Source: synthetic Close data supplied by run config.\n"
+        "\n"
+        "# %% define playbook metadata\n"
+        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
+        "PLAYBOOK_CALLABLE = 'run'\n"
+        "\n"
+        "# %% main compute\n"
+        "import pandas as pd\n"
+        "\n"
+        "def run(data):\n"
+        '    """Return a forward batched indicator contract."""\n'
+        "    close = data.feature('Close')\n"
+        "    columns = pd.MultiIndex.from_product(\n"
+        "        [['ma-2'], list(close.columns)], names=['candidate_id', 'symbol']\n"
+        "    )\n"
+        "    ma = pd.DataFrame(1.0, index=close.index, columns=columns)\n"
+        "    return {\n"
+        "        'contract': 'aegis.batched_playbook.v1',\n"
+        "        'kind': 'indicator_surface',\n"
+        "        'candidate_axis': [{'candidate_id': 'ma-2', 'params': {}}],\n"
+        "        'outputs': {'ma': ma},\n"
+        "    }\n"
     )
 
 

@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from research.aegis_research.batched_candidates import reject_batched_result_in_record_runner
 from research.aegis_research.component_registry import (
     ComponentSelection,
     FrozenComponentRegistry,
@@ -393,6 +394,7 @@ def _resolve_indicator_refs(
             seen_playbook_ids.add(playbook_id)
             definition = playbook_registry.get(PlaybookSelection("indicators", playbook_id))
             result = definition.load_callable()(data)
+            reject_batched_result_in_record_runner(result, source_id=definition.id)
             _reject_playbook_metric_records(result, source_id=definition.id)
             source_evidence = {
                 "source": "playbook",
@@ -787,6 +789,7 @@ def _score_strategy_playbook_candidates(
     context: IndicatorContext,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     _assert_strategy_consumed_indicator_context(inputs, strategy_id=source_id)
+    reject_batched_result_in_record_runner(result, source_id=source_id)
     candidates = _strategy_playbook_candidate_records(result, source_id=source_id)
     records: list[dict[str, Any]] = []
     signal_diagnostics = _empty_signal_diagnostics()
