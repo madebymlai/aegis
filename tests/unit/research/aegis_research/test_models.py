@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from research.aegis_research.config import ModelConfig
+from research.aegis_research.config import TrainModelConfig
 from research.aegis_research.model_contracts import ModelPredictionResult
 from research.aegis_research.models import (
     TargetModelCompatibilityError,
@@ -149,9 +149,7 @@ def test_valid_binary_target_reaches_training() -> None:
 
 
 def test_probability_series_must_name_positive_class_output() -> None:
-    index = pd.MultiIndex.from_product(
-        [pd.RangeIndex(2), ["SYN"]], names=[None, "symbol"]
-    )
+    index = pd.MultiIndex.from_product([pd.RangeIndex(2), ["SYN"]], names=[None, "symbol"])
     result = ModelPredictionResult(
         probabilities=pd.Series([0.8, 0.7], index=index, name="class_0_probability"),
         observed_classes=(0, 1),
@@ -166,8 +164,14 @@ def _labels(values, *, index=None) -> pd.DataFrame:
     return pd.DataFrame({"SYN": values}, index=index)
 
 
-def _model_config(min_train_samples: int = 1) -> ModelConfig:
-    return ModelConfig(**model_config_dict(min_train_samples=min_train_samples))
+def _model_config(min_train_samples: int = 1) -> TrainModelConfig:
+    raw = model_config_dict(min_train_samples=min_train_samples)
+    return TrainModelConfig(
+        source="plugin",
+        id=raw["plugin_id"],
+        min_train_samples=raw["min_train_samples"],
+        params=raw["params"],
+    )
 
 
 def _target_schema(

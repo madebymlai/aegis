@@ -41,6 +41,7 @@ class RunStore:
         if mode == RerunMode.OVERWRITE and supersedes_run_id is None:
             raise ValueError("overwrite mode requires supersedes_run_id")
 
+        _assert_relative_run_root_safe(self.root_dir)
         physical_run_id = _validate_run_id(run_id or _new_run_id(run_label))
         run_dir = self.root_dir / physical_run_id
         _assert_run_dir_within_root(self.root_dir, run_dir)
@@ -81,3 +82,17 @@ def _assert_run_dir_within_root(root_dir: Path, run_dir: Path) -> None:
     target = run_dir.resolve(strict=False)
     if root not in target.parents:
         raise ValueError("run_id must resolve inside the run root")
+
+
+def _assert_relative_run_root_safe(root_dir: Path) -> None:
+    if root_dir.is_absolute():
+        return
+    current = Path.cwd()
+    for part in root_dir.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("run root must not contain symlinked path components")
+    project_root = Path.cwd().resolve(strict=False)
+    resolved_root = (Path.cwd() / root_dir).resolve(strict=False)
+    if resolved_root != project_root and project_root not in resolved_root.parents:
+        raise ValueError("run root must resolve inside the project root")

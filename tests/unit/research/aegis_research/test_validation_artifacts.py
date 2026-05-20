@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from research.aegis_research.config import load_experiment_config
 from research.aegis_research.data import (
     close_from_ohlcv,
     feature_from_ohlcv,
@@ -11,8 +10,8 @@ from research.aegis_research.data import (
     load_market_data,
     low_from_ohlcv,
 )
-from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
-from research.aegis_research.labels import build_label_result
+from research.aegis_research.indicators import build_model_feature_matrix
+from research.aegis_research.labels import LabelConfig, build_label_result
 from research.aegis_research.models import target_model_compatibility
 from research.aegis_research.splits import build_validation_splits_result
 from research.aegis_research.validation import (
@@ -22,7 +21,9 @@ from research.aegis_research.validation import (
 )
 from tests.support.research.aegis_research.experiment_config_fixtures import (
     SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+    load_train_fixture_config,
 )
+from tests.support.research.aegis_research.indicator_result_fixtures import native_indicator_result
 from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
@@ -142,20 +143,19 @@ def test_validation_requires_open_prices_for_default_next_open() -> None:
 
 def _evaluate(config_path: str, *, pass_open_prices: bool = True):
     registry = make_model_registry()
-    resolved = load_experiment_config(config_path, model_registry=registry)
+    resolved = load_train_fixture_config(config_path, model_registry=registry)
     config = resolved.config
     data = load_market_data(config.data)
     close = close_from_ohlcv(data)
     open_prices = feature_from_ohlcv(data, "Open") if pass_open_prices else None
     high = high_from_ohlcv(data)
     low = low_from_ohlcv(data)
-    indicator_result = build_indicator_result(close, config.indicators)
-    label_result = build_label_result(close, config.labels, high=high, low=low)
+    indicator_result = native_indicator_result(close)
+    label_result = build_label_result(close, LabelConfig(), high=high, low=low)
     labels = label_result.labels
     model_features = build_model_feature_matrix(
         indicator_result,
         labels,
-        invalid_value_policy=config.indicators.invalid_value_policy,
     )
     splits_result = build_validation_splits_result(
         model_features.eligible_index,

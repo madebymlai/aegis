@@ -120,9 +120,10 @@ Long-only portfolio simulation is easier to review when active VBT settings are 
 Removed fields should fail as unknown fields:
 
 ```yaml
-signals:
-  long_threshold: 0.60
-  exit_threshold: 0.40
+train:
+  signals:
+    long_threshold: 0.60
+    exit_threshold: 0.40
 ```
 
 Representative tests keep this behavior explicit:
@@ -137,11 +138,12 @@ test_purged_fixlb_runs_with_close_only_csv
 `same_close` remains valid only as an explicit timing override:
 
 ```yaml
-signals:
-  policy: long_only_hysteresis
-  long_entry_threshold: 0.55
-  long_exit_threshold: 0.50
-  execution_timing: same_close
+train:
+  signals:
+    policy: long_only_hysteresis
+    long_entry_threshold: 0.55
+    long_exit_threshold: 0.50
+    execution_timing: same_close
 ```
 
 Default `next_open` requires Open and records non-executable signals when no adjacent in-split execution row exists:

@@ -5,21 +5,28 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.component_registry import ComponentSelection, FrozenComponentRegistry
 from research.aegis_research.config import (
     ConfigValidationError,
     ConfigValidationIssue,
-    ExperimentConfig,
-    ResolvedExperimentConfig,
+    ResolvedLaneConfig,
+    TrainLaneConfig,
     known_config_secret_values,
     redact_text,
-    resolve_experiment_config,
+    resolve_lane_config,
 )
 from research.aegis_research.data import (
     load_market_data_result,
+    market_data_bundle,
     required_experiment_ohlcv_features,
 )
-from research.aegis_research.indicators import build_indicator_result, build_model_feature_matrix
-from research.aegis_research.labels import build_label_result
+from research.aegis_research.data_arrays import (
+    DataArrayContract,
+    build_data_array_contract,
+    merge_data_arrays,
+    with_data_array_contract_metadata,
+)
+from research.aegis_research.indicators import build_model_feature_matrix
 from research.aegis_research.model_registry import FrozenModelRegistry, ModelRegistry
 from research.aegis_research.models import (
     assert_target_model_compatible,
@@ -38,27 +45,35 @@ from research.aegis_research.validation import evaluate_validation_splits
 
 
 def run_experiment(
-    config: ResolvedExperimentConfig | ExperimentConfig | dict[str, Any],
+    config: ResolvedLaneConfig | TrainLaneConfig | dict[str, Any],
     *,
     model_registry: ModelRegistry | FrozenModelRegistry | None = None,
+    label_result_builder: Callable[..., Any] | None = None,
+    indicator_result_builder: Callable[..., Any] | None = None,
     rerun_mode: str = RerunMode.NEW,
     run_id: str | None = None,
     parent_run_id: str | None = None,
     supersedes_run_id: str | None = None,
     on_run_started: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, object]:
-    resolved_config = resolve_experiment_config(config, model_registry=model_registry)
+    resolved_config = resolve_lane_config(
+        config,
+        model_registry=model_registry,
+        expected_lane="train",
+    )
     if resolved_config.model_registry is None:
         raise ConfigValidationError(
             [
                 ConfigValidationIssue(
-                    "model.plugin_id", "registered model plugin registry is required"
+                    "train.model.id", "registered model plugin registry is required"
                 )
             ]
         )
     config = resolved_config.config
+    array_contract = _train_data_array_contract(config, resolved_config.component_registry)
     known_secrets = known_config_secret_values(resolved_config.authored_config)
     run_start_evidence = capture_run_start_evidence(resolved_config, repo_path=Path.cwd())
+    run_start_evidence["data_arrays"] = array_contract.metadata()
     recorder = RunStore(config.output_dir).start_run(
         run_label=config.name,
         config=run_start_evidence["config"],
@@ -78,19 +93,26 @@ def run_experiment(
         artifacts = ExperimentArtifactWriter(recorder)
         artifacts.write_config_artifacts(resolved_config)
 
-        required_features = required_experiment_ohlcv_features(config.labels, config.signals)
+        array_contract.assert_configured()
+        required_features = array_contract.required_arrays
         data_result = load_market_data_result(
             config.data,
             required_features=required_features,
         )
+        data_result = with_data_array_contract_metadata(data_result, array_contract)
         artifacts.write_data_metadata_artifact(data_result)
         data_result.assert_usable()
         artifacts.write_data_native_artifact(data_result)
-        close = data_result.feature("Close")
-        open_prices = data_result.feature("Open") if "Open" in required_features else None
-        high = data_result.feature("High") if "High" in required_features else None
-        low = data_result.feature("Low") if "Low" in required_features else None
-        label_result = build_label_result(close, config.labels, high=high, low=low)
+        data_bundle = market_data_bundle(data_result)
+        close_prices = data_bundle.feature("Close")
+        execution_open_prices = (
+            data_bundle.feature("Open")
+            if "Open" in array_contract.pipeline_required_arrays
+            else None
+        )
+        if label_result_builder is None:
+            _raise_missing_label_result_builder()
+        label_result = label_result_builder(data_bundle)
         artifacts.write_label_artifacts(
             label_result,
             max_public_artifact_bytes=config.split.max_public_artifact_bytes,
@@ -107,12 +129,13 @@ def run_experiment(
             artifacts.write_label_compatibility_artifact(pre_split_compatibility)
             assert_target_model_compatible(pre_split_compatibility)
 
-        indicator_result = build_indicator_result(close, config.indicators)
+        if indicator_result_builder is None:
+            _raise_missing_indicator_result_builder()
+        indicator_result = indicator_result_builder(data_bundle)
         try:
             model_features = build_model_feature_matrix(
                 indicator_result,
                 labels,
-                invalid_value_policy=config.indicators.invalid_value_policy,
             )
         except Exception as error:
             artifacts.write_label_compatibility_artifact(
@@ -146,12 +169,12 @@ def run_experiment(
             split_metric_ids.extend(artifacts.write_split_artifacts(split_result))
 
         validation = evaluate_validation_splits(
-            close,
+            close_prices,
             indicators,
             labels,
             splits_result.splits,
             config,
-            open_prices=open_prices,
+            open_prices=execution_open_prices,
             target_schema=label_result.target_schema,
             split_metadata=splits_result.metadata,
             compatibility=compatibility,
@@ -200,6 +223,38 @@ def _run_refs(recorder) -> dict[str, Any]:
     }
 
 
+def _train_data_array_contract(
+    config: TrainLaneConfig,
+    component_registry: FrozenComponentRegistry | None,
+) -> DataArrayContract:
+    return build_data_array_contract(
+        configured_arrays=config.data.effective_arrays,
+        component_required_arrays=_train_component_required_arrays(config, component_registry),
+        pipeline_required_arrays=required_experiment_ohlcv_features(None, config.signals),
+    )
+
+
+def _train_component_required_arrays(
+    config: TrainLaneConfig,
+    component_registry: FrozenComponentRegistry | None,
+) -> tuple[str, ...]:
+    if component_registry is None:
+        return ()
+    required: list[tuple[str, ...]] = []
+    if config.label.source == "component":
+        required.append(
+            component_registry.get(ComponentSelection("labels", config.label.id)).input_names
+        )
+    for ref in config.indicators:
+        if ref.source != "component":
+            continue
+        for component_id in ref.expanded_ids(component_registry.ids("indicators")):
+            required.append(
+                component_registry.get(ComponentSelection("indicators", component_id)).input_names
+            )
+    return merge_data_arrays(*required)
+
+
 def _redacted_diagnostic(error: Exception, known_secrets: tuple[str, ...]) -> dict[str, str]:
     message = _redact_nonportable_paths(redact_text(str(error), known_secrets))
     return {
@@ -232,6 +287,28 @@ def _pre_split_compatibility_failure(
         "splits": [],
         "failure_reason": str(error),
     }
+
+
+def _raise_missing_label_result_builder() -> None:
+    raise ConfigValidationError(
+        [
+            ConfigValidationIssue(
+                "train.label",
+                "component label source refs are required; use aerd run --train or pass a label_result_builder",
+            )
+        ]
+    )
+
+
+def _raise_missing_indicator_result_builder() -> None:
+    raise ConfigValidationError(
+        [
+            ConfigValidationIssue(
+                "indicators",
+                "component indicator source refs are required; use aerd run --train or pass an indicator_result_builder",
+            )
+        ]
+    )
 
 
 def _redact_nonportable_paths(value: str) -> str:

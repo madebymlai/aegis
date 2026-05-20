@@ -96,33 +96,30 @@ def test_sklearn_model_plugin_notebook_executes() -> None:
     _execute_notebook(str(notebook_path), notebook_path.parent)
 
 
-def test_experiment_config_directory_is_generic_readme_pointer() -> None:
-    readme = Path("research/configs/experiments/README.md").read_text()
+def test_config_directory_is_generic_readme_pointer() -> None:
+    readme = Path("research/configs/README.md").read_text()
     gitignore = Path(".gitignore").read_text()
 
-    assert "docs/examples/scaffold_experiment_walkthrough.ipynb" in readme
-    assert "scaffold evidence only" in readme
-    assert "not validated trading methodology" in readme
-    assert "empirical edge" in readme
-    assert "investment advice" in readme
+    assert "aerd run <config>" in readme
+    assert "aerd run --train <config>" in readme
     assert "API keys" in readme
     assert "environment-backed secret references" in readme
     assert "git add -f" not in readme
     assert "etf_cspx_dtla_sgln_yfinance_ml" not in readme
-    assert "research/configs/experiments/*" in gitignore
-    assert "!research/configs/experiments/README.md" in gitignore
+    assert "research/configs/*" in gitignore
+    assert "!research/configs/README.md" in gitignore
     for old_path in OLD_SYNTHETIC_CONFIG_PATHS:
         _assert_not_tracked(old_path)
 
 
-def test_experiment_config_directory_ignore_rules_keep_only_readme_trackable() -> None:
+def test_config_directory_ignore_rules_keep_only_readme_trackable() -> None:
     ignored_yaml = subprocess.run(
         [
             "git",
             "check-ignore",
             "--no-index",
             "--quiet",
-            "research/configs/experiments/example.yaml",
+            "research/configs/example.yaml",
         ],
         check=False,
     )
@@ -132,20 +129,15 @@ def test_experiment_config_directory_ignore_rules_keep_only_readme_trackable() -
             "check-ignore",
             "--no-index",
             "--quiet",
-            "research/configs/experiments/README.md",
+            "research/configs/README.md",
         ],
         check=False,
     )
-    tracked_files = subprocess.run(
-        ["git", "ls-files", "research/configs/experiments"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
     assert ignored_yaml.returncode == 0
     assert ignored_readme.returncode == 1
-    assert tracked_files.stdout.splitlines() == ["research/configs/experiments/README.md"]
+    assert Path("research/configs/README.md").is_file()
+    assert not Path("research/configs/runs/README.md").exists()
+    assert not Path("research/configs/train/README.md").exists()
 
 
 def test_active_docs_do_not_reference_old_synthetic_experiment_configs() -> None:

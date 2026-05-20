@@ -7,15 +7,15 @@ import pandas as pd
 from research.aegis_research import experiments
 from research.aegis_research.config import (
     DataConfig,
-    IndicatorConfig,
-    LabelConfig,
     SplitConfig,
 )
 from research.aegis_research.data import close_from_ohlcv, load_market_data_result
 from research.aegis_research.data_schema import ohlc_availability
-from research.aegis_research.indicators import build_indicator_result
-from research.aegis_research.labels import build_label_result
+from research.aegis_research.labels import LabelConfig, build_label_result
 from research.aegis_research.splits import build_validation_splits_result
+from tests.support.research.aegis_research.indicator_result_fixtures import (
+    native_indicator_result,
+)
 
 
 def test_experiments_no_longer_imports_private_label_primary_close() -> None:
@@ -54,7 +54,7 @@ def test_indicator_and_label_results_expose_portable_metadata() -> None:
     data = load_market_data_result(DataConfig(rows=120, symbols=["SYN"])).native_data
     close = close_from_ohlcv(data)
 
-    indicators = build_indicator_result(close, IndicatorConfig())
+    indicators = native_indicator_result(close)
     labels = build_label_result(close, LabelConfig())
 
     assert indicators.frame.shape[0] == 120

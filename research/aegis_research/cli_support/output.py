@@ -127,7 +127,10 @@ def run_success_payload(
 def report_summary(report: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not report:
         return None
-    reasons = [safe_message(str(reason), max_chars=MAX_REASON_CHARS) for reason in report.get("reasons", [])]
+    reasons = [
+        safe_message(str(reason), max_chars=MAX_REASON_CHARS)
+        for reason in report.get("reasons", [])
+    ]
     gate_outcomes = report.get("gate_outcomes", [])
     return {
         "status": report.get("status"),
@@ -154,7 +157,9 @@ def safe_path(value: Any) -> str | None:
     path_text = str(value)
     path = Path(path_text)
     was_relative = not path.is_absolute()
-    resolved = (Path.cwd() / path).resolve(strict=False) if was_relative else path.resolve(strict=False)
+    resolved = (
+        (Path.cwd() / path).resolve(strict=False) if was_relative else path.resolve(strict=False)
+    )
     cwd = Path.cwd().resolve(strict=False)
     try:
         return resolved.relative_to(cwd).as_posix()

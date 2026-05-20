@@ -95,7 +95,9 @@ def _purged_kfold_splits_result(
         max_public_artifact_bytes=config.max_public_artifact_bytes,
     )
     if resource_estimate["estimated_output_cells"] > config.max_estimated_output_cells:
-        raise ValueError("purged_kfold estimated output cells exceed split.max_estimated_output_cells")
+        raise ValueError(
+            "purged_kfold estimated output cells exceed split.max_estimated_output_cells"
+        )
 
     leakage_invariant = _assert_no_interval_leakage(
         splits,
@@ -219,7 +221,9 @@ def _validate_prediction_evaluation_times(
     if not pred_times.is_monotonic_increasing:
         raise ValueError("purged_kfold samples must be ordered by prediction time")
     if (eval_times < pred_times).any():
-        raise ValueError("purged_kfold evaluation times must be greater than or equal to prediction times")
+        raise ValueError(
+            "purged_kfold evaluation times must be greater than or equal to prediction times"
+        )
 
 
 def _assert_no_interval_leakage(

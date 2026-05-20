@@ -11,6 +11,10 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.provenance.manifest import RunStatus
+from tests.support.research.aegis_research.component_fixtures import (
+    write_indicator_component,
+    write_label_component,
+)
 from tests.support.research.aegis_research.model_plugin_fixtures import model_config_dict
 
 
@@ -20,7 +24,9 @@ def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
     output = capsys.readouterr()
     assert "usage: aerd" in output.out
     assert "run" in output.out
-    assert "exp" in output.out
+    assert "play" not in output.out
+    assert "train" not in output.out
+    assert "exp" not in output.out
 
 
 def test_package_metadata_exposes_aerd_script() -> None:
@@ -45,7 +51,7 @@ def test_json_invocation_error_is_structured(
     assert payload["error"]["category"] == "invocation"
 
 
-def test_run_json_executes_valid_config_and_rejected_verdict_exits_zero(
+def test_train_json_executes_valid_config_and_rejected_verdict_exits_zero(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -53,12 +59,13 @@ def test_run_json_executes_valid_config_and_rejected_verdict_exits_zero(
     monkeypatch.chdir(tmp_path)
     config_path = _write_config(tmp_path, report={"min_oos_sharpe": 999.0})
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "cli-json-run"]) == 0
+    assert cli.main(["run", "--train", str(config_path), "--json", "--run-id", "cli-json-run"]) == 0
 
     output = capsys.readouterr()
     assert output.err == ""
     payload = json.loads(output.out)
     assert payload["status"] == "success"
+    assert payload["lane"] == "train"
     assert payload["selection"]["source"] == "explicit"
     assert payload["run"]["id"] == "cli-json-run"
     assert payload["run"]["status"] == RunStatus.COMPLETED
@@ -75,7 +82,7 @@ def test_json_post_manifest_failure_includes_safe_run_refs(
     config_path = _write_config(
         tmp_path,
         data={
-            "source": "yfinance",
+            "source": "yf",
             "symbols": ["SYN"],
             "start": "2020-01-01",
             "end": "2021-01-01",
@@ -93,7 +100,9 @@ def test_json_post_manifest_failure_includes_safe_run_refs(
         fail_after_manifest,
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "post-manifest"]) == 10
+    assert (
+        cli.main(["run", "--train", str(config_path), "--json", "--run-id", "post-manifest"]) == 10
+    )
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -122,7 +131,7 @@ def test_top_level_keyboard_interrupt_json_is_structured(
     assert payload["error"]["category"] == "interrupted"
 
 
-def test_run_keyboard_interrupt_json_preserves_run_refs(
+def test_train_keyboard_interrupt_json_preserves_run_refs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -141,9 +150,12 @@ def test_run_keyboard_interrupt_json_preserves_run_refs(
         )
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("research.aegis_research.cli_commands.run.run_experiment", interrupt_run)
+    monkeypatch.setattr("research.aegis_research.cli_commands.run.run_training", interrupt_run)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "interrupted-run"]) == 130
+    assert (
+        cli.main(["run", "--train", str(config_path), "--json", "--run-id", "interrupted-run"])
+        == 130
+    )
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -152,7 +164,7 @@ def test_run_keyboard_interrupt_json_preserves_run_refs(
     assert payload["run"]["id"] == "interrupted-run"
 
 
-def test_run_records_explicit_config_selection_in_manifest(
+def test_train_records_explicit_config_selection_in_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -160,7 +172,9 @@ def test_run_records_explicit_config_selection_in_manifest(
     monkeypatch.chdir(tmp_path)
     config_path = _write_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "selection-run"]) == 0
+    assert (
+        cli.main(["run", "--train", str(config_path), "--json", "--run-id", "selection-run"]) == 0
+    )
 
     capsys.readouterr()
     manifest = json.loads((tmp_path / "runs" / "selection-run" / "manifest.json").read_text())
@@ -175,10 +189,13 @@ def test_output_helper_normalizes_nonstandard_json_numbers(
 ) -> None:
     from research.aegis_research.cli_support.output import CommandResult, write_success
 
-    assert write_success(
-        CommandResult(command="test", payload={"value": float("nan")}),
-        json_mode=True,
-    ) == 0
+    assert (
+        write_success(
+            CommandResult(command="test", payload={"value": float("nan")}),
+            json_mode=True,
+        )
+        == 0
+    )
 
     assert json.loads(capsys.readouterr().out)["value"] is None
 
@@ -198,14 +215,32 @@ def test_safe_path_hides_relative_paths_that_escape_cwd(
 
 
 def _write_config(tmp_path: Path, **overrides: Any) -> Path:
+    write_label_component(tmp_path / "research/components/labels/fixlb.py")
+    write_indicator_component(tmp_path / "research/components/indicators/returns.py")
+    model = model_config_dict(min_train_samples=1)
     config: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "cli_contract",
         "output_dir": "runs",
-        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "timeframe": "1D"},
-        "model": model_config_dict(min_train_samples=1),
+        "data": {
+            "source": "synthetic",
+            "symbols": ["SYN"],
+            "rows": 120,
+            "timeframe": "1D",
+            "arrays": ["OHLCV"],
+        },
         "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
+        "indicators": [{"source": "component", "ids": ["demo.returns"]}],
+        "train": {
+            "label": {"source": "component", "id": "demo.fixlb"},
+            "model": {
+                "source": "plugin",
+                "id": model["plugin_id"],
+                "min_train_samples": model["min_train_samples"],
+                "params": model["params"],
+            },
+        },
     }
     for key, value in overrides.items():
         if isinstance(value, dict) and isinstance(config.get(key), dict):

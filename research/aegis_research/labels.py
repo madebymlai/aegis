@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.config import LabelConfig, to_builtin
+from research.aegis_research.configuration.secrets import to_builtin
 from research.aegis_research.data_schema import table_shape
 
 LABEL_TARGET_SCHEMA_VERSION = "label_target.v1"
@@ -19,6 +19,42 @@ TRENDLB_MODE_NATIVE_VALUES = {
     "pct_change": "pctchange",
     "pct_change_norm": "pctchangenorm",
 }
+
+
+@dataclass(frozen=True)
+class LabelGeneratorConfig:
+    kind: str = "fixlb"
+    params: dict[str, Any] = field(default_factory=lambda: {"n": 5})
+
+
+@dataclass(frozen=True)
+class LabelTargetSelectionConfig:
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LabelTargetTransformConfig:
+    name: str = "threshold_future_return"
+    version: int = 1
+    params: dict[str, Any] = field(default_factory=lambda: {"threshold": 0.0})
+
+
+@dataclass(frozen=True)
+class LabelTargetConfig:
+    role: str = "supervised_target"
+    source_output: str = "labels"
+    select: LabelTargetSelectionConfig = field(default_factory=LabelTargetSelectionConfig)
+    transform: LabelTargetTransformConfig = field(default_factory=LabelTargetTransformConfig)
+
+
+@dataclass(frozen=True)
+class LabelConfig:
+    generator: LabelGeneratorConfig = field(default_factory=LabelGeneratorConfig)
+    target: LabelTargetConfig = field(default_factory=LabelTargetConfig)
+
+    @property
+    def kind(self) -> str:
+        return self.generator.kind
 
 
 @dataclass(frozen=True)

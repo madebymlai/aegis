@@ -1,5 +1,4 @@
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -7,33 +6,33 @@ import pytest
 
 from research.aegis_research.config import (
     REPORT_STATUSES,
-    DataConfig,
-    ExperimentConfig,
-    ModelConfig,
-    SignalConfig,
-    SplitConfig,
-    load_experiment_config,
-    resolve_experiment_config,
 )
 from research.aegis_research.experiments import run_experiment
 from tests.support.research.aegis_research.experiment_config_fixtures import (
     SYNTHETIC_ML_SCAFFOLD_CONFIG,
     SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+    load_train_fixture_config,
 )
-from tests.support.research.aegis_research.model_plugin_fixtures import (
-    make_model_registry,
-    model_config_dict,
+from tests.support.research.aegis_research.indicator_result_fixtures import (
+    native_indicator_result,
 )
+from tests.support.research.aegis_research.label_result_fixtures import native_label_result
+from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_synthetic_scaffold_fixture_experiment_runs(tmp_path: Path) -> None:
     registry = make_model_registry()
-    config = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
-    config = resolve_experiment_config(
-        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+    config = load_train_fixture_config(
+        SYNTHETIC_ML_SCAFFOLD_CONFIG,
+        model_registry=registry,
+        output_dir=str(tmp_path),
     )
 
-    result = run_experiment(config)
+    result = run_experiment(
+        config,
+        label_result_builder=native_label_result,
+        indicator_result_builder=native_indicator_result,
+    )
 
     run_dir = Path(result["run_dir"])
     assert (run_dir / "survival_report.json").exists()
@@ -58,15 +57,18 @@ def test_synthetic_scaffold_fixture_experiment_runs(tmp_path: Path) -> None:
 
 def test_synthetic_purged_fixlb_experiment_is_decision_grade(tmp_path: Path) -> None:
     registry = make_model_registry()
-    config = load_experiment_config(
+    config = load_train_fixture_config(
         SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
-    )
-    config = resolve_experiment_config(
-        replace(config.config, output_dir=str(tmp_path)), model_registry=registry
+        output_dir=str(tmp_path),
     )
 
-    result = run_experiment(config, run_id="purged-fixlb")
+    result = run_experiment(
+        config,
+        run_id="purged-fixlb",
+        label_result_builder=native_label_result,
+        indicator_result_builder=native_indicator_result,
+    )
 
     run_dir = Path(result["run_dir"])
     split_evidence = json.loads((run_dir / "splits" / "evidence.json").read_text())
@@ -92,19 +94,20 @@ def test_purged_public_evidence_enforces_actual_byte_cap_before_split_outputs(
     tmp_path: Path,
 ) -> None:
     registry = make_model_registry()
-    resolved = load_experiment_config(
+    config = load_train_fixture_config(
         SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
-    )
-    experiment = replace(
-        resolved.config,
         output_dir=str(tmp_path),
-        split=replace(resolved.config.split, max_public_artifact_bytes=100),
+        split={"max_public_artifact_bytes": 100},
     )
-    config = resolve_experiment_config(experiment, model_registry=registry)
 
     with pytest.raises(ValueError, match="label evaluation evidence"):
-        run_experiment(config, run_id="purged-byte-cap")
+        run_experiment(
+            config,
+            run_id="purged-byte-cap",
+            label_result_builder=native_label_result,
+            indicator_result_builder=native_indicator_result,
+        )
 
     run_dir = tmp_path / "purged-byte-cap"
     assert not (run_dir / "labels" / "evaluation_evidence.json").exists()
@@ -113,15 +116,18 @@ def test_purged_public_evidence_enforces_actual_byte_cap_before_split_outputs(
 
 def test_synthetic_purged_experiment_preserves_multi_asset_axis(tmp_path: Path) -> None:
     registry = make_model_registry()
-    config = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG, model_registry=registry)
-    experiment = replace(
-        config.config,
+    config = load_train_fixture_config(
+        SYNTHETIC_ML_SCAFFOLD_CONFIG,
+        model_registry=registry,
         output_dir=str(tmp_path),
-        data=replace(config.config.data, symbols=["AAA", "BBB"], rows=240),
+        data={"symbols": ["AAA", "BBB"], "rows": 240},
     )
-    config = resolve_experiment_config(experiment, model_registry=registry)
 
-    result = run_experiment(config)
+    result = run_experiment(
+        config,
+        label_result_builder=native_label_result,
+        indicator_result_builder=native_indicator_result,
+    )
 
     run_dir = Path(result["run_dir"])
     probabilities = (run_dir / "probabilities.csv").read_text()
@@ -139,18 +145,20 @@ def test_purged_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:
         {"Close": close_values},
         index=pd.date_range("2020-01-01", periods=260, freq="1D", tz="UTC"),
     ).to_csv(csv_path)
-    config = resolve_experiment_config(
-        ExperimentConfig(
-            name="close-only-fixlb",
-            output_dir=str(tmp_path / "runs"),
-            data=DataConfig(source="csv", path=str(csv_path), symbols=["SYN"]),
-            split=SplitConfig(kind="purged_kfold", n_folds=3, max_splits=3),
-            model=ModelConfig(**model_config_dict(min_train_samples=50)),
-            signals=SignalConfig(execution_timing="same_close"),
-        ),
+    config = load_train_fixture_config(
+        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=make_model_registry(),
+        output_dir=str(tmp_path / "runs"),
+        data={"source": "csv", "path": str(csv_path), "symbols": ["SYN"], "arrays": ["Close"]},
+        split={"n_folds": 3, "max_splits": 3},
+        signals={"execution_timing": "same_close"},
     )
 
-    result = run_experiment(config, run_id="close-only-run")
+    result = run_experiment(
+        config,
+        run_id="close-only-run",
+        label_result_builder=native_label_result,
+        indicator_result_builder=native_indicator_result,
+    )
 
     assert result["status"] == "completed"

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from research.aegis_research import model_export as model_export_module
-from research.aegis_research.config import load_experiment_config, resolve_experiment_config
 from research.aegis_research.experiments import run_experiment
 from research.aegis_research.model_export import (
     MODEL_EXPORT_BUNDLE_SCHEMA_VERSION,
@@ -18,7 +16,12 @@ from research.aegis_research.model_plugins import SKLEARN_LOGISTIC_PLUGIN_ID
 from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
 from tests.support.research.aegis_research.experiment_config_fixtures import (
     SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
+    load_train_fixture_config,
 )
+from tests.support.research.aegis_research.indicator_result_fixtures import (
+    native_indicator_result,
+)
+from tests.support.research.aegis_research.label_result_fixtures import native_label_result
 from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
@@ -131,19 +134,23 @@ def test_model_export_failure_does_not_leave_immutable_output_dir(
 
 def _run_experiment(tmp_path: Path) -> Path:
     registry = make_model_registry()
-    resolved = load_experiment_config(
+    resolved = load_train_fixture_config(
         SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
         model_registry=registry,
+        output_dir=str(tmp_path / "runs"),
     )
-    resolved = resolve_experiment_config(
-        replace(resolved.config, output_dir=str(tmp_path / "runs")),
-        model_registry=registry,
+    result = run_experiment(
+        resolved,
+        run_id="export-source-run",
+        label_result_builder=native_label_result,
+        indicator_result_builder=native_indicator_result,
     )
-    result = run_experiment(resolved, run_id="export-source-run")
     return Path(result["run_dir"])
 
 
-def _rewrite_json_artifact(path: Path, artifact: dict[str, object], payload: dict[str, object]) -> None:
+def _rewrite_json_artifact(
+    path: Path, artifact: dict[str, object], payload: dict[str, object]
+) -> None:
     atomic_write_json(path, payload)
     artifact["hash"] = hash_file(path)
     artifact["size"] = path.stat().st_size

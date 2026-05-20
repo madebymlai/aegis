@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from research.aegis_research.config import load_experiment_config
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.evidence import (
     capture_environment_evidence,
@@ -26,7 +25,9 @@ from research.aegis_research.provenance.manifest import (
 )
 from tests.support.research.aegis_research.experiment_config_fixtures import (
     SYNTHETIC_ML_SCAFFOLD_CONFIG,
+    load_train_fixture_config,
 )
+from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
@@ -323,7 +324,10 @@ def test_git_evidence_includes_staged_and_untracked_content_identity(tmp_path: P
 
 
 def test_run_start_evidence_uses_public_redacted_config_hashes() -> None:
-    config = load_experiment_config(SYNTHETIC_ML_SCAFFOLD_CONFIG)
+    config = load_train_fixture_config(
+        SYNTHETIC_ML_SCAFFOLD_CONFIG,
+        model_registry=make_model_registry(),
+    )
 
     evidence = capture_run_start_evidence(config, repo_path=Path.cwd())
 

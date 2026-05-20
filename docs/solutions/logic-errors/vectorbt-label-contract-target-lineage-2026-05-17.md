@@ -80,23 +80,21 @@ selected_native = _select_native_target(native_labels, close, config.kind, selec
 target = _derive_target(selected_native, config)
 ```
 
-The config contract separates generator params from target selection and target transforms:
+The component-owned label contract separates generator params from target selection and target transforms. Public train YAML selects the reviewed label component by id; these params are not authored inline in the lane config:
 
-```yaml
-labels:
-  generator:
-    kind: fixlb
-    params:
-      n: [1, 2]
-  target:
-    role: supervised_target
-    select:
-      params:
-        n: 2
-    transform:
-      name: threshold_future_return
-      params:
-        threshold: 0.0
+```python
+LabelConfig(
+    kind="fixlb",
+    params={"n": [1, 2]},
+    target=LabelTargetConfig(
+        role="supervised_target",
+        select=LabelTargetSelectionConfig(params={"n": 2}),
+        transform=LabelTargetTransformConfig(
+            name="threshold_future_return",
+            params={"threshold": 0.0},
+        ),
+    ),
+)
 ```
 
 Native labels can preserve every generated parameter coordinate, while the model path receives only the selected target. The target schema records the derivation:
@@ -184,7 +182,7 @@ pd.testing.assert_frame_equal(result.labels, expected_n_2_target)
 ```python
 diagnostics = target_model_compatibility(
     labels,
-    ModelConfig(min_train_samples=1),
+    TrainModelConfig(source="plugin", id="aegis.sklearn_logistic", min_train_samples=1),
     {"target_kind": "continuous", "target_role": "supervised_target"},
     phase="pre_split",
 )
@@ -194,7 +192,7 @@ assert diagnostics["compatible"] is False
 
 ```python
 with pytest.raises(ConfigValidationError, match="look-ahead labels require purged_kfold"):
-    resolve_experiment_config(config_with_holdout_fixlb)
+    resolve_lane_config(config_with_holdout_fixlb, expected_lane="train")
 ```
 
 ## Related Issues

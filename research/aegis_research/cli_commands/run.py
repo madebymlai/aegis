@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from research.aegis_research.cli_support.defaults import DefaultSelection, resolve_default
 from research.aegis_research.cli_support.errors import (
     ConfigCliError,
     ExecutionFailureError,
@@ -19,22 +19,43 @@ from research.aegis_research.cli_support.output import (
     safe_path,
     write_success,
 )
+from research.aegis_research.component_registry import (
+    ComponentRegistryError,
+    ComponentSelection,
+    FrozenComponentRegistry,
+    discover_component_registry,
+)
 from research.aegis_research.config import (
     ConfigSelectionEvidence,
     ConfigValidationError,
+    ResolvedLaneConfig,
     known_config_secret_values,
-    load_experiment_config,
+    load_lane_config,
     redact_text,
-    with_config_selection,
+    with_lane_config_selection,
 )
-from research.aegis_research.experiments import run_experiment
+from research.aegis_research.indicators import build_component_indicator_result
 from research.aegis_research.model_plugins import make_default_model_registry
+from research.aegis_research.model_registry import freeze_model_registry
+from research.aegis_research.playbook_registry import (
+    PlaybookRegistryError,
+    PlaybookSelection,
+    discover_playbook_registry,
+)
 from research.aegis_research.provenance.recorder import RerunMode
+from research.aegis_research.strategy_runs import run_strategy_sweep
+from research.aegis_research.training import run_training
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = subparsers.add_parser("run", help="Run an experiment config")
-    parser.add_argument("config", nargs="?", help="Path to experiment YAML")
+    parser = subparsers.add_parser("run", help="Run a config")
+    parser.add_argument("config", nargs="?", help="Path to run YAML")
+    parser.add_argument(
+        "-t",
+        "--train",
+        action="store_true",
+        help="Run the config's train section for ML training",
+    )
     parser.add_argument(
         "--json",
         action="store_true",
@@ -54,38 +75,69 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 
 def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> int:
-    registry = make_default_model_registry()
-    selection = _select_config(args.config)
-    run_refs: dict[str, Any] = {}
+    if args.config is None:
+        if args.train:
+            raise ConfigCliError("aerd run --train requires an explicit config")
+        raise ConfigCliError("aerd run requires an explicit config; use --train for ML training")
+    config_path = Path(args.config)
 
+    if args.train:
+        return _handle_train_run(args, config_path=config_path, json_mode=json_mode, **streams)
+
+    return _handle_strategy_run(args, config_path=config_path, json_mode=json_mode, **streams)
+
+
+def _handle_strategy_run(
+    args: argparse.Namespace,
+    *,
+    config_path: Path,
+    json_mode: bool,
+    **streams: Any,
+) -> int:
+    run_refs: dict[str, Any] = {}
     try:
-        resolved = load_experiment_config(selection.config_path, model_registry=registry)
-        resolved = with_config_selection(
-            resolved,
-            ConfigSelectionEvidence(
-                source=selection.source,
-                config_path=selection.display_path,
-            ),
-            source_path=selection.display_path,
+        if _looks_like_model_training_config(config_path):
+            raise ConfigCliError(
+                "model training configs are not accepted by default aerd run; use aerd run --train with a train section"
+            )
+        component_registry = discover_component_registry()
+        playbook_registry = discover_playbook_registry(component_registry=component_registry)
+        resolved = load_lane_config(
+            config_path,
+            component_registry=component_registry,
+            expected_lane="run",
         )
-    except ConfigValidationError as error:
+        resolved = with_lane_config_selection(
+            resolved,
+            ConfigSelectionEvidence(source="explicit", config_path=safe_path(config_path)),
+        )
+        _validate_run_playbook_refs(resolved.config, playbook_registry)
+    except (ConfigValidationError, ComponentRegistryError, PlaybookRegistryError) as error:
         raise ConfigCliError(str(error)) from error
     except (OSError, yaml.YAMLError) as error:
         raise ConfigCliError(str(error)) from error
 
     known_secrets = known_config_secret_values(resolved.authored_config)
     try:
-        result = run_experiment(
+        result = run_strategy_sweep(
             resolved,
+            component_registry=component_registry,
+            playbook_registry=playbook_registry,
             rerun_mode=args.rerun_mode,
             run_id=args.run_id,
             parent_run_id=args.parent_run_id,
             supersedes_run_id=args.supersedes_run_id,
             on_run_started=run_refs.update,
         )
+        run_refs.update(result)
     except KeyboardInterrupt as error:
         raise InterruptedCliError(
-            "experiment run interrupted",
+            "strategy run interrupted",
+            run_refs=_refreshed_run_refs(run_refs),
+        ) from error
+    except ConfigValidationError as error:
+        raise ConfigCliError(
+            redact_text(str(error), known_secrets),
             run_refs=_refreshed_run_refs(run_refs),
         ) from error
     except Exception as error:
@@ -97,7 +149,9 @@ def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> 
     return write_success(
         CommandResult(
             command="run",
-            payload=run_success_payload(result, selection=selection.summary()),
+            payload=_run_payload(
+                result, selection={"source": "explicit", "config_path": safe_path(config_path)}
+            ),
             human_lines=_human_run_lines(result),
         ),
         json_mode=json_mode,
@@ -105,26 +159,188 @@ def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> 
     )
 
 
-def _select_config(config: str | None) -> DefaultSelection:
-    if config is None:
-        return resolve_default()
-    path = Path(config)
-    return DefaultSelection(
-        config_path=path,
-        display_path=safe_path(path) or str(config),
-        source="explicit",
+def _handle_train_run(
+    args: argparse.Namespace,
+    *,
+    config_path: Path,
+    json_mode: bool,
+    **streams: Any,
+) -> int:
+    selection = {"source": "explicit", "config_path": safe_path(config_path) or str(config_path)}
+    run_refs: dict[str, Any] = {}
+    try:
+        component_registry = discover_component_registry()
+        model_registry = freeze_model_registry(make_default_model_registry())
+        resolved = load_lane_config(
+            config_path,
+            component_registry=component_registry,
+            model_registry=model_registry,
+            expected_lane="train",
+        )
+        resolved = with_lane_config_selection(
+            resolved,
+            ConfigSelectionEvidence(source="explicit", config_path=selection["config_path"]),
+        )
+        label_result_builder = _label_result_builder(resolved, component_registry)
+        indicator_result_builder = _indicator_result_builder(resolved, component_registry)
+    except (ConfigValidationError, ComponentRegistryError) as error:
+        raise ConfigCliError(str(error)) from error
+    except (OSError, yaml.YAMLError) as error:
+        raise ConfigCliError(str(error)) from error
+
+    known_secrets = known_config_secret_values(resolved.authored_config)
+    try:
+        result = run_training(
+            resolved,
+            label_result_builder=label_result_builder,
+            indicator_result_builder=indicator_result_builder,
+            rerun_mode=args.rerun_mode,
+            run_id=args.run_id,
+            parent_run_id=args.parent_run_id,
+            supersedes_run_id=args.supersedes_run_id,
+            on_run_started=run_refs.update,
+        )
+    except KeyboardInterrupt as error:
+        raise InterruptedCliError(
+            "training run interrupted",
+            run_refs=_refreshed_run_refs(run_refs),
+        ) from error
+    except ConfigValidationError as error:
+        raise ConfigCliError(
+            redact_text(str(error), known_secrets),
+            run_refs=_refreshed_run_refs(run_refs),
+        ) from error
+    except Exception as error:
+        raise ExecutionFailureError(
+            redact_text(str(error), known_secrets),
+            run_refs=_refreshed_run_refs(run_refs),
+        ) from error
+
+    payload = run_success_payload(result, selection=selection)
+    payload["mode"] = "train"
+    payload["lane"] = "train"
+    payload["evidence_type"] = "ml_training"
+    return write_success(
+        CommandResult(
+            command="run",
+            payload=payload,
+            human_lines=_human_train_lines(result),
+        ),
+        json_mode=json_mode,
+        **streams,
     )
 
 
+def _looks_like_model_training_config(path: Path) -> bool:
+    raw = yaml.safe_load(path.read_text())
+    if not isinstance(raw, dict):
+        return False
+    if "model" in raw or "labels" in raw or "split" in raw:
+        return True
+    return "train" in raw and not {"strategy", "ranking"}.intersection(raw)
+
+
+def _label_result_builder(
+    resolved: ResolvedLaneConfig,
+    component_registry: FrozenComponentRegistry,
+) -> Any:
+    config = resolved.config
+    definition = component_registry.get(ComponentSelection("labels", config.label.id))
+    label_callable = definition.load_callable()
+
+    def build(data: Any) -> Any:
+        result = label_callable(data)
+        metadata = dict(getattr(result, "metadata", {}))
+        metadata["source"] = {"kind": "component", "id": config.label.id}
+        return replace(result, metadata=metadata)
+
+    return build
+
+
+def _indicator_result_builder(
+    resolved: ResolvedLaneConfig,
+    component_registry: FrozenComponentRegistry,
+) -> Any:
+    config = resolved.config
+    refs = list(config.indicators)
+
+    def build(data: Any) -> Any:
+        return build_component_indicator_result(
+            data,
+            refs,
+            component_registry=component_registry,
+        )
+
+    return build
+
+
+def _validate_run_playbook_refs(config: Any, playbook_registry: Any) -> None:
+    if config.strategy.source == "playbook":
+        definition = playbook_registry.get(PlaybookSelection("strategies", config.strategy.id))
+        _require_playbook_stage(definition.manifest.stages, "strategies", config.strategy.id)
+    seen_playbook_ids: dict[str, str] = {}
+    for ref in config.indicators:
+        if ref.source != "playbook":
+            continue
+        playbook_ids = ref.expanded_ids(playbook_registry.ids("indicators"))
+        for playbook_id in playbook_ids:
+            definition = playbook_registry.get(PlaybookSelection("indicators", playbook_id))
+            _require_playbook_stage(definition.manifest.stages, "indicators", playbook_id)
+            previous = seen_playbook_ids.get(playbook_id)
+            if previous is not None:
+                raise PlaybookRegistryError(
+                    f"duplicate expanded playbook indicator id {playbook_id!r} from {previous}"
+                )
+            seen_playbook_ids[playbook_id] = str(ref.ids)
+
+
+def _require_playbook_stage(stages: tuple[str, ...], stage: str, playbook_id: str) -> None:
+    if stage not in stages:
+        raise PlaybookRegistryError(f"playbook {playbook_id!r} does not support {stage} runs")
+
+
+def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[str, Any]:
+    leaderboard = result.get("leaderboard", {})
+    return {
+        "lane": "run",
+        "mode": "strategy",
+        "evidence_type": "strategy_sweep",
+        "selection": selection,
+        "run": {
+            "id": result.get("run_id"),
+            "status": result.get("status"),
+            "run_dir": safe_path(result.get("run_dir")),
+            "manifest_path": safe_path(result.get("manifest_path")),
+            "started_at": result.get("started_at"),
+            "finished_at": result.get("finished_at"),
+        },
+        "artifacts": {"strategy_artifact_id": result.get("strategy_artifact_id")},
+        "leaderboard": {
+            "summary": leaderboard.get("summary"),
+            "top_rows": leaderboard.get("rows", [])[:10],
+        },
+    }
+
+
 def _human_run_lines(result: dict[str, Any]) -> tuple[str, ...]:
+    return (
+        f"Run: {safe_path(result.get('run_dir'))}",
+        "Mode: strategy",
+        "Evidence: strategy_sweep",
+        f"Status: {result.get('status')}",
+    )
+
+
+def _human_train_lines(result: dict[str, Any]) -> tuple[str, ...]:
     report = result.get("report", {})
-    lines = [f"Run: {safe_path(result.get('run_dir'))}", f"Status: {result.get('status')}"]
+    lines = [
+        f"Run: {safe_path(result.get('run_dir'))}",
+        "Mode: train",
+        "Evidence: ml_training",
+        f"Status: {result.get('status')}",
+    ]
     if isinstance(report, dict):
         lines.append(f"Verdict: {report.get('status')}")
-        reasons = report.get("reasons", [])
-        if reasons:
-            lines.append("Reason:")
-            lines.extend(f"- {reason}" for reason in reasons)
     return tuple(lines)
 
 

@@ -8,7 +8,7 @@ Aegis RD is a research operating system for turning market hypotheses into repro
 
 It gives every idea the same audit trail: source data, feature construction, labels, splits, model behavior, signal rules, execution assumptions, costs, reports, and the final decision about whether the idea survived. The result is a research process that can be rerun, inspected, rejected, or promoted without relying on memory, notebooks, or hand-waved assumptions.
 
-Each valid experiment run writes a local `manifest.json` that records lifecycle status, config evidence, environment and Git evidence, artifact hashes, schema versions, and lineage. Failed runs remain inspectable, and walk-forward validation keeps per-split artifacts separate from aggregate reports.
+Each valid run writes a local `manifest.json` that records lifecycle status, config evidence, environment and Git evidence, artifact hashes, schema versions, and lineage. Failed runs remain inspectable, and walk-forward validation keeps per-split artifacts separate from aggregate reports. Playbook-backed exploration and promoted-component sweeps both write source-labeled immutable run evidence.
 
 ## What It Does
 
@@ -23,15 +23,22 @@ Aegis RD gives each research loop a clear contract:
 - Simulate shared-cash portfolios with explicit entry budgets, costs, execution timing, direction, metric scope, and benchmark assumptions.
 - Produce reports that separate per-split evidence, aggregate summaries, survival gates, and uncertainty.
 
+## Research Command
+
+- `aerd run <config>` runs strategy/research evidence over explicit playbook or component strategy/indicator refs. Playbooks may sweep candidates; components are fixed-param promoted implementations. It does not train models.
+- `aerd run --train <config>` runs the ML training mode from the same config contract and preserves the existing split-local model, probability, signal, portfolio, and report artifacts.
+
+Configs stay inert across both modes: YAML selects trusted IDs and parameters only. It cannot import Python, execute formulas, point at arbitrary notebooks/scripts, or reference generated run artifacts as reproducible inputs. Train-specific settings live under `train:` and are required only when `--train` is passed.
+
 ## Market Data Contract
 
-Market data is loaded as native VectorBT `Data` for every supported source: `synthetic`, `csv`, `yfinance`, `binance`, and `ccxt`. Downstream stages consume explicit derived OHLCV panels where timestamps are rows and symbols are columns; single-symbol runs are still one-column panels, not squeezed Series.
+Market data is loaded as native VectorBT `Data` for every supported source: `synthetic`, `csv`, `yf`, `binance`, and `ccxt`. Run configs declare `data.arrays` as a list of exact VectorBT feature names, with `OHLCV` expanding to `Open`, `High`, `Low`, `Close`, and `Volume`. Beyond that shortcut, available arrays are source-specific VBT `Data.features`, not a global Aegis list. Downstream stages consume timestamp-by-symbol panels; single-symbol runs are still one-column panels, not squeezed Series.
 
 Each run writes public `data.metadata` with safe provider metadata, requested and observed symbols, canonical feature availability, per-symbol diagnostics, quality state, timezone and index evidence, and omitted metadata fields. Private `data.native` preserves VectorBT-native state after public metadata succeeds and remains secret-scanned and fail-closed.
 
 Default signal execution is `next_open`, so Open prices are required unless a config explicitly opts into `signals.execution_timing: same_close`. Portfolio configs must declare `portfolio.entry_budget`, which is split across executable same-bar entries in one shared cash pool. Shorting, `portfolio.direction: both`, equal-weight rebalancing, ranked allocation, and target-weight sizing are out of scope for the v1 signal contract.
 
-Non-standard OHLCV names use `data.feature_map`, with logical keys such as `close` and `volume` mapped to provider or CSV feature names. Market-data symbols are not normalized in schema v1: configs must use the market data provider's exact symbol format, such as `BTC-USD` for Yahoo Finance, `BTCUSDT` for Binance, or `BTC/USDT` for CCXT. This is intentional rather than bad; hidden alias mapping would make evidence ambiguous. The caveat is that switching market data providers may require changing symbols until a documented normalization table exists.
+Non-standard local columns must be normalized before ingestion or inside a source adapter; run configs do not provide feature mapping. Market-data symbols are not normalized: configs must use the provider's exact symbol format, such as `BTC-USD` for Yahoo Finance, `BTCUSDT` for Binance, or `BTC/USDT` for CCXT. This is intentional; hidden alias mapping would make evidence ambiguous.
 
 ## Why It Exists
 

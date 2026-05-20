@@ -6,9 +6,6 @@ from typing import Any
 
 class ErrorCategory:
     INVOCATION = "invocation"
-    MISSING_DEFAULT = "missing_default"
-    DEFAULT_RESOLUTION = "default_resolution"
-    DEFAULT_STORAGE = "default_storage"
     CONFIG_VALIDATION = "config_validation"
     EXECUTION_FAILURE = "execution_failure"
     INTERRUPTED = "interrupted"
@@ -17,9 +14,6 @@ class ErrorCategory:
 
 EXIT_CODES = {
     ErrorCategory.INVOCATION: 2,
-    ErrorCategory.MISSING_DEFAULT: 3,
-    ErrorCategory.DEFAULT_RESOLUTION: 4,
-    ErrorCategory.DEFAULT_STORAGE: 5,
     ErrorCategory.CONFIG_VALIDATION: 6,
     ErrorCategory.EXECUTION_FAILURE: 10,
     ErrorCategory.INTERRUPTED: 130,
@@ -45,18 +39,6 @@ class CliError(Exception):
 
 class InvocationError(CliError):
     category = ErrorCategory.INVOCATION
-
-
-class MissingDefaultError(CliError):
-    category = ErrorCategory.MISSING_DEFAULT
-
-
-class DefaultResolutionError(CliError):
-    category = ErrorCategory.DEFAULT_RESOLUTION
-
-
-class DefaultStorageError(CliError):
-    category = ErrorCategory.DEFAULT_STORAGE
 
 
 class ConfigCliError(CliError):
