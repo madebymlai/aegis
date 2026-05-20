@@ -84,6 +84,50 @@ class BatchedStrategySignalResult:
     diagnostics: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class IndicatorAxisPreflight:
+    source: BatchedSourceKind
+    source_id: str
+    candidate_count: int
+    output_count: int
+    row_count: int
+    symbol_count: int
+    estimated_cells: int
+
+
+@dataclass(frozen=True)
+class IndicatorGridPreflight:
+    axes: tuple[IndicatorAxisPreflight, ...]
+    indicator_context_count: int
+    estimated_cells: int
+    max_candidates: int
+    max_estimated_cells: int
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "schema_version": "batched_indicator_preflight.v1",
+            "indicator_axis_count": len(self.axes),
+            "indicator_context_count": self.indicator_context_count,
+            "estimated_cells": self.estimated_cells,
+            "limits": {
+                "max_candidates": self.max_candidates,
+                "max_estimated_cells": self.max_estimated_cells,
+            },
+            "axes": [
+                {
+                    "source": axis.source,
+                    "id": axis.source_id,
+                    "candidate_count": axis.candidate_count,
+                    "output_count": axis.output_count,
+                    "row_count": axis.row_count,
+                    "symbol_count": axis.symbol_count,
+                    "estimated_cells": axis.estimated_cells,
+                }
+                for axis in self.axes
+            ],
+        }
+
+
 def is_batched_playbook_result(result: Any) -> bool:
     return isinstance(result, Mapping) and result.get("contract") == BATCHED_PLAYBOOK_CONTRACT
 
@@ -219,6 +263,36 @@ def composed_candidate_ids(
     return tuple(ids)
 
 
+def preflight_indicator_grid(
+    indicator_results: Sequence[BatchedIndicatorResult],
+    *,
+    max_candidates: int,
+    max_estimated_cells: int,
+) -> IndicatorGridPreflight:
+    axes = tuple(_indicator_axis_preflight(result) for result in indicator_results)
+    indicator_context_count = 1
+    for axis in axes:
+        indicator_context_count *= axis.candidate_count
+    estimated_cells = sum(axis.estimated_cells for axis in axes)
+    if indicator_context_count > max_candidates:
+        raise BatchedContractError(
+            f"batched indicator grid has {indicator_context_count} candidates, above "
+            f"candidate_grid.max_candidates={max_candidates}"
+        )
+    if estimated_cells > max_estimated_cells:
+        raise BatchedContractError(
+            f"batched indicator grid has {estimated_cells} estimated cells, above "
+            f"candidate_grid.max_estimated_cells={max_estimated_cells}"
+        )
+    return IndicatorGridPreflight(
+        axes=axes,
+        indicator_context_count=indicator_context_count,
+        estimated_cells=estimated_cells,
+        max_candidates=max_candidates,
+        max_estimated_cells=max_estimated_cells,
+    )
+
+
 def _validated_header(
     result: Any,
     *,
@@ -254,6 +328,23 @@ def _validated_header(
             f"playbook {source_id!r} batched result contains unsupported fields: {unsupported}"
         )
     return result
+
+
+def _indicator_axis_preflight(result: BatchedIndicatorResult) -> IndicatorAxisPreflight:
+    first_output = next(iter(result.outputs.values()))
+    symbol_count = len(first_output.columns.get_level_values(SYMBOL_LEVEL).unique())
+    row_count = len(first_output.index)
+    output_count = len(result.outputs)
+    estimated_cells = result.axis.count * output_count * row_count * symbol_count
+    return IndicatorAxisPreflight(
+        source=result.axis.source,
+        source_id=result.axis.source_id,
+        candidate_count=result.axis.count,
+        output_count=output_count,
+        row_count=row_count,
+        symbol_count=symbol_count,
+        estimated_cells=estimated_cells,
+    )
 
 
 def _candidate_axis(

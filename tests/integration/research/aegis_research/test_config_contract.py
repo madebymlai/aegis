@@ -252,6 +252,34 @@ def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, mo
     assert secrets == ["super-secret-token"]
 
 
+def test_run_lane_accepts_candidate_grid_policy(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["candidate_grid"] = {"max_candidates": 100, "max_estimated_cells": 10_000}
+
+    resolved = resolve_lane_config(
+        raw,
+        component_registry=_component_registry(tmp_path),
+        expected_lane="run",
+    )
+
+    assert resolved.config.candidate_grid.max_candidates == 100
+    assert resolved.config.candidate_grid.max_estimated_cells == 10_000
+
+
+def test_run_lane_rejects_invalid_candidate_grid_policy(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["candidate_grid"] = {"max_candidates": 0}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+            expected_lane="run",
+        )
+
+    assert "candidate_grid.max_candidates" in str(error.value)
+
+
 def _train_config() -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
@@ -268,6 +296,19 @@ def _train_config() -> dict[str, object]:
                 "params": {"max_iter": 1000, "random_state": 42},
             },
         },
+    }
+
+
+def _run_config() -> dict[str, object]:
+    return {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "lane": "run",
+        "name": "canonical_run",
+        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
+        "portfolio": {"entry_budget": 1.0},
+        "strategy": {"source": "playbook", "id": "ma_cross"},
+        "indicators": [{"source": "playbook", "ids": ["ma_explore"]}],
+        "ranking": {"metric": "total_return_pct", "direction": "desc"},
     }
 
 

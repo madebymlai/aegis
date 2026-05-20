@@ -29,6 +29,7 @@ from research.aegis_research.configuration.schema import (
     SIGNAL_POLICIES,
     SOURCE_KINDS,
     SPLIT_KINDS,
+    CandidateGridConfig,
     ConfigValidationIssue,
     DataConfig,
     DataQualityConfig,
@@ -109,7 +110,7 @@ def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
     common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir"}
     if lane == "train":
         return common | {"indicators", "train"}
-    return common | {"indicators", "ranking", "strategy"}
+    return common | {"candidate_grid", "indicators", "ranking", "strategy"}
 
 
 def _validate_strategy_run_lane(
@@ -135,6 +136,13 @@ def _validate_strategy_run_lane(
         allowed_sources={"component", "playbook"},
     )
     _validate_ranking("ranking", raw.get("ranking"), issues)
+    candidate_grid = _section(
+        raw,
+        "candidate_grid",
+        set(CandidateGridConfig.__dataclass_fields__),
+        issues,
+    )
+    _validate_candidate_grid(candidate_grid, issues)
 
 
 def _validate_train_lane(
@@ -778,6 +786,14 @@ def _validate_signals(signals: dict[str, Any], issues: list[ConfigValidationIssu
                 "must be less than signals.long_entry_threshold",
             )
         )
+
+
+def _validate_candidate_grid(
+    candidate_grid: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    _optional_int("candidate_grid.max_candidates", candidate_grid, issues, positive=True)
+    _optional_int("candidate_grid.max_estimated_cells", candidate_grid, issues, positive=True)
 
 
 def _validate_portfolio(portfolio: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:

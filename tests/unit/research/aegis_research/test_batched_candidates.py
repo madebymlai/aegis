@@ -14,6 +14,7 @@ from research.aegis_research.batched_candidates import (
     BatchedCandidateAxis,
     BatchedContractError,
     composed_candidate_ids,
+    preflight_indicator_grid,
     reject_batched_result_in_record_runner,
     validate_batched_indicator_result,
     validate_batched_strategy_axis,
@@ -185,6 +186,63 @@ def test_composed_candidate_ids_preserve_source_boundaries_and_reject_duplicates
     )
     with pytest.raises(BatchedContractError, match="duplicate composed candidate ids"):
         composed_candidate_ids(strategy_axis=duplicate_strategy_axis)
+
+
+def test_preflight_indicator_grid_reports_counts_and_limits() -> None:
+    close = _close_frame()
+    result = validate_batched_indicator_result(
+        {
+            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "kind": INDICATOR_RESULT_KIND,
+            "candidate_axis": [
+                {"candidate_id": "ma-2", "params": {}},
+                {"candidate_id": "ma-5", "params": {}},
+            ],
+            "outputs": {"ma": _surface(close, ["ma-2", "ma-5"])},
+        },
+        source_id="ma_explore",
+        close=close,
+    )
+
+    preflight = preflight_indicator_grid(
+        [result],
+        max_candidates=10,
+        max_estimated_cells=20,
+    )
+
+    assert preflight.indicator_context_count == 2
+    assert preflight.estimated_cells == 12
+    assert preflight.diagnostics()["axes"] == [
+        {
+            "source": "playbook",
+            "id": "ma_explore",
+            "candidate_count": 2,
+            "output_count": 1,
+            "row_count": 3,
+            "symbol_count": 2,
+            "estimated_cells": 12,
+        }
+    ]
+
+
+def test_preflight_indicator_grid_rejects_oversize_estimates() -> None:
+    close = _close_frame()
+    result = validate_batched_indicator_result(
+        {
+            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "kind": INDICATOR_RESULT_KIND,
+            "candidate_axis": [
+                {"candidate_id": "ma-2", "params": {}},
+                {"candidate_id": "ma-5", "params": {}},
+            ],
+            "outputs": {"ma": _surface(close, ["ma-2", "ma-5"])},
+        },
+        source_id="ma_explore",
+        close=close,
+    )
+
+    with pytest.raises(BatchedContractError, match=r"candidate_grid\.max_estimated_cells"):
+        preflight_indicator_grid([result], max_candidates=10, max_estimated_cells=11)
 
 
 def _close_frame() -> pd.DataFrame:
