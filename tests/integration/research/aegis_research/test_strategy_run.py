@@ -166,7 +166,7 @@ def test_strategy_run_writes_data_metadata_before_quality_failure(
     assert metadata["unavailable_arrays"] == ["Close"]
 
 
-def test_strategy_run_fails_partial_leaderboards_after_writing_evidence(
+def test_strategy_run_fails_partial_leaderboards_before_writing_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -199,11 +199,10 @@ def test_strategy_run_fails_partial_leaderboards_after_writing_evidence(
     assert cli.main(["run", str(config_path), "--json", "--run-id", "partial-run"]) == 10
 
     payload = json.loads(capsys.readouterr().err)
-    artifact = json.loads((tmp_path / "runs" / "partial-run" / "strategy_run.json").read_text())
     manifest = json.loads((tmp_path / "runs" / "partial-run" / "manifest.json").read_text())
     assert payload["error"]["category"] == "execution_failure"
     assert manifest["run"]["status"] == RunStatus.FAILED
-    assert artifact["leaderboard"]["summary"]["failure_gating_status"] == "partial"
+    assert not (tmp_path / "runs" / "partial-run" / "strategy_run.json").exists()
 
 
 def test_strategy_run_redacts_known_config_secrets_on_default_run_failure(

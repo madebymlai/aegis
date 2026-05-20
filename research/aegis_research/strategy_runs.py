@@ -12,6 +12,7 @@ from research.aegis_research.component_registry import (
     ComponentSelection,
     FrozenComponentRegistry,
 )
+from research.aegis_research.component_registry.manifests import COMPONENT_ID_RE
 from research.aegis_research.config import (
     ConfigValidationError,
     ResolvedLaneConfig,
@@ -65,6 +66,14 @@ PLAYBOOK_METRIC_AUTHORITY_KEYS = {
     "metric_authority",
     "metrics",
 }
+INDICATOR_CANDIDATE_FORBIDDEN_KEYS = (
+    PLAYBOOK_METRIC_AUTHORITY_KEYS
+    | STRATEGY_OUTPUT_FORBIDDEN_KEYS
+    | {
+        "entries",
+        "exits",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -131,8 +140,45 @@ class _TrackedIndicatorCandidate(Mapping[str, Any]):
 
     def __getitem__(self, item: str) -> Any:
         if item == "outputs":
-            self._mark_consumed(self._key)
+            outputs = self._value[item]
+            if isinstance(outputs, Mapping):
+                return _TrackedIndicatorOutputs(self._key, outputs, self._mark_consumed)
         return self._value[item]
+
+    def __contains__(self, item: object) -> bool:
+        return item in self._value
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._value)
+
+    def __len__(self) -> int:
+        return len(self._value)
+
+    def get(self, item: str, default: Any = None) -> Any:
+        try:
+            return self[item]
+        except KeyError:
+            return default
+
+
+class _TrackedIndicatorOutputs(Mapping[str, Any]):
+    def __init__(
+        self,
+        key: str,
+        value: Mapping[str, Any],
+        mark_consumed: Callable[[str], None],
+    ) -> None:
+        self._key = key
+        self._value = value
+        self._mark_consumed = mark_consumed
+
+    def __getitem__(self, item: str) -> Any:
+        value = self._value[item]
+        self._mark_consumed(self._key)
+        return value
+
+    def __contains__(self, item: object) -> bool:
+        return item in self._value
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._value)
@@ -235,28 +281,32 @@ def run_strategy_sweep(
             playbook_registry=playbooks,
             data=data_bundle,
         )
-        indicator_contexts = _indicator_contexts(indicators, indicator_evidence, indicator_axes)
-        composition_diagnostics = _composition_diagnostics(indicator_axes, indicator_contexts)
+        composition_diagnostics = _composition_diagnostics(indicator_axes)
         recorder.manifest.evidence["composition"] = composition_diagnostics["planned"]
         recorder.persist()
+        indicator_contexts = _indicator_contexts(indicators, indicator_evidence, indicator_axes)
 
-        strategy_evidence, strategy_variant_records, signal_diagnostics, portfolio_diagnostics = _resolve_strategy_ref(
-            config.strategy,
-            component_registry=component_registry,
-            playbook_registry=playbooks,
-            data=data_bundle,
-            open_prices=open_prices,
-            indicator_contexts=indicator_contexts,
-            portfolio_config=config.portfolio,
-            report_config=config.report,
-            composition_diagnostics=composition_diagnostics,
+        strategy_evidence, strategy_variant_records, signal_diagnostics, portfolio_diagnostics = (
+            _resolve_strategy_ref(
+                config.strategy,
+                component_registry=component_registry,
+                playbook_registry=playbooks,
+                data=data_bundle,
+                open_prices=open_prices,
+                indicator_contexts=indicator_contexts,
+                portfolio_config=config.portfolio,
+                report_config=config.report,
+                composition_diagnostics=composition_diagnostics,
+            )
         )
+        _assert_unique_strategy_variant_ids(strategy_variant_records)
         leaderboard = build_run_leaderboard(
             strategy_variant_records,
             metric=config.ranking.metric,
             direction=config.ranking.direction,
             rank_by=config.ranking.rank_by,
         )
+        _assert_leaderboard_complete(leaderboard)
         payload = {
             "schema_version": STRATEGY_ARTIFACT_SCHEMA_VERSION,
             "lane": "run",
@@ -268,13 +318,13 @@ def run_strategy_sweep(
                 array_contract,
                 strategy_source=config.strategy.source,
             ),
+            "candidates": [to_builtin(record) for record in strategy_variant_records],
             "leaderboard": leaderboard,
             "composition": composition_diagnostics,
             "signal_diagnostics": signal_diagnostics,
             "portfolio_diagnostics": portfolio_diagnostics,
         }
         _write_strategy_artifact(recorder, payload)
-        _assert_leaderboard_complete(leaderboard)
         recorder.mark_run_completed()
         return {
             **_run_refs(recorder),
@@ -329,7 +379,7 @@ def _resolve_indicator_refs(
                         "source": "component",
                         "id": component_id,
                         "version": definition.manifest.version,
-                        "source_hash": definition.identity.source_hash,
+                        **definition.identity.public(),
                     }
                 )
             continue
@@ -346,7 +396,7 @@ def _resolve_indicator_refs(
                 "source": "playbook",
                 "id": definition.id,
                 "version": definition.manifest.version,
-                "source_hash": definition.identity.source_hash,
+                **definition.identity.public(),
                 "indicator_family": definition.manifest.indicator_family,
                 "baseline_component_indicator_id": definition.manifest.baseline_component_indicator_id,
             }
@@ -368,7 +418,7 @@ def _indicator_playbook_axis(
 ) -> IndicatorPlaybookAxis:
     source_id = str(source_evidence["id"])
     source_key = _indicator_source_key(source_id)
-    variants = result.get("variant_records") if isinstance(result, dict) else None
+    variants = result.get("variant_records") if isinstance(result, Mapping) else None
     if not isinstance(variants, list):
         raise TypeError(f"playbook {source_id!r} result variant_records must be a list")
     if not variants:
@@ -378,29 +428,42 @@ def _indicator_playbook_axis(
     candidates: list[IndicatorPlaybookCandidate] = []
     seen_candidate_ids: set[str] = set()
     for index, item in enumerate(variants):
-        if not isinstance(item, dict):
+        if not isinstance(item, Mapping):
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
             )
         record = dict(item)
-        candidate_id = record.get("variant_id") or record.get("candidate_id")
+        forbidden = sorted(set(record) & INDICATOR_CANDIDATE_FORBIDDEN_KEYS)
+        if forbidden:
+            raise ValueError(
+                f"indicator playbook {source_id!r} result variant_records[{index}] must not "
+                f"contain signal, metric, or portfolio fields: {forbidden}"
+            )
+        candidate_id = record.get("candidate_id")
         if not isinstance(candidate_id, str) or not candidate_id:
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}] must include "
                 "a non-empty candidate_id"
             )
+        _assert_candidate_id_shape(
+            candidate_id,
+            source_id=source_id,
+            index=index,
+            field_name="candidate_id",
+        )
         if candidate_id in seen_candidate_ids:
             raise ValueError(
                 f"indicator playbook {source_id!r} emitted duplicate candidate {candidate_id!r}"
             )
         seen_candidate_ids.add(candidate_id)
-        if not isinstance(record.get("params"), dict):
+        if not isinstance(record.get("params"), Mapping):
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}].params must be "
                 "a mapping of swept parameter names to values"
             )
+        params = dict(record["params"])
         outputs = record.get("outputs")
-        if not isinstance(outputs, dict) or not outputs:
+        if not isinstance(outputs, Mapping) or not outputs:
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}].outputs must be "
                 "a non-empty mapping of output names to pandas objects"
@@ -415,7 +478,7 @@ def _indicator_playbook_axis(
         }
         evidence = source_evidence | {
             "candidate_id": candidate_id,
-            "params": to_builtin(dict(record["params"])),
+            "params": to_builtin(params),
             "outputs": sorted(normalized_outputs),
             "source_key": source_key,
         }
@@ -424,7 +487,7 @@ def _indicator_playbook_axis(
                 source_key=source_key,
                 source_id=source_id,
                 candidate_id=candidate_id,
-                params=dict(record["params"]),
+                params=params,
                 outputs=normalized_outputs,
                 evidence=evidence,
             )
@@ -478,10 +541,7 @@ def _indicator_contexts(
     return contexts
 
 
-def _composition_diagnostics(
-    axes: list[IndicatorPlaybookAxis],
-    contexts: list[IndicatorContext],
-) -> dict[str, Any]:
+def _composition_diagnostics(axes: list[IndicatorPlaybookAxis]) -> dict[str, Any]:
     return {
         "schema_version": "strategy_composition.v1",
         "planned": {
@@ -493,11 +553,18 @@ def _composition_diagnostics(
                 }
                 for axis in axes
             ],
-            "indicator_context_count": len(contexts),
+            "indicator_context_count": _indicator_context_count(axes),
         },
         "strategy_contexts": {},
         "total_composed_candidates": 0,
     }
+
+
+def _indicator_context_count(axes: list[IndicatorPlaybookAxis]) -> int:
+    count = 1
+    for axis in axes:
+        count *= len(axis.candidates)
+    return count
 
 
 def _indicator_source_key(source_id: str) -> str:
@@ -631,7 +698,7 @@ def _resolve_strategy_ref(
                 "source": "playbook",
                 "id": definition.id,
                 "version": definition.manifest.version,
-                "source_hash": definition.identity.source_hash,
+                **definition.identity.public(),
                 "consumes_runner_data": True,
                 "data_binding": "strategy_inputs",
             },
@@ -697,7 +764,7 @@ def _resolve_strategy_ref(
             "source": "component",
             "id": ref.id,
             "version": definition.manifest.version,
-            "source_hash": definition.identity.source_hash,
+            **definition.identity.public(),
         },
         records,
         signal_diagnostics,
@@ -764,11 +831,27 @@ def _strategy_inputs_for_context(
     return StrategyInputs(
         data=data,
         indicators=StrategyIndicatorInputs(
-            context.indicators,
+            _isolated_indicator_values(context.indicators),
             required_consumed_keys=context.required_indicator_keys,
         ),
         metadata=metadata,
     )
+
+
+def _isolated_indicator_values(indicators: Mapping[str, Any]) -> dict[str, Any]:
+    isolated: dict[str, Any] = {}
+    for key, value in indicators.items():
+        if isinstance(value, Mapping) and isinstance(value.get("outputs"), Mapping):
+            isolated[key] = {
+                **value,
+                "outputs": {
+                    output_name: output.copy() if isinstance(output, pd.DataFrame) else output
+                    for output_name, output in value["outputs"].items()
+                },
+            }
+            continue
+        isolated[key] = value
+    return isolated
 
 
 def _assert_strategy_consumed_indicator_context(
@@ -778,7 +861,7 @@ def _assert_strategy_consumed_indicator_context(
 ) -> None:
     indicators = inputs.indicators
     if not isinstance(indicators, StrategyIndicatorInputs):
-        return
+        raise TypeError("strategy indicator inputs must be StrategyIndicatorInputs")
     missing = indicators.missing_required_keys
     if missing:
         raise ValueError(
@@ -836,6 +919,31 @@ def _composed_candidate_id(
     )
 
 
+def _assert_unique_strategy_variant_ids(records: list[dict[str, Any]]) -> None:
+    seen: set[str] = set()
+    for index, record in enumerate(records):
+        variant_id = record.get("variant_id")
+        if not isinstance(variant_id, str) or not variant_id:
+            raise TypeError(f"strategy candidate record {index} must include a non-empty variant_id")
+        if variant_id in seen:
+            raise ValueError(f"duplicate composed strategy candidate id: {variant_id}")
+        seen.add(variant_id)
+
+
+def _assert_candidate_id_shape(
+    value: str,
+    *,
+    source_id: str,
+    index: int,
+    field_name: str,
+) -> None:
+    if not COMPONENT_ID_RE.fullmatch(value) or value in {".", ".."}:
+        raise ValueError(
+            f"playbook {source_id!r} result variant_records[{index}].{field_name} must "
+            "contain only letters, numbers, dots, underscores, and hyphens"
+        )
+
+
 def _score_strategy_signals(
     signal_result: StrategySignalResult,
     *,
@@ -876,7 +984,7 @@ def _strategy_playbook_candidate_records(
     *,
     source_id: str,
 ) -> list[dict[str, Any]]:
-    if not isinstance(result, dict):
+    if not isinstance(result, Mapping):
         raise TypeError(f"playbook {source_id!r} result must be a mapping")
     variants = result.get("variant_records")
     if not isinstance(variants, list):
@@ -887,25 +995,32 @@ def _strategy_playbook_candidate_records(
     seen_variant_ids: set[str] = set()
     forbidden_fields = STRATEGY_OUTPUT_FORBIDDEN_KEYS | PLAYBOOK_METRIC_AUTHORITY_KEYS
     for index, item in enumerate(variants):
-        if not isinstance(item, dict):
+        if not isinstance(item, Mapping):
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
             )
         record = dict(item)
-        variant_id = record.get("variant_id") or record.get("candidate_id")
+        variant_id = record.get("variant_id")
         if not isinstance(variant_id, str) or not variant_id:
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}] must include "
                 "a non-empty variant_id"
             )
+        _assert_candidate_id_shape(
+            variant_id,
+            source_id=source_id,
+            index=index,
+            field_name="variant_id",
+        )
         if variant_id in seen_variant_ids:
             raise ValueError(f"playbook {source_id!r} emitted duplicate candidate {variant_id!r}")
         seen_variant_ids.add(variant_id)
-        if not isinstance(record.get("params"), dict):
+        if not isinstance(record.get("params"), Mapping):
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}].params must be "
                 "a mapping of swept parameter names to values"
             )
+        record["params"] = dict(record["params"])
         forbidden = sorted(set(record) & forbidden_fields)
         if forbidden:
             raise ValueError(
@@ -922,13 +1037,13 @@ def _strategy_playbook_candidate_records(
 
 
 def _reject_playbook_metric_records(result: Any, *, source_id: str) -> None:
-    if not isinstance(result, dict):
+    if not isinstance(result, Mapping):
         raise TypeError(f"playbook {source_id!r} result must be a mapping")
     variants = result.get("variant_records")
     if not isinstance(variants, list):
         raise TypeError(f"playbook {source_id!r} result variant_records must be a list")
     for index, item in enumerate(variants):
-        if not isinstance(item, dict):
+        if not isinstance(item, Mapping):
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
             )
