@@ -23,7 +23,7 @@ def test_playbook_registry_discovers_stable_ids_and_loads_selected_playbook(tmp_
     assert registry.ids("indicators") == ("ma_explore",)
     assert definition.identity.repo_relative_path == "research/playbooks/indicators/ma_explore.py"
     assert result["contract"] == "aegis.playbook_sweep.v1"
-    assert result["candidate_axis"] == [{"candidate_id": "ma_explore", "params": {"window": 5}}]
+    assert result["candidate_axis"] == [{"candidate_id": "ma_explore-5", "params": {"window": 5}}]
 
 
 def test_playbook_owns_static_params(tmp_path) -> None:
@@ -36,7 +36,7 @@ def test_playbook_owns_static_params(tmp_path) -> None:
     result = definition.load_callable()(None)
 
     assert result["contract"] == "aegis.playbook_sweep.v1"
-    assert result["candidate_axis"] == [{"candidate_id": "ma_explore", "params": {"window": 5}}]
+    assert result["candidate_axis"] == [{"candidate_id": "ma_explore-5", "params": {"window": 5}}]
 
 
 def test_playbook_registry_rejects_duplicate_ids(tmp_path) -> None:
@@ -150,6 +150,6 @@ def _write_playbook(
         "    return {"
         "'contract': 'aegis.playbook_sweep.v1', "
         "'kind': 'indicator_surface', "
-        f"'candidate_axis': [{{'candidate_id': {playbook_id!r}, 'params': {{'window': 5}}}}], "
+        f"'candidate_axis': [{{'candidate_id': {f'{playbook_id}-5'!r}, 'params': {{'window': 5}}}}], "
         "'outputs': {'ma': 'not-materialized'}}\n"
     )

@@ -171,10 +171,10 @@ def test_run_cli_executes_playbook_strategy_sweep_candidates(
     assert artifact["leaderboard"]["summary"]["attempted"] == 4
     candidate_ids = {candidate["variant_id"] for candidate in artifact["candidates"]}
     assert candidate_ids == {
-        "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-2]",
-        "strategy:playbook:ma_cross:slow+indicators:[playbook:ma_explore:ma-2]",
-        "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-5]",
-        "strategy:playbook:ma_cross:slow+indicators:[playbook:ma_explore:ma-5]",
+        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-2]",
+        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-2]",
+        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-5]",
+        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-5]",
     }
     row = artifact["leaderboard"]["rows"][0]
     composed = artifact["catalogs"]["composed_candidates"][row["composed_candidate_id"]]
@@ -385,8 +385,8 @@ def test_run_cli_records_failed_batched_chunk_candidate_context(
     assert chunks[1]["status"] == "failed"
     assert chunks[1]["error"]["stage"] == "materialize_signals"
     assert chunks[1]["candidate_ids"] == [
-        "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-5]",
-        "strategy:playbook:ma_cross:slow+indicators:[playbook:ma_explore:ma-5]",
+        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-5]",
+        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-5]",
     ]
     assert not (tmp_path / "runs" / "batched-chunk-fails" / "strategy_run.json").exists()
 
@@ -455,8 +455,8 @@ def test_run_cli_records_batched_portfolio_simulation_failure_context(
     assert chunk["status"] == "failed"
     assert chunk["error"]["stage"] == "portfolio_simulation"
     assert chunk["candidate_ids"] == [
-        "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-2]",
-        "strategy:playbook:ma_cross:slow+indicators:[playbook:ma_explore:ma-2]",
+        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-2]",
+        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-2]",
     ]
     assert not (tmp_path / "runs" / "batched-portfolio-fails" / "strategy_run.json").exists()
 
@@ -501,8 +501,8 @@ def test_run_cli_records_batched_metric_extraction_failure_context(
     assert chunk["status"] == "failed"
     assert chunk["error"]["stage"] == "metric_extraction"
     assert chunk["candidate_ids"] == [
-        "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-2]",
-        "strategy:playbook:ma_cross:slow+indicators:[playbook:ma_explore:ma-2]",
+        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-2]",
+        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-2]",
     ]
     assert not (tmp_path / "runs" / "batched-metrics-fail" / "strategy_run.json").exists()
 
@@ -1021,8 +1021,8 @@ def _write_batched_strategy_playbook(
         "        'contract': 'aegis.playbook_sweep.v1',\n"
         "        'kind': 'strategy_axis',\n"
         "        'candidate_axis': [\n"
-        "            {'candidate_id': 'fast', 'params': {'threshold': 0.0}},\n"
-        "            {'candidate_id': 'slow', 'params': {'threshold': 0.01}},\n"
+        "            {'candidate_id': 'fast-0', 'params': {'threshold': 0.0}},\n"
+        "            {'candidate_id': 'slow-0.01', 'params': {'threshold': 0.01}},\n"
         "        ],\n"
         "        'materialize_signals': materialize_signals,\n"
         "    }\n"

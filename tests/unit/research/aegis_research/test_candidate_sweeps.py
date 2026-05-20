@@ -15,6 +15,7 @@ from research.aegis_research.candidate_sweeps import (
     CandidateSweepError,
     SignalMaterializationRequest,
     SweepCandidate,
+    candidate_id_from_params,
     compose_candidate_grid,
     composed_candidate_ids,
     materialize_strategy_sweep_signals,
@@ -56,7 +57,7 @@ def test_validate_strategy_sweep_axis_and_requested_signal_batch() -> None:
             "kind": STRATEGY_AXIS_KIND,
             "candidate_axis": [
                 {"candidate_id": "fast", "params": {}},
-                {"candidate_id": "slow", "params": {"threshold": 0.01}},
+                {"candidate_id": "slow-0.01", "params": {"threshold": 0.01}},
             ],
         },
         source_id="ma_cross",
@@ -75,7 +76,7 @@ def test_validate_strategy_sweep_axis_and_requested_signal_batch() -> None:
         close=close,
     )
 
-    assert axis.candidate_ids == ("fast", "slow")
+    assert axis.candidate_ids == ("fast", "slow-0.01")
     assert signals.entries.dtypes.tolist() == [bool, bool]
     assert signals.entries.columns.get_level_values(CANDIDATE_LEVEL).unique().tolist() == ["fast"]
 
@@ -99,7 +100,7 @@ def test_validate_strategy_sweep_plan_materializes_requested_candidate_range() -
             "kind": STRATEGY_AXIS_KIND,
             "candidate_axis": [
                 {"candidate_id": "fast", "params": {}},
-                {"candidate_id": "slow", "params": {"threshold": 0.01}},
+                {"candidate_id": "slow-0.01", "params": {"threshold": 0.01}},
             ],
             STRATEGY_MATERIALIZER_KEY: materialize,
             "diagnostics": {"grid": "thresholds"},
@@ -110,14 +111,16 @@ def test_validate_strategy_sweep_plan_materializes_requested_candidate_range() -
     signals = materialize_strategy_sweep_signals(
         plan,
         source_id="ma_cross",
-        requested_candidate_ids=["slow"],
+        requested_candidate_ids=["slow-0.01"],
         close=close,
     )
 
-    assert plan.axis.candidate_ids == ("fast", "slow")
+    assert plan.axis.candidate_ids == ("fast", "slow-0.01")
     assert plan.diagnostics == {"grid": "thresholds"}
-    assert observed_requests == [("slow",)]
-    assert signals.entries.columns.get_level_values(CANDIDATE_LEVEL).unique().tolist() == ["slow"]
+    assert observed_requests == [("slow-0.01",)]
+    assert signals.entries.columns.get_level_values(CANDIDATE_LEVEL).unique().tolist() == [
+        "slow-0.01"
+    ]
 
 
 def test_strategy_sweep_request_carries_composed_candidate_context() -> None:
@@ -142,12 +145,12 @@ def test_strategy_sweep_request_carries_composed_candidate_context() -> None:
         {
             "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": STRATEGY_AXIS_KIND,
-            "candidate_axis": [{"candidate_id": "fast", "params": {"threshold": 0.01}}],
+            "candidate_axis": [{"candidate_id": "fast-0.01", "params": {"threshold": 0.01}}],
             STRATEGY_MATERIALIZER_KEY: materialize,
         },
         source_id="ma_cross",
     )
-    composed_id = "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-20]"
+    composed_id = "strategy:playbook:ma_cross:fast-0.01+indicators:[playbook:ma_explore:ma-20]"
 
     materialize_strategy_sweep_signals(
         plan,
@@ -222,6 +225,45 @@ def test_rejects_duplicate_candidate_ids() -> None:
                 "candidate_axis": [
                     {"candidate_id": "fast", "params": {}},
                     {"candidate_id": "fast", "params": {}},
+                ],
+            },
+            source_id="ma_cross",
+        )
+
+
+def test_rejects_candidate_ids_missing_param_tokens() -> None:
+    params = {"entry_threshold": 40.0, "exit_threshold": 55.0}
+    assert (
+        candidate_id_from_params(
+            "mean-revert",
+            params,
+            keys=("entry_threshold", "exit_threshold"),
+        )
+        == "mean-revert-40-55"
+    )
+
+    with pytest.raises(CandidateSweepError, match="parameter token"):
+        validate_strategy_sweep_axis(
+            {
+                "contract": PLAYBOOK_SWEEP_CONTRACT,
+                "kind": STRATEGY_AXIS_KIND,
+                "candidate_axis": [
+                    {
+                        "candidate_id": "mean-revert-45-55",
+                        "params": params,
+                    }
+                ],
+            },
+            source_id="rsi_reversion",
+        )
+
+    with pytest.raises(CandidateSweepError, match="parameter token"):
+        validate_strategy_sweep_axis(
+            {
+                "contract": PLAYBOOK_SWEEP_CONTRACT,
+                "kind": STRATEGY_AXIS_KIND,
+                "candidate_axis": [
+                    {"candidate_id": "threshold-0.01", "params": {"threshold": 0.0}}
                 ],
             },
             source_id="ma_cross",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import product
@@ -51,6 +52,27 @@ class CandidateSweepError(ValueError):
     def __init__(self, message: str, *, diagnostics: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.diagnostics = diagnostics
+
+
+def candidate_id_from_params(
+    prefix: str,
+    params: Mapping[str, Any],
+    *,
+    keys: Sequence[str] | None = None,
+) -> str:
+    """Build a candidate ID whose tokens come from the selected param values."""
+
+    selected_keys = tuple(keys) if keys is not None else tuple(sorted(params))
+    missing_keys = sorted(set(selected_keys) - set(params))
+    if missing_keys:
+        raise ValueError(f"candidate id params missing keys: {missing_keys}")
+
+    parts = [_candidate_id_token(prefix)]
+    parts.extend(_candidate_id_token(params[key]) for key in selected_keys)
+    candidate_id = "-".join(parts)
+    if not COMPONENT_ID_RE.fullmatch(candidate_id) or candidate_id in {".", ".."}:
+        raise ValueError(f"candidate id {candidate_id!r} contains unsupported characters")
+    return candidate_id
 
 
 @dataclass(frozen=True)
@@ -502,7 +524,14 @@ def _candidate_axis(
             raise TypeError(
                 f"playbook {source_id!r} candidate_axis[{index}].params must be a mapping"
             )
-        candidates.append(SweepCandidate(candidate_id=candidate_id, params=dict(params)))
+        params = dict(params)
+        _validate_candidate_params_in_id(
+            candidate_id,
+            params,
+            source_id=source_id,
+            index=index,
+        )
+        candidates.append(SweepCandidate(candidate_id=candidate_id, params=params))
     return CandidateAxis(source=source, source_id=source_id, candidates=tuple(candidates))
 
 
@@ -601,3 +630,48 @@ def _validate_candidate_id(candidate_id: str, *, source_id: str, index: int) -> 
             f"playbook {source_id!r} candidate_axis[{index}].candidate_id must contain only "
             "letters, numbers, dots, underscores, and hyphens"
         )
+
+
+def _validate_candidate_params_in_id(
+    candidate_id: str,
+    params: Mapping[str, Any],
+    *,
+    source_id: str,
+    index: int,
+) -> None:
+    missing = []
+    for key, value in params.items():
+        token = _candidate_id_token(value)
+        if not _candidate_id_contains_token(candidate_id, token):
+            missing.append(f"{key}={token}")
+    if missing:
+        raise CandidateSweepError(
+            f"playbook {source_id!r} candidate_axis[{index}].candidate_id must include "
+            f"parameter token(s): {missing}"
+        )
+
+
+def _candidate_id_contains_token(candidate_id: str, token: str) -> bool:
+    return re.search(
+        rf"(?<![A-Za-z0-9_.]){re.escape(token)}(?![A-Za-z0-9_.])",
+        candidate_id,
+    ) is not None
+
+
+def _candidate_id_token(value: Any) -> str:
+    if hasattr(value, "item"):
+        value = value.item()
+    if value is None:
+        raw = "none"
+    elif isinstance(value, bool):
+        raw = str(value).lower()
+    elif isinstance(value, int):
+        raw = f"neg{abs(value)}" if value < 0 else str(value)
+    elif isinstance(value, float):
+        raw = f"neg{abs(value):g}" if value < 0 else f"{value:g}"
+    else:
+        raw = str(value)
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip("-")
+    if not token:
+        raise ValueError(f"candidate id token cannot be derived from {value!r}")
+    return token
