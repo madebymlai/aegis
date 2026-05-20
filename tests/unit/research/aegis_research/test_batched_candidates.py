@@ -8,16 +8,20 @@ from research.aegis_research.batched_candidates import (
     CANDIDATE_LEVEL,
     INDICATOR_RESULT_KIND,
     STRATEGY_AXIS_KIND,
+    STRATEGY_MATERIALIZER_KEY,
     STRATEGY_SIGNALS_KIND,
     SYMBOL_LEVEL,
     BatchedCandidate,
     BatchedCandidateAxis,
     BatchedContractError,
+    BatchedSignalRequest,
     composed_candidate_ids,
+    materialize_batched_strategy_signals,
     preflight_indicator_grid,
     reject_batched_result_in_record_runner,
     validate_batched_indicator_result,
     validate_batched_strategy_axis,
+    validate_batched_strategy_plan,
     validate_batched_strategy_signals,
 )
 
@@ -75,6 +79,91 @@ def test_validate_batched_strategy_axis_and_requested_signal_batch() -> None:
     assert axis.candidate_ids == ("fast", "slow")
     assert signals.entries.dtypes.tolist() == [bool, bool]
     assert signals.entries.columns.get_level_values(CANDIDATE_LEVEL).unique().tolist() == ["fast"]
+
+
+def test_validate_batched_strategy_plan_materializes_requested_candidate_range() -> None:
+    close = _close_frame()
+    observed_requests: list[tuple[str, ...]] = []
+
+    def materialize(request: BatchedSignalRequest):
+        observed_requests.append(request.candidate_ids)
+        return {
+            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "kind": STRATEGY_SIGNALS_KIND,
+            "entries": _surface(close, list(request.candidate_ids), value=True),
+            "exits": _surface(close, list(request.candidate_ids), value=False),
+        }
+
+    plan = validate_batched_strategy_plan(
+        {
+            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "kind": STRATEGY_AXIS_KIND,
+            "candidate_axis": [
+                {"candidate_id": "fast", "params": {}},
+                {"candidate_id": "slow", "params": {"threshold": 0.01}},
+            ],
+            STRATEGY_MATERIALIZER_KEY: materialize,
+            "diagnostics": {"grid": "thresholds"},
+        },
+        source_id="ma_cross",
+    )
+
+    signals = materialize_batched_strategy_signals(
+        plan,
+        source_id="ma_cross",
+        requested_candidate_ids=["slow"],
+        close=close,
+    )
+
+    assert plan.axis.candidate_ids == ("fast", "slow")
+    assert plan.diagnostics == {"grid": "thresholds"}
+    assert observed_requests == [("slow",)]
+    assert signals.entries.columns.get_level_values(CANDIDATE_LEVEL).unique().tolist() == ["slow"]
+
+
+def test_validate_batched_strategy_plan_requires_signal_materializer() -> None:
+    with pytest.raises(TypeError, match="materialize_signals"):
+        validate_batched_strategy_plan(
+            {
+                "contract": BATCHED_PLAYBOOK_CONTRACT,
+                "kind": STRATEGY_AXIS_KIND,
+                "candidate_axis": [{"candidate_id": "fast", "params": {}}],
+            },
+            source_id="ma_cross",
+        )
+
+
+def test_batched_strategy_materializer_cannot_emit_unrequested_candidates() -> None:
+    close = _close_frame()
+
+    def materialize(_request: BatchedSignalRequest):
+        return {
+            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "kind": STRATEGY_SIGNALS_KIND,
+            "entries": _surface(close, ["fast", "slow"], value=True),
+            "exits": _surface(close, ["fast", "slow"], value=False),
+        }
+
+    plan = validate_batched_strategy_plan(
+        {
+            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "kind": STRATEGY_AXIS_KIND,
+            "candidate_axis": [
+                {"candidate_id": "fast", "params": {}},
+                {"candidate_id": "slow", "params": {}},
+            ],
+            STRATEGY_MATERIALIZER_KEY: materialize,
+        },
+        source_id="ma_cross",
+    )
+
+    with pytest.raises(BatchedContractError, match="candidate axis mismatch"):
+        materialize_batched_strategy_signals(
+            plan,
+            source_id="ma_cross",
+            requested_candidate_ids=["fast"],
+            close=close,
+        )
 
 
 def test_rejects_legacy_variant_records_in_batched_contract() -> None:

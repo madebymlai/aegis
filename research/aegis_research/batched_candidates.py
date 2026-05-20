@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import product
 from typing import Any, Literal
@@ -16,6 +16,7 @@ SYMBOL_LEVEL = "symbol"
 INDICATOR_RESULT_KIND = "indicator_surface"
 STRATEGY_AXIS_KIND = "strategy_axis"
 STRATEGY_SIGNALS_KIND = "strategy_signals"
+STRATEGY_MATERIALIZER_KEY = "materialize_signals"
 
 BatchedSourceKind = Literal["component", "playbook"]
 
@@ -81,6 +82,18 @@ class BatchedIndicatorResult:
 class BatchedStrategySignalResult:
     entries: pd.DataFrame
     exits: pd.DataFrame
+    diagnostics: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BatchedSignalRequest:
+    candidate_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BatchedStrategyPlan:
+    axis: BatchedCandidateAxis
+    materialize_signals: Callable[[BatchedSignalRequest], Mapping[str, Any]]
     diagnostics: dict[str, Any]
 
 
@@ -187,6 +200,57 @@ def validate_batched_strategy_axis(
         allowed_keys={"contract", "kind", "candidate_axis", "diagnostics"},
     )
     return _candidate_axis(result, source="playbook", source_id=source_id)
+
+
+def validate_batched_strategy_plan(
+    result: Any,
+    *,
+    source_id: str,
+) -> BatchedStrategyPlan:
+    result = _validated_header(
+        result,
+        source_id=source_id,
+        expected_kind=STRATEGY_AXIS_KIND,
+        allowed_keys={
+            "contract",
+            "kind",
+            "candidate_axis",
+            STRATEGY_MATERIALIZER_KEY,
+            "diagnostics",
+        },
+    )
+    materialize = result.get(STRATEGY_MATERIALIZER_KEY)
+    if not callable(materialize):
+        raise TypeError(
+            f"playbook {source_id!r} batched strategy axis must include callable "
+            f"{STRATEGY_MATERIALIZER_KEY!r}"
+        )
+    return BatchedStrategyPlan(
+        axis=_candidate_axis(result, source="playbook", source_id=source_id),
+        materialize_signals=materialize,
+        diagnostics=_diagnostics(result),
+    )
+
+
+def materialize_batched_strategy_signals(
+    plan: BatchedStrategyPlan,
+    *,
+    source_id: str,
+    requested_candidate_ids: Sequence[str],
+    close: pd.DataFrame,
+) -> BatchedStrategySignalResult:
+    requested = _requested_candidate_ids(
+        requested_candidate_ids,
+        axis=plan.axis,
+        source_id=source_id,
+    )
+    return validate_batched_strategy_signals(
+        plan.materialize_signals(BatchedSignalRequest(candidate_ids=requested)),
+        source_id=source_id,
+        axis=plan.axis,
+        requested_candidate_ids=requested,
+        close=close,
+    )
 
 
 def validate_batched_strategy_signals(
