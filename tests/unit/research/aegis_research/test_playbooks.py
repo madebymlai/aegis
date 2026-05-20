@@ -64,6 +64,23 @@ def test_strategy_playbook_rejects_literal_candidate_id_with_params(tmp_path) ->
         discover_playbook_registry(root=root, repo_root=tmp_path)
 
 
+@pytest.mark.parametrize("family", ["indicators", "strategies"])
+def test_playbook_allows_literal_candidate_id_for_named_logic_without_params(
+    tmp_path,
+    family: str,
+) -> None:
+    root = tmp_path / "research" / "playbooks"
+    _write_literal_candidate_id_playbook(
+        root / family / "named_logic.py",
+        family,
+        params="{}",
+    )
+
+    registry = discover_playbook_registry(root=root, repo_root=tmp_path)
+
+    assert registry.ids(family) == (f"bad_{family}",)
+
+
 def test_playbook_registry_rejects_ids_that_lane_configs_cannot_reference(tmp_path) -> None:
     root = tmp_path / "research" / "playbooks"
     _write_playbook(root / "indicators" / "bad.py", "indicators", "bad/id")
@@ -175,7 +192,7 @@ def _write_playbook(
     )
 
 
-def _write_literal_candidate_id_playbook(path, family: str) -> None:
+def _write_literal_candidate_id_playbook(path, family: str, *, params: str = "{'window': 5}") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest = {
         "family": family,
@@ -202,5 +219,5 @@ def _write_literal_candidate_id_playbook(path, family: str) -> None:
         "    return {"
         "'contract': 'aegis.playbook_sweep.v1', "
         f"'kind': {kind!r}, "
-        "'candidate_axis': [{'candidate_id': 'literal-5', 'params': {'window': 5}}]}\n"
+        "'candidate_axis': [{'candidate_id': 'literal-5', 'params': " + params + "}]}\n"
     )
