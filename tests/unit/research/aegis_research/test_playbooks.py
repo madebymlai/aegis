@@ -99,6 +99,16 @@ def test_indicator_playbook_rejects_unknown_baseline_component(tmp_path) -> None
         )
 
 
+def test_playbook_registry_rejects_dangling_symlink_with_registry_error(tmp_path) -> None:
+    root = tmp_path / "research" / "playbooks"
+    link = root / "indicators" / "missing.py"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(tmp_path / "missing.py")
+
+    with pytest.raises(PlaybookRegistryError, match="symlink target does not exist"):
+        discover_playbook_registry(root=root, repo_root=tmp_path)
+
+
 def _write_playbook(
     path,
     family: str,

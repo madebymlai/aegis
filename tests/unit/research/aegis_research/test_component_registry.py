@@ -185,6 +185,16 @@ def test_component_discovery_rejects_symlink_escape(tmp_path) -> None:
         discover_component_registry(root=root, repo_root=tmp_path)
 
 
+def test_component_discovery_rejects_dangling_symlink_with_registry_error(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    link = root / "indicators" / "missing.py"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(tmp_path / "missing.py")
+
+    with pytest.raises(ComponentRegistryError, match="symlink target does not exist"):
+        discover_component_registry(root=root, repo_root=tmp_path)
+
+
 def test_component_callable_loads_only_after_selection(tmp_path) -> None:
     root = tmp_path / "research" / "components"
     path = root / "indicators" / "loadable.py"

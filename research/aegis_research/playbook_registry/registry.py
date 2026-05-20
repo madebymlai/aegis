@@ -295,8 +295,13 @@ def _playbook_files(path: Path, root: Path) -> tuple[Path, ...]:
     files = []
     for child in path.rglob("*"):
         if child.is_symlink():
-            _assert_inside_root(child.resolve(strict=True), root)
-            raise PlaybookRegistryError(f"{child}: playbook symlink resolves outside approved root")
+            try:
+                _assert_inside_root(child.resolve(strict=True), root)
+            except FileNotFoundError as error:
+                raise PlaybookRegistryError(
+                    f"{child}: playbook symlink target does not exist"
+                ) from error
+            raise PlaybookRegistryError(f"{child}: playbook symlink is not allowed")
         if child.suffix == ".py" and child.is_file():
             _assert_inside_root(child, root)
             files.append(child)

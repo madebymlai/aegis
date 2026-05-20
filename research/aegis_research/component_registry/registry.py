@@ -132,10 +132,13 @@ def _component_files(path: Path, root: Path) -> tuple[Path, ...]:
     files = []
     for child in path.rglob("*"):
         if child.is_symlink():
-            _assert_inside_root(child.resolve(strict=True), root)
-            raise ComponentRegistryError(
-                f"{child}: component symlink resolves outside approved root"
-            )
+            try:
+                _assert_inside_root(child.resolve(strict=True), root)
+            except FileNotFoundError as error:
+                raise ComponentRegistryError(
+                    f"{child}: component symlink target does not exist"
+                ) from error
+            raise ComponentRegistryError(f"{child}: component symlink is not allowed")
         if child.suffix == ".py" and child.is_file():
             _assert_inside_root(child, root)
             files.append(child)
