@@ -39,7 +39,7 @@ aerd run <strategy-run-config>
 aerd run --train <config>
 ```
 
-Default `aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research evidence. Run-lane playbooks use the sweep contract: indicator playbooks emit candidate-indexed surfaces, strategy playbooks materialize requested signal batches, and Aegis centrally scores complete composed strategy candidates through VBT chunks. Components are fixed-param promoted implementations and do not emit candidate axes. `aerd run --train` owns ML model-plugin training through the config's `train:` section; model-shaped configs passed to default `aerd run` fail with guidance to use `aerd run --train`.
+Default `aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research evidence. Run-lane playbooks use the sweep contract: indicator playbooks emit candidate-indexed surfaces, strategy playbooks materialize requested signal batches, and Aegis centrally scores complete composed strategy candidates through VBT chunks. Components are fixed-param promoted implementations and do not emit candidate axes. `aerd run --train` owns ML model-plugin training through top-level `labeler: {id: ...}` and the config's `train:` section; model-shaped configs passed to default `aerd run` fail with guidance to use `aerd run --train`.
 
 The walkthrough is scaffold evidence only. It is not validated trading methodology, empirical edge, or investment advice.
 
@@ -77,7 +77,7 @@ There is no universal catalog of all possible `data.arrays` values in Aegis. Vec
 
 ## Indicator Contract
 
-Train-mode configs reference promoted indicator component IDs in the top-level `indicators` section. Strategy/research `run` configs use the same top-level `indicators` section for grouped source blocks with `ids: all` or explicit ID lists. Source selection does not define params, inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths. `aerd run --train` requires `train.label` and `train.model`; model refs use `source` plus stable `id`, and v1 accepts only `source: plugin`.
+Train-mode configs reference promoted indicator component IDs in the top-level `indicators` section and one reviewed label component in top-level `labeler: {id: ...}`. Strategy/research `run` configs use the same top-level `indicators` section for grouped source blocks with `ids: all` or explicit ID lists. Source selection does not define params, inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths. `aerd run --train` requires `labeler` and `train.model`; model refs use `source` plus stable `id`, and v1 accepts only `source: plugin`. Top-level `labeler` and top-level `strategy` are mutually exclusive.
 
 ```yaml
 indicators:
@@ -189,7 +189,7 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 Promoted components live under `research/components/{labels,indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after lane validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/components/*_component_example.py`.
 
-Playbooks live under `research/playbooks/{labels,indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Run-lane indicator and strategy playbooks declare `result_schema: "playbook_sweep_result.v1"` and return contract marker `"aegis.playbook_sweep.v1"`. Indicator playbook IDs represent one indicator idea/family; the playbook owns its default parameters and candidate axis, emits named candidate-indexed outputs for strategy sweeps to consume, and a baseline may name exactly one component indicator ID. Strategy playbooks expose strategy candidate axes and materialize bounded signal chunks. Train-mode labels currently use fixed label components rather than label playbooks. See `docs/playbooks.md`, `docs/examples/playbooks/indicator_playbook_example.py`, and `docs/examples/playbooks/strategy_playbook_example.py`.
+Playbooks live under `research/playbooks/{indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Run-lane indicator and strategy playbooks declare `result_schema: "playbook_sweep_result.v1"` and return contract marker `"aegis.playbook_sweep.v1"`. Indicator playbook IDs represent one indicator idea/family; the playbook owns its default parameters and candidate axis, emits named candidate-indexed outputs for strategy sweeps to consume, and a baseline may name exactly one component indicator ID. Strategy playbooks expose strategy candidate axes and materialize bounded signal chunks. Labels are not active playbooks; train-mode labels use fixed reviewed label components selected by top-level `labeler`. See `docs/playbooks.md`, `docs/examples/playbooks/indicator_playbook_example.py`, and `docs/examples/playbooks/strategy_playbook_example.py`.
 
 ## Validation Modes
 
@@ -221,10 +221,8 @@ Purged validation writes one child artifact set per split: model, train/test pro
 Training configs select reviewed label components; they do not author generator params, target selection, transforms, formulas, imports, or notebook paths inline. A train lane references the selected component by stable id:
 
 ```yaml
-train:
-  label:
-    source: component
-    id: aegis.fixlb
+labeler:
+  id: aegis.fixlb
 ```
 
 Use VectorBT PRO `FIXLB` fixed look-ahead labels through a reviewed label component. That component owns the native generator params, target selection, target transform, split-safety metadata, and output names.

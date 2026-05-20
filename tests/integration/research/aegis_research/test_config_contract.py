@@ -40,8 +40,150 @@ def test_train_lane_config_resolves_model_registry_contract(tmp_path: Path) -> N
     )
 
     assert resolved.lane == "train"
+    assert resolved.config.labeler.id == "demo.fixlb"
     assert resolved.config.model.plugin_id == "aegis.sklearn_logistic"
     assert resolved.model_registry is not None
+
+
+def test_train_lane_rejects_nested_legacy_label_selection(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw.pop("labeler")
+    raw["train"] = {
+        **raw["train"],  # type: ignore[dict-item]
+        "label": {"source": "component", "id": "demo.fixlb"},
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane="train",
+        )
+
+    assert "train.label" in str(error.value)
+    assert "top-level labeler" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "extra_key",
+    [
+        "source",
+        "params",
+        "path",
+        "notebook_path",
+        "artifact_path",
+        "python",
+        "code",
+        "formula",
+        "sweep",
+        "axis",
+    ],
+)
+def test_train_lane_rejects_labeler_extra_keys(tmp_path: Path, extra_key: str) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["labeler"] = {"id": "demo.fixlb", extra_key: "not-allowed"}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane="train",
+        )
+
+    assert f"labeler.{extra_key}" in str(error.value)
+
+
+def test_train_lane_rejects_missing_labeler(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw.pop("labeler")
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane="train",
+        )
+
+    assert "labeler" in str(error.value)
+    assert "required" in str(error.value)
+
+
+def test_train_lane_rejects_scalar_labeler(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["labeler"] = "demo.fixlb"
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane="train",
+        )
+
+    assert "labeler" in str(error.value)
+    assert "mapping" in str(error.value)
+
+
+def test_train_lane_rejects_unknown_labeler_id(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["labeler"] = {"id": "unknown.fixlb"}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane="train",
+        )
+
+    assert "labeler.id" in str(error.value)
+    assert "unknown label component id" in str(error.value)
+
+
+@pytest.mark.parametrize("labeler_id", [None, "", "all", "bad/id"])
+def test_train_lane_rejects_invalid_labeler_id(tmp_path: Path, labeler_id: object) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["labeler"] = {"id": labeler_id}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane="train",
+        )
+
+    assert "labeler.id" in str(error.value)
+
+
+@pytest.mark.parametrize("expected_lane", ["run", "train"])
+def test_lane_config_rejects_strategy_and_labeler_together(
+    tmp_path: Path, expected_lane: str
+) -> None:
+    registry = _component_registry(tmp_path, include_strategy=True)
+    raw = _run_config()
+    raw["labeler"] = {"id": "demo.fixlb"}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=registry,
+            model_registry=make_model_registry(),
+            expected_lane=expected_lane,
+        )
+
+    assert "labeler" in str(error.value)
+    assert "strategy" in str(error.value)
+    assert "mutually exclusive" in str(error.value)
 
 
 def test_data_arrays_single_ohlcv_resolves_effective_set(tmp_path: Path) -> None:
@@ -315,9 +457,9 @@ def _train_config() -> dict[str, object]:
         "name": "canonical_train",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
         "portfolio": {"entry_budget": 1.0},
+        "labeler": {"id": "demo.fixlb"},
         "indicators": [{"source": "component", "ids": ["demo.returns"]}],
         "train": {
-            "label": {"source": "component", "id": "demo.fixlb"},
             "model": {
                 "source": "plugin",
                 "id": "aegis.sklearn_logistic",

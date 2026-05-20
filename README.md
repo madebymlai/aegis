@@ -28,7 +28,7 @@ Aegis RD gives each research loop a clear contract:
 - `aerd run <config>` runs strategy/research evidence over explicit playbook or component strategy/indicator refs. Run-lane playbooks use candidate-sweep axes and bounded signal chunks; components are fixed-param promoted implementations. Indicator candidates are ranked only as part of complete composed strategy candidates scored by Aegis central VBT execution. It does not train models.
 - `aerd run --train <config>` runs the ML training mode from the same config contract and preserves the existing split-local model, probability, signal, portfolio, and report artifacts.
 
-Configs stay inert across both modes: YAML selects trusted IDs and parameters only. It cannot import Python, execute formulas, point at arbitrary notebooks/scripts, or reference generated run artifacts as reproducible inputs. Train-specific settings live under `train:` and are required only when `--train` is passed.
+Configs stay inert across both modes: YAML selects trusted IDs and parameters only. It cannot import Python, execute formulas, point at arbitrary notebooks/scripts, or reference generated run artifacts as reproducible inputs. Train label selection uses top-level `labeler: {id: ...}` for a reviewed label component; train model, split, and signal settings live under `train:` and are required only when `--train` is passed. Top-level `labeler` and top-level `strategy` are mutually exclusive.
 
 ## Market Data Contract
 

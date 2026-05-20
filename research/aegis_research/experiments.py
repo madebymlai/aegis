@@ -241,10 +241,9 @@ def _train_component_required_arrays(
     if component_registry is None:
         return ()
     required: list[tuple[str, ...]] = []
-    if config.label.source == "component":
-        required.append(
-            component_registry.get(ComponentSelection("labels", config.label.id)).input_names
-        )
+    required.append(
+        component_registry.get(ComponentSelection("labels", config.labeler.id)).input_names
+    )
     for ref in config.indicators:
         if ref.source != "component":
             continue
@@ -293,8 +292,8 @@ def _raise_missing_label_result_builder() -> None:
     raise ConfigValidationError(
         [
             ConfigValidationIssue(
-                "train.label",
-                "component label source refs are required; use aerd run --train or pass a label_result_builder",
+                "labeler",
+                "component labeler execution requires aerd run --train or a label_result_builder",
             )
         ]
     )

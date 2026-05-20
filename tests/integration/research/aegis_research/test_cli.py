@@ -51,6 +51,60 @@ def test_json_invocation_error_is_structured(
     assert payload["error"]["category"] == "invocation"
 
 
+def test_default_run_reports_strategy_labeler_conflict_without_train_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": CONFIG_SCHEMA_VERSION,
+                "lane": "run",
+                "name": "bad_run",
+                "data": {
+                    "source": "synthetic",
+                    "symbols": ["SYN"],
+                    "rows": 120,
+                    "arrays": ["OHLCV"],
+                },
+                "portfolio": {"entry_budget": 1.0},
+                "strategy": {"source": "playbook", "id": "missing_strategy"},
+                "labeler": {"id": "demo.fixlb"},
+                "indicators": [{"source": "playbook", "ids": ["missing_indicator"]}],
+                "ranking": {"metric": "total_return_pct", "direction": "desc"},
+            },
+            sort_keys=False,
+        )
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-run"]) == 6
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert "mutually exclusive" in payload["error"]["message"]
+    assert "aerd run --train" not in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "bad-run").exists()
+
+
+def test_default_run_guides_top_level_labeler_train_config_to_train_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = _write_config(tmp_path)
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-mode"]) == 6
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert "aerd run --train" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "bad-mode").exists()
+
+
 def test_train_json_executes_valid_config_and_rejected_verdict_exits_zero(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -231,9 +285,9 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
         },
         "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
+        "labeler": {"id": "demo.fixlb"},
         "indicators": [{"source": "component", "ids": ["demo.returns"]}],
         "train": {
-            "label": {"source": "component", "id": "demo.fixlb"},
             "model": {
                 "source": "plugin",
                 "id": model["plugin_id"],

@@ -237,6 +237,8 @@ def _looks_like_model_training_config(path: Path) -> bool:
         return False
     if "model" in raw or "labels" in raw or "split" in raw:
         return True
+    if "labeler" in raw and not {"strategy", "ranking"}.intersection(raw):
+        return True
     return "train" in raw and not {"strategy", "ranking"}.intersection(raw)
 
 
@@ -245,13 +247,18 @@ def _label_result_builder(
     component_registry: FrozenComponentRegistry,
 ) -> Any:
     config = resolved.config
-    definition = component_registry.get(ComponentSelection("labels", config.label.id))
+    definition = component_registry.get(ComponentSelection("labels", config.labeler.id))
     label_callable = definition.load_callable()
 
     def build(data: Any) -> Any:
         result = label_callable(data)
         metadata = dict(getattr(result, "metadata", {}))
-        metadata["source"] = {"kind": "component", "id": config.label.id}
+        metadata["source"] = {
+            "kind": "component",
+            "id": config.labeler.id,
+            "version": definition.manifest.version,
+            **definition.identity.public(),
+        }
         return replace(result, metadata=metadata)
 
     return build

@@ -27,7 +27,7 @@ def test_valid_lane_configs_resolve_with_lane_identity(tmp_path: Path) -> None:
     assert run.lane == "run"
     assert run.config.strategy.id == "demo.strategy"
     assert train.lane == "train"
-    assert train.config.label.id == "demo.label"
+    assert train.config.labeler.id == "demo.label"
     assert train.config.model.id == "tests.sklearn_logistic"
     assert run.manifest()["lane"] == "run"
 
@@ -100,30 +100,23 @@ def test_load_lane_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
         ),
         (
             "train",
-            {"train": {"label": {"source": "component", "id": "demo.label", "params": {"n": 5}}}},
-            "train.label.params",
+            {"labeler": {"id": "demo.label", "params": {"n": 5}}},
+            "labeler.params",
         ),
         (
             "train",
             {
-                "train": {
-                    "label": {
-                        "source": "component",
-                        "id": "demo.label",
-                        "artifact_path": "runs/previous-run/strategy_run.json",
-                    }
+                "labeler": {
+                    "id": "demo.label",
+                    "artifact_path": "runs/previous-run/strategy_run.json",
                 }
             },
-            "train.label.artifact_path",
+            "labeler.artifact_path",
         ),
         (
             "train",
-            {
-                "train": {
-                    "label": {"source": "component", "id": "demo.label", "python": "lambda x: x"}
-                }
-            },
-            "train.label.python",
+            {"labeler": {"id": "demo.label", "python": "lambda x: x"}},
+            "labeler.python",
         ),
     ],
 )
@@ -337,9 +330,9 @@ def _train_config() -> dict[str, object]:
         "name": "train_demo",
         "data": {"source": "synthetic", "rows": 50, "arrays": ["OHLCV"]},
         "portfolio": {"entry_budget": 1.0},
+        "labeler": {"id": "demo.label"},
         "indicators": [{"source": "component", "ids": ["demo.indicator"]}],
         "train": {
-            "label": {"source": "component", "id": "demo.label"},
             "model": {"source": "plugin", "id": "tests.sklearn_logistic"},
         },
     }

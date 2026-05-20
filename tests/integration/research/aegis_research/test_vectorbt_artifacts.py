@@ -307,6 +307,7 @@ class _NativeObjectWithSensitiveState:
 class _RemoteDataWithSecret:
     def __init__(self, api_token: str) -> None:
         self.api_token = api_token
+        self._data: dict[str, pd.DataFrame] = {}
 
     @classmethod
     def pull(
@@ -320,11 +321,29 @@ class _RemoteDataWithSecret:
     ):
         api_token = api_token or (wrapper_kwargs or {}).get("api_token")
         api_token = api_token or (execute_kwargs or {}).get("api_token")
-        return cls(api_token)
+        return [(cls._raw_frame(), {"api_token": api_token})]
 
-    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
+    @classmethod
+    def from_data(
+        cls,
+        data,
+        *,
+        wrapper_kwargs: dict | None = None,
+        fetch_kwargs: dict | None = None,
+        returned_kwargs: dict | None = None,
+        **_kwargs,
+    ):
+        api_token = (wrapper_kwargs or {}).get("api_token")
+        api_token = api_token or next(iter((fetch_kwargs or {}).values()), {}).get("api_token")
+        api_token = api_token or next(iter((returned_kwargs or {}).values()), {}).get("api_token")
+        instance = cls(api_token)
+        instance._data = data
+        return instance
+
+    @staticmethod
+    def _raw_frame() -> pd.DataFrame:
         index = pd.date_range("2020-01-01", periods=180, freq="1D", tz="UTC", name="Open time")
-        frame = pd.DataFrame(
+        return pd.DataFrame(
             {
                 "Open": range(180),
                 "High": [value + 1 for value in range(180)],
@@ -334,6 +353,9 @@ class _RemoteDataWithSecret:
             },
             index=index,
         )
+
+    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
+        frame = self._data["SYN"].copy()
         frame.columns = pd.MultiIndex.from_product(
             [["SYN"], frame.columns], names=["symbol", "feature"]
         )

@@ -16,10 +16,10 @@ indicators:
   - source: component
     ids: [demo.native_indicators]
 
+labeler:
+  id: demo.fixlb
+
 train:
-  label:
-    source: component
-    id: demo.fixlb
   model:
     source: plugin
     id: aegis.sklearn_logistic
