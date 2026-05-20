@@ -133,6 +133,36 @@ def test_portfolio_metrics_by_candidate_group_preserves_candidate_scope() -> Non
     }
 
 
+def test_portfolio_metrics_by_candidate_group_handles_single_candidate_batch() -> None:
+    index = pd.date_range("2024-01-01", periods=5)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0, 14.0], "B": [20.0, 21.0, 22.0, 23.0, 24.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["candidate-a"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    entries = pd.DataFrame(False, index=index, columns=columns)
+    entries.loc[index[0], :] = True
+    exits = pd.DataFrame(False, index=index, columns=columns)
+    simulation = simulate_portfolio_batch(
+        close,
+        entries,
+        exits,
+        PortfolioConfig(entry_budget=0.6, fees=0, slippage=0),
+        SignalConfig(execution_timing="same_close"),
+    )
+
+    metrics = portfolio_metrics_by_candidate_group(
+        simulation.portfolio,
+        ReportConfig(freq="1D", year_freq="252D"),
+        ["candidate-a"],
+    )
+
+    assert metrics["candidate-a"]["total_return_pct"] == pytest.approx(18.0)
+
+
 def test_portfolio_metrics_records_warning_and_non_finite_evidence() -> None:
     warning_metrics = portfolio_metrics(
         _FakePortfolio(sharpe_ratio=1.2, warning_message="Sharpe Ratio requires frequency"),

@@ -135,6 +135,7 @@ def _validate_strategy_run_lane(
         component_registry=component_registry,
         allowed_sources={"component", "playbook"},
     )
+    _validate_run_source_combination(raw, issues)
     _validate_ranking("ranking", raw.get("ranking"), issues)
     candidate_grid = _section(
         raw,
@@ -143,6 +144,27 @@ def _validate_strategy_run_lane(
         issues,
     )
     _validate_candidate_grid(candidate_grid, issues)
+
+
+def _validate_run_source_combination(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    strategy = raw.get("strategy")
+    if not isinstance(strategy, dict) or strategy.get("source") != "component":
+        return
+    indicators = raw.get("indicators")
+    if not isinstance(indicators, list):
+        return
+    for index, indicator in enumerate(indicators):
+        if isinstance(indicator, dict) and indicator.get("source") == "playbook":
+            issues.append(
+                ConfigValidationIssue(
+                    f"indicators[{index}].source",
+                    "playbook indicators cannot enter the component runner; use a playbook "
+                    "strategy or promote the indicator candidate to a fixed component",
+                )
+            )
 
 
 def _validate_train_lane(
@@ -794,6 +816,7 @@ def _validate_candidate_grid(
 ) -> None:
     _optional_int("candidate_grid.max_candidates", candidate_grid, issues, positive=True)
     _optional_int("candidate_grid.max_estimated_cells", candidate_grid, issues, positive=True)
+    _optional_int("candidate_grid.batch_size", candidate_grid, issues, positive=True)
 
 
 def _validate_portfolio(portfolio: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:

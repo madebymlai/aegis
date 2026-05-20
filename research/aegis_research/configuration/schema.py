@@ -247,6 +247,7 @@ class RankingConfig:
 class CandidateGridConfig:
     max_candidates: int = 100_000
     max_estimated_cells: int = 50_000_000
+    batch_size: int = 1_000
 
 
 @dataclass(frozen=True)

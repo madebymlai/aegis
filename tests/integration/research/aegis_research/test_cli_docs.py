@@ -75,7 +75,10 @@ def test_docs_describe_composed_strategy_candidates_and_manual_promotion() -> No
     )
 
     assert "complete composed strategy candidates" in docs
-    assert "Indicator playbook rows become rankable only when a strategy source consumes" in docs
+    assert "Indicator playbook candidates become rankable only when a batched strategy playbook consumes" in docs
+    assert "batched_playbook_result.v1" in docs
+    assert "candidate_grid.batch_size" in docs
+    assert "chunks" in docs
     assert "metric_source" in docs
     assert "manual promotion" in docs
     assert "best indicator" not in docs

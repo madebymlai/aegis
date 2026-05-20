@@ -2,18 +2,28 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass
-from itertools import product
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.batched_candidates import reject_batched_result_in_record_runner
+from research.aegis_research.batched_candidates import (
+    BATCHED_PLAYBOOK_CONTRACT,
+    BATCHED_PLAYBOOK_RESULT_SCHEMA,
+    BatchedCandidateAxis,
+    BatchedComposedCandidate,
+    BatchedContractError,
+    BatchedIndicatorResult,
+    compose_batched_candidate_grid,
+    materialize_batched_strategy_signals,
+    preflight_indicator_grid,
+    validate_batched_indicator_result,
+    validate_batched_strategy_plan,
+)
 from research.aegis_research.component_registry import (
     ComponentSelection,
     FrozenComponentRegistry,
 )
-from research.aegis_research.component_registry.manifests import COMPONENT_ID_RE
 from research.aegis_research.config import (
     ConfigValidationError,
     ResolvedLaneConfig,
@@ -39,18 +49,18 @@ from research.aegis_research.playbook_registry import (
     PlaybookSelection,
     discover_playbook_registry,
 )
-from research.aegis_research.portfolios import simulate_portfolio
+from research.aegis_research.portfolios import simulate_portfolio, simulate_portfolio_batch
 from research.aegis_research.provenance.experiment_artifacts import ExperimentArtifactWriter
 from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
 from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.provenance.run_store import RunStore
-from research.aegis_research.reports import portfolio_metrics
+from research.aegis_research.reports import portfolio_metrics, portfolio_metrics_by_candidate_group
 from research.aegis_research.run_leaderboard import (
     METRIC_SOURCE_CENTRAL_PORTFOLIO,
     build_run_leaderboard,
 )
 
-STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v2"
+STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v3"
 STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
     "costs",
     "direction",
@@ -204,23 +214,6 @@ class StrategySignalResult:
 
 
 @dataclass(frozen=True)
-class IndicatorPlaybookCandidate:
-    source_key: str
-    source_id: str
-    candidate_id: str
-    params: dict[str, Any]
-    outputs: dict[str, pd.DataFrame]
-    evidence: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class IndicatorPlaybookAxis:
-    source_key: str
-    source_id: str
-    candidates: tuple[IndicatorPlaybookCandidate, ...]
-
-
-@dataclass(frozen=True)
 class IndicatorContext:
     context_id: str
     indicators: dict[str, Any]
@@ -278,22 +271,32 @@ def run_strategy_sweep(
         data_result.assert_usable()
         data_bundle = market_data_bundle(data_result)
         open_prices = data_bundle.feature("Open")
-        indicators, indicator_evidence, indicator_axes = _resolve_indicator_refs(
+        if config.strategy.source == "playbook":
+            _assert_batched_strategy_playbook(config.strategy, playbooks)
+            return _run_batched_strategy_sweep(
+                config,
+                component_registry=component_registry,
+                playbook_registry=playbooks,
+                recorder=recorder,
+                data_result=data_result,
+                data=data_bundle,
+                open_prices=open_prices,
+                array_contract=array_contract,
+            )
+        indicators, indicator_evidence = _resolve_indicator_refs(
             config.indicators,
             component_registry=component_registry,
-            playbook_registry=playbooks,
             data=data_bundle,
         )
-        composition_diagnostics = _composition_diagnostics(indicator_axes)
+        composition_diagnostics = _composition_diagnostics()
         recorder.manifest.evidence["composition"] = composition_diagnostics["planned"]
         recorder.persist()
-        indicator_contexts = _indicator_contexts(indicators, indicator_evidence, indicator_axes)
+        indicator_contexts = _fixed_indicator_contexts(indicators, indicator_evidence)
 
-        strategy_evidence, strategy_variant_records, signal_diagnostics, portfolio_diagnostics = (
+        strategy_evidence, strategy_candidate_records, signal_diagnostics, portfolio_diagnostics = (
             _resolve_strategy_ref(
                 config.strategy,
                 component_registry=component_registry,
-                playbook_registry=playbooks,
                 data=data_bundle,
                 open_prices=open_prices,
                 indicator_contexts=indicator_contexts,
@@ -302,9 +305,9 @@ def run_strategy_sweep(
                 composition_diagnostics=composition_diagnostics,
             )
         )
-        _assert_unique_strategy_variant_ids(strategy_variant_records)
+        _assert_unique_strategy_variant_ids(strategy_candidate_records)
         leaderboard = build_run_leaderboard(
-            strategy_variant_records,
+            strategy_candidate_records,
             metric=config.ranking.metric,
             direction=config.ranking.direction,
             rank_by=config.ranking.rank_by,
@@ -321,7 +324,7 @@ def run_strategy_sweep(
                 array_contract,
                 strategy_source=config.strategy.source,
             ),
-            "candidates": [to_builtin(record) for record in strategy_variant_records],
+            "candidates": [to_builtin(record) for record in strategy_candidate_records],
             "leaderboard": leaderboard,
             "composition": composition_diagnostics,
             "signal_diagnostics": signal_diagnostics,
@@ -357,12 +360,299 @@ def _resolve_indicator_refs(
     refs: list[RunIndicatorSourceConfig],
     *,
     component_registry: FrozenComponentRegistry,
-    playbook_registry: FrozenPlaybookRegistry,
     data: MarketDataBundle,
-) -> tuple[dict[str, Any], list[dict[str, Any]], list[IndicatorPlaybookAxis]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     indicators: dict[str, Any] = {}
     evidence: list[dict[str, Any]] = []
-    axes: list[IndicatorPlaybookAxis] = []
+    for ref in refs:
+        if ref.source == "component":
+            component_ids = ref.expanded_ids(component_registry.ids("indicators"))
+            for component_id in component_ids:
+                if component_id in indicators:
+                    raise ValueError(f"duplicate indicator component ref: {component_id}")
+                output, source_evidence = _load_component_indicator_ref(
+                    component_id,
+                    component_registry=component_registry,
+                    data=data,
+                )
+                indicators[component_id] = output
+                evidence.append(source_evidence)
+            continue
+
+        raise ValueError(
+            "playbook indicators in run configs require a batched strategy playbook; "
+            f"playbook indicator ids {ref.ids!r} cannot enter the component runner"
+        )
+    return indicators, evidence
+
+
+def _assert_batched_strategy_playbook(
+    ref: RunSourceRefConfig,
+    playbook_registry: FrozenPlaybookRegistry,
+) -> None:
+    definition = playbook_registry.get(PlaybookSelection("strategies", ref.id))
+    if definition.manifest.result_schema != BATCHED_PLAYBOOK_RESULT_SCHEMA:
+        raise ValueError(
+            f"strategy playbook {definition.id!r} uses result_schema "
+            f"{definition.manifest.result_schema!r}; run playbooks must use "
+            f"{BATCHED_PLAYBOOK_RESULT_SCHEMA!r}"
+        )
+
+
+def _run_batched_strategy_sweep(
+    config: Any,
+    *,
+    component_registry: FrozenComponentRegistry,
+    playbook_registry: FrozenPlaybookRegistry,
+    recorder: Any,
+    data_result: Any,
+    data: MarketDataBundle,
+    open_prices: pd.DataFrame,
+    array_contract: DataArrayContract,
+) -> dict[str, Any]:
+    try:
+        indicators, indicator_evidence, indicator_axes, indicator_candidate_evidence, preflight = (
+            _resolve_batched_indicator_refs(
+                config.indicators,
+                component_registry=component_registry,
+                playbook_registry=playbook_registry,
+                data=data,
+                candidate_grid=config.candidate_grid,
+            )
+        )
+    except BatchedContractError as error:
+        _persist_batched_preflight_failure(recorder, error)
+        raise
+    strategy_definition = playbook_registry.get(PlaybookSelection("strategies", config.strategy.id))
+    inputs = StrategyInputs(
+        data=data,
+        indicators=StrategyIndicatorInputs(
+            indicators,
+            required_consumed_keys=tuple(_indicator_source_key(axis.source_id) for axis in indicator_axes),
+        ),
+        metadata={
+            "strategy_id": strategy_definition.id,
+            "playbook_source_hash": strategy_definition.identity.source_hash,
+            "batched_contract": BATCHED_PLAYBOOK_CONTRACT,
+        },
+    )
+    strategy_plan = validate_batched_strategy_plan(
+        strategy_definition.load_callable()(inputs),
+        source_id=strategy_definition.id,
+    )
+    total_composed_candidates = _batched_composed_candidate_count(
+        strategy_plan.axis,
+        indicator_axes,
+    )
+    close = data.feature("Close")
+    batch_count = _candidate_batch_count(
+        total_composed_candidates,
+        config.candidate_grid.batch_size,
+    )
+    composition_diagnostics = {
+        "schema_version": "batched_strategy_composition.v1",
+        "planned": {
+            "indicator_preflight": preflight,
+            "strategy_candidate_count": strategy_plan.axis.count,
+            "total_composed_candidates": total_composed_candidates,
+            "batch_size": config.candidate_grid.batch_size,
+            "batch_count": batch_count,
+            "execution_preflight": _batched_execution_preflight(
+                total_composed_candidates=total_composed_candidates,
+                batch_size=config.candidate_grid.batch_size,
+                row_count=len(close.index),
+                symbol_count=len(close.columns),
+                has_open_prices=open_prices is not None,
+                max_estimated_cells=config.candidate_grid.max_estimated_cells,
+            ),
+        },
+        "total_composed_candidates": total_composed_candidates,
+    }
+    recorder.manifest.evidence["composition"] = composition_diagnostics["planned"]
+    recorder.persist()
+    _assert_batched_candidate_budget(
+        total_composed_candidates,
+        config.candidate_grid.max_candidates,
+    )
+    _assert_batched_execution_budget(
+        composition_diagnostics["planned"]["execution_preflight"]
+    )
+    composed_candidates = compose_batched_candidate_grid(
+        strategy_axis=strategy_plan.axis,
+        indicator_axes=indicator_axes,
+    )
+    strategy_evidence = {
+        "source": "playbook",
+        "id": strategy_definition.id,
+        "version": strategy_definition.manifest.version,
+        **strategy_definition.identity.public(),
+        "consumes_runner_data": True,
+        "data_binding": "batched_strategy_inputs",
+        "result_contract": BATCHED_PLAYBOOK_CONTRACT,
+    }
+    catalogs = _batched_artifact_catalogs(
+        strategy_evidence=strategy_evidence,
+        indicator_evidence=indicator_evidence,
+        indicator_candidate_evidence=indicator_candidate_evidence,
+        strategy_axis=strategy_plan.axis,
+        composed_candidates=composed_candidates,
+    )
+    strategy_records: list[dict[str, Any]] = []
+    signal_diagnostics = _empty_signal_diagnostics()
+    portfolio_diagnostics = _empty_portfolio_diagnostics()
+    chunk_diagnostics = _empty_chunk_diagnostics()
+    recorder.manifest.evidence["chunks"] = chunk_diagnostics
+    recorder.persist()
+    for batch_index, batch in enumerate(
+        _candidate_batches(composed_candidates, config.candidate_grid.batch_size)
+    ):
+        batch_ids = tuple(candidate.candidate_id for candidate in batch)
+        chunk_ref = _batched_chunk_ref(batch_index)
+        chunk_record = _batched_chunk_record(batch_index, batch_ids, chunk_ref)
+        chunk_diagnostics["chunks"].append(chunk_record)
+        catalogs["chunks"][chunk_ref] = chunk_record
+        recorder.persist()
+        try:
+            chunk_record["stage"] = "materialize_signals"
+            signal_result = materialize_batched_strategy_signals(
+                strategy_plan,
+                source_id=strategy_definition.id,
+                requested_candidate_ids=batch_ids,
+                indicator_axes=indicator_axes,
+                candidate_pool=batch,
+                close=close,
+            )
+            chunk_record["stage"] = "indicator_consumption_validation"
+            _assert_strategy_consumed_indicator_context(inputs, strategy_id=strategy_definition.id)
+            chunk_record["stage"] = "portfolio_simulation"
+            portfolio = simulate_portfolio_batch(
+                close,
+                signal_result.entries,
+                signal_result.exits,
+                config.portfolio,
+                SignalConfig(),
+                open_prices=open_prices,
+                market_index=close.index,
+            )
+            chunk_record["stage"] = "metric_extraction"
+            metrics_by_candidate = portfolio_metrics_by_candidate_group(
+                portfolio.portfolio,
+                config.report,
+                batch_ids,
+            )
+            chunk_record["stage"] = "candidate_recording"
+            for candidate in batch:
+                strategy_candidate_ref = _strategy_candidate_ref(candidate.strategy)
+                indicator_candidate_refs = [
+                    _indicator_candidate_ref(indicator) for indicator in candidate.indicators
+                ]
+                metric_ref = candidate.candidate_id
+                catalogs["metrics"][metric_ref] = metrics_by_candidate[candidate.candidate_id]
+                catalogs["composed_candidates"][candidate.candidate_id] |= {
+                    "chunk_ref": chunk_ref,
+                    "metric_ref": metric_ref,
+                }
+                indicator_candidates = [
+                    indicator_candidate_evidence[
+                        (indicator.source, indicator.source_id, indicator.candidate_id)
+                    ]
+                    for indicator in candidate.indicators
+                ]
+                strategy_records.append(
+                    {
+                        "variant_id": candidate.candidate_id,
+                        "composed_candidate_id": candidate.candidate_id,
+                        "strategy_source": "playbook",
+                        "strategy_id": strategy_definition.id,
+                        "strategy_candidate_id": candidate.strategy.candidate_id,
+                        "strategy_candidate_ref": strategy_candidate_ref,
+                        "strategy_params": to_builtin(candidate.strategy.params),
+                        "source_hash": strategy_definition.identity.source_hash,
+                        "indicators": indicator_evidence,
+                        "indicator_candidates": indicator_candidates,
+                        "indicator_candidate_refs": indicator_candidate_refs,
+                        "metric_ref": metric_ref,
+                        "chunk_ref": chunk_ref,
+                        "params": to_builtin(candidate.strategy.params),
+                        "metrics": metrics_by_candidate[candidate.candidate_id],
+                        "metric_source": METRIC_SOURCE_CENTRAL_PORTFOLIO,
+                        "portfolio": to_builtin(asdict(config.portfolio)),
+                    }
+                )
+                signal_diagnostics["candidates"][candidate.candidate_id] = {
+                    **signal_result.diagnostics,
+                    "batch_index": batch_index,
+                    "chunk_ref": chunk_ref,
+                }
+                portfolio_diagnostics["candidates"][candidate.candidate_id] = {
+                    "batch_index": batch_index,
+                    "chunk_ref": chunk_ref,
+                }
+            portfolio_diagnostics["chunks"][chunk_ref] = to_builtin(portfolio.diagnostics)
+        except Exception as error:
+            _mark_batched_chunk_failed(chunk_record, error)
+            recorder.persist()
+            raise
+        chunk_record["status"] = "succeeded"
+        chunk_record["stage"] = "completed"
+        recorder.persist()
+
+    leaderboard = build_run_leaderboard(
+        strategy_records,
+        metric=config.ranking.metric,
+        direction=config.ranking.direction,
+        rank_by=config.ranking.rank_by,
+    )
+    _assert_leaderboard_complete(leaderboard)
+    payload = {
+        "schema_version": STRATEGY_ARTIFACT_SCHEMA_VERSION,
+        "lane": "run",
+        "evidence_type": "strategy_sweep",
+        "strategy": strategy_evidence,
+        "indicators": indicator_evidence,
+        "data": _strategy_data_evidence_payload(
+            data_result,
+            array_contract,
+            strategy_source=config.strategy.source,
+        ),
+        "candidates": _compact_batched_candidate_records(catalogs),
+        "leaderboard": leaderboard,
+        "composition": composition_diagnostics,
+        "catalogs": catalogs,
+        "chunk_diagnostics": chunk_diagnostics,
+        "signal_diagnostics": signal_diagnostics,
+        "portfolio_diagnostics": portfolio_diagnostics,
+    }
+    _write_strategy_artifact(recorder, payload)
+    recorder.mark_run_completed()
+    return {
+        **_run_refs(recorder),
+        "lane": "run",
+        "evidence_type": "strategy_sweep",
+        "strategy_artifact_id": "strategy.run",
+        "leaderboard": leaderboard,
+    }
+
+
+def _resolve_batched_indicator_refs(
+    refs: list[RunIndicatorSourceConfig],
+    *,
+    component_registry: FrozenComponentRegistry,
+    playbook_registry: FrozenPlaybookRegistry,
+    data: MarketDataBundle,
+    candidate_grid: Any,
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[BatchedCandidateAxis],
+    dict[tuple[str, str, str], dict[str, Any]],
+    dict[str, Any],
+]:
+    indicators: dict[str, Any] = {}
+    evidence: list[dict[str, Any]] = []
+    axes: list[BatchedCandidateAxis] = []
+    batched_results: list[BatchedIndicatorResult] = []
+    candidate_evidence: dict[tuple[str, str, str], dict[str, Any]] = {}
     seen_playbook_ids: set[str] = set()
     for ref in refs:
         if ref.source == "component":
@@ -370,21 +660,13 @@ def _resolve_indicator_refs(
             for component_id in component_ids:
                 if component_id in indicators:
                     raise ValueError(f"duplicate indicator component ref: {component_id}")
-                definition = component_registry.get(ComponentSelection("indicators", component_id))
-                output = definition.load_callable()(data)
-                indicators[component_id] = _validate_indicator_output(
-                    output,
-                    data.feature("Close"),
+                output, source_evidence = _load_component_indicator_ref(
                     component_id,
+                    component_registry=component_registry,
+                    data=data,
                 )
-                evidence.append(
-                    {
-                        "source": "component",
-                        "id": component_id,
-                        "version": definition.manifest.version,
-                        **definition.identity.public(),
-                    }
-                )
+                indicators[component_id] = output
+                evidence.append(source_evidence)
             continue
 
         playbook_ids = ref.expanded_ids(playbook_registry.ids("indicators"))
@@ -393,9 +675,17 @@ def _resolve_indicator_refs(
                 raise ValueError(f"duplicate indicator playbook ref: {playbook_id}")
             seen_playbook_ids.add(playbook_id)
             definition = playbook_registry.get(PlaybookSelection("indicators", playbook_id))
-            result = definition.load_callable()(data)
-            reject_batched_result_in_record_runner(result, source_id=definition.id)
-            _reject_playbook_metric_records(result, source_id=definition.id)
+            if definition.manifest.result_schema != BATCHED_PLAYBOOK_RESULT_SCHEMA:
+                raise ValueError(
+                    f"batched strategy run requires indicator playbook {definition.id!r} "
+                    f"to use result_schema {BATCHED_PLAYBOOK_RESULT_SCHEMA!r}"
+                )
+            result = validate_batched_indicator_result(
+                definition.load_callable()(data),
+                source_id=definition.id,
+                close=data.feature("Close"),
+            )
+            source_key = _indicator_source_key(definition.id)
             source_evidence = {
                 "source": "playbook",
                 "id": definition.id,
@@ -403,200 +693,291 @@ def _resolve_indicator_refs(
                 **definition.identity.public(),
                 "indicator_family": definition.manifest.indicator_family,
                 "baseline_component_indicator_id": definition.manifest.baseline_component_indicator_id,
+                "candidate_count": result.axis.count,
+                "result_contract": BATCHED_PLAYBOOK_CONTRACT,
             }
-            axis = _indicator_playbook_axis(
-                result,
-                data=data,
-                source_evidence=source_evidence,
-            )
-            axes.append(axis)
-            evidence.append(source_evidence | {"candidate_count": len(axis.candidates)})
-    return indicators, evidence, axes
+            indicators[source_key] = {
+                "candidate_axis": [
+                    {"candidate_id": candidate.candidate_id, "params": to_builtin(candidate.params)}
+                    for candidate in result.axis.candidates
+                ],
+                "outputs": result.outputs,
+                "diagnostics": result.diagnostics,
+            }
+            for candidate in result.axis.candidates:
+                candidate_evidence[("playbook", definition.id, candidate.candidate_id)] = (
+                    source_evidence
+                    | {
+                        "candidate_id": candidate.candidate_id,
+                        "params": to_builtin(candidate.params),
+                        "outputs": sorted(result.outputs),
+                        "source_key": source_key,
+                    }
+                )
+            axes.append(result.axis)
+            batched_results.append(result)
+            evidence.append(source_evidence)
+    preflight = preflight_indicator_grid(
+        batched_results,
+        max_candidates=candidate_grid.max_candidates,
+        max_estimated_cells=candidate_grid.max_estimated_cells,
+    ).diagnostics()
+    return indicators, evidence, axes, candidate_evidence, preflight
 
 
-def _indicator_playbook_axis(
-    result: Any,
+def _load_component_indicator_ref(
+    component_id: str,
     *,
+    component_registry: FrozenComponentRegistry,
     data: MarketDataBundle,
-    source_evidence: dict[str, Any],
-) -> IndicatorPlaybookAxis:
-    source_id = str(source_evidence["id"])
-    source_key = _indicator_source_key(source_id)
-    variants = result.get("variant_records") if isinstance(result, Mapping) else None
-    if not isinstance(variants, list):
-        raise TypeError(f"playbook {source_id!r} result variant_records must be a list")
-    if not variants:
-        raise ValueError(f"indicator playbook {source_id!r} must emit at least one candidate")
-
-    close = data.feature("Close")
-    candidates: list[IndicatorPlaybookCandidate] = []
-    seen_candidate_ids: set[str] = set()
-    for index, item in enumerate(variants):
-        if not isinstance(item, Mapping):
-            raise TypeError(
-                f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
-            )
-        record = dict(item)
-        forbidden = sorted(set(record) & INDICATOR_CANDIDATE_FORBIDDEN_KEYS)
-        if forbidden:
-            raise ValueError(
-                f"indicator playbook {source_id!r} result variant_records[{index}] must not "
-                f"contain signal, metric, or portfolio fields: {forbidden}"
-            )
-        candidate_id = record.get("candidate_id")
-        if not isinstance(candidate_id, str) or not candidate_id:
-            raise TypeError(
-                f"playbook {source_id!r} result variant_records[{index}] must include "
-                "a non-empty candidate_id"
-            )
-        _assert_candidate_id_shape(
-            candidate_id,
-            source_id=source_id,
-            index=index,
-            field_name="candidate_id",
-        )
-        if candidate_id in seen_candidate_ids:
-            raise ValueError(
-                f"indicator playbook {source_id!r} emitted duplicate candidate {candidate_id!r}"
-            )
-        seen_candidate_ids.add(candidate_id)
-        if not isinstance(record.get("params"), Mapping):
-            raise TypeError(
-                f"playbook {source_id!r} result variant_records[{index}].params must be "
-                "a mapping of swept parameter names to values"
-            )
-        params = dict(record["params"])
-        outputs = record.get("outputs")
-        if not isinstance(outputs, Mapping) or not outputs:
-            raise TypeError(
-                f"playbook {source_id!r} result variant_records[{index}].outputs must be "
-                "a non-empty mapping of output names to pandas objects"
-            )
-        normalized_outputs = {
-            _indicator_output_name(output_name, source_id=source_id, index=index): _indicator_output_frame(
-                output,
-                close,
-                f"indicator playbook {source_id!r} candidate {candidate_id!r} output {output_name!r}",
-            )
-            for output_name, output in outputs.items()
-        }
-        evidence = source_evidence | {
-            "candidate_id": candidate_id,
-            "params": to_builtin(params),
-            "outputs": sorted(normalized_outputs),
-            "source_key": source_key,
-        }
-        candidates.append(
-            IndicatorPlaybookCandidate(
-                source_key=source_key,
-                source_id=source_id,
-                candidate_id=candidate_id,
-                params=params,
-                outputs=normalized_outputs,
-                evidence=evidence,
-            )
-        )
-
-    return IndicatorPlaybookAxis(
-        source_key=source_key,
-        source_id=source_id,
-        candidates=tuple(candidates),
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    definition = component_registry.get(ComponentSelection("indicators", component_id))
+    output = definition.load_callable()(data)
+    return (
+        _validate_indicator_output(
+            output,
+            data.feature("Close"),
+            component_id,
+        ),
+        {
+            "source": "component",
+            "id": component_id,
+            "version": definition.manifest.version,
+            **definition.identity.public(),
+        },
     )
 
 
-def _indicator_contexts(
+def _batched_artifact_catalogs(
+    *,
+    strategy_evidence: dict[str, Any],
+    indicator_evidence: list[dict[str, Any]],
+    indicator_candidate_evidence: dict[tuple[str, str, str], dict[str, Any]],
+    strategy_axis: BatchedCandidateAxis,
+    composed_candidates: tuple[BatchedComposedCandidate, ...],
+) -> dict[str, Any]:
+    catalogs: dict[str, Any] = {
+        "schema_version": "batched_strategy_catalogs.v1",
+        "sources": {
+            _strategy_source_ref(strategy_evidence["source"], strategy_evidence["id"]): to_builtin(
+                strategy_evidence
+            ),
+        },
+        "indicator_candidates": {},
+        "strategy_candidates": {},
+        "composed_candidates": {},
+        "chunks": {},
+        "metrics": {},
+    }
+    for evidence in indicator_evidence:
+        catalogs["sources"][_indicator_source_ref(evidence["source"], evidence["id"])] = to_builtin(
+            evidence
+        )
+    for (source, source_id, candidate_id), evidence in indicator_candidate_evidence.items():
+        catalogs["indicator_candidates"][_indicator_candidate_ref_parts(source, source_id, candidate_id)] = (
+            to_builtin(evidence)
+        )
+    for candidate in strategy_axis.candidates:
+        catalogs["strategy_candidates"][
+            _strategy_candidate_ref_parts(strategy_axis.source, strategy_axis.source_id, candidate.candidate_id)
+        ] = {
+            "source_ref": _strategy_source_ref(strategy_axis.source, strategy_axis.source_id),
+            "source": strategy_axis.source,
+            "id": strategy_axis.source_id,
+            "candidate_id": candidate.candidate_id,
+            "params": to_builtin(candidate.params),
+        }
+    for candidate in composed_candidates:
+        catalogs["composed_candidates"][candidate.candidate_id] = {
+            "candidate_id": candidate.candidate_id,
+            "strategy_candidate_ref": _strategy_candidate_ref(candidate.strategy),
+            "indicator_candidate_refs": [
+                _indicator_candidate_ref(indicator) for indicator in candidate.indicators
+            ],
+        }
+    return catalogs
+
+
+def _compact_batched_candidate_records(catalogs: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "variant_id": candidate_id,
+            "composed_candidate_id": candidate_id,
+            "strategy_candidate_ref": record["strategy_candidate_ref"],
+            "indicator_candidate_refs": record["indicator_candidate_refs"],
+            "metric_ref": record["metric_ref"],
+            "chunk_ref": record["chunk_ref"],
+            "metric_source": METRIC_SOURCE_CENTRAL_PORTFOLIO,
+        }
+        for candidate_id, record in catalogs["composed_candidates"].items()
+    ]
+
+
+def _strategy_source_ref(source: str, source_id: str) -> str:
+    return f"strategy:{source}:{source_id}"
+
+
+def _indicator_source_ref(source: str, source_id: str) -> str:
+    return f"indicator:{source}:{source_id}"
+
+
+def _strategy_candidate_ref(candidate: Any) -> str:
+    return _strategy_candidate_ref_parts(candidate.source, candidate.source_id, candidate.candidate_id)
+
+
+def _strategy_candidate_ref_parts(source: str, source_id: str, candidate_id: str) -> str:
+    return f"strategy:{source}:{source_id}:{candidate_id}"
+
+
+def _indicator_candidate_ref(candidate: Any) -> str:
+    return _indicator_candidate_ref_parts(candidate.source, candidate.source_id, candidate.candidate_id)
+
+
+def _indicator_candidate_ref_parts(source: str, source_id: str, candidate_id: str) -> str:
+    return f"indicator:{source}:{source_id}:{candidate_id}"
+
+
+def _assert_batched_candidate_budget(
+    candidate_count: int,
+    max_candidates: int,
+) -> None:
+    if candidate_count > max_candidates:
+        raise BatchedContractError(
+            f"batched composed grid has {candidate_count} candidates, above "
+            f"candidate_grid.max_candidates={max_candidates}"
+        )
+
+
+def _batched_execution_preflight(
+    *,
+    total_composed_candidates: int,
+    batch_size: int,
+    row_count: int,
+    symbol_count: int,
+    has_open_prices: bool,
+    max_estimated_cells: int,
+) -> dict[str, Any]:
+    batch_candidate_count = min(total_composed_candidates, batch_size)
+    materialized_frame_count = 4 + int(has_open_prices)
+    estimated_cells = batch_candidate_count * row_count * symbol_count * materialized_frame_count
+    return {
+        "schema_version": "batched_execution_preflight.v1",
+        "batch_candidate_count": batch_candidate_count,
+        "row_count": row_count,
+        "symbol_count": symbol_count,
+        "materialized_frame_count": materialized_frame_count,
+        "estimated_cells": estimated_cells,
+        "limits": {"max_estimated_cells": max_estimated_cells},
+    }
+
+
+def _assert_batched_execution_budget(preflight: dict[str, Any]) -> None:
+    estimated_cells = int(preflight["estimated_cells"])
+    max_estimated_cells = int(preflight["limits"]["max_estimated_cells"])
+    if estimated_cells > max_estimated_cells:
+        raise BatchedContractError(
+            f"batched execution batch has {estimated_cells} estimated cells, above "
+            f"candidate_grid.max_estimated_cells={max_estimated_cells}; reduce "
+            "candidate_grid.batch_size"
+        )
+
+
+def _candidate_batches(
+    candidates: tuple[BatchedComposedCandidate, ...],
+    batch_size: int,
+) -> Iterator[tuple[BatchedComposedCandidate, ...]]:
+    for start in range(0, len(candidates), batch_size):
+        yield candidates[start : start + batch_size]
+
+
+def _candidate_batch_count(
+    candidate_count: int,
+    batch_size: int,
+) -> int:
+    return (candidate_count + batch_size - 1) // batch_size
+
+
+def _batched_composed_candidate_count(
+    strategy_axis: BatchedCandidateAxis,
+    indicator_axes: list[BatchedCandidateAxis],
+) -> int:
+    count = strategy_axis.count
+    for axis in indicator_axes:
+        count *= axis.count
+    return count
+
+
+def _persist_batched_preflight_failure(recorder: Any, error: BatchedContractError) -> None:
+    if error.diagnostics is None:
+        return
+    recorder.manifest.evidence["composition"] = {"indicator_preflight": error.diagnostics}
+    recorder.persist()
+
+
+def _empty_chunk_diagnostics() -> dict[str, Any]:
+    return {
+        "schema_version": "batched_strategy_chunk_diagnostics.v1",
+        "chunks": [],
+    }
+
+
+def _batched_chunk_ref(batch_index: int) -> str:
+    return f"batch-{batch_index:06d}"
+
+
+def _batched_chunk_record(
+    batch_index: int,
+    candidate_ids: tuple[str, ...],
+    chunk_ref: str,
+) -> dict[str, Any]:
+    return {
+        "chunk_ref": chunk_ref,
+        "batch_index": batch_index,
+        "candidate_count": len(candidate_ids),
+        "candidate_ids": list(candidate_ids),
+        "status": "running",
+        "stage": "planned",
+    }
+
+
+def _mark_batched_chunk_failed(chunk_record: dict[str, Any], error: Exception) -> None:
+    chunk_record["status"] = "failed"
+    chunk_record["error"] = {
+        "stage": chunk_record["stage"],
+        "error_type": type(error).__name__,
+        "message": str(error)[:1000],
+    }
+
+
+def _fixed_indicator_contexts(
     fixed_indicators: dict[str, Any],
     fixed_evidence: list[dict[str, Any]],
-    axes: list[IndicatorPlaybookAxis],
 ) -> list[IndicatorContext]:
-    if not axes:
-        return [
-            IndicatorContext(
-                context_id="fixed-indicators",
-                indicators=dict(fixed_indicators),
-                evidence=list(fixed_evidence),
-                candidate_evidence=[],
-                required_indicator_keys=(),
-            )
-        ]
-
-    contexts: list[IndicatorContext] = []
-    for candidates in product(*(axis.candidates for axis in axes)):
-        indicators = dict(fixed_indicators)
-        candidate_evidence: list[dict[str, Any]] = []
-        for candidate in candidates:
-            if candidate.source_key in indicators:
-                raise ValueError(f"duplicate strategy indicator input key: {candidate.source_key}")
-            indicators[candidate.source_key] = {
-                "candidate_id": candidate.candidate_id,
-                "params": to_builtin(candidate.params),
-                "outputs": candidate.outputs,
-            }
-            candidate_evidence.append(candidate.evidence)
-        contexts.append(
-            IndicatorContext(
-                context_id=_indicator_context_id(candidate_evidence),
-                indicators=indicators,
-                evidence=[*fixed_evidence, *candidate_evidence],
-                candidate_evidence=candidate_evidence,
-                required_indicator_keys=tuple(candidate.source_key for candidate in candidates),
-            )
+    return [
+        IndicatorContext(
+            context_id="fixed-indicators",
+            indicators=dict(fixed_indicators),
+            evidence=list(fixed_evidence),
+            candidate_evidence=[],
+            required_indicator_keys=(),
         )
-    return contexts
+    ]
 
 
-def _composition_diagnostics(axes: list[IndicatorPlaybookAxis]) -> dict[str, Any]:
+def _composition_diagnostics() -> dict[str, Any]:
     return {
         "schema_version": "strategy_composition.v1",
         "planned": {
-            "indicator_axes": [
-                {
-                    "source_key": axis.source_key,
-                    "source_id": axis.source_id,
-                    "candidate_count": len(axis.candidates),
-                }
-                for axis in axes
-            ],
-            "indicator_context_count": _indicator_context_count(axes),
+            "indicator_axes": [],
+            "indicator_context_count": 1,
         },
         "strategy_contexts": {},
         "total_composed_candidates": 0,
     }
 
 
-def _indicator_context_count(axes: list[IndicatorPlaybookAxis]) -> int:
-    count = 1
-    for axis in axes:
-        count *= len(axis.candidates)
-    return count
-
-
 def _indicator_source_key(source_id: str) -> str:
     return f"playbook:{source_id}"
-
-
-def _indicator_context_id(candidate_evidence: list[dict[str, Any]]) -> str:
-    tokens = [
-        f"{item['source']}:{item['id']}:{item['candidate_id']}" for item in candidate_evidence
-    ]
-    return "indicators:[" + ",".join(tokens) + "]"
-
-
-def _indicator_output_name(output_name: Any, *, source_id: str, index: int) -> str:
-    if not isinstance(output_name, str) or not output_name:
-        raise TypeError(
-            f"playbook {source_id!r} result variant_records[{index}].outputs keys must be "
-            "non-empty strings"
-        )
-    return output_name
-
-
-def _indicator_output_frame(value: Any, close: pd.DataFrame, label: str) -> pd.DataFrame:
-    frame = value.to_frame() if isinstance(value, pd.Series) else value
-    if not isinstance(frame, pd.DataFrame):
-        raise TypeError(f"{label} must be a pandas Series or DataFrame")
-    _assert_indicator_frame(frame, close, label)
-    return frame
 
 
 def _strategy_data_array_contract(
@@ -649,7 +1030,6 @@ def _resolve_strategy_ref(
     ref: RunSourceRefConfig,
     *,
     component_registry: FrozenComponentRegistry,
-    playbook_registry: FrozenPlaybookRegistry,
     data: MarketDataBundle,
     open_prices: pd.DataFrame,
     indicator_contexts: list[IndicatorContext],
@@ -657,60 +1037,6 @@ def _resolve_strategy_ref(
     report_config: Any,
     composition_diagnostics: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
-    if ref.source == "playbook":
-        definition = playbook_registry.get(PlaybookSelection("strategies", ref.id))
-        strategy_callable = definition.load_callable()
-        records: list[dict[str, Any]] = []
-        signal_diagnostics = _empty_signal_diagnostics()
-        portfolio_diagnostics = _empty_portfolio_diagnostics()
-        for context in indicator_contexts:
-            inputs = _strategy_inputs_for_context(
-                data=data,
-                context=context,
-                metadata={
-                    "strategy_id": ref.id,
-                    "playbook_source_hash": definition.identity.source_hash,
-                    "indicator_ids": [item["id"] for item in context.evidence],
-                    "indicator_context_id": context.context_id,
-                },
-            )
-            context_records, context_signal_diagnostics, context_portfolio_diagnostics = (
-                _score_strategy_playbook_candidates(
-                    strategy_callable(inputs),
-                    inputs,
-                    data=data,
-                    open_prices=open_prices,
-                    portfolio_config=portfolio_config,
-                    report_config=report_config,
-                    source_id=definition.id,
-                    source_hash=definition.identity.source_hash,
-                    context=context,
-                )
-            )
-            _record_context_composition(
-                composition_diagnostics,
-                context,
-                strategy_candidate_count=len(context_records),
-            )
-            records.extend(context_records)
-            signal_diagnostics["candidates"].update(context_signal_diagnostics["candidates"])
-            portfolio_diagnostics["candidates"].update(
-                context_portfolio_diagnostics["candidates"]
-            )
-        return (
-            {
-                "source": "playbook",
-                "id": definition.id,
-                "version": definition.manifest.version,
-                **definition.identity.public(),
-                "consumes_runner_data": True,
-                "data_binding": "strategy_inputs",
-            },
-            records,
-            signal_diagnostics,
-            portfolio_diagnostics,
-        )
-
     definition = component_registry.get(ComponentSelection("strategies", ref.id))
     strategy_callable = definition.load_callable()
     records = []
@@ -776,57 +1102,6 @@ def _resolve_strategy_ref(
     )
 
 
-def _score_strategy_playbook_candidates(
-    result: Any,
-    inputs: StrategyInputs,
-    *,
-    data: MarketDataBundle,
-    open_prices: pd.DataFrame,
-    portfolio_config: Any,
-    report_config: Any,
-    source_id: str,
-    source_hash: str,
-    context: IndicatorContext,
-) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
-    _assert_strategy_consumed_indicator_context(inputs, strategy_id=source_id)
-    reject_batched_result_in_record_runner(result, source_id=source_id)
-    candidates = _strategy_playbook_candidate_records(result, source_id=source_id)
-    records: list[dict[str, Any]] = []
-    signal_diagnostics = _empty_signal_diagnostics()
-    portfolio_diagnostics = _empty_portfolio_diagnostics()
-    for candidate in candidates:
-        strategy_candidate_id = str(candidate["variant_id"])
-        variant_id = _composed_candidate_id(
-            strategy_source="playbook",
-            strategy_id=source_id,
-            strategy_candidate_id=strategy_candidate_id,
-            indicator_candidates=context.candidate_evidence,
-        )
-        record, signal_diagnostic, portfolio_diagnostic = _score_strategy_signals(
-            validate_strategy_output(candidate, inputs),
-            data=data,
-            open_prices=open_prices,
-            portfolio_config=portfolio_config,
-            report_config=report_config,
-            variant_id=variant_id,
-            params=candidate["params"],
-            source_fields={
-                "composed_candidate_id": variant_id,
-                "strategy_source": "playbook",
-                "strategy_id": source_id,
-                "strategy_candidate_id": strategy_candidate_id,
-                "strategy_params": to_builtin(dict(candidate["params"])),
-                "source_hash": source_hash,
-                "indicators": context.evidence,
-                "indicator_candidates": context.candidate_evidence,
-            },
-        )
-        records.append(record)
-        signal_diagnostics["candidates"][variant_id] = signal_diagnostic
-        portfolio_diagnostics["candidates"][variant_id] = portfolio_diagnostic
-    return records, signal_diagnostics, portfolio_diagnostics
-
-
 def _strategy_inputs_for_context(
     *,
     data: MarketDataBundle,
@@ -884,8 +1159,9 @@ def _empty_signal_diagnostics() -> dict[str, Any]:
 
 def _empty_portfolio_diagnostics() -> dict[str, Any]:
     return {
-        "schema_version": "strategy_portfolio_candidate_diagnostics.v1",
+        "schema_version": "strategy_portfolio_candidate_diagnostics.v2",
         "candidates": {},
+        "chunks": {},
     }
 
 
@@ -935,20 +1211,6 @@ def _assert_unique_strategy_variant_ids(records: list[dict[str, Any]]) -> None:
         seen.add(variant_id)
 
 
-def _assert_candidate_id_shape(
-    value: str,
-    *,
-    source_id: str,
-    index: int,
-    field_name: str,
-) -> None:
-    if not COMPONENT_ID_RE.fullmatch(value) or value in {".", ".."}:
-        raise ValueError(
-            f"playbook {source_id!r} result variant_records[{index}].{field_name} must "
-            "contain only letters, numbers, dots, underscores, and hyphens"
-        )
-
-
 def _score_strategy_signals(
     signal_result: StrategySignalResult,
     *,
@@ -984,82 +1246,6 @@ def _score_strategy_signals(
     )
 
 
-def _strategy_playbook_candidate_records(
-    result: Any,
-    *,
-    source_id: str,
-) -> list[dict[str, Any]]:
-    if not isinstance(result, Mapping):
-        raise TypeError(f"playbook {source_id!r} result must be a mapping")
-    variants = result.get("variant_records")
-    if not isinstance(variants, list):
-        raise TypeError(f"playbook {source_id!r} result variant_records must be a list")
-    if not variants:
-        raise ValueError(f"playbook {source_id!r} must emit at least one executable candidate")
-    records: list[dict[str, Any]] = []
-    seen_variant_ids: set[str] = set()
-    forbidden_fields = STRATEGY_OUTPUT_FORBIDDEN_KEYS | PLAYBOOK_METRIC_SOURCE_KEYS
-    for index, item in enumerate(variants):
-        if not isinstance(item, Mapping):
-            raise TypeError(
-                f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
-            )
-        record = dict(item)
-        variant_id = record.get("variant_id")
-        if not isinstance(variant_id, str) or not variant_id:
-            raise TypeError(
-                f"playbook {source_id!r} result variant_records[{index}] must include "
-                "a non-empty variant_id"
-            )
-        _assert_candidate_id_shape(
-            variant_id,
-            source_id=source_id,
-            index=index,
-            field_name="variant_id",
-        )
-        if variant_id in seen_variant_ids:
-            raise ValueError(f"playbook {source_id!r} emitted duplicate candidate {variant_id!r}")
-        seen_variant_ids.add(variant_id)
-        if not isinstance(record.get("params"), Mapping):
-            raise TypeError(
-                f"playbook {source_id!r} result variant_records[{index}].params must be "
-                "a mapping of swept parameter names to values"
-            )
-        record["params"] = dict(record["params"])
-        forbidden = sorted(set(record) & forbidden_fields)
-        if forbidden:
-            raise ValueError(
-                f"playbook {source_id!r} result variant_records[{index}] must not contain "
-                f"metric or portfolio fields: {forbidden}"
-            )
-        if "entries" not in record or "exits" not in record:
-            raise ValueError(
-                f"playbook {source_id!r} result variant_records[{index}] must include entries and exits"
-            )
-        record["variant_id"] = variant_id
-        records.append(record)
-    return records
-
-
-def _reject_playbook_metric_records(result: Any, *, source_id: str) -> None:
-    if not isinstance(result, Mapping):
-        raise TypeError(f"playbook {source_id!r} result must be a mapping")
-    variants = result.get("variant_records")
-    if not isinstance(variants, list):
-        raise TypeError(f"playbook {source_id!r} result variant_records must be a list")
-    for index, item in enumerate(variants):
-        if not isinstance(item, Mapping):
-            raise TypeError(
-                f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
-            )
-        forbidden = sorted(set(item) & PLAYBOOK_METRIC_SOURCE_KEYS)
-        if forbidden:
-            raise ValueError(
-                f"playbook {source_id!r} result variant_records[{index}] must not contain "
-                f"leaderboard metric fields: {forbidden}"
-            )
-
-
 def _validate_indicator_output(output: Any, close: pd.DataFrame, component_id: str) -> Any:
     frame = output.to_frame() if isinstance(output, pd.Series) else output
     if isinstance(frame, pd.DataFrame):
@@ -1091,7 +1277,7 @@ def _strategy_data_evidence_payload(
     if strategy_source == "playbook":
         payload |= {
             "strategy_consumed_runner_data": True,
-            "strategy_data_binding": "strategy_inputs",
+            "strategy_data_binding": "batched_strategy_inputs",
         }
     else:
         payload |= {
@@ -1177,8 +1363,26 @@ def _write_strategy_artifact(recorder, payload: dict[str, Any]) -> None:
         "strategy.run",
         content_hash=hash_file(full_path),
         size=full_path.stat().st_size,
-        shape={"leaderboard_rows": len(payload["leaderboard"]["rows"])},
+        shape=_strategy_artifact_shape(payload),
     )
+
+
+def _strategy_artifact_shape(payload: dict[str, Any]) -> dict[str, int]:
+    shape = {
+        "leaderboard_rows": len(payload["leaderboard"]["rows"]),
+        "candidate_count": len(payload.get("candidates", [])),
+    }
+    catalogs = payload.get("catalogs")
+    if isinstance(catalogs, Mapping):
+        shape |= {
+            "source_count": len(catalogs.get("sources", {})),
+            "indicator_candidate_count": len(catalogs.get("indicator_candidates", {})),
+            "strategy_candidate_count": len(catalogs.get("strategy_candidates", {})),
+            "composed_candidate_count": len(catalogs.get("composed_candidates", {})),
+            "chunk_count": len(catalogs.get("chunks", {})),
+            "metric_count": len(catalogs.get("metrics", {})),
+        }
+    return shape
 
 
 def _true_count(value: pd.DataFrame | pd.Series) -> int:

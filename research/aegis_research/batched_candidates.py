@@ -10,6 +10,7 @@ import pandas as pd
 from research.aegis_research.component_registry.manifests import COMPONENT_ID_RE
 
 BATCHED_PLAYBOOK_CONTRACT = "aegis.batched_playbook.v1"
+BATCHED_PLAYBOOK_RESULT_SCHEMA = "batched_playbook_result.v1"
 CANDIDATE_LEVEL = "candidate_id"
 SYMBOL_LEVEL = "symbol"
 
@@ -47,7 +48,9 @@ SIGNAL_FIELD_KEYS = frozenset({"entries", "exits"})
 
 
 class BatchedContractError(ValueError):
-    pass
+    def __init__(self, message: str, *, diagnostics: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
 
 
 @dataclass(frozen=True)
@@ -160,18 +163,6 @@ class IndicatorGridPreflight:
         }
 
 
-def is_batched_playbook_result(result: Any) -> bool:
-    return isinstance(result, Mapping) and result.get("contract") == BATCHED_PLAYBOOK_CONTRACT
-
-
-def reject_batched_result_in_record_runner(result: Any, *, source_id: str) -> None:
-    if is_batched_playbook_result(result):
-        raise BatchedContractError(
-            f"playbook {source_id!r} emitted batched contract {BATCHED_PLAYBOOK_CONTRACT!r}; "
-            "run with the batched playbook path instead of legacy variant_records"
-        )
-
-
 def validate_batched_indicator_result(
     result: Any,
     *,
@@ -257,11 +248,16 @@ def materialize_batched_strategy_signals(
     source_id: str,
     requested_candidate_ids: Sequence[str],
     indicator_axes: Sequence[BatchedCandidateAxis] = (),
+    candidate_pool: Sequence[BatchedComposedCandidate] | None = None,
     close: pd.DataFrame,
 ) -> BatchedStrategySignalResult:
-    candidate_grid = compose_batched_candidate_grid(
-        strategy_axis=plan.axis,
-        indicator_axes=indicator_axes,
+    candidate_grid = (
+        tuple(candidate_pool)
+        if candidate_pool is not None
+        else compose_batched_candidate_grid(
+            strategy_axis=plan.axis,
+            indicator_axes=indicator_axes,
+        )
     )
     requested = _requested_composed_candidates(
         requested_candidate_ids,
@@ -390,23 +386,26 @@ def preflight_indicator_grid(
     for axis in axes:
         indicator_context_count *= axis.candidate_count
     estimated_cells = sum(axis.estimated_cells for axis in axes)
-    if indicator_context_count > max_candidates:
-        raise BatchedContractError(
-            f"batched indicator grid has {indicator_context_count} candidates, above "
-            f"candidate_grid.max_candidates={max_candidates}"
-        )
-    if estimated_cells > max_estimated_cells:
-        raise BatchedContractError(
-            f"batched indicator grid has {estimated_cells} estimated cells, above "
-            f"candidate_grid.max_estimated_cells={max_estimated_cells}"
-        )
-    return IndicatorGridPreflight(
+    preflight = IndicatorGridPreflight(
         axes=axes,
         indicator_context_count=indicator_context_count,
         estimated_cells=estimated_cells,
         max_candidates=max_candidates,
         max_estimated_cells=max_estimated_cells,
     )
+    if indicator_context_count > max_candidates:
+        raise BatchedContractError(
+            f"batched indicator grid has {indicator_context_count} candidates, above "
+            f"candidate_grid.max_candidates={max_candidates}",
+            diagnostics=preflight.diagnostics(),
+        )
+    if estimated_cells > max_estimated_cells:
+        raise BatchedContractError(
+            f"batched indicator grid has {estimated_cells} estimated cells, above "
+            f"candidate_grid.max_estimated_cells={max_estimated_cells}",
+            diagnostics=preflight.diagnostics(),
+        )
+    return preflight
 
 
 def _validated_header(
@@ -527,10 +526,10 @@ def _candidate_surface_frame(
     if value.columns.has_duplicates:
         raise BatchedContractError(f"playbook {source_id!r} batched {field_name} columns duplicate candidate-symbol pairs")
     column_names = list(value.columns.names)
-    if column_names.count(CANDIDATE_LEVEL) != 1 or column_names.count(SYMBOL_LEVEL) != 1:
+    if len(column_names) != 2 or set(column_names) != {CANDIDATE_LEVEL, SYMBOL_LEVEL}:
         raise BatchedContractError(
-            f"playbook {source_id!r} batched {field_name} columns must include exactly one "
-            f"{CANDIDATE_LEVEL!r} level and one {SYMBOL_LEVEL!r} level"
+            f"playbook {source_id!r} batched {field_name} columns must include exactly two "
+            f"levels: {CANDIDATE_LEVEL!r} and {SYMBOL_LEVEL!r}"
         )
 
     candidate_values = value.columns.get_level_values(CANDIDATE_LEVEL)

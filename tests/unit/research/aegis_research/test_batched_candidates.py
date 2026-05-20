@@ -19,7 +19,6 @@ from research.aegis_research.batched_candidates import (
     composed_candidate_ids,
     materialize_batched_strategy_signals,
     preflight_indicator_grid,
-    reject_batched_result_in_record_runner,
     validate_batched_indicator_result,
     validate_batched_strategy_axis,
     validate_batched_strategy_plan,
@@ -214,18 +213,6 @@ def test_rejects_legacy_variant_records_in_batched_contract() -> None:
         validate_batched_strategy_axis({"variant_records": []}, source_id="ma_cross")
 
 
-def test_record_runner_rejects_batched_contract_explicitly() -> None:
-    with pytest.raises(BatchedContractError, match="batched contract"):
-        reject_batched_result_in_record_runner(
-            {
-                "contract": BATCHED_PLAYBOOK_CONTRACT,
-                "kind": STRATEGY_AXIS_KIND,
-                "candidate_axis": [{"candidate_id": "fast", "params": {}}],
-            },
-            source_id="ma_cross",
-        )
-
-
 def test_rejects_duplicate_candidate_ids() -> None:
     with pytest.raises(BatchedContractError, match="duplicate candidate"):
         validate_batched_strategy_axis(
@@ -272,6 +259,28 @@ def test_rejects_signal_materialization_that_omits_requested_candidates() -> Non
             },
             source_id="ma_cross",
             expected_candidate_ids=["fast", "slow"],
+            close=close,
+        )
+
+
+def test_rejects_extra_strategy_signal_column_levels() -> None:
+    close = _close_frame()
+    columns = pd.MultiIndex.from_product(
+        [["fast"], list(close.columns), ["extra"]],
+        names=[CANDIDATE_LEVEL, SYMBOL_LEVEL, "debug_level"],
+    )
+    surface = pd.DataFrame(True, index=close.index, columns=columns)
+
+    with pytest.raises(BatchedContractError, match="exactly two levels"):
+        validate_batched_strategy_signals(
+            {
+                "contract": BATCHED_PLAYBOOK_CONTRACT,
+                "kind": STRATEGY_SIGNALS_KIND,
+                "entries": surface,
+                "exits": surface,
+            },
+            source_id="ma_cross",
+            expected_candidate_ids=["fast"],
             close=close,
         )
 
@@ -364,8 +373,10 @@ def test_preflight_indicator_grid_rejects_oversize_estimates() -> None:
         close=close,
     )
 
-    with pytest.raises(BatchedContractError, match=r"candidate_grid\.max_estimated_cells"):
+    with pytest.raises(BatchedContractError, match=r"candidate_grid\.max_estimated_cells") as error:
         preflight_indicator_grid([result], max_candidates=10, max_estimated_cells=11)
+
+    assert error.value.diagnostics["estimated_cells"] == 12
 
 
 def _close_frame() -> pd.DataFrame:

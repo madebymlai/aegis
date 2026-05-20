@@ -254,7 +254,7 @@ def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, mo
 
 def test_run_lane_accepts_candidate_grid_policy(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["candidate_grid"] = {"max_candidates": 100, "max_estimated_cells": 10_000}
+    raw["candidate_grid"] = {"max_candidates": 100, "max_estimated_cells": 10_000, "batch_size": 25}
 
     resolved = resolve_lane_config(
         raw,
@@ -264,11 +264,39 @@ def test_run_lane_accepts_candidate_grid_policy(tmp_path: Path) -> None:
 
     assert resolved.config.candidate_grid.max_candidates == 100
     assert resolved.config.candidate_grid.max_estimated_cells == 10_000
+    assert resolved.config.candidate_grid.batch_size == 25
 
 
-def test_run_lane_rejects_invalid_candidate_grid_policy(tmp_path: Path) -> None:
+def test_run_lane_rejects_playbook_indicators_with_component_strategy(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["candidate_grid"] = {"max_candidates": 0}
+    raw["strategy"] = {"source": "component", "id": "demo.strategy"}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(
+            raw,
+            component_registry=_component_registry(tmp_path, include_strategy=True),
+            expected_lane="run",
+        )
+
+    assert "indicators[0].source" in str(error.value)
+    assert "cannot enter the component runner" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected_path"),
+    [
+        ({"max_candidates": 0}, "candidate_grid.max_candidates"),
+        ({"batch_size": 0}, "candidate_grid.batch_size"),
+        ({"batch_size": "100"}, "candidate_grid.batch_size"),
+    ],
+)
+def test_run_lane_rejects_invalid_candidate_grid_policy(
+    tmp_path: Path,
+    policy: dict[str, object],
+    expected_path: str,
+) -> None:
+    raw = _run_config()
+    raw["candidate_grid"] = policy
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_lane_config(
@@ -277,7 +305,7 @@ def test_run_lane_rejects_invalid_candidate_grid_policy(tmp_path: Path) -> None:
             expected_lane="run",
         )
 
-    assert "candidate_grid.max_candidates" in str(error.value)
+    assert expected_path in str(error.value)
 
 
 def _train_config() -> dict[str, object]:
@@ -312,11 +340,32 @@ def _run_config() -> dict[str, object]:
     }
 
 
-def _component_registry(tmp_path: Path):
+def _component_registry(tmp_path: Path, *, include_strategy: bool = False):
     root = tmp_path / "research" / "components"
     write_label_component(
         root / "labels" / "fixlb.py",
         body="def run(data):\n    raise RuntimeError('not executed during config tests')\n",
     )
     write_indicator_component(root / "indicators" / "returns.py")
+    if include_strategy:
+        _write_strategy_component(root / "strategies" / "strategy.py")
     return discover_component_registry(root=root, repo_root=tmp_path)
+
+
+def _write_strategy_component(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Strategy fixture component used by config tests.\n"
+        "# Source: synthetic Close data supplied by the test fixture.\n"
+        "\n"
+        "# %% define component metadata\n"
+        "COMPONENT_MANIFEST = {"
+        "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
+        "'input_names': ['Close'], 'signal_outputs': ['entries', 'exits']}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
+        "def run(bundle):\n"
+        "    \"\"\"Return fixed strategy signals for config validation tests.\"\"\"\n"
+        "    raise RuntimeError('not executed during config tests')\n"
+    )

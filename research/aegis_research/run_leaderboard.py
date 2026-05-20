@@ -22,7 +22,7 @@ class _RankedRow:
 
 
 def build_run_leaderboard(
-    variant_records: Sequence[Mapping[str, Any]],
+    candidate_records: Sequence[Mapping[str, Any]],
     *,
     metric: str,
     direction: str,
@@ -34,7 +34,7 @@ def build_run_leaderboard(
     succeeded = 0
     failed = 0
     excluded = 0
-    for index, record in enumerate(variant_records):
+    for index, record in enumerate(candidate_records):
         variant_id = _variant_id(record, index)
         if "error" in record:
             failed += 1
@@ -60,7 +60,7 @@ def build_run_leaderboard(
             ranked_rows.pop()
         succeeded += 1
 
-    attempted = len(variant_records)
+    attempted = len(candidate_records)
     return {
         "schema_version": RUN_LEADERBOARD_SCHEMA_VERSION,
         "metric": metric,
@@ -95,11 +95,15 @@ def _leaderboard_row(
         "strategy_source": record.get("strategy_source"),
         "strategy_id": record.get("strategy_id"),
         "strategy_candidate_id": record.get("strategy_candidate_id"),
+        "strategy_candidate_ref": record.get("strategy_candidate_ref"),
         "strategy_params": record.get("strategy_params", record.get("params", {})),
         "indicator_source": record.get("indicator_source"),
         "indicator_id": record.get("indicator_id"),
         "indicators": record.get("indicators", []),
         "indicator_candidates": record.get("indicator_candidates", []),
+        "indicator_candidate_refs": record.get("indicator_candidate_refs", []),
+        "metric_ref": record.get("metric_ref"),
+        "chunk_ref": record.get("chunk_ref"),
         "params": record.get("params", {}),
         "portfolio": record.get("portfolio", {}),
         "metric_source": record.get("metric_source"),

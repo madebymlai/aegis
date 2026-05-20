@@ -934,6 +934,8 @@ def _candidate_stat_value(stats: Any, title: str, candidate_id: str) -> Any:
         if title in stats.index and candidate_id in stats.columns:
             return stats.loc[title, candidate_id]
     if isinstance(stats, pd.Series):
+        if title in stats.index:
+            return stats.get(title)
         return stats.get(candidate_id)
     return None
 
