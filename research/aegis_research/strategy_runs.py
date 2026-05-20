@@ -372,6 +372,11 @@ def _playbook_variant_records(
                 f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
             )
         record = dict(item)
+        if not isinstance(record.get("params"), dict):
+            raise TypeError(
+                f"playbook {source_id!r} result variant_records[{index}].params must be "
+                "a mapping of swept parameter names to values"
+            )
         record.setdefault(source_field, source)
         record.setdefault(id_field, source_id)
         record.setdefault("source_hash", source_hash)

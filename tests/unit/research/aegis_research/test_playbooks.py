@@ -24,7 +24,7 @@ def test_playbook_registry_discovers_stable_ids_and_executes_selected_notebook(t
 
     assert registry.ids("indicators") == ("ma_explore",)
     assert definition.identity.repo_relative_path == "research/playbooks/indicators/ma_explore.ipynb"
-    assert result["variant_records"] == [{"id": "ma_explore", "window": 5}]
+    assert result["variant_records"] == [{"id": "ma_explore", "params": {"window": 5}}]
 
 
 def test_notebook_playbook_owns_static_params(tmp_path) -> None:
@@ -36,7 +36,7 @@ def test_notebook_playbook_owns_static_params(tmp_path) -> None:
 
     result = execute_notebook_playbook(definition)
 
-    assert result["variant_records"] == [{"id": "ma_explore", "window": 5}]
+    assert result["variant_records"] == [{"id": "ma_explore", "params": {"window": 5}}]
 
 
 def test_playbook_registry_rejects_duplicate_ids(tmp_path) -> None:
@@ -132,7 +132,7 @@ def _write_notebook(
                 "AEGIS_PLAYBOOK_RESULT = {"
                 "'variant_records': [{'id': '"
                 + playbook_id
-                + "', 'window': 5}]}"
+                + "', 'params': {'window': 5}}]}"
             )
         ],
     )

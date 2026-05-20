@@ -126,6 +126,31 @@ def test_run_cli_reports_failed_playbook_execution_on_run_manifest(
     assert manifest["run"]["status"] == RunStatus.FAILED
 
 
+def test_run_cli_rejects_playbook_variant_without_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_notebook(tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross")
+    _write_notebook(
+        tmp_path / "research/playbooks/indicators/ma_explore.ipynb",
+        "indicators",
+        "ma_explore",
+        include_params=False,
+    )
+    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "missing-params"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    manifest = json.loads((tmp_path / "runs" / "missing-params" / "manifest.json").read_text())
+    assert payload["error"]["category"] == "execution_failure"
+    assert "params must be a mapping" in payload["error"]["message"]
+    assert manifest["run"]["status"] == RunStatus.FAILED
+
+
 def test_run_cli_rejects_playbook_that_does_not_support_requested_family(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -209,6 +234,7 @@ def _write_notebook(
     playbook_id: str,
     *,
     stages: list[str] | None = None,
+    include_params: bool = True,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata = {
@@ -221,6 +247,7 @@ def _write_notebook(
     }
     if family == "indicators":
         metadata["indicator_family"] = "ma"
+    params_source = "'params': {'window': 5}, " if include_params else ""
     nb = nbformat.v4.new_notebook(
         metadata={"aegis_playbook": metadata},
         cells=[
@@ -228,8 +255,9 @@ def _write_notebook(
                 "AEGIS_PLAYBOOK_RESULT = {"
                 "'variant_records': [{'variant_id': '"
                 + playbook_id
-                + "', 'params': {'window': 5}, "
-                "'metrics': {'total_return_pct': 1.5}}]}"
+                + "', "
+                + params_source
+                + "'metrics': {'total_return_pct': 1.5}}]}"
             )
         ],
     )
