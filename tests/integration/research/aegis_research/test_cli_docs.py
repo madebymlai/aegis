@@ -64,6 +64,23 @@ def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() 
     assert "exactly one component indicator ID" in docs
 
 
+def test_docs_describe_composed_strategy_candidates_and_manual_promotion() -> None:
+    docs = "\n".join(
+        [
+            Path("README.md").read_text(),
+            Path("docs/components.md").read_text(),
+            Path("docs/playbooks.md").read_text(),
+            Path("docs/vectorbt-scaffold.md").read_text(),
+        ]
+    )
+
+    assert "complete composed strategy candidates" in docs
+    assert "Indicator playbook rows become rankable only when a strategy source consumes" in docs
+    assert "metric_authority" in docs
+    assert "manual promotion" in docs
+    assert "best indicator" not in docs
+
+
 def test_component_and_playbook_placeholders_point_to_examples() -> None:
     paths = [
         "research/components/labels/README.md",

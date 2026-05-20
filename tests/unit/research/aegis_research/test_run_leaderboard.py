@@ -98,3 +98,43 @@ def test_build_run_leaderboard_rejects_missing_metric_authority() -> None:
             metric="total_return_pct",
             direction="desc",
         )
+
+
+def test_build_run_leaderboard_preserves_composed_candidate_provenance() -> None:
+    leaderboard = build_run_leaderboard(
+        [
+            {
+                "variant_id": "strategy:playbook:ma_cross:fast+indicators:[playbook:ma:ma-20]",
+                "composed_candidate_id": "strategy:playbook:ma_cross:fast+indicators:[playbook:ma:ma-20]",
+                "strategy_source": "playbook",
+                "strategy_id": "ma_cross",
+                "strategy_candidate_id": "fast",
+                "strategy_params": {"threshold": 0.0},
+                "indicator_candidates": [
+                    {
+                        "source": "playbook",
+                        "id": "ma",
+                        "candidate_id": "ma-20",
+                        "params": {"window": 20},
+                    }
+                ],
+                "metrics": {"total_return_pct": 1.0},
+                "metric_authority": "aegis",
+            }
+        ],
+        metric="total_return_pct",
+        direction="desc",
+    )
+
+    row = leaderboard["rows"][0]
+    assert row["composed_candidate_id"] == row["variant_id"]
+    assert row["strategy_candidate_id"] == "fast"
+    assert row["strategy_params"] == {"threshold": 0.0}
+    assert row["indicator_candidates"] == [
+        {
+            "source": "playbook",
+            "id": "ma",
+            "candidate_id": "ma-20",
+            "params": {"window": 20},
+        }
+    ]

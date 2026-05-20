@@ -39,7 +39,7 @@ aerd run <strategy-run-config>
 aerd run --train <config>
 ```
 
-Default `aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research evidence. Playbooks may sweep candidates; components are fixed-param promoted implementations. `aerd run --train` owns ML model-plugin training through the config's `train:` section; model-shaped configs passed to default `aerd run` fail with guidance to use `aerd run --train`.
+Default `aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research evidence. Playbooks may sweep candidates; components are fixed-param promoted implementations. Indicator playbook candidates are ranked only after a strategy source consumes their outputs and Aegis centrally scores the resulting signals through VBT. `aerd run --train` owns ML model-plugin training through the config's `train:` section; model-shaped configs passed to default `aerd run` fail with guidance to use `aerd run --train`.
 
 The walkthrough is scaffold evidence only. It is not validated trading methodology, empirical edge, or investment advice.
 
@@ -189,7 +189,7 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 Promoted components live under `research/components/{labels,indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after lane validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/components/*_component_example.py`.
 
-Playbooks live under `research/playbooks/{labels,indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Indicator playbook IDs represent one indicator idea/family; the playbook owns its default parameters and sweeps, and a baseline may name exactly one component indicator ID. See `docs/playbooks.md` and `docs/examples/playbooks/*_playbook_example.py`.
+Playbooks live under `research/playbooks/{labels,indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Indicator playbook IDs represent one indicator idea/family; the playbook owns its default parameters and sweeps, emits named outputs for strategies to consume, and a baseline may name exactly one component indicator ID. See `docs/playbooks.md` and `docs/examples/playbooks/*_playbook_example.py`.
 
 ## Validation Modes
 

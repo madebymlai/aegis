@@ -89,13 +89,17 @@ def _leaderboard_row(
 ) -> dict[str, Any]:
     row = {
         "variant_id": variant_id,
+        "composed_candidate_id": record.get("composed_candidate_id"),
         "primary_metric": metric,
         "primary_metric_value": value,
         "strategy_source": record.get("strategy_source"),
         "strategy_id": record.get("strategy_id"),
+        "strategy_candidate_id": record.get("strategy_candidate_id"),
+        "strategy_params": record.get("strategy_params", record.get("params", {})),
         "indicator_source": record.get("indicator_source"),
         "indicator_id": record.get("indicator_id"),
         "indicators": record.get("indicators", []),
+        "indicator_candidates": record.get("indicator_candidates", []),
         "params": record.get("params", {}),
         "portfolio": record.get("portfolio", {}),
         "metric_authority": record.get("metric_authority"),

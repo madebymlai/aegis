@@ -196,6 +196,209 @@ def test_run_cli_rejects_strategy_playbook_metrics(
     assert manifest["run"]["status"] == RunStatus.FAILED
 
 
+def test_run_cli_rejects_indicator_playbook_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
+    )
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py",
+        "indicators",
+        "ma_explore",
+        include_metrics=True,
+    )
+    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "indicator-metrics"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    manifest = json.loads((tmp_path / "runs" / "indicator-metrics" / "manifest.json").read_text())
+    assert payload["error"]["category"] == "execution_failure"
+    assert "leaderboard metric fields" in payload["error"]["message"]
+    assert manifest["run"]["status"] == RunStatus.FAILED
+
+
+def test_run_cli_rejects_strategy_playbook_variant_without_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py",
+        "strategies",
+        "ma_cross",
+        include_params=False,
+    )
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py", "indicators", "ma_explore"
+    )
+    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "missing-strategy-params"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    manifest = json.loads(
+        (tmp_path / "runs" / "missing-strategy-params" / "manifest.json").read_text()
+    )
+    assert payload["error"]["category"] == "execution_failure"
+    assert "params must be a mapping" in payload["error"]["message"]
+    assert manifest["run"]["status"] == RunStatus.FAILED
+
+
+def test_run_cli_composes_indicator_and_strategy_playbook_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py",
+        "strategies",
+        "ma_cross",
+        strategy_windows=[2, 4],
+    )
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py",
+        "indicators",
+        "ma_explore",
+        indicator_windows=[2, 5],
+    )
+    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "composed-run"]) == 0
+
+    output = capsys.readouterr()
+    artifact = json.loads((tmp_path / "runs" / "composed-run" / "strategy_run.json").read_text())
+    assert json.loads(output.out)["status"] == "success"
+    assert artifact["composition"]["planned"]["indicator_context_count"] == 2
+    assert artifact["composition"]["total_composed_candidates"] == 4
+    assert artifact["leaderboard"]["summary"]["attempted"] == 4
+    row = artifact["leaderboard"]["rows"][0]
+    assert row["metric_authority"] == "aegis"
+    assert row["composed_candidate_id"].startswith("strategy:playbook:ma_cross:")
+    assert row["strategy_params"]
+    assert row["source_hash"]
+    assert row["indicator_candidates"][0]["id"] == "ma_explore"
+    assert row["indicator_candidates"][0]["candidate_id"].startswith("ma-")
+    assert row["indicator_candidates"][0]["params"]
+    assert row["indicator_candidates"][0]["source_hash"]
+
+
+def test_run_cli_rejects_partially_consumed_indicator_playbook_axes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_single_indicator_strategy_playbook(
+        tmp_path / "research/playbooks/strategies/ma_one_only.py"
+    )
+    _write_playbook(tmp_path / "research/playbooks/indicators/ma_one.py", "indicators", "ma_one")
+    _write_playbook(tmp_path / "research/playbooks/indicators/ma_two.py", "indicators", "ma_two")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_one_only",
+        indicators=[{"source": "playbook", "ids": ["ma_one", "ma_two"]}],
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "partial-consumption"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert "playbook:ma_two" in payload["error"]["message"]
+
+
+def test_run_cli_rejects_unused_indicator_playbook_axis(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ignore_indicators.py",
+        "strategies",
+        "ignore_indicators",
+        consume_indicators=False,
+    )
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py", "indicators", "ma_explore"
+    )
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ignore_indicators",
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "unused-axis"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    manifest = json.loads((tmp_path / "runs" / "unused-axis" / "manifest.json").read_text())
+    assert payload["error"]["category"] == "execution_failure"
+    assert "did not consume selected indicator playbook axes" in payload["error"]["message"]
+    assert manifest["run"]["status"] == RunStatus.FAILED
+
+
+def test_run_cli_accepts_empty_playbook_candidate_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
+    )
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py",
+        "indicators",
+        "ma_explore",
+        params={},
+    )
+    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "empty-params"]) == 0
+
+    output = capsys.readouterr()
+    artifact = json.loads((tmp_path / "runs" / "empty-params" / "strategy_run.json").read_text())
+    assert json.loads(output.out)["status"] == "success"
+    assert artifact["leaderboard"]["rows"][0]["indicator_candidates"][0]["params"] == {}
+
+
+def test_run_cli_accepts_empty_strategy_candidate_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py",
+        "strategies",
+        "ma_cross",
+        params={},
+    )
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py", "indicators", "ma_explore"
+    )
+    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "empty-strategy-params"]) == 0
+
+    output = capsys.readouterr()
+    artifact = json.loads(
+        (tmp_path / "runs" / "empty-strategy-params" / "strategy_run.json").read_text()
+    )
+    assert json.loads(output.out)["status"] == "success"
+    assert artifact["leaderboard"]["rows"][0]["strategy_params"] == {}
+
+
 def test_run_cli_rejects_playbook_that_does_not_support_requested_family(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -286,6 +489,10 @@ def _write_playbook(
     stages: list[str] | None = None,
     include_params: bool = True,
     include_metrics: bool = False,
+    consume_indicators: bool = True,
+    indicator_windows: list[int] | None = None,
+    strategy_windows: list[int] | None = None,
+    params: dict[str, object] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest = {
@@ -298,27 +505,56 @@ def _write_playbook(
     }
     if family == "indicators":
         manifest["indicator_family"] = "ma"
-    params_source = "'params': {'window': 5}, " if include_params else ""
     if family == "strategies":
-        metrics_source = "'metrics': {'total_return_pct': 1.5}, " if include_metrics else ""
+        windows = strategy_windows or [3]
+        consume_source = (
+            "    indicator_outputs = ["
+            "value['outputs']['ma'] for key, value in inputs.indicators.items() "
+            "if key.startswith('playbook:')"
+            "]\n"
+            "    if indicator_outputs:\n"
+            "        average = sum(indicator_outputs) / len(indicator_outputs)\n"
+            "    else:\n"
+            "        average = close.rolling(3).mean().bfill()\n"
+            if consume_indicators
+            else "    average = close.rolling(3).mean().bfill()\n"
+        )
+        records_source = "\n".join(
+            _strategy_record_source(
+                window,
+                include_params=include_params,
+                include_metrics=include_metrics,
+                params=params,
+            )
+            for window in windows
+        )
         body = (
             "def run(inputs):\n"
             '    """Generate moving-average crossover candidates for central scoring."""\n'
             "    close = inputs.data.feature('Close')\n"
-            "    average = close.rolling(3).mean()\n"
-            "    return {'variant_records': [{'variant_id': "
-            f"{playbook_id!r}, {params_source}"
-            f"{metrics_source}"
-            "'entries': (close > average).fillna(False), "
-            "'exits': (close < average).fillna(False)}]}\n"
+            f"{consume_source}"
+            "    records = []\n"
+            f"{records_source}\n"
+            "    return {'variant_records': records}\n"
         )
     else:
+        windows = indicator_windows or [5]
+        records_source = "\n".join(
+            _indicator_record_source(
+                window,
+                include_params=include_params,
+                include_metrics=include_metrics,
+                params=params,
+            )
+            for window in windows
+        )
         body = (
-            "def run(_inputs):\n"
-            '    """Return fixture variant params for playbook source tests."""\n'
-            "    return {'variant_records': [{'variant_id': "
-            f"{playbook_id!r}, {params_source}"
-            "}]}\n"
+            "def run(data):\n"
+            '    """Return fixture indicator candidates for playbook source tests."""\n'
+            "    close = data.feature('Close')\n"
+            "    records = []\n"
+            f"{records_source}\n"
+            "    return {'variant_records': records}\n"
         )
     path.write_text(
         "# %% playbook overview\n"
@@ -330,6 +566,78 @@ def _write_playbook(
         "PLAYBOOK_CALLABLE = 'run'\n"
         "\n"
         "# %% main compute\n" + body
+    )
+
+
+def _strategy_record_source(
+    window: int,
+    *,
+    include_params: bool,
+    include_metrics: bool,
+    params: dict[str, object] | None,
+) -> str:
+    metrics_source = "'metrics': {'total_return_pct': 1.5}, " if include_metrics else ""
+    params_value = {"window": window} if params is None else params
+    params_source = f"'params': {params_value!r}, " if include_params else ""
+    return (
+        "    records.append({"
+        f"'variant_id': 'ma-cross-{window}', "
+        f"{params_source}"
+        f"{metrics_source}"
+        "'entries': (close > average).fillna(False), "
+        "'exits': (close < average).fillna(False)})"
+    )
+
+
+def _indicator_record_source(
+    window: int,
+    *,
+    include_params: bool,
+    include_metrics: bool,
+    params: dict[str, object] | None,
+) -> str:
+    metrics_source = "'metrics': {'total_return_pct': 1.5}, " if include_metrics else ""
+    params_value = {"window": window} if params is None else params
+    params_source = f"'params': {params_value!r}, " if include_params else ""
+    return (
+        "    ma = close.rolling("
+        f"{window}"
+        ").mean().bfill()\n"
+        "    records.append({"
+        f"'candidate_id': 'ma-{window}', "
+        f"{params_source}"
+        f"{metrics_source}"
+        "'outputs': {'ma': ma}})"
+    )
+
+
+def _write_single_indicator_strategy_playbook(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "family": "strategies",
+        "id": "ma_one_only",
+        "version": "1.0.0",
+        "stages": ["strategies"],
+        "accepted_inputs": ["Close"],
+        "result_schema": "playbook_result.v1",
+    }
+    path.write_text(
+        "# %% playbook overview\n"
+        "# Strategy fixture that consumes only one indicator playbook axis.\n"
+        "# Source: synthetic Close data supplied by run config.\n"
+        "\n"
+        "# %% define playbook metadata\n"
+        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
+        "PLAYBOOK_CALLABLE = 'run'\n"
+        "\n"
+        "# %% main compute\n"
+        "def run(inputs):\n"
+        '    """Use only ma_one so unused-axis validation can fail."""\n'
+        "    close = inputs.data.feature('Close')\n"
+        "    ma = inputs.indicators['playbook:ma_one']['outputs']['ma']\n"
+        "    return {'variant_records': [{'variant_id': 'uses-ma-one', "
+        "'params': {}, 'entries': (close > ma).fillna(False), "
+        "'exits': (close < ma).fillna(False)}]}\n"
     )
 
 

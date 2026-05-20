@@ -1,7 +1,7 @@
 # %% playbook overview
 # Strategy playbook example.
-# Source: run-provided Close feature. Aegis imports PLAYBOOK_CALLABLE for
-# ranked runs and centrally computes portfolio metrics from returned signals.
+# Source: run-provided Close feature plus source-scoped indicator candidates.
+# Aegis centrally computes portfolio metrics from returned signals.
 
 
 # %% define playbook metadata
@@ -18,19 +18,20 @@ PLAYBOOK_CALLABLE = "generate_candidates"
 
 # %% main compute
 def generate_candidates(inputs):
-    """Sweep moving-average windows and return signals for central scoring."""
+    """Sweep trade-rule thresholds over selected indicator candidates."""
 
     close = inputs.data.feature("Close")
-    windows = (10, 20)
+    ma_source = inputs.indicators["playbook:example_ma_explore"]
+    moving_average = ma_source["outputs"]["ma"]
+    thresholds = (0.0, 0.01)
     variants = []
-    for window in windows:
-        average = close.rolling(window).mean()
+    for threshold in thresholds:
         variants.append(
             {
-                "variant_id": f"strategy-ma-{window}",
-                "params": {"window": window},
-                "entries": (close > average).fillna(False),
-                "exits": (close < average).fillna(False),
+                "variant_id": f"strategy-ma-threshold-{threshold}",
+                "params": {"threshold": threshold},
+                "entries": (close > moving_average * (1 + threshold)).fillna(False),
+                "exits": (close < moving_average).fillna(False),
             }
         )
     return {"variant_records": variants}
