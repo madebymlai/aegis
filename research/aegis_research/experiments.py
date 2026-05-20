@@ -104,8 +104,10 @@ def run_experiment(
         data_result.assert_usable()
         artifacts.write_data_native_artifact(data_result)
         data_bundle = market_data_bundle(data_result)
-        close = data_bundle.feature("Close")
-        open_prices = data_bundle.feature("Open") if "Open" in required_features else None
+        close_prices = data_bundle.feature("Close")
+        execution_open_prices = (
+            data_bundle.feature("Open") if "Open" in array_contract.pipeline_required_arrays else None
+        )
         if label_result_builder is None:
             _raise_missing_label_result_builder()
         label_result = label_result_builder(data_bundle)
@@ -165,12 +167,12 @@ def run_experiment(
             split_metric_ids.extend(artifacts.write_split_artifacts(split_result))
 
         validation = evaluate_validation_splits(
-            close,
+            close_prices,
             indicators,
             labels,
             splits_result.splits,
             config,
-            open_prices=open_prices,
+            open_prices=execution_open_prices,
             target_schema=label_result.target_schema,
             split_metadata=splits_result.metadata,
             compatibility=compatibility,
