@@ -15,4 +15,4 @@ COMPONENT_CALLABLE = "run"
 
 def run(data):
     config = LabelConfig()
-    return build_label_result(data.close, config)
+    return build_label_result(data.feature("Close"), config)

@@ -104,8 +104,8 @@ def run_experiment(
         data_result.assert_usable()
         artifacts.write_data_native_artifact(data_result)
         data_bundle = market_data_bundle(data_result)
-        close = data_bundle.close
-        open_prices = data_bundle.open if "Open" in required_features else None
+        close = data_bundle.feature("Close")
+        open_prices = data_bundle.feature("Open") if "Open" in required_features else None
         if label_result_builder is None:
             _raise_missing_label_result_builder()
         label_result = label_result_builder(data_bundle)

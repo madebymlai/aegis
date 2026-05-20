@@ -33,7 +33,7 @@ def test_component_indicator_preserves_vbt_param_lineage(tmp_path: Path) -> None
         _indicator_manifest("demo.ma", param_names=["window", "wtype"]),
         "from vectorbtpro import vbt\n"
         "def run(data):\n"
-        "    ma = vbt.MA.run(data.close, window=[2, 3], wtype='simple', "
+        "    ma = vbt.MA.run(data.feature('Close'), window=[2, 3], wtype='simple', "
         "hide_params=None, hide_default=False)\n"
         "    return ma.ma\n",
     )
@@ -69,7 +69,7 @@ def test_component_indicator_records_cartesian_vbt_grid(tmp_path: Path) -> None:
         _indicator_manifest("demo.ma", param_names=["window", "wtype"]),
         "from vectorbtpro import vbt\n"
         "def run(data):\n"
-        "    ma = vbt.MA.run(data.close, window=[2, 3], wtype=['simple', 'wilder'], "
+        "    ma = vbt.MA.run(data.feature('Close'), window=[2, 3], wtype=['simple', 'wilder'], "
         "param_product=True, hide_params=None, hide_default=False)\n"
         "    return ma.ma\n",
     )
@@ -101,7 +101,7 @@ def test_custom_indicator_factory_component_matches_builtin_lineage_shape(tmp_pa
         "RETVOL = vbt.IF(input_names=['close'], param_names=['window'], "
         "output_names=['retvol']).with_apply_func(_retvol_apply, keep_pd=True)\n"
         "def run(data):\n"
-        "    return RETVOL.run(data.close, window=[3], hide_params=None, hide_default=False).retvol\n",
+        "    return RETVOL.run(data.feature('Close'), window=[3], hide_params=None, hide_default=False).retvol\n",
     )
 
     symbols = {item["symbol"] for item in result.lineage}
@@ -111,7 +111,7 @@ def test_custom_indicator_factory_component_matches_builtin_lineage_shape(tmp_pa
     assert all(item["indicator_id"] == "demo.retvol" for item in result.lineage)
 
 
-def test_component_indicator_reads_ohlcv_bundle_fields(tmp_path: Path) -> None:
+def test_component_indicator_reads_declared_bundle_features(tmp_path: Path) -> None:
     close = _close_frame(symbols=["SYN"])
     high = close + 2.0
 
@@ -125,7 +125,7 @@ def test_component_indicator_reads_ohlcv_bundle_fields(tmp_path: Path) -> None:
             transforms=["identity"],
         ),
         "def run(data):\n"
-        "    return data.high - data.close\n",
+        "    return data.feature('High') - data.feature('Close')\n",
         high=high,
     )
 
@@ -143,7 +143,7 @@ def test_component_indicator_rejects_default_model_feature_for_unknown_output(tm
             close,
             manifest,
             "def run(data):\n"
-            "    return data.close.rolling(2).mean()\n",
+            "    return data.feature('Close').rolling(2).mean()\n",
         )
 
 
@@ -156,7 +156,7 @@ def test_component_indicator_rejects_shape_changing_outputs(tmp_path: Path) -> N
             close,
             _indicator_manifest("demo.bad"),
             "def run(data):\n"
-            "    return data.close.iloc[1:]\n",
+            "    return data.feature('Close').iloc[1:]\n",
         )
 
 
@@ -266,8 +266,11 @@ def _component_result(
         f"{source}"
     )
     registry = discover_component_registry(root=root, repo_root=tmp_path)
+    features = {"Close": close}
+    if high is not None:
+        features["High"] = high
     return build_component_indicator_result(
-        MarketDataBundle(close=close, high=high),
+        MarketDataBundle(features=features, loaded_features=tuple(features)),
         [RunIndicatorSourceConfig(source="component", ids=[str(manifest["id"])])],
         component_registry=registry,
     )

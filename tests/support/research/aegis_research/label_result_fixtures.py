@@ -14,7 +14,8 @@ def native_label_result(data: MarketDataBundle | pd.DataFrame, **_kwargs: Any) -
         high = None
         low = None
     else:
-        close = data.close
-        high = data.high
-        low = data.low
+        close = data.feature("Close")
+        loaded = set(data.loaded_features or data.features)
+        high = data.feature("High") if "High" in loaded else None
+        low = data.feature("Low") if "Low" in loaded else None
     return build_label_result(close, LabelConfig(), high=high, low=low)

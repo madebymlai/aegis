@@ -15,14 +15,15 @@ from tests.support.research.aegis_research.model_plugin_fixtures import model_co
 
 
 def test_strategy_output_boundary_rejects_portfolio_fields() -> None:
+    close = _frame()
     bundle = StrategyInputBundle(
-        data=MarketDataBundle(close=_frame()),
+        data=MarketDataBundle(features={"Close": close}, loaded_features=("Close",)),
         indicators={},
         metadata={},
     )
     output = {
-        "entries": bundle.data.close > 1,
-        "exits": bundle.data.close < 1,
+        "entries": close > 1,
+        "exits": close < 1,
         "size": 0.5,
     }
 
@@ -229,7 +230,7 @@ def _write_strategy_component(path: Path) -> None:
         "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(bundle):\n"
-        "    close = bundle.data.close\n"
+        "    close = bundle.data.feature('Close')\n"
         "    entries = close > close.rolling(3).mean()\n"
         "    exits = close < close.rolling(3).mean()\n"
         "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
@@ -247,7 +248,7 @@ def _write_indicator_component(path: Path) -> None:
         "'supported_transforms': ['identity']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(data):\n"
-        "    return data.close.rolling(2).mean().bfill()\n"
+        "    return data.feature('Close').rolling(2).mean().bfill()\n"
     )
 
 
@@ -262,7 +263,7 @@ def _write_named_indicator_component(path: Path, component_id: str) -> None:
         "'supported_transforms': ['identity']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(data):\n"
-        "    return data.close.rolling(2).mean().bfill()\n"
+        "    return data.feature('Close').rolling(2).mean().bfill()\n"
     )
 
 
@@ -276,8 +277,9 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(bundle):\n"
         "    ma = bundle.indicators['demo.ma']\n"
-        "    entries = bundle.data.close > ma\n"
-        "    exits = bundle.data.close < ma\n"
+        "    close = bundle.data.feature('Close')\n"
+        "    entries = close > ma\n"
+        "    exits = close < ma\n"
         "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
     )
 

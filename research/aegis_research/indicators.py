@@ -174,8 +174,9 @@ def _run_component_indicator(data: MarketDataBundle, definition: ComponentDefini
     if isinstance(output, IndicatorResult):
         return _source_component_indicator_result(output, definition)
     output_name = _single_component_output_name(definition.manifest)
-    frame = _component_output_frame(output, data.close, definition.id, output_name)
-    return _component_frame_indicator_result(data.close, frame, definition, output_name)
+    close = data.feature("Close")
+    frame = _component_output_frame(output, close, definition.id, output_name)
+    return _component_frame_indicator_result(close, frame, definition, output_name)
 
 
 def _source_component_indicator_result(

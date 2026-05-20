@@ -195,7 +195,11 @@ def _resolve_indicator_refs(
                     raise ValueError(f"duplicate indicator component ref: {component_id}")
                 definition = component_registry.get(ComponentSelection("indicators", component_id))
                 output = definition.load_callable()(data)
-                indicators[component_id] = _validate_indicator_output(output, data.close, component_id)
+                indicators[component_id] = _validate_indicator_output(
+                    output,
+                    data.feature("Close"),
+                    component_id,
+                )
                 evidence.append(
                     {
                         "source": "component",
@@ -314,14 +318,15 @@ def _resolve_strategy_ref(
     )
     signal_result = validate_strategy_output(strategy_callable(bundle), bundle)
     signal_config = SignalConfig()
+    close = data.feature("Close")
     portfolio = simulate_portfolio(
-        data.close,
+        close,
         signal_result.entries,
         signal_result.exits,
         portfolio_config,
         signal_config,
         open_prices=open_prices,
-        market_index=data.close.index,
+        market_index=close.index,
     )
     metrics = portfolio_metrics(portfolio.portfolio, report_config)
     return (
@@ -412,8 +417,9 @@ def validate_strategy_output(output: Any, bundle: StrategyInputBundle) -> Strate
         raise ValueError(f"strategy output must not contain portfolio fields: {forbidden}")
     if "entries" not in output or "exits" not in output:
         raise ValueError("strategy output must include entries and exits")
-    entries = _signal_frame(output["entries"], bundle.data.close, "entries")
-    exits = _signal_frame(output["exits"], bundle.data.close, "exits")
+    close = bundle.data.feature("Close")
+    entries = _signal_frame(output["entries"], close, "entries")
+    exits = _signal_frame(output["exits"], close, "exits")
     diagnostics = {
         "schema_version": "strategy_signal_diagnostics.v1",
         "entry_states": _true_count(entries),

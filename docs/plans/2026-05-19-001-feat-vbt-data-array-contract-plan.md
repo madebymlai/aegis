@@ -99,7 +99,7 @@ The current market-data path is VBT-native in places, but still centers on fixed
 - Use exact VBT feature names in component manifests: this removes the lower-case project alias layer and makes manifest/config comparison direct.
 - Add input declarations to label and strategy component manifests, not only indicators: otherwise train and strategy components could still depend on undeclared arrays.
 - Validate component requirements before component execution and before unnecessary provider use where practical: component/config mismatch is a contract error, not an indicator runtime error.
-- Keep convenience accessors on the data bundle, but make dynamic VBT feature access the primary contract: existing `data.close` usage remains ergonomic while non-OHLCV arrays do not require new hardcoded fields.
+- Keep the data bundle dynamic-only: component code requests every raw feature through `data.feature("FeatureName")`, including OHLCV features, so non-OHLCV arrays never require new hardcoded fields.
 
 ---
 

@@ -34,7 +34,7 @@ def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
     assert {row["symbol"] for row in result.diagnostics} == {"AAA", "BBB"}
     assert result.metadata["quality"]["state"] == "healthy"
     assert close_from_ohlcv(result).shape == (10, 2)
-    assert bundle.close.equals(result.feature("Close"))
+    assert bundle.feature("Close").equals(result.feature("Close"))
 
 
 def test_market_data_bundle_can_resolve_named_features() -> None:
@@ -42,7 +42,7 @@ def test_market_data_bundle_can_resolve_named_features() -> None:
     close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
     factor = pd.DataFrame({"SYN": [10.0, 20.0]}, index=index)
     bundle = MarketDataBundle(
-        close=close,
+        features={"Close": close},
         loaded_features=("Close", "Factor"),
         feature_getter=lambda feature: factor,
     )
@@ -54,7 +54,7 @@ def test_market_data_bundle_rejects_unloaded_features() -> None:
     index = pd.date_range("2020-01-01", periods=2, tz="UTC")
     close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
     bundle = MarketDataBundle(
-        close=close,
+        features={"Close": close},
         loaded_features=("Close",),
         feature_getter=lambda feature: close,
     )
@@ -117,7 +117,8 @@ def test_bundle_can_serve_dynamic_feature_without_close() -> None:
     )
     bundle = market_data_bundle(result)
 
-    assert bundle.close is None
+    with pytest.raises(ValueError, match="was not loaded"):
+        bundle.feature("Close")
     assert bundle.feature("FundingRate").iloc[-1, 0] == 0.03
 
 

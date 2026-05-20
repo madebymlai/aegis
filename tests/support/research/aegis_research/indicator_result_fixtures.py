@@ -44,7 +44,7 @@ def ma_indicator_result(close: pd.DataFrame, windows: Sequence[int] = (3,)) -> I
 
 
 def native_indicator_result(data: MarketDataBundle | pd.DataFrame) -> IndicatorResult:
-    close = data if isinstance(data, pd.DataFrame) else data.close
+    close = data if isinstance(data, pd.DataFrame) else data.feature("Close")
     ma = vbt.MA.run(
         close,
         window=[10, 30],

@@ -16,7 +16,7 @@ COMPONENT_CALLABLE = "run"
 
 def run(data):
     ma = vbt.MA.run(
-        data.close,
+        data.feature("Close"),
         window=[10, 30],
         wtype="simple",
         hide_params=None,

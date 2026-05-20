@@ -85,7 +85,7 @@ indicators:
     ids: [returns, ma, rsi]
 ```
 
-Indicator components own their default params, sweep grids, selected outputs, and model-feature transforms. Component callables receive a market-data bundle, so close-only indicators use `data.close` and OHLCV indicators can use `data.open`, `data.high`, `data.low`, and `data.volume` when those inputs are declared by the manifest. Other source/provider features are requested explicitly with `data.feature("FeatureName")`. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels. Cartesian products and constrained grids belong inside reviewed component code or playbooks, not in run/train YAML.
+Indicator components own their default params, sweep grids, selected outputs, and model-feature transforms. Component callables receive a market-data bundle and request declared raw features with `data.feature("FeatureName")`, including `data.feature("Close")` for close-only indicators and `data.feature("High")` or `data.feature("Low")` for OHLCV-dependent indicators. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels. Cartesian products and constrained grids belong inside reviewed component code or playbooks, not in run/train YAML.
 
 Primitive features such as returns and rolling volatility stay local in schema v4, but they still produce the same lineage, feature mapping, invalid-value diagnostics, and artifact metadata as VectorBT-backed indicators. Reusable/domain transforms should graduate to a reviewed registry definition when they need first-class indicator identity or repeated use.
 
@@ -103,7 +103,7 @@ The indicator stage keeps native VectorBT objects private until the modeling bou
 
 ## Native Data Lifecycle
 
-Every source returns a `MarketDataResult` with native `vbt.Data`, safe metadata, asset diagnostics, quality state, and known-secret evidence. Derived feature views are requested with `result.feature("Close")`, through the OHLC helpers, or through the component-facing market-data bundle fields such as `data.close` and `data.high`; they always return timestamp-by-symbol DataFrames. Orchestration does not select a first symbol or squeeze single-symbol panels.
+Every source returns a `MarketDataResult` with native `vbt.Data`, safe metadata, asset diagnostics, quality state, and known-secret evidence. Derived feature views are requested with `result.feature("Close")`, through the OHLC helpers, or through the component-facing `data.feature("FeatureName")`; they always return timestamp-by-symbol DataFrames. Orchestration does not select a first symbol or squeeze single-symbol panels.
 
 Required data arrays come from the explicit config, selected component `input_names`, and pipeline needs. `fixlb` label components usually declare `Close`; trend and pivot labels declare `High`, `Low`, and `Close`. The default signal timing `next_open` also requires `Open`; explicit `same_close` is the only v1 timing override that allows close-only portfolio validation. Every configured array is loaded and validated, even if no selected component consumes it.
 

@@ -11,7 +11,7 @@ COMPONENT_CALLABLE = "run"
 
 def run(bundle):
     window = 10
-    close = bundle.data.close
+    close = bundle.data.feature("Close")
     moving_average = close.rolling(window).mean()
     return {
         "entries": (close > moving_average).fillna(False),

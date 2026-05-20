@@ -249,7 +249,7 @@ def _write_label_component(path: Path) -> None:
         "'output_names': ['labels']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(data):\n"
-        "    return build_label_result(data.close, LabelConfig())\n"
+        "    return build_label_result(data.feature('Close'), LabelConfig())\n"
     )
 
 
@@ -264,5 +264,5 @@ def _write_indicator_component(path: Path) -> None:
         "'supported_transforms': ['identity']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(data):\n"
-        "    return data.close.pct_change().fillna(0.0)\n"
+        "    return data.feature('Close').pct_change().fillna(0.0)\n"
     )

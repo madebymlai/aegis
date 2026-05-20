@@ -297,5 +297,5 @@ def _write_indicator_component(path: Path) -> None:
         "'supported_transforms': ['identity']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "def run(data):\n"
-        "    return data.close.pct_change().fillna(0.0)\n"
+        "    return data.feature('Close').pct_change().fillna(0.0)\n"
     )

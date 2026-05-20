@@ -97,11 +97,7 @@ class MarketDataResult:
 
 @dataclass(frozen=True)
 class MarketDataBundle:
-    close: pd.DataFrame | None = None
-    open: pd.DataFrame | None = None
-    high: pd.DataFrame | None = None
-    low: pd.DataFrame | None = None
-    volume: pd.DataFrame | None = None
+    features: dict[str, pd.DataFrame] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     native_data: Any | None = None
     loaded_features: tuple[str, ...] = ()
@@ -114,7 +110,7 @@ class MarketDataBundle:
     def feature(self, feature: str) -> pd.DataFrame:
         if self.loaded_features and feature not in self.loaded_features:
             raise ValueError(f"market data feature {feature!r} was not loaded for this run")
-        panel = getattr(self, feature.lower(), None) if feature in OHLCV_FEATURES else None
+        panel = self.features.get(feature)
         if panel is not None:
             return panel
         if self.feature_getter is not None:
@@ -124,17 +120,7 @@ class MarketDataBundle:
 
 def market_data_bundle(result: MarketDataResult) -> MarketDataBundle:
     result.assert_usable()
-    available = result.metadata.get("ohlc_available", {})
-
-    def optional_feature(feature: str) -> pd.DataFrame | None:
-        return result.feature(feature) if available.get(feature) else None
-
     return MarketDataBundle(
-        close=optional_feature("Close"),
-        open=optional_feature("Open"),
-        high=optional_feature("High"),
-        low=optional_feature("Low"),
-        volume=optional_feature("Volume"),
         metadata=result.metadata,
         native_data=result.native_data,
         loaded_features=tuple(result.metadata.get("loaded_arrays", ())),
