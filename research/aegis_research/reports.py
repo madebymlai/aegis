@@ -180,6 +180,106 @@ def portfolio_metrics(pf: Any, config: ReportConfig) -> dict[str, Any]:
     }
 
 
+def portfolio_metrics_by_candidate_group(
+    pf: Any,
+    config: ReportConfig,
+    candidate_ids: Iterable[str],
+) -> dict[str, dict[str, Any]]:
+    candidate_ids = tuple(candidate_ids)
+    sharpe_kwargs = {
+        "freq": pd.Timedelta(config.freq),
+        "year_freq": pd.Timedelta(config.year_freq),
+    }
+    evidence_settings = portfolio_metric_assumptions(config) | {
+        "scope_detail": "one shared cash group across symbols for each candidate",
+    }
+    stats, stats_warnings = _capture_warnings(
+        lambda: pf.stats(metrics=list(PORTFOLIO_STATS_METRICS), agg_func=None)
+    )
+    per_symbol_stats, per_symbol_stats_warnings = _capture_warnings(
+        lambda: pf.stats(
+            metrics=list(PORTFOLIO_STATS_METRICS),
+            agg_func=None,
+            group_by=False,
+        )
+    )
+    sharpe_ratio, sharpe_warnings = _capture_warnings(lambda: pf.get_sharpe_ratio(**sharpe_kwargs))
+    per_symbol_sharpe, per_symbol_sharpe_warnings = _capture_warnings(
+        lambda: pf.get_sharpe_ratio(
+            **sharpe_kwargs,
+            group_by=False,
+        )
+    )
+    optional_diagnostics = _optional_diagnostics_by_candidate(
+        pf,
+        candidate_ids,
+        sharpe_kwargs,
+        evidence_settings,
+    )
+
+    metrics_by_candidate: dict[str, dict[str, Any]] = {}
+    for candidate_id in candidate_ids:
+        metrics: dict[str, Any] = {}
+        metric_evidence: dict[str, Any] = {}
+        per_symbol: dict[str, dict[str, Any]] = {}
+        per_symbol_metric_evidence: dict[str, dict[str, Any]] = {}
+        for metric_name, metric in PORTFOLIO_METRIC_CATALOG.items():
+            vbt_metric = _vbt_metric_config(pf, metric["vbt_metric"])
+            title = vbt_metric["title"]
+            source = _metric_source(metric, title)
+            if metric["source_method"] == "stats":
+                raw_value = _candidate_stat_value(stats, title, candidate_id)
+                raw_symbol_values = _candidate_symbol_stat_values(
+                    per_symbol_stats,
+                    title,
+                    candidate_id,
+                )
+                warnings_for_metric = stats_warnings
+                per_symbol_warnings = per_symbol_stats_warnings
+            else:
+                raw_value = _candidate_raw_value(sharpe_ratio, candidate_id)
+                raw_symbol_values = _candidate_symbol_raw_values(per_symbol_sharpe, candidate_id)
+                warnings_for_metric = sharpe_warnings
+                per_symbol_warnings = per_symbol_sharpe_warnings
+
+            evidence = _metric_evidence(
+                metric_name,
+                metric,
+                source,
+                raw_value,
+                settings=evidence_settings,
+                warning_records=warnings_for_metric,
+            )
+            symbol_evidence = {
+                symbol: _metric_evidence(
+                    metric_name,
+                    metric,
+                    source,
+                    value,
+                    settings=evidence_settings,
+                    warning_records=per_symbol_warnings,
+                )
+                for symbol, value in raw_symbol_values.items()
+            }
+            metrics[metric_name] = evidence["value"]
+            metric_evidence[metric_name] = evidence
+            per_symbol[metric_name] = {
+                symbol: evidence["value"] for symbol, evidence in symbol_evidence.items()
+            }
+            per_symbol_metric_evidence[metric_name] = symbol_evidence
+        metrics_by_candidate[candidate_id] = {
+            **metrics,
+            "metric_scope": PORTFOLIO_METRIC_SCOPE,
+            "metric_assumptions": evidence_settings,
+            "metric_evidence": metric_evidence,
+            "metric_roles": _metric_roles(),
+            "optional_diagnostics": optional_diagnostics[candidate_id],
+            "per_symbol": per_symbol,
+            "per_symbol_metric_evidence": per_symbol_metric_evidence,
+        }
+    return metrics_by_candidate
+
+
 def portfolio_metric_assumptions(config: ReportConfig) -> dict[str, Any]:
     return {
         "scope": PORTFOLIO_METRIC_SCOPE,
@@ -743,6 +843,52 @@ def _optional_diagnostics(
     return diagnostics
 
 
+def _optional_diagnostics_by_candidate(
+    pf: Any,
+    candidate_ids: Iterable[str],
+    sharpe_kwargs: dict[str, Any],
+    settings: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    diagnostics = {candidate_id: {} for candidate_id in candidate_ids}
+    for name, spec in OPTIONAL_DIAGNOSTICS.items():
+        method_name = spec["method"]
+        if not hasattr(pf, method_name):
+            for candidate_id in diagnostics:
+                diagnostics[candidate_id][name] = _unavailable_diagnostic(
+                    name, spec, settings, "method not available"
+                )
+            continue
+        try:
+            raw_value, warning_records = _capture_warnings(
+                lambda method_name=method_name: getattr(pf, method_name)(**sharpe_kwargs)
+            )
+        except Exception as error:
+            for candidate_id in diagnostics:
+                diagnostics[candidate_id][name] = _unavailable_diagnostic(
+                    name, spec, settings, str(error)
+                )
+            continue
+        for candidate_id in diagnostics:
+            diagnostics[candidate_id][name] = _metric_evidence(
+                name,
+                {
+                    "unit": spec["unit"],
+                    "required_report_output": False,
+                    "required_gate_input": False,
+                },
+                {
+                    "engine": "vectorbtpro",
+                    "identity": spec["vbt_metric"],
+                    "title": name,
+                    "method": method_name,
+                },
+                _candidate_raw_value(raw_value, candidate_id),
+                settings=settings,
+                warning_records=warning_records,
+            )
+    return diagnostics
+
+
 def _unavailable_diagnostic(
     name: str,
     spec: Mapping[str, Any],
@@ -779,6 +925,53 @@ def _raw_metric_map(stats: Any, name: str) -> dict[str, Any]:
             return _raw_value_map(stats[name])
         return {}
     return {"portfolio": stats.get(name)}
+
+
+def _candidate_stat_value(stats: Any, title: str, candidate_id: str) -> Any:
+    if isinstance(stats, pd.DataFrame):
+        if candidate_id in stats.index and title in stats.columns:
+            return stats.loc[candidate_id, title]
+        if title in stats.index and candidate_id in stats.columns:
+            return stats.loc[title, candidate_id]
+    if isinstance(stats, pd.Series):
+        return stats.get(candidate_id)
+    return None
+
+
+def _candidate_symbol_stat_values(stats: Any, title: str, candidate_id: str) -> dict[str, Any]:
+    if not isinstance(stats, pd.DataFrame):
+        return {}
+    if title not in stats.columns:
+        return {}
+    values = stats[title]
+    if not isinstance(values.index, pd.MultiIndex) or "candidate_id" not in values.index.names:
+        return {}
+    if candidate_id not in values.index.get_level_values("candidate_id"):
+        return {}
+    candidate_values = values.xs(candidate_id, level="candidate_id")
+    return {str(symbol): value for symbol, value in candidate_values.items()}
+
+
+def _candidate_raw_value(value: Any, candidate_id: str) -> Any:
+    if isinstance(value, pd.DataFrame):
+        if candidate_id in value.index and len(value.columns) == 1:
+            return value.iloc[value.index.get_loc(candidate_id), 0]
+        if candidate_id in value.columns and len(value.index) == 1:
+            return value.loc[value.index[0], candidate_id]
+    if isinstance(value, pd.Series):
+        return value.get(candidate_id)
+    return value
+
+
+def _candidate_symbol_raw_values(value: Any, candidate_id: str) -> dict[str, Any]:
+    if not isinstance(value, pd.Series):
+        return {}
+    if not isinstance(value.index, pd.MultiIndex) or "candidate_id" not in value.index.names:
+        return {}
+    if candidate_id not in value.index.get_level_values("candidate_id"):
+        return {}
+    candidate_values = value.xs(candidate_id, level="candidate_id")
+    return {str(symbol): item for symbol, item in candidate_values.items()}
 
 
 def _headline_raw_metric(stats: Any, name: str) -> Any:
