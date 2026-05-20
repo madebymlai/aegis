@@ -9,8 +9,8 @@ import pandas as pd
 
 from research.aegis_research.component_registry.manifests import COMPONENT_ID_RE
 
-BATCHED_PLAYBOOK_CONTRACT = "aegis.batched_playbook.v1"
-BATCHED_PLAYBOOK_RESULT_SCHEMA = "batched_playbook_result.v1"
+PLAYBOOK_SWEEP_CONTRACT = "aegis.playbook_sweep.v1"
+PLAYBOOK_SWEEP_RESULT_SCHEMA = "playbook_sweep_result.v1"
 CANDIDATE_LEVEL = "candidate_id"
 SYMBOL_LEVEL = "symbol"
 
@@ -19,7 +19,7 @@ STRATEGY_AXIS_KIND = "strategy_axis"
 STRATEGY_SIGNALS_KIND = "strategy_signals"
 STRATEGY_MATERIALIZER_KEY = "materialize_signals"
 
-BatchedSourceKind = Literal["component", "playbook"]
+SweepSourceKind = Literal["component", "playbook"]
 
 PLAYBOOK_METRIC_SOURCE_KEYS = frozenset(
     {
@@ -47,23 +47,23 @@ PORTFOLIO_FIELD_KEYS = frozenset(
 SIGNAL_FIELD_KEYS = frozenset({"entries", "exits"})
 
 
-class BatchedContractError(ValueError):
+class CandidateSweepError(ValueError):
     def __init__(self, message: str, *, diagnostics: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.diagnostics = diagnostics
 
 
 @dataclass(frozen=True)
-class BatchedCandidate:
+class SweepCandidate:
     candidate_id: str
     params: dict[str, Any]
 
 
 @dataclass(frozen=True)
-class BatchedCandidateAxis:
-    source: BatchedSourceKind
+class CandidateAxis:
+    source: SweepSourceKind
     source_id: str
-    candidates: tuple[BatchedCandidate, ...]
+    candidates: tuple[SweepCandidate, ...]
 
     @property
     def candidate_ids(self) -> tuple[str, ...]:
@@ -75,37 +75,37 @@ class BatchedCandidateAxis:
 
 
 @dataclass(frozen=True)
-class BatchedCandidateRef:
-    source: BatchedSourceKind
+class CandidateRef:
+    source: SweepSourceKind
     source_id: str
     candidate_id: str
     params: dict[str, Any]
 
 
 @dataclass(frozen=True)
-class BatchedComposedCandidate:
+class ComposedCandidate:
     candidate_id: str
-    strategy: BatchedCandidateRef
-    indicators: tuple[BatchedCandidateRef, ...]
+    strategy: CandidateRef
+    indicators: tuple[CandidateRef, ...]
 
 
 @dataclass(frozen=True)
-class BatchedIndicatorResult:
-    axis: BatchedCandidateAxis
+class IndicatorSweepResult:
+    axis: CandidateAxis
     outputs: dict[str, pd.DataFrame]
     diagnostics: dict[str, Any]
 
 
 @dataclass(frozen=True)
-class BatchedStrategySignalResult:
+class StrategySweepSignalResult:
     entries: pd.DataFrame
     exits: pd.DataFrame
     diagnostics: dict[str, Any]
 
 
 @dataclass(frozen=True)
-class BatchedSignalRequest:
-    candidates: tuple[BatchedComposedCandidate, ...]
+class SignalMaterializationRequest:
+    candidates: tuple[ComposedCandidate, ...]
 
     @property
     def candidate_ids(self) -> tuple[str, ...]:
@@ -113,15 +113,15 @@ class BatchedSignalRequest:
 
 
 @dataclass(frozen=True)
-class BatchedStrategyPlan:
-    axis: BatchedCandidateAxis
-    materialize_signals: Callable[[BatchedSignalRequest], Mapping[str, Any]]
+class StrategySweepPlan:
+    axis: CandidateAxis
+    materialize_signals: Callable[[SignalMaterializationRequest], Mapping[str, Any]]
     diagnostics: dict[str, Any]
 
 
 @dataclass(frozen=True)
 class IndicatorAxisPreflight:
-    source: BatchedSourceKind
+    source: SweepSourceKind
     source_id: str
     candidate_count: int
     output_count: int
@@ -140,7 +140,7 @@ class IndicatorGridPreflight:
 
     def diagnostics(self) -> dict[str, Any]:
         return {
-            "schema_version": "batched_indicator_preflight.v1",
+            "schema_version": "indicator_sweep_preflight.v1",
             "indicator_axis_count": len(self.axes),
             "indicator_context_count": self.indicator_context_count,
             "estimated_cells": self.estimated_cells,
@@ -163,12 +163,12 @@ class IndicatorGridPreflight:
         }
 
 
-def validate_batched_indicator_result(
+def validate_indicator_sweep_result(
     result: Any,
     *,
     source_id: str,
     close: pd.DataFrame,
-) -> BatchedIndicatorResult:
+) -> IndicatorSweepResult:
     result = _validated_header(
         result,
         source_id=source_id,
@@ -178,12 +178,12 @@ def validate_batched_indicator_result(
     axis = _candidate_axis(result, source="playbook", source_id=source_id)
     outputs = result.get("outputs")
     if not isinstance(outputs, Mapping) or not outputs:
-        raise TypeError(f"playbook {source_id!r} batched indicator outputs must be a mapping")
+        raise TypeError(f"playbook {source_id!r} indicator sweep outputs must be a mapping")
 
     validated_outputs: dict[str, pd.DataFrame] = {}
     for name, value in outputs.items():
         if not isinstance(name, str) or not name:
-            raise TypeError(f"playbook {source_id!r} batched indicator output names must be strings")
+            raise TypeError(f"playbook {source_id!r} indicator sweep output names must be strings")
         validated_outputs[name] = _candidate_surface_frame(
             value,
             close=close,
@@ -191,18 +191,18 @@ def validate_batched_indicator_result(
             field_name=f"outputs.{name}",
             expected_candidate_ids=axis.candidate_ids,
         )
-    return BatchedIndicatorResult(
+    return IndicatorSweepResult(
         axis=axis,
         outputs=validated_outputs,
         diagnostics=_diagnostics(result),
     )
 
 
-def validate_batched_strategy_axis(
+def validate_strategy_sweep_axis(
     result: Any,
     *,
     source_id: str,
-) -> BatchedCandidateAxis:
+) -> CandidateAxis:
     result = _validated_header(
         result,
         source_id=source_id,
@@ -212,11 +212,11 @@ def validate_batched_strategy_axis(
     return _candidate_axis(result, source="playbook", source_id=source_id)
 
 
-def validate_batched_strategy_plan(
+def validate_strategy_sweep_plan(
     result: Any,
     *,
     source_id: str,
-) -> BatchedStrategyPlan:
+) -> StrategySweepPlan:
     result = _validated_header(
         result,
         source_id=source_id,
@@ -232,29 +232,29 @@ def validate_batched_strategy_plan(
     materialize = result.get(STRATEGY_MATERIALIZER_KEY)
     if not callable(materialize):
         raise TypeError(
-            f"playbook {source_id!r} batched strategy axis must include callable "
+            f"playbook {source_id!r} strategy sweep axis must include callable "
             f"{STRATEGY_MATERIALIZER_KEY!r}"
         )
-    return BatchedStrategyPlan(
+    return StrategySweepPlan(
         axis=_candidate_axis(result, source="playbook", source_id=source_id),
         materialize_signals=materialize,
         diagnostics=_diagnostics(result),
     )
 
 
-def materialize_batched_strategy_signals(
-    plan: BatchedStrategyPlan,
+def materialize_strategy_sweep_signals(
+    plan: StrategySweepPlan,
     *,
     source_id: str,
     requested_candidate_ids: Sequence[str],
-    indicator_axes: Sequence[BatchedCandidateAxis] = (),
-    candidate_pool: Sequence[BatchedComposedCandidate] | None = None,
+    indicator_axes: Sequence[CandidateAxis] = (),
+    candidate_pool: Sequence[ComposedCandidate] | None = None,
     close: pd.DataFrame,
-) -> BatchedStrategySignalResult:
+) -> StrategySweepSignalResult:
     candidate_grid = (
         tuple(candidate_pool)
         if candidate_pool is not None
-        else compose_batched_candidate_grid(
+        else compose_candidate_grid(
             strategy_axis=plan.axis,
             indicator_axes=indicator_axes,
         )
@@ -264,21 +264,21 @@ def materialize_batched_strategy_signals(
         candidates=candidate_grid,
         source_id=source_id,
     )
-    return validate_batched_strategy_signals(
-        plan.materialize_signals(BatchedSignalRequest(candidates=requested)),
+    return validate_strategy_sweep_signals(
+        plan.materialize_signals(SignalMaterializationRequest(candidates=requested)),
         source_id=source_id,
         expected_candidate_ids=tuple(candidate.candidate_id for candidate in requested),
         close=close,
     )
 
 
-def validate_batched_strategy_signals(
+def validate_strategy_sweep_signals(
     result: Any,
     *,
     source_id: str,
     expected_candidate_ids: Sequence[str],
     close: pd.DataFrame,
-) -> BatchedStrategySignalResult:
+) -> StrategySweepSignalResult:
     result = _validated_header(
         result,
         source_id=source_id,
@@ -287,7 +287,7 @@ def validate_batched_strategy_signals(
     )
     expected = _expected_candidate_ids(expected_candidate_ids, source_id=source_id)
     if "entries" not in result or "exits" not in result:
-        raise ValueError(f"playbook {source_id!r} batched strategy signals must include entries and exits")
+        raise ValueError(f"playbook {source_id!r} strategy sweep signals must include entries and exits")
     entries = _candidate_surface_frame(
         result["entries"],
         close=close,
@@ -302,7 +302,7 @@ def validate_batched_strategy_signals(
         field_name="exits",
         expected_candidate_ids=expected,
     ).fillna(False).astype(bool)
-    return BatchedStrategySignalResult(
+    return StrategySweepSignalResult(
         entries=entries,
         exits=exits,
         diagnostics=_diagnostics(result),
@@ -311,28 +311,28 @@ def validate_batched_strategy_signals(
 
 def composed_candidate_ids(
     *,
-    strategy_axis: BatchedCandidateAxis,
-    indicator_axes: Sequence[BatchedCandidateAxis] = (),
+    strategy_axis: CandidateAxis,
+    indicator_axes: Sequence[CandidateAxis] = (),
 ) -> tuple[str, ...]:
     return tuple(
         candidate.candidate_id
-        for candidate in compose_batched_candidate_grid(
+        for candidate in compose_candidate_grid(
             strategy_axis=strategy_axis,
             indicator_axes=indicator_axes,
         )
     )
 
 
-def compose_batched_candidate_grid(
+def compose_candidate_grid(
     *,
-    strategy_axis: BatchedCandidateAxis,
-    indicator_axes: Sequence[BatchedCandidateAxis] = (),
-) -> tuple[BatchedComposedCandidate, ...]:
+    strategy_axis: CandidateAxis,
+    indicator_axes: Sequence[CandidateAxis] = (),
+) -> tuple[ComposedCandidate, ...]:
     indicator_products = tuple(product(*(axis.candidates for axis in indicator_axes))) or ((),)
-    candidates: list[BatchedComposedCandidate] = []
+    candidates: list[ComposedCandidate] = []
     for indicators in indicator_products:
         indicator_refs = tuple(
-            BatchedCandidateRef(
+            CandidateRef(
                 source=axis.source,
                 source_id=axis.source_id,
                 candidate_id=candidate.candidate_id,
@@ -344,7 +344,7 @@ def compose_batched_candidate_grid(
             f"{ref.source}:{ref.source_id}:{ref.candidate_id}" for ref in indicator_refs
         ]
         for strategy_candidate in strategy_axis.candidates:
-            strategy_ref = BatchedCandidateRef(
+            strategy_ref = CandidateRef(
                 source=strategy_axis.source,
                 source_id=strategy_axis.source_id,
                 candidate_id=strategy_candidate.candidate_id,
@@ -358,7 +358,7 @@ def compose_batched_candidate_grid(
             else:
                 candidate_id = strategy_candidate.candidate_id
             candidates.append(
-                BatchedComposedCandidate(
+                ComposedCandidate(
                     candidate_id=candidate_id,
                     strategy=strategy_ref,
                     indicators=indicator_refs,
@@ -371,12 +371,12 @@ def compose_batched_candidate_grid(
             duplicates.add(candidate.candidate_id)
         seen_ids.add(candidate.candidate_id)
     if duplicates:
-        raise BatchedContractError(f"duplicate composed candidate ids: {sorted(duplicates)}")
+        raise CandidateSweepError(f"duplicate composed candidate ids: {sorted(duplicates)}")
     return tuple(candidates)
 
 
 def preflight_indicator_grid(
-    indicator_results: Sequence[BatchedIndicatorResult],
+    indicator_results: Sequence[IndicatorSweepResult],
     *,
     max_candidates: int,
     max_estimated_cells: int,
@@ -394,14 +394,14 @@ def preflight_indicator_grid(
         max_estimated_cells=max_estimated_cells,
     )
     if indicator_context_count > max_candidates:
-        raise BatchedContractError(
-            f"batched indicator grid has {indicator_context_count} candidates, above "
+        raise CandidateSweepError(
+            f"indicator sweep grid has {indicator_context_count} candidates, above "
             f"candidate_grid.max_candidates={max_candidates}",
             diagnostics=preflight.diagnostics(),
         )
     if estimated_cells > max_estimated_cells:
-        raise BatchedContractError(
-            f"batched indicator grid has {estimated_cells} estimated cells, above "
+        raise CandidateSweepError(
+            f"indicator sweep grid has {estimated_cells} estimated cells, above "
             f"candidate_grid.max_estimated_cells={max_estimated_cells}",
             diagnostics=preflight.diagnostics(),
         )
@@ -416,36 +416,36 @@ def _validated_header(
     allowed_keys: set[str],
 ) -> Mapping[str, Any]:
     if not isinstance(result, Mapping):
-        raise TypeError(f"playbook {source_id!r} batched result must be a mapping")
+        raise TypeError(f"playbook {source_id!r} sweep result must be a mapping")
     if "variant_records" in result:
-        raise BatchedContractError(
+        raise CandidateSweepError(
             f"playbook {source_id!r} emitted legacy variant_records; "
-            f"batched playbooks must use contract {BATCHED_PLAYBOOK_CONTRACT!r}"
+            f"playbook sweeps must use contract {PLAYBOOK_SWEEP_CONTRACT!r}"
         )
-    if result.get("contract") != BATCHED_PLAYBOOK_CONTRACT:
-        raise BatchedContractError(
-            f"playbook {source_id!r} batched result contract must be "
-            f"{BATCHED_PLAYBOOK_CONTRACT!r}"
+    if result.get("contract") != PLAYBOOK_SWEEP_CONTRACT:
+        raise CandidateSweepError(
+            f"playbook {source_id!r} sweep result contract must be "
+            f"{PLAYBOOK_SWEEP_CONTRACT!r}"
         )
     if result.get("kind") != expected_kind:
-        raise BatchedContractError(
-            f"playbook {source_id!r} batched result kind must be {expected_kind!r}"
+        raise CandidateSweepError(
+            f"playbook {source_id!r} sweep result kind must be {expected_kind!r}"
         )
     forbidden = sorted(set(result) & (PLAYBOOK_METRIC_SOURCE_KEYS | PORTFOLIO_FIELD_KEYS))
     if forbidden:
-        raise BatchedContractError(
-            f"playbook {source_id!r} batched result must not contain metric or portfolio fields: "
+        raise CandidateSweepError(
+            f"playbook {source_id!r} sweep result must not contain metric or portfolio fields: "
             f"{forbidden}"
         )
     unsupported = sorted(set(result) - allowed_keys)
     if unsupported:
-        raise BatchedContractError(
-            f"playbook {source_id!r} batched result contains unsupported fields: {unsupported}"
+        raise CandidateSweepError(
+            f"playbook {source_id!r} sweep result contains unsupported fields: {unsupported}"
         )
     return result
 
 
-def _indicator_axis_preflight(result: BatchedIndicatorResult) -> IndicatorAxisPreflight:
+def _indicator_axis_preflight(result: IndicatorSweepResult) -> IndicatorAxisPreflight:
     first_output = next(iter(result.outputs.values()))
     symbol_count = len(first_output.columns.get_level_values(SYMBOL_LEVEL).unique())
     row_count = len(first_output.index)
@@ -465,23 +465,23 @@ def _indicator_axis_preflight(result: BatchedIndicatorResult) -> IndicatorAxisPr
 def _candidate_axis(
     result: Mapping[str, Any],
     *,
-    source: BatchedSourceKind,
+    source: SweepSourceKind,
     source_id: str,
-) -> BatchedCandidateAxis:
+) -> CandidateAxis:
     raw_candidates = result.get("candidate_axis")
     if not isinstance(raw_candidates, Sequence) or isinstance(raw_candidates, (str, bytes)):
         raise TypeError(f"playbook {source_id!r} candidate_axis must be a list")
     if not raw_candidates:
-        raise BatchedContractError(f"playbook {source_id!r} candidate_axis must not be empty")
+        raise CandidateSweepError(f"playbook {source_id!r} candidate_axis must not be empty")
 
-    candidates: list[BatchedCandidate] = []
+    candidates: list[SweepCandidate] = []
     seen_ids: set[str] = set()
     for index, raw_candidate in enumerate(raw_candidates):
         if not isinstance(raw_candidate, Mapping):
             raise TypeError(f"playbook {source_id!r} candidate_axis[{index}] must be a mapping")
         unsupported = sorted(set(raw_candidate) - {"candidate_id", "params"})
         if unsupported:
-            raise BatchedContractError(
+            raise CandidateSweepError(
                 f"playbook {source_id!r} candidate_axis[{index}] contains unsupported fields: "
                 f"{unsupported}"
             )
@@ -493,7 +493,7 @@ def _candidate_axis(
             )
         _validate_candidate_id(candidate_id, source_id=source_id, index=index)
         if candidate_id in seen_ids:
-            raise BatchedContractError(
+            raise CandidateSweepError(
                 f"playbook {source_id!r} emitted duplicate candidate {candidate_id!r}"
             )
         seen_ids.add(candidate_id)
@@ -502,8 +502,8 @@ def _candidate_axis(
             raise TypeError(
                 f"playbook {source_id!r} candidate_axis[{index}].params must be a mapping"
             )
-        candidates.append(BatchedCandidate(candidate_id=candidate_id, params=dict(params)))
-    return BatchedCandidateAxis(source=source, source_id=source_id, candidates=tuple(candidates))
+        candidates.append(SweepCandidate(candidate_id=candidate_id, params=dict(params)))
+    return CandidateAxis(source=source, source_id=source_id, candidates=tuple(candidates))
 
 
 def _candidate_surface_frame(
@@ -515,28 +515,28 @@ def _candidate_surface_frame(
     expected_candidate_ids: tuple[str, ...],
 ) -> pd.DataFrame:
     if not isinstance(value, pd.DataFrame):
-        raise TypeError(f"playbook {source_id!r} batched {field_name} must be a pandas DataFrame")
+        raise TypeError(f"playbook {source_id!r} sweep {field_name} must be a pandas DataFrame")
     if not value.index.equals(close.index):
-        raise BatchedContractError(f"playbook {source_id!r} batched {field_name} has misaligned timestamps")
+        raise CandidateSweepError(f"playbook {source_id!r} sweep {field_name} has misaligned timestamps")
     if not isinstance(value.columns, pd.MultiIndex):
         raise TypeError(
-            f"playbook {source_id!r} batched {field_name} columns must be a MultiIndex "
+            f"playbook {source_id!r} sweep {field_name} columns must be a MultiIndex "
             f"with {CANDIDATE_LEVEL!r} and {SYMBOL_LEVEL!r} levels"
         )
     if value.columns.has_duplicates:
-        raise BatchedContractError(f"playbook {source_id!r} batched {field_name} columns duplicate candidate-symbol pairs")
+        raise CandidateSweepError(f"playbook {source_id!r} sweep {field_name} columns duplicate candidate-symbol pairs")
     column_names = list(value.columns.names)
     if len(column_names) != 2 or set(column_names) != {CANDIDATE_LEVEL, SYMBOL_LEVEL}:
-        raise BatchedContractError(
-            f"playbook {source_id!r} batched {field_name} columns must include exactly two "
+        raise CandidateSweepError(
+            f"playbook {source_id!r} sweep {field_name} columns must include exactly two "
             f"levels: {CANDIDATE_LEVEL!r} and {SYMBOL_LEVEL!r}"
         )
 
     candidate_values = value.columns.get_level_values(CANDIDATE_LEVEL)
     actual_candidate_ids = tuple(dict.fromkeys(str(candidate_id) for candidate_id in candidate_values))
     if actual_candidate_ids != expected_candidate_ids:
-        raise BatchedContractError(
-            f"playbook {source_id!r} batched {field_name} candidate axis mismatch: "
+        raise CandidateSweepError(
+            f"playbook {source_id!r} sweep {field_name} candidate axis mismatch: "
             f"expected {list(expected_candidate_ids)!r}, got {list(actual_candidate_ids)!r}"
         )
 
@@ -544,16 +544,16 @@ def _candidate_surface_frame(
     symbol_values = value.columns.get_level_values(SYMBOL_LEVEL)
     expected_column_count = len(expected_candidate_ids) * len(expected_symbols)
     if len(value.columns) != expected_column_count:
-        raise BatchedContractError(
-            f"playbook {source_id!r} batched {field_name} must have one column per "
+        raise CandidateSweepError(
+            f"playbook {source_id!r} sweep {field_name} must have one column per "
             "candidate-symbol pair"
         )
     for candidate_id in expected_candidate_ids:
         mask = candidate_values == candidate_id
         candidate_symbols = [str(symbol) for symbol in symbol_values[mask]]
         if candidate_symbols != expected_symbols:
-            raise BatchedContractError(
-                f"playbook {source_id!r} batched {field_name} symbols for candidate "
+            raise CandidateSweepError(
+                f"playbook {source_id!r} sweep {field_name} symbols for candidate "
                 f"{candidate_id!r} are misaligned"
             )
     return value
@@ -566,23 +566,23 @@ def _expected_candidate_ids(
 ) -> tuple[str, ...]:
     requested = tuple(candidate_ids)
     if not requested:
-        raise BatchedContractError(f"playbook {source_id!r} requested candidate ids must not be empty")
+        raise CandidateSweepError(f"playbook {source_id!r} requested candidate ids must not be empty")
     if len(set(requested)) != len(requested):
-        raise BatchedContractError(f"playbook {source_id!r} requested candidate ids contain duplicates")
+        raise CandidateSweepError(f"playbook {source_id!r} requested candidate ids contain duplicates")
     return requested
 
 
 def _requested_composed_candidates(
     candidate_ids: Sequence[str],
     *,
-    candidates: Sequence[BatchedComposedCandidate],
+    candidates: Sequence[ComposedCandidate],
     source_id: str,
-) -> tuple[BatchedComposedCandidate, ...]:
+) -> tuple[ComposedCandidate, ...]:
     requested_ids = _expected_candidate_ids(candidate_ids, source_id=source_id)
     candidates_by_id = {candidate.candidate_id: candidate for candidate in candidates}
     unknown = sorted(set(requested_ids) - set(candidates_by_id))
     if unknown:
-        raise BatchedContractError(
+        raise CandidateSweepError(
             f"playbook {source_id!r} requested unknown candidate ids: {unknown}"
         )
     return tuple(candidates_by_id[candidate_id] for candidate_id in requested_ids)
@@ -591,13 +591,13 @@ def _requested_composed_candidates(
 def _diagnostics(result: Mapping[str, Any]) -> dict[str, Any]:
     diagnostics = result.get("diagnostics", {})
     if not isinstance(diagnostics, Mapping):
-        raise TypeError("batched diagnostics must be a mapping")
+        raise TypeError("sweep diagnostics must be a mapping")
     return dict(diagnostics)
 
 
 def _validate_candidate_id(candidate_id: str, *, source_id: str, index: int) -> None:
     if not COMPONENT_ID_RE.fullmatch(candidate_id) or candidate_id in {".", ".."}:
-        raise BatchedContractError(
+        raise CandidateSweepError(
             f"playbook {source_id!r} candidate_axis[{index}].candidate_id must contain only "
             "letters, numbers, dots, underscores, and hyphens"
         )

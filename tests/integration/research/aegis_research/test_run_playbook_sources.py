@@ -38,9 +38,9 @@ def test_run_cli_executes_repo_controlled_playbooks_by_id(
     assert artifact["strategy"]["source"] == "playbook"
     assert artifact["strategy"]["id"] == "ma_cross"
     assert artifact["strategy"]["consumes_runner_data"] is True
-    assert artifact["strategy"]["data_binding"] == "batched_strategy_inputs"
+    assert artifact["strategy"]["data_binding"] == "strategy_sweep_inputs"
     assert artifact["data"]["strategy_consumed_runner_data"] is True
-    assert artifact["data"]["strategy_data_binding"] == "batched_strategy_inputs"
+    assert artifact["data"]["strategy_data_binding"] == "strategy_sweep_inputs"
     assert artifact["indicators"][0]["source"] == "playbook"
     assert artifact["indicators"][0]["id"] == "ma_explore"
     assert artifact["leaderboard"]["summary"]["succeeded"] == 2
@@ -134,11 +134,11 @@ def test_run_cli_rejects_legacy_playbook_result_schema(
     payload = json.loads(output.err)
     manifest = json.loads((tmp_path / "runs" / "legacy-rejected" / "manifest.json").read_text())
     assert payload["error"]["category"] == "execution_failure"
-    assert "batched_playbook_result.v1" in payload["error"]["message"]
+    assert "playbook_sweep_result.v1" in payload["error"]["message"]
     assert manifest["run"]["status"] == RunStatus.FAILED
 
 
-def test_run_cli_executes_batched_playbook_strategy_candidates(
+def test_run_cli_executes_playbook_strategy_sweep_candidates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -163,7 +163,7 @@ def test_run_cli_executes_batched_playbook_strategy_candidates(
     manifest = json.loads((tmp_path / "runs" / "batched-run" / "manifest.json").read_text())
     assert json.loads(output.out)["status"] == "success"
     assert artifact["schema_version"] == "strategy_run.v3"
-    assert artifact["strategy"]["result_contract"] == "aegis.batched_playbook.v1"
+    assert artifact["strategy"]["result_contract"] == "aegis.playbook_sweep.v1"
     assert artifact["composition"]["planned"]["indicator_preflight"]["indicator_context_count"] == 2
     assert artifact["composition"]["planned"]["strategy_candidate_count"] == 2
     assert artifact["composition"]["planned"]["total_composed_candidates"] == 4
@@ -220,7 +220,7 @@ def test_run_cli_executes_batched_playbook_strategy_candidates(
     }
 
 
-def test_run_cli_batches_batched_playbook_final_smaller_candidate_batch(
+def test_run_cli_batches_playbook_strategy_sweep_final_smaller_candidate_batch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -275,7 +275,7 @@ def test_run_cli_rejects_non_batched_indicator_for_batched_strategy(
     )
     assert payload["error"]["category"] == "execution_failure"
     assert "result_schema" in payload["error"]["message"]
-    assert "batched_playbook_result.v1" in payload["error"]["message"]
+    assert "playbook_sweep_result.v1" in payload["error"]["message"]
     assert manifest["run"]["status"] == RunStatus.FAILED
     assert not (tmp_path / "runs" / "non-batched-indicator" / "strategy_run.json").exists()
 
@@ -890,12 +890,12 @@ def _write_batched_indicator_playbook(path: Path, *, windows: list[int] | None =
         "version": "1.0.0",
         "stages": ["indicators"],
         "accepted_inputs": ["Close"],
-        "result_schema": "batched_playbook_result.v1",
+        "result_schema": "playbook_sweep_result.v1",
         "indicator_family": "ma",
     }
     path.write_text(
         "# %% playbook overview\n"
-        "# Batched contract fixture for record-runner rejection.\n"
+        "# Sweep contract fixture for record-runner rejection.\n"
         "# Source: synthetic Close data supplied by run config.\n"
         "\n"
         "# %% define playbook metadata\n"
@@ -919,7 +919,7 @@ def _write_batched_indicator_playbook(path: Path, *, windows: list[int] | None =
         "        frames.append(frame)\n"
         "    ma = pd.concat(frames, axis=1)\n"
         "    return {\n"
-        "        'contract': 'aegis.batched_playbook.v1',\n"
+        "        'contract': 'aegis.playbook_sweep.v1',\n"
         "        'kind': 'indicator_surface',\n"
         "        'candidate_axis': [\n"
         "            {'candidate_id': candidate_id, 'params': {'window': window}}\n"
@@ -958,11 +958,11 @@ def _write_batched_strategy_playbook(
         "version": "1.0.0",
         "stages": ["strategies"],
         "accepted_inputs": ["Close"],
-        "result_schema": "batched_playbook_result.v1",
+        "result_schema": "playbook_sweep_result.v1",
     }
     path.write_text(
         "# %% playbook overview\n"
-        "# Batched strategy fixture for candidate-grid tests.\n"
+        "# Strategy sweep fixture for candidate-grid tests.\n"
         "# Source: synthetic Close data supplied by run config.\n"
         "\n"
         "# %% define playbook metadata\n"
@@ -1011,14 +1011,14 @@ def _write_batched_strategy_playbook(
         "            entry_frames.append(entries)\n"
         "            exit_frames.append(exits)\n"
         "        return {\n"
-        "            'contract': 'aegis.batched_playbook.v1',\n"
+        "            'contract': 'aegis.playbook_sweep.v1',\n"
         "            'kind': 'strategy_signals',\n"
         "            'entries': pd.concat(entry_frames, axis=1),\n"
         "            'exits': pd.concat(exit_frames, axis=1),\n"
         "        }\n"
         "\n"
         "    return {\n"
-        "        'contract': 'aegis.batched_playbook.v1',\n"
+        "        'contract': 'aegis.playbook_sweep.v1',\n"
         "        'kind': 'strategy_axis',\n"
         "        'candidate_axis': [\n"
         "            {'candidate_id': 'fast', 'params': {'threshold': 0.0}},\n"
@@ -1149,7 +1149,7 @@ def _write_no_trade_strategy_playbook(path: Path) -> None:
         "version": "1.0.0",
         "stages": ["strategies"],
         "accepted_inputs": ["Close"],
-        "result_schema": "batched_playbook_result.v1",
+        "result_schema": "playbook_sweep_result.v1",
     }
     path.write_text(
         "# %% playbook overview\n"
@@ -1180,14 +1180,14 @@ def _write_no_trade_strategy_playbook(path: Path) -> None:
         "            frames.append(signals)\n"
         "        signal_frame = pd.concat(frames, axis=1)\n"
         "        return {\n"
-        "            'contract': 'aegis.batched_playbook.v1',\n"
+        "            'contract': 'aegis.playbook_sweep.v1',\n"
         "            'kind': 'strategy_signals',\n"
         "            'entries': signal_frame,\n"
         "            'exits': signal_frame,\n"
         "        }\n"
         "\n"
         "    return {\n"
-        "        'contract': 'aegis.batched_playbook.v1',\n"
+        "        'contract': 'aegis.playbook_sweep.v1',\n"
         "        'kind': 'strategy_axis',\n"
         "        'candidate_axis': [{'candidate_id': 'no-trades', 'params': {}}],\n"
         "        'materialize_signals': materialize_signals,\n"
@@ -1227,7 +1227,7 @@ def _write_failing_playbook(path: Path, family: str, playbook_id: str) -> None:
         "version": "1.0.0",
         "stages": [family],
         "accepted_inputs": ["Close"],
-        "result_schema": "batched_playbook_result.v1",
+        "result_schema": "playbook_sweep_result.v1",
     }
     path.write_text(
         "# %% playbook overview\n"

@@ -13,7 +13,7 @@ PLAYBOOK_MANIFEST = {
     "version": "1.0.0",
     "stages": ["indicators"],
     "accepted_inputs": ["Close"],
-    "result_schema": "batched_playbook_result.v1",
+    "result_schema": "playbook_sweep_result.v1",
     "indicator_family": "moving_average",
     "baseline_component_indicator_id": "example.ma",
 }
@@ -55,7 +55,7 @@ def generate_variants(data):
                     }
                 )
     return {
-        "contract": "aegis.batched_playbook.v1",
+        "contract": "aegis.playbook_sweep.v1",
         "kind": "indicator_surface",
         "candidate_axis": candidates,
         "outputs": {

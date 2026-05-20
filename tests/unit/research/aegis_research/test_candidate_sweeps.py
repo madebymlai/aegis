@@ -3,33 +3,33 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from research.aegis_research.batched_candidates import (
-    BATCHED_PLAYBOOK_CONTRACT,
+from research.aegis_research.candidate_sweeps import (
     CANDIDATE_LEVEL,
     INDICATOR_RESULT_KIND,
+    PLAYBOOK_SWEEP_CONTRACT,
     STRATEGY_AXIS_KIND,
     STRATEGY_MATERIALIZER_KEY,
     STRATEGY_SIGNALS_KIND,
     SYMBOL_LEVEL,
-    BatchedCandidate,
-    BatchedCandidateAxis,
-    BatchedContractError,
-    BatchedSignalRequest,
-    compose_batched_candidate_grid,
+    CandidateAxis,
+    CandidateSweepError,
+    SignalMaterializationRequest,
+    SweepCandidate,
+    compose_candidate_grid,
     composed_candidate_ids,
-    materialize_batched_strategy_signals,
+    materialize_strategy_sweep_signals,
     preflight_indicator_grid,
-    validate_batched_indicator_result,
-    validate_batched_strategy_axis,
-    validate_batched_strategy_plan,
-    validate_batched_strategy_signals,
+    validate_indicator_sweep_result,
+    validate_strategy_sweep_axis,
+    validate_strategy_sweep_plan,
+    validate_strategy_sweep_signals,
 )
 
 
-def test_validate_batched_indicator_result_exposes_candidate_axis() -> None:
+def test_validate_indicator_sweep_result_exposes_candidate_axis() -> None:
     close = _close_frame()
     result = {
-        "contract": BATCHED_PLAYBOOK_CONTRACT,
+        "contract": PLAYBOOK_SWEEP_CONTRACT,
         "kind": INDICATOR_RESULT_KIND,
         "candidate_axis": [
             {"candidate_id": "ma-2", "params": {"window": 2}},
@@ -39,7 +39,7 @@ def test_validate_batched_indicator_result_exposes_candidate_axis() -> None:
         "diagnostics": {"grid": "fixture"},
     }
 
-    validated = validate_batched_indicator_result(result, source_id="ma_explore", close=close)
+    validated = validate_indicator_sweep_result(result, source_id="ma_explore", close=close)
 
     assert validated.axis.count == 2
     assert validated.axis.candidate_ids == ("ma-2", "ma-5")
@@ -48,11 +48,11 @@ def test_validate_batched_indicator_result_exposes_candidate_axis() -> None:
     assert validated.diagnostics == {"grid": "fixture"}
 
 
-def test_validate_batched_strategy_axis_and_requested_signal_batch() -> None:
+def test_validate_strategy_sweep_axis_and_requested_signal_batch() -> None:
     close = _close_frame()
-    axis = validate_batched_strategy_axis(
+    axis = validate_strategy_sweep_axis(
         {
-            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": STRATEGY_AXIS_KIND,
             "candidate_axis": [
                 {"candidate_id": "fast", "params": {}},
@@ -62,13 +62,13 @@ def test_validate_batched_strategy_axis_and_requested_signal_batch() -> None:
         source_id="ma_cross",
     )
     result = {
-        "contract": BATCHED_PLAYBOOK_CONTRACT,
+        "contract": PLAYBOOK_SWEEP_CONTRACT,
         "kind": STRATEGY_SIGNALS_KIND,
         "entries": _surface(close, ["fast"], value=True),
         "exits": _surface(close, ["fast"], value=False),
     }
 
-    signals = validate_batched_strategy_signals(
+    signals = validate_strategy_sweep_signals(
         result,
         source_id="ma_cross",
         expected_candidate_ids=["fast"],
@@ -80,22 +80,22 @@ def test_validate_batched_strategy_axis_and_requested_signal_batch() -> None:
     assert signals.entries.columns.get_level_values(CANDIDATE_LEVEL).unique().tolist() == ["fast"]
 
 
-def test_validate_batched_strategy_plan_materializes_requested_candidate_range() -> None:
+def test_validate_strategy_sweep_plan_materializes_requested_candidate_range() -> None:
     close = _close_frame()
     observed_requests: list[tuple[str, ...]] = []
 
-    def materialize(request: BatchedSignalRequest):
+    def materialize(request: SignalMaterializationRequest):
         observed_requests.append(request.candidate_ids)
         return {
-            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": STRATEGY_SIGNALS_KIND,
             "entries": _surface(close, list(request.candidate_ids), value=True),
             "exits": _surface(close, list(request.candidate_ids), value=False),
         }
 
-    plan = validate_batched_strategy_plan(
+    plan = validate_strategy_sweep_plan(
         {
-            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": STRATEGY_AXIS_KIND,
             "candidate_axis": [
                 {"candidate_id": "fast", "params": {}},
@@ -107,7 +107,7 @@ def test_validate_batched_strategy_plan_materializes_requested_candidate_range()
         source_id="ma_cross",
     )
 
-    signals = materialize_batched_strategy_signals(
+    signals = materialize_strategy_sweep_signals(
         plan,
         source_id="ma_cross",
         requested_candidate_ids=["slow"],
@@ -120,27 +120,27 @@ def test_validate_batched_strategy_plan_materializes_requested_candidate_range()
     assert signals.entries.columns.get_level_values(CANDIDATE_LEVEL).unique().tolist() == ["slow"]
 
 
-def test_batched_strategy_request_carries_composed_candidate_context() -> None:
+def test_strategy_sweep_request_carries_composed_candidate_context() -> None:
     close = _close_frame()
-    indicator_axis = BatchedCandidateAxis(
+    indicator_axis = CandidateAxis(
         source="playbook",
         source_id="ma_explore",
-        candidates=(BatchedCandidate(candidate_id="ma-20", params={"window": 20}),),
+        candidates=(SweepCandidate(candidate_id="ma-20", params={"window": 20}),),
     )
     observed_requests = []
 
-    def materialize(request: BatchedSignalRequest):
+    def materialize(request: SignalMaterializationRequest):
         observed_requests.append(request.candidates)
         return {
-            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": STRATEGY_SIGNALS_KIND,
             "entries": _surface(close, list(request.candidate_ids), value=True),
             "exits": _surface(close, list(request.candidate_ids), value=False),
         }
 
-    plan = validate_batched_strategy_plan(
+    plan = validate_strategy_sweep_plan(
         {
-            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": STRATEGY_AXIS_KIND,
             "candidate_axis": [{"candidate_id": "fast", "params": {"threshold": 0.01}}],
             STRATEGY_MATERIALIZER_KEY: materialize,
@@ -149,7 +149,7 @@ def test_batched_strategy_request_carries_composed_candidate_context() -> None:
     )
     composed_id = "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-20]"
 
-    materialize_batched_strategy_signals(
+    materialize_strategy_sweep_signals(
         plan,
         source_id="ma_cross",
         requested_candidate_ids=[composed_id],
@@ -163,11 +163,11 @@ def test_batched_strategy_request_carries_composed_candidate_context() -> None:
     assert request_candidate.indicators[0].params == {"window": 20}
 
 
-def test_validate_batched_strategy_plan_requires_signal_materializer() -> None:
+def test_validate_strategy_sweep_plan_requires_signal_materializer() -> None:
     with pytest.raises(TypeError, match="materialize_signals"):
-        validate_batched_strategy_plan(
+        validate_strategy_sweep_plan(
             {
-                "contract": BATCHED_PLAYBOOK_CONTRACT,
+                "contract": PLAYBOOK_SWEEP_CONTRACT,
                 "kind": STRATEGY_AXIS_KIND,
                 "candidate_axis": [{"candidate_id": "fast", "params": {}}],
             },
@@ -175,20 +175,20 @@ def test_validate_batched_strategy_plan_requires_signal_materializer() -> None:
         )
 
 
-def test_batched_strategy_materializer_cannot_emit_unrequested_candidates() -> None:
+def test_strategy_sweep_materializer_cannot_emit_unrequested_candidates() -> None:
     close = _close_frame()
 
-    def materialize(_request: BatchedSignalRequest):
+    def materialize(_request: SignalMaterializationRequest):
         return {
-            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": STRATEGY_SIGNALS_KIND,
             "entries": _surface(close, ["fast", "slow"], value=True),
             "exits": _surface(close, ["fast", "slow"], value=False),
         }
 
-    plan = validate_batched_strategy_plan(
+    plan = validate_strategy_sweep_plan(
         {
-            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": STRATEGY_AXIS_KIND,
             "candidate_axis": [
                 {"candidate_id": "fast", "params": {}},
@@ -199,8 +199,8 @@ def test_batched_strategy_materializer_cannot_emit_unrequested_candidates() -> N
         source_id="ma_cross",
     )
 
-    with pytest.raises(BatchedContractError, match="candidate axis mismatch"):
-        materialize_batched_strategy_signals(
+    with pytest.raises(CandidateSweepError, match="candidate axis mismatch"):
+        materialize_strategy_sweep_signals(
             plan,
             source_id="ma_cross",
             requested_candidate_ids=["fast"],
@@ -208,16 +208,16 @@ def test_batched_strategy_materializer_cannot_emit_unrequested_candidates() -> N
         )
 
 
-def test_rejects_legacy_variant_records_in_batched_contract() -> None:
-    with pytest.raises(BatchedContractError, match="legacy variant_records"):
-        validate_batched_strategy_axis({"variant_records": []}, source_id="ma_cross")
+def test_rejects_legacy_variant_records_in_sweep_contract() -> None:
+    with pytest.raises(CandidateSweepError, match="legacy variant_records"):
+        validate_strategy_sweep_axis({"variant_records": []}, source_id="ma_cross")
 
 
 def test_rejects_duplicate_candidate_ids() -> None:
-    with pytest.raises(BatchedContractError, match="duplicate candidate"):
-        validate_batched_strategy_axis(
+    with pytest.raises(CandidateSweepError, match="duplicate candidate"):
+        validate_strategy_sweep_axis(
             {
-                "contract": BATCHED_PLAYBOOK_CONTRACT,
+                "contract": PLAYBOOK_SWEEP_CONTRACT,
                 "kind": STRATEGY_AXIS_KIND,
                 "candidate_axis": [
                     {"candidate_id": "fast", "params": {}},
@@ -231,10 +231,10 @@ def test_rejects_duplicate_candidate_ids() -> None:
 def test_rejects_playbook_owned_metric_or_portfolio_fields() -> None:
     close = _close_frame()
 
-    with pytest.raises(BatchedContractError, match="metric or portfolio fields"):
-        validate_batched_strategy_signals(
+    with pytest.raises(CandidateSweepError, match="metric or portfolio fields"):
+        validate_strategy_sweep_signals(
             {
-                "contract": BATCHED_PLAYBOOK_CONTRACT,
+                "contract": PLAYBOOK_SWEEP_CONTRACT,
                 "kind": STRATEGY_SIGNALS_KIND,
                 "entries": _surface(close, ["fast"]),
                 "exits": _surface(close, ["fast"]),
@@ -249,10 +249,10 @@ def test_rejects_playbook_owned_metric_or_portfolio_fields() -> None:
 def test_rejects_signal_materialization_that_omits_requested_candidates() -> None:
     close = _close_frame()
 
-    with pytest.raises(BatchedContractError, match="candidate axis mismatch"):
-        validate_batched_strategy_signals(
+    with pytest.raises(CandidateSweepError, match="candidate axis mismatch"):
+        validate_strategy_sweep_signals(
             {
-                "contract": BATCHED_PLAYBOOK_CONTRACT,
+                "contract": PLAYBOOK_SWEEP_CONTRACT,
                 "kind": STRATEGY_SIGNALS_KIND,
                 "entries": _surface(close, ["fast"]),
                 "exits": _surface(close, ["fast"]),
@@ -271,10 +271,10 @@ def test_rejects_extra_strategy_signal_column_levels() -> None:
     )
     surface = pd.DataFrame(True, index=close.index, columns=columns)
 
-    with pytest.raises(BatchedContractError, match="exactly two levels"):
-        validate_batched_strategy_signals(
+    with pytest.raises(CandidateSweepError, match="exactly two levels"):
+        validate_strategy_sweep_signals(
             {
-                "contract": BATCHED_PLAYBOOK_CONTRACT,
+                "contract": PLAYBOOK_SWEEP_CONTRACT,
                 "kind": STRATEGY_SIGNALS_KIND,
                 "entries": surface,
                 "exits": surface,
@@ -286,45 +286,45 @@ def test_rejects_extra_strategy_signal_column_levels() -> None:
 
 
 def test_composed_candidate_ids_preserve_source_boundaries_and_reject_duplicates() -> None:
-    strategy_axis = BatchedCandidateAxis(
+    strategy_axis = CandidateAxis(
         source="playbook",
         source_id="ma_cross",
-        candidates=(BatchedCandidate(candidate_id="fast", params={}),),
+        candidates=(SweepCandidate(candidate_id="fast", params={}),),
     )
-    indicator_axis = BatchedCandidateAxis(
+    indicator_axis = CandidateAxis(
         source="playbook",
         source_id="ma_explore",
-        candidates=(BatchedCandidate(candidate_id="ma-20", params={"window": 20}),),
+        candidates=(SweepCandidate(candidate_id="ma-20", params={"window": 20}),),
     )
 
     assert composed_candidate_ids(
         strategy_axis=strategy_axis,
         indicator_axes=[indicator_axis],
     ) == ("strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-20]",)
-    composed_candidate = compose_batched_candidate_grid(
+    composed_candidate = compose_candidate_grid(
         strategy_axis=strategy_axis,
         indicator_axes=[indicator_axis],
     )[0]
     assert composed_candidate.strategy.params == {}
     assert composed_candidate.indicators[0].params == {"window": 20}
 
-    duplicate_strategy_axis = BatchedCandidateAxis(
+    duplicate_strategy_axis = CandidateAxis(
         source="playbook",
         source_id="ma_cross",
         candidates=(
-            BatchedCandidate(candidate_id="fast", params={}),
-            BatchedCandidate(candidate_id="fast", params={}),
+            SweepCandidate(candidate_id="fast", params={}),
+            SweepCandidate(candidate_id="fast", params={}),
         ),
     )
-    with pytest.raises(BatchedContractError, match="duplicate composed candidate ids"):
+    with pytest.raises(CandidateSweepError, match="duplicate composed candidate ids"):
         composed_candidate_ids(strategy_axis=duplicate_strategy_axis)
 
 
 def test_preflight_indicator_grid_reports_counts_and_limits() -> None:
     close = _close_frame()
-    result = validate_batched_indicator_result(
+    result = validate_indicator_sweep_result(
         {
-            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": INDICATOR_RESULT_KIND,
             "candidate_axis": [
                 {"candidate_id": "ma-2", "params": {}},
@@ -359,9 +359,9 @@ def test_preflight_indicator_grid_reports_counts_and_limits() -> None:
 
 def test_preflight_indicator_grid_rejects_oversize_estimates() -> None:
     close = _close_frame()
-    result = validate_batched_indicator_result(
+    result = validate_indicator_sweep_result(
         {
-            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "contract": PLAYBOOK_SWEEP_CONTRACT,
             "kind": INDICATOR_RESULT_KIND,
             "candidate_axis": [
                 {"candidate_id": "ma-2", "params": {}},
@@ -373,7 +373,7 @@ def test_preflight_indicator_grid_rejects_oversize_estimates() -> None:
         close=close,
     )
 
-    with pytest.raises(BatchedContractError, match=r"candidate_grid\.max_estimated_cells") as error:
+    with pytest.raises(CandidateSweepError, match=r"candidate_grid\.max_estimated_cells") as error:
         preflight_indicator_grid([result], max_candidates=10, max_estimated_cells=11)
 
     assert error.value.diagnostics["estimated_cells"] == 12

@@ -13,7 +13,7 @@ PLAYBOOK_MANIFEST = {
     "version": "1.0.0",
     "stages": ["strategies"],
     "accepted_inputs": ["Close"],
-    "result_schema": "batched_playbook_result.v1",
+    "result_schema": "playbook_sweep_result.v1",
 }
 PLAYBOOK_CALLABLE = "generate_candidates"
 
@@ -43,14 +43,14 @@ def generate_candidates(inputs):
             entry_frames.append(entries)
             exit_frames.append(exits)
         return {
-            "contract": "aegis.batched_playbook.v1",
+            "contract": "aegis.playbook_sweep.v1",
             "kind": "strategy_signals",
             "entries": pd.concat(entry_frames, axis=1),
             "exits": pd.concat(exit_frames, axis=1),
         }
 
     return {
-        "contract": "aegis.batched_playbook.v1",
+        "contract": "aegis.playbook_sweep.v1",
         "kind": "strategy_axis",
         "candidate_axis": [
             {"candidate_id": "strategy-ma-threshold-0", "params": {"threshold": 0.0}},

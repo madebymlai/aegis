@@ -7,18 +7,18 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.batched_candidates import (
-    BATCHED_PLAYBOOK_CONTRACT,
-    BATCHED_PLAYBOOK_RESULT_SCHEMA,
-    BatchedCandidateAxis,
-    BatchedComposedCandidate,
-    BatchedContractError,
-    BatchedIndicatorResult,
-    compose_batched_candidate_grid,
-    materialize_batched_strategy_signals,
+from research.aegis_research.candidate_sweeps import (
+    PLAYBOOK_SWEEP_CONTRACT,
+    PLAYBOOK_SWEEP_RESULT_SCHEMA,
+    CandidateAxis,
+    CandidateSweepError,
+    ComposedCandidate,
+    IndicatorSweepResult,
+    compose_candidate_grid,
+    materialize_strategy_sweep_signals,
     preflight_indicator_grid,
-    validate_batched_indicator_result,
-    validate_batched_strategy_plan,
+    validate_indicator_sweep_result,
+    validate_strategy_sweep_plan,
 )
 from research.aegis_research.component_registry import (
     ComponentSelection,
@@ -272,8 +272,8 @@ def run_strategy_sweep(
         data_bundle = market_data_bundle(data_result)
         open_prices = data_bundle.feature("Open")
         if config.strategy.source == "playbook":
-            _assert_batched_strategy_playbook(config.strategy, playbooks)
-            return _run_batched_strategy_sweep(
+            _assert_playbook_sweep_strategy(config.strategy, playbooks)
+            return _run_playbook_strategy_sweep(
                 config,
                 component_registry=component_registry,
                 playbook_registry=playbooks,
@@ -380,26 +380,26 @@ def _resolve_indicator_refs(
             continue
 
         raise ValueError(
-            "playbook indicators in run configs require a batched strategy playbook; "
+            "playbook indicators in run configs require a playbook strategy sweep; "
             f"playbook indicator ids {ref.ids!r} cannot enter the component runner"
         )
     return indicators, evidence
 
 
-def _assert_batched_strategy_playbook(
+def _assert_playbook_sweep_strategy(
     ref: RunSourceRefConfig,
     playbook_registry: FrozenPlaybookRegistry,
 ) -> None:
     definition = playbook_registry.get(PlaybookSelection("strategies", ref.id))
-    if definition.manifest.result_schema != BATCHED_PLAYBOOK_RESULT_SCHEMA:
+    if definition.manifest.result_schema != PLAYBOOK_SWEEP_RESULT_SCHEMA:
         raise ValueError(
             f"strategy playbook {definition.id!r} uses result_schema "
             f"{definition.manifest.result_schema!r}; run playbooks must use "
-            f"{BATCHED_PLAYBOOK_RESULT_SCHEMA!r}"
+            f"{PLAYBOOK_SWEEP_RESULT_SCHEMA!r}"
         )
 
 
-def _run_batched_strategy_sweep(
+def _run_playbook_strategy_sweep(
     config: Any,
     *,
     component_registry: FrozenComponentRegistry,
@@ -412,7 +412,7 @@ def _run_batched_strategy_sweep(
 ) -> dict[str, Any]:
     try:
         indicators, indicator_evidence, indicator_axes, indicator_candidate_evidence, preflight = (
-            _resolve_batched_indicator_refs(
+            _resolve_sweep_indicator_refs(
                 config.indicators,
                 component_registry=component_registry,
                 playbook_registry=playbook_registry,
@@ -420,8 +420,8 @@ def _run_batched_strategy_sweep(
                 candidate_grid=config.candidate_grid,
             )
         )
-    except BatchedContractError as error:
-        _persist_batched_preflight_failure(recorder, error)
+    except CandidateSweepError as error:
+        _persist_sweep_preflight_failure(recorder, error)
         raise
     strategy_definition = playbook_registry.get(PlaybookSelection("strategies", config.strategy.id))
     inputs = StrategyInputs(
@@ -433,14 +433,14 @@ def _run_batched_strategy_sweep(
         metadata={
             "strategy_id": strategy_definition.id,
             "playbook_source_hash": strategy_definition.identity.source_hash,
-            "batched_contract": BATCHED_PLAYBOOK_CONTRACT,
+            "sweep_contract": PLAYBOOK_SWEEP_CONTRACT,
         },
     )
-    strategy_plan = validate_batched_strategy_plan(
+    strategy_plan = validate_strategy_sweep_plan(
         strategy_definition.load_callable()(inputs),
         source_id=strategy_definition.id,
     )
-    total_composed_candidates = _batched_composed_candidate_count(
+    total_composed_candidates = _sweep_composed_candidate_count(
         strategy_plan.axis,
         indicator_axes,
     )
@@ -450,14 +450,14 @@ def _run_batched_strategy_sweep(
         config.candidate_grid.batch_size,
     )
     composition_diagnostics = {
-        "schema_version": "batched_strategy_composition.v1",
+        "schema_version": "strategy_sweep_composition.v1",
         "planned": {
             "indicator_preflight": preflight,
             "strategy_candidate_count": strategy_plan.axis.count,
             "total_composed_candidates": total_composed_candidates,
             "batch_size": config.candidate_grid.batch_size,
             "batch_count": batch_count,
-            "execution_preflight": _batched_execution_preflight(
+            "execution_preflight": _sweep_execution_preflight(
                 total_composed_candidates=total_composed_candidates,
                 batch_size=config.candidate_grid.batch_size,
                 row_count=len(close.index),
@@ -470,14 +470,14 @@ def _run_batched_strategy_sweep(
     }
     recorder.manifest.evidence["composition"] = composition_diagnostics["planned"]
     recorder.persist()
-    _assert_batched_candidate_budget(
+    _assert_sweep_candidate_budget(
         total_composed_candidates,
         config.candidate_grid.max_candidates,
     )
-    _assert_batched_execution_budget(
+    _assert_sweep_execution_budget(
         composition_diagnostics["planned"]["execution_preflight"]
     )
-    composed_candidates = compose_batched_candidate_grid(
+    composed_candidates = compose_candidate_grid(
         strategy_axis=strategy_plan.axis,
         indicator_axes=indicator_axes,
     )
@@ -487,10 +487,10 @@ def _run_batched_strategy_sweep(
         "version": strategy_definition.manifest.version,
         **strategy_definition.identity.public(),
         "consumes_runner_data": True,
-        "data_binding": "batched_strategy_inputs",
-        "result_contract": BATCHED_PLAYBOOK_CONTRACT,
+        "data_binding": "strategy_sweep_inputs",
+        "result_contract": PLAYBOOK_SWEEP_CONTRACT,
     }
-    catalogs = _batched_artifact_catalogs(
+    catalogs = _sweep_artifact_catalogs(
         strategy_evidence=strategy_evidence,
         indicator_evidence=indicator_evidence,
         indicator_candidate_evidence=indicator_candidate_evidence,
@@ -507,14 +507,14 @@ def _run_batched_strategy_sweep(
         _candidate_batches(composed_candidates, config.candidate_grid.batch_size)
     ):
         batch_ids = tuple(candidate.candidate_id for candidate in batch)
-        chunk_ref = _batched_chunk_ref(batch_index)
-        chunk_record = _batched_chunk_record(batch_index, batch_ids, chunk_ref)
+        chunk_ref = _sweep_chunk_ref(batch_index)
+        chunk_record = _sweep_chunk_record(batch_index, batch_ids, chunk_ref)
         chunk_diagnostics["chunks"].append(chunk_record)
         catalogs["chunks"][chunk_ref] = chunk_record
         recorder.persist()
         try:
             chunk_record["stage"] = "materialize_signals"
-            signal_result = materialize_batched_strategy_signals(
+            signal_result = materialize_strategy_sweep_signals(
                 strategy_plan,
                 source_id=strategy_definition.id,
                 requested_candidate_ids=batch_ids,
@@ -590,7 +590,7 @@ def _run_batched_strategy_sweep(
                 }
             portfolio_diagnostics["chunks"][chunk_ref] = to_builtin(portfolio.diagnostics)
         except Exception as error:
-            _mark_batched_chunk_failed(chunk_record, error)
+            _mark_sweep_chunk_failed(chunk_record, error)
             recorder.persist()
             raise
         chunk_record["status"] = "succeeded"
@@ -615,7 +615,7 @@ def _run_batched_strategy_sweep(
             array_contract,
             strategy_source=config.strategy.source,
         ),
-        "candidates": _compact_batched_candidate_records(catalogs),
+        "candidates": _compact_sweep_candidate_records(catalogs),
         "leaderboard": leaderboard,
         "composition": composition_diagnostics,
         "catalogs": catalogs,
@@ -634,7 +634,7 @@ def _run_batched_strategy_sweep(
     }
 
 
-def _resolve_batched_indicator_refs(
+def _resolve_sweep_indicator_refs(
     refs: list[RunIndicatorSourceConfig],
     *,
     component_registry: FrozenComponentRegistry,
@@ -644,14 +644,14 @@ def _resolve_batched_indicator_refs(
 ) -> tuple[
     dict[str, Any],
     list[dict[str, Any]],
-    list[BatchedCandidateAxis],
+    list[CandidateAxis],
     dict[tuple[str, str, str], dict[str, Any]],
     dict[str, Any],
 ]:
     indicators: dict[str, Any] = {}
     evidence: list[dict[str, Any]] = []
-    axes: list[BatchedCandidateAxis] = []
-    batched_results: list[BatchedIndicatorResult] = []
+    axes: list[CandidateAxis] = []
+    sweep_results: list[IndicatorSweepResult] = []
     candidate_evidence: dict[tuple[str, str, str], dict[str, Any]] = {}
     seen_playbook_ids: set[str] = set()
     for ref in refs:
@@ -675,12 +675,12 @@ def _resolve_batched_indicator_refs(
                 raise ValueError(f"duplicate indicator playbook ref: {playbook_id}")
             seen_playbook_ids.add(playbook_id)
             definition = playbook_registry.get(PlaybookSelection("indicators", playbook_id))
-            if definition.manifest.result_schema != BATCHED_PLAYBOOK_RESULT_SCHEMA:
+            if definition.manifest.result_schema != PLAYBOOK_SWEEP_RESULT_SCHEMA:
                 raise ValueError(
-                    f"batched strategy run requires indicator playbook {definition.id!r} "
-                    f"to use result_schema {BATCHED_PLAYBOOK_RESULT_SCHEMA!r}"
+                    f"strategy sweep run requires indicator playbook {definition.id!r} "
+                    f"to use result_schema {PLAYBOOK_SWEEP_RESULT_SCHEMA!r}"
                 )
-            result = validate_batched_indicator_result(
+            result = validate_indicator_sweep_result(
                 definition.load_callable()(data),
                 source_id=definition.id,
                 close=data.feature("Close"),
@@ -694,7 +694,7 @@ def _resolve_batched_indicator_refs(
                 "indicator_family": definition.manifest.indicator_family,
                 "baseline_component_indicator_id": definition.manifest.baseline_component_indicator_id,
                 "candidate_count": result.axis.count,
-                "result_contract": BATCHED_PLAYBOOK_CONTRACT,
+                "result_contract": PLAYBOOK_SWEEP_CONTRACT,
             }
             indicators[source_key] = {
                 "candidate_axis": [
@@ -715,10 +715,10 @@ def _resolve_batched_indicator_refs(
                     }
                 )
             axes.append(result.axis)
-            batched_results.append(result)
+            sweep_results.append(result)
             evidence.append(source_evidence)
     preflight = preflight_indicator_grid(
-        batched_results,
+        sweep_results,
         max_candidates=candidate_grid.max_candidates,
         max_estimated_cells=candidate_grid.max_estimated_cells,
     ).diagnostics()
@@ -748,16 +748,16 @@ def _load_component_indicator_ref(
     )
 
 
-def _batched_artifact_catalogs(
+def _sweep_artifact_catalogs(
     *,
     strategy_evidence: dict[str, Any],
     indicator_evidence: list[dict[str, Any]],
     indicator_candidate_evidence: dict[tuple[str, str, str], dict[str, Any]],
-    strategy_axis: BatchedCandidateAxis,
-    composed_candidates: tuple[BatchedComposedCandidate, ...],
+    strategy_axis: CandidateAxis,
+    composed_candidates: tuple[ComposedCandidate, ...],
 ) -> dict[str, Any]:
     catalogs: dict[str, Any] = {
-        "schema_version": "batched_strategy_catalogs.v1",
+        "schema_version": "strategy_sweep_catalogs.v1",
         "sources": {
             _strategy_source_ref(strategy_evidence["source"], strategy_evidence["id"]): to_builtin(
                 strategy_evidence
@@ -798,7 +798,7 @@ def _batched_artifact_catalogs(
     return catalogs
 
 
-def _compact_batched_candidate_records(catalogs: dict[str, Any]) -> list[dict[str, Any]]:
+def _compact_sweep_candidate_records(catalogs: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "variant_id": candidate_id,
@@ -837,18 +837,18 @@ def _indicator_candidate_ref_parts(source: str, source_id: str, candidate_id: st
     return f"indicator:{source}:{source_id}:{candidate_id}"
 
 
-def _assert_batched_candidate_budget(
+def _assert_sweep_candidate_budget(
     candidate_count: int,
     max_candidates: int,
 ) -> None:
     if candidate_count > max_candidates:
-        raise BatchedContractError(
-            f"batched composed grid has {candidate_count} candidates, above "
+        raise CandidateSweepError(
+            f"strategy sweep composed grid has {candidate_count} candidates, above "
             f"candidate_grid.max_candidates={max_candidates}"
         )
 
 
-def _batched_execution_preflight(
+def _sweep_execution_preflight(
     *,
     total_composed_candidates: int,
     batch_size: int,
@@ -861,7 +861,7 @@ def _batched_execution_preflight(
     materialized_frame_count = 4 + int(has_open_prices)
     estimated_cells = batch_candidate_count * row_count * symbol_count * materialized_frame_count
     return {
-        "schema_version": "batched_execution_preflight.v1",
+        "schema_version": "strategy_sweep_execution_preflight.v1",
         "batch_candidate_count": batch_candidate_count,
         "row_count": row_count,
         "symbol_count": symbol_count,
@@ -871,21 +871,21 @@ def _batched_execution_preflight(
     }
 
 
-def _assert_batched_execution_budget(preflight: dict[str, Any]) -> None:
+def _assert_sweep_execution_budget(preflight: dict[str, Any]) -> None:
     estimated_cells = int(preflight["estimated_cells"])
     max_estimated_cells = int(preflight["limits"]["max_estimated_cells"])
     if estimated_cells > max_estimated_cells:
-        raise BatchedContractError(
-            f"batched execution batch has {estimated_cells} estimated cells, above "
+        raise CandidateSweepError(
+            f"strategy sweep execution batch has {estimated_cells} estimated cells, above "
             f"candidate_grid.max_estimated_cells={max_estimated_cells}; reduce "
             "candidate_grid.batch_size"
         )
 
 
 def _candidate_batches(
-    candidates: tuple[BatchedComposedCandidate, ...],
+    candidates: tuple[ComposedCandidate, ...],
     batch_size: int,
-) -> Iterator[tuple[BatchedComposedCandidate, ...]]:
+) -> Iterator[tuple[ComposedCandidate, ...]]:
     for start in range(0, len(candidates), batch_size):
         yield candidates[start : start + batch_size]
 
@@ -897,9 +897,9 @@ def _candidate_batch_count(
     return (candidate_count + batch_size - 1) // batch_size
 
 
-def _batched_composed_candidate_count(
-    strategy_axis: BatchedCandidateAxis,
-    indicator_axes: list[BatchedCandidateAxis],
+def _sweep_composed_candidate_count(
+    strategy_axis: CandidateAxis,
+    indicator_axes: list[CandidateAxis],
 ) -> int:
     count = strategy_axis.count
     for axis in indicator_axes:
@@ -907,7 +907,7 @@ def _batched_composed_candidate_count(
     return count
 
 
-def _persist_batched_preflight_failure(recorder: Any, error: BatchedContractError) -> None:
+def _persist_sweep_preflight_failure(recorder: Any, error: CandidateSweepError) -> None:
     if error.diagnostics is None:
         return
     recorder.manifest.evidence["composition"] = {"indicator_preflight": error.diagnostics}
@@ -916,16 +916,16 @@ def _persist_batched_preflight_failure(recorder: Any, error: BatchedContractErro
 
 def _empty_chunk_diagnostics() -> dict[str, Any]:
     return {
-        "schema_version": "batched_strategy_chunk_diagnostics.v1",
+        "schema_version": "strategy_sweep_chunk_diagnostics.v1",
         "chunks": [],
     }
 
 
-def _batched_chunk_ref(batch_index: int) -> str:
+def _sweep_chunk_ref(batch_index: int) -> str:
     return f"batch-{batch_index:06d}"
 
 
-def _batched_chunk_record(
+def _sweep_chunk_record(
     batch_index: int,
     candidate_ids: tuple[str, ...],
     chunk_ref: str,
@@ -940,7 +940,7 @@ def _batched_chunk_record(
     }
 
 
-def _mark_batched_chunk_failed(chunk_record: dict[str, Any], error: Exception) -> None:
+def _mark_sweep_chunk_failed(chunk_record: dict[str, Any], error: Exception) -> None:
     chunk_record["status"] = "failed"
     chunk_record["error"] = {
         "stage": chunk_record["stage"],
@@ -1277,7 +1277,7 @@ def _strategy_data_evidence_payload(
     if strategy_source == "playbook":
         payload |= {
             "strategy_consumed_runner_data": True,
-            "strategy_data_binding": "batched_strategy_inputs",
+            "strategy_data_binding": "strategy_sweep_inputs",
         }
     else:
         payload |= {
