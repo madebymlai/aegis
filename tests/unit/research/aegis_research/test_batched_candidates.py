@@ -15,6 +15,7 @@ from research.aegis_research.batched_candidates import (
     BatchedCandidateAxis,
     BatchedContractError,
     BatchedSignalRequest,
+    compose_batched_candidate_grid,
     composed_candidate_ids,
     materialize_batched_strategy_signals,
     preflight_indicator_grid,
@@ -71,8 +72,7 @@ def test_validate_batched_strategy_axis_and_requested_signal_batch() -> None:
     signals = validate_batched_strategy_signals(
         result,
         source_id="ma_cross",
-        axis=axis,
-        requested_candidate_ids=["fast"],
+        expected_candidate_ids=["fast"],
         close=close,
     )
 
@@ -119,6 +119,49 @@ def test_validate_batched_strategy_plan_materializes_requested_candidate_range()
     assert plan.diagnostics == {"grid": "thresholds"}
     assert observed_requests == [("slow",)]
     assert signals.entries.columns.get_level_values(CANDIDATE_LEVEL).unique().tolist() == ["slow"]
+
+
+def test_batched_strategy_request_carries_composed_candidate_context() -> None:
+    close = _close_frame()
+    indicator_axis = BatchedCandidateAxis(
+        source="playbook",
+        source_id="ma_explore",
+        candidates=(BatchedCandidate(candidate_id="ma-20", params={"window": 20}),),
+    )
+    observed_requests = []
+
+    def materialize(request: BatchedSignalRequest):
+        observed_requests.append(request.candidates)
+        return {
+            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "kind": STRATEGY_SIGNALS_KIND,
+            "entries": _surface(close, list(request.candidate_ids), value=True),
+            "exits": _surface(close, list(request.candidate_ids), value=False),
+        }
+
+    plan = validate_batched_strategy_plan(
+        {
+            "contract": BATCHED_PLAYBOOK_CONTRACT,
+            "kind": STRATEGY_AXIS_KIND,
+            "candidate_axis": [{"candidate_id": "fast", "params": {"threshold": 0.01}}],
+            STRATEGY_MATERIALIZER_KEY: materialize,
+        },
+        source_id="ma_cross",
+    )
+    composed_id = "strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-20]"
+
+    materialize_batched_strategy_signals(
+        plan,
+        source_id="ma_cross",
+        requested_candidate_ids=[composed_id],
+        indicator_axes=[indicator_axis],
+        close=close,
+    )
+
+    request_candidate = observed_requests[0][0]
+    assert request_candidate.candidate_id == composed_id
+    assert request_candidate.strategy.params == {"threshold": 0.01}
+    assert request_candidate.indicators[0].params == {"window": 20}
 
 
 def test_validate_batched_strategy_plan_requires_signal_materializer() -> None:
@@ -200,11 +243,6 @@ def test_rejects_duplicate_candidate_ids() -> None:
 
 def test_rejects_playbook_owned_metric_or_portfolio_fields() -> None:
     close = _close_frame()
-    axis = BatchedCandidateAxis(
-        source="playbook",
-        source_id="ma_cross",
-        candidates=(BatchedCandidate(candidate_id="fast", params={}),),
-    )
 
     with pytest.raises(BatchedContractError, match="metric or portfolio fields"):
         validate_batched_strategy_signals(
@@ -216,22 +254,13 @@ def test_rejects_playbook_owned_metric_or_portfolio_fields() -> None:
                 "portfolio": {"entry_budget": 1.0},
             },
             source_id="ma_cross",
-            axis=axis,
-            requested_candidate_ids=["fast"],
+            expected_candidate_ids=["fast"],
             close=close,
         )
 
 
 def test_rejects_signal_materialization_that_omits_requested_candidates() -> None:
     close = _close_frame()
-    axis = BatchedCandidateAxis(
-        source="playbook",
-        source_id="ma_cross",
-        candidates=(
-            BatchedCandidate(candidate_id="fast", params={}),
-            BatchedCandidate(candidate_id="slow", params={}),
-        ),
-    )
 
     with pytest.raises(BatchedContractError, match="candidate axis mismatch"):
         validate_batched_strategy_signals(
@@ -242,8 +271,7 @@ def test_rejects_signal_materialization_that_omits_requested_candidates() -> Non
                 "exits": _surface(close, ["fast"]),
             },
             source_id="ma_cross",
-            axis=axis,
-            requested_candidate_ids=["fast", "slow"],
+            expected_candidate_ids=["fast", "slow"],
             close=close,
         )
 
@@ -264,6 +292,12 @@ def test_composed_candidate_ids_preserve_source_boundaries_and_reject_duplicates
         strategy_axis=strategy_axis,
         indicator_axes=[indicator_axis],
     ) == ("strategy:playbook:ma_cross:fast+indicators:[playbook:ma_explore:ma-20]",)
+    composed_candidate = compose_batched_candidate_grid(
+        strategy_axis=strategy_axis,
+        indicator_axes=[indicator_axis],
+    )[0]
+    assert composed_candidate.strategy.params == {}
+    assert composed_candidate.indicators[0].params == {"window": 20}
 
     duplicate_strategy_axis = BatchedCandidateAxis(
         source="playbook",

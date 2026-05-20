@@ -72,6 +72,21 @@ class BatchedCandidateAxis:
 
 
 @dataclass(frozen=True)
+class BatchedCandidateRef:
+    source: BatchedSourceKind
+    source_id: str
+    candidate_id: str
+    params: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BatchedComposedCandidate:
+    candidate_id: str
+    strategy: BatchedCandidateRef
+    indicators: tuple[BatchedCandidateRef, ...]
+
+
+@dataclass(frozen=True)
 class BatchedIndicatorResult:
     axis: BatchedCandidateAxis
     outputs: dict[str, pd.DataFrame]
@@ -87,7 +102,11 @@ class BatchedStrategySignalResult:
 
 @dataclass(frozen=True)
 class BatchedSignalRequest:
-    candidate_ids: tuple[str, ...]
+    candidates: tuple[BatchedComposedCandidate, ...]
+
+    @property
+    def candidate_ids(self) -> tuple[str, ...]:
+        return tuple(candidate.candidate_id for candidate in self.candidates)
 
 
 @dataclass(frozen=True)
@@ -237,18 +256,22 @@ def materialize_batched_strategy_signals(
     *,
     source_id: str,
     requested_candidate_ids: Sequence[str],
+    indicator_axes: Sequence[BatchedCandidateAxis] = (),
     close: pd.DataFrame,
 ) -> BatchedStrategySignalResult:
-    requested = _requested_candidate_ids(
+    candidate_grid = compose_batched_candidate_grid(
+        strategy_axis=plan.axis,
+        indicator_axes=indicator_axes,
+    )
+    requested = _requested_composed_candidates(
         requested_candidate_ids,
-        axis=plan.axis,
+        candidates=candidate_grid,
         source_id=source_id,
     )
     return validate_batched_strategy_signals(
-        plan.materialize_signals(BatchedSignalRequest(candidate_ids=requested)),
+        plan.materialize_signals(BatchedSignalRequest(candidates=requested)),
         source_id=source_id,
-        axis=plan.axis,
-        requested_candidate_ids=requested,
+        expected_candidate_ids=tuple(candidate.candidate_id for candidate in requested),
         close=close,
     )
 
@@ -257,8 +280,7 @@ def validate_batched_strategy_signals(
     result: Any,
     *,
     source_id: str,
-    axis: BatchedCandidateAxis,
-    requested_candidate_ids: Sequence[str],
+    expected_candidate_ids: Sequence[str],
     close: pd.DataFrame,
 ) -> BatchedStrategySignalResult:
     result = _validated_header(
@@ -267,11 +289,7 @@ def validate_batched_strategy_signals(
         expected_kind=STRATEGY_SIGNALS_KIND,
         allowed_keys={"contract", "kind", "entries", "exits", "diagnostics"},
     )
-    requested = _requested_candidate_ids(
-        requested_candidate_ids,
-        axis=axis,
-        source_id=source_id,
-    )
+    expected = _expected_candidate_ids(expected_candidate_ids, source_id=source_id)
     if "entries" not in result or "exits" not in result:
         raise ValueError(f"playbook {source_id!r} batched strategy signals must include entries and exits")
     entries = _candidate_surface_frame(
@@ -279,14 +297,14 @@ def validate_batched_strategy_signals(
         close=close,
         source_id=source_id,
         field_name="entries",
-        expected_candidate_ids=requested,
+        expected_candidate_ids=expected,
     ).fillna(False).astype(bool)
     exits = _candidate_surface_frame(
         result["exits"],
         close=close,
         source_id=source_id,
         field_name="exits",
-        expected_candidate_ids=requested,
+        expected_candidate_ids=expected,
     ).fillna(False).astype(bool)
     return BatchedStrategySignalResult(
         entries=entries,
@@ -300,14 +318,42 @@ def composed_candidate_ids(
     strategy_axis: BatchedCandidateAxis,
     indicator_axes: Sequence[BatchedCandidateAxis] = (),
 ) -> tuple[str, ...]:
+    return tuple(
+        candidate.candidate_id
+        for candidate in compose_batched_candidate_grid(
+            strategy_axis=strategy_axis,
+            indicator_axes=indicator_axes,
+        )
+    )
+
+
+def compose_batched_candidate_grid(
+    *,
+    strategy_axis: BatchedCandidateAxis,
+    indicator_axes: Sequence[BatchedCandidateAxis] = (),
+) -> tuple[BatchedComposedCandidate, ...]:
     indicator_products = tuple(product(*(axis.candidates for axis in indicator_axes))) or ((),)
-    ids: list[str] = []
+    candidates: list[BatchedComposedCandidate] = []
     for indicators in indicator_products:
-        indicator_tokens = [
-            f"{axis.source}:{axis.source_id}:{candidate.candidate_id}"
+        indicator_refs = tuple(
+            BatchedCandidateRef(
+                source=axis.source,
+                source_id=axis.source_id,
+                candidate_id=candidate.candidate_id,
+                params=dict(candidate.params),
+            )
             for axis, candidate in zip(indicator_axes, indicators, strict=True)
+        )
+        indicator_tokens = [
+            f"{ref.source}:{ref.source_id}:{ref.candidate_id}" for ref in indicator_refs
         ]
         for strategy_candidate in strategy_axis.candidates:
+            strategy_ref = BatchedCandidateRef(
+                source=strategy_axis.source,
+                source_id=strategy_axis.source_id,
+                candidate_id=strategy_candidate.candidate_id,
+                params=dict(strategy_candidate.params),
+            )
             if indicator_tokens:
                 candidate_id = (
                     f"strategy:{strategy_axis.source}:{strategy_axis.source_id}:"
@@ -315,16 +361,22 @@ def composed_candidate_ids(
                 )
             else:
                 candidate_id = strategy_candidate.candidate_id
-            ids.append(candidate_id)
+            candidates.append(
+                BatchedComposedCandidate(
+                    candidate_id=candidate_id,
+                    strategy=strategy_ref,
+                    indicators=indicator_refs,
+                )
+            )
     seen_ids: set[str] = set()
     duplicates: set[str] = set()
-    for candidate_id in ids:
-        if candidate_id in seen_ids:
-            duplicates.add(candidate_id)
-        seen_ids.add(candidate_id)
+    for candidate in candidates:
+        if candidate.candidate_id in seen_ids:
+            duplicates.add(candidate.candidate_id)
+        seen_ids.add(candidate.candidate_id)
     if duplicates:
         raise BatchedContractError(f"duplicate composed candidate ids: {sorted(duplicates)}")
-    return tuple(ids)
+    return tuple(candidates)
 
 
 def preflight_indicator_grid(
@@ -508,10 +560,9 @@ def _candidate_surface_frame(
     return value
 
 
-def _requested_candidate_ids(
+def _expected_candidate_ids(
     candidate_ids: Sequence[str],
     *,
-    axis: BatchedCandidateAxis,
     source_id: str,
 ) -> tuple[str, ...]:
     requested = tuple(candidate_ids)
@@ -519,13 +570,23 @@ def _requested_candidate_ids(
         raise BatchedContractError(f"playbook {source_id!r} requested candidate ids must not be empty")
     if len(set(requested)) != len(requested):
         raise BatchedContractError(f"playbook {source_id!r} requested candidate ids contain duplicates")
-    known_ids = set(axis.candidate_ids)
-    unknown = sorted(set(requested) - known_ids)
+    return requested
+
+
+def _requested_composed_candidates(
+    candidate_ids: Sequence[str],
+    *,
+    candidates: Sequence[BatchedComposedCandidate],
+    source_id: str,
+) -> tuple[BatchedComposedCandidate, ...]:
+    requested_ids = _expected_candidate_ids(candidate_ids, source_id=source_id)
+    candidates_by_id = {candidate.candidate_id: candidate for candidate in candidates}
+    unknown = sorted(set(requested_ids) - set(candidates_by_id))
     if unknown:
         raise BatchedContractError(
             f"playbook {source_id!r} requested unknown candidate ids: {unknown}"
         )
-    return requested
+    return tuple(candidates_by_id[candidate_id] for candidate_id in requested_ids)
 
 
 def _diagnostics(result: Mapping[str, Any]) -> dict[str, Any]:
