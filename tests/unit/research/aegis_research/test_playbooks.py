@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from research.aegis_research.component_registry import discover_component_registry
+from research.aegis_research.component_registry import (
+    COMPONENT_FAMILIES,
+    discover_component_registry,
+)
 from research.aegis_research.playbook_registry import (
+    PLAYBOOK_FAMILIES,
     PlaybookRegistryError,
     PlaybookSelection,
     discover_playbook_registry,
@@ -24,6 +28,11 @@ def test_playbook_registry_discovers_stable_ids_and_loads_selected_playbook(tmp_
     assert definition.identity.repo_relative_path == "research/playbooks/indicators/ma_explore.py"
     assert result["contract"] == "aegis.playbook_sweep.v1"
     assert result["candidate_axis"] == [{"candidate_id": "ma_explore-5", "params": {"window": 5}}]
+
+
+def test_active_playbook_families_exclude_labels_while_components_keep_labels() -> None:
+    assert PLAYBOOK_FAMILIES == ("indicators", "strategies")
+    assert "labels" in COMPONENT_FAMILIES
 
 
 def test_playbook_owns_static_params(tmp_path) -> None:
@@ -99,6 +108,35 @@ def test_playbook_registry_rejects_unsupported_stage(tmp_path) -> None:
     )
 
     with pytest.raises(PlaybookRegistryError, match="unsupported stage"):
+        discover_playbook_registry(root=root, repo_root=tmp_path)
+
+
+def test_playbook_registry_rejects_label_family_manifest(tmp_path) -> None:
+    root = tmp_path / "research" / "playbooks"
+    _write_playbook(root / "indicators" / "bad_label.py", "labels", "bad_label")
+
+    with pytest.raises(PlaybookRegistryError, match="playbook family"):
+        discover_playbook_registry(root=root, repo_root=tmp_path)
+
+
+def test_playbook_registry_rejects_label_stage(tmp_path) -> None:
+    root = tmp_path / "research" / "playbooks"
+    _write_playbook(
+        root / "indicators" / "bad_label_stage.py",
+        "indicators",
+        "bad_label_stage",
+        stages=["labels"],
+    )
+
+    with pytest.raises(PlaybookRegistryError, match="unsupported stage"):
+        discover_playbook_registry(root=root, repo_root=tmp_path)
+
+
+def test_playbook_registry_rejects_stale_label_family_files(tmp_path) -> None:
+    root = tmp_path / "research" / "playbooks"
+    _write_playbook(root / "labels" / "stale.py", "labels", "stale")
+
+    with pytest.raises(PlaybookRegistryError, match="unsupported playbook family"):
         discover_playbook_registry(root=root, repo_root=tmp_path)
 
 

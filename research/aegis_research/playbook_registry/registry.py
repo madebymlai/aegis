@@ -64,6 +64,7 @@ def discover_playbook_registry(
     if root_path.is_symlink():
         raise PlaybookRegistryError(f"{root_path}: playbook root must not be a symlink")
     _assert_inside_root(root_path, root_path)
+    _reject_unsupported_family_files(root_path)
 
     for family in PLAYBOOK_FAMILIES:
         family_root = root_path / family
@@ -347,6 +348,17 @@ def _playbook_files(path: Path, root: Path) -> tuple[Path, ...]:
             _assert_inside_root(child, root)
             files.append(child)
     return tuple(sorted(files))
+
+
+def _reject_unsupported_family_files(root: Path) -> None:
+    for child in sorted(root.iterdir()):
+        if not child.is_dir() or child.name in PLAYBOOK_FAMILIES:
+            continue
+        files = _playbook_files(child, root)
+        if files:
+            raise PlaybookRegistryError(
+                f"{child}: unsupported playbook family; labels must be reviewed components"
+            )
 
 
 def _assert_inside_root(path: Path, root: Path) -> None:

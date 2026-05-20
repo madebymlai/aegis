@@ -34,8 +34,6 @@ research/components/indicators/*
 research/components/strategies/*
 !research/components/strategies/README.md
 
-research/playbooks/labels/*
-!research/playbooks/labels/README.md
 research/playbooks/indicators/*
 !research/playbooks/indicators/README.md
 research/playbooks/strategies/*

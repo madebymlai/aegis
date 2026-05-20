@@ -64,6 +64,32 @@ def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() 
     assert "exactly one component indicator ID" in docs
 
 
+def test_active_docs_describe_component_only_labeler_contract() -> None:
+    docs = "\n".join(
+        [
+            Path("README.md").read_text(),
+            Path("docs/components.md").read_text(),
+            Path("docs/playbooks.md").read_text(),
+            Path("docs/vectorbt-scaffold.md").read_text(),
+        ]
+    )
+
+    assert "labeler:" in docs
+    assert "labeler: {id: ...}" in docs
+    assert "`labeler` and top-level `strategy` are mutually exclusive" in docs
+    assert "Labels are not a playbook family" in docs
+    assert "train.label" not in docs
+    assert "research/playbooks/{labels,indicators,strategies}/" not in docs
+
+
+def test_docs_examples_use_top_level_labeler_contract() -> None:
+    examples = "\n".join(path.read_text() for path in Path("docs/examples").rglob("*.ipynb"))
+
+    assert "'labeler': {'id': 'example.fixlb'}" in examples
+    assert "train.label" not in examples
+    assert "'label': {'source': 'component'" not in examples
+
+
 def test_docs_describe_composed_strategy_candidates_and_manual_promotion() -> None:
     docs = "\n".join(
         [
@@ -89,7 +115,6 @@ def test_component_and_playbook_placeholders_point_to_examples() -> None:
         "research/components/labels/README.md",
         "research/components/indicators/README.md",
         "research/components/strategies/README.md",
-        "research/playbooks/labels/README.md",
         "research/playbooks/indicators/README.md",
         "research/playbooks/strategies/README.md",
     ]
@@ -99,3 +124,5 @@ def test_component_and_playbook_placeholders_point_to_examples() -> None:
         assert "docs/examples/" in readme
         assert "ignored by git" in readme
         assert "not secret management" in readme
+
+    assert not Path("research/playbooks/labels/README.md").exists()

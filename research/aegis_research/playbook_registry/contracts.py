@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-PlaybookFamily = Literal["labels", "indicators", "strategies"]
-PLAYBOOK_FAMILIES: tuple[PlaybookFamily, ...] = ("labels", "indicators", "strategies")
+PlaybookFamily = Literal["indicators", "strategies"]
+PLAYBOOK_FAMILIES: tuple[PlaybookFamily, ...] = ("indicators", "strategies")
 PLAYBOOK_STAGES = frozenset(PLAYBOOK_FAMILIES)
 
 

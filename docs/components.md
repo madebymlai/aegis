@@ -22,20 +22,22 @@ Indicator components should use the same VectorBT-native helper path as built-in
 
 Manual promotion starts from a composed leaderboard row: the indicator side identifies the source/candidate/params to freeze into an indicator component, and the strategy side identifies the source/candidate/params to freeze into a strategy component. Aegis does not generate those component files automatically; a component author creates reviewed source files and reruns with `source: component` refs to verify the promoted pair.
 
-`aerd run --train` uses top-level component indicator selections plus train-specific label and model refs. Model refs keep a `source` field for future extension, but v1 accepts only `source: plugin`:
+`aerd run --train` uses top-level component indicator selections plus a top-level `labeler` ID-only mapping. Labeler source is implied as a reviewed label component, and labeler params live in the percent-cell component source. Model refs stay under `train:` and keep a `source` field for future extension; v1 accepts only `source: plugin`:
 
 ```yaml
+labeler:
+  id: demo.fixlb
+
 indicators:
   - source: component
     ids: [demo.ma]
 
 train:
-  label:
-    source: component
-    id: demo.fixlb
   model:
     source: plugin
     id: aegis.sklearn_logistic
 ```
+
+Top-level `labeler` and top-level `strategy` are mutually exclusive. Use `labeler` only with `aerd run --train`; use `strategy` only with default `aerd run`.
 
 Local component files are ignored by git by default except the placeholder READMEs. Ignored files are not secret management; do not store credentials in local research code. Public component examples live under `docs/examples/components/`.

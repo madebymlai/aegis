@@ -216,8 +216,7 @@ class ReportConfig:
 
 
 @dataclass(frozen=True)
-class SourceRefConfig:
-    source: str
+class LabelerConfig:
     id: str
 
 
@@ -280,7 +279,7 @@ class StrategyRunLaneConfig:
 @dataclass(frozen=True)
 class TrainLaneConfig:
     name: str
-    label: SourceRefConfig
+    labeler: LabelerConfig
     model: TrainModelConfig
     indicators: list[RunIndicatorSourceConfig]
     schema_version: int = CONFIG_SCHEMA_VERSION

@@ -6,13 +6,13 @@ from research.aegis_research.configuration.schema import (
     CandidateGridConfig,
     DataConfig,
     DataQualityConfig,
+    LabelerConfig,
     PortfolioConfig,
     RankingConfig,
     ReportConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
     SignalConfig,
-    SourceRefConfig,
     SplitConfig,
     StrategyRunLaneConfig,
     TrainLaneConfig,
@@ -48,7 +48,7 @@ def _build_train_lane_config(raw: dict[str, Any]) -> TrainLaneConfig:
         signals=SignalConfig(**train.get("signals", {})),
         portfolio=PortfolioConfig(**raw.get("portfolio", {})),
         report=ReportConfig(**raw.get("report", {})),
-        label=_build_source_ref(train["label"]),
+        labeler=_build_labeler(raw["labeler"]),
         model=_build_train_model(train["model"]),
         output_dir=raw.get("output_dir", "runs"),
     )
@@ -63,8 +63,8 @@ def _build_train_model(raw: dict[str, Any]) -> TrainModelConfig:
     )
 
 
-def _build_source_ref(raw: dict[str, Any]) -> SourceRefConfig:
-    return SourceRefConfig(source=raw["source"], id=raw["id"])
+def _build_labeler(raw: dict[str, Any]) -> LabelerConfig:
+    return LabelerConfig(id=raw["id"])
 
 
 def _build_run_source_ref(raw: dict[str, Any]) -> RunSourceRefConfig:

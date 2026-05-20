@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,17 @@ def test_train_json_runs_existing_ml_pipeline_with_training_lane_evidence(
     assert payload["run"]["id"] == "train-json-run"
     assert payload["run"]["status"] == RunStatus.COMPLETED
     assert (tmp_path / "runs" / "train-json-run" / "manifest.json").is_file()
+    label_component = tmp_path / "research/components/labels/fixlb.py"
+    label_metadata = json.loads(
+        (tmp_path / "runs" / "train-json-run" / "labels" / "metadata.json").read_text()
+    )
+    assert label_metadata["source"] == {
+        "kind": "component",
+        "id": "demo.fixlb",
+        "version": "1.0.0",
+        "repo_relative_path": "research/components/labels/fixlb.py",
+        "source_hash": hashlib.sha256(label_component.read_bytes()).hexdigest(),
+    }
 
 
 def test_train_requires_explicit_config_path(capsys: pytest.CaptureFixture[str]) -> None:
@@ -70,13 +82,12 @@ def test_train_rejects_run_artifact_source_refs_before_run_directory(
                     "arrays": ["OHLCV"],
                 },
                 "portfolio": {"entry_budget": 1.0},
+                "labeler": {
+                    "id": "missing",
+                    "artifact_path": "runs/previous-run/strategy_run.json",
+                },
                 "indicators": [{"source": "component", "ids": ["demo.returns"]}],
                 "train": {
-                    "label": {
-                        "source": "component",
-                        "id": "missing",
-                        "artifact_path": "runs/previous-run/strategy_run.json",
-                    },
                     "model": {"source": "plugin", "id": "tests.sklearn_logistic"},
                 },
             },
@@ -132,9 +143,9 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
         },
         "portfolio": {"entry_budget": 1.0},
         "report": {"freq": "1D", "year_freq": "252D"},
+        "labeler": {"id": "demo.fixlb"},
         "indicators": [{"source": "component", "ids": ["demo.returns"]}],
         "train": {
-            "label": {"source": "component", "id": "demo.fixlb"},
             "model": {
                 "source": "plugin",
                 "id": model["plugin_id"],

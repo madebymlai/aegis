@@ -53,6 +53,7 @@ def _validate_raw_lane_config(
     expected_lane: str | None,
 ) -> None:
     lane = _effective_run_mode(raw, expected_lane)
+    _validate_top_level_lane_selection(raw, issues)
     _validate_known_keys("$", raw, _lane_allowed_top_level_keys(lane), issues)
     _require_int("schema_version", raw, issues, positive=True)
     if raw.get("schema_version") != CONFIG_SCHEMA_VERSION:
@@ -101,6 +102,8 @@ def _effective_run_mode(raw: dict[str, Any], expected_lane: str | None) -> str:
     authored_lane = raw.get("lane")
     if isinstance(authored_lane, str) and authored_lane in LANES:
         return authored_lane
+    if "labeler" in raw and not {"strategy", "ranking"}.intersection(raw):
+        return "train"
     if "train" in raw and not {"strategy", "ranking"}.intersection(raw):
         return "train"
     return "run"
@@ -109,8 +112,20 @@ def _effective_run_mode(raw: dict[str, Any], expected_lane: str | None) -> str:
 def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
     common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir"}
     if lane == "train":
-        return common | {"indicators", "train"}
+        return common | {"indicators", "labeler", "train"}
     return common | {"candidate_grid", "indicators", "ranking", "strategy"}
+
+
+def _validate_top_level_lane_selection(
+    raw: dict[str, Any], issues: list[ConfigValidationIssue]
+) -> None:
+    if "strategy" in raw and "labeler" in raw:
+        issues.append(
+            ConfigValidationIssue(
+                "labeler",
+                "is mutually exclusive with top-level strategy selection",
+            )
+        )
 
 
 def _validate_strategy_run_lane(
@@ -188,13 +203,18 @@ def _validate_train_lane(
         {"label", "model", "split", "signals"},
         issues,
     )
-    _validate_source_ref(
-        "train.label",
-        train.get("label"),
-        "labels",
+    if "label" in train:
+        issues.append(
+            ConfigValidationIssue(
+                "train.label",
+                "was removed; move the stable component id to top-level labeler: {id: ...}",
+            )
+        )
+    _validate_labeler_ref(
+        "labeler",
+        raw.get("labeler"),
         issues,
         component_registry=component_registry,
-        allowed_sources={"component"},
     )
     _validate_indicator_sources(
         "indicators",
@@ -261,12 +281,53 @@ def _validate_train_model_ref(
                     issues.append(ConfigValidationIssue(child_path, message))
 
 
+def _validate_labeler_ref(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+) -> None:
+    if value is None:
+        issues.append(ConfigValidationIssue(path, "is required for train mode"))
+        return
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_known_keys(path, value, {"id"}, issues)
+    _validate_no_lane_executable_keys(path, value, issues)
+    labeler_id = value.get("id")
+    if not isinstance(labeler_id, str):
+        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
+        return
+    if labeler_id == "":
+        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
+        return
+    if labeler_id == "all":
+        issues.append(ConfigValidationIssue(f"{path}.id", "must select one labeler id"))
+        return
+    if not EXPERIMENT_NAME_RE.fullmatch(labeler_id):
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.id",
+                "must contain only letters, numbers, dots, underscores, and hyphens",
+            )
+        )
+        return
+    try:
+        component_registry.get(ComponentSelection("labels", labeler_id))
+    except ComponentRegistryError:
+        issues.append(ConfigValidationIssue(f"{path}.id", "unknown label component id"))
+
+
 def _validate_training_fields_absent(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
 ) -> None:
-    for key in ("train", "model", "labels", "label", "split", "signals"):
+    for key in ("train", "model", "labels", "label", "labeler", "split", "signals"):
         if key in raw:
+            if key == "labeler" and "strategy" in raw:
+                continue
             issues.append(
                 ConfigValidationIssue(
                     key,
@@ -396,27 +457,6 @@ def _validate_run_source_ref(
         allowed_sources=allowed_sources,
         non_string_id_message="must be a non-empty stable id",
         all_id_message="must select one strategy id",
-    )
-
-
-def _validate_source_ref(
-    path: str,
-    value: Any,
-    family: str,
-    issues: list[ConfigValidationIssue],
-    *,
-    component_registry: FrozenComponentRegistry,
-    allowed_sources: set[str] | None = None,
-) -> None:
-    _validate_source_ref_value(
-        path,
-        value,
-        family,
-        issues,
-        component_registry=component_registry,
-        allowed_sources=allowed_sources,
-        non_string_id_message="must be a string",
-        all_id_message="must be a non-empty stable id",
     )
 
 

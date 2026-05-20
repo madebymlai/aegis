@@ -709,12 +709,12 @@ def test_run_cli_rejects_playbook_that_does_not_support_requested_family(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _write_playbook(
-        tmp_path / "research/playbooks/strategies/labels_only.py",
+        tmp_path / "research/playbooks/strategies/indicators_only.py",
         "strategies",
-        "labels_only",
-        stages=["labels"],
+        "indicators_only",
+        stages=["indicators"],
     )
-    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="labels_only")
+    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="indicators_only")
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "should-not-exist"]) == 6
 
@@ -725,7 +725,9 @@ def test_run_cli_rejects_playbook_that_does_not_support_requested_family(
 
 
 def test_playbook_roots_ignore_local_notebooks_except_readme_placeholders() -> None:
-    for family in ("labels", "indicators", "strategies"):
+    assert not Path("research/playbooks/labels/README.md").exists()
+
+    for family in ("indicators", "strategies"):
         assert Path(f"research/playbooks/{family}/README.md").is_file()
         ignored_notebook = pytest.importorskip("subprocess").run(
             [
