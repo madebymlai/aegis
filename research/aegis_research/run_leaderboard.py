@@ -10,7 +10,7 @@ from typing import Any
 RUN_LEADERBOARD_SCHEMA_VERSION = "run_leaderboard.v1"
 MAX_LEADERBOARD_ROWS = 10
 MAX_FAILURE_SAMPLES = 10
-METRIC_AUTHORITY_AEGIS = "aegis"
+METRIC_SOURCE_CENTRAL_PORTFOLIO = "central_portfolio"
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,7 @@ def build_run_leaderboard(
             failed += 1
             _append_failure_sample(failures, variant_id, record["error"])
             continue
-        _assert_aegis_metric_authority(record, variant_id, metric)
+        _assert_central_metric_source(record, variant_id, metric)
         value = _metric_value(record, metric)
         if value is None:
             excluded += 1
@@ -102,7 +102,7 @@ def _leaderboard_row(
         "indicator_candidates": record.get("indicator_candidates", []),
         "params": record.get("params", {}),
         "portfolio": record.get("portfolio", {}),
-        "metric_authority": record.get("metric_authority"),
+        "metric_source": record.get("metric_source"),
         "source_hash": record.get("source_hash"),
         "component_source_hash": record.get("component_source_hash"),
     }
@@ -124,21 +124,23 @@ def _metric_value(record: Mapping[str, Any], metric: str) -> float | None:
     return _finite_float(value)
 
 
-def _assert_aegis_metric_authority(
+def _assert_central_metric_source(
     record: Mapping[str, Any],
     variant_id: str,
     metric: str,
 ) -> None:
-    if record.get("metric_authority") != METRIC_AUTHORITY_AEGIS:
+    if record.get("metric_source") != METRIC_SOURCE_CENTRAL_PORTFOLIO:
         raise ValueError(
-            f"variant {variant_id!r} metric authority must be {METRIC_AUTHORITY_AEGIS!r}"
+            f"variant {variant_id!r} metric source must be "
+            f"{METRIC_SOURCE_CENTRAL_PORTFOLIO!r}"
         )
     baseline_metrics = record.get("baseline_metrics", {})
     has_baseline_metric = isinstance(baseline_metrics, Mapping) and metric in baseline_metrics
     has_baseline_metric = has_baseline_metric or record.get("baseline_metric_value") is not None
-    if has_baseline_metric and record.get("baseline_metric_authority") != METRIC_AUTHORITY_AEGIS:
+    if has_baseline_metric and record.get("baseline_metric_source") != METRIC_SOURCE_CENTRAL_PORTFOLIO:
         raise ValueError(
-            f"variant {variant_id!r} baseline metric authority must be {METRIC_AUTHORITY_AEGIS!r}"
+            f"variant {variant_id!r} baseline metric source must be "
+            f"{METRIC_SOURCE_CENTRAL_PORTFOLIO!r}"
         )
 
 

@@ -34,12 +34,12 @@ That creates a fairness problem. A playbook row can appear beside a component ro
   - **Trigger:** A researcher selects a strategy playbook in a run config.
   - **Actors:** A1, A3, A4
   - **Steps:** The playbook produces one or more strategy candidates with reproducible params and aligned signal outputs. Aegis applies the central portfolio execution contract to each candidate, computes metrics, and ranks the resulting rows.
-  - **Outcome:** Playbook-backed rows use the same execution and metric authority as component-backed strategy runs, while this contract keeps one selected strategy source per run config.
+  - **Outcome:** Playbook-backed rows use the same execution and metric source as component-backed strategy runs, while this contract keeps one selected strategy source per run config.
   - **Covered by:** R1, R2, R3, R4, R5
-- F2. Invalid playbook metric authority
+- F2. Invalid playbook metric source
   - **Trigger:** A strategy playbook tries to provide its own ranked metrics instead of letting Aegis compute them.
   - **Actors:** A1, A3, A4
-  - **Steps:** Aegis validates the playbook output before accepting rows into the run leaderboard and rejects output that would make the playbook the metric authority.
+  - **Steps:** Aegis validates the playbook output before accepting rows into the run leaderboard and rejects output that would make the playbook the metric source.
   - **Outcome:** The run fails visibly instead of publishing a mixed-authority leaderboard.
   - **Covered by:** R2, R5, R6
 - F3. Promotion from playbook winner to component
@@ -65,7 +65,7 @@ That creates a fairness problem. A playbook row can appear beside a component ro
 
 **Promotion and reproducibility**
 - R7. Each ranked playbook candidate must preserve enough params and source identity to reproduce the signal idea and promote a winner into a strategy component without relying on hidden local state.
-- R8. Run artifacts must preserve source identity so reviewers can distinguish playbook-backed signal ideas from component-backed signal ideas while trusting the same execution and metric authority for both.
+- R8. Run artifacts must preserve source identity so reviewers can distinguish playbook-backed signal ideas from component-backed signal ideas while trusting the same execution and metric source for both.
 
 ---
 
@@ -83,7 +83,7 @@ That creates a fairness problem. A playbook row can appear beside a component ro
 - A reviewer can trust that every ranked row in a run leaderboard was scored under one Aegis-owned execution contract.
 - A playbook-backed candidate and a component-backed candidate can be compared across equivalent single-source runs or future aggregation surfaces without hidden differences in fees, slippage, sizing, timing, direction, cash sharing, or metric ownership.
 - A winning playbook row carries enough params to guide manual promotion into a reviewed strategy component.
-- A downstream planner does not need to invent whether playbooks own metrics, whether mixed metric authority is allowed, or how playbook-backed rows differ from component-backed rows in ranked comparison.
+- A downstream planner does not need to invent whether playbooks own metrics, whether mixed metric sources are allowed, or how playbook-backed rows differ from component-backed rows in ranked comparison.
 
 ---
 

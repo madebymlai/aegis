@@ -16,7 +16,7 @@ Replace the record-oriented playbook sweep path with a VBT-native batched contra
 
 ## Problem Frame
 
-The composed-candidate PR made ranking semantics correct, but it still expands candidate grids through Python records and calls central portfolio simulation per candidate. The next step is to make candidate axes native to the data shape before simulation so Aegis can use VectorBT's grouping, broadcasting, and chunking patterns without changing metric authority.
+The composed-candidate PR made ranking semantics correct, but it still expands candidate grids through Python records and calls central portfolio simulation per candidate. The next step is to make candidate axes native to the data shape before simulation so Aegis can use VectorBT's grouping, broadcasting, and chunking patterns without changing central metric provenance.
 
 ---
 
@@ -34,7 +34,7 @@ The composed-candidate PR made ranking semantics correct, but it still expands c
 - R7. A ranked row must still represent a complete composed strategy candidate: selected indicator candidates, selected strategy candidate, centrally simulated portfolio, and Aegis-owned metrics.
 - R8. Aegis must score batched candidates through central VBT portfolio execution in chunks or batches where feasible, instead of defaulting to one portfolio simulation per composed candidate.
 - R9. Batched scoring must preserve per-candidate portfolio isolation and shared-cash semantics so candidate results remain comparable with the current central execution contract.
-- R10. Metric extraction must operate at candidate-group scope and preserve the existing metric authority, metric evidence, and per-symbol evidence expectations.
+- R10. Metric extraction must operate at candidate-group scope and preserve the existing metric source, metric evidence, and per-symbol evidence expectations.
 - R11. Candidate-grid size, chunk execution, memory budget decisions, and skipped or failed chunks must be visible to reviewers and automation.
 
 **Artifacts and failure policy**
@@ -79,8 +79,8 @@ The composed-candidate PR made ranking semantics correct, but it still expands c
 
 - `research/aegis_research/strategy_runs.py` owns `run_strategy_sweep`, playbook execution, candidate validation, composition diagnostics, central scoring handoff, and strategy artifacts.
 - `research/aegis_research/portfolios.py` owns `simulate_portfolio`, execution timing, generated entry sizing, shared-cash settings, and VBT `Portfolio.from_signals` calls.
-- `research/aegis_research/reports.py` owns `portfolio_metrics`, metric authority evidence, shared-cash metric scope, and per-symbol metric evidence.
-- `research/aegis_research/run_leaderboard.py` owns ranking, Aegis metric authority enforcement, partial leaderboard summaries, and compact top rows.
+- `research/aegis_research/reports.py` owns `portfolio_metrics`, metric source evidence, shared-cash metric scope, and per-symbol metric evidence.
+- `research/aegis_research/run_leaderboard.py` owns ranking, central metric source enforcement, partial leaderboard summaries, and compact top rows.
 - `research/aegis_research/playbook_registry/registry.py` and `research/aegis_research/playbook_registry/contracts.py` own playbook discovery, manifest validation, source identity, and callable loading.
 - `research/aegis_research/configuration/schema.py` and `research/aegis_research/configuration/validation.py` own run config shape and validation for any chunk or memory-budget settings.
 - `tests/integration/research/aegis_research/test_run_playbook_sources.py` is the primary existing coverage for playbook execution, composed candidates, invalid playbook fields, unused indicator axes, and artifact behavior.
@@ -445,18 +445,18 @@ Prose requirements govern if these diagrams and the implementation units disagre
 - Introduce candidate-group metric extraction as a sibling to the existing single-portfolio metric path rather than reusing the single shared-cash headline assumption directly.
 - Either slice grouped portfolio results to one candidate group before using existing single-portfolio helpers, or add group-aware raw-value mapping that never applies single-headline helpers to multi-group values.
 - For each candidate group, produce the same authoritative metric payload shape expected by leaderboard records, including aggregate metric evidence and per-symbol evidence under that candidate.
-- Preserve `metric_authority: "aegis"`, metric assumptions, metric roles, optional diagnostics, and per-symbol metric evidence under each candidate.
+- Preserve `metric_source: "central_portfolio"`, metric assumptions, metric roles, optional diagnostics, and per-symbol metric evidence under each candidate.
 - Keep one official leaderboard row per composed candidate; per-symbol stats are evidence, not separate leaderboard candidates.
 - Reuse `build_run_leaderboard(...)` authority checks where possible, but feed it candidate records produced by grouped metric extraction.
 - Treat missing, non-finite, or unavailable ranking metrics as completeness failures under the official all-or-nothing policy.
 
 **Patterns to follow:**
 - `portfolio_metrics(...)` in `research/aegis_research/reports.py`.
-- `build_run_leaderboard(...)` and `_assert_aegis_metric_authority(...)` in `research/aegis_research/run_leaderboard.py`.
+- `build_run_leaderboard(...)` and `_assert_central_metric_source(...)` in `research/aegis_research/run_leaderboard.py`.
 - Existing report tests in `tests/unit/research/aegis_research/test_reports.py`.
 
 **Test scenarios:**
-- Covers AE3. Happy path: grouped batched portfolio returns one metric record per composed candidate with Aegis metric authority.
+- Covers AE3. Happy path: grouped batched portfolio returns one metric record per composed candidate with central portfolio metric source.
 - Happy path: batch size 1 produces metric payloads equivalent to the existing single-candidate metric path.
 - Happy path: a two-candidate, multi-symbol fixture extracts two aggregate candidate metric payloads and candidate-scoped per-symbol evidence.
 - Happy path: a two-candidate grouped portfolio produces candidate-scoped `optional_diagnostics` without applying single-headline helpers to multi-group values.
@@ -603,7 +603,7 @@ Prose requirements govern if these diagrams and the implementation units disagre
 - **State lifecycle risks:** Partial batch success must not leave completed artifacts that look authoritative. Manifest status and artifact completion must reflect run completeness policy.
 - **API surface parity:** CLI `aerd run`, docs examples, playbook registry contracts, and automation-consuming artifacts must tell the same batched-contract story.
 - **Integration coverage:** Unit tests alone will not prove candidate isolation, shared-cash grouping, metric extraction, and artifact state; integration tests must cover multi-symbol and multi-candidate batched runs.
-- **Unchanged invariants:** Aegis remains the metric authority, strategy candidates remain long-only entries/exits, portfolio config stays run-owned, components stay fixed, and promotion remains manual.
+- **Unchanged invariants:** Aegis remains the central metric computation boundary, strategy candidates remain long-only entries/exits, portfolio config stays run-owned, components stay fixed, and promotion remains manual.
 
 ---
 

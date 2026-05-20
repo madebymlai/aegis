@@ -44,10 +44,12 @@ from research.aegis_research.provenance.manifest import atomic_write_json, hash_
 from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.reports import portfolio_metrics
-from research.aegis_research.run_leaderboard import build_run_leaderboard
+from research.aegis_research.run_leaderboard import (
+    METRIC_SOURCE_CENTRAL_PORTFOLIO,
+    build_run_leaderboard,
+)
 
 STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v2"
-METRIC_AUTHORITY_AEGIS = "aegis"
 STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
     "costs",
     "direction",
@@ -60,14 +62,19 @@ STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
     "sizing",
     "slippage",
 }
-PLAYBOOK_METRIC_AUTHORITY_KEYS = {
-    "baseline_metric_authority",
+PLAYBOOK_METRIC_SOURCE_KEYS = {
+    "baseline_metric_source",
     "baseline_metrics",
-    "metric_authority",
+    "metric_source",
     "metrics",
 }
+DEPRECATED_PLAYBOOK_METRIC_PROVENANCE_KEYS = {
+    "baseline_metric_authority",
+    "metric_authority",
+}
 INDICATOR_CANDIDATE_FORBIDDEN_KEYS = (
-    PLAYBOOK_METRIC_AUTHORITY_KEYS
+    PLAYBOOK_METRIC_SOURCE_KEYS
+    | DEPRECATED_PLAYBOOK_METRIC_PROVENANCE_KEYS
     | STRATEGY_OUTPUT_FORBIDDEN_KEYS
     | {
         "entries",
@@ -971,7 +978,7 @@ def _score_strategy_signals(
             **source_fields,
             "params": to_builtin(dict(params)),
             "metrics": portfolio_metrics(portfolio.portfolio, report_config),
-            "metric_authority": METRIC_AUTHORITY_AEGIS,
+            "metric_source": METRIC_SOURCE_CENTRAL_PORTFOLIO,
             "portfolio": to_builtin(asdict(portfolio_config)),
         },
         signal_result.diagnostics,
@@ -993,7 +1000,11 @@ def _strategy_playbook_candidate_records(
         raise ValueError(f"playbook {source_id!r} must emit at least one executable candidate")
     records: list[dict[str, Any]] = []
     seen_variant_ids: set[str] = set()
-    forbidden_fields = STRATEGY_OUTPUT_FORBIDDEN_KEYS | PLAYBOOK_METRIC_AUTHORITY_KEYS
+    forbidden_fields = (
+        STRATEGY_OUTPUT_FORBIDDEN_KEYS
+        | PLAYBOOK_METRIC_SOURCE_KEYS
+        | DEPRECATED_PLAYBOOK_METRIC_PROVENANCE_KEYS
+    )
     for index, item in enumerate(variants):
         if not isinstance(item, Mapping):
             raise TypeError(
@@ -1047,7 +1058,8 @@ def _reject_playbook_metric_records(result: Any, *, source_id: str) -> None:
             raise TypeError(
                 f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
             )
-        forbidden = sorted(set(item) & PLAYBOOK_METRIC_AUTHORITY_KEYS)
+        forbidden_fields = PLAYBOOK_METRIC_SOURCE_KEYS | DEPRECATED_PLAYBOOK_METRIC_PROVENANCE_KEYS
+        forbidden = sorted(set(item) & forbidden_fields)
         if forbidden:
             raise ValueError(
                 f"playbook {source_id!r} result variant_records[{index}] must not contain "

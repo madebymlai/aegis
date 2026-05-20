@@ -43,7 +43,7 @@ def test_run_cli_executes_repo_controlled_playbooks_by_id(
     assert artifact["indicators"][0]["id"] == "ma_explore"
     assert artifact["leaderboard"]["summary"]["succeeded"] == 1
     assert artifact["leaderboard"]["rows"][0]["strategy_source"] == "playbook"
-    assert artifact["leaderboard"]["rows"][0]["metric_authority"] == "aegis"
+    assert artifact["leaderboard"]["rows"][0]["metric_source"] == "central_portfolio"
 
 
 def test_run_cli_expands_all_playbook_indicators(
@@ -366,7 +366,7 @@ def test_run_cli_composes_indicator_and_strategy_playbook_candidates(
     assert set(artifact["signal_diagnostics"]["candidates"]) == expected_ids
     assert set(artifact["portfolio_diagnostics"]["candidates"]) == expected_ids
     row = artifact["leaderboard"]["rows"][0]
-    assert row["metric_authority"] == "aegis"
+    assert row["metric_source"] == "central_portfolio"
     assert row["composed_candidate_id"].startswith("strategy:playbook:ma_cross:")
     assert row["strategy_params"]
     assert row["source_hash"]

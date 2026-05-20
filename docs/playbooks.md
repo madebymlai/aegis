@@ -18,7 +18,7 @@ ranking:
   direction: desc
 ```
 
-Each playbook ID represents one research idea/family. Playbooks own sweep grids and variant definitions; components are fixed-param promoted implementations. Run configs select source blocks only: `ids: all` expands to every discovered playbook for that source, and `ids: [...]` selects explicit stable IDs. Playbooks receive runner-provided inputs through the same logical data contract as components, and run configs still declare `data.arrays` for those inputs. Playbooks do not receive run-config params; put VectorBT-native parameter grids in the playbook itself. Every emitted `variant_records` row must include a `params` mapping containing the swept parameter values needed to reproduce or promote that candidate, for example `{"window": 20, "wtype": "simple", "threshold": 0.01}`. Use `params: {}` when the candidate varies by named logic rather than tunable params. Strategy playbook rows must return `entries` and `exits` signals; Aegis computes portfolio metrics centrally. Playbook-provided metrics are not leaderboard authority.
+Each playbook ID represents one research idea/family. Playbooks own sweep grids and variant definitions; components are fixed-param promoted implementations. Run configs select source blocks only: `ids: all` expands to every discovered playbook for that source, and `ids: [...]` selects explicit stable IDs. Playbooks receive runner-provided inputs through the same logical data contract as components, and run configs still declare `data.arrays` for those inputs. Playbooks do not receive run-config params; put VectorBT-native parameter grids in the playbook itself. Every emitted `variant_records` row must include a `params` mapping containing the swept parameter values needed to reproduce or promote that candidate, for example `{"window": 20, "wtype": "simple", "threshold": 0.01}`. Use `params: {}` when the candidate varies by named logic rather than tunable params. Strategy playbook rows must return `entries` and `exits` signals; Aegis computes portfolio metrics centrally. Playbook-provided metrics are not accepted as leaderboard metrics.
 
 Indicator playbook rows become rankable only when a strategy source consumes their named outputs and emits executable signals. Each indicator candidate returns source-scoped outputs such as `{"outputs": {"ma": ma_frame}}`; strategies read them from keys like `inputs.indicators["playbook:ma_explore"]["outputs"]["ma"]`. Aegis fails the run if a selected indicator playbook axis is not consumed by the strategy, because an unused indicator should not appear next to ranked strategy metrics.
 
@@ -40,7 +40,7 @@ Leaderboards rank complete composed strategy candidates, not raw indicators. A r
       "outputs": ["ma"]
     }
   ],
-  "metric_authority": "aegis",
+  "metric_source": "central_portfolio",
   "primary_metric": "total_return_pct"
 }
 ```

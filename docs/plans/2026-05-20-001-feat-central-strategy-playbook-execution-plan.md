@@ -10,7 +10,7 @@ origin: docs/brainstorms/2026-05-20-strategy-playbook-central-execution-requirem
 
 ## Summary
 
-This plan makes Aegis' existing strategy-run execution boundary the only metric authority for ranked run rows. Strategy playbooks will produce centrally executable candidates, while Aegis reuses the same signal validation, VBT portfolio simulation, metric calculation, and leaderboard path already used for promoted strategy components.
+This plan makes Aegis' existing strategy-run execution boundary the only accepted metric source for ranked run rows. Strategy playbooks will produce centrally executable candidates, while Aegis reuses the same signal validation, VBT portfolio simulation, metric calculation, and leaderboard path already used for promoted strategy components.
 
 ---
 
@@ -29,10 +29,10 @@ The current branch already centralizes promoted strategy component execution thr
 - R5. Aegis must reject strategy playbook candidates that cannot be centrally executed under the shared strategy-run contract.
 - R6. Aegis must reject playbook output that attempts to make playbook-computed metrics the source of ranked results.
 - R7. Each ranked playbook candidate must preserve enough params and source identity to reproduce the signal idea and promote a winner into a strategy component without relying on hidden local state.
-- R8. Run artifacts must preserve source identity so reviewers can distinguish playbook-backed signal ideas from component-backed signal ideas while trusting the same execution and metric authority for both.
+- R8. Run artifacts must preserve source identity so reviewers can distinguish playbook-backed signal ideas from component-backed signal ideas while trusting the same execution and metric source for both.
 
 **Origin actors:** A1 Researcher, A2 Strategy component author, A3 Strategy run reviewer, A4 Automation agent
-**Origin flows:** F1 Ranked strategy playbook candidate, F2 Invalid playbook metric authority, F3 Promotion from playbook winner to component
+**Origin flows:** F1 Ranked strategy playbook candidate, F2 Invalid playbook metric source, F3 Promotion from playbook winner to component
 **Origin acceptance examples:** AE1 central execution for ranked playbook rows, AE2 reject playbook-computed metrics, AE3 reject non-executable candidates, AE4 preserve promotion evidence
 
 ---
@@ -50,7 +50,7 @@ The current branch already centralizes promoted strategy component execution thr
 ### Deferred to Follow-Up Work
 
 - Centrally executable indicator playbook sweeps: Indicator playbook variants currently do not feed the selected strategy through a central combinatorial execution path. This plan should prevent them from contributing playbook-scored leaderboard rows, then leave richer indicator-playbook candidate execution to a separate plan.
-- Multi-strategy comparison in one run: Equivalent playbook/component comparison remains possible through shared metric authority across equivalent single-source runs, but direct playbook-vs-component strategy comparison in one config requires a future config shape change.
+- Multi-strategy comparison in one run: Equivalent playbook/component comparison remains possible through shared metric source provenance across equivalent single-source runs, but direct playbook-vs-component strategy comparison in one config requires a future config shape change.
 
 ---
 
@@ -84,7 +84,7 @@ The current branch already centralizes promoted strategy component execution thr
 
 - Reuse the component strategy execution seam: Strategy playbook candidates should converge on the same signal validation and `simulate_portfolio(...)` path as components instead of introducing a separate scorer.
 - Use Python percent-cell playbooks for registered execution: Keep one `.py` source of truth that can run interactively in Jupytext-compatible tools and can be imported by Aegis as a normal Python callable.
-- Fail fast on metric authority violations: A strategy playbook candidate that supplies ranked metrics or portfolio outputs should fail the run before leaderboard publication, not become a failure sample in a partial leaderboard.
+- Fail fast on playbook metric source violations: A strategy playbook candidate that supplies ranked metrics or portfolio outputs should fail the run before leaderboard publication, not become a failure sample in a partial leaderboard.
 - Keep selected strategy singular for this plan: The existing config shape is one selected strategy. The plan centralizes playbook execution within that shape and defers multi-strategy comparison to follow-up work.
 - Remove direct playbook-scored indicator rows from ranked leaderboards: Until indicator playbook variants can be centrally executed through a selected strategy, they should remain source evidence rather than metric-authoritative leaderboard rows.
 
@@ -95,7 +95,7 @@ The current branch already centralizes promoted strategy component execution thr
 ### Resolved During Planning
 
 - Should run configs support multiple strategy sources in one leaderboard now? Keep one selected strategy for this plan; multi-strategy comparison is deferred.
-- Should invalid playbook metric authority fail the whole run or create a partial leaderboard? Fail the run before publishing ranked rows because the issue is contract violation, not an ordinary failed candidate.
+- Should invalid playbook metric source fail the whole run or create a partial leaderboard? Fail the run before publishing ranked rows because the issue is contract violation, not an ordinary failed candidate.
 - Should playbook-computed strategy metrics be kept as diagnostics? No for ranked strategy rows; metrics have one owner in the run leaderboard path.
 
 ### Deferred to Implementation
@@ -144,7 +144,7 @@ The important boundary is metric ownership: playbooks and components may differ 
 
 **Files:**
 - Modify: `research/aegis_research/strategy_runs.py`
-- Modify: `research/aegis_research/run_leaderboard.py` to enforce central metric authority at the ranking boundary
+- Modify: `research/aegis_research/run_leaderboard.py` to enforce central metric source provenance at the ranking boundary
 - Test: `tests/integration/research/aegis_research/test_run_playbook_sources.py`
 - Test: `tests/unit/research/aegis_research/test_playbooks.py`
 
@@ -152,7 +152,7 @@ The important boundary is metric ownership: playbooks and components may differ 
 - Add a strategy-playbook candidate validation path separate from the generic `_playbook_variant_records(...)` passthrough.
 - Require each ranked candidate to provide stable candidate identity, params, entries, and exits sufficient for central execution.
 - Reject candidate fields that would make the playbook the metric or portfolio authority, including ranked metrics and portfolio/execution outputs.
-- Treat missing params, missing signals, forbidden metric authority, and empty candidate sets as contract failures before publishing a leaderboard.
+- Treat missing params, missing signals, forbidden playbook metric fields, and empty candidate sets as contract failures before publishing a leaderboard.
 
 **Execution note:** Start with failing integration tests that reflect the current undesired behavior: playbook `metrics` are accepted and ranked.
 
@@ -257,7 +257,7 @@ The important boundary is metric ownership: playbooks and components may differ 
 
 **Files:**
 - Modify: `research/aegis_research/strategy_runs.py`
-- Modify: `research/aegis_research/run_leaderboard.py` to require explicit central metric authority markers
+- Modify: `research/aegis_research/run_leaderboard.py` to require explicit central metric source markers
 - Modify: `docs/playbooks.md`
 - Test: `tests/integration/research/aegis_research/test_run_playbook_sources.py`
 - Test: `tests/unit/research/aegis_research/test_run_leaderboard.py` if leaderboard authority checks move into the leaderboard builder
@@ -268,12 +268,12 @@ The important boundary is metric ownership: playbooks and components may differ 
 - Require a lightweight authority marker on centrally scored records so `build_run_leaderboard(...)` rejects records whose metric source is missing or not Aegis.
 
 **Patterns to follow:**
-- Existing leaderboard failure handling for excluded rows, while recognizing that metric authority violations should fail before publication.
+- Existing leaderboard failure handling for excluded rows, while recognizing that metric source violations should fail before publication.
 - `docs/playbooks.md` distinction between playbook exploration and Aegis-ranked run evidence.
 
 **Test scenarios:**
 - Error path: an indicator playbook emits precomputed metrics for leaderboard-bound variant records; the run fails visibly instead of publishing a successful leaderboard with omitted rows.
-- Error path: a generic playbook row reaches `build_run_leaderboard(...)` without central metric authority; the row is rejected rather than sorted.
+- Error path: a generic playbook row reaches `build_run_leaderboard(...)` without central metric source; the row is rejected rather than sorted.
 - Happy path: component indicator evidence remains present in artifacts while strategy scoring still uses central metrics.
 - Regression: baseline-delta ranking does not use playbook-computed baseline metrics; any baseline metric used for ranking must be centrally computed or unsupported for now.
 
@@ -313,7 +313,7 @@ The important boundary is metric ownership: playbooks and components may differ 
 - Python percent-cell example smoke: the strategy playbook example uses the new candidate-first output shape.
 
 **Verification:**
-- A reader can tell that playbooks and components differ in source form, not in portfolio metric authority.
+- A reader can tell that playbooks and components differ in source form, not in portfolio metric source.
 - Docs no longer teach playbook-scored leaderboard rows as the strategy playbook pattern.
 
 ---
@@ -321,7 +321,7 @@ The important boundary is metric ownership: playbooks and components may differ 
 ## System-Wide Impact
 
 - **Interaction graph:** `run` CLI → playbook registry → strategy run orchestration → portfolio simulation → report metrics → leaderboard. The plan changes the playbook branch so it converges with the component branch before portfolio execution.
-- **Error propagation:** Invalid playbook metric authority or non-executable signals should fail the run after manifest creation but before writing a success leaderboard. Config-level playbook ID errors remain config validation failures.
+- **Error propagation:** Invalid playbook metric source or non-executable signals should fail the run after manifest creation but before writing a success leaderboard. Config-level playbook ID errors remain config validation failures.
 - **State lifecycle risks:** Python playbook modules must not depend on interactive-local state or hidden side effects; ranked candidates must be returned from the selected callable.
 - **API surface parity:** Component strategy execution remains signal-only. Strategy playbook execution becomes candidate-and-signal-only for ranked rows.
 - **Integration coverage:** Unit tests alone will not prove the strategy playbook import path. Integration tests must execute a real Python percent-cell playbook and verify central portfolio metrics.
@@ -337,7 +337,7 @@ The important boundary is metric ownership: playbooks and components may differ 
 | Removing indicator playbook metric rows reduces current leaderboard behavior. | Preserve source evidence and document that centrally executable indicator-playbook combinations need a follow-up contract. |
 | Central scorer extraction could accidentally change component strategy behavior. | Add regression tests around existing component strategy execution and compare equivalent playbook/component signal outputs. |
 | Playbook validation errors may be hard for researchers to repair. | Classify failures by missing params, forbidden metrics, missing signals, and alignment so CLI diagnostics are actionable. |
-| Baseline-delta ranking currently assumes metric records can come from playbooks. | Require Aegis metric authority for baseline values as well, and disable playbook-computed baseline ranking authority until baselines can be centrally recomputed. |
+| Baseline-delta ranking currently assumes metric records can come from playbooks. | Require central metric source provenance for baseline values as well, and disable playbook-computed baseline ranking values until baselines can be centrally recomputed. |
 
 ---
 

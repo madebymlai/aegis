@@ -24,7 +24,7 @@ flowchart TB
     Grid[Composed candidate grid]
     Chunking[Aegis chunking and memory policy]
     Portfolio[VBT portfolio scoring]
-    Metrics[Aegis metric authority]
+    Metrics[Central metric source]
     Artifacts[Leaderboard and candidate evidence]
 
     IndicatorBatches --> StrategyBatch --> Grid --> Chunking --> Portfolio --> Metrics --> Artifacts
@@ -87,7 +87,7 @@ Prose is authoritative if this diagram and the requirements disagree.
 - R7. A ranked row must still represent a complete composed strategy candidate: selected indicator candidates, selected strategy candidate, centrally simulated portfolio, and Aegis-owned metrics.
 - R8. Aegis must score batched candidates through central VBT portfolio execution in chunks or batches where feasible, instead of defaulting to one portfolio simulation per composed candidate.
 - R9. Batched scoring must preserve per-candidate portfolio isolation and shared-cash semantics so candidate results remain comparable with the current central execution contract.
-- R10. Metric extraction must operate at candidate-group scope and preserve the existing metric authority, metric evidence, and per-symbol evidence expectations.
+- R10. Metric extraction must operate at candidate-group scope and preserve the existing metric source, metric evidence, and per-symbol evidence expectations.
 - R11. Candidate-grid size, chunk execution, memory budget decisions, and skipped or failed chunks must be visible to reviewers and automation.
 
 **Artifacts and failure policy**
@@ -121,7 +121,7 @@ Prose is authoritative if this diagram and the requirements disagree.
 - Batched indicator and strategy playbooks remain understandable enough for authors to write without reverse-engineering internal runner behavior.
 - Leaderboard rows remain semantically identical to current composed candidates: complete strategy candidates scored by Aegis/VBT metrics.
 - Artifacts remain usable by automation for ranking, audit, reproduction, and manual promotion even when candidate counts are much larger than top leaderboard size.
-- A downstream planner can design implementation phases without inventing contract ownership, failure policy, metric authority, or promotion semantics.
+- A downstream planner can design implementation phases without inventing contract ownership, failure policy, metric provenance, or promotion semantics.
 
 ---
 
@@ -142,7 +142,7 @@ Prose is authoritative if this diagram and the requirements disagree.
 
 - Forward replacement over compatibility layering: A clean batched contract is preferred over preserving two first-class sweep shapes indefinitely.
 - Both indicators and signals are batched: The redesign should make candidate dimensions native across the full research path, not only at final signal scoring.
-- Aegis remains metric authority: VBT-native batching changes execution shape, not ownership of portfolio metrics or ranking.
+- Central portfolio metrics remain the leaderboard source: VBT-native batching changes execution shape, not the ownership boundary for portfolio metrics or ranking.
 - Chunking and memory visibility are product requirements: Large-grid behavior must be observable and bounded, not left as an implementation afterthought.
 - Official leaderboards remain complete evidence: Failed or partial scoring can produce diagnostics, but must not masquerade as completed ranked results.
 

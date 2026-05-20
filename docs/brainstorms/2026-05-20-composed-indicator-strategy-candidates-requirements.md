@@ -136,7 +136,7 @@ Prose is authoritative if this diagram and the requirements disagree.
 
 ## Dependencies / Assumptions
 
-- `docs/brainstorms/2026-05-20-strategy-playbook-central-execution-requirements.md` establishes that ranked rows must use Aegis-owned portfolio execution and metric authority.
+- `docs/brainstorms/2026-05-20-strategy-playbook-central-execution-requirements.md` establishes that ranked rows must use Aegis-owned portfolio execution and central metric source provenance.
 - `docs/brainstorms/2026-05-18-research-playbook-component-workflow-requirements.md` establishes stable playbook/component refs and manual promotion.
 - `docs/brainstorms/2026-05-18-portfolio-simulation-contract-requirements.md` establishes the baseline VBT portfolio execution assumptions.
 - VectorBT Discord examples align with ranking complete backtest candidates: users sweep indicator params, strategy thresholds, and stop/portfolio params, then rank portfolio stats such as Sharpe ratio or total return.

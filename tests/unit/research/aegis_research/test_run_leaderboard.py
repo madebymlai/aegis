@@ -10,7 +10,7 @@ def test_build_run_leaderboard_ranks_top_10_with_counts() -> None:
         {
             "variant_id": f"v{i:02d}",
             "metrics": {"total_return_pct": float(i)},
-            "metric_authority": "aegis",
+            "metric_source": "central_portfolio",
         }
         for i in range(12)
     ]
@@ -46,9 +46,9 @@ def test_build_run_leaderboard_records_source_and_baseline_delta_direction() -> 
                 "indicator_source": "playbook",
                 "indicator_id": "ma_explore",
                 "metrics": {"max_drawdown_pct": 0.1},
-                "metric_authority": "aegis",
+                "metric_source": "central_portfolio",
                 "baseline_metrics": {"max_drawdown_pct": 0.2},
-                "baseline_metric_authority": "aegis",
+                "baseline_metric_source": "central_portfolio",
                 "baseline_component_indicator_id": "baseline.ma",
             }
         ],
@@ -72,12 +72,12 @@ def test_baseline_delta_fallback_preserves_ascending_metric_direction() -> None:
             {
                 "variant_id": "higher_drawdown",
                 "metrics": {"max_drawdown_pct": 0.4},
-                "metric_authority": "aegis",
+                "metric_source": "central_portfolio",
             },
             {
                 "variant_id": "lower_drawdown",
                 "metrics": {"max_drawdown_pct": 0.1},
-                "metric_authority": "aegis",
+                "metric_source": "central_portfolio",
             },
         ],
         metric="max_drawdown_pct",
@@ -91,10 +91,10 @@ def test_baseline_delta_fallback_preserves_ascending_metric_direction() -> None:
     ]
 
 
-def test_build_run_leaderboard_rejects_missing_metric_authority() -> None:
-    with pytest.raises(ValueError, match="metric authority"):
+def test_build_run_leaderboard_rejects_missing_metric_source() -> None:
+    with pytest.raises(ValueError, match="metric source"):
         build_run_leaderboard(
-            [{"variant_id": "not_authoritative", "metrics": {"total_return_pct": 1.0}}],
+            [{"variant_id": "unknown_source", "metrics": {"total_return_pct": 1.0}}],
             metric="total_return_pct",
             direction="desc",
         )
@@ -119,7 +119,7 @@ def test_build_run_leaderboard_preserves_composed_candidate_provenance() -> None
                     }
                 ],
                 "metrics": {"total_return_pct": 1.0},
-                "metric_authority": "aegis",
+                "metric_source": "central_portfolio",
             }
         ],
         metric="total_return_pct",

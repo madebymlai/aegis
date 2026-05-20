@@ -66,11 +66,11 @@ Current run execution can centrally rank strategy playbook candidates, but indic
 - `research/aegis_research/strategy_runs.py` currently validates strategy playbook `variant_records` with params, entries, and exits, then routes them through central portfolio scoring.
 - `research/aegis_research/strategy_runs.py` currently calls indicator playbooks and rejects metrics, but does not materialize their variants into strategy-consumable outputs.
 - `research/aegis_research/indicators.py` has `IndicatorResult` and fixed component indicator lineage/shape handling; component indicator sweeps are rejected.
-- `research/aegis_research/run_leaderboard.py` enforces Aegis metric authority and keeps only top leaderboard rows.
+- `research/aegis_research/run_leaderboard.py` enforces central metric source provenance and keeps only top leaderboard rows.
 - `research/aegis_research/playbook_registry/registry.py` discovers Python percent-cell playbooks with stable IDs and literal manifests.
 - `tests/integration/research/aegis_research/test_strategy_run.py` covers component indicators feeding strategies and central strategy execution.
 - `tests/integration/research/aegis_research/test_run_playbook_sources.py` covers playbook execution, strategy playbook metrics rejection, and failed playbook run manifests.
-- `tests/unit/research/aegis_research/test_run_leaderboard.py` covers leaderboard metric authority boundaries.
+- `tests/unit/research/aegis_research/test_run_leaderboard.py` covers leaderboard metric source boundaries.
 
 ### Institutional Learnings
 
@@ -210,7 +210,7 @@ Raw candidate IDs only need to be unique within their source/context. Leaderboar
 **Patterns to follow:**
 - `_strategy_playbook_candidate_records(...)` for fail-fast playbook output validation.
 - `ComponentDefinition.identity` and existing source evidence rows for source hash/version provenance.
-- `METRIC_AUTHORITY_AEGIS` and `_assert_aegis_metric_authority(...)` for the central metric authority boundary.
+- `METRIC_SOURCE_CENTRAL_PORTFOLIO` and `_assert_central_metric_source(...)` for the central metric source boundary.
 
 **Test scenarios:**
 - Error path: an indicator playbook candidate missing `params` fails before strategy execution.
@@ -244,7 +244,7 @@ Raw candidate IDs only need to be unique within their source/context. Leaderboar
 - Expose indicator candidates to strategies through source-scoped indicator keys rather than flattening candidate outputs into the global indicator map.
 - Reject duplicate effective indicator keys before strategy execution unless source identity already disambiguates them.
 - Preserve fixed indicator components as always-present inputs, then layer one selected candidate from each selected indicator playbook axis per composed candidate.
-- Keep indicator family metadata and optional baseline IDs as provenance, not metric authority.
+- Keep indicator family metadata and optional baseline IDs as provenance, not metric source evidence.
 
 **Execution note:** Add characterization coverage showing current indicator playbook variants are evidence-only before changing them into materialized candidates.
 
@@ -353,7 +353,7 @@ composed candidates = indicator context + per-context strategy candidate
 - Integration: after a composed candidate fails validation after run directory creation, the run manifest is marked failed with source/candidate context and no successful partial leaderboard is published.
 
 **Verification:**
-- Every ranked composed row has `metric_authority: "aegis"`.
+- Every ranked composed row has `metric_source: "central_portfolio"`.
 - Portfolio diagnostics preserve enough per-composed-candidate context to debug scoring failures and reproduce ranked rows, reusing existing diagnostic shapes where possible.
 - Existing component-only and strategy-playbook-only runs continue to behave as before.
 
@@ -385,11 +385,11 @@ composed candidates = indicator context + per-context strategy candidate
 - `data_array_evidence_payload(...)` style of source-neutral evidence blocks.
 
 **Test scenarios:**
-- Covers AE5. Winning row includes canonical composed candidate ID, strategy source kind/id/hash, strategy candidate id/params, consumed indicator source kind/id/hash, indicator candidate id/params, portfolio config, and metric authority.
+- Covers AE5. Winning row includes canonical composed candidate ID, strategy source kind/id/hash, strategy candidate id/params, consumed indicator source kind/id/hash, indicator candidate id/params, portfolio config, and metric source.
 - Collision case: two indicator playbooks reuse the same candidate ID and one strategy playbook reuses the same variant ID across indicator contexts; artifacts remain unique through the canonical composed candidate ID.
 - Covers AE6. Candidate expansion counts are present in artifact evidence or strategy artifact diagnostics.
 - Integration: more than ten composed candidates produce top-N leaderboard rows while preserving full attempted/succeeded counts.
-- Regression: leaderboard rejects a composed row missing Aegis metric authority.
+- Regression: leaderboard rejects a composed row missing central metric source.
 - Copy/field semantics: artifact labels avoid calling an indicator candidate “best” outside the composed strategy context.
 
 **Verification:**
@@ -421,7 +421,7 @@ composed candidates = indicator context + per-context strategy candidate
 - Update examples so indicator playbook variants return strategy-consumable outputs rather than metrics-only evidence.
 - Clarify manual promotion language: a composed winner provides evidence for a human/component author to promote winning indicator params and winning strategy params separately into fixed components; Aegis does not auto-write promoted component files.
 - Add a concrete “Promoting a composed winner” walkthrough showing how to read a winning row, map indicator source/candidate/params into a fixed indicator component, map strategy source/candidate/params into a fixed strategy component, and rerun with those fixed components.
-- Add a small leaderboard table or JSON snippet where each row is clearly a composed strategy candidate with strategy evidence, consumed indicator evidence, central VBT metrics, and `metric_authority: "aegis"`.
+- Add a small leaderboard table or JSON snippet where each row is clearly a composed strategy candidate with strategy evidence, consumed indicator evidence, central VBT metrics, and `metric_source: "central_portfolio"`.
 - Update only docs/examples that currently teach indicator playbook metrics, component sweeps, or ambiguous winner language; broaden to README or scaffold docs only when their current wording conflicts with composed-candidate semantics.
 
 **Patterns to follow:**
@@ -442,7 +442,7 @@ composed candidates = indicator context + per-context strategy candidate
 ## System-Wide Impact
 
 - **Interaction graph:** `aerd run` config resolution, playbook/component registries, market-data loading, indicator source execution, strategy source execution, central portfolio simulation, run artifact writing, and leaderboard ranking all participate in the composed flow.
-- **Error propagation:** Invalid playbook output, output misalignment, forbidden metric authority, and duplicate candidate IDs should fail the run visibly and mark run manifests failed rather than publishing partial ranked evidence.
+- **Error propagation:** Invalid playbook output, output misalignment, forbidden playbook metric fields, and duplicate candidate IDs should fail the run visibly and mark run manifests failed rather than publishing partial ranked evidence.
 - **State lifecycle risks:** Run directories may already exist before composition failures occur; manifest failure evidence must remain intact and should include enough context to repair the offending source.
 - **API surface parity:** Component-only strategy runs, strategy-playbook-only runs, and train-mode component indicator use must remain compatible with the current config shape.
 - **Integration coverage:** Unit tests alone will not prove composition because the behavior crosses registry loading, playbook execution, strategy validation, VBT portfolio simulation, artifact writing, and leaderboard ranking.
