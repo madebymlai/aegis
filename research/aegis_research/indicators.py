@@ -187,6 +187,7 @@ def _source_component_indicator_result(
     result: IndicatorResult,
     definition: ComponentDefinition,
 ) -> IndicatorResult:
+    _ensure_fixed_component_param_set(_result_param_sets(result), definition.id)
     metadata = {
         **result.metadata,
         "id": definition.id,
@@ -198,7 +199,7 @@ def _source_component_indicator_result(
         frame=result.frame,
         metadata=metadata,
         native_objects={definition.id: result.native_objects},
-        native_outputs={definition.id: result.native_outputs},
+        native_outputs=_component_native_outputs(result, definition),
         lineage=lineage,
         feature_mapping={
             key: {**value, "component_id": definition.id}
@@ -206,6 +207,20 @@ def _source_component_indicator_result(
         },
         diagnostics=result.diagnostics,
     )
+
+
+def _component_native_outputs(
+    result: IndicatorResult,
+    definition: ComponentDefinition,
+) -> dict[str, dict[str, pd.DataFrame]]:
+    if not result.native_outputs:
+        return {}
+    outputs: dict[str, pd.DataFrame] = {}
+    for native_id, native_outputs in result.native_outputs.items():
+        for output_name, output in native_outputs.items():
+            key = output_name if output_name not in outputs else f"{native_id}.{output_name}"
+            outputs[key] = output
+    return {definition.id: outputs}
 
 
 def _component_frame_indicator_result(
@@ -217,6 +232,9 @@ def _component_frame_indicator_result(
     manifest = definition.manifest
     if not isinstance(manifest, IndicatorManifest):
         raise TypeError(f"component {definition.id!r} is not an indicator")
+    component_params = _ensure_fixed_component_param_set(
+        _component_output_params(output_frame, manifest), definition.id
+    )
     model_feature_series: list[pd.Series] = []
     model_feature_columns: list[tuple[str, str, str, str, str, str]] = []
     lineage: list[dict[str, Any]] = []
@@ -269,7 +287,7 @@ def _component_frame_indicator_result(
             "version": manifest.version,
             "source_hash": definition.identity.source_hash,
             "outputs": [output_name],
-            "params": _component_output_params(output_frame, manifest),
+            "params": component_params,
             "model_features": list(manifest.default_model_features),
         },
         native_outputs={definition.id: {output_name: output_frame}},
@@ -370,6 +388,33 @@ def _component_output_params(
         seen.add(token)
         rows.append(params)
     return rows
+
+
+def _result_param_sets(result: IndicatorResult) -> list[dict[str, Any]]:
+    rows = []
+    seen = set()
+    for lineage_record in result.lineage:
+        params = lineage_record.get("params", {})
+        if not isinstance(params, dict):
+            raise TypeError("indicator component lineage params must be a mapping")
+        token = _params_token(params)
+        if token in seen:
+            continue
+        seen.add(token)
+        rows.append(params)
+    return rows
+
+
+def _ensure_fixed_component_param_set(
+    params: list[dict[str, Any]],
+    component_id: str,
+) -> list[dict[str, Any]]:
+    if len(params) > 1:
+        raise ValueError(
+            f"indicator component {component_id!r} must emit one fixed parameter set; "
+            "use a playbook for sweeps"
+        )
+    return params
 
 
 def _apply_transform(

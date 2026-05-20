@@ -1,3 +1,8 @@
+# %% component overview
+# Fixed moving-average crossover strategy component promoted from playbook research.
+# Source: run-provided Close feature and centrally configured Aegis portfolio settings.
+
+# %% define component metadata
 COMPONENT_MANIFEST = {
     "family": "strategies",
     "id": "example.ma_cross",
@@ -9,8 +14,11 @@ COMPONENT_MANIFEST = {
 COMPONENT_CALLABLE = "run"
 
 
+# %% main compute
 def run(bundle):
-    window = 10
+    """Emit entries/exits from a fixed 20-bar moving-average crossover."""
+
+    window = 20
     close = bundle.data.feature("Close")
     moving_average = close.rolling(window).mean()
     return {

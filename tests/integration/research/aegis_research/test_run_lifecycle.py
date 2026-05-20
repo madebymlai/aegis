@@ -66,6 +66,26 @@ def test_run_store_rejects_unsafe_run_ids(tmp_path: Path, run_id: str) -> None:
     assert not any(tmp_path.iterdir())
 
 
+def test_run_store_rejects_relative_symlinked_run_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    outside = tmp_path / "outside-runs"
+    outside.mkdir()
+    (tmp_path / "runs").symlink_to(outside, target_is_directory=True)
+    store = RunStore("runs")
+
+    with pytest.raises(ValueError, match="symlinked"):
+        store.start_run(
+            run_label="baseline",
+            config={"schema_version": 1},
+            run_id="escape-run",
+        )
+
+    assert not (outside / "escape-run").exists()
+
+
 def test_run_store_overwrite_creates_superseding_physical_run(tmp_path: Path) -> None:
     store = RunStore(tmp_path)
     original = store.start_run(

@@ -1,6 +1,6 @@
 # Playbooks
 
-Notebook playbooks are repo-controlled exploratory notebooks under `research/playbooks/{labels,indicators,strategies}/`. `aerd run` selects them by stable ID from notebook metadata, not by path:
+Playbooks are repo-controlled Jupytext-compatible Python percent-cell files under `research/playbooks/{labels,indicators,strategies}/`. `aerd run` selects them by stable ID from `PLAYBOOK_MANIFEST`, not by path:
 
 ```yaml
 strategy:
@@ -18,12 +18,14 @@ ranking:
   direction: desc
 ```
 
-Each indicator playbook ID represents one indicator idea/family. The selected playbook or component owns its defaults, sweep grids, and variant definitions. Run configs select source blocks only: `ids: all` expands to every discovered indicator for that source, and `ids: [...]` selects explicit stable IDs. Run configs still declare `data.arrays` for runner-provided component data; notebook playbooks remain self-contained evidence producers until a separate playbook input contract exists. Playbooks do not receive run-config params; put VectorBT-native parameter grids in the notebook itself. Every emitted `variant_records` row must include a `params` mapping containing the swept parameter values needed to reproduce or promote that candidate, for example `{"window": 20, "wtype": "simple", "threshold": 0.01}`. If a baseline exists, the playbook declares exactly one component indicator ID and emits baseline metric evidence; leaderboard rows show indicator source, primary metric, optional baseline metric, raw delta, and direction-adjusted delta. Baseline-delta ranking is used only when explicitly selected.
+Each playbook ID represents one research idea/family. Playbooks own sweep grids and variant definitions; components are fixed-param promoted implementations. Run configs select source blocks only: `ids: all` expands to every discovered playbook for that source, and `ids: [...]` selects explicit stable IDs. Playbooks receive runner-provided inputs through the same logical data contract as components, and run configs still declare `data.arrays` for those inputs. Playbooks do not receive run-config params; put VectorBT-native parameter grids in the playbook itself. Every emitted `variant_records` row must include a `params` mapping containing the swept parameter values needed to reproduce or promote that candidate, for example `{"window": 20, "wtype": "simple", "threshold": 0.01}`. Strategy playbook rows must return `entries` and `exits` signals; Aegis computes portfolio metrics centrally. Playbook-provided metrics are not leaderboard authority.
 
-In notebook metadata, `family` is the registry bucket and must match the directory: `indicators`, `strategies`, or `labels`. Indicator playbooks also declare `indicator_family`, which describes the idea being explored, such as `moving_average`; it is not the registry bucket.
+Use purposeful percent cells in playbook files: a broad overview cell that states the research idea and source data, imports/definitions as needed, a literal metadata cell, and a `# %% main ...` cell containing the callable. The callable docstring should explain the indicator, label, or strategy approach being explored.
+
+In `PLAYBOOK_MANIFEST`, `family` is the registry bucket and must match the directory: `indicators`, `strategies`, or `labels`. Indicator playbooks also declare `indicator_family`, which describes the idea being explored, such as `moving_average`; it is not the registry bucket.
 
 Run artifacts are immutable evidence under the configured run root. Playbook-backed rows remain source-labeled as playbook evidence; manual promotion into `research/components/` is still a reviewed source-code step, not an automatic command that mutates component files.
 
-Configs cannot provide arbitrary notebook paths, scripts, imports, inline Python, formulas, generated run state, last-run refs, or leaderboard-row refs as reproducible run inputs.
+Configs cannot provide arbitrary source paths, imports, inline Python, formulas, generated run state, last-run refs, or leaderboard-row refs as reproducible run inputs.
 
 Public playbook examples live under `docs/examples/playbooks/`.

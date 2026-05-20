@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import nbformat
 import pytest
 import yaml
 
@@ -18,11 +17,11 @@ def test_run_cli_executes_repo_controlled_playbooks_by_id(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_notebook(
-        tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross"
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
     )
-    _write_notebook(
-        tmp_path / "research/playbooks/indicators/ma_explore.ipynb", "indicators", "ma_explore"
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py", "indicators", "ma_explore"
     )
     config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
 
@@ -36,10 +35,15 @@ def test_run_cli_executes_repo_controlled_playbooks_by_id(
     assert payload["lane"] == "run"
     assert artifact["strategy"]["source"] == "playbook"
     assert artifact["strategy"]["id"] == "ma_cross"
+    assert artifact["strategy"]["consumes_runner_data"] is True
+    assert artifact["strategy"]["data_binding"] == "strategy_inputs"
+    assert artifact["data"]["strategy_consumed_runner_data"] is True
+    assert artifact["data"]["strategy_data_binding"] == "strategy_inputs"
     assert artifact["indicators"][0]["source"] == "playbook"
     assert artifact["indicators"][0]["id"] == "ma_explore"
-    assert artifact["leaderboard"]["summary"]["succeeded"] == 2
-    assert artifact["leaderboard"]["rows"][0]["indicator_source"] in {None, "playbook"}
+    assert artifact["leaderboard"]["summary"]["succeeded"] == 1
+    assert artifact["leaderboard"]["rows"][0]["strategy_source"] == "playbook"
+    assert artifact["leaderboard"]["rows"][0]["metric_authority"] == "aegis"
 
 
 def test_run_cli_expands_all_playbook_indicators(
@@ -48,11 +52,11 @@ def test_run_cli_expands_all_playbook_indicators(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_notebook(
-        tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross"
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
     )
-    _write_notebook(tmp_path / "research/playbooks/indicators/ma_one.ipynb", "indicators", "ma_one")
-    _write_notebook(tmp_path / "research/playbooks/indicators/ma_two.ipynb", "indicators", "ma_two")
+    _write_playbook(tmp_path / "research/playbooks/indicators/ma_one.py", "indicators", "ma_one")
+    _write_playbook(tmp_path / "research/playbooks/indicators/ma_two.py", "indicators", "ma_two")
     config_path = _write_run_config(
         tmp_path,
         strategy_source="playbook",
@@ -94,10 +98,10 @@ def test_run_cli_rejects_duplicate_expanded_playbook_indicators_before_artifacts
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_notebook(
-        tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross"
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
     )
-    _write_notebook(tmp_path / "research/playbooks/indicators/ma_one.ipynb", "indicators", "ma_one")
+    _write_playbook(tmp_path / "research/playbooks/indicators/ma_one.py", "indicators", "ma_one")
     config_path = _write_run_config(
         tmp_path,
         strategy_source="playbook",
@@ -122,11 +126,9 @@ def test_run_cli_reports_failed_playbook_execution_on_run_manifest(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_failing_notebook(
-        tmp_path / "research/playbooks/strategies/bad.ipynb", "strategies", "bad"
-    )
-    _write_notebook(
-        tmp_path / "research/playbooks/indicators/ma_explore.ipynb", "indicators", "ma_explore"
+    _write_failing_playbook(tmp_path / "research/playbooks/strategies/bad.py", "strategies", "bad")
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py", "indicators", "ma_explore"
     )
     config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="bad")
 
@@ -146,11 +148,11 @@ def test_run_cli_rejects_playbook_variant_without_params(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_notebook(
-        tmp_path / "research/playbooks/strategies/ma_cross.ipynb", "strategies", "ma_cross"
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
     )
-    _write_notebook(
-        tmp_path / "research/playbooks/indicators/ma_explore.ipynb",
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py",
         "indicators",
         "ma_explore",
         include_params=False,
@@ -167,14 +169,41 @@ def test_run_cli_rejects_playbook_variant_without_params(
     assert manifest["run"]["status"] == RunStatus.FAILED
 
 
+def test_run_cli_rejects_strategy_playbook_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/ma_cross.py",
+        "strategies",
+        "ma_cross",
+        include_metrics=True,
+    )
+    _write_playbook(
+        tmp_path / "research/playbooks/indicators/ma_explore.py", "indicators", "ma_explore"
+    )
+    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "metric-playbook"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    manifest = json.loads((tmp_path / "runs" / "metric-playbook" / "manifest.json").read_text())
+    assert payload["error"]["category"] == "execution_failure"
+    assert "metric or portfolio fields" in payload["error"]["message"]
+    assert manifest["run"]["status"] == RunStatus.FAILED
+
+
 def test_run_cli_rejects_playbook_that_does_not_support_requested_family(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_notebook(
-        tmp_path / "research/playbooks/strategies/labels_only.ipynb",
+    _write_playbook(
+        tmp_path / "research/playbooks/strategies/labels_only.py",
         "strategies",
         "labels_only",
         stages=["labels"],
@@ -198,7 +227,7 @@ def test_playbook_roots_ignore_local_notebooks_except_readme_placeholders() -> N
                 "check-ignore",
                 "--no-index",
                 "--quiet",
-                f"research/playbooks/{family}/local.ipynb",
+                f"research/playbooks/{family}/local.py",
             ],
             check=False,
         )
@@ -249,54 +278,82 @@ def _write_run_config(
     return path
 
 
-def _write_notebook(
+def _write_playbook(
     path: Path,
     family: str,
     playbook_id: str,
     *,
     stages: list[str] | None = None,
     include_params: bool = True,
+    include_metrics: bool = False,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    metadata = {
+    manifest = {
         "family": family,
         "id": playbook_id,
         "version": "1.0.0",
         "stages": stages or [family],
-        "accepted_inputs": ["close"],
+        "accepted_inputs": ["Close"],
         "result_schema": "playbook_result.v1",
     }
     if family == "indicators":
-        metadata["indicator_family"] = "ma"
+        manifest["indicator_family"] = "ma"
     params_source = "'params': {'window': 5}, " if include_params else ""
-    nb = nbformat.v4.new_notebook(
-        metadata={"aegis_playbook": metadata},
-        cells=[
-            nbformat.v4.new_code_cell(
-                "AEGIS_PLAYBOOK_RESULT = {"
-                "'variant_records': [{'variant_id': '"
-                + playbook_id
-                + "', "
-                + params_source
-                + "'metrics': {'total_return_pct': 1.5}}]}"
-            )
-        ],
+    if family == "strategies":
+        metrics_source = "'metrics': {'total_return_pct': 1.5}, " if include_metrics else ""
+        body = (
+            "def run(inputs):\n"
+            '    """Generate moving-average crossover candidates for central scoring."""\n'
+            "    close = inputs.data.feature('Close')\n"
+            "    average = close.rolling(3).mean()\n"
+            "    return {'variant_records': [{'variant_id': "
+            f"{playbook_id!r}, {params_source}"
+            f"{metrics_source}"
+            "'entries': (close > average).fillna(False), "
+            "'exits': (close < average).fillna(False)}]}\n"
+        )
+    else:
+        body = (
+            "def run(_inputs):\n"
+            '    """Return fixture variant params for playbook source tests."""\n'
+            "    return {'variant_records': [{'variant_id': "
+            f"{playbook_id!r}, {params_source}"
+            "}]}\n"
+        )
+    path.write_text(
+        "# %% playbook overview\n"
+        "# Integration fixture playbook selected by stable ID.\n"
+        "# Source: synthetic Close data supplied by run config.\n"
+        "\n"
+        "# %% define playbook metadata\n"
+        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
+        "PLAYBOOK_CALLABLE = 'run'\n"
+        "\n"
+        "# %% main compute\n" + body
     )
-    nbformat.write(nb, path)
 
 
-def _write_failing_notebook(path: Path, family: str, playbook_id: str) -> None:
+def _write_failing_playbook(path: Path, family: str, playbook_id: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    metadata = {
+    manifest = {
         "family": family,
         "id": playbook_id,
         "version": "1.0.0",
         "stages": [family],
-        "accepted_inputs": ["close"],
+        "accepted_inputs": ["Close"],
         "result_schema": "playbook_result.v1",
     }
-    nb = nbformat.v4.new_notebook(
-        metadata={"aegis_playbook": metadata},
-        cells=[nbformat.v4.new_code_cell("raise RuntimeError('boom token=secret')")],
+    path.write_text(
+        "# %% playbook overview\n"
+        "# Integration fixture playbook that fails during callable execution.\n"
+        "# Source: synthetic Close data supplied by run config.\n"
+        "\n"
+        "# %% define playbook metadata\n"
+        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
+        "PLAYBOOK_CALLABLE = 'run'\n"
+        "\n"
+        "# %% main compute\n"
+        "def run(_inputs):\n"
+        '    """Raise a deterministic fixture error for failure-path tests."""\n'
+        "    raise RuntimeError('boom token=secret')\n"
     )
-    nbformat.write(nb, path)

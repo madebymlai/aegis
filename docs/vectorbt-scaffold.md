@@ -6,7 +6,7 @@ This scaffold follows the VectorBT PRO docs around data classes, indicator pipel
 
 ```text
 data fetch/load
--> strategy/research sweep over playbooks or components (`aerd run`)
+-> strategy/research evidence over playbooks or fixed components (`aerd run`)
 -> ML model-plugin training (`aerd run --train`)
 -> VectorBT PRO portfolio evidence
 -> reports and leaderboards
@@ -24,7 +24,7 @@ data fetch/load
 - `validation.py`: evaluates train/test validation flows and keeps split mechanics out of orchestration.
 - `splits.py`: builds VectorBT purged K-fold validation splits.
 - `reports.py`: turns IS/OOS portfolio stats into a blunt survival verdict.
-- `strategy_runs.py`: playbook-backed and component-backed strategy-sweep orchestration.
+- `strategy_runs.py`: playbook-backed sweeps and fixed component-backed strategy orchestration.
 - `training.py` and `experiments.py`: ML model-plugin training orchestration.
 - `cli.py`: mode-aware `aerd` dispatcher.
 
@@ -39,13 +39,13 @@ aerd run <strategy-run-config>
 aerd run --train <config>
 ```
 
-Default `aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research sweep evidence. `aerd run --train` owns ML model-plugin training through the config's `train:` section; model-shaped configs passed to default `aerd run` fail with guidance to use `aerd run --train`.
+Default `aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research evidence. Playbooks may sweep candidates; components are fixed-param promoted implementations. `aerd run --train` owns ML model-plugin training through the config's `train:` section; model-shaped configs passed to default `aerd run` fail with guidance to use `aerd run --train`.
 
 The walkthrough is scaffold evidence only. It is not validated trading methodology, empirical edge, or investment advice.
 
 ## Config Contract
 
-YAML is a versioned public contract. Every config must declare `schema_version: 4`; canonical configs also declare `lane: run` or `lane: train`. The CLI command must agree with the lane (`aerd run` for strategy/research sweeps, `aerd run --train` for ML training), and static config validation runs before any run directory exists. Data-array contract failures discovered from selected components happen before provider data is loaded and mark the run failed with manifest evidence. This in-repo schema v4 contract is forward-first: older draft configs that used top-level `labels`, top-level `model`, deprecated run indicator refs, removed feature-map fields, or non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
+YAML is a versioned public contract. Every config must declare `schema_version: 4`; canonical configs also declare `lane: run` or `lane: train`. The CLI command must agree with the lane (`aerd run` for strategy/research evidence, `aerd run --train` for ML training), and static config validation runs before any run directory exists. Data-array contract failures discovered from selected components happen before provider data is loaded and mark the run failed with manifest evidence. This in-repo schema v4 contract is forward-first: older draft configs that used top-level `labels`, top-level `model`, deprecated run indicator refs, removed feature-map fields, or non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
 
 Validation is strict by default:
 
@@ -85,7 +85,7 @@ indicators:
     ids: [returns, ma, rsi]
 ```
 
-Indicator components own their default params, sweep grids, selected outputs, and model-feature transforms. Component callables receive a market-data bundle and request declared raw features with `data.feature("FeatureName")`, including `data.feature("Close")` for close-only indicators and `data.feature("High")` or `data.feature("Low")` for OHLCV-dependent indicators. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels. Cartesian products and constrained grids belong inside reviewed component code or playbooks, not in run/train YAML.
+Indicator components own fixed reviewed params, selected outputs, and model-feature transforms. Component callables receive a market-data bundle and request declared raw features with `data.feature("FeatureName")`, including `data.feature("Close")` for close-only indicators and `data.feature("High")` or `data.feature("Low")` for OHLCV-dependent indicators. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels. Cartesian products, constrained grids, and other sweeps belong in playbooks, not components or run/train YAML.
 
 Primitive features such as returns and rolling volatility stay local in schema v4, but they still produce the same lineage, feature mapping, invalid-value diagnostics, and artifact metadata as VectorBT-backed indicators. Reusable/domain transforms should graduate to a reviewed registry definition when they need first-class indicator identity or repeated use.
 
@@ -167,7 +167,7 @@ Public artifacts and metadata are redacted. `data.metadata` is written after dat
 
 Native VectorBT artifacts are private local artifacts by default, version-sensitive, and paired with portable metadata sidecars so manifest validation does not require loading pickles. Unsafe private native persistence fails the run closed after safe public metadata has been recorded.
 
-The canonical CLI is `aerd`. Use `aerd run <config>` for playbook-backed or component-backed strategy/research sweeps, and `aerd run --train <config>` for model-plugin training. Use `--json` for agent/CI automation; successful JSON is written to stdout, structured errors are written to stderr, and run manifests remain the detailed artifact inventory.
+The canonical CLI is `aerd`. Use `aerd run <config>` for playbook-backed sweeps or fixed component-backed strategy/research evidence, and `aerd run --train <config>` for model-plugin training. Use `--json` for agent/CI automation; successful JSON is written to stdout, structured errors are written to stderr, and run manifests remain the detailed artifact inventory.
 
 Both run modes require explicit config paths in v1. Local configs live flat under `research/configs/`; there is no local default experiment workflow and no mode inference from subdirectories.
 
@@ -189,7 +189,7 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 Promoted components live under `research/components/{labels,indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after lane validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/components/*_component_example.py`.
 
-Notebook playbooks live under `research/playbooks/{labels,indicators,strategies}/` and are selected by stable ID from notebook metadata, not by path. Indicator playbook IDs represent one indicator idea/family; the notebook owns its default parameters and sweeps, and a baseline may name exactly one component indicator ID. See `docs/playbooks.md` and `docs/examples/playbooks/*_playbook_example.ipynb`.
+Playbooks live under `research/playbooks/{labels,indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Indicator playbook IDs represent one indicator idea/family; the playbook owns its default parameters and sweeps, and a baseline may name exactly one component indicator ID. See `docs/playbooks.md` and `docs/examples/playbooks/*_playbook_example.py`.
 
 ## Validation Modes
 

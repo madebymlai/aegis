@@ -7,7 +7,12 @@ from research.aegis_research.run_leaderboard import build_run_leaderboard
 
 def test_build_run_leaderboard_ranks_top_10_with_counts() -> None:
     records = [
-        {"variant_id": f"v{i:02d}", "metrics": {"total_return_pct": float(i)}} for i in range(12)
+        {
+            "variant_id": f"v{i:02d}",
+            "metrics": {"total_return_pct": float(i)},
+            "metric_authority": "aegis",
+        }
+        for i in range(12)
     ]
     records.append({"variant_id": "failed", "error": {"code": "runtime", "message": "bad"}})
 
@@ -41,7 +46,9 @@ def test_build_run_leaderboard_records_source_and_baseline_delta_direction() -> 
                 "indicator_source": "playbook",
                 "indicator_id": "ma_explore",
                 "metrics": {"max_drawdown_pct": 0.1},
+                "metric_authority": "aegis",
                 "baseline_metrics": {"max_drawdown_pct": 0.2},
+                "baseline_metric_authority": "aegis",
                 "baseline_component_indicator_id": "baseline.ma",
             }
         ],
@@ -62,8 +69,16 @@ def test_build_run_leaderboard_records_source_and_baseline_delta_direction() -> 
 def test_baseline_delta_fallback_preserves_ascending_metric_direction() -> None:
     leaderboard = build_run_leaderboard(
         [
-            {"variant_id": "higher_drawdown", "metrics": {"max_drawdown_pct": 0.4}},
-            {"variant_id": "lower_drawdown", "metrics": {"max_drawdown_pct": 0.1}},
+            {
+                "variant_id": "higher_drawdown",
+                "metrics": {"max_drawdown_pct": 0.4},
+                "metric_authority": "aegis",
+            },
+            {
+                "variant_id": "lower_drawdown",
+                "metrics": {"max_drawdown_pct": 0.1},
+                "metric_authority": "aegis",
+            },
         ],
         metric="max_drawdown_pct",
         direction="asc",
@@ -74,3 +89,12 @@ def test_baseline_delta_fallback_preserves_ascending_metric_direction() -> None:
         "lower_drawdown",
         "higher_drawdown",
     ]
+
+
+def test_build_run_leaderboard_rejects_missing_metric_authority() -> None:
+    with pytest.raises(ValueError, match="metric authority"):
+        build_run_leaderboard(
+            [{"variant_id": "not_authoritative", "metrics": {"total_return_pct": 1.0}}],
+            metric="total_return_pct",
+            direction="desc",
+        )

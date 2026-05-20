@@ -33,7 +33,7 @@ class PlaybookSourceIdentity:
 
 
 @dataclass(frozen=True)
-class NotebookPlaybookManifest:
+class PlaybookManifest:
     family: PlaybookFamily
     id: str
     version: str
@@ -49,10 +49,11 @@ class NotebookPlaybookManifest:
 
 
 @dataclass(frozen=True)
-class NotebookPlaybookDefinition:
-    manifest: NotebookPlaybookManifest
+class PlaybookDefinition:
+    manifest: PlaybookManifest
     file_path: Path
     identity: PlaybookSourceIdentity
+    callable_name: str
 
     @property
     def family(self) -> PlaybookFamily:
@@ -61,3 +62,16 @@ class NotebookPlaybookDefinition:
     @property
     def id(self) -> str:
         return self.manifest.id
+
+    @property
+    def input_names(self) -> tuple[str, ...]:
+        return self.manifest.accepted_inputs
+
+    def load_callable(self) -> Any:
+        from research.aegis_research.playbook_registry.registry import load_playbook_callable
+
+        return load_playbook_callable(self)
+
+
+NotebookPlaybookManifest = PlaybookManifest
+NotebookPlaybookDefinition = PlaybookDefinition

@@ -59,13 +59,80 @@ def test_component_discovery_rejects_non_literal_metadata(tmp_path) -> None:
     path = root / "indicators" / "computed.py"
     path.parent.mkdir(parents=True)
     path.write_text(
+        "# %% component overview\n"
+        "# Fixture used to verify static manifest parsing rejects non-literals.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {'family': 'indicators', 'id': f'bad', 'version': '1'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
         "def run():\n"
+        '    """Return the indicator output."""\n'
         "    pass\n"
     )
 
     with pytest.raises(ComponentRegistryError, match="literal"):
+        discover_component_registry(root=root, repo_root=tmp_path)
+
+
+def test_component_discovery_rejects_bare_percent_cells(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    path = root / "indicators" / "bare_cell.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "# %%\n"
+        f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'bare.cell')!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return the indicator output."""\n'
+        "    pass\n"
+    )
+
+    with pytest.raises(ComponentRegistryError, match="include a purpose"):
+        discover_component_registry(root=root, repo_root=tmp_path)
+
+
+def test_component_discovery_requires_main_compute_cell(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    path = root / "indicators" / "no_main.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture without a main compute cell.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'no.main')!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "def run():\n"
+        '    """Return the indicator output."""\n'
+        "    pass\n"
+    )
+
+    with pytest.raises(ComponentRegistryError, match="# %% main cell"):
+        discover_component_registry(root=root, repo_root=tmp_path)
+
+
+def test_component_discovery_requires_callable_docstring(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    path = root / "indicators" / "missing_docstring.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture without a callable docstring.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'missing.docstring')!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        "    pass\n"
+    )
+
+    with pytest.raises(ComponentRegistryError, match="must have a docstring"):
         discover_component_registry(root=root, repo_root=tmp_path)
 
 
@@ -75,6 +142,11 @@ def test_component_discovery_does_not_execute_top_level_code(tmp_path) -> None:
     path = root / "indicators" / "side_effect.py"
     path.parent.mkdir(parents=True)
     path.write_text(
+        "# %% component overview\n"
+        "# Fixture used to verify registry discovery avoids top-level execution.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
         "from pathlib import Path\n"
         f"Path({str(side_effect)!r}).write_text('executed')\n"
         "COMPONENT_MANIFEST = {\n"
@@ -89,7 +161,9 @@ def test_component_discovery_does_not_execute_top_level_code(tmp_path) -> None:
         "    'supported_transforms': ['identity'],\n"
         "}\n"
         "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
         "def run():\n"
+        '    """Return the indicator output."""\n'
         "    pass\n"
     )
 
@@ -152,11 +226,18 @@ def test_component_callable_module_is_registered_while_loading(tmp_path) -> None
     path = root / "indicators" / "registered.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
+        "# %% component overview\n"
+        "# Fixture used to verify component modules are registered during import.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'registered')!r}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "import sys\n"
         "MODULE_REGISTERED = __name__ in sys.modules\n"
+        "\n# %% main compute\n"
         "def run():\n"
+        '    """Report whether the module is registered while loading."""\n'
         "    return MODULE_REGISTERED\n"
     )
 
@@ -170,9 +251,16 @@ def _write_component(path, family: str, component_id: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest = _manifest_for(family, component_id)
     path.write_text(
+        "# %% component overview\n"
+        "# Generic registry fixture component.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
         "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
         "def run():\n"
+        '    """Return a deterministic fixture value."""\n'
         f"    return {component_id!r}\n"
     )
 

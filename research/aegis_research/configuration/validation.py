@@ -109,7 +109,7 @@ def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
     common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir"}
     if lane == "train":
         return common | {"indicators", "train"}
-    return common | {"indicators", "ranking", "strategy", "train"}
+    return common | {"indicators", "ranking", "strategy"}
 
 
 def _validate_strategy_run_lane(
@@ -235,7 +235,7 @@ def _validate_training_fields_absent(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
 ) -> None:
-    for key in ("model", "labels", "label", "split", "signals"):
+    for key in ("train", "model", "labels", "label", "split", "signals"):
         if key in raw:
             issues.append(
                 ConfigValidationIssue(
@@ -514,6 +514,20 @@ def _validate_output_dir(raw: dict[str, Any], issues: list[ConfigValidationIssue
         issues.append(
             ConfigValidationIssue("output_dir", "must be a relative path under the project root")
         )
+        return
+    current = Path.cwd()
+    for part in path.parts:
+        current = current / part
+        if current.is_symlink():
+            issues.append(
+                ConfigValidationIssue("output_dir", "must not contain symlinked path components")
+            )
+            return
+    project_root = Path.cwd().resolve(strict=False)
+    resolved = (Path.cwd() / path).resolve(strict=False)
+    if resolved != project_root and project_root not in resolved.parents:
+        issues.append(ConfigValidationIssue("output_dir", "must resolve under the project root"))
+        return
 
 
 def _validate_data(

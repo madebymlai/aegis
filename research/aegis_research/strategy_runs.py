@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -36,8 +36,8 @@ from research.aegis_research.playbook_registry import (
     PlaybookSelection,
     discover_playbook_registry,
 )
-from research.aegis_research.playbook_registry.registry import execute_notebook_playbook
 from research.aegis_research.portfolios import simulate_portfolio
+from research.aegis_research.provenance.experiment_artifacts import ExperimentArtifactWriter
 from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
 from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.provenance.run_store import RunStore
@@ -45,6 +45,7 @@ from research.aegis_research.reports import portfolio_metrics
 from research.aegis_research.run_leaderboard import build_run_leaderboard
 
 STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v2"
+METRIC_AUTHORITY_AEGIS = "aegis"
 STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
     "costs",
     "direction",
@@ -57,10 +58,16 @@ STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
     "sizing",
     "slippage",
 }
+PLAYBOOK_METRIC_AUTHORITY_KEYS = {
+    "baseline_metric_authority",
+    "baseline_metrics",
+    "metric_authority",
+    "metrics",
+}
 
 
 @dataclass(frozen=True)
-class StrategyInputBundle:
+class StrategyInputs:
     data: MarketDataBundle
     indicators: dict[str, Any]
     metadata: dict[str, Any]
@@ -87,10 +94,10 @@ def run_strategy_sweep(
     config = resolved_config.config
     if config.lane != "run":
         raise ValueError("run_strategy_sweep requires a run lane config")
-    array_contract = _strategy_data_array_contract(config, component_registry)
     playbooks = playbook_registry or discover_playbook_registry(
         component_registry=component_registry
     )
+    array_contract = _strategy_data_array_contract(config, component_registry, playbooks)
 
     recorder = RunStore(config.output_dir).start_run(
         run_label=config.name,
@@ -118,6 +125,7 @@ def run_strategy_sweep(
             required_features=array_contract.required_arrays,
         )
         data_result = with_data_array_contract_metadata(data_result, array_contract)
+        ExperimentArtifactWriter(recorder).write_data_metadata_artifact(data_result)
         data_result.assert_usable()
         data_bundle = market_data_bundle(data_result)
         open_prices = data_bundle.feature("Open")
@@ -153,12 +161,17 @@ def run_strategy_sweep(
             "evidence_type": "strategy_sweep",
             "strategy": strategy_evidence,
             "indicators": indicator_evidence,
-            "data": data_array_evidence_payload(data_result, array_contract),
+            "data": _strategy_data_evidence_payload(
+                data_result,
+                array_contract,
+                strategy_source=config.strategy.source,
+            ),
             "leaderboard": leaderboard,
             "signal_diagnostics": signal_diagnostics,
             "portfolio_diagnostics": portfolio_diagnostics,
         }
         _write_strategy_artifact(recorder, payload)
+        _assert_leaderboard_complete(leaderboard)
         recorder.mark_run_completed()
         return {
             **_run_refs(recorder),
@@ -224,7 +237,17 @@ def _resolve_indicator_refs(
                 raise ValueError(f"duplicate indicator playbook ref: {playbook_id}")
             seen_playbook_ids.add(playbook_id)
             definition = playbook_registry.get(PlaybookSelection("indicators", playbook_id))
-            result = execute_notebook_playbook(definition)
+            result = definition.load_callable()(data)
+            _reject_playbook_metric_records(result, source_id=definition.id)
+            _playbook_variant_records(
+                result,
+                source_field="indicator_source",
+                id_field="indicator_id",
+                source="playbook",
+                source_id=definition.id,
+                source_hash=definition.identity.source_hash,
+                baseline_component_indicator_id=definition.manifest.baseline_component_indicator_id,
+            )
             evidence.append(
                 {
                     "source": "playbook",
@@ -235,46 +258,51 @@ def _resolve_indicator_refs(
                     "baseline_component_indicator_id": definition.manifest.baseline_component_indicator_id,
                 }
             )
-            variant_records.extend(
-                _playbook_variant_records(
-                    result,
-                    source_field="indicator_source",
-                    id_field="indicator_id",
-                    source="playbook",
-                    source_id=definition.id,
-                    source_hash=definition.identity.source_hash,
-                    baseline_component_indicator_id=definition.manifest.baseline_component_indicator_id,
-                )
-            )
     return indicators, evidence, variant_records
 
 
 def _strategy_data_array_contract(
     config: Any,
     component_registry: FrozenComponentRegistry,
+    playbook_registry: FrozenPlaybookRegistry,
 ) -> DataArrayContract:
     return build_data_array_contract(
         configured_arrays=config.data.effective_arrays,
-        component_required_arrays=_strategy_component_required_arrays(config, component_registry),
+        component_required_arrays=_strategy_required_arrays(
+            config,
+            component_registry,
+            playbook_registry,
+        ),
         pipeline_required_arrays=("Close", "Open"),
     )
 
 
-def _strategy_component_required_arrays(
+def _strategy_required_arrays(
     config: Any,
     component_registry: FrozenComponentRegistry,
+    playbook_registry: FrozenPlaybookRegistry,
 ) -> tuple[str, ...]:
     required: list[tuple[str, ...]] = []
     if config.strategy.source == "component":
         required.append(
             component_registry.get(ComponentSelection("strategies", config.strategy.id)).input_names
         )
+    if config.strategy.source == "playbook":
+        required.append(
+            playbook_registry.get(PlaybookSelection("strategies", config.strategy.id)).input_names
+        )
     for ref in config.indicators:
-        if ref.source != "component":
+        if ref.source == "component":
+            for component_id in ref.expanded_ids(component_registry.ids("indicators")):
+                required.append(
+                    component_registry.get(
+                        ComponentSelection("indicators", component_id)
+                    ).input_names
+                )
             continue
-        for component_id in ref.expanded_ids(component_registry.ids("indicators")):
+        for playbook_id in ref.expanded_ids(playbook_registry.ids("indicators")):
             required.append(
-                component_registry.get(ComponentSelection("indicators", component_id)).input_names
+                playbook_registry.get(PlaybookSelection("indicators", playbook_id)).input_names
             )
     return merge_data_arrays(*required)
 
@@ -293,29 +321,43 @@ def _resolve_strategy_ref(
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     if ref.source == "playbook":
         definition = playbook_registry.get(PlaybookSelection("strategies", ref.id))
-        result = execute_notebook_playbook(definition)
+        inputs = StrategyInputs(
+            data=data,
+            indicators=indicators,
+            metadata={
+                "strategy_id": ref.id,
+                "playbook_source_hash": definition.identity.source_hash,
+                "indicator_ids": [item["id"] for item in indicator_evidence],
+            },
+        )
+        records, signal_diagnostics, portfolio_diagnostics = _score_strategy_playbook_candidates(
+            definition.load_callable()(inputs),
+            inputs,
+            data=data,
+            open_prices=open_prices,
+            portfolio_config=portfolio_config,
+            report_config=report_config,
+            source_id=definition.id,
+            source_hash=definition.identity.source_hash,
+            indicator_evidence=indicator_evidence,
+        )
         return (
             {
                 "source": "playbook",
                 "id": definition.id,
                 "version": definition.manifest.version,
                 "source_hash": definition.identity.source_hash,
+                "consumes_runner_data": True,
+                "data_binding": "strategy_inputs",
             },
-            _playbook_variant_records(
-                result,
-                source_field="strategy_source",
-                id_field="strategy_id",
-                source="playbook",
-                source_id=definition.id,
-                source_hash=definition.identity.source_hash,
-            ),
-            {},
-            {},
+            records,
+            signal_diagnostics,
+            portfolio_diagnostics,
         )
 
     definition = component_registry.get(ComponentSelection("strategies", ref.id))
     strategy_callable = definition.load_callable()
-    bundle = StrategyInputBundle(
+    inputs = StrategyInputs(
         data=data,
         indicators=indicators,
         metadata={
@@ -324,19 +366,21 @@ def _resolve_strategy_ref(
             "indicator_ids": [item["id"] for item in indicator_evidence],
         },
     )
-    signal_result = validate_strategy_output(strategy_callable(bundle), bundle)
-    signal_config = SignalConfig()
-    close = data.feature("Close")
-    portfolio = simulate_portfolio(
-        close,
-        signal_result.entries,
-        signal_result.exits,
-        portfolio_config,
-        signal_config,
+    record, signal_diagnostics, portfolio_diagnostics = _score_strategy_signals(
+        validate_strategy_output(strategy_callable(inputs), inputs),
+        data=data,
         open_prices=open_prices,
-        market_index=close.index,
+        portfolio_config=portfolio_config,
+        report_config=report_config,
+        variant_id=ref.id,
+        params={},
+        source_fields={
+            "strategy_source": "component",
+            "strategy_id": ref.id,
+            "component_source_hash": definition.identity.source_hash,
+            "indicators": indicator_evidence,
+        },
     )
-    metrics = portfolio_metrics(portfolio.portfolio, report_config)
     return (
         {
             "source": "component",
@@ -344,20 +388,159 @@ def _resolve_strategy_ref(
             "version": definition.manifest.version,
             "source_hash": definition.identity.source_hash,
         },
-        [
-            {
-                "variant_id": ref.id,
-                "strategy_source": "component",
-                "strategy_id": ref.id,
-                "component_source_hash": definition.identity.source_hash,
+        [record],
+        signal_diagnostics,
+        portfolio_diagnostics,
+    )
+
+
+def _score_strategy_playbook_candidates(
+    result: Any,
+    inputs: StrategyInputs,
+    *,
+    data: MarketDataBundle,
+    open_prices: pd.DataFrame,
+    portfolio_config: Any,
+    report_config: Any,
+    source_id: str,
+    source_hash: str,
+    indicator_evidence: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    candidates = _strategy_playbook_candidate_records(result, source_id=source_id)
+    records: list[dict[str, Any]] = []
+    signal_diagnostics: dict[str, Any] = {
+        "schema_version": "strategy_signal_candidate_diagnostics.v1",
+        "candidates": {},
+    }
+    portfolio_diagnostics: dict[str, Any] = {
+        "schema_version": "strategy_portfolio_candidate_diagnostics.v1",
+        "candidates": {},
+    }
+    for candidate in candidates:
+        variant_id = str(candidate["variant_id"])
+        record, signal_diagnostic, portfolio_diagnostic = _score_strategy_signals(
+            validate_strategy_output(candidate, inputs),
+            data=data,
+            open_prices=open_prices,
+            portfolio_config=portfolio_config,
+            report_config=report_config,
+            variant_id=variant_id,
+            params=candidate["params"],
+            source_fields={
+                "strategy_source": "playbook",
+                "strategy_id": source_id,
+                "source_hash": source_hash,
                 "indicators": indicator_evidence,
-                "metrics": metrics,
-                "portfolio": to_builtin(asdict(portfolio_config)),
-            }
-        ],
+            },
+        )
+        records.append(record)
+        signal_diagnostics["candidates"][variant_id] = signal_diagnostic
+        portfolio_diagnostics["candidates"][variant_id] = portfolio_diagnostic
+    return records, signal_diagnostics, portfolio_diagnostics
+
+
+def _score_strategy_signals(
+    signal_result: StrategySignalResult,
+    *,
+    data: MarketDataBundle,
+    open_prices: pd.DataFrame,
+    portfolio_config: Any,
+    report_config: Any,
+    variant_id: str,
+    params: Mapping[str, Any],
+    source_fields: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    close = data.feature("Close")
+    portfolio = simulate_portfolio(
+        close,
+        signal_result.entries,
+        signal_result.exits,
+        portfolio_config,
+        SignalConfig(),
+        open_prices=open_prices,
+        market_index=close.index,
+    )
+    return (
+        {
+            "variant_id": variant_id,
+            **source_fields,
+            "params": to_builtin(dict(params)),
+            "metrics": portfolio_metrics(portfolio.portfolio, report_config),
+            "metric_authority": METRIC_AUTHORITY_AEGIS,
+            "portfolio": to_builtin(asdict(portfolio_config)),
+        },
         signal_result.diagnostics,
         portfolio.diagnostics,
     )
+
+
+def _strategy_playbook_candidate_records(
+    result: Any,
+    *,
+    source_id: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        raise TypeError(f"playbook {source_id!r} result must be a mapping")
+    variants = result.get("variant_records")
+    if not isinstance(variants, list):
+        raise TypeError(f"playbook {source_id!r} result variant_records must be a list")
+    if not variants:
+        raise ValueError(f"playbook {source_id!r} must emit at least one executable candidate")
+    records: list[dict[str, Any]] = []
+    seen_variant_ids: set[str] = set()
+    forbidden_fields = STRATEGY_OUTPUT_FORBIDDEN_KEYS | PLAYBOOK_METRIC_AUTHORITY_KEYS
+    for index, item in enumerate(variants):
+        if not isinstance(item, dict):
+            raise TypeError(
+                f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
+            )
+        record = dict(item)
+        variant_id = record.get("variant_id") or record.get("candidate_id")
+        if not isinstance(variant_id, str) or not variant_id:
+            raise TypeError(
+                f"playbook {source_id!r} result variant_records[{index}] must include "
+                "a non-empty variant_id"
+            )
+        if variant_id in seen_variant_ids:
+            raise ValueError(f"playbook {source_id!r} emitted duplicate candidate {variant_id!r}")
+        seen_variant_ids.add(variant_id)
+        if not isinstance(record.get("params"), dict):
+            raise TypeError(
+                f"playbook {source_id!r} result variant_records[{index}].params must be "
+                "a mapping of swept parameter names to values"
+            )
+        forbidden = sorted(set(record) & forbidden_fields)
+        if forbidden:
+            raise ValueError(
+                f"playbook {source_id!r} result variant_records[{index}] must not contain "
+                f"metric or portfolio fields: {forbidden}"
+            )
+        if "entries" not in record or "exits" not in record:
+            raise ValueError(
+                f"playbook {source_id!r} result variant_records[{index}] must include entries and exits"
+            )
+        record["variant_id"] = variant_id
+        records.append(record)
+    return records
+
+
+def _reject_playbook_metric_records(result: Any, *, source_id: str) -> None:
+    if not isinstance(result, dict):
+        raise TypeError(f"playbook {source_id!r} result must be a mapping")
+    variants = result.get("variant_records")
+    if not isinstance(variants, list):
+        raise TypeError(f"playbook {source_id!r} result variant_records must be a list")
+    for index, item in enumerate(variants):
+        if not isinstance(item, dict):
+            raise TypeError(
+                f"playbook {source_id!r} result variant_records[{index}] must be a mapping"
+            )
+        forbidden = sorted(set(item) & PLAYBOOK_METRIC_AUTHORITY_KEYS)
+        if forbidden:
+            raise ValueError(
+                f"playbook {source_id!r} result variant_records[{index}] must not contain "
+                f"leaderboard metric fields: {forbidden}"
+            )
 
 
 def _playbook_variant_records(
@@ -411,6 +594,40 @@ def _validate_indicator_output(output: Any, close: pd.DataFrame, component_id: s
 def _assert_indicator_frame(frame: pd.DataFrame, close: pd.DataFrame, component_id: str) -> None:
     if not frame.index.equals(close.index):
         raise ValueError(f"indicator component {component_id!r} has misaligned timestamps")
+    if list(map(str, frame.columns)) != list(map(str, close.columns)):
+        raise ValueError(f"indicator component {component_id!r} has misaligned symbols")
+
+
+def _strategy_data_evidence_payload(
+    data_result: Any,
+    array_contract: DataArrayContract,
+    *,
+    strategy_source: str,
+) -> dict[str, Any]:
+    payload = data_array_evidence_payload(data_result, array_contract)
+    if strategy_source == "playbook":
+        payload |= {
+            "strategy_consumed_runner_data": True,
+            "strategy_data_binding": "strategy_inputs",
+        }
+    else:
+        payload |= {
+            "strategy_consumed_runner_data": True,
+            "strategy_data_binding": "runner_data_bundle",
+        }
+    return payload
+
+
+def _assert_leaderboard_complete(leaderboard: dict[str, Any]) -> None:
+    summary = leaderboard.get("summary", {})
+    failed = int(summary.get("failed", 0))
+    excluded = int(summary.get("excluded", 0))
+    succeeded = int(summary.get("succeeded", 0))
+    if failed or excluded or not succeeded:
+        raise RuntimeError(
+            "strategy sweep did not produce a complete leaderboard: "
+            f"succeeded={succeeded}, failed={failed}, excluded={excluded}"
+        )
 
 
 def _run_refs(recorder) -> dict[str, Any]:
@@ -424,7 +641,7 @@ def _run_refs(recorder) -> dict[str, Any]:
     }
 
 
-def validate_strategy_output(output: Any, bundle: StrategyInputBundle) -> StrategySignalResult:
+def validate_strategy_output(output: Any, inputs: StrategyInputs) -> StrategySignalResult:
     if not isinstance(output, dict):
         raise TypeError("strategy output must be a mapping")
     forbidden = sorted(set(output) & STRATEGY_OUTPUT_FORBIDDEN_KEYS)
@@ -432,7 +649,7 @@ def validate_strategy_output(output: Any, bundle: StrategyInputBundle) -> Strate
         raise ValueError(f"strategy output must not contain portfolio fields: {forbidden}")
     if "entries" not in output or "exits" not in output:
         raise ValueError("strategy output must include entries and exits")
-    close = bundle.data.feature("Close")
+    close = inputs.data.feature("Close")
     entries = _signal_frame(output["entries"], close, "entries")
     exits = _signal_frame(output["exits"], close, "exits")
     diagnostics = {

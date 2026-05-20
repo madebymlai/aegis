@@ -23,6 +23,9 @@ from research.aegis_research.configuration.schema import (
 
 COMPONENT_MANIFEST_NAME = "COMPONENT_MANIFEST"
 COMPONENT_CALLABLE_NAME = "COMPONENT_CALLABLE"
+COMPONENT_PERCENT_CELL_MARKER = "# %%"
+COMPONENT_PERCENT_CELL_RE = re.compile(r"^# %%.*$", re.MULTILINE)
+COMPONENT_MAIN_CELL_RE = re.compile(r"^# %%\s+main\b", re.MULTILINE)
 COMPONENT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 LABEL_TARGET_KINDS = {"binary_classification", "continuous", "regime", "sparse_event"}
 STRATEGY_SIGNAL_OUTPUTS = {"entries", "exits"}
@@ -82,6 +85,13 @@ def build_manifest(
 
 
 def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], str]:
+    percent_cell_markers = COMPONENT_PERCENT_CELL_RE.findall(source)
+    if not percent_cell_markers:
+        raise ComponentRegistryError(f"{path}: component files must use # %% percent cells")
+    if any(marker.strip() == COMPONENT_PERCENT_CELL_MARKER for marker in percent_cell_markers):
+        raise ComponentRegistryError(f"{path}: component percent cells must include a purpose")
+    if COMPONENT_MAIN_CELL_RE.search(source) is None:
+        raise ComponentRegistryError(f"{path}: component files must include a # %% main cell")
     try:
         tree = ast.parse(source, filename=str(path))
     except SyntaxError as error:
@@ -89,16 +99,19 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], s
 
     manifest: Any = None
     callable_name: Any = None
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     for node in tree.body:
-        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == callable_name:
+            callable_node = node
             continue
-        target = node.targets[0]
-        if not isinstance(target, ast.Name):
-            continue
-        if target.id == COMPONENT_MANIFEST_NAME:
-            manifest = _literal_value(path, COMPONENT_MANIFEST_NAME, node.value)
-        elif target.id == COMPONENT_CALLABLE_NAME:
-            callable_name = _literal_value(path, COMPONENT_CALLABLE_NAME, node.value)
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id == COMPONENT_MANIFEST_NAME:
+                manifest = _literal_value(path, COMPONENT_MANIFEST_NAME, node.value)
+            elif target.id == COMPONENT_CALLABLE_NAME:
+                callable_name = _literal_value(path, COMPONENT_CALLABLE_NAME, node.value)
 
     if manifest is None:
         raise ComponentRegistryError(f"{path}: missing {COMPONENT_MANIFEST_NAME}")
@@ -108,6 +121,20 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], s
         raise ComponentRegistryError(f"{path}: {COMPONENT_CALLABLE_NAME} must be a literal string")
     if not isinstance(manifest, dict):
         raise ComponentRegistryError(f"{path}: {COMPONENT_MANIFEST_NAME} must be a literal mapping")
+    if callable_node is None:
+        for node in tree.body:
+            if (
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                and node.name == callable_name
+            ):
+                callable_node = node
+                break
+    if callable_node is None:
+        raise ComponentRegistryError(f"{path}: missing callable function {callable_name!r}")
+    if not ast.get_docstring(callable_node):
+        raise ComponentRegistryError(
+            f"{path}: component callable {callable_name!r} must have a docstring"
+        )
     return manifest, callable_name
 
 

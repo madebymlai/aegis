@@ -274,7 +274,7 @@ flowchart TB
 - Scope duplicate-ID checks by component family, and persist artifact identity as `{family, id}` so label, indicator, and strategy IDs cannot be confused.
 - Add root `.gitignore` rules so everything under `research/components/{labels,indicators,strategies}/` is ignored by default except each directory's tracked `README.md` placeholder.
 - Write component README placeholders using the same warning pattern as local config READMEs: tracked local component files are intentionally absent, the README points to the relevant `docs/examples/*_component_example.py`, local component files are ignored by git, ignored files are not secret management, and force-adds should be intentionally reviewed.
-- Define only the shared strategy component declaration shell here; U6 owns the concrete `StrategyInputBundle`, signal-only output contract, and portfolio-boundary validation where the strategy-run consumer exists.
+- Define only the shared strategy component declaration shell here; U6 owns the concrete `StrategyInputs`, signal-only output contract, and portfolio-boundary validation where the strategy-run consumer exists.
 - Record run-mode source identity during registry selection without consulting Git tracked/dirty status: component family, component ID, manifest fingerprint, and implementation source hash.
 
 **Execution note:** Implement registry behavior test-first because duplicate IDs and source fingerprints are reproducibility boundaries.
@@ -562,7 +562,7 @@ flowchart TB
 - Test: `tests/integration/research/aegis_research/test_provenance_manifest.py`
 
 **Approach:**
-- Define the v1 component strategy callable boundary around `StrategyInputBundle`: market data fields available to strategies, raw indicator outputs, optional transformed indicator-derived model features only when declared, parameter-combination identity, and index/symbol alignment metadata.
+- Define the v1 component strategy callable boundary around `StrategyInputs`: market data fields available to strategies, raw indicator outputs, optional transformed indicator-derived model features only when declared, parameter-combination identity, and index/symbol alignment metadata.
 - Resolve the configured strategy source ref explicitly: `source: component` loads a strategy from `research/components/strategies/` by ID, while `source: playbook` loads a strategy notebook declaration from `research/playbooks/strategies/` by ID.
 - Treat indicator inputs for strategy experimentation as a combined run selection in v1: configs may include playbook indicator refs, explicit component indicator ID lists, and `all`/empty-string component selectors in the same run. Metrics must record whether each indicator result was computed by a playbook or a component; baseline evidence is emitted by playbooks that declare exactly one component indicator baseline.
 - Define the v1 strategy output boundary as aligned boolean/enum entries/exits or equivalent signal states over the same timestamp/symbol panel as market data; outputs must not include size, cost, slippage, direction, execution timing, or portfolio construction fields.
@@ -741,7 +741,7 @@ flowchart TB
 | Component autodiscovery becomes arbitrary code loading | Medium | High | Use non-executing manifest discovery from fixed package-owned and repo-controlled roots only; configs cannot provide paths/imports, and callable imports occur only after validation. |
 | Playbook-backed exploration is confused with promoted-component validation | Medium | Medium | Record strategy and indicator source kinds in run artifacts and leaderboard rows. |
 | Artifact paths escape approved roots | Low | High | Validate final, staging, and backup paths against approved roots; reject absolute paths, traversal, symlink escapes, and cross-root promotion. |
-| Strategy components smuggle portfolio assumptions | Medium | High | Validate manifests/config/output schemas, enforce `StrategyInputBundle` and signal-only outputs, record signal diagnostics, and test malicious timing/sizing/direction fixtures. |
+| Strategy components smuggle portfolio assumptions | Medium | High | Validate manifests/config/output schemas, enforce `StrategyInputs` and signal-only outputs, record signal diagnostics, and test malicious timing/sizing/direction fixtures. |
 | Sweep variants explode memory or runtime | Medium | Medium | Add sweep-size validation, variant counts, failed-variant evidence, and reuse VectorBT grid guidance. |
 | Failed-variant evidence or metrics artifacts become too large or leak private data | Medium | Medium | Cap public artifact bytes, group failures, store representative sanitized examples, apply redaction to diagnostics/stderr, and emit truncation evidence. |
 | Ranking metric semantics are ambiguous | Medium | Medium | Use an allowlist from the portfolio metric catalog with explicit direction, availability, tie, and baseline-delta handling. |

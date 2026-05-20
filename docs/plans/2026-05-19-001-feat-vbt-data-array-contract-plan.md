@@ -377,7 +377,7 @@ The effective array set is expanded before validation and is what data loading a
 - **State lifecycle risks:** Runs currently persist manifests early; failures after preflight should still mark the run failed and redact diagnostics as existing lifecycle code does.
 - **API surface parity:** `aerd run`, `aerd run --train`, direct `run_experiment` callers, component examples, and docs must all use the same `data.arrays` semantics.
 - **Integration coverage:** Unit tests alone will not prove the contract; CLI and e2e notebook tests are needed to show config, registry, data loading, and artifacts agree.
-- **Unchanged invariants:** YAML remains non-executable, components own params/sweeps, model plugin params remain separate, and VBT native data remains the source-of-truth market-data object.
+- **Unchanged invariants:** YAML remains non-executable, components own fixed params, playbooks own sweeps, model plugin params remain separate, and VBT native data remains the source-of-truth market-data object.
 
 ---
 

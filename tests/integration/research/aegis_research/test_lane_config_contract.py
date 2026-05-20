@@ -161,6 +161,25 @@ def test_strategy_run_rejects_model_training_config_with_train_guidance(tmp_path
     assert "aerd run --train" in str(error.value)
 
 
+def test_strategy_run_rejects_top_level_train_block(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(
+        _run_config(),
+        {
+            "train": {
+                "label": {"source": "component", "id": "demo.label"},
+                "model": {"source": "plugin", "id": "tests.sklearn_logistic"},
+            }
+        },
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert "train" in str(error.value)
+    assert "aerd run --train" in str(error.value)
+
+
 def test_run_indicator_selection_rejects_config_params(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     raw = _merge(
@@ -220,6 +239,24 @@ def test_lane_csv_source_rejects_non_project_relative_path(
 
     assert "data.path" in str(error.value)
     assert "relative path" in str(error.value)
+
+
+def test_lane_output_dir_rejects_symlink_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    registry = _component_registry(tmp_path)
+    outside = tmp_path / "outside-runs"
+    outside.mkdir()
+    (tmp_path / "runs").symlink_to(outside, target_is_directory=True)
+    raw = _merge(_run_config(), {"output_dir": "runs"})
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert "output_dir" in str(error.value)
+    assert "symlink" in str(error.value)
 
 
 def test_run_lane_accepts_playbook_and_component_indicator_sources_together(
@@ -320,7 +357,17 @@ def _write_component(path: Path, family: str, component_id: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest = _manifest_for(family, component_id)
     path.write_text(
-        f"COMPONENT_MANIFEST = {manifest!r}\nCOMPONENT_CALLABLE = 'run'\ndef run():\n    pass\n"
+        "# %% component overview\n"
+        "# Lane-config fixture component used only for registry validation.\n"
+        "# Source: static metadata; callable execution is not part of these tests.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {manifest!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return no output because lane-config tests only validate selection."""\n'
+        "    pass\n"
     )
 
 

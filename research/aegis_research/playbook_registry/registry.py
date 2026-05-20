@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import ast
 import hashlib
+import importlib.util
 import json
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
-
-import nbformat
-from nbclient import NotebookClient
 
 from research.aegis_research.component_registry import ComponentSelection, FrozenComponentRegistry
 from research.aegis_research.component_registry.contracts import ComponentRegistryError
@@ -17,27 +17,28 @@ from research.aegis_research.component_registry.manifests import COMPONENT_ID_RE
 from research.aegis_research.playbook_registry.contracts import (
     PLAYBOOK_FAMILIES,
     PLAYBOOK_STAGES,
-    NotebookPlaybookDefinition,
-    NotebookPlaybookManifest,
+    PlaybookDefinition,
     PlaybookFamily,
+    PlaybookManifest,
     PlaybookRegistryError,
     PlaybookSelection,
     PlaybookSourceIdentity,
 )
 
 DEFAULT_PLAYBOOK_ROOT = Path("research/playbooks")
-PLAYBOOK_METADATA_KEY = "aegis_playbook"
+PLAYBOOK_MANIFEST_NAME = "PLAYBOOK_MANIFEST"
+PLAYBOOK_CALLABLE_NAME = "PLAYBOOK_CALLABLE"
 
 
 @dataclass(frozen=True)
 class FrozenPlaybookRegistry:
-    definitions: Mapping[PlaybookFamily, Mapping[str, NotebookPlaybookDefinition]]
+    definitions: Mapping[PlaybookFamily, Mapping[str, PlaybookDefinition]]
     fingerprint: str
 
     def ids(self, family: PlaybookFamily) -> tuple[str, ...]:
         return tuple(self.definitions.get(family, {}))
 
-    def get(self, selection: PlaybookSelection) -> NotebookPlaybookDefinition:
+    def get(self, selection: PlaybookSelection) -> PlaybookDefinition:
         try:
             return self.definitions[selection.family][selection.id]
         except KeyError as error:
@@ -54,7 +55,7 @@ def discover_playbook_registry(
 ) -> FrozenPlaybookRegistry:
     repo_root_path = Path.cwd() if repo_root is None else Path(repo_root)
     root_path = _resolve_root(Path(root), repo_root=repo_root_path)
-    definitions: dict[PlaybookFamily, dict[str, NotebookPlaybookDefinition]] = {
+    definitions: dict[PlaybookFamily, dict[str, PlaybookDefinition]] = {
         family: {} for family in PLAYBOOK_FAMILIES
     }
     if not root_path.exists():
@@ -67,9 +68,9 @@ def discover_playbook_registry(
         family_root = root_path / family
         if not family_root.exists():
             continue
-        for notebook_path in _playbook_files(family_root, root_path):
-            definition = _parse_notebook_playbook(
-                notebook_path,
+        for playbook_path in _playbook_files(family_root, root_path):
+            definition = _parse_playbook(
+                playbook_path,
                 family=family,
                 repo_root=repo_root_path,
                 component_registry=component_registry,
@@ -81,49 +82,62 @@ def discover_playbook_registry(
     return _freeze(definitions)
 
 
-def execute_notebook_playbook(
-    definition: NotebookPlaybookDefinition,
-    *,
-    timeout: int = 60,
-) -> dict[str, Any]:
-    notebook = nbformat.read(definition.file_path, as_version=4)
-    capture = nbformat.v4.new_code_cell(
-        "import json\n"
-        "print('AEGIS_PLAYBOOK_RESULT_JSON=' + json.dumps(AEGIS_PLAYBOOK_RESULT, sort_keys=True))"
-    )
-    notebook.cells = [*notebook.cells, capture]
-    client = NotebookClient(notebook, timeout=timeout, kernel_name="python3")
-    executed = client.execute()
-    outputs = executed.cells[-1].get("outputs", [])
-    for output in outputs:
-        text = output.get("text")
-        if not isinstance(text, str):
-            continue
-        for line in text.splitlines():
-            if line.startswith("AEGIS_PLAYBOOK_RESULT_JSON="):
-                result = json.loads(line.removeprefix("AEGIS_PLAYBOOK_RESULT_JSON="))
-                if not isinstance(result, dict):
-                    raise PlaybookRegistryError("playbook result must be a mapping")
-                return result
-    raise PlaybookRegistryError("playbook did not emit AEGIS_PLAYBOOK_RESULT")
+def load_playbook_callable(definition: PlaybookDefinition) -> Any:
+    module_name = (
+        "research.aegis_research.playbook_registry.loaded."
+        f"{definition.family}.{definition.id}.{definition.identity.source_hash[:12]}"
+    ).replace("-", "_")
+    spec = importlib.util.spec_from_file_location(module_name, definition.file_path)
+    if spec is None or spec.loader is None:
+        raise PlaybookRegistryError(f"could not import playbook file: {definition.file_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    try:
+        playbook_callable = getattr(module, definition.callable_name)
+    except AttributeError as error:
+        raise PlaybookRegistryError(
+            f"playbook {definition.family}/{definition.id} missing callable {definition.callable_name!r}"
+        ) from error
+    if not callable(playbook_callable):
+        raise PlaybookRegistryError(
+            f"playbook {definition.family}/{definition.id} callable {definition.callable_name!r} is not callable"
+        )
+    return playbook_callable
 
 
-def _parse_notebook_playbook(
+def _parse_playbook(
     path: Path,
     *,
     family: PlaybookFamily,
     repo_root: Path,
     component_registry: FrozenComponentRegistry | None,
-) -> NotebookPlaybookDefinition:
-    try:
-        source_bytes = path.read_bytes()
-        notebook = nbformat.reads(source_bytes.decode(), as_version=4)
-    except Exception as error:
-        raise PlaybookRegistryError(f"{path}: invalid notebook") from error
-    metadata = notebook.metadata.get(PLAYBOOK_METADATA_KEY)
-    if not isinstance(metadata, dict):
-        raise PlaybookRegistryError(f"{path}: missing {PLAYBOOK_METADATA_KEY} metadata")
-    manifest = _build_manifest(metadata, expected_family=family, path=path)
+) -> PlaybookDefinition:
+    return _parse_python_playbook(
+        path,
+        family=family,
+        repo_root=repo_root,
+        component_registry=component_registry,
+    )
+
+
+def _parse_python_playbook(
+    path: Path,
+    *,
+    family: PlaybookFamily,
+    repo_root: Path,
+    component_registry: FrozenComponentRegistry | None,
+) -> PlaybookDefinition:
+    source_bytes = path.read_bytes()
+    source = source_bytes.decode()
+    manifest_payload, callable_name = _read_python_playbook_declaration(path, source)
+    if "# %%" not in source:
+        raise PlaybookRegistryError(f"{path}: playbooks must use # %% percent cells")
+    manifest = _build_manifest(manifest_payload, expected_family=family, path=path)
     if manifest.baseline_component_indicator_id is not None and component_registry is not None:
         try:
             component_registry.get(
@@ -133,7 +147,7 @@ def _parse_notebook_playbook(
             raise PlaybookRegistryError(
                 f"{path}: unknown baseline component indicator {manifest.baseline_component_indicator_id!r}"
             ) from error
-    return NotebookPlaybookDefinition(
+    return PlaybookDefinition(
         manifest=manifest,
         file_path=path,
         identity=_source_identity(
@@ -141,7 +155,45 @@ def _parse_notebook_playbook(
             repo_root=repo_root,
             source_hash=hashlib.sha256(source_bytes).hexdigest(),
         ),
+        callable_name=callable_name,
     )
+
+
+def _read_python_playbook_declaration(path: Path, source: str) -> tuple[dict[str, Any], str]:
+    try:
+        tree = ast.parse(source, filename=str(path))
+    except SyntaxError as error:
+        raise PlaybookRegistryError(f"{path}: invalid Python syntax") from error
+
+    manifest: Any = None
+    callable_name: Any = None
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if target.id == PLAYBOOK_MANIFEST_NAME:
+            manifest = _literal_value(path, PLAYBOOK_MANIFEST_NAME, node.value)
+        elif target.id == PLAYBOOK_CALLABLE_NAME:
+            callable_name = _literal_value(path, PLAYBOOK_CALLABLE_NAME, node.value)
+
+    if manifest is None:
+        raise PlaybookRegistryError(f"{path}: missing {PLAYBOOK_MANIFEST_NAME}")
+    if callable_name is None:
+        raise PlaybookRegistryError(f"{path}: missing {PLAYBOOK_CALLABLE_NAME}")
+    if not isinstance(manifest, dict):
+        raise PlaybookRegistryError(f"{path}: {PLAYBOOK_MANIFEST_NAME} must be a literal mapping")
+    if not isinstance(callable_name, str) or not callable_name:
+        raise PlaybookRegistryError(f"{path}: {PLAYBOOK_CALLABLE_NAME} must be a literal string")
+    return manifest, callable_name
+
+
+def _literal_value(path: Path, name: str, node: ast.AST) -> Any:
+    try:
+        return ast.literal_eval(node)
+    except (SyntaxError, ValueError) as error:
+        raise PlaybookRegistryError(f"{path}: {name} must be a Python literal") from error
 
 
 def _build_manifest(
@@ -149,7 +201,7 @@ def _build_manifest(
     *,
     expected_family: PlaybookFamily,
     path: Path,
-) -> NotebookPlaybookManifest:
+) -> PlaybookManifest:
     family = metadata.get("family")
     if family not in PLAYBOOK_FAMILIES:
         raise PlaybookRegistryError(f"{path}: playbook family must be one of {PLAYBOOK_FAMILIES}")
@@ -181,7 +233,7 @@ def _build_manifest(
         raise PlaybookRegistryError(
             f"{path}: baseline_component_indicator_id must be a non-empty string"
         )
-    return NotebookPlaybookManifest(
+    return PlaybookManifest(
         family=family,
         id=playbook_id,
         version=version,
@@ -245,7 +297,7 @@ def _playbook_files(path: Path, root: Path) -> tuple[Path, ...]:
         if child.is_symlink():
             _assert_inside_root(child.resolve(strict=True), root)
             raise PlaybookRegistryError(f"{child}: playbook symlink resolves outside approved root")
-        if child.suffix == ".ipynb" and child.is_file():
+        if child.suffix == ".py" and child.is_file():
             _assert_inside_root(child, root)
             files.append(child)
     return tuple(sorted(files))
@@ -276,9 +328,9 @@ def _source_identity(path: Path, *, repo_root: Path, source_hash: str) -> Playbo
 
 
 def _freeze(
-    definitions: dict[PlaybookFamily, dict[str, NotebookPlaybookDefinition]],
+    definitions: dict[PlaybookFamily, dict[str, PlaybookDefinition]],
 ) -> FrozenPlaybookRegistry:
-    sorted_definitions: dict[PlaybookFamily, Mapping[str, NotebookPlaybookDefinition]] = {}
+    sorted_definitions: dict[PlaybookFamily, Mapping[str, PlaybookDefinition]] = {}
     for family in PLAYBOOK_FAMILIES:
         sorted_definitions[family] = MappingProxyType(dict(sorted(definitions[family].items())))
     frozen = MappingProxyType(sorted_definitions)
@@ -286,7 +338,7 @@ def _freeze(
 
 
 def _registry_fingerprint(
-    definitions: Mapping[PlaybookFamily, Mapping[str, NotebookPlaybookDefinition]],
+    definitions: Mapping[PlaybookFamily, Mapping[str, PlaybookDefinition]],
 ) -> str:
     payload = {
         family: {

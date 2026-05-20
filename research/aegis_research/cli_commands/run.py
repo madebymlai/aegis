@@ -112,11 +112,12 @@ def _handle_strategy_run(
             ConfigSelectionEvidence(source="explicit", config_path=safe_path(config_path)),
         )
         _validate_run_playbook_refs(resolved.config, playbook_registry)
-    except (ConfigValidationError, PlaybookRegistryError) as error:
+    except (ConfigValidationError, ComponentRegistryError, PlaybookRegistryError) as error:
         raise ConfigCliError(str(error)) from error
     except (OSError, yaml.YAMLError) as error:
         raise ConfigCliError(str(error)) from error
 
+    known_secrets = known_config_secret_values(resolved.authored_config)
     try:
         result = run_strategy_sweep(
             resolved,
@@ -135,10 +136,14 @@ def _handle_strategy_run(
             run_refs=_refreshed_run_refs(run_refs),
         ) from error
     except ConfigValidationError as error:
-        raise ConfigCliError(str(error), run_refs=_refreshed_run_refs(run_refs)) from error
+        raise ConfigCliError(
+            redact_text(str(error), known_secrets),
+            run_refs=_refreshed_run_refs(run_refs),
+        ) from error
     except Exception as error:
         raise ExecutionFailureError(
-            redact_text(str(error)), run_refs=_refreshed_run_refs(run_refs)
+            redact_text(str(error), known_secrets),
+            run_refs=_refreshed_run_refs(run_refs),
         ) from error
 
     return write_success(

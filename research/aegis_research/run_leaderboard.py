@@ -10,6 +10,7 @@ from typing import Any
 RUN_LEADERBOARD_SCHEMA_VERSION = "run_leaderboard.v1"
 MAX_LEADERBOARD_ROWS = 10
 MAX_FAILURE_SAMPLES = 10
+METRIC_AUTHORITY_AEGIS = "aegis"
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ def build_run_leaderboard(
             failed += 1
             _append_failure_sample(failures, variant_id, record["error"])
             continue
+        _assert_aegis_metric_authority(record, variant_id, metric)
         value = _metric_value(record, metric)
         if value is None:
             excluded += 1
@@ -96,6 +98,9 @@ def _leaderboard_row(
         "indicators": record.get("indicators", []),
         "params": record.get("params", {}),
         "portfolio": record.get("portfolio", {}),
+        "metric_authority": record.get("metric_authority"),
+        "source_hash": record.get("source_hash"),
+        "component_source_hash": record.get("component_source_hash"),
     }
     baseline_value = _baseline_metric_value(record, metric)
     if baseline_value is not None:
@@ -113,6 +118,24 @@ def _metric_value(record: Mapping[str, Any], metric: str) -> float | None:
     metrics = record.get("metrics", {})
     value = metrics.get(metric) if isinstance(metrics, Mapping) else record.get(metric)
     return _finite_float(value)
+
+
+def _assert_aegis_metric_authority(
+    record: Mapping[str, Any],
+    variant_id: str,
+    metric: str,
+) -> None:
+    if record.get("metric_authority") != METRIC_AUTHORITY_AEGIS:
+        raise ValueError(
+            f"variant {variant_id!r} metric authority must be {METRIC_AUTHORITY_AEGIS!r}"
+        )
+    baseline_metrics = record.get("baseline_metrics", {})
+    has_baseline_metric = isinstance(baseline_metrics, Mapping) and metric in baseline_metrics
+    has_baseline_metric = has_baseline_metric or record.get("baseline_metric_value") is not None
+    if has_baseline_metric and record.get("baseline_metric_authority") != METRIC_AUTHORITY_AEGIS:
+        raise ValueError(
+            f"variant {variant_id!r} baseline metric authority must be {METRIC_AUTHORITY_AEGIS!r}"
+        )
 
 
 def _baseline_metric_value(record: Mapping[str, Any], metric: str) -> float | None:
