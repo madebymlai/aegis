@@ -14,8 +14,9 @@ indicators:
     ids: all
 
 ranking:
-  metric: total_return_pct
+  metric: total_return
   direction: desc
+  secondary_metrics: [sharpe_ratio]
 ```
 
 Each playbook ID represents one research idea/family. Playbooks own sweep grids and candidate axes; components are fixed-param promoted implementations. Run configs select source blocks only: `ids: all` expands to every discovered playbook for that source, and `ids: [...]` selects explicit stable IDs. Playbooks receive runner-provided inputs through the same logical data contract as components, and run configs still declare `data.arrays` for those inputs. Playbooks do not receive run-config params; put VectorBT-native parameter grids in the playbook itself. Run playbooks must use `result_schema: "playbook_sweep_result.v1"` and contract marker `"aegis.playbook_sweep.v1"`. Indicator playbooks emit candidate-indexed output surfaces; strategy playbooks first return a strategy candidate axis, then materialize requested entry/exit signal batches. Candidate metadata must include a `params` mapping containing the swept parameter values needed to reproduce or promote that candidate, for example `{"window": 20, "wtype": "simple", "threshold": 0.01}`. Every non-empty param value must appear in `candidate_id`; use `candidate_id_from_params` to derive IDs from the same params dictionary rather than duplicating values in literals. The playbook registry rejects literal `candidate_id` values when `params` is non-empty, for both indicator and strategy sweep playbooks. Use `params: {}` when the candidate varies by named logic rather than tunable params. Aegis computes portfolio metrics centrally. Playbook-provided metrics are not accepted as leaderboard metrics.
@@ -45,7 +46,10 @@ Leaderboards rank complete composed strategy candidates, not raw indicators. A r
   "chunk_ref": "batch-000000",
   "metric_ref": "strategy:playbook:ma_cross:fast-0.01+indicators:[playbook:ma_explore:ma-20]",
   "metric_source": "central_portfolio",
-  "primary_metric": "total_return_pct"
+  "metrics": {
+    "total_return": 12.5,
+    "sharpe_ratio": 1.4
+  }
 }
 ```
 

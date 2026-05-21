@@ -74,7 +74,7 @@ def test_default_run_reports_strategy_labeler_conflict_without_train_guidance(
                 "strategy": {"source": "playbook", "id": "missing_strategy"},
                 "labeler": {"id": "demo.fixlb"},
                 "indicators": [{"source": "playbook", "ids": ["missing_indicator"]}],
-                "ranking": {"metric": "total_return_pct", "direction": "desc"},
+                "ranking": {"metric": "total_return", "direction": "desc"},
             },
             sort_keys=False,
         )

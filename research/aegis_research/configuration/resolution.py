@@ -27,12 +27,20 @@ from research.aegis_research.configuration.schema import (
 from research.aegis_research.configuration.secrets import redact_config, to_builtin
 from research.aegis_research.configuration.validation import (
     _effective_run_mode,
+    _validate_ranking,
     _validate_raw_lane_config,
+    _validate_train_model_ref,
 )
 from research.aegis_research.model_registry import (
     FrozenModelRegistry,
     ModelRegistry,
     freeze_model_registry,
+)
+from research.aegis_research.metrics import (
+    FrozenMetricRegistry,
+    MetricRegistry,
+    freeze_metric_registry,
+    make_default_metric_registry,
 )
 
 
@@ -69,6 +77,7 @@ class ResolvedLaneConfig:
     source_path: str | None = None
     component_registry: FrozenComponentRegistry | None = None
     model_registry: FrozenModelRegistry | None = None
+    metric_registry: FrozenMetricRegistry | None = None
     selection: ConfigSelectionEvidence | None = None
 
     @property
@@ -93,6 +102,9 @@ class ResolvedLaneConfig:
             "model_registry_fingerprint": (
                 self.model_registry.fingerprint if self.model_registry else None
             ),
+            "metric_registry_fingerprint": (
+                self.metric_registry.fingerprint if self.metric_registry else None
+            ),
             "selection": self.selection.manifest() if self.selection else None,
         }
 
@@ -110,6 +122,7 @@ def with_lane_config_selection(
         source_path=config.source_path if source_path is None else source_path,
         component_registry=config.component_registry,
         model_registry=config.model_registry,
+        metric_registry=config.metric_registry,
         selection=selection,
     )
 
@@ -119,6 +132,7 @@ def load_lane_config(
     *,
     component_registry: FrozenComponentRegistry | None = None,
     model_registry: ModelRegistry | FrozenModelRegistry | None = None,
+    metric_registry: MetricRegistry | FrozenMetricRegistry | None = None,
     expected_lane: str | None = None,
 ) -> ResolvedLaneConfig:
     config_path = Path(path)
@@ -130,6 +144,7 @@ def load_lane_config(
         source_path=str(path),
         component_registry=component_registry,
         model_registry=model_registry,
+        metric_registry=metric_registry,
         expected_lane=expected_lane,
     )
 
@@ -141,33 +156,43 @@ def resolve_lane_config(
     source_path: str | None = None,
     component_registry: FrozenComponentRegistry | None = None,
     model_registry: ModelRegistry | FrozenModelRegistry | None = None,
+    metric_registry: MetricRegistry | FrozenMetricRegistry | None = None,
     expected_lane: str | None = None,
 ) -> ResolvedLaneConfig:
     frozen_model_registry = freeze_model_registry(model_registry)
+    frozen_metric_registry = freeze_metric_registry(metric_registry)
     if isinstance(value, ResolvedLaneConfig):
         if expected_lane is not None and value.lane != expected_lane:
             raise ConfigValidationError(
                 [ConfigValidationIssue("lane", f"must be {expected_lane!r}")]
             )
-        if frozen_model_registry is None:
-            return value
-        raw = to_builtin(asdict(value.config))
-        _assert_train_model_registered(
-            raw,
-            frozen_model_registry,
-            component_registry=value.component_registry or discover_component_registry(),
+        effective_model_registry = (
+            frozen_model_registry if model_registry is not None else value.model_registry
         )
+        effective_metric_registry = (
+            frozen_metric_registry or value.metric_registry or make_default_metric_registry()
+        )
+        if model_registry is None and metric_registry is None and value.metric_registry is not None:
+            return value
+        if model_registry is not None or metric_registry is not None:
+            _assert_resolved_config_registries(
+                value.config,
+                frozen_model_registry=effective_model_registry,
+                frozen_metric_registry=effective_metric_registry,
+            )
         return ResolvedLaneConfig(
             config=value.config,
             raw_config_hash=value.raw_config_hash,
             authored_config=value.authored_config,
             source_path=value.source_path,
             component_registry=value.component_registry,
-            model_registry=frozen_model_registry,
+            model_registry=effective_model_registry,
+            metric_registry=effective_metric_registry,
             selection=value.selection,
         )
 
     registry = component_registry or discover_component_registry()
+    effective_metric_registry = frozen_metric_registry or make_default_metric_registry()
     if isinstance(value, StrategyRunLaneConfig | TrainLaneConfig):
         raw = to_builtin(asdict(value))
         raw_text = yaml.safe_dump(raw, sort_keys=False)
@@ -177,6 +202,7 @@ def resolve_lane_config(
             source_path=source_path,
             component_registry=registry,
             model_registry=frozen_model_registry,
+            metric_registry=effective_metric_registry,
             expected_lane=expected_lane,
         )
 
@@ -186,6 +212,7 @@ def resolve_lane_config(
         source_path=source_path,
         component_registry=registry,
         model_registry=frozen_model_registry,
+        metric_registry=effective_metric_registry,
         expected_lane=expected_lane,
     )
 
@@ -197,6 +224,7 @@ def _build_resolved_lane_config(
     source_path: str | None,
     component_registry: FrozenComponentRegistry,
     model_registry: FrozenModelRegistry | None,
+    metric_registry: FrozenMetricRegistry,
     expected_lane: str | None,
 ) -> ResolvedLaneConfig:
     if not isinstance(raw, dict):
@@ -208,6 +236,7 @@ def _build_resolved_lane_config(
         issues,
         component_registry=component_registry,
         model_registry=model_registry,
+        metric_registry=metric_registry,
         expected_lane=expected_lane,
     )
     if issues:
@@ -231,24 +260,32 @@ def _build_resolved_lane_config(
         source_path=source_path,
         component_registry=component_registry,
         model_registry=model_registry,
+        metric_registry=metric_registry,
     )
 
 
-def _assert_train_model_registered(
-    raw: dict[str, Any],
-    model_registry: FrozenModelRegistry,
+def _assert_resolved_config_registries(
+    config: LaneConfig,
     *,
-    component_registry: FrozenComponentRegistry,
+    frozen_model_registry: FrozenModelRegistry | None,
+    frozen_metric_registry: FrozenMetricRegistry,
 ) -> None:
-    if raw.get("lane") != "train":
-        return
     issues: list[ConfigValidationIssue] = []
-    _validate_raw_lane_config(
-        raw,
-        issues,
-        component_registry=component_registry,
-        model_registry=model_registry,
-        expected_lane="train",
-    )
+    if isinstance(config, TrainLaneConfig):
+        if frozen_model_registry is not None:
+            _validate_train_model_ref(
+                "train.model",
+                to_builtin(asdict(config.model)),
+                issues,
+                model_registry=frozen_model_registry,
+            )
+    elif isinstance(config, StrategyRunLaneConfig):
+        _validate_ranking(
+            "ranking",
+            to_builtin(asdict(config.ranking)),
+            issues,
+            lane="run",
+            registry=frozen_metric_registry,
+        )
     if issues:
         raise ConfigValidationError(issues)

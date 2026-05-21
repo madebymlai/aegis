@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from research.aegis_research.metrics.contracts import (
+    DIRECTION_ASC,
+    DIRECTION_DESC,
+    LANE_RUN,
+    SOURCE_TYPE_VBT_STATS,
+    MetricDefinition,
+    MetricRegistryError,
+)
+from research.aegis_research.metrics.registry import MetricRegistry
+
+VBT_STATS_PROVIDER = "vectorbtpro"
+VBT_PORTFOLIO_TARGET = "portfolio"
+
+SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
+    "total_return": {
+        "unit": "percent",
+        "value_semantics": "percentage_return",
+        "direction_hint": DIRECTION_DESC,
+        "source_method": "stats",
+        "required_report_output": True,
+        "required_gate_input": False,
+    },
+    "max_dd": {
+        "unit": "percent_loss_magnitude",
+        "value_semantics": "drawdown_loss_magnitude_percent",
+        "direction_hint": DIRECTION_ASC,
+        "source_method": "stats",
+        "required_report_output": True,
+        "required_gate_input": True,
+    },
+    "total_trades": {
+        "unit": "count",
+        "value_semantics": "trade_count",
+        "direction_hint": DIRECTION_DESC,
+        "source_method": "stats",
+        "required_report_output": True,
+        "required_gate_input": True,
+    },
+    "win_rate": {
+        "unit": "percent",
+        "value_semantics": "winning_trade_rate_percent",
+        "direction_hint": DIRECTION_DESC,
+        "source_method": "stats",
+        "required_report_output": True,
+        "required_gate_input": False,
+    },
+    "total_fees_paid": {
+        "unit": "cash",
+        "value_semantics": "fee_cost_cash",
+        "direction_hint": DIRECTION_ASC,
+        "source_method": "stats",
+        "required_report_output": True,
+        "required_gate_input": False,
+    },
+    "sharpe_ratio": {
+        "unit": "ratio",
+        "value_semantics": "risk_adjusted_return_ratio",
+        "direction_hint": DIRECTION_DESC,
+        "source_method": "get_sharpe_ratio",
+        "required_report_output": True,
+        "required_gate_input": True,
+        "required_inputs": ("frequency", "year_frequency"),
+    },
+}
+
+PORTFOLIO_METRIC_CATALOG: dict[str, dict[str, Any]] = {
+    metric_id: {
+        "vbt_metric": metric_id,
+        "unit": overlay["unit"],
+        "source_method": overlay["source_method"],
+        "required_report_output": overlay["required_report_output"],
+        "required_gate_input": overlay["required_gate_input"],
+    }
+    for metric_id, overlay in SUPPORTED_PORTFOLIO_STATS.items()
+}
+PORTFOLIO_METRIC_VALUE_KEYS = tuple(PORTFOLIO_METRIC_CATALOG)
+PORTFOLIO_STATS_METRICS = tuple(
+    metric["vbt_metric"]
+    for metric in PORTFOLIO_METRIC_CATALOG.values()
+    if metric["source_method"] == "stats"
+)
+
+
+def register_vbt_stats_metrics(
+    registry: MetricRegistry,
+    *,
+    portfolio_metrics: Mapping[str, Mapping[str, Any]] | None = None,
+) -> None:
+    metrics = portfolio_metrics if portfolio_metrics is not None else _portfolio_metrics()
+    for metric_id, overlay in SUPPORTED_PORTFOLIO_STATS.items():
+        registry.register(_portfolio_metric_definition(metric_id, overlay, metrics))
+
+
+def _portfolio_metrics() -> Mapping[str, Mapping[str, Any]]:
+    import vectorbtpro as vbt
+
+    return vbt.Portfolio.metrics
+
+
+def _portfolio_metric_definition(
+    metric_id: str,
+    overlay: Mapping[str, Any],
+    metrics: Mapping[str, Mapping[str, Any]],
+) -> MetricDefinition:
+    try:
+        vbt_metric = metrics[metric_id]
+    except KeyError as error:
+        raise MetricRegistryError(
+            f"VectorBT Portfolio stats metric {metric_id!r} is not registered"
+        ) from error
+    title = vbt_metric.get("title")
+    if not title:
+        raise MetricRegistryError(f"VectorBT Portfolio stats metric {metric_id!r} has no title")
+    return MetricDefinition(
+        id=metric_id,
+        title=str(title),
+        source_type=SOURCE_TYPE_VBT_STATS,
+        unit=str(overlay["unit"]),
+        value_semantics=str(overlay["value_semantics"]),
+        supported_lanes=(LANE_RUN,),
+        primary_eligible=True,
+        secondary_eligible=True,
+        direction_hint=str(overlay["direction_hint"]),
+        required_inputs=tuple(overlay.get("required_inputs", ())),
+        provider=VBT_STATS_PROVIDER,
+        target=VBT_PORTFOLIO_TARGET,
+        vbt_metric=metric_id,
+        source_method=str(overlay["source_method"]),
+        required_report_output=bool(overlay["required_report_output"]),
+        required_gate_input=bool(overlay["required_gate_input"]),
+    )

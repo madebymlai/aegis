@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,22 @@ def test_train_lane_config_resolves_model_registry_contract(tmp_path: Path) -> N
     assert resolved.config.labeler.id == "demo.fixlb"
     assert resolved.config.model.plugin_id == "aegis.sklearn_logistic"
     assert resolved.model_registry is not None
+
+
+def test_resolved_train_lane_config_attaches_default_metric_registry(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    resolved = resolve_lane_config(
+        _train_config(),
+        component_registry=registry,
+        model_registry=make_model_registry(),
+        expected_lane="train",
+    )
+
+    resolved_without_metric_registry = replace(resolved, metric_registry=None)
+
+    reresolved = resolve_lane_config(resolved_without_metric_registry, expected_lane="train")
+
+    assert reresolved.metric_registry is not None
 
 
 def test_train_lane_rejects_nested_legacy_label_selection(tmp_path: Path) -> None:
@@ -478,7 +495,7 @@ def _run_config() -> dict[str, object]:
         "portfolio": {"entry_budget": 1.0},
         "strategy": {"source": "playbook", "id": "ma_cross"},
         "indicators": [{"source": "playbook", "ids": ["ma_explore"]}],
-        "ranking": {"metric": "total_return_pct", "direction": "desc"},
+        "ranking": {"metric": "total_return", "direction": "desc"},
     }
 
 

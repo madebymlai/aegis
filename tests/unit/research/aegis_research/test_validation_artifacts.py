@@ -189,11 +189,11 @@ def _evaluate(config_path: str, *, pass_open_prices: bool = True):
 def _metrics_frame(metric_assumptions: list[dict[str, object] | None]):
     return pd.DataFrame(
         {
-            "total_return_pct": [1.0, 2.0],
+            "total_return": [1.0, 2.0],
             "sharpe_ratio": [1.0, 2.0],
-            "max_drawdown_pct": [1.0, 2.0],
+            "max_dd": [1.0, 2.0],
             "total_trades": [1, 2],
-            "win_rate_pct": [50.0, 60.0],
+            "win_rate": [50.0, 60.0],
             "total_fees_paid": [0.0, 0.0],
             "metric_scope": ["shared_cash_group", "shared_cash_group"],
             "metric_assumptions": metric_assumptions,

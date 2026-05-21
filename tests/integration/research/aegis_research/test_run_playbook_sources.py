@@ -686,7 +686,7 @@ def test_run_cli_does_not_write_completed_strategy_artifact_for_partial_leaderbo
         tmp_path,
         strategy_source="playbook",
         strategy_id="no_trades",
-        ranking_metric="win_rate_pct",
+        ranking_metric="win_rate",
     )
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "partial-leaderboard"]) == 10
@@ -760,7 +760,7 @@ def _write_run_config(
     strategy_source: str,
     strategy_id: str,
     indicators: list[dict[str, object]] | None = None,
-    ranking_metric: str = "total_return_pct",
+    ranking_metric: str = "total_return",
     candidate_grid: dict[str, object] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
@@ -1044,7 +1044,7 @@ def _strategy_record_source(
     params: dict[str, object] | None,
     variant_id: str | None,
 ) -> str:
-    metrics_source = "'metrics': {'total_return_pct': 1.5}, " if include_metrics else ""
+    metrics_source = "'metrics': {'total_return': 1.5}, " if include_metrics else ""
     params_value = {"window": window} if params is None else params
     params_source = f"'params': {params_value!r}, " if include_params else ""
     record_id = variant_id or f"ma-cross-{window}"
@@ -1067,7 +1067,7 @@ def _indicator_record_source(
     candidate_id: str | None,
     extra_fields: dict[str, object] | None,
 ) -> str:
-    metrics_source = "'metrics': {'total_return_pct': 1.5}, " if include_metrics else ""
+    metrics_source = "'metrics': {'total_return': 1.5}, " if include_metrics else ""
     params_value = {"window": window} if params is None else params
     params_source = f"'params': {params_value!r}, " if include_params else ""
     extra_source = "".join(

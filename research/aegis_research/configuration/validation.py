@@ -41,6 +41,7 @@ from research.aegis_research.configuration.schema import (
 )
 from research.aegis_research.configuration.secrets import _validate_no_inline_secrets
 from research.aegis_research.market_data.sources import LOCAL_DATA_SOURCES, remote_data_sources
+from research.aegis_research.metrics import FrozenMetricRegistry
 from research.aegis_research.model_registry import FrozenModelRegistry
 
 
@@ -50,6 +51,7 @@ def _validate_raw_lane_config(
     *,
     component_registry: FrozenComponentRegistry,
     model_registry: FrozenModelRegistry | None,
+    metric_registry: FrozenMetricRegistry,
     expected_lane: str | None,
 ) -> None:
     lane = _effective_run_mode(raw, expected_lane)
@@ -86,13 +88,19 @@ def _validate_raw_lane_config(
     _validate_report(report, issues)
 
     if lane == "run":
-        _validate_strategy_run_lane(raw, issues, component_registry=component_registry)
+        _validate_strategy_run_lane(
+            raw,
+            issues,
+            component_registry=component_registry,
+            metric_registry=metric_registry,
+        )
     elif lane == "train":
         _validate_train_lane(
             raw,
             issues,
             component_registry=component_registry,
             model_registry=model_registry,
+            metric_registry=metric_registry,
         )
 
 
@@ -133,6 +141,7 @@ def _validate_strategy_run_lane(
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
+    metric_registry: FrozenMetricRegistry,
 ) -> None:
     _validate_training_fields_absent(raw, issues)
     _validate_run_source_ref(
@@ -151,7 +160,7 @@ def _validate_strategy_run_lane(
         allowed_sources={"component", "playbook"},
     )
     _validate_run_source_combination(raw, issues)
-    _validate_ranking("ranking", raw.get("ranking"), issues)
+    _validate_ranking("ranking", raw.get("ranking"), issues, lane="run", registry=metric_registry)
     candidate_grid = _section(
         raw,
         "candidate_grid",
@@ -188,6 +197,7 @@ def _validate_train_lane(
     *,
     component_registry: FrozenComponentRegistry,
     model_registry: FrozenModelRegistry | None,
+    metric_registry: FrozenMetricRegistry,
 ) -> None:
     if "train" not in raw:
         issues.append(
@@ -514,19 +524,29 @@ def _validate_source_ref_value(
             )
 
 
-def _validate_ranking(path: str, value: Any, issues: list[ConfigValidationIssue]) -> None:
+def _validate_ranking(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+    *,
+    lane: str,
+    registry: FrozenMetricRegistry,
+) -> None:
     if not isinstance(value, dict):
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
-    _validate_known_keys(path, value, {"metric", "direction", "rank_by"}, issues)
+    _validate_known_keys(path, value, {"metric", "direction", "secondary_metrics", "rank_by"}, issues)
     metric = value.get("metric")
     if not isinstance(metric, str) or not metric:
         issues.append(ConfigValidationIssue(f"{path}.metric", "must be a non-empty string"))
-    elif metric not in _portfolio_metric_ids():
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.metric", f"must be one of {sorted(_portfolio_metric_ids())}"
-            )
+    else:
+        _validate_metric_selection(
+            f"{path}.metric",
+            metric,
+            issues,
+            lane=lane,
+            registry=registry,
+            require_primary=True,
         )
     direction = value.get("direction")
     if not isinstance(direction, str) or direction not in RANKING_DIRECTIONS:
@@ -535,20 +555,78 @@ def _validate_ranking(path: str, value: Any, issues: list[ConfigValidationIssue]
                 f"{path}.direction", f"must be one of {sorted(RANKING_DIRECTIONS)}"
             )
         )
-    rank_by = value.get("rank_by", "primary_metric")
-    if rank_by not in {"primary_metric", "baseline_delta"}:
+    if "rank_by" in value:
         issues.append(
             ConfigValidationIssue(
                 f"{path}.rank_by",
-                "must be one of ['baseline_delta', 'primary_metric']",
+                "was removed; include 'baseline_delta' in secondary_metrics for baseline comparison",
             )
+        )
+    _validate_secondary_metrics(
+        path,
+        value.get("secondary_metrics", []),
+        issues,
+        primary_metric=metric if isinstance(metric, str) else None,
+        lane=lane,
+        registry=registry,
+    )
+
+
+def _validate_secondary_metrics(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+    *,
+    primary_metric: str | None,
+    lane: str,
+    registry: FrozenMetricRegistry,
+) -> None:
+    if not isinstance(value, list):
+        issues.append(ConfigValidationIssue(f"{path}.secondary_metrics", "must be a list"))
+        return
+    seen: set[str] = set()
+    for index, metric_id in enumerate(value):
+        item_path = f"{path}.secondary_metrics[{index}]"
+        if not isinstance(metric_id, str) or not metric_id:
+            issues.append(ConfigValidationIssue(item_path, "must be a non-empty metric id string"))
+            continue
+        if metric_id == primary_metric:
+            issues.append(ConfigValidationIssue(item_path, "must not repeat primary metric"))
+            continue
+        if metric_id in seen:
+            issues.append(ConfigValidationIssue(item_path, "duplicate secondary metric"))
+            continue
+        seen.add(metric_id)
+        _validate_metric_selection(
+            item_path,
+            metric_id,
+            issues,
+            lane=lane,
+            registry=registry,
+            require_primary=False,
         )
 
 
-def _portfolio_metric_ids() -> set[str]:
-    from research.aegis_research.reports import PORTFOLIO_METRIC_CATALOG
-
-    return set(PORTFOLIO_METRIC_CATALOG)
+def _validate_metric_selection(
+    path: str,
+    metric_id: str,
+    issues: list[ConfigValidationIssue],
+    *,
+    lane: str,
+    registry: FrozenMetricRegistry,
+    require_primary: bool,
+) -> None:
+    if metric_id not in registry:
+        issues.append(ConfigValidationIssue(path, f"must be one of {sorted(registry.ids())}"))
+        return
+    definition = registry.get(metric_id)
+    if lane not in definition.supported_lanes:
+        issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not supported for {lane!r} lane"))
+        return
+    if require_primary and not definition.primary_eligible:
+        issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not primary-eligible"))
+    if not require_primary and not definition.secondary_eligible:
+        issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not secondary-eligible"))
 
 
 def _validate_no_lane_executable_keys(
