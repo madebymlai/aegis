@@ -18,6 +18,8 @@ from research.aegis_research.configuration.schema import (
     DENIED_PASSTHROUGH_KEYS,
     EXPERIMENT_NAME_RE,
     MISSING_POLICIES,
+    OPTIMIZATION_RETURN_GRID_POLICIES,
+    OPTIMIZATION_SEARCH_POLICIES,
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
     RANKING_DIRECTIONS,
@@ -27,6 +29,8 @@ from research.aegis_research.configuration.schema import (
     ConfigValidationIssue,
     DataConfig,
     DataQualityConfig,
+    OptimizationConfig,
+    OptimizationEvidenceConfig,
     PortfolioConfig,
     ReportConfig,
     RunSplitConfig,
@@ -81,6 +85,7 @@ def _run_allowed_top_level_keys() -> set[str]:
         "portfolio",
         "report",
         "output_dir",
+        "optimization",
         "candidate_grid",
         "indicators",
         "ranking",
@@ -112,6 +117,7 @@ def _validate_run_config(
     )
     _validate_run_source_combination(raw, issues)
     _validate_ranking("ranking", raw.get("ranking"), issues, registry=metric_registry)
+    _validate_optimization(raw, issues)
     if raw.get("split") is not None:
         split = _section(raw, "split", set(RunSplitConfig.__dataclass_fields__), issues)
         _validate_run_split(split, issues)
@@ -122,6 +128,13 @@ def _validate_run_config(
         issues,
     )
     _validate_candidate_grid(candidate_grid, issues)
+    if "optimization" in raw and "candidate_grid" in raw:
+        issues.append(
+            ConfigValidationIssue(
+                "candidate_grid",
+                "native optimization uses optimization.search and VBT params; candidate_grid is not accepted",
+            )
+        )
 
 
 def _validate_run_source_combination(
@@ -129,6 +142,17 @@ def _validate_run_source_combination(
     issues: list[ConfigValidationIssue],
 ) -> None:
     strategy = raw.get("strategy")
+    if (
+        raw.get("optimization") is not None
+        and isinstance(strategy, dict)
+        and strategy.get("source") == "component"
+    ):
+        issues.append(
+            ConfigValidationIssue(
+                "strategy.source",
+                "component param spaces are #32; #31 native optimization requires a native playbook source",
+            )
+        )
     if not isinstance(strategy, dict) or strategy.get("source") != "component":
         return
     indicators = raw.get("indicators")
@@ -145,19 +169,141 @@ def _validate_run_source_combination(
             )
 
 
-def _validate_run_split(split: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    _optional_int("split.max_splits", split, issues, positive=True)
-    _optional_int("split.max_estimated_output_cells", split, issues, positive=True)
-    _optional_int("split.max_public_artifact_bytes", split, issues, positive=True)
+def _validate_run_split(
+    split: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    path: str = "split",
+) -> None:
+    _optional_int(f"{path}.max_splits", split, issues, positive=True)
+    _optional_int(f"{path}.max_estimated_output_cells", split, issues, positive=True)
+    _optional_int(f"{path}.max_public_artifact_bytes", split, issues, positive=True)
 
     params = split.get("params", {})
     if not isinstance(params, dict):
-        issues.append(ConfigValidationIssue("split.params", "must be a mapping"))
+        issues.append(ConfigValidationIssue(f"{path}.params", "must be a mapping"))
     else:
-        _validate_json_like("split.params", params, issues)
-        _validate_no_inline_secrets("split.params", params, issues)
-        _validate_no_run_executable_keys("split.params", params, issues)
-    validate_run_split_config(split, issues)
+        _validate_json_like(f"{path}.params", params, issues)
+        _validate_no_inline_secrets(f"{path}.params", params, issues)
+        _validate_no_run_executable_keys(f"{path}.params", params, issues)
+    validate_run_split_config(split, issues, path=path)
+
+
+def _validate_optimization(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
+    if "optimization" not in raw:
+        return
+    optimization = raw.get("optimization")
+    if not isinstance(optimization, dict):
+        issues.append(ConfigValidationIssue("optimization", "must be a mapping"))
+        return
+
+    _validate_known_keys(
+        "optimization",
+        optimization,
+        set(OptimizationConfig.__dataclass_fields__),
+        issues,
+    )
+    if _require_str("optimization.search", optimization, issues):
+        search = optimization["search"]
+        if search not in OPTIMIZATION_SEARCH_POLICIES:
+            issues.append(
+                ConfigValidationIssue(
+                    "optimization.search",
+                    f"must be one of {sorted(OPTIMIZATION_SEARCH_POLICIES)}",
+                )
+            )
+    else:
+        search = None
+
+    _validate_optimization_split(raw, optimization, issues)
+    _validate_optimization_random_policy(optimization, issues, search=search)
+    _optional_int("optimization.seed", optimization, issues, minimum=0)
+    _validate_optimization_execute(optimization.get("execute", {}), issues)
+    _validate_optimization_evidence(optimization.get("evidence", {}), issues)
+
+
+def _validate_optimization_split(
+    raw: dict[str, Any],
+    optimization: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if raw.get("split") is not None:
+        issues.append(
+            ConfigValidationIssue(
+                "split",
+                "native optimization configs must move the split policy under optimization.split",
+            )
+        )
+    if "split" not in optimization:
+        message = "is required for native optimization"
+        if raw.get("split") is not None:
+            message += "; move the split policy under optimization.split"
+        issues.append(ConfigValidationIssue("optimization.split", message))
+        return
+    split = optimization["split"]
+    if not isinstance(split, dict):
+        issues.append(ConfigValidationIssue("optimization.split", "must be a mapping"))
+        return
+    _validate_known_keys(
+        "optimization.split",
+        split,
+        set(RunSplitConfig.__dataclass_fields__),
+        issues,
+    )
+    _validate_run_split(split, issues, path="optimization.split")
+
+
+def _validate_optimization_random_policy(
+    optimization: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    search: str | None,
+) -> None:
+    if "random_subset" in optimization:
+        _optional_int("optimization.random_subset", optimization, issues, positive=True)
+    if search == "random" and "random_subset" not in optimization:
+        issues.append(
+            ConfigValidationIssue(
+                "optimization.random_subset",
+                "is required when optimization.search is 'random'",
+            )
+        )
+    if search == "grid" and "random_subset" in optimization:
+        issues.append(
+            ConfigValidationIssue(
+                "optimization.random_subset",
+                "only valid when optimization.search is 'random'",
+            )
+        )
+
+
+def _validate_optimization_execute(value: Any, issues: list[ConfigValidationIssue]) -> None:
+    path = "optimization.execute"
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_json_like(path, value, issues)
+    _validate_no_inline_secrets(path, value, issues)
+    _validate_no_run_executable_keys(path, value, issues)
+
+
+def _validate_optimization_evidence(value: Any, issues: list[ConfigValidationIssue]) -> None:
+    path = "optimization.evidence"
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_known_keys(path, value, set(OptimizationEvidenceConfig.__dataclass_fields__), issues)
+    _validate_json_like(path, value, issues)
+    _validate_no_inline_secrets(path, value, issues)
+    if "return_grid" in value:
+        return_grid = value["return_grid"]
+        if not isinstance(return_grid, str) or return_grid not in OPTIMIZATION_RETURN_GRID_POLICIES:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}.return_grid",
+                    f"must be one of {sorted(OPTIMIZATION_RETURN_GRID_POLICIES)}",
+                )
+            )
 
 
 def _validate_removed_training_fields(

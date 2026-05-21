@@ -66,6 +66,11 @@ from research.aegis_research.run_leaderboard import (
 )
 from research.aegis_research.run_splits import RunSplit, build_run_splits_result
 from research.aegis_research.split_leaderboard import build_split_leaderboard
+from research.aegis_research.optimization.source import (
+    OPTIMIZATION_SOURCE_CONTRACT,
+    OptimizationSourceError,
+    validate_optimization_source,
+)
 
 STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v3"
 STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
@@ -276,6 +281,21 @@ def run_strategy_sweep(
         data_result.assert_usable()
         data_bundle = market_data_bundle(data_result)
         open_prices = data_bundle.feature("Open")
+        if config.optimization is not None:
+            return _run_native_optimization_strategy_sweep(
+                config,
+                playbook_registry=playbooks,
+                recorder=recorder,
+                data_result=data_result,
+                data=data_bundle,
+                open_prices=open_prices,
+                array_contract=array_contract,
+                metric_registry_fingerprint=(
+                    resolved_config.metric_registry.fingerprint
+                    if resolved_config.metric_registry
+                    else None
+                ),
+            )
         if config.strategy.source == "playbook":
             _assert_playbook_sweep_strategy(config.strategy, playbooks)
             return _run_playbook_strategy_sweep(
@@ -432,6 +452,75 @@ def _assert_playbook_sweep_strategy(
             f"{definition.manifest.result_schema!r}; run playbooks must use "
             f"{PLAYBOOK_SWEEP_RESULT_SCHEMA!r}"
         )
+
+
+def _run_native_optimization_strategy_sweep(
+    config: Any,
+    *,
+    playbook_registry: FrozenPlaybookRegistry,
+    recorder: Any,
+    data_result: Any,
+    data: MarketDataBundle,
+    open_prices: pd.DataFrame,
+    array_contract: DataArrayContract,
+    metric_registry_fingerprint: str | None,
+) -> dict[str, Any]:
+    if config.strategy.source != "playbook":
+        raise OptimizationSourceError(
+            "native optimization sources must be playbook strategies in #31; "
+            "component param spaces and component unification are #32"
+        )
+    definition = playbook_registry.get(PlaybookSelection("strategies", config.strategy.id))
+    if definition.manifest.result_schema != OPTIMIZATION_SOURCE_CONTRACT:
+        raise OptimizationSourceError(
+            f"strategy playbook {definition.id!r} must expose result_schema "
+            f"{OPTIMIZATION_SOURCE_CONTRACT!r} for native optimization"
+        )
+
+    strategy_evidence = {
+        "source": "playbook",
+        "id": definition.id,
+        "version": definition.manifest.version,
+        **definition.identity.public(),
+        "consumes_runner_data": True,
+        "data_binding": "native_optimization_inputs",
+        "result_contract": OPTIMIZATION_SOURCE_CONTRACT,
+    }
+    inputs = StrategyInputs(
+        data=data,
+        indicators={},
+        metadata={
+            "strategy_id": definition.id,
+            "playbook_source_hash": definition.identity.source_hash,
+            "optimization_contract": OPTIMIZATION_SOURCE_CONTRACT,
+        },
+    )
+    native_source = validate_optimization_source(
+        definition.load_callable()(inputs),
+        source_evidence=strategy_evidence,
+    )
+    close = data.feature("Close")
+    split_result = build_run_splits_result(close.index, config.optimization.split)
+    native_optimization_evidence = {
+        "schema_version": "native_optimization_route.v1",
+        "contract": OPTIMIZATION_SOURCE_CONTRACT,
+        "source": native_source.evidence,
+        "param_names": list(native_source.params),
+        "optimization": to_builtin(asdict(config.optimization)),
+        "split": split_result.metadata,
+        "data": _strategy_data_evidence_payload(
+            data_result,
+            array_contract,
+            strategy_source=config.strategy.source,
+        ),
+        "metric_registry_fingerprint": metric_registry_fingerprint,
+        "open_prices_available": open_prices is not None,
+    }
+    recorder.manifest.evidence["native_optimization"] = native_optimization_evidence
+    recorder.persist()
+    raise OptimizationSourceError(
+        "native optimization source contract validated; vbt.cv_split execution is not implemented yet"
+    )
 
 
 def _run_playbook_strategy_sweep(

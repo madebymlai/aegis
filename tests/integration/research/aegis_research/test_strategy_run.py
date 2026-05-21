@@ -438,6 +438,24 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
     assert not (tmp_path / "runs" / "should-not-exist").exists()
 
 
+def test_run_rejects_native_optimization_without_nested_split_before_run_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+    config_path = _write_run_config(tmp_path, optimization={"search": "grid"})
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "native-no-split"]) == 6
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "optimization.split" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "native-no-split").exists()
+
+
 def test_run_missing_config_is_config_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -461,6 +479,7 @@ def _write_run_config(
     data: dict[str, object] | None = None,
     split: dict[str, object] | None = None,
     candidate_grid: dict[str, object] | None = None,
+    optimization: dict[str, object] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
@@ -482,6 +501,7 @@ def _write_run_config(
                 "ranking": {"metric": "total_return", "direction": "desc"},
                 **({"split": split} if split is not None else {}),
                 **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
+                **({"optimization": optimization} if optimization is not None else {}),
             },
             sort_keys=False,
         )

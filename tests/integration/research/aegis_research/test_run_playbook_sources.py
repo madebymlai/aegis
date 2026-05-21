@@ -220,6 +220,36 @@ def test_run_cli_executes_playbook_strategy_sweep_candidates(
     }
 
 
+def test_native_optimization_routes_away_from_custom_candidate_grid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
+    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("legacy candidate sweep path should not run for native optimization")
+
+    monkeypatch.setattr(strategy_runs, "compose_candidate_grid", fail_if_called)
+    monkeypatch.setattr(strategy_runs, "materialize_strategy_sweep_signals", fail_if_called)
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_cross",
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "native-boundary"]) == 10
+
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error"]["category"] == "execution_failure"
+    assert "aegis.optimization_source.v1" in payload["error"]["message"]
+    assert "legacy candidate sweep path" not in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "native-boundary" / "strategy_run.json").exists()
+
+
 def test_run_cli_executes_playbook_strategy_sweep_with_rolling_split(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -854,6 +884,7 @@ def _write_run_config(
     ranking_metric: str = "total_return",
     candidate_grid: dict[str, object] | None = None,
     split: dict[str, object] | None = None,
+    optimization: dict[str, object] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
@@ -875,6 +906,7 @@ def _write_run_config(
                 "ranking": {"metric": ranking_metric, "direction": "desc"},
                 **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
                 **({"split": split} if split is not None else {}),
+                **({"optimization": optimization} if optimization is not None else {}),
             },
             sort_keys=False,
         )

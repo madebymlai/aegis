@@ -29,6 +29,8 @@ DATA_QUALITY_DEGRADATIONS = {
 }
 SOURCE_KINDS = {"component", "playbook"}
 RANKING_DIRECTIONS = {"asc", "desc"}
+OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
+OPTIMIZATION_RETURN_GRID_POLICIES = {"first", "all"}
 RUN_EXECUTABLE_DENIED_KEYS = {
     "artifact_path",
     "callable",
@@ -205,6 +207,21 @@ class CandidateGridConfig:
 
 
 @dataclass(frozen=True)
+class OptimizationEvidenceConfig:
+    return_grid: str = "first"
+
+
+@dataclass(frozen=True)
+class OptimizationConfig:
+    search: str
+    split: RunSplitConfig
+    random_subset: int | None = None
+    seed: int | None = None
+    execute: dict[str, Any] = field(default_factory=dict)
+    evidence: OptimizationEvidenceConfig = field(default_factory=OptimizationEvidenceConfig)
+
+
+@dataclass(frozen=True)
 class RunConfig:
     name: str
     strategy: RunSourceRefConfig
@@ -214,6 +231,7 @@ class RunConfig:
     data: DataConfig = field(default_factory=DataConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
+    optimization: OptimizationConfig | None = None
     split: RunSplitConfig | None = None
     candidate_grid: CandidateGridConfig = field(default_factory=CandidateGridConfig)
     output_dir: str = "runs"

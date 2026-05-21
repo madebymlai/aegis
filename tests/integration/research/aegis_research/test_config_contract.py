@@ -37,6 +37,7 @@ def test_public_config_exports_only_run_config_contract() -> None:
     for name in removed:
         assert not hasattr(config_module, name)
     assert hasattr(config_module, "RunConfig")
+    assert hasattr(config_module, "OptimizationConfig")
     assert hasattr(config_module, "ResolvedRunConfig")
     assert hasattr(config_module, "load_run_config")
     assert hasattr(config_module, "resolve_run_config")
@@ -249,6 +250,186 @@ def test_run_accepts_candidate_grid_policy(tmp_path: Path) -> None:
     assert resolved.config.candidate_grid.batch_size == 25
 
 
+def test_run_accepts_native_grid_optimization_with_nested_split(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = _native_optimization(search="grid")
+
+    resolved = resolve_run_config(
+        raw,
+        component_registry=_component_registry(tmp_path),
+    )
+
+    assert resolved.config.optimization is not None
+    assert resolved.config.optimization.search == "grid"
+    assert resolved.config.optimization.random_subset is None
+    assert resolved.config.optimization.seed is None
+    assert resolved.config.optimization.execute == {}
+    assert resolved.config.optimization.evidence.return_grid == "first"
+    assert resolved.config.optimization.split.method == "from_rolling"
+    assert resolved.config.optimization.split.params["set_labels"] == ["selection", "held_out"]
+
+
+def test_run_accepts_native_random_optimization_policy(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = _native_optimization(
+        search="random",
+        random_subset=5,
+        seed=42,
+        execute={"engine": "threadpool", "chunk_len": "auto"},
+        evidence={"return_grid": "all"},
+    )
+
+    resolved = resolve_run_config(
+        raw,
+        component_registry=_component_registry(tmp_path),
+    )
+
+    assert resolved.config.optimization is not None
+    assert resolved.config.optimization.search == "random"
+    assert resolved.config.optimization.random_subset == 5
+    assert resolved.config.optimization.seed == 42
+    assert resolved.config.optimization.execute == {"engine": "threadpool", "chunk_len": "auto"}
+    assert resolved.config.optimization.evidence.return_grid == "all"
+
+
+@pytest.mark.parametrize(
+    ("optimization", "expected_path", "expected_message"),
+    [
+        (
+            {
+                "search": "grid",
+                "split": {
+                    "method": "from_rolling",
+                    "params": {
+                        "length": 20,
+                        "split": 0.5,
+                        "set_labels": ["selection", "held_out"],
+                    },
+                },
+                "engine": "custom",
+            },
+            "optimization.engine",
+            "unknown field",
+        ),
+        (
+            {
+                "search": "grid",
+                "split": {
+                    "method": "from_rolling",
+                    "params": {
+                        "length": 20,
+                        "split": 0.5,
+                        "set_labels": ["selection", "held_out"],
+                    },
+                },
+                "mode": "native",
+            },
+            "optimization.mode",
+            "unknown field",
+        ),
+        (
+            {
+                "search": "random",
+                "split": {
+                    "method": "from_rolling",
+                    "params": {
+                        "length": 20,
+                        "split": 0.5,
+                        "set_labels": ["selection", "held_out"],
+                    },
+                },
+            },
+            "optimization.random_subset",
+            "is required",
+        ),
+        (
+            {
+                "search": "grid",
+                "split": {
+                    "method": "from_rolling",
+                    "params": {
+                        "length": 20,
+                        "split": 0.5,
+                        "set_labels": ["selection", "held_out"],
+                    },
+                },
+                "random_subset": 5,
+            },
+            "optimization.random_subset",
+            "only valid when optimization.search is 'random'",
+        ),
+        (
+            {"search": "grid"},
+            "optimization.split",
+            "is required",
+        ),
+    ],
+)
+def test_run_rejects_invalid_native_optimization_policy(
+    tmp_path: Path,
+    optimization: dict[str, object],
+    expected_path: str,
+    expected_message: str,
+) -> None:
+    raw = _run_config()
+    raw["optimization"] = optimization
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert expected_path in str(error.value)
+    assert expected_message in str(error.value)
+
+
+def test_run_rejects_top_level_split_as_native_optimization_split(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = {"search": "grid"}
+    raw["split"] = _optimization_split()
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "optimization.split" in str(error.value)
+    assert "move the split policy under optimization.split" in str(error.value)
+
+
+def test_run_rejects_candidate_grid_on_native_optimization_config(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = _native_optimization(search="grid")
+    raw["candidate_grid"] = {"max_candidates": 100, "max_estimated_cells": 10_000}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "candidate_grid" in str(error.value)
+    assert "native optimization uses optimization.search" in str(error.value)
+
+
+def test_run_rejects_native_optimization_component_param_space_boundary(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = _native_optimization(search="grid")
+    raw["strategy"] = {"source": "component", "id": "demo.strategy"}
+    raw["indicators"] = [{"source": "component", "ids": ["demo.returns"]}]
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path, include_strategy=True),
+        )
+
+    assert "strategy.source" in str(error.value)
+    assert "component param spaces are #32" in str(error.value)
+
+
 def test_run_rejects_playbook_indicators_with_component_strategy(tmp_path: Path) -> None:
     raw = _run_config()
     raw["strategy"] = {"source": "component", "id": "demo.strategy"}
@@ -297,6 +478,18 @@ def _run_config() -> dict[str, object]:
         "strategy": {"source": "playbook", "id": "ma_cross"},
         "indicators": [{"source": "playbook", "ids": ["ma_explore"]}],
         "ranking": {"metric": "total_return", "direction": "desc"},
+    }
+
+
+def _native_optimization(search: str, **overrides: object) -> dict[str, object]:
+    return {"search": search, "split": _optimization_split(), **overrides}
+
+
+def _optimization_split() -> dict[str, object]:
+    return {
+        "method": "from_rolling",
+        "params": {"length": 20, "split": 0.5, "set_labels": ["selection", "held_out"]},
+        "max_splits": 10,
     }
 
 
