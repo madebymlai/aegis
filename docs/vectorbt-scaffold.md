@@ -45,7 +45,7 @@ The walkthrough is scaffold evidence only. It is not validated trading methodolo
 
 ## Config Contract
 
-YAML is a versioned public contract. Every config must declare `schema_version: 4`; canonical configs also declare `lane: run` or `lane: train`. The CLI command must agree with the lane (`aerd run` for strategy/research evidence, `aerd run --train` for ML training), and static config validation runs before any run directory exists. Data-array contract failures discovered from selected components happen before provider data is loaded and mark the run failed with manifest evidence. This in-repo schema v4 contract is forward-first: older draft configs that used top-level `labels`, top-level `model`, deprecated run indicator refs, removed feature-map fields, or non-purged split kinds are intentionally rejected rather than compatibility-shimmed.
+YAML is a versioned public contract. Every config must declare `schema_version: 5`; canonical configs also declare `lane: run` or `lane: train`. The CLI command must agree with the lane (`aerd run` for strategy/research evidence, `aerd run --train` for ML training), and static config validation runs before any run directory exists. Data-array contract failures discovered from selected components happen before provider data is loaded and mark the run failed with manifest evidence. This in-repo schema v5 contract is forward-first: older draft configs that used top-level `labels`, top-level `model`, deprecated run indicator refs, removed feature-map fields, or invalid split method params are intentionally rejected rather than compatibility-shimmed.
 
 Validation is strict by default:
 

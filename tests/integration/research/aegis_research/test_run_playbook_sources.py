@@ -220,6 +220,48 @@ def test_run_cli_executes_playbook_strategy_sweep_candidates(
     }
 
 
+def test_run_cli_executes_playbook_strategy_sweep_with_rolling_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
+    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_cross",
+        candidate_grid={"batch_size": 2},
+        split=_rolling_split_config(),
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "rolling-playbook"]) == 0
+
+    output = capsys.readouterr()
+    artifact = json.loads((tmp_path / "runs" / "rolling-playbook" / "strategy_run.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "rolling-playbook" / "manifest.json").read_text())
+    assert json.loads(output.out)["status"] == "success"
+    assert artifact["split"]["method"] == "from_rolling"
+    assert artifact["leaderboard"]["schema_version"] == "split_run_leaderboard.v1"
+    assert artifact["leaderboard"]["summary"]["attempted_splits"] == artifact["split"]["n_splits"]
+    assert artifact["leaderboard"]["rows"][0]["metric_source"] == "central_portfolio"
+    assert artifact["leaderboard"]["rows"][0]["selected_split_count"] >= 1
+    assert {record["set"] for record in artifact["split_metrics"]} == {"selection", "held_out"}
+    assert sum(1 for record in artifact["split_metrics"] if record["set"] == "held_out") == artifact[
+        "split"
+    ]["n_splits"]
+    assert {record["native_set"] for record in artifact["split_metrics"]} == {
+        "selection",
+        "held_out",
+    }
+    assert artifact["catalogs"]["metrics"] == {}
+    strategy_artifact = next(item for item in manifest["artifacts"] if item["id"] == "strategy.run")
+    assert strategy_artifact["status"] == "completed"
+    assert strategy_artifact["shape"]["split_count"] == artifact["split"]["n_splits"]
+    assert strategy_artifact["shape"]["split_metric_count"] == len(artifact["split_metrics"])
+
+
 def test_run_cli_batches_playbook_strategy_sweep_final_smaller_candidate_batch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -459,6 +501,55 @@ def test_run_cli_records_batched_portfolio_simulation_failure_context(
         "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-2]",
     ]
     assert not (tmp_path / "runs" / "batched-portfolio-fails" / "strategy_run.json").exists()
+
+
+def test_run_cli_preserves_partial_split_artifact_after_later_chunk_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
+    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
+    original_simulate_portfolio_batch = strategy_runs.simulate_portfolio_batch
+
+    def fail_second_candidate_batch(*args: object, **kwargs: object) -> object:
+        entries = args[1]
+        candidate_id = str(entries.columns.get_level_values("candidate_id")[0])
+        if ":slow-" in candidate_id:
+            raise RuntimeError("split portfolio batch failed intentionally")
+        return original_simulate_portfolio_batch(*args, **kwargs)
+
+    monkeypatch.setattr(
+        strategy_runs,
+        "simulate_portfolio_batch",
+        fail_second_candidate_batch,
+    )
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_cross",
+        candidate_grid={"batch_size": 1},
+        split=_rolling_split_config(),
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "split-partial"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    manifest = json.loads((tmp_path / "runs" / "split-partial" / "manifest.json").read_text())
+    artifact = json.loads((tmp_path / "runs" / "split-partial" / "strategy_run.json").read_text())
+    strategy_artifact = next(item for item in manifest["artifacts"] if item["id"] == "strategy.run")
+    chunks = manifest["evidence"]["chunks"]["chunks"]
+    assert payload["error"]["category"] == "execution_failure"
+    assert "split portfolio batch failed intentionally" in payload["error"]["message"]
+    assert chunks[0]["status"] == "succeeded"
+    assert chunks[1]["status"] == "failed"
+    assert chunks[1]["error"]["stage"] == "split_portfolio_simulation"
+    assert strategy_artifact["status"] == "partial"
+    assert strategy_artifact["shape"]["split_metric_count"] == len(artifact["split_metrics"])
+    assert artifact["split_metrics"]
+    assert artifact["leaderboard"]["summary"]["partial_leaderboard"] is True
 
 
 def test_run_cli_records_batched_metric_extraction_failure_context(
@@ -762,6 +853,7 @@ def _write_run_config(
     indicators: list[dict[str, object]] | None = None,
     ranking_metric: str = "total_return",
     candidate_grid: dict[str, object] | None = None,
+    split: dict[str, object] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
@@ -782,11 +874,25 @@ def _write_run_config(
                 else [{"source": "playbook", "ids": ["ma_explore"]}],
                 "ranking": {"metric": ranking_metric, "direction": "desc"},
                 **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
+                **({"split": split} if split is not None else {}),
             },
             sort_keys=False,
         )
     )
     return path
+
+
+def _rolling_split_config() -> dict[str, object]:
+    return {
+        "method": "from_rolling",
+        "params": {
+            "length": 20,
+            "offset": 20,
+            "split": 0.5,
+            "set_labels": ["selection", "held_out"],
+        },
+        "max_splits": 5,
+    }
 
 
 def _write_playbook(

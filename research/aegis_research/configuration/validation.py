@@ -35,6 +35,7 @@ from research.aegis_research.configuration.schema import (
     DataQualityConfig,
     PortfolioConfig,
     ReportConfig,
+    RunSplitConfig,
     SignalConfig,
     SplitConfig,
     has_data_array_token_shape,
@@ -43,6 +44,7 @@ from research.aegis_research.configuration.secrets import _validate_no_inline_se
 from research.aegis_research.market_data.sources import LOCAL_DATA_SOURCES, remote_data_sources
 from research.aegis_research.metrics import FrozenMetricRegistry
 from research.aegis_research.model_registry import FrozenModelRegistry
+from research.aegis_research.run_splits import validate_run_split_config
 
 
 def _validate_raw_lane_config(
@@ -121,7 +123,7 @@ def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
     common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir"}
     if lane == "train":
         return common | {"indicators", "labeler", "train"}
-    return common | {"candidate_grid", "indicators", "ranking", "strategy"}
+    return common | {"candidate_grid", "indicators", "ranking", "split", "strategy"}
 
 
 def _validate_top_level_lane_selection(
@@ -161,6 +163,9 @@ def _validate_strategy_run_lane(
     )
     _validate_run_source_combination(raw, issues)
     _validate_ranking("ranking", raw.get("ranking"), issues, lane="run", registry=metric_registry)
+    if raw.get("split") is not None:
+        split = _section(raw, "split", set(RunSplitConfig.__dataclass_fields__), issues)
+        _validate_run_split(split, issues)
     candidate_grid = _section(
         raw,
         "candidate_grid",
@@ -240,6 +245,21 @@ def _validate_train_lane(
     _validate_train_model_ref(
         "train.model", train.get("model"), issues, model_registry=model_registry
     )
+
+
+def _validate_run_split(split: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
+    _optional_int("split.max_splits", split, issues, positive=True)
+    _optional_int("split.max_estimated_output_cells", split, issues, positive=True)
+    _optional_int("split.max_public_artifact_bytes", split, issues, positive=True)
+
+    params = split.get("params", {})
+    if not isinstance(params, dict):
+        issues.append(ConfigValidationIssue("split.params", "must be a mapping"))
+    else:
+        _validate_json_like("split.params", params, issues)
+        _validate_no_inline_secrets("split.params", params, issues)
+        _validate_no_lane_executable_keys("split.params", params, issues)
+    validate_run_split_config(split, issues)
 
 
 def _validate_train_model_ref(
@@ -334,7 +354,7 @@ def _validate_training_fields_absent(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
 ) -> None:
-    for key in ("train", "model", "labels", "label", "labeler", "split", "signals"):
+    for key in ("train", "model", "labels", "label", "labeler", "signals"):
         if key in raw:
             if key == "labeler" and "strategy" in raw:
                 continue
