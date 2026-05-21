@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 from vectorbtpro import vbt
+from vectorbtpro.utils.execution import NoResultsException
 
 from research.aegis_research.configuration.schema import (
     OptimizationConfig,
@@ -89,7 +90,15 @@ def execute_optimization(
         call_args = (close, open_prices)
     else:
         call_args = (close,)
-    output = decorated(*call_args, **dict(source.params))
+    try:
+        output = decorated(*call_args, **dict(source.params))
+    except NoResultsException as error:
+        raise OptimizationRunnerError(
+            "optimization pipeline produced no usable results across the requested "
+            "parameter grid; every sampled combination returned vbt.NoResult or was "
+            "filtered out — return NaN metrics from invalid combinations instead so "
+            "they remain visible in evidence"
+        ) from error
     if return_grid_kw is None:
         selection_series = output
         selection_grid: pd.Series | None = None
@@ -147,7 +156,10 @@ def _build_cv_callable(
     if has_open_prices:
 
         def cv_callable(close_slice, open_slice, **params):
-            entries, exits = _coerce_pipeline_signals(pipeline(close_slice, **params))
+            pipeline_output = pipeline(close_slice, **params)
+            if pipeline_output is vbt.NoResult:
+                return vbt.NoResult
+            entries, exits = _coerce_pipeline_signals(pipeline_output)
             result = simulate_portfolio(
                 close_slice,
                 entries,
@@ -162,7 +174,10 @@ def _build_cv_callable(
         return cv_callable, ["close_slice", "open_slice"]
 
     def cv_callable_no_open(close_slice, **params):
-        entries, exits = _coerce_pipeline_signals(pipeline(close_slice, **params))
+        pipeline_output = pipeline(close_slice, **params)
+        if pipeline_output is vbt.NoResult:
+            return vbt.NoResult
+        entries, exits = _coerce_pipeline_signals(pipeline_output)
         result = simulate_portfolio(
             close_slice,
             entries,
@@ -217,10 +232,17 @@ def _build_selection_function(*, ranking_metric: str, direction: str):
         if not isinstance(per_param, pd.Series):
             per_param = pd.Series(per_param)
         per_param = per_param.astype(float)
+        finite = per_param.dropna()
+        if finite.empty:
+            raise OptimizationRunnerError(
+                f"optimization selection cannot rank by {ranking_metric!r}: every "
+                "sampled parameter row returned a non-finite value (NaN/inf). Inspect "
+                "pipeline diagnostics for the failing combinations"
+            )
         if direction == "desc":
-            label = per_param.idxmax()
+            label = finite.idxmax()
         else:
-            label = per_param.idxmin()
+            label = finite.idxmin()
         return vbt.LabelSel([label])
 
     return selection
