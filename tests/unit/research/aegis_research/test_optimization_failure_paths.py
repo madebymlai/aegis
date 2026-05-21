@@ -26,6 +26,8 @@ from research.aegis_research.optimization.runner import (
 )
 from research.aegis_research.optimization.source import OptimizationSource
 
+DATA_IDENTITY = {"source": "test", "symbols": ["SYN"], "timeframe": "1D"}
+
 
 def _close_open_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     index = pd.date_range("2024-01-01", periods=40, freq="D")
@@ -158,7 +160,9 @@ def test_leaderboard_records_failure_when_winner_ranking_metric_missing() -> Non
         [(5, 10), (2, 20)], names=["fast_window", "slow_window"]
     )
     candidate_rows = candidate_rows_from_param_index(
-        sampled_index, source_identity={"source": "test"}
+        sampled_index,
+        source_identity={"source": "test"},
+        data_identity=DATA_IDENTITY,
     )
 
     leaderboard = build_optimization_leaderboard(
@@ -186,7 +190,9 @@ def test_leaderboard_skips_split_with_zero_held_out_rows_and_records_failure() -
     )
     sampled_index = pd.MultiIndex.from_tuples([(5, 10)], names=["fast_window", "slow_window"])
     candidate_rows = candidate_rows_from_param_index(
-        sampled_index, source_identity={"source": "test"}
+        sampled_index,
+        source_identity={"source": "test"},
+        data_identity=DATA_IDENTITY,
     )
 
     leaderboard = build_optimization_leaderboard(
@@ -221,7 +227,9 @@ def test_leaderboard_nan_held_out_metric_does_not_inflate_aggregate() -> None:
     selection = pd.Series(values, index=index, name="value")
     sampled_index = pd.MultiIndex.from_tuples([(5, 10)], names=["fast_window", "slow_window"])
     candidate_rows = candidate_rows_from_param_index(
-        sampled_index, source_identity={"source": "test"}
+        sampled_index,
+        source_identity={"source": "test"},
+        data_identity=DATA_IDENTITY,
     )
 
     leaderboard = build_optimization_leaderboard(
@@ -261,7 +269,9 @@ def test_leaderboard_canonical_key_supports_nan_and_complex_param_values() -> No
         [(float("nan"), 0.10)], names=["sl_stop", "tp_stop"]
     )
     candidate_rows = candidate_rows_from_param_index(
-        sampled_index, source_identity={"source": "test"}
+        sampled_index,
+        source_identity={"source": "test"},
+        data_identity=DATA_IDENTITY,
     )
 
     leaderboard = build_optimization_leaderboard(
@@ -301,7 +311,9 @@ def test_leaderboard_none_ranking_metric_sorts_last_for_both_directions() -> Non
         [(2, 10), (5, 20), (10, 50)], names=["fast_window", "slow_window"]
     )
     candidate_rows = candidate_rows_from_param_index(
-        sampled_index, source_identity={"source": "test"}
+        sampled_index,
+        source_identity={"source": "test"},
+        data_identity=DATA_IDENTITY,
     )
 
     desc_leaderboard = build_optimization_leaderboard(

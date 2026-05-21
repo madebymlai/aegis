@@ -236,6 +236,12 @@ def test_optimization_executes_cv_split_and_writes_strategy_run_artifact(
     first_candidate = artifact["candidates"][0]
     assert set(first_candidate["params"].keys()) == {"fast_window", "slow_window"}
     assert first_candidate["candidate_key"].startswith("cand_")
+    assert first_candidate["identity"]["data_identity"]["source"] == "synthetic"
+    assert first_candidate["identity"]["data_identity"]["symbols"] == ["SYN"]
+    assert first_candidate["store_namespace"] == {
+        "kind": "artifact_only",
+        "run_id": "optimization-run",
+    }
     selection_grid = artifact["execution"]["selection_grid"]
     assert selection_grid is not None
     selection_grid_sets = {row["coordinates"]["set"] for row in selection_grid["rows"]}

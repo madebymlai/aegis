@@ -13,6 +13,8 @@ from research.aegis_research.optimization.leaderboard import (
 )
 from research.aegis_research.optimization.runner import METRIC_INDEX_NAME
 
+DATA_IDENTITY = {"source": "test", "symbols": ["SYN"], "timeframe": "1D"}
+
 
 def _build_selection_series(
     winners_per_split: dict[int, tuple[int, int]],
@@ -41,6 +43,7 @@ def _build_candidate_rows() -> list[dict[str, Any]]:
     return candidate_rows_from_param_index(
         sampled_index,
         source_identity={"source": "test"},
+        data_identity=DATA_IDENTITY,
     )
 
 

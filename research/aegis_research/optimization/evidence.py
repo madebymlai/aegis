@@ -10,8 +10,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-CANDIDATE_ROW_SCHEMA_VERSION = "candidate_row.v1"
-CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v1"
+CANDIDATE_ROW_SCHEMA_VERSION = "candidate_row.v2"
+CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v2"
 DEFAULT_COORDINATE_LEVELS = frozenset({"split", "set", "symbol"})
 
 
@@ -19,15 +19,19 @@ def candidate_rows_from_param_index(
     index: pd.Index,
     *,
     source_identity: Mapping[str, Any],
+    data_identity: Mapping[str, Any],
     hidden_params: Mapping[str, Any] | None = None,
     portfolio_policy: Mapping[str, Any] | None = None,
+    store_namespace: Mapping[str, Any] | None = None,
     coordinate_levels: Sequence[str] = tuple(DEFAULT_COORDINATE_LEVELS),
 ) -> list[dict[str, Any]]:
     level_names, row_values = _index_rows(index)
     coordinate_names = set(coordinate_levels)
     source_identity = _canonical_mapping(source_identity)
+    data_identity = _canonical_mapping(data_identity)
     hidden_params = _canonical_mapping(hidden_params or {})
     portfolio_policy = _canonical_mapping(portfolio_policy or {})
+    store_namespace = _canonical_mapping(store_namespace or {})
     rows = []
     for row_index, values in enumerate(row_values):
         params: dict[str, Any] = {}
@@ -43,6 +47,7 @@ def candidate_rows_from_param_index(
         identity = {
             "schema_version": CANDIDATE_IDENTITY_SCHEMA_VERSION,
             "source_identity": source_identity,
+            "data_identity": data_identity,
             "params": params,
             "hidden_params": hidden_params,
             "portfolio_policy": portfolio_policy,
@@ -52,6 +57,7 @@ def candidate_rows_from_param_index(
                 "schema_version": CANDIDATE_ROW_SCHEMA_VERSION,
                 "row_index": row_index,
                 "candidate_key": _candidate_key(identity),
+                "store_namespace": store_namespace,
                 "params": params,
                 "coordinates": coordinates,
                 "param_index": {

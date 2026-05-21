@@ -8,6 +8,15 @@ from vectorbtpro import vbt
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
 
 
+DATA_IDENTITY = {
+    "source": "synthetic",
+    "symbols": ["SYN"],
+    "timeframe": "1D",
+    "index_start": "2026-01-01",
+    "index_end": "2026-01-31",
+}
+
+
 class StopKind(Enum):
     TRAILING = "trailing"
 
@@ -21,6 +30,7 @@ def test_candidate_rows_are_derived_from_vbt_param_index() -> None:
     rows = candidate_rows_from_param_index(
         index,
         source_identity={"source": "playbook", "id": "native_rsi", "source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
         portfolio_policy={"entry_budget": 1.0},
     )
 
@@ -34,6 +44,7 @@ def test_candidate_rows_are_derived_from_vbt_param_index() -> None:
     }
     assert rows[0]["coordinates"] == {}
     assert rows[0]["identity"]["source_identity"]["source_hash"] == "abc"
+    assert rows[0]["identity"]["data_identity"] == DATA_IDENTITY
     assert rows[0]["identity"]["portfolio_policy"] == {"entry_budget": 1.0}
 
 
@@ -47,7 +58,11 @@ def test_candidate_key_excludes_split_set_symbol_coordinates() -> None:
         names=["split", "set", "symbol", "rsi_window"],
     )
 
-    rows = candidate_rows_from_param_index(index, source_identity={"source_hash": "abc"})
+    rows = candidate_rows_from_param_index(
+        index,
+        source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
+    )
 
     assert {row["candidate_key"] for row in rows} == {rows[0]["candidate_key"]}
     assert rows[0]["params"] == {"rsi_window": 14}
@@ -65,6 +80,7 @@ def test_candidate_values_are_serialized_deterministically() -> None:
     rows = candidate_rows_from_param_index(
         index,
         source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
         hidden_params={"no_stop_value": None},
     )
 
@@ -88,24 +104,28 @@ def test_candidate_key_includes_hidden_source_and_portfolio_identity() -> None:
     base = candidate_rows_from_param_index(
         index,
         source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
         portfolio_policy={"fees": 0.001},
     )[0]
     different_hidden = candidate_rows_from_param_index(
         index,
         source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 2},
         portfolio_policy={"fees": 0.001},
     )[0]
     different_source = candidate_rows_from_param_index(
         index,
         source_identity={"source_hash": "def"},
+        data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
         portfolio_policy={"fees": 0.001},
     )[0]
     different_portfolio = candidate_rows_from_param_index(
         index,
         source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
         portfolio_policy={"fees": 0.002},
     )[0]
@@ -113,6 +133,34 @@ def test_candidate_key_includes_hidden_source_and_portfolio_identity() -> None:
     assert base["candidate_key"] != different_hidden["candidate_key"]
     assert base["candidate_key"] != different_source["candidate_key"]
     assert base["candidate_key"] != different_portfolio["candidate_key"]
+
+
+def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:
+    index = pd.MultiIndex.from_tuples([(14,)], names=["rsi_window"])
+
+    base = candidate_rows_from_param_index(
+        index,
+        source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
+        store_namespace={"kind": "local_sqlite", "name": "default"},
+    )[0]
+    different_data = candidate_rows_from_param_index(
+        index,
+        source_identity={"source_hash": "abc"},
+        data_identity={**DATA_IDENTITY, "symbols": ["ALT"]},
+        store_namespace={"kind": "local_sqlite", "name": "default"},
+    )[0]
+    different_store = candidate_rows_from_param_index(
+        index,
+        source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
+        store_namespace={"kind": "local_sqlite", "name": "other"},
+    )[0]
+
+    assert base["candidate_key"] != different_data["candidate_key"]
+    assert base["candidate_key"] == different_store["candidate_key"]
+    assert base["store_namespace"] == {"kind": "local_sqlite", "name": "default"}
+    assert different_store["store_namespace"] == {"kind": "local_sqlite", "name": "other"}
 
 
 def test_random_subset_rows_persist_actual_vbt_sampled_index() -> None:
@@ -128,7 +176,11 @@ def test_random_subset_rows_persist_actual_vbt_sampled_index() -> None:
         _seed=42,
     )
 
-    rows = candidate_rows_from_param_index(sampled.index, source_identity={"source_hash": "abc"})
+    rows = candidate_rows_from_param_index(
+        sampled.index,
+        source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
+    )
 
     assert [row["params"] for row in rows] == [
         {"a": 1, "b": 10, "c": False},

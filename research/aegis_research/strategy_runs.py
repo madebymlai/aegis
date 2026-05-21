@@ -582,7 +582,9 @@ def _run_optimization_strategy_sweep(
     candidate_rows = candidate_rows_from_param_index(
         optimization_run.evaluated_index,
         source_identity=optimization_source.evidence,
+        data_identity=_candidate_data_identity(data_result, array_contract),
         portfolio_policy=to_builtin(asdict(config.portfolio)),
+        store_namespace={"kind": "artifact_only", "run_id": recorder.manifest.run_id},
         coordinate_levels=("split", "set", "symbol", METRIC_INDEX_NAME),
     )
     optimization_evidence["candidate_count"] = len(candidate_rows)
@@ -2240,6 +2242,25 @@ def _strategy_data_evidence_payload(
             "strategy_data_binding": "runner_data_bundle",
         }
     return payload
+
+
+def _candidate_data_identity(data_result: Any, array_contract: DataArrayContract) -> dict[str, Any]:
+    metadata = data_result.metadata
+    return {
+        "schema_version": "candidate_data_identity.v1",
+        "source": metadata.get("source"),
+        "requested_symbols": metadata.get("requested_symbols"),
+        "symbols": metadata.get("symbols"),
+        "timeframe": metadata.get("timeframe"),
+        "effective_arrays": metadata.get("effective_arrays"),
+        "loaded_arrays": metadata.get("loaded_arrays"),
+        "shape": metadata.get("shape"),
+        "index_start": metadata.get("index_start"),
+        "index_end": metadata.get("index_end"),
+        "index_evidence": metadata.get("index_evidence"),
+        "source_metadata": metadata.get("source_metadata"),
+        "array_contract": array_contract.metadata(),
+    }
 
 
 def _assert_leaderboard_complete(leaderboard: dict[str, Any]) -> None:
