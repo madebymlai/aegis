@@ -47,13 +47,19 @@ class IndicatorManifest(ComponentManifest):
     input_names: tuple[str, ...]
     param_names: tuple[str, ...]
     output_names: tuple[str, ...]
+    defaults: Mapping[str, Any]
+    param_space_callable: str | None = None
     bar_aligned: bool = True
 
 
 @dataclass(frozen=True)
 class StrategyManifest(ComponentManifest):
     input_names: tuple[str, ...]
+    param_names: tuple[str, ...]
     signal_outputs: tuple[str, ...]
+    consumes_outputs: tuple[str, ...]
+    defaults: Mapping[str, Any]
+    param_space_callable: str | None = None
     owns_portfolio: bool = False
 
 

@@ -210,6 +210,55 @@ def test_component_manifest_exposes_input_names_for_supported_families(tmp_path)
     assert registry.get(ComponentSelection("strategies", "demo.strategy")).input_names == ("Close",)
 
 
+def test_component_manifest_exposes_param_space_defaults_and_consumed_outputs(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_component(root / "indicators" / "indicator.py", "indicators", "demo.indicator")
+    _write_component(root / "strategies" / "strategy.py", "strategies", "demo.strategy")
+    indicator_path = root / "indicators" / "indicator.py"
+    strategy_path = root / "strategies" / "strategy.py"
+    indicator_path.write_text(
+        indicator_path.read_text().replace(
+            "'output_names': ['value']",
+            "'output_names': ['value'], 'defaults': {'window': 20}, "
+            "'param_space_callable': 'param_space'",
+        )
+    )
+    strategy_path.write_text(
+        strategy_path.read_text().replace(
+            "'signal_outputs': ['entries', 'exits']",
+            "'param_names': ['threshold'], 'signal_outputs': ['entries', 'exits'], "
+            "'consumes_outputs': ['value'], 'defaults': {'threshold': 0.0}, "
+            "'param_space_callable': 'param_space'",
+        )
+    )
+
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    indicator = registry.get(ComponentSelection("indicators", "demo.indicator")).manifest
+    strategy = registry.get(ComponentSelection("strategies", "demo.strategy")).manifest
+
+    assert indicator.defaults == {"window": 20}
+    assert indicator.param_space_callable == "param_space"
+    assert strategy.param_names == ("threshold",)
+    assert strategy.consumes_outputs == ("value",)
+    assert strategy.defaults == {"threshold": 0.0}
+    assert strategy.param_space_callable == "param_space"
+
+
+def test_component_manifest_rejects_defaults_outside_param_names(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_component(root / "indicators" / "indicator.py", "indicators", "demo.bad")
+    path = root / "indicators" / "indicator.py"
+    path.write_text(
+        path.read_text().replace(
+            "'output_names': ['value']",
+            "'output_names': ['value'], 'defaults': {'unknown': 20}",
+        )
+    )
+
+    with pytest.raises(ComponentRegistryError, match="defaults keys"):
+        discover_component_registry(root=root, repo_root=tmp_path)
+
+
 def test_component_manifest_rejects_malformed_input_names(tmp_path) -> None:
     root = tmp_path / "research" / "components"
     _write_component(root / "indicators" / "indicator.py", "indicators", "demo.bad")
