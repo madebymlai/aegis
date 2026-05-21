@@ -11,7 +11,7 @@ deepened: 2026-05-21
 
 ## Summary
 
-Introduce one forward optimization path: a VBT-native split/CV runner that wraps one shared parameterized pipeline/callable with `vbt.cv_split`, derives candidate evidence from VBT result indexes, and keeps Aegis-owned portfolio policy, resource gates, metrics, diagnostics, and artifacts around that native execution boundary. Direct full-period `vbt.parameterized` remains an internal shape-test/smoke-test mechanism, not a separate public research optimization runner.
+Introduce one forward run path: a VBT-native split/CV runner that wraps one shared parameterized pipeline/callable with `vbt.cv_split`, derives candidate evidence from VBT result indexes, and keeps Aegis-owned portfolio policy, resource gates, metrics, diagnostics, and artifacts around that native execution boundary. Direct full-period `vbt.parameterized` remains an internal shape-test/smoke-test mechanism, not a separate public research runner, and configs without the native optimization contract are not preserved as a fixed/non-optimized side path.
 
 ---
 
@@ -30,7 +30,7 @@ The plan also tightens the earlier top-level split direction: because #31 optimi
 **Native optimization contract**
 - R1. Forward optimization must use VBT-native parameterization APIs directly, not Aegis-owned candidate-grid composition.
 - R2. Public #31 optimization research configs must include `optimization.split`; `optimization` without `optimization.split` must fail validation instead of publishing an in-sample optimization leaderboard.
-- R3. A config with no `optimization` block is a fixed/non-optimized run: it must not fail solely because optimization is absent, must not perform parameter search, and must not publish an in-sample optimization leaderboard.
+- R3. A forward research config without the native `optimization` contract must fail validation or be migrated; Aegis must not preserve a separate fixed/non-optimized public run branch beside the native path.
 - R4. Parameter values that vary across an optimized run must be represented as `vbt.Param` inputs in one shared parameterized pipeline/callable, including strategy thresholds, indicator windows, tied threshold pairs, constraints, and supported portfolio/risk arguments.
 - R5. Aegis must not feed VBT-generated params back into `compose_candidate_grid` or `materialize_strategy_sweep_signals` as a compatibility adapter.
 - R6. Split optimization must run through `vbt.cv_split` around the shared parameterized pipeline/callable rather than Aegis manually looping split windows, selecting candidate IDs, and re-simulating selected held-out candidates.
@@ -84,7 +84,7 @@ The plan also tightens the earlier top-level split direction: because #31 optimi
 - Do not preserve old custom candidate-axis behavior as a forward optimization path or compatibility adapter. If implementation finds a concrete persisted-data or external-consumer dependency, isolate it as legacy read/reporting support outside `optimization.search` execution; #31 optimized configs must still reject `candidate_grid`.
 - Do not build an adapter that wraps VBT params only to feed them into `compose_candidate_grid` or `materialize_strategy_sweep_signals`.
 - Do not expose full-period, no-split optimization as a valid research leaderboard in #31. Direct `vbt.parameterized` over full data is only a shape-test/smoke-test mechanism or non-promotable diagnostic outside the public optimization contract.
-- Do not use top-level `split` as the forward optimized-run contract. #31 optimized configs use `optimization.split`; any remaining top-level `split` support is legacy/fixed-run behavior outside native optimized execution.
+- Do not use top-level `split` as the forward run contract. #31 configs use `optimization.split`; remaining top-level `split` support is legacy-only and not a public side path.
 - Do not implement Aegis-owned random sampling, tied-parameter pairing, conditional filtering, or mono-chunk batching when VBT already provides those semantics.
 - Do not let playbooks, strategies, or future source contracts own official portfolio metrics.
 - Do not introduce component sweeps, component param spaces, per-run component params, or component unification in #31.
@@ -98,7 +98,7 @@ The plan also tightens the earlier top-level split direction: because #31 optimi
 - #32 playbook removal/unification: removal or conversion of legacy playbook sweep contracts once the native runner and component-oriented model cover current behavior.
 - #32 component param spaces: parameterized components and per-run component params.
 - Advanced optimizers: Optuna, Hyperopt, Bayesian optimization, or adaptive search as separate VBT-native extension issues.
-- Legacy code deletion: delete `CandidateAxis`, `ComposedCandidate`, `compose_candidate_grid`, and `materialize_strategy_sweep_signals` only after #32 confirms no artifact, docs, or external consumer requires read/reporting support. Until then, the legacy code may remain dormant, but it must not be reachable from #31 optimized configs.
+- Legacy code deletion: delete or isolate `CandidateAxis`, `ComposedCandidate`, `compose_candidate_grid`, and `materialize_strategy_sweep_signals` from active execution as soon as the native path lands. If a concrete historical artifact consumer exists, keep only read/reporting support that cannot be reached by forward run configs.
 
 ---
 
@@ -139,9 +139,9 @@ The plan also tightens the earlier top-level split direction: because #31 optimi
 ## Key Technical Decisions
 
 - Native runner boundary: add a new VBT-native optimization contract and split/CV runner rather than extending `CandidateAxis` or wrapping VBT params back into `compose_candidate_grid`. This directly enforces R1-R7 and keeps #31 forward-first.
-- Split-required research path: `optimization` means research optimization and requires `optimization.split` in #31. A config without `optimization` remains a fixed/non-optimized run; direct full-period `vbt.parameterized` is retained only for focused tests/spikes that verify the shared parameterized pipeline used by `vbt.cv_split`.
+- Split-required research path: the native optimization contract is the only forward research run contract and requires `optimization.split` in #31. A config without `optimization` is removed/rejected rather than routed to a fixed/non-optimized branch; direct full-period `vbt.parameterized` is retained only for focused tests/spikes that verify the shared parameterized pipeline used by `vbt.cv_split`.
 - Config policy: use `optimization.search` as the explicit policy field with grid/random meanings; reject `optimization.engine` and `optimization.mode`, and do not expose a user-selectable backend. VBT execution settings stay under execution policy as VBT kwargs, not Aegis optimizer selection.
-- Candidate-grid replacement: bump the run config contract and reject `candidate_grid` whenever `optimization` is present. Legacy code may remain unreachable/dormant for non-native coverage until #32, but resource/evidence limits move under native optimization policy so custom batching does not remain a parallel optimization abstraction.
+- Candidate-grid replacement: bump the run config contract and reject `candidate_grid` from forward configs. Legacy code may remain only as unreachable historical read/reporting support until #32 deletes or converts it, but resource/evidence limits move under native optimization policy so custom batching does not remain a parallel optimization abstraction.
 - Source contract first: define how a research source exposes a VBT parameterized pipeline and parameter specs before wiring execution. The plan should not start by translating legacy RSI candidate loops because that would preserve the old authoring model.
 - VBT result index first: persist normalized VBT parameter rows and derive stable Aegis keys afterward. Candidate identity should include source identity and behavior-affecting hidden metadata/portfolio policy fingerprint, while split/set labels remain metric/evidence coordinates rather than part of candidate identity.
 - Portfolio policy wrapper: the parameterized function may vary indicator, signal, and supported portfolio/risk values, but official metrics must come from an Aegis-owned portfolio helper that preserves entry budget, next-open validation, long-only settings, shared cash, fees, slippage, and diagnostics.
@@ -184,7 +184,7 @@ Native run flow:
 ```mermaid
 flowchart TB
     Config[Run config with optimization.search]
-    Sources[Selected fixed components or native research source]
+    Sources[Native parameterized research pipeline]
     Contract[VBT-native pipeline contract]
     Preflight[VBT-native resource and evidence preflight]
     Pipeline[Shared parameterized pipeline/callable]
@@ -218,6 +218,7 @@ Config policy comparison:
 | `optimization.execute` | VBT execution/chunking kwargs | Yes | Must not imply Aegis optimizer engine selection |
 | `optimization.engine` | Aegis optimizer backend selector | No | Reject in validation |
 | `optimization.mode` | Native/custom mode switch | No | Reject in validation |
+| no `optimization` block | Fixed/non-optimized public run branch | No | Reject or migrate instead of routing around the native path |
 | `candidate_grid` | Custom composed-candidate batching/search contract | No for forward optimization | Replace with native resource/evidence policy |
 
 Result identity flow:
@@ -330,12 +331,12 @@ Implementation should follow the dependency fields, not just the visual order be
 
 **Approach:**
 - Introduce an additive native optimization dataclass under the run config with `optimization.search` as the explicit search policy field and `optimization.split` as the required CV policy for optimized research.
-- Add the routing contract that `optimization is not None` enters the native runner, while configs without `optimization` can remain on existing fixed/legacy paths until #32 removes them.
+- Add the routing contract that forward configs enter the native runner and configs without `optimization` fail or are migrated instead of falling through to existing fixed/legacy paths.
 - Require `optimization.split` whenever `optimization` is present; `optimization` without `optimization.split` is rejected as in-sample optimization rather than published as research evidence.
 - Accept grid search without Aegis sampling and random/lazy search by mapping the policy to VBT `random_subset`/seed behavior.
 - Validate that random/lazy search includes a subset size and grid search does not carry random-only settings.
 - Reject `optimization.engine` and `optimization.mode` as unknown/invalid fields.
-- Reject `candidate_grid` when `optimization` is present rather than silently treating it as native execution policy. Do not remove the legacy field before native routing exists.
+- Reject `candidate_grid` in forward configs rather than silently treating it as native execution policy. Do not keep it as an alternate public run route once native routing exists.
 - Keep split guard fields under `optimization.split`, not under VBT `splitter_kwargs`.
 - Keep VBT execution kwargs in an explicitly named execution-policy section and validate them as JSON-like, non-secret, non-executable config.
 
@@ -352,9 +353,10 @@ Implementation should follow the dependency fields, not just the visual order be
 - Error path: random search without a subset size fails before run directory creation.
 - Error path: grid search with random-only settings fails before run directory creation.
 - Error path: `optimization` without `optimization.split` fails before run directory creation.
+- Error path: a forward run config without `optimization` fails before run directory creation instead of entering fixed/legacy execution.
 - Error path: a native optimized config with top-level `split` but no `optimization.split` fails with migration-oriented validation guidance.
-- Error path: `candidate_grid` on a native optimization config fails with migration-oriented validation guidance.
-- Error path: a config containing both `optimization.search` and `candidate_grid` cannot run even while legacy playbook code remains in the repo.
+- Error path: `candidate_grid` fails with migration-oriented validation guidance.
+- Error path: a config containing both `optimization.search` and `candidate_grid` cannot run even while legacy code remains in the repo.
 - Integration: a minimal validation fixture with `optimization.search` and `optimization.split` resolves without requiring the public RSI dry-run config to migrate before the runner exists.
 
 **Verification:**
@@ -386,7 +388,7 @@ Implementation should follow the dependency fields, not just the visual order be
 - Make the runner-owned pipeline call the Aegis portfolio helper to produce official metrics, or reject metric-shaped values that do not carry central Aegis portfolio provenance.
 - Reject source outputs that provide metrics, portfolio policy, or candidate IDs as authoritative optimization evidence.
 - Wire `strategy_runs.py` to route optimized configs into the native runner without invoking `compose_candidate_grid`, `composed_candidate_ids`, or `materialize_strategy_sweep_signals`.
-- Treat legacy playbook candidate-axis execution as non-forward. Keep it only where existing non-native behavior remains intentionally untouched until #32, not as a path for #31 optimized configs.
+- Treat legacy playbook candidate-axis execution as non-forward and unreachable from forward configs. Keep only explicitly scoped historical read/reporting support until #32 deletes or converts remaining playbook contracts.
 - Do not modify existing playbook implementations in #31. Use synthetic/native test sources and docs/config-only examples; converting existing RSI/MA playbooks is #32.
 
 **Execution note:** Start with contract and negative-call tests before integrating full VBT execution.
@@ -694,7 +696,7 @@ Implementation should follow the dependency fields, not just the visual order be
 | `return_grid="all"` or random sampled rows create huge artifacts | Make evidence retention resource-gated and default to minimal reproducible selection-grid plus selected held-out evidence |
 | VBT `cv_split` split/set execution violates thread/process constraints | Keep per-split train/test execution within VBT's documented constraints and do not pass execution policy that separates grid-results reuse unsafely |
 | Existing docs/tests keep teaching `candidate_grid` | Update docs/examples/tests in U7 and add negative native-path tests in U2/U5/U6 |
-| Legacy deletion happens too early | Keep deletion out of #31; #32 confirms removal after persistence/promotion/unification decisions |
+| Active legacy deletion exposes hidden historical consumers | Delete/collapse active run routes in #31, but keep only explicitly proven read/reporting support until #32 completes component unification |
 
 ---
 
