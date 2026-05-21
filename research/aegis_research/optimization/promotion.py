@@ -7,6 +7,10 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
 )
+from research.aegis_research.optimization.component_source import (
+    ComponentSourceError,
+    component_param_slices,
+)
 
 
 class PromotionResolutionError(ValueError):
@@ -80,6 +84,11 @@ def _resolve_candidate(ref: ComponentPromotionRef, *, store: CandidateStore) -> 
     provenance.setdefault("component_family", ref.component_family)
     provenance.setdefault("component_id", ref.component_id)
     provenance.setdefault("component_slot", ref.component_slot)
+    params = _component_params_from_candidate(
+        ref,
+        candidate_params=row["params"],
+        provenance=provenance,
+    )
     return ResolvedPromotion(
         reference_kind="candidate_id",
         component_family=ref.component_family,
@@ -87,7 +96,7 @@ def _resolve_candidate(ref: ComponentPromotionRef, *, store: CandidateStore) -> 
         component_slot=ref.component_slot,
         candidate_key=row["candidate_key"],
         run_id=row["run_id"],
-        params=dict(row["params"]),
+        params=params,
         provenance=provenance,
     )
 
@@ -103,3 +112,51 @@ def _assert_component_match(ref: ComponentPromotionRef, row: dict[str, Any]) -> 
         raise PromotionResolutionError(
             f"promotion token {row['token']!r} does not belong to requested component ({fields})"
         )
+
+
+def _component_params_from_candidate(
+    ref: ComponentPromotionRef,
+    *,
+    candidate_params: dict[str, Any],
+    provenance: dict[str, Any],
+) -> dict[str, Any]:
+    runtime = _candidate_component_runtime(ref, provenance)
+    params = dict(runtime.get("fixed_params", {}))
+    try:
+        slices = component_param_slices(candidate_params)
+    except ComponentSourceError as error:
+        raise PromotionResolutionError(str(error)) from error
+    slice_key = (ref.component_family, ref.component_id, ref.component_slot)
+    params.update(slices.get(slice_key, {}))
+    missing = sorted(set(runtime.get("param_keys", {})) - set(params))
+    if missing:
+        raise PromotionResolutionError(
+            f"candidate key {ref.candidate_id!r} is missing params for component "
+            f"{ref.component_family}/{ref.component_id} slot {ref.component_slot!r}: {missing}"
+        )
+    return params
+
+
+def _candidate_component_runtime(
+    ref: ComponentPromotionRef,
+    provenance: dict[str, Any],
+) -> dict[str, Any]:
+    source = provenance.get("source")
+    if not isinstance(source, dict):
+        raise PromotionResolutionError(
+            f"candidate key {ref.candidate_id!r} has no component source provenance"
+        )
+    runtimes = [source.get("strategy"), *source.get("indicators", [])]
+    for runtime in runtimes:
+        if not isinstance(runtime, dict):
+            continue
+        if (
+            runtime.get("family") == ref.component_family
+            and runtime.get("id") == ref.component_id
+            and runtime.get("slot") == ref.component_slot
+        ):
+            return runtime
+    raise PromotionResolutionError(
+        f"candidate key {ref.candidate_id!r} does not include component "
+        f"{ref.component_family}/{ref.component_id} slot {ref.component_slot!r}"
+    )

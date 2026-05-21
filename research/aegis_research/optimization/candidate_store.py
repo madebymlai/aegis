@@ -98,7 +98,27 @@ class CandidateStore:
         params: Mapping[str, Any],
         provenance: Mapping[str, Any],
     ) -> None:
+        row_payload = {
+            "run_id": run_id,
+            "component_family": component_family,
+            "component_id": component_id,
+            "component_slot": component_slot,
+            "candidate_key": candidate_key,
+            "params_json": _json_dumps(params),
+            "provenance_json": _json_dumps(provenance),
+        }
         with self._connection:
+            existing = self._connection.execute(
+                "SELECT * FROM candidate_promotions WHERE token = ?",
+                (token,),
+            ).fetchone()
+            if existing is not None:
+                for field, value in row_payload.items():
+                    if existing[field] != value:
+                        raise CandidateStoreError(
+                            f"promotion token {token} already exists with different payload"
+                        )
+                return
             self._connection.execute(
                 """
                 INSERT INTO candidate_promotions (
@@ -114,13 +134,13 @@ class CandidateStore:
                 """,
                 (
                     token,
-                    run_id,
-                    component_family,
-                    component_id,
-                    component_slot,
-                    candidate_key,
-                    _json_dumps(params),
-                    _json_dumps(provenance),
+                    row_payload["run_id"],
+                    row_payload["component_family"],
+                    row_payload["component_id"],
+                    row_payload["component_slot"],
+                    row_payload["candidate_key"],
+                    row_payload["params_json"],
+                    row_payload["provenance_json"],
                 ),
             )
 

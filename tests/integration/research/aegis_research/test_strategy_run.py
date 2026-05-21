@@ -185,6 +185,35 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert len(artifact["candidates"]) == 1
 
 
+def test_strategy_run_emits_strategy_and_indicator_promotion_locks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_indicator_component(tmp_path / "research/components/indicators/ma.py")
+    _write_indicator_strategy_component(tmp_path / "research/components/strategies/uses_ma.py")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_id="demo.uses_ma",
+        indicators=[{"id": "demo.ma", "params": {"window": 2}}],
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-locks"]) == 0
+
+    capsys.readouterr()
+    artifact = json.loads((tmp_path / "runs" / "component-locks" / "strategy_run.json").read_text())
+    promotions = {
+        (promotion["component_family"], promotion["component_id"]): promotion
+        for promotion in artifact["promotions"]
+    }
+
+    assert set(promotions) == {("strategies", "demo.uses_ma"), ("indicators", "demo.ma")}
+    assert promotions[("indicators", "demo.ma")]["params"] == {"window": 2}
+    assert promotions[("strategies", "demo.uses_ma")]["params"] == {}
+
+
 def test_strategy_run_rejects_data_quality_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

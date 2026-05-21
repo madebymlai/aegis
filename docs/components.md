@@ -25,6 +25,6 @@ Component manifests declare:
 
 Indicator callables receive a market-data bundle and request declared raw features through `data.feature("FeatureName")`. Strategy callables receive an inputs object with `inputs.data`, `inputs.indicators`, and `inputs.metadata`; they emit aligned `entries` and `exits` only. Portfolio sizing, costs, direction, and timing remain config-owned.
 
-Runs with no unlocked axes still execute through the native optimization path as one candidate. Runs with unlocked component params compose all indicator and strategy axes into one VBT-native grid. Promotion locks resolve persisted candidate params into constants before execution.
+Runs with no unlocked axes still execute through the native optimization path as one candidate. Runs with unlocked component params compose all indicator and strategy axes into one VBT-native grid. Completed runs write component promotion records under `strategy_run.json` `promotions`; use a promotion record `token` as a later component `lock_id`. Use a leaderboard row `candidate_key` as `candidate_id` to pin a specific non-best candidate row. Promotion locks resolve persisted component params into constants before execution.
 
 Local component files are ignored by git by default except placeholder READMEs. Ignored files are not secret management; do not store credentials in local research code. Public component examples live under `docs/examples/components/`.

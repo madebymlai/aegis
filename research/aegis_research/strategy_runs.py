@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass
@@ -54,12 +56,19 @@ from research.aegis_research.data_arrays import (
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import (
     build_component_optimization_source,
+    component_param_slices,
+    component_ref_key,
 )
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
 from research.aegis_research.optimization.leaderboard import build_optimization_leaderboard
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
+)
+from research.aegis_research.optimization.promotion import (
+    ComponentPromotionRef,
+    ResolvedPromotion,
+    resolve_component_promotion,
 )
 from research.aegis_research.optimization.runner import (
     METRIC_INDEX_NAME,
@@ -89,6 +98,8 @@ from research.aegis_research.run_splits import RunSplit, build_run_splits_result
 from research.aegis_research.split_leaderboard import build_split_leaderboard
 
 STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v3"
+COMPONENT_PROMOTION_SCHEMA_VERSION = "component_promotion.v1"
+COMPONENT_PROMOTION_PROVENANCE_SCHEMA_VERSION = "component_promotion_provenance.v1"
 STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
     "costs",
     "direction",
@@ -492,10 +503,16 @@ def _run_optimization_strategy_sweep(
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
+    candidate_store_path = _candidate_store_path(config)
+    resolved_component_params, resolved_promotions = _resolve_component_promotions(
+        config,
+        candidate_store_path=candidate_store_path,
+    )
     optimization_source = build_component_optimization_source(
         config,
         component_registry=component_registry,
         data=data,
+        resolved_component_params=resolved_component_params,
     )
     strategy_evidence = optimization_source.evidence["strategy"]
     close = data.feature("Close")
@@ -514,6 +531,7 @@ def _run_optimization_strategy_sweep(
         ),
         "metric_registry_fingerprint": metric_registry_fingerprint,
         "open_prices_available": open_prices is not None,
+        "resolved_promotions": resolved_promotions,
     }
     try:
         optimization_evidence["preflight"] = build_preflight(
@@ -556,7 +574,6 @@ def _run_optimization_strategy_sweep(
     run_payload = serialize_optimization_run(optimization_run)
     optimization_evidence["execution"] = run_payload
 
-    candidate_store_path = _candidate_store_path(config)
     candidate_store_namespace = _candidate_store_namespace()
     candidate_rows = candidate_rows_from_param_index(
         optimization_run.evaluated_index,
@@ -588,6 +605,11 @@ def _run_optimization_strategy_sweep(
         config=config,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
+    promotion_records = _component_promotion_records(
+        run_id=recorder.manifest.run_id,
+        leaderboard=leaderboard,
+        optimization_source=optimization_source.evidence,
+    )
     with CandidateStore(candidate_store_path) as candidate_store:
         candidate_store.insert_completed_run(
             run_id=recorder.manifest.run_id,
@@ -595,6 +617,18 @@ def _run_optimization_strategy_sweep(
             leaderboard=leaderboard,
             provenance=candidate_store_provenance,
         )
+        for promotion in promotion_records:
+            candidate_store.insert_promotion(
+                token=promotion["token"],
+                run_id=promotion["run_id"],
+                component_family=promotion["component_family"],
+                component_id=promotion["component_id"],
+                component_slot=promotion["component_slot"],
+                candidate_key=promotion["candidate_key"],
+                params=promotion["params"],
+                provenance=promotion["provenance"],
+            )
+    optimization_evidence["promotions"] = promotion_records
     recorder.manifest.evidence["optimization"] = optimization_evidence
 
     artifact_payload = {
@@ -618,6 +652,8 @@ def _run_optimization_strategy_sweep(
         "execution": run_payload,
         "candidates": [to_builtin(record) for record in candidate_rows],
         "leaderboard": leaderboard,
+        "resolved_promotions": resolved_promotions,
+        "promotions": promotion_records,
         "candidate_store": {
             "schema_version": "candidate_store_ref.v1",
             "path": candidate_store_namespace["path"],
@@ -2260,6 +2296,166 @@ def _candidate_data_identity(data_result: Any, array_contract: DataArrayContract
         "source_metadata": metadata.get("source_metadata"),
         "array_contract": array_contract.metadata(),
     }
+
+
+def _resolve_component_promotions(
+    config: Any,
+    *,
+    candidate_store_path: Path,
+) -> tuple[dict[tuple[str, str, str], dict[str, Any]], list[dict[str, Any]]]:
+    refs = list(_component_promotion_refs(config))
+    if not refs:
+        return {}, []
+    resolved_params: dict[tuple[str, str, str], dict[str, Any]] = {}
+    resolved_records: list[dict[str, Any]] = []
+    with CandidateStore(candidate_store_path) as candidate_store:
+        for key, ref in refs:
+            resolved = resolve_component_promotion(ref, store=candidate_store)
+            if key in resolved_params:
+                raise OptimizationSourceError(
+                    f"duplicate promotion resolution for component {key}"
+                )
+            resolved_params[key] = dict(resolved.params)
+            resolved_records.append(_resolved_promotion_record(resolved))
+    return resolved_params, resolved_records
+
+
+def _component_promotion_refs(
+    config: Any,
+) -> Iterator[tuple[tuple[str, str, str], ComponentPromotionRef]]:
+    if config.strategy.lock_id is not None or config.strategy.candidate_id is not None:
+        key = component_ref_key("strategies", config.strategy.id, "strategy")
+        yield key, ComponentPromotionRef(
+            component_family="strategies",
+            component_id=config.strategy.id,
+            component_slot="strategy",
+            lock_id=config.strategy.lock_id,
+            candidate_id=config.strategy.candidate_id,
+        )
+    for ref in config.indicators:
+        if ref.lock_id is None and ref.candidate_id is None:
+            continue
+        key = component_ref_key("indicators", ref.id, ref.id)
+        yield key, ComponentPromotionRef(
+            component_family="indicators",
+            component_id=ref.id,
+            component_slot=ref.id,
+            lock_id=ref.lock_id,
+            candidate_id=ref.candidate_id,
+        )
+
+
+def _resolved_promotion_record(resolved: ResolvedPromotion) -> dict[str, Any]:
+    return {
+        "schema_version": "resolved_component_promotion.v1",
+        "reference_kind": resolved.reference_kind,
+        "component_family": resolved.component_family,
+        "component_id": resolved.component_id,
+        "component_slot": resolved.component_slot,
+        "candidate_key": resolved.candidate_key,
+        "run_id": resolved.run_id,
+        "params": to_builtin(resolved.params),
+        "provenance": to_builtin(resolved.provenance),
+    }
+
+
+def _component_promotion_records(
+    *,
+    run_id: str,
+    leaderboard: Mapping[str, Any],
+    optimization_source: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    rows = list(leaderboard.get("rows", ()))
+    if not rows:
+        return []
+    top_row = rows[0]
+    candidate_key = str(top_row["candidate_key"])
+    candidate_params = dict(top_row.get("params", {}))
+    component_slices = component_param_slices(candidate_params)
+    records: list[dict[str, Any]] = []
+    for runtime in _promotion_runtime_records(optimization_source):
+        component_family = str(runtime["family"])
+        component_id = str(runtime["id"])
+        component_slot = str(runtime["slot"])
+        params = dict(runtime.get("fixed_params", {}))
+        slice_key = (component_family, component_id, component_slot)
+        params.update(component_slices.get(slice_key, {}))
+        missing = sorted(set(runtime.get("param_keys", {})) - set(params))
+        if missing:
+            raise OptimizationSourceError(
+                f"candidate {candidate_key} is missing promotion params for component "
+                f"{component_family}/{component_id} slot {component_slot!r}: {missing}"
+            )
+        token = _component_promotion_token(
+            run_id=run_id,
+            rank=1,
+            component_family=component_family,
+            component_id=component_id,
+            component_slot=component_slot,
+            candidate_key=candidate_key,
+        )
+        provenance = {
+            "schema_version": COMPONENT_PROMOTION_PROVENANCE_SCHEMA_VERSION,
+            "run_id": run_id,
+            "rank": 1,
+            "candidate_key": candidate_key,
+            "component_family": component_family,
+            "component_id": component_id,
+            "component_slot": component_slot,
+            "source": optimization_source,
+            "leaderboard_row": top_row,
+        }
+        records.append(
+            {
+                "schema_version": COMPONENT_PROMOTION_SCHEMA_VERSION,
+                "token": token,
+                "reference_kind": "lock_id",
+                "run_id": run_id,
+                "rank": 1,
+                "component_family": component_family,
+                "component_id": component_id,
+                "component_slot": component_slot,
+                "candidate_key": candidate_key,
+                "params": to_builtin(params),
+                "provenance": to_builtin(provenance),
+            }
+        )
+    return records
+
+
+def _promotion_runtime_records(optimization_source: Mapping[str, Any]) -> list[dict[str, Any]]:
+    runtimes: list[dict[str, Any]] = []
+    strategy = optimization_source.get("strategy")
+    if isinstance(strategy, Mapping):
+        runtimes.append(dict(strategy))
+    for runtime in optimization_source.get("indicators", ()):
+        if isinstance(runtime, Mapping):
+            runtimes.append(dict(runtime))
+    return runtimes
+
+
+def _component_promotion_token(
+    *,
+    run_id: str,
+    rank: int,
+    component_family: str,
+    component_id: str,
+    component_slot: str,
+    candidate_key: str,
+) -> str:
+    payload = {
+        "schema_version": COMPONENT_PROMOTION_SCHEMA_VERSION,
+        "run_id": run_id,
+        "rank": rank,
+        "component_family": component_family,
+        "component_id": component_id,
+        "component_slot": component_slot,
+        "candidate_key": candidate_key,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()[:32]
+    return f"lock_{digest}"
 
 
 def _candidate_store_path(config: Any) -> Path:

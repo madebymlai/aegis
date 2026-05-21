@@ -9,7 +9,10 @@ import yaml
 from research.aegis_research import cli, strategy_runs
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.component_source import component_param_key
+from research.aegis_research.optimization.component_source import (
+    FIXED_CANDIDATE_PARAM,
+    component_param_key,
+)
 from research.aegis_research.provenance.manifest import RunStatus
 
 
@@ -98,6 +101,76 @@ def test_component_optimization_routes_away_from_custom_candidate_grid(
     with CandidateStore(store_path) as store:
         top = store.top_candidates_by_run("component-boundary", limit=1)
     assert top[0]["leaderboard_row"]["candidate_key"] == artifact["leaderboard"]["rows"][0]["candidate_key"]
+    assert artifact["promotions"][0]["component_family"] == "strategies"
+    assert artifact["promotions"][0]["component_id"] == "demo.ma_opt"
+    assert artifact["promotions"][0]["token"].startswith("lock_")
+
+
+def test_component_optimization_resolves_lock_id_as_fixed_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
+    config_path = _write_run_config(tmp_path)
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "source-run"]) == 0
+    source_artifact = json.loads((tmp_path / "runs" / "source-run" / "strategy_run.json").read_text())
+    lock_id = source_artifact["promotions"][0]["token"]
+
+    locked_config_path = _write_run_config(
+        tmp_path,
+        strategy={"id": "demo.ma_opt", "lock_id": lock_id},
+    )
+
+    assert cli.main(["run", str(locked_config_path), "--json", "--run-id", "locked-run"]) == 0
+
+    capsys.readouterr()
+    locked_artifact = json.loads((tmp_path / "runs" / "locked-run" / "strategy_run.json").read_text())
+
+    assert locked_artifact["strategy"]["param_mode"] == "locked"
+    assert locked_artifact["strategy"]["fixed_params"] == source_artifact["promotions"][0]["params"]
+    assert locked_artifact["resolved_promotions"][0]["reference_kind"] == "lock_id"
+    assert locked_artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
+    assert len(locked_artifact["candidates"]) == 1
+
+
+def test_component_optimization_resolves_candidate_id_pin_as_fixed_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
+    config_path = _write_run_config(tmp_path)
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "candidate-source"]) == 0
+    source_artifact = json.loads(
+        (tmp_path / "runs" / "candidate-source" / "strategy_run.json").read_text()
+    )
+    pinned_row = source_artifact["leaderboard"]["rows"][1]
+    fast_key = component_param_key("strategies", "demo.ma_opt", "strategy", "fast_window")
+    slow_key = component_param_key("strategies", "demo.ma_opt", "strategy", "slow_window")
+    expected_params = {
+        "fast_window": pinned_row["params"][fast_key],
+        "slow_window": pinned_row["params"][slow_key],
+    }
+
+    pinned_config_path = _write_run_config(
+        tmp_path,
+        strategy={"id": "demo.ma_opt", "candidate_id": pinned_row["candidate_key"]},
+    )
+
+    assert cli.main(["run", str(pinned_config_path), "--json", "--run-id", "candidate-pin"]) == 0
+
+    capsys.readouterr()
+    pinned_artifact = json.loads((tmp_path / "runs" / "candidate-pin" / "strategy_run.json").read_text())
+
+    assert pinned_artifact["strategy"]["param_mode"] == "locked"
+    assert pinned_artifact["strategy"]["fixed_params"] == expected_params
+    assert pinned_artifact["resolved_promotions"][0]["reference_kind"] == "candidate_id"
+    assert pinned_artifact["resolved_promotions"][0]["candidate_key"] == pinned_row["candidate_key"]
 
 
 def test_component_optimization_runtime_error_records_failure_diagnostics(
@@ -151,6 +224,7 @@ def test_component_optimization_preflight_failure_records_manifest_without_pipel
 def _write_run_config(
     tmp_path: Path,
     *,
+    strategy: dict[str, object] | None = None,
     strategy_id: str = "demo.ma_opt",
     candidate_grid: dict[str, object] | None = None,
     optimization: dict[str, object] | None = None,
@@ -159,7 +233,7 @@ def _write_run_config(
     path.write_text(
         yaml.safe_dump(
             _run_config_payload(
-                strategy={"id": strategy_id},
+                strategy=strategy or {"id": strategy_id},
                 indicators=[],
                 candidate_grid=candidate_grid,
                 optimization=optimization or {"search": "grid", "split": _rolling_split_config()},

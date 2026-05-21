@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.component_source import component_param_key
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
 from research.aegis_research.optimization.leaderboard import (
     OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION,
@@ -21,6 +22,7 @@ from research.aegis_research.optimization.promotion import (
 def test_resolves_lock_id_for_matching_component(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
+        params = _strategy_params(candidate)
         store.insert_promotion(
             token="lock_run-a_strategy_demo_ma_cross_rank1",
             run_id="run-a",
@@ -28,7 +30,7 @@ def test_resolves_lock_id_for_matching_component(tmp_path: Path) -> None:
             component_id="demo.ma_cross",
             component_slot="strategy:demo.ma_cross",
             candidate_key=candidate["candidate_key"],
-            params=candidate["params"],
+            params=params,
             provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
         )
 
@@ -44,13 +46,14 @@ def test_resolves_lock_id_for_matching_component(tmp_path: Path) -> None:
 
     assert resolved.reference_kind == "lock_id"
     assert resolved.candidate_key == candidate["candidate_key"]
-    assert resolved.params == candidate["params"]
+    assert resolved.params == params
     assert resolved.provenance["run_id"] == "run-a"
 
 
 def test_rejects_lock_id_for_wrong_component(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
+        params = _strategy_params(candidate)
         store.insert_promotion(
             token="lock_run-a_strategy_demo_ma_cross_rank1",
             run_id="run-a",
@@ -58,7 +61,7 @@ def test_rejects_lock_id_for_wrong_component(tmp_path: Path) -> None:
             component_id="demo.ma_cross",
             component_slot="strategy:demo.ma_cross",
             candidate_key=candidate["candidate_key"],
-            params=candidate["params"],
+            params=params,
             provenance={"run_id": "run-a"},
         )
 
@@ -91,23 +94,41 @@ def test_resolves_direct_candidate_id_pin(tmp_path: Path) -> None:
 
     assert resolved.reference_kind == "candidate_id"
     assert resolved.candidate_key == candidate["candidate_key"]
-    assert resolved.params == candidate["params"]
+    assert resolved.params == _strategy_params(candidate)
     assert resolved.provenance["component_id"] == "demo.ma_cross"
 
 
-def test_rejects_ambiguous_reference_fields(tmp_path: Path) -> None:
+def test_rejects_direct_candidate_id_for_wrong_component(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
-        with pytest.raises(PromotionResolutionError, match="exactly one"):
+        candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
+
+        with pytest.raises(PromotionResolutionError, match="does not include component"):
             resolve_component_promotion(
                 ComponentPromotionRef(
                     component_family="strategies",
-                    component_id="demo.ma_cross",
-                    component_slot="strategy:demo.ma_cross",
-                    lock_id="lock-id",
-                    candidate_id="cand_key",
+                    component_id="demo.other",
+                    component_slot="strategy:demo.other",
+                    candidate_id=candidate["candidate_key"],
+                    run_id="run-a",
                 ),
                 store=store,
             )
+
+
+def test_rejects_ambiguous_reference_fields(tmp_path: Path) -> None:
+    with _store_with_candidate(tmp_path) as store, pytest.raises(
+        PromotionResolutionError, match="exactly one"
+    ):
+        resolve_component_promotion(
+            ComponentPromotionRef(
+                component_family="strategies",
+                component_id="demo.ma_cross",
+                component_slot="strategy:demo.ma_cross",
+                lock_id="lock-id",
+                candidate_id="cand_key",
+            ),
+            store=store,
+        )
 
 
 def test_rejects_missing_lock_or_candidate(tmp_path: Path) -> None:
@@ -142,15 +163,17 @@ def _store_with_candidate(tmp_path: Path) -> CandidateStore:
         run_id="run-a",
         candidate_rows=candidates,
         leaderboard=_leaderboard(candidates),
-        provenance={"run_id": "run-a"},
+        provenance={"run_id": "run-a", "source": _source_evidence()},
     )
     return store
 
 
 def _candidate_rows() -> list[dict[str, object]]:
+    fast_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window")
+    slow_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window")
     index = pd.MultiIndex.from_tuples(
         [(2, 10), (5, 10)],
-        names=["fast_window", "slow_window"],
+        names=[fast_key, slow_key],
     )
     return candidate_rows_from_param_index(
         index,
@@ -159,6 +182,37 @@ def _candidate_rows() -> list[dict[str, object]]:
         portfolio_policy={"entry_budget": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
+
+
+def _strategy_params(candidate: dict[str, object]) -> dict[str, object]:
+    fast_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window")
+    slow_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window")
+    params = candidate["params"]
+    assert isinstance(params, dict)
+    return {"fast_window": params[fast_key], "slow_window": params[slow_key]}
+
+
+def _source_evidence() -> dict[str, object]:
+    return {
+        "schema_version": "component_optimization_source.v1",
+        "source": "component",
+        "strategy": {
+            "family": "strategies",
+            "slot": "strategy:demo.ma_cross",
+            "id": "demo.ma_cross",
+            "version": "1.0.0",
+            "fixed_params": {},
+            "param_keys": {
+                "fast_window": component_param_key(
+                    "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window"
+                ),
+                "slow_window": component_param_key(
+                    "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window"
+                ),
+            },
+        },
+        "indicators": [],
+    }
 
 
 def _leaderboard(candidates: list[dict[str, object]]) -> dict[str, object]:
