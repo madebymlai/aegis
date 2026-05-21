@@ -66,6 +66,21 @@ candidate_grid:
 
 Completed strategy sweeps require every planned candidate chunk to score and produce the requested ranking metric. Preflight rejections and chunk failures write diagnostic evidence to the manifest, including planned counts, chunk indexes, candidate IDs, stage, error type, and message, but they do not publish completed `strategy_run.json` leaderboard evidence.
 
+Run configs can optionally add top-level split scoring. The selected strategy candidate set is unchanged: fixed component runs are one-candidate sets, and playbook sweeps are composed strategy x indicator candidate sets. Aegis builds VBT split sets from the source index, scores candidates only on each split's selection set, evaluates the selected candidate on the held-out set with fresh portfolio state, and writes one final split-based leaderboard plus `split_metrics` and `split_diagnostics` in `strategy_run.json`.
+
+```yaml
+split:
+  method: from_rolling
+  params:
+    length: 252
+    offset: 252
+    split: 0.8
+    set_labels: [selection, held_out]
+  max_splits: 100
+```
+
+`split.method` must be an exact `vbt.Splitter` constructor method. Use `aerd show splitters from_rolling --json` or another discovered method to inspect signature-derived params and defaults. Compatible methods such as `from_rolling` and `from_purged_kfold` share the same scoring path when VBT returns exactly two non-overlapping sets per split. The first set is used for selection, the second set is used for held-out scoring, and native VBT set labels are preserved in evidence. The final split leaderboard is distinct from the full-period historical leaderboard: it is ranked by held-out split metrics and includes selected split coverage. Do not treat these run split sets as ML train-lane support; label/model training remains legacy and separate from playbook strategy scoring.
+
 Use purposeful percent cells in playbook files: a broad overview cell that states the research idea and source data, imports/definitions as needed, a literal metadata cell, and a `# %% main ...` cell containing the callable. The callable docstring should explain the indicator or strategy approach being explored.
 
 In `PLAYBOOK_MANIFEST`, `family` is the registry bucket and must match the active directory: `indicators` or `strategies`. Indicator playbooks also declare `indicator_family`, which describes the idea being explored, such as `moving_average`; it is not the registry bucket. Labels are not a playbook family; train labels are fixed reviewed label components selected by top-level `labeler: {id: ...}`.

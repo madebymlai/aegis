@@ -12,6 +12,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
+    RunSplitConfig,
     SignalConfig,
     SplitConfig,
     StrategyRunLaneConfig,
@@ -31,6 +32,7 @@ def _build_strategy_run_lane_config(raw: dict[str, Any]) -> StrategyRunLaneConfi
         strategy=_build_run_source_ref(raw["strategy"]),
         indicators=_build_run_indicator_sources(raw["indicators"]),
         ranking=_build_ranking(raw["ranking"]),
+        split=_build_run_split(raw.get("split")),
         candidate_grid=CandidateGridConfig(**raw.get("candidate_grid", {})),
         output_dir=raw.get("output_dir", "runs"),
     )
@@ -87,6 +89,18 @@ def _build_ranking(raw: dict[str, Any]) -> RankingConfig:
         metric=raw["metric"],
         direction=raw["direction"],
         secondary_metrics=list(raw.get("secondary_metrics", [])),
+    )
+
+
+def _build_run_split(raw: dict[str, Any] | None) -> RunSplitConfig | None:
+    if raw is None:
+        return None
+    return RunSplitConfig(
+        method=raw["method"],
+        params=dict(raw.get("params", {})),
+        max_splits=raw.get("max_splits", 100),
+        max_estimated_output_cells=raw.get("max_estimated_output_cells", 25_000_000),
+        max_public_artifact_bytes=raw.get("max_public_artifact_bytes", 10_000_000),
     )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -8,8 +9,10 @@ from typing import Any
 import pandas as pd
 
 from research.aegis_research.candidate_sweeps import (
+    CANDIDATE_LEVEL,
     PLAYBOOK_SWEEP_CONTRACT,
     PLAYBOOK_SWEEP_RESULT_SCHEMA,
+    SYMBOL_LEVEL,
     CandidateAxis,
     CandidateSweepError,
     ComposedCandidate,
@@ -51,7 +54,7 @@ from research.aegis_research.playbook_registry import (
 )
 from research.aegis_research.portfolios import simulate_portfolio, simulate_portfolio_batch
 from research.aegis_research.provenance.experiment_artifacts import ExperimentArtifactWriter
-from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
+from research.aegis_research.provenance.manifest import ArtifactStatus, atomic_write_json, hash_file
 from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.reports import portfolio_metrics, portfolio_metrics_by_candidate_group
@@ -59,6 +62,8 @@ from research.aegis_research.run_leaderboard import (
     METRIC_SOURCE_CENTRAL_PORTFOLIO,
     build_run_leaderboard,
 )
+from research.aegis_research.run_splits import RunSplit, build_run_splits_result
+from research.aegis_research.split_leaderboard import build_split_leaderboard
 
 STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v3"
 STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
@@ -297,6 +302,23 @@ def run_strategy_sweep(
         recorder.manifest.evidence["composition"] = composition_diagnostics["planned"]
         recorder.persist()
         indicator_contexts = _fixed_indicator_contexts(indicators, indicator_evidence)
+        if config.split is not None:
+            return _run_split_component_strategy_sweep(
+                config,
+                component_registry=component_registry,
+                recorder=recorder,
+                data_result=data_result,
+                data=data_bundle,
+                open_prices=open_prices,
+                array_contract=array_contract,
+                indicator_contexts=indicator_contexts,
+                composition_diagnostics=composition_diagnostics,
+                metric_registry_fingerprint=(
+                    resolved_config.metric_registry.fingerprint
+                    if resolved_config.metric_registry
+                    else None
+                ),
+            )
 
         strategy_evidence, strategy_candidate_records, signal_diagnostics, portfolio_diagnostics = (
             _resolve_strategy_ref(
@@ -512,6 +534,29 @@ def _run_playbook_strategy_sweep(
     chunk_diagnostics = _empty_chunk_diagnostics()
     recorder.manifest.evidence["chunks"] = chunk_diagnostics
     recorder.persist()
+    if config.split is not None:
+        return _run_split_playbook_strategy_sweep(
+            config,
+            recorder=recorder,
+            data_result=data_result,
+            data=data,
+            open_prices=open_prices,
+            array_contract=array_contract,
+            metric_registry_fingerprint=metric_registry_fingerprint,
+            strategy_definition=strategy_definition,
+            strategy_plan=strategy_plan,
+            indicator_axes=indicator_axes,
+            indicator_evidence=indicator_evidence,
+            indicator_candidate_evidence=indicator_candidate_evidence,
+            composed_candidates=composed_candidates,
+            catalogs=catalogs,
+            strategy_evidence=strategy_evidence,
+            composition_diagnostics=composition_diagnostics,
+            signal_diagnostics=signal_diagnostics,
+            portfolio_diagnostics=portfolio_diagnostics,
+            chunk_diagnostics=chunk_diagnostics,
+            inputs=inputs,
+        )
     for batch_index, batch in enumerate(
         _candidate_batches(composed_candidates, config.candidate_grid.batch_size)
     ):
@@ -642,6 +687,707 @@ def _run_playbook_strategy_sweep(
         "strategy_artifact_id": "strategy.run",
         "leaderboard": leaderboard,
     }
+
+
+def _run_split_playbook_strategy_sweep(
+    config: Any,
+    *,
+    recorder: Any,
+    data_result: Any,
+    data: MarketDataBundle,
+    open_prices: pd.DataFrame,
+    array_contract: DataArrayContract,
+    metric_registry_fingerprint: str | None,
+    strategy_definition: Any,
+    strategy_plan: Any,
+    indicator_axes: list[CandidateAxis],
+    indicator_evidence: list[dict[str, Any]],
+    indicator_candidate_evidence: dict[tuple[str, str, str], dict[str, Any]],
+    composed_candidates: tuple[ComposedCandidate, ...],
+    catalogs: dict[str, Any],
+    strategy_evidence: dict[str, Any],
+    composition_diagnostics: dict[str, Any],
+    signal_diagnostics: dict[str, Any],
+    portfolio_diagnostics: dict[str, Any],
+    chunk_diagnostics: dict[str, Any],
+    inputs: StrategyInputs,
+) -> dict[str, Any]:
+    close = data.feature("Close")
+    split_result = build_run_splits_result(close.index, config.split)
+    recorder.manifest.evidence["split"] = split_result.metadata
+    split_execution_preflight = _split_execution_preflight(
+        splits=split_result.splits,
+        candidate_count=len(composed_candidates),
+        batch_size=config.candidate_grid.batch_size,
+        symbol_count=len(close.columns),
+        has_open_prices=open_prices is not None,
+        max_estimated_cells=config.candidate_grid.max_estimated_cells,
+    )
+    composition_diagnostics["planned"]["split_execution_preflight"] = split_execution_preflight
+    _assert_split_execution_budget(split_execution_preflight)
+    _plan_strategy_artifact_if_needed(recorder)
+    recorder.persist()
+    candidate_records: dict[str, dict[str, Any]] = {}
+    split_metric_records: list[dict[str, Any]] = []
+    batches = tuple(_candidate_batches(composed_candidates, config.candidate_grid.batch_size))
+    for batch_index, batch in enumerate(batches):
+        batch_ids = tuple(candidate.candidate_id for candidate in batch)
+        chunk_ref = _sweep_chunk_ref(batch_index)
+        chunk_record = _sweep_chunk_record(batch_index, batch_ids, chunk_ref)
+        chunk_diagnostics["chunks"].append(chunk_record)
+        catalogs["chunks"][chunk_ref] = chunk_record
+        recorder.persist()
+        try:
+            chunk_record["stage"] = "materialize_signals"
+            signal_result = materialize_strategy_sweep_signals(
+                strategy_plan,
+                source_id=strategy_definition.id,
+                requested_candidate_ids=batch_ids,
+                indicator_axes=indicator_axes,
+                candidate_pool=batch,
+                close=close,
+            )
+            chunk_record["stage"] = "indicator_consumption_validation"
+            _assert_strategy_consumed_indicator_context(inputs, strategy_id=strategy_definition.id)
+            chunk_record["stage"] = "split_portfolio_simulation"
+            metric_records, split_portfolio_diagnostics = _split_metric_records_for_batch(
+                close,
+                open_prices,
+                signal_result.entries,
+                signal_result.exits,
+                batch_ids,
+                split_result.splits,
+                portfolio_config=config.portfolio,
+                report_config=config.report,
+                roles=("selection",),
+            )
+            split_metric_records.extend(metric_records)
+            portfolio_diagnostics["chunks"][chunk_ref] = split_portfolio_diagnostics
+            chunk_record["stage"] = "candidate_recording"
+            for candidate in batch:
+                strategy_candidate_ref = _strategy_candidate_ref(candidate.strategy)
+                indicator_candidate_refs = [
+                    _indicator_candidate_ref(indicator) for indicator in candidate.indicators
+                ]
+                indicator_candidates = [
+                    indicator_candidate_evidence[
+                        (indicator.source, indicator.source_id, indicator.candidate_id)
+                    ]
+                    for indicator in candidate.indicators
+                ]
+                catalogs["composed_candidates"][candidate.candidate_id] |= {"chunk_ref": chunk_ref}
+                candidate_records[candidate.candidate_id] = {
+                    "variant_id": candidate.candidate_id,
+                    "composed_candidate_id": candidate.candidate_id,
+                    "strategy_source": "playbook",
+                    "strategy_id": strategy_definition.id,
+                    "strategy_candidate_id": candidate.strategy.candidate_id,
+                    "strategy_candidate_ref": strategy_candidate_ref,
+                    "strategy_params": to_builtin(candidate.strategy.params),
+                    "source_hash": strategy_definition.identity.source_hash,
+                    "indicators": indicator_evidence,
+                    "indicator_candidates": indicator_candidates,
+                    "indicator_candidate_refs": indicator_candidate_refs,
+                    "chunk_ref": chunk_ref,
+                    "params": to_builtin(candidate.strategy.params),
+                    "metric_source": METRIC_SOURCE_CENTRAL_PORTFOLIO,
+                    "portfolio": to_builtin(asdict(config.portfolio)),
+                }
+                signal_diagnostics["candidates"][candidate.candidate_id] = {
+                    **signal_result.diagnostics,
+                    "batch_index": batch_index,
+                    "chunk_ref": chunk_ref,
+                }
+                portfolio_diagnostics["candidates"][candidate.candidate_id] = {
+                    "batch_index": batch_index,
+                    "chunk_ref": chunk_ref,
+                }
+        except Exception as error:
+            _mark_sweep_chunk_failed(chunk_record, error)
+            _write_partial_split_strategy_artifact(
+                recorder,
+                _split_strategy_payload(
+                    config,
+                    data_result=data_result,
+                    array_contract=array_contract,
+                    strategy_evidence=strategy_evidence,
+                    indicator_evidence=indicator_evidence,
+                    candidates=list(candidate_records.values()),
+                    leaderboard=None,
+                    composition_diagnostics=composition_diagnostics,
+                    split_metadata=split_result.metadata,
+                    split_metric_records=split_metric_records,
+                    catalogs=catalogs,
+                    chunk_diagnostics=chunk_diagnostics,
+                    signal_diagnostics=signal_diagnostics,
+                    portfolio_diagnostics=portfolio_diagnostics,
+                ),
+                error=error,
+            )
+            recorder.persist()
+            raise
+        chunk_record["status"] = "succeeded"
+        chunk_record["stage"] = "completed"
+        recorder.persist()
+
+    selected_candidate_ids_by_split = _selected_candidate_ids_by_split(
+        split_metric_records,
+        metric=config.ranking.metric,
+        direction=config.ranking.direction,
+    )
+    for batch_index, batch in enumerate(batches):
+        batch_ids = tuple(candidate.candidate_id for candidate in batch)
+        selected_batch_ids = tuple(
+            candidate_id
+            for candidate_id in batch_ids
+            if any(candidate_id in selected for selected in selected_candidate_ids_by_split.values())
+        )
+        if not selected_batch_ids:
+            continue
+        chunk_ref = _sweep_chunk_ref(batch_index)
+        chunk_record = chunk_diagnostics["chunks"][batch_index]
+        try:
+            chunk_record["stage"] = "materialize_selected_held_out_signals"
+            signal_result = materialize_strategy_sweep_signals(
+                strategy_plan,
+                source_id=strategy_definition.id,
+                requested_candidate_ids=selected_batch_ids,
+                indicator_axes=indicator_axes,
+                candidate_pool=batch,
+                close=close,
+            )
+            chunk_record["stage"] = "split_held_out_portfolio_simulation"
+            held_out_records, held_out_diagnostics = _split_metric_records_for_batch(
+                close,
+                open_prices,
+                signal_result.entries,
+                signal_result.exits,
+                selected_batch_ids,
+                split_result.splits,
+                portfolio_config=config.portfolio,
+                report_config=config.report,
+                roles=("held_out",),
+                candidate_ids_by_split=selected_candidate_ids_by_split,
+            )
+            split_metric_records.extend(held_out_records)
+            _merge_split_portfolio_diagnostics(
+                portfolio_diagnostics["chunks"].setdefault(chunk_ref, {}),
+                held_out_diagnostics,
+            )
+        except Exception as error:
+            _mark_sweep_chunk_failed(chunk_record, error)
+            _write_partial_split_strategy_artifact(
+                recorder,
+                _split_strategy_payload(
+                    config,
+                    data_result=data_result,
+                    array_contract=array_contract,
+                    strategy_evidence=strategy_evidence,
+                    indicator_evidence=indicator_evidence,
+                    candidates=list(candidate_records.values()),
+                    leaderboard=None,
+                    composition_diagnostics=composition_diagnostics,
+                    split_metadata=split_result.metadata,
+                    split_metric_records=split_metric_records,
+                    catalogs=catalogs,
+                    chunk_diagnostics=chunk_diagnostics,
+                    signal_diagnostics=signal_diagnostics,
+                    portfolio_diagnostics=portfolio_diagnostics,
+                ),
+                error=error,
+            )
+            recorder.persist()
+            raise
+        chunk_record["status"] = "succeeded"
+        chunk_record["stage"] = "completed"
+        recorder.persist()
+
+    leaderboard = build_split_leaderboard(
+        split_metric_records,
+        candidate_records,
+        metric=config.ranking.metric,
+        direction=config.ranking.direction,
+        metric_registry_fingerprint=metric_registry_fingerprint,
+    )
+    payload = _split_strategy_payload(
+        config,
+        data_result=data_result,
+        array_contract=array_contract,
+        strategy_evidence=strategy_evidence,
+        indicator_evidence=indicator_evidence,
+        candidates=list(candidate_records.values()),
+        leaderboard=leaderboard,
+        composition_diagnostics=composition_diagnostics,
+        split_metadata=split_result.metadata,
+        split_metric_records=split_metric_records,
+        catalogs=catalogs,
+        chunk_diagnostics=chunk_diagnostics,
+        signal_diagnostics=signal_diagnostics,
+        portfolio_diagnostics=portfolio_diagnostics,
+    )
+    _assert_split_leaderboard_complete(recorder, payload, leaderboard)
+    _write_strategy_artifact(recorder, payload)
+    recorder.mark_run_completed()
+    return {
+        **_run_refs(recorder),
+        "lane": "run",
+        "evidence_type": "strategy_sweep",
+        "strategy_artifact_id": "strategy.run",
+        "leaderboard": leaderboard,
+    }
+
+
+def _run_split_component_strategy_sweep(
+    config: Any,
+    *,
+    component_registry: FrozenComponentRegistry,
+    recorder: Any,
+    data_result: Any,
+    data: MarketDataBundle,
+    open_prices: pd.DataFrame,
+    array_contract: DataArrayContract,
+    indicator_contexts: list[IndicatorContext],
+    composition_diagnostics: dict[str, Any],
+    metric_registry_fingerprint: str | None,
+) -> dict[str, Any]:
+    close = data.feature("Close")
+    split_result = build_run_splits_result(close.index, config.split)
+    recorder.manifest.evidence["split"] = split_result.metadata
+    split_execution_preflight = _split_execution_preflight(
+        splits=split_result.splits,
+        candidate_count=len(indicator_contexts),
+        batch_size=config.candidate_grid.batch_size,
+        symbol_count=len(close.columns),
+        has_open_prices=open_prices is not None,
+        max_estimated_cells=config.candidate_grid.max_estimated_cells,
+    )
+    composition_diagnostics["planned"]["split_execution_preflight"] = split_execution_preflight
+    _assert_split_execution_budget(split_execution_preflight)
+    _plan_strategy_artifact_if_needed(recorder)
+    recorder.persist()
+    definition = component_registry.get(ComponentSelection("strategies", config.strategy.id))
+    strategy_callable = definition.load_callable()
+    strategy_evidence = {
+        "source": "component",
+        "id": config.strategy.id,
+        "version": definition.manifest.version,
+        **definition.identity.public(),
+    }
+    candidate_records: dict[str, dict[str, Any]] = {}
+    split_metric_records: list[dict[str, Any]] = []
+    signal_diagnostics = _empty_signal_diagnostics()
+    portfolio_diagnostics = _empty_portfolio_diagnostics()
+    try:
+        for context in indicator_contexts:
+            inputs = _strategy_inputs_for_context(
+                data=data,
+                context=context,
+                metadata={
+                    "strategy_id": config.strategy.id,
+                    "component_source_hash": definition.identity.source_hash,
+                    "indicator_ids": [item["id"] for item in context.evidence],
+                    "indicator_context_id": context.context_id,
+                },
+            )
+            signal_result = validate_strategy_output(strategy_callable(inputs), inputs)
+            _assert_strategy_consumed_indicator_context(inputs, strategy_id=config.strategy.id)
+            strategy_candidate_id = config.strategy.id
+            variant_id = _composed_candidate_id(
+                strategy_source="component",
+                strategy_id=config.strategy.id,
+                strategy_candidate_id=strategy_candidate_id,
+                indicator_candidates=context.candidate_evidence,
+            )
+            metric_records, split_portfolio_diagnostics = _split_metric_records_for_batch(
+                close,
+                open_prices,
+                _candidate_signal_frame(signal_result.entries, variant_id),
+                _candidate_signal_frame(signal_result.exits, variant_id),
+                (variant_id,),
+                split_result.splits,
+                portfolio_config=config.portfolio,
+                report_config=config.report,
+            )
+            split_metric_records.extend(metric_records)
+            _record_context_composition(
+                composition_diagnostics,
+                context,
+                strategy_candidate_count=1,
+            )
+            candidate_records[variant_id] = {
+                "variant_id": variant_id,
+                "composed_candidate_id": variant_id,
+                "strategy_source": "component",
+                "strategy_id": config.strategy.id,
+                "strategy_candidate_id": strategy_candidate_id,
+                "strategy_params": {},
+                "component_source_hash": definition.identity.source_hash,
+                "indicators": context.evidence,
+                "indicator_candidates": context.candidate_evidence,
+                "params": {},
+                "metric_source": METRIC_SOURCE_CENTRAL_PORTFOLIO,
+                "portfolio": to_builtin(asdict(config.portfolio)),
+            }
+            signal_diagnostics["candidates"][variant_id] = signal_result.diagnostics
+            portfolio_diagnostics["candidates"][variant_id] = {
+                "split_count": len(split_result.splits),
+                "split_refs": [split.label for split in split_result.splits],
+            }
+            portfolio_diagnostics["chunks"][variant_id] = split_portfolio_diagnostics
+    except Exception as error:
+        _write_partial_split_strategy_artifact(
+            recorder,
+            _split_strategy_payload(
+                config,
+                data_result=data_result,
+                array_contract=array_contract,
+                strategy_evidence=strategy_evidence,
+                indicator_evidence=[item for context in indicator_contexts for item in context.evidence],
+                candidates=list(candidate_records.values()),
+                leaderboard=None,
+                composition_diagnostics=composition_diagnostics,
+                split_metadata=split_result.metadata,
+                split_metric_records=split_metric_records,
+                signal_diagnostics=signal_diagnostics,
+                portfolio_diagnostics=portfolio_diagnostics,
+            ),
+            error=error,
+        )
+        raise
+
+    leaderboard = build_split_leaderboard(
+        split_metric_records,
+        candidate_records,
+        metric=config.ranking.metric,
+        direction=config.ranking.direction,
+        metric_registry_fingerprint=metric_registry_fingerprint,
+    )
+    payload = _split_strategy_payload(
+        config,
+        data_result=data_result,
+        array_contract=array_contract,
+        strategy_evidence=strategy_evidence,
+        indicator_evidence=[item for context in indicator_contexts for item in context.evidence],
+        candidates=list(candidate_records.values()),
+        leaderboard=leaderboard,
+        composition_diagnostics=composition_diagnostics,
+        split_metadata=split_result.metadata,
+        split_metric_records=split_metric_records,
+        signal_diagnostics=signal_diagnostics,
+        portfolio_diagnostics=portfolio_diagnostics,
+    )
+    _assert_split_leaderboard_complete(recorder, payload, leaderboard)
+    _write_strategy_artifact(recorder, payload)
+    recorder.mark_run_completed()
+    return {
+        **_run_refs(recorder),
+        "lane": "run",
+        "evidence_type": "strategy_sweep",
+        "strategy_artifact_id": "strategy.run",
+        "leaderboard": leaderboard,
+    }
+
+
+def _candidate_signal_frame(frame: pd.DataFrame, candidate_id: str) -> pd.DataFrame:
+    result = frame.copy()
+    result.columns = pd.MultiIndex.from_product(
+        [[candidate_id], list(frame.columns)],
+        names=[CANDIDATE_LEVEL, SYMBOL_LEVEL],
+    )
+    return result
+
+
+def _split_metric_records_for_batch(
+    close: pd.DataFrame,
+    open_prices: pd.DataFrame | None,
+    entries: pd.DataFrame,
+    exits: pd.DataFrame,
+    candidate_ids: tuple[str, ...],
+    splits: list[RunSplit],
+    *,
+    portfolio_config: Any,
+    report_config: Any,
+    roles: tuple[str, ...] = ("selection", "held_out"),
+    candidate_ids_by_split: Mapping[str, set[str]] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    diagnostics: dict[str, Any] = {
+        "schema_version": "split_portfolio_diagnostics.v1",
+        "splits": {},
+    }
+    for split in splits:
+        split_diagnostics = diagnostics["splits"].setdefault(split.label, {})
+        for role, native_set, window_index in (
+            ("selection", split.selection_set, split.selection_index),
+            ("held_out", split.held_out_set, split.held_out_index),
+        ):
+            if role not in roles:
+                continue
+            window_close = close.loc[window_index]
+            window_open = open_prices.loc[window_index] if open_prices is not None else None
+            portfolio = simulate_portfolio_batch(
+                window_close,
+                entries.loc[window_index],
+                exits.loc[window_index],
+                portfolio_config,
+                SignalConfig(),
+                open_prices=window_open,
+                market_index=close.index,
+            )
+            split_diagnostics[role] = to_builtin(portfolio.diagnostics)
+            metrics_by_candidate = portfolio_metrics_by_candidate_group(
+                portfolio.portfolio,
+                report_config,
+                candidate_ids,
+            )
+            for candidate_id in candidate_ids:
+                if candidate_ids_by_split is not None and candidate_id not in candidate_ids_by_split.get(
+                    split.label,
+                    set(),
+                ):
+                    continue
+                records.append(
+                    {
+                        "schema_version": "split_metric.v1",
+                        "split_label": split.label,
+                        "split": split.label,
+                        "set": role,
+                        "native_set": native_set,
+                        "candidate_id": candidate_id,
+                        "row_count": len(window_index),
+                        "metric_source": METRIC_SOURCE_CENTRAL_PORTFOLIO,
+                        "metrics": metrics_by_candidate[candidate_id],
+                    }
+                )
+    return records, diagnostics
+
+
+def _merge_split_portfolio_diagnostics(target: dict[str, Any], source: dict[str, Any]) -> None:
+    target.setdefault("schema_version", source.get("schema_version"))
+    target_splits = target.setdefault("splits", {})
+    for split_label, split_diagnostics in source.get("splits", {}).items():
+        target_splits.setdefault(split_label, {}).update(split_diagnostics)
+
+
+def _selected_candidate_ids_by_split(
+    records: list[dict[str, Any]],
+    *,
+    metric: str,
+    direction: str,
+) -> dict[str, set[str]]:
+    selected: dict[str, dict[str, Any]] = {}
+    reverse = direction == "desc"
+    for record in records:
+        if record.get("set") != "selection" or "candidate_id" not in record:
+            continue
+        value = _split_metric_value(record, metric)
+        if value is None:
+            continue
+        split_label = str(record["split_label"])
+        current = selected.get(split_label)
+        if current is None:
+            selected[split_label] = record
+            continue
+        current_value = _split_metric_value(current, metric)
+        if current_value is None:
+            selected[split_label] = record
+            continue
+        key = (value, str(record["candidate_id"]))
+        current_key = (current_value, str(current["candidate_id"]))
+        if (key > current_key) if reverse else (key < current_key):
+            selected[split_label] = record
+    return {
+        split_label: {str(record["candidate_id"])} for split_label, record in selected.items()
+    }
+
+
+def _split_metric_value(record: Mapping[str, Any], metric: str) -> float | None:
+    metrics = record.get("metrics", {})
+    value = metrics.get(metric) if isinstance(metrics, Mapping) else None
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _split_execution_preflight(
+    *,
+    splits: list[RunSplit],
+    candidate_count: int,
+    batch_size: int,
+    symbol_count: int,
+    has_open_prices: bool,
+    max_estimated_cells: int,
+) -> dict[str, Any]:
+    batch_candidate_count = min(candidate_count, batch_size)
+    selection_rows = sum(len(split.selection_index) for split in splits)
+    held_out_rows = sum(len(split.held_out_index) for split in splits)
+    total_window_rows = selection_rows + held_out_rows
+    materialized_frame_count = 4 + int(has_open_prices)
+    estimated_cells = batch_candidate_count * total_window_rows * symbol_count * materialized_frame_count
+    return {
+        "schema_version": "split_execution_preflight.v1",
+        "split_count": len(splits),
+        "candidate_count": candidate_count,
+        "batch_candidate_count": batch_candidate_count,
+        "batch_size": batch_size,
+        "selection_rows": selection_rows,
+        "held_out_rows": held_out_rows,
+        "total_window_rows": total_window_rows,
+        "symbol_count": symbol_count,
+        "materialized_frame_count": materialized_frame_count,
+        "estimated_cells": estimated_cells,
+        "limits": {"max_estimated_cells": max_estimated_cells},
+    }
+
+
+def _assert_split_execution_budget(preflight: dict[str, Any]) -> None:
+    estimated_cells = int(preflight["estimated_cells"])
+    max_estimated_cells = int(preflight["limits"]["max_estimated_cells"])
+    if estimated_cells > max_estimated_cells:
+        raise CandidateSweepError(
+            f"split strategy execution batch has {estimated_cells} estimated cells, above "
+            f"candidate_grid.max_estimated_cells={max_estimated_cells}; reduce "
+            "candidate_grid.batch_size or split workload"
+        )
+
+
+def _split_strategy_payload(
+    config: Any,
+    *,
+    data_result: Any,
+    array_contract: DataArrayContract,
+    strategy_evidence: dict[str, Any],
+    indicator_evidence: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    leaderboard: dict[str, Any] | None,
+    composition_diagnostics: dict[str, Any],
+    split_metadata: dict[str, Any],
+    split_metric_records: list[dict[str, Any]],
+    signal_diagnostics: dict[str, Any],
+    portfolio_diagnostics: dict[str, Any],
+    catalogs: dict[str, Any] | None = None,
+    chunk_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "schema_version": STRATEGY_ARTIFACT_SCHEMA_VERSION,
+        "lane": "run",
+        "evidence_type": "strategy_sweep",
+        "strategy": strategy_evidence,
+        "indicators": indicator_evidence,
+        "data": _strategy_data_evidence_payload(
+            data_result,
+            array_contract,
+            strategy_source=config.strategy.source,
+        ),
+        "split": split_metadata,
+        "candidates": [to_builtin(record) for record in candidates],
+        "leaderboard": leaderboard or _partial_split_leaderboard(config),
+        "split_metrics": to_builtin(split_metric_records),
+        "split_diagnostics": _split_diagnostics(split_metadata, split_metric_records),
+        "composition": composition_diagnostics,
+        "signal_diagnostics": signal_diagnostics,
+        "portfolio_diagnostics": portfolio_diagnostics,
+    }
+    if catalogs is not None:
+        payload["catalogs"] = catalogs
+    if chunk_diagnostics is not None:
+        payload["chunk_diagnostics"] = chunk_diagnostics
+    return payload
+
+
+def _partial_split_leaderboard(config: Any) -> dict[str, Any]:
+    return {
+        "schema_version": "split_run_leaderboard.v1",
+        "primary_metric": config.ranking.metric,
+        "direction": config.ranking.direction,
+        "weight_basis": "held_out_row_count",
+        "rows": [],
+        "failure_samples": [],
+        "summary": {
+            "attempted_splits": 0,
+            "selected_splits": 0,
+            "candidate_count": 0,
+            "partial_leaderboard": True,
+            "failure_gating_status": "partial",
+        },
+    }
+
+
+def _split_diagnostics(
+    split_metadata: dict[str, Any],
+    split_metric_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    selection_metric_counts: dict[str, int] = {}
+    for row in split_metric_records:
+        if row.get("set") != "selection":
+            continue
+        candidate_id = str(row["candidate_id"])
+        selection_metric_counts[candidate_id] = selection_metric_counts.get(candidate_id, 0) + 1
+    return {
+        "schema_version": "split_strategy_diagnostics.v1",
+        "split_count": split_metadata.get("n_splits", 0),
+        "metric_record_count": len(split_metric_records),
+        "selection_metric_record_count": sum(
+            1 for record in split_metric_records if record.get("set") == "selection"
+        ),
+        "held_out_metric_record_count": sum(
+            1 for record in split_metric_records if record.get("set") == "held_out"
+        ),
+        "candidate_selection_metric_counts": selection_metric_counts,
+    }
+
+
+def _assert_split_leaderboard_complete(
+    recorder: Any,
+    payload: dict[str, Any],
+    leaderboard: dict[str, Any],
+) -> None:
+    summary = leaderboard.get("summary", {})
+    if leaderboard.get("rows") and not summary.get("partial_leaderboard"):
+        return
+    error = RuntimeError(
+        "split strategy sweep did not produce a complete leaderboard: "
+        f"selected_splits={summary.get('selected_splits', 0)}, "
+        f"attempted_splits={summary.get('attempted_splits', 0)}, "
+        f"partial={summary.get('partial_leaderboard', True)}"
+    )
+    _write_partial_split_strategy_artifact(recorder, payload, error=error)
+    raise error
+
+
+def _write_partial_split_strategy_artifact(
+    recorder: Any,
+    payload: dict[str, Any],
+    *,
+    error: Exception,
+) -> None:
+    _plan_strategy_artifact_if_needed(recorder)
+    recorder.artifacts.begin_artifact_write("strategy.run")
+    artifact_path = Path("strategy_run.json")
+    full_path = recorder.run_dir / artifact_path
+    atomic_write_json(full_path, payload)
+    artifact = _strategy_artifact_record(recorder)
+    if artifact is None:
+        raise RuntimeError("strategy.run artifact disappeared during partial write")
+    recorder.manifest.replace_artifact(
+        "strategy.run",
+        {
+            **artifact,
+            "hash": hash_file(full_path),
+            "size": full_path.stat().st_size,
+            "shape": _strategy_artifact_shape(payload),
+            "status": ArtifactStatus.PARTIAL,
+            "diagnostic": {
+                "error_type": type(error).__name__,
+                "message": str(error)[:1000],
+            },
+        },
+    )
+    recorder.persist()
 
 
 def _resolve_sweep_indicator_refs(
@@ -1357,15 +2103,8 @@ def _signal_frame(value: Any, close: pd.DataFrame, name: str) -> pd.DataFrame:
 
 
 def _write_strategy_artifact(recorder, payload: dict[str, Any]) -> None:
+    _plan_strategy_artifact_if_needed(recorder)
     artifact_path = Path("strategy_run.json")
-    recorder.artifacts.plan_artifact(
-        artifact_id="strategy.run",
-        role="strategy_sweep_evidence",
-        artifact_type="json",
-        producer_stage="strategy_run",
-        path=str(artifact_path),
-        schema_version=STRATEGY_ARTIFACT_SCHEMA_VERSION,
-    )
     recorder.artifacts.begin_artifact_write("strategy.run")
     full_path = recorder.run_dir / artifact_path
     atomic_write_json(full_path, payload)
@@ -1377,11 +2116,35 @@ def _write_strategy_artifact(recorder, payload: dict[str, Any]) -> None:
     )
 
 
+def _plan_strategy_artifact_if_needed(recorder: Any) -> None:
+    if _strategy_artifact_record(recorder) is not None:
+        return
+    recorder.artifacts.plan_artifact(
+        artifact_id="strategy.run",
+        role="strategy_sweep_evidence",
+        artifact_type="json",
+        producer_stage="strategy_run",
+        path="strategy_run.json",
+        schema_version=STRATEGY_ARTIFACT_SCHEMA_VERSION,
+    )
+
+
+def _strategy_artifact_record(recorder: Any) -> dict[str, Any] | None:
+    for artifact in recorder.manifest.artifacts:
+        if artifact["id"] == "strategy.run":
+            return artifact
+    return None
+
+
 def _strategy_artifact_shape(payload: dict[str, Any]) -> dict[str, int]:
     shape = {
         "leaderboard_rows": len(payload["leaderboard"]["rows"]),
         "candidate_count": len(payload.get("candidates", [])),
     }
+    if "split" in payload:
+        shape["split_count"] = int(payload["split"].get("n_splits", 0))
+    if "split_metrics" in payload:
+        shape["split_metric_count"] = len(payload.get("split_metrics", []))
     catalogs = payload.get("catalogs")
     if isinstance(catalogs, Mapping):
         shape |= {

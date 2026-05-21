@@ -329,6 +329,105 @@ def test_lane_ranking_accepts_vbt_metric_ids_and_secondary_metrics(tmp_path: Pat
     assert len(resolved.manifest()["metric_registry_fingerprint"]) == 64
 
 
+def test_run_lane_accepts_dynamic_vbt_splitter_config(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(
+        _run_config(),
+        {
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 20, "split": 0.8},
+                "max_splits": 10,
+            }
+        },
+    )
+
+    resolved = resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert resolved.config.split is not None
+    assert resolved.config.split.method == "from_rolling"
+    assert resolved.config.split.params == {"length": 20, "split": 0.8}
+    assert resolved.config.split.max_splits == 10
+
+
+def test_run_lane_accepts_purged_kfold_splitter_method(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(
+        _run_config(),
+        {"split": {"method": "from_purged_kfold", "params": {"n_folds": 4}}},
+    )
+
+    resolved = resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert resolved.config.split is not None
+    assert resolved.config.split.method == "from_purged_kfold"
+
+
+def test_run_lane_rejects_unknown_splitter_method(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(_run_config(), {"split": {"method": "walk_forward", "params": {}}})
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert "split.method" in str(error.value)
+    assert "from_rolling" in str(error.value)
+
+
+def test_run_lane_rejects_unknown_splitter_param(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(
+        _run_config(),
+        {"split": {"method": "from_rolling", "params": {"length": 20, "made_up": 1}}},
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert "split.params.made_up" in str(error.value)
+
+
+def test_run_lane_rejects_missing_required_splitter_param(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(_run_config(), {"split": {"method": "from_rolling", "params": {}}})
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert "split.params.length" in str(error.value)
+    assert "is required" in str(error.value)
+
+
+def test_run_lane_rejects_splitter_method_requiring_runtime_object(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(_run_config(), {"split": {"method": "from_split_func", "params": {}}})
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert "split.method" in str(error.value)
+    assert "split_func" in str(error.value)
+
+
+def test_run_lane_rejects_internal_splitter_param(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _merge(
+        _run_config(),
+        {
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 20, "template_context": {"x": "y"}},
+            }
+        },
+    )
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert "split.params.template_context" in str(error.value)
+    assert "managed internally" in str(error.value)
+
+
 @pytest.mark.parametrize(
     ("secondary_metrics", "expected"),
     [

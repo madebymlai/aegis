@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 4
+CONFIG_SCHEMA_VERSION = 5
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
@@ -190,6 +190,15 @@ class SplitConfig:
 
 
 @dataclass(frozen=True)
+class RunSplitConfig:
+    method: str
+    params: dict[str, Any] = field(default_factory=dict)
+    max_splits: int = 100
+    max_estimated_output_cells: int = 25_000_000
+    max_public_artifact_bytes: int = 10_000_000
+
+
+@dataclass(frozen=True)
 class SignalConfig:
     policy: str = "long_only_hysteresis"
     long_entry_threshold: float = 0.55
@@ -272,6 +281,7 @@ class StrategyRunLaneConfig:
     data: DataConfig = field(default_factory=DataConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
+    split: RunSplitConfig | None = None
     candidate_grid: CandidateGridConfig = field(default_factory=CandidateGridConfig)
     output_dir: str = "runs"
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from research.aegis_research.run_leaderboard import build_run_leaderboard
+from research.aegis_research.split_leaderboard import build_split_leaderboard
 
 
 def test_build_run_leaderboard_ranks_top_10_with_counts() -> None:
@@ -164,3 +165,108 @@ def test_build_run_leaderboard_requires_selected_secondary_metric() -> None:
     assert leaderboard["rows"] == []
     assert leaderboard["summary"]["excluded"] == 1
     assert "sharpe_ratio" in leaderboard["failure_samples"][0]["message"]
+
+
+def test_build_split_leaderboard_selects_only_from_selection_window() -> None:
+    leaderboard = build_split_leaderboard(
+        [
+            _rolling_metric("split_0", "selection", "candidate_a", 2.0, 10),
+            _rolling_metric("split_0", "selection", "candidate_b", 1.0, 10),
+            _rolling_metric("split_0", "held_out", "candidate_a", 0.1, 5),
+            _rolling_metric("split_0", "held_out", "candidate_b", 99.0, 5),
+        ],
+        {
+            "candidate_a": {"variant_id": "candidate_a", "metric_source": "central_portfolio"},
+            "candidate_b": {"variant_id": "candidate_b", "metric_source": "central_portfolio"},
+        },
+        metric="total_return",
+        direction="desc",
+    )
+
+    assert [row["variant_id"] for row in leaderboard["rows"]] == ["candidate_a"]
+    assert leaderboard["rows"][0]["metrics"]["total_return"] == pytest.approx(0.1)
+    assert leaderboard["summary"]["failure_gating_status"] == "pass"
+
+
+def test_build_split_leaderboard_honors_ascending_selection_direction() -> None:
+    leaderboard = build_split_leaderboard(
+        [
+            _rolling_metric("split_0", "selection", "candidate_a", 1.0, 10),
+            _rolling_metric("split_0", "selection", "candidate_b", 2.0, 10),
+            _rolling_metric("split_0", "held_out", "candidate_a", 3.0, 5),
+            _rolling_metric("split_0", "held_out", "candidate_b", 0.1, 5),
+        ],
+        {
+            "candidate_a": {"variant_id": "candidate_a", "metric_source": "central_portfolio"},
+            "candidate_b": {"variant_id": "candidate_b", "metric_source": "central_portfolio"},
+        },
+        metric="total_return",
+        direction="asc",
+    )
+
+    assert [row["variant_id"] for row in leaderboard["rows"]] == ["candidate_a"]
+    assert leaderboard["rows"][0]["metrics"]["total_return"] == pytest.approx(3.0)
+
+
+def test_build_split_leaderboard_weights_oos_metrics_and_records_coverage() -> None:
+    leaderboard = build_split_leaderboard(
+        [
+            _rolling_metric("split_0", "selection", "candidate_a", 2.0, 10),
+            _rolling_metric("split_0", "selection", "candidate_b", 1.0, 10),
+            _rolling_metric("split_0", "held_out", "candidate_a", 1.0, 1),
+            _rolling_metric("split_0", "held_out", "candidate_b", 4.0, 1),
+            _rolling_metric("split_1", "selection", "candidate_a", 3.0, 10),
+            _rolling_metric("split_1", "selection", "candidate_b", 2.0, 10),
+            _rolling_metric("split_1", "held_out", "candidate_a", 3.0, 3),
+            _rolling_metric("split_1", "held_out", "candidate_b", 5.0, 3),
+        ],
+        {
+            "candidate_a": {"variant_id": "candidate_a", "metric_source": "central_portfolio"},
+            "candidate_b": {"variant_id": "candidate_b", "metric_source": "central_portfolio"},
+        },
+        metric="total_return",
+        direction="desc",
+        metric_registry_fingerprint="metrics123",
+    )
+
+    row = leaderboard["rows"][0]
+    assert leaderboard["metric_registry_fingerprint"] == "metrics123"
+    assert row["variant_id"] == "candidate_a"
+    assert row["metrics"]["total_return"] == pytest.approx(2.5)
+    assert row["selected_split_count"] == 2
+    assert row["eligible_split_count"] == 2
+    assert row["held_out_row_count"] == 4
+    assert row["split_refs"] == ["split_0", "split_1"]
+
+
+def test_build_split_leaderboard_marks_missing_selected_oos_metric_partial() -> None:
+    leaderboard = build_split_leaderboard(
+        [
+            _rolling_metric("split_0", "selection", "candidate_a", 2.0, 10),
+            _rolling_metric("split_0", "held_out", "candidate_a", None, 5),
+        ],
+        {"candidate_a": {"variant_id": "candidate_a", "metric_source": "central_portfolio"}},
+        metric="total_return",
+        direction="desc",
+    )
+
+    assert leaderboard["rows"] == []
+    assert leaderboard["summary"]["partial_leaderboard"] is True
+    assert "unavailable" in leaderboard["failure_samples"][0]["message"]
+
+
+def _rolling_metric(
+    split: str,
+    set_name: str,
+    candidate_id: str,
+    value: float | None,
+    row_count: int,
+) -> dict[str, object]:
+    return {
+        "split_label": split,
+        "set": set_name,
+        "candidate_id": candidate_id,
+        "row_count": row_count,
+        "metric_source": "central_portfolio",
+        "metrics": {"total_return": value},
+    }

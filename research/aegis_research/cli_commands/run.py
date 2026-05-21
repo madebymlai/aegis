@@ -235,7 +235,9 @@ def _looks_like_model_training_config(path: Path) -> bool:
     raw = yaml.safe_load(path.read_text())
     if not isinstance(raw, dict):
         return False
-    if "model" in raw or "labels" in raw or "split" in raw:
+    if "model" in raw or "labels" in raw:
+        return True
+    if "split" in raw and not {"strategy", "ranking"}.intersection(raw):
         return True
     if "labeler" in raw and not {"strategy", "ranking"}.intersection(raw):
         return True

@@ -58,6 +58,109 @@ def test_strategy_run_cli_executes_component_strategy_and_writes_manifest(
     assert (tmp_path / "runs" / "strategy-run" / "strategy_run.json").is_file()
 
 
+def test_strategy_run_cli_executes_component_strategy_with_rolling_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+    config_path = _write_run_config(tmp_path, split=_rolling_split_config())
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-rolling"]) == 0
+
+    output = capsys.readouterr()
+    artifact = json.loads((tmp_path / "runs" / "component-rolling" / "strategy_run.json").read_text())
+    assert json.loads(output.out)["status"] == "success"
+    assert artifact["strategy"]["source"] == "component"
+    assert artifact["split"]["method"] == "from_rolling"
+    assert artifact["leaderboard"]["schema_version"] == "split_run_leaderboard.v1"
+    assert artifact["leaderboard"]["summary"]["candidate_count"] == 1
+    assert artifact["leaderboard"]["rows"][0]["selected_split_count"] == artifact["split"]["n_splits"]
+    assert {record["set"] for record in artifact["split_metrics"]} == {"selection", "held_out"}
+
+
+def test_strategy_run_cli_scores_component_strategy_with_purged_kfold_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+    config_path = _write_run_config(tmp_path, split=_purged_kfold_split_config())
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-purged"]) == 0
+
+    output = capsys.readouterr()
+    artifact = json.loads((tmp_path / "runs" / "component-purged" / "strategy_run.json").read_text())
+    assert json.loads(output.out)["status"] == "success"
+    assert artifact["split"]["method"] == "from_purged_kfold"
+    assert artifact["split"]["sets"][0]["label"] == "train"
+    assert artifact["split"]["sets"][1]["label"] == "test"
+    assert {record["native_set"] for record in artifact["split_metrics"]} == {"train", "test"}
+    assert artifact["leaderboard"]["summary"]["candidate_count"] == 1
+
+
+def test_strategy_run_rejects_split_execution_over_budget_before_portfolio_simulation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("portfolio simulation should not run after split preflight rejection")
+
+    monkeypatch.setattr(strategy_runs, "simulate_portfolio_batch", fail_if_called)
+    config_path = _write_run_config(
+        tmp_path,
+        split=_rolling_split_config(),
+        candidate_grid={"max_estimated_cells": 1},
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "split-over-budget"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    manifest = json.loads((tmp_path / "runs" / "split-over-budget" / "manifest.json").read_text())
+    preflight = manifest["evidence"]["composition"]["split_execution_preflight"]
+    assert payload["error"]["category"] == "execution_failure"
+    assert "candidate_grid.max_estimated_cells=1" in payload["error"]["message"]
+    assert preflight["estimated_cells"] > preflight["limits"]["max_estimated_cells"]
+    assert not (tmp_path / "runs" / "split-over-budget" / "strategy_run.json").exists()
+
+
+def test_strategy_run_preserves_partial_component_split_artifact_on_scoring_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+
+    def fail_portfolio_batch(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("component split portfolio failed intentionally")
+
+    monkeypatch.setattr(strategy_runs, "simulate_portfolio_batch", fail_portfolio_batch)
+    config_path = _write_run_config(tmp_path, split=_rolling_split_config())
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-split-fails"]) == 10
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    manifest = json.loads((tmp_path / "runs" / "component-split-fails" / "manifest.json").read_text())
+    artifact = json.loads(
+        (tmp_path / "runs" / "component-split-fails" / "strategy_run.json").read_text()
+    )
+    strategy_artifact = next(item for item in manifest["artifacts"] if item["id"] == "strategy.run")
+    assert payload["error"]["category"] == "execution_failure"
+    assert "component split portfolio failed intentionally" in payload["error"]["message"]
+    assert strategy_artifact["status"] == "partial"
+    assert artifact["split"]["method"] == "from_rolling"
+    assert artifact["leaderboard"]["summary"]["partial_leaderboard"] is True
+
+
 def test_strategy_run_passes_component_indicator_sources_to_strategy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -351,6 +454,8 @@ def _write_run_config(
     indicators: list[dict[str, object]] | None = None,
     arrays: list[str] | None = None,
     data: dict[str, object] | None = None,
+    split: dict[str, object] | None = None,
+    candidate_grid: dict[str, object] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
@@ -370,11 +475,34 @@ def _write_run_config(
                 "strategy": {"source": "component", "id": strategy_id},
                 "indicators": indicators or [{"source": "component", "ids": "all"}],
                 "ranking": {"metric": "total_return", "direction": "desc"},
+                **({"split": split} if split is not None else {}),
+                **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
             },
             sort_keys=False,
         )
     )
     return path
+
+
+def _rolling_split_config() -> dict[str, object]:
+    return {
+        "method": "from_rolling",
+        "params": {
+            "length": 20,
+            "offset": 20,
+            "split": 0.5,
+            "set_labels": ["selection", "held_out"],
+        },
+        "max_splits": 5,
+    }
+
+
+def _purged_kfold_split_config() -> dict[str, object]:
+    return {
+        "method": "from_purged_kfold",
+        "params": {"n_folds": 3, "n_test_folds": 1},
+        "max_splits": 5,
+    }
 
 
 def _write_strategy_component(path: Path) -> None:

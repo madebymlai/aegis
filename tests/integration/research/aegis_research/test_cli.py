@@ -24,9 +24,55 @@ def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
     output = capsys.readouterr()
     assert "usage: aerd" in output.out
     assert "run" in output.out
+    assert "show" in output.out
     assert "play" not in output.out
     assert "train" not in output.out
     assert "exp" not in output.out
+
+
+def test_show_splitters_from_rolling_json(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["show", "splitters", "from_rolling", "--json"]) == 0
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["status"] == "success"
+    assert payload["method"] == "from_rolling"
+    assert payload["run_scoring_set_policy"] == "exactly_two_sets_first_selection_second_held_out"
+    param_names = {param["name"] for param in payload["params"]}
+    assert {"length", "split", "offset"}.issubset(param_names)
+
+
+def test_show_splitters_marks_runtime_object_methods_unsupported(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main(["show", "splitters", "from_split_func", "--json"]) == 0
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["status"] == "success"
+    assert payload["supported"] is False
+    assert "split_func" in payload["required_internal_params"]
+
+
+def test_show_splitters_lists_catalog_json(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["show", "splitters", "--json"]) == 0
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["status"] == "success"
+    assert payload["schema_version"] == "splitter_catalog.v1"
+    assert payload["run_scoring_set_policy"] == "exactly_two_sets_first_selection_second_held_out"
+    assert any(method["method"] == "from_rolling" for method in payload["methods"])
+
+
+def test_show_splitters_unknown_method_json(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["show", "splitters", "missing_method", "--json"]) == 6
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert payload["status"] == "error"
+    assert payload["error"]["category"] == "config_validation"
+    assert "missing_method" in payload["error"]["message"]
 
 
 def test_package_metadata_exposes_aerd_script() -> None:
