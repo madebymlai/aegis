@@ -280,6 +280,78 @@ def test_runner_rejects_ranking_metric_outside_central_catalog() -> None:
         )
 
 
+def test_runner_tied_param_levels_emit_paired_rows_only() -> None:
+    close, open_prices = _close_open_frames()
+    tied_source = OptimizationSource(
+        pipeline=_ma_pipeline,
+        params={
+            "fast_window": vbt.Param([2, 5, 10], level=0),
+            "slow_window": vbt.Param([20, 50, 100], level=0),
+        },
+        evidence={"source": "test"},
+        diagnostics={},
+        metadata={},
+    )
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=tied_source,
+        optimization=_optimization_config(return_grid="first"),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+
+    sampled_pairs = set(map(tuple, run.sampled_index))
+    assert sampled_pairs == {(2, 20), (5, 50), (10, 100)}
+    grid_param_pairs = set(
+        zip(
+            run.grid.index.get_level_values("fast_window"),
+            run.grid.index.get_level_values("slow_window"),
+            strict=True,
+        )
+    )
+    assert grid_param_pairs == sampled_pairs
+
+
+def test_runner_conditional_params_filter_invalid_combinations() -> None:
+    close, open_prices = _close_open_frames()
+    cond_source = OptimizationSource(
+        pipeline=_ma_pipeline,
+        params={
+            "fast_window": vbt.Param([2, 5, 10], condition="fast_window < slow_window"),
+            "slow_window": vbt.Param([3, 8]),
+        },
+        evidence={"source": "test"},
+        diagnostics={},
+        metadata={},
+    )
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=cond_source,
+        optimization=_optimization_config(return_grid="first"),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+
+    sampled_pairs = set(map(tuple, run.sampled_index))
+    assert sampled_pairs == {(2, 3), (2, 8), (5, 8)}
+    grid_param_pairs = set(
+        zip(
+            run.grid.index.get_level_values("fast_window"),
+            run.grid.index.get_level_values("slow_window"),
+            strict=True,
+        )
+    )
+    assert grid_param_pairs == sampled_pairs
+
+
 def test_runner_rejects_unsupported_ranking_direction() -> None:
     close, open_prices = _close_open_frames()
     source = _build_source(fast=[2], slow=[10])
