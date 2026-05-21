@@ -1229,9 +1229,9 @@ def _split_metric_records_for_batch(
     }
     for split in splits:
         split_diagnostics = diagnostics["splits"].setdefault(split.label, {})
-        for role, native_set, window_index in (
-            ("selection", split.selection_set, split.selection_index),
-            ("held_out", split.held_out_set, split.held_out_index),
+        for role, window_index in (
+            ("selection", split.selection_index),
+            ("held_out", split.held_out_index),
         ):
             if role not in roles:
                 continue
@@ -1264,7 +1264,6 @@ def _split_metric_records_for_batch(
                         "split_label": split.label,
                         "split": split.label,
                         "set": role,
-                        "native_set": native_set,
                         "candidate_id": candidate_id,
                         "row_count": len(window_index),
                         "metric_source": METRIC_SOURCE_CENTRAL_PORTFOLIO,

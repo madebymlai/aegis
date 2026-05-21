@@ -13,10 +13,9 @@ split:
     length: 252
     offset: 252
     split: 0.8
-    set_labels: [selection, held_out]
   max_splits: 100
 ```
 
-Compatible VBT splitter methods, such as `from_rolling` and `from_purged_kfold`, use the same run scoring pipeline when VBT can build exactly two non-overlapping sets per split from the source index plus params. The first set is used for selection, the second set is used for held-out scoring, and native VBT set labels are preserved in evidence.
+Compatible VBT splitter methods, such as `from_rolling` and `from_purged_kfold`, use the same run scoring pipeline when VBT can build exactly two non-overlapping sets per split from the source index plus params. The first set is always treated as the selection set, the second as the held-out set; `set_labels` is not user-configurable.
 
 Ignored files are not secret management. Do not put API keys, provider tokens, or credentials directly in local YAMLs or notebooks. Use environment-backed secret references, and do not force-add local configs unless they are intentionally reviewed as tracked artifacts.

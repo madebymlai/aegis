@@ -46,7 +46,7 @@ The plan also tightens the earlier top-level split direction: because #31 optimi
 
 **Split and selection semantics**
 - R13. Aegis ranking metric and direction must map into VBT `selection` semantics for `cv_split`, including custom selection when the returned object contains multiple metrics.
-- R14. Split evidence must distinguish selection sets from held-out sets using native VBT split/set labels while preserving Aegis wording of selection versus held-out evaluation.
+- R14. Split evidence must distinguish selection sets from held-out sets using a canonical Aegis role string (`selection`, `held_out`) emitted positionally; raw VBT splitter labels (`set_0`, `train`, etc.) are internal lookup keys and must not leak into manifests, artifacts, or downstream filtering.
 - R15. Split runs must persist enough grid evidence to prove which parameter rows were eligible and sampled for each split selection decision.
 - R16. Held-out leaderboard rows must be derived from VBT-selected parameter combinations and held-out metrics, not from custom composed candidate IDs.
 
@@ -533,8 +533,8 @@ Implementation should follow the dependency fields, not just the visual order be
 - Pass search/random/execution policy through `parameterized_kwargs` and split execution kwargs according to VBT `cv_split` constraints.
 - Pass execution/chunking/mono-chunk settings through VBT-native kwargs rather than custom candidate batches.
 - Map `ranking.metric` and `ranking.direction` into `selection`, using a custom selection function when metric output has multiple metrics.
-- Define split role mapping explicitly: exactly two sets are accepted; VBT set index 0 is always Aegis `selection`, VBT set index 1 is always Aegis `held_out`; user-authored set labels are display/native metadata and must not override role order. Reject labels/configs that imply a different role order.
-- Preserve both raw VBT split/set coordinates and Aegis role mapping in evidence.
+- Define split role mapping explicitly: exactly two sets are accepted; VBT set index 0 is always Aegis `selection`, VBT set index 1 is always Aegis `held_out`. `set_labels` is not a user-configurable knob — config validation rejects `set_labels` under any `split.params` (top-level legacy or `optimization.split`); each VBT splitter factory's natural defaults flow through unchanged and serve only as internal dict lookup keys into the set-indices map.
+- Emit only the canonical Aegis role in evidence (`set: selection|held_out`, `sets[i].role`). Do not emit raw VBT labels as `native_set` or as keyed evidence fields — they would just leak the splitter family ("set_0/set_1" vs "train/test") into downstream code without semantic value.
 - Persist eligible/sampled selection-grid rows for each split and selected held-out metric rows.
 - Normalize VBT parameter indexes into candidate evidence records and preserve metric registry fingerprints, failure summaries, sampled rows, and portfolio diagnostics.
 - Normalize `return_grid` output carefully. For `return_grid="first"`, deduplicate training-grid rows by split and parameter row and treat only set-0 grid rows as selection eligibility. For `return_grid="all"`, keep selection-grid and held-out-grid evidence roles separate and require resource gates before retaining the larger output.
@@ -556,13 +556,13 @@ Implementation should follow the dependency fields, not just the visual order be
 - Covers AE4. Happy path: random/lazy search with `optimization.search: random`, subset size, and seed persists actual sampled parameter rows.
 - Covers AE2. Happy path: ranking `total_return desc` selects winners from selection-set metrics and ranks final rows by held-out metrics.
 - Happy path: VBT execution/mono-chunk kwargs are recorded as VBT execution policy and not as `optimization.engine`.
-- Happy path: `optimization.split.params` values such as `length`, `offset`, `split`, and `set_labels` are forwarded as VBT `splitter_kwargs`, while Aegis guard fields are not forwarded.
-- Happy path: native VBT split/set labels are preserved and mapped to Aegis selection/held-out wording in evidence.
+- Happy path: `optimization.split.params` values such as `length`, `offset`, and `split` are forwarded as VBT `splitter_kwargs`, while Aegis guard fields are not forwarded.
+- Happy path: evidence emits the canonical Aegis role (`selection`, `held_out`) for every split×set record regardless of which VBT splitter factory was chosen; raw VBT splitter labels never appear in manifests or artifacts.
 - Happy path: selection and held-out portfolio row counts equal the corresponding VBT split set lengths, not the full source index length.
 - Happy path: `return_grid="first"` does not double-count duplicated training-grid rows as held-out eligibility.
 - Happy path: random/lazy split optimization persists actual sampled/eligible selection rows per split.
 - Edge case: ascending ranking maps to min selection and preserves held-out ranking behavior.
-- Error path: reversed or semantically misleading `set_labels` fail if they would imply role order different from set-0 selection and set-1 held-out.
+- Error path: `set_labels` authored under any `split.params` (top-level legacy or `optimization.split`) is rejected during validation with a message that set roles are Aegis-owned and assigned positionally.
 - Error path: split output with one set, three sets, empty sets, or too many splits fails before native optimization execution.
 - Error path: a config with `optimization` and no `optimization.split` fails validation rather than entering the native runner.
 - Error path: oversized theoretical grid with no random subset fails before VBT execution.

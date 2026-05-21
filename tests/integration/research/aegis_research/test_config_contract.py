@@ -266,7 +266,7 @@ def test_run_accepts_native_grid_optimization_with_nested_split(tmp_path: Path) 
     assert resolved.config.optimization.execute == {}
     assert resolved.config.optimization.evidence.return_grid == "first"
     assert resolved.config.optimization.split.method == "from_rolling"
-    assert resolved.config.optimization.split.params["set_labels"] == ["selection", "held_out"]
+    assert "set_labels" not in resolved.config.optimization.split.params
 
 
 def test_run_accepts_native_random_optimization_policy(tmp_path: Path) -> None:
@@ -303,7 +303,6 @@ def test_run_accepts_native_random_optimization_policy(tmp_path: Path) -> None:
                     "params": {
                         "length": 20,
                         "split": 0.5,
-                        "set_labels": ["selection", "held_out"],
                     },
                 },
                 "engine": "custom",
@@ -319,7 +318,6 @@ def test_run_accepts_native_random_optimization_policy(tmp_path: Path) -> None:
                     "params": {
                         "length": 20,
                         "split": 0.5,
-                        "set_labels": ["selection", "held_out"],
                     },
                 },
                 "mode": "native",
@@ -335,7 +333,6 @@ def test_run_accepts_native_random_optimization_policy(tmp_path: Path) -> None:
                     "params": {
                         "length": 20,
                         "split": 0.5,
-                        "set_labels": ["selection", "held_out"],
                     },
                 },
             },
@@ -350,7 +347,6 @@ def test_run_accepts_native_random_optimization_policy(tmp_path: Path) -> None:
                     "params": {
                         "length": 20,
                         "split": 0.5,
-                        "set_labels": ["selection", "held_out"],
                     },
                 },
                 "random_subset": 5,
@@ -382,6 +378,31 @@ def test_run_rejects_invalid_native_optimization_policy(
 
     assert expected_path in str(error.value)
     assert expected_message in str(error.value)
+
+
+def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = {
+        "search": "grid",
+        "split": {
+            "method": "from_rolling",
+            "params": {
+                "length": 20,
+                "split": 0.5,
+                "set_labels": ["selection", "held_out"],
+            },
+            "max_splits": 10,
+        },
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "optimization.split.params.set_labels" in str(error.value)
+    assert "owned by Aegis" in str(error.value)
 
 
 def test_run_rejects_top_level_split_as_native_optimization_split(tmp_path: Path) -> None:
@@ -488,7 +509,7 @@ def _native_optimization(search: str, **overrides: object) -> dict[str, object]:
 def _optimization_split() -> dict[str, object]:
     return {
         "method": "from_rolling",
-        "params": {"length": 20, "split": 0.5, "set_labels": ["selection", "held_out"]},
+        "params": {"length": 20, "split": 0.5},
         "max_splits": 10,
     }
 

@@ -94,9 +94,8 @@ def test_strategy_run_cli_scores_component_strategy_with_purged_kfold_split(
     artifact = json.loads((tmp_path / "runs" / "component-purged" / "strategy_run.json").read_text())
     assert json.loads(output.out)["status"] == "success"
     assert artifact["split"]["method"] == "from_purged_kfold"
-    assert artifact["split"]["sets"][0]["label"] == "train"
-    assert artifact["split"]["sets"][1]["label"] == "test"
-    assert {record["native_set"] for record in artifact["split_metrics"]} == {"train", "test"}
+    assert artifact["split"]["sets"][0]["role"] == "selection"
+    assert artifact["split"]["sets"][1]["role"] == "held_out"
     assert artifact["leaderboard"]["summary"]["candidate_count"] == 1
 
 
@@ -516,7 +515,6 @@ def _rolling_split_config() -> dict[str, object]:
             "length": 20,
             "offset": 20,
             "split": 0.5,
-            "set_labels": ["selection", "held_out"],
         },
         "max_splits": 5,
     }

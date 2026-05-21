@@ -315,10 +315,6 @@ def test_run_cli_executes_playbook_strategy_sweep_with_rolling_split(
     assert sum(1 for record in artifact["split_metrics"] if record["set"] == "held_out") == artifact[
         "split"
     ]["n_splits"]
-    assert {record["native_set"] for record in artifact["split_metrics"]} == {
-        "selection",
-        "held_out",
-    }
     assert artifact["catalogs"]["metrics"] == {}
     strategy_artifact = next(item for item in manifest["artifacts"] if item["id"] == "strategy.run")
     assert strategy_artifact["status"] == "completed"
@@ -955,7 +951,6 @@ def _rolling_split_config() -> dict[str, object]:
             "length": 20,
             "offset": 20,
             "split": 0.5,
-            "set_labels": ["selection", "held_out"],
         },
         "max_splits": 5,
     }

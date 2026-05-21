@@ -186,6 +186,14 @@ def _validate_run_split(
         _validate_json_like(f"{path}.params", params, issues)
         _validate_no_inline_secrets(f"{path}.params", params, issues)
         _validate_no_run_executable_keys(f"{path}.params", params, issues)
+        if "set_labels" in params:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}.params.set_labels",
+                    "set roles are owned by Aegis and assigned positionally "
+                    "(set 0 selection, set 1 held_out); set_labels is not configurable",
+                )
+            )
     validate_run_split_config(split, issues, path=path)
 
 

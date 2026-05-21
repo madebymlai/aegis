@@ -169,7 +169,7 @@ The forward-first move is to stop extending the custom candidate-axis optimizer.
 
 **Split and selection semantics**
 - R12. Aegis ranking metric and direction must map into VBT `selection` semantics for `cv_split`, including custom selection when the returned object contains multiple metrics.
-- R13. Split evidence must distinguish the selection set from held-out sets using native VBT split/set labels while preserving Aegis wording of selection versus held-out evaluation.
+- R13. Split evidence must distinguish the selection set from held-out sets using a canonical Aegis role string (`selection`, `held_out`) assigned positionally (VBT set index 0 → selection, set index 1 → held_out). Raw VBT splitter labels (`set_0`, `train`, etc.) are internal lookup keys only and must not be emitted in manifests or artifacts. `set_labels` is not a user-configurable knob and config validation must reject it.
 - R14. Split runs must persist enough grid evidence to prove which parameter rows were eligible and sampled for each split selection decision.
 - R15. Held-out leaderboard rows must be derived from VBT-selected parameter combinations and held-out metrics, not from custom composed candidate IDs.
 
