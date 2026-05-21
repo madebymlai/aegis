@@ -100,6 +100,15 @@ def _source_params(value: Any) -> dict[str, vbt.Param]:
             raise OptimizationSourceError(
                 f"optimization param {name!r} must be a vectorbtpro vbt.Param"
             )
+        if getattr(param, "hide", False):
+            raise OptimizationSourceError(
+                f"optimization param {name!r} has hide=True, which excludes it from the "
+                "VBT result index; candidate identity would then collapse different "
+                "values to the same candidate_key. Hidden params are deferred to #32 "
+                "(which materializes hidden_params alongside the param index). For now, "
+                "remove hide=True or fold the hidden axis into the pipeline as a "
+                "fixed constant."
+            )
         params[name] = param
     return params
 

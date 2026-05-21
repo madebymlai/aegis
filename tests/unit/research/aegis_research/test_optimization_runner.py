@@ -454,7 +454,7 @@ def test_runner_rejects_invalid_pipeline_signal_shape() -> None:
         metadata={},
     )
 
-    with pytest.raises(OptimizationRunnerError, match="entries.*exits"):
+    with pytest.raises(OptimizationRunnerError, match=r"entries.*exits"):
         execute_optimization(
             close=close,
             open_prices=open_prices,

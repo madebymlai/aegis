@@ -242,3 +242,87 @@ def test_leaderboard_nan_held_out_metric_does_not_inflate_aggregate() -> None:
     assert any("ranking metric" in msg and "unavailable" in msg for msg in failure_messages), (
         failure_messages
     )
+
+
+def test_leaderboard_canonical_key_supports_nan_and_complex_param_values() -> None:
+    # NaN params would previously canonicalize to a dict ({'kind': 'nan'}) and
+    # crash _canonical_params_key with TypeError: unhashable type. JSON-encoded
+    # keys round-trip these cleanly.
+    rows = []
+    values = []
+    for set_label in ("selection", "held_out"):
+        rows.append((0, set_label, float("nan"), 0.10, "total_return"))
+        values.append(0.20 if set_label == "selection" else 0.15)
+    index = pd.MultiIndex.from_tuples(
+        rows, names=["split", "set", "sl_stop", "tp_stop", METRIC_INDEX_NAME]
+    )
+    selection = pd.Series(values, index=index, name="value")
+    sampled_index = pd.MultiIndex.from_tuples(
+        [(float("nan"), 0.10)], names=["sl_stop", "tp_stop"]
+    )
+    candidate_rows = candidate_rows_from_param_index(
+        sampled_index, source_identity={"source": "test"}
+    )
+
+    leaderboard = build_optimization_leaderboard(
+        selection=selection,
+        candidate_rows=candidate_rows,
+        split_held_out_row_counts={0: 10},
+        ranking_metric="total_return",
+        ranking_direction="desc",
+    )
+
+    assert leaderboard["rows"], "winner with NaN-valued param must produce a leaderboard row"
+    assert leaderboard["rows"][0]["candidate_key"] == candidate_rows[0]["candidate_key"]
+
+
+def test_leaderboard_none_ranking_metric_sorts_last_for_both_directions() -> None:
+    # Three winners; one of them has NaN held-out ranking metric. The bucket for
+    # that winner gets created (its held-out row exists), but its ranking value
+    # is unavailable -> ranking_metric_value should be None and that row must
+    # sort to the end in both directions.
+    rows = []
+    values = []
+    for split_idx, params, held_out_ret in (
+        (0, (2, 10), 0.10),
+        (1, (5, 20), 0.30),
+        (2, (10, 50), float("nan")),
+    ):
+        rows.append((split_idx, "selection", *params, "total_return"))
+        values.append(held_out_ret if not (isinstance(held_out_ret, float) and math.isnan(held_out_ret)) else 0.0)
+        rows.append((split_idx, "held_out", *params, "total_return"))
+        values.append(held_out_ret)
+    index = pd.MultiIndex.from_tuples(
+        rows,
+        names=["split", "set", "fast_window", "slow_window", METRIC_INDEX_NAME],
+    )
+    selection = pd.Series(values, index=index, name="value")
+    sampled_index = pd.MultiIndex.from_tuples(
+        [(2, 10), (5, 20), (10, 50)], names=["fast_window", "slow_window"]
+    )
+    candidate_rows = candidate_rows_from_param_index(
+        sampled_index, source_identity={"source": "test"}
+    )
+
+    desc_leaderboard = build_optimization_leaderboard(
+        selection=selection,
+        candidate_rows=candidate_rows,
+        split_held_out_row_counts={0: 10, 1: 10, 2: 10},
+        ranking_metric="total_return",
+        ranking_direction="desc",
+    )
+    asc_leaderboard = build_optimization_leaderboard(
+        selection=selection,
+        candidate_rows=candidate_rows,
+        split_held_out_row_counts={0: 10, 1: 10, 2: 10},
+        ranking_metric="total_return",
+        ranking_direction="asc",
+    )
+
+    assert len(desc_leaderboard["rows"]) == 3
+    assert desc_leaderboard["rows"][-1]["ranking_metric_value"] is None, (
+        "desc: None ranking value must sort last"
+    )
+    assert asc_leaderboard["rows"][-1]["ranking_metric_value"] is None, (
+        "asc: None ranking value must sort last (regression — was previously sorting first)"
+    )

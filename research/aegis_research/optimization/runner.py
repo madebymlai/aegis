@@ -91,11 +91,9 @@ def execute_optimization(
         selection=vbt.RepFunc(selection_fn),
         return_grid=return_grid_kw,
     )
-    call_args: tuple[Any, ...]
-    if open_prices is not None:
-        call_args = (close, open_prices)
-    else:
-        call_args = (close,)
+    call_args: tuple[Any, ...] = (
+        (close, open_prices) if open_prices is not None else (close,)
+    )
     try:
         output = decorated(*call_args, **dict(source.params))
     except NoResultsException as error:
@@ -304,10 +302,7 @@ def _build_selection_function(*, ranking_metric: str, direction: str):
                 "sampled parameter row returned a non-finite value (NaN/inf). Inspect "
                 "pipeline diagnostics for the failing combinations"
             )
-        if direction == "desc":
-            label = finite.idxmax()
-        else:
-            label = finite.idxmin()
+        label = finite.idxmax() if direction == "desc" else finite.idxmin()
         return vbt.LabelSel([label])
 
     return selection
@@ -381,10 +376,7 @@ def serialize_optimization_run(run: OptimizationRun) -> dict[str, Any]:
 
 def _serialize_param_index(index: pd.Index) -> dict[str, Any]:
     names = list(index.names)
-    if isinstance(index, pd.MultiIndex):
-        tuples = list(index)
-    else:
-        tuples = [(value,) for value in index]
+    tuples = list(index) if isinstance(index, pd.MultiIndex) else [(value,) for value in index]
     rows = [
         {name: _scalar(component) for name, component in zip(names, key, strict=True)}
         for key in tuples

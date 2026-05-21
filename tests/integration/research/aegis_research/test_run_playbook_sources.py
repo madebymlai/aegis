@@ -395,6 +395,12 @@ def test_optimization_pipeline_runtime_error_records_failure_diagnostics(
     assert "pipeline raised" in payload["error"]["message"], (
         "pipeline runtime error must surface in the CLI error payload"
     )
+    evidence = manifest["evidence"]["optimization"]
+    assert "execution_failure" in evidence, (
+        "generic pipeline exceptions must persist evidence.optimization.execution_failure "
+        "(R27); previously only OptimizationRunnerError was caught"
+    )
+    assert "pipeline raised" in evidence["execution_failure"]["message"]
 
 
 def test_optimization_preflight_failure_records_manifest_without_pipeline_execution(

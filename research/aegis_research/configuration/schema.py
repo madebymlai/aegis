@@ -30,7 +30,7 @@ DATA_QUALITY_DEGRADATIONS = {
 SOURCE_KINDS = {"component", "playbook"}
 RANKING_DIRECTIONS = {"asc", "desc"}
 OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
-OPTIMIZATION_RETURN_GRID_POLICIES = {"first", "all"}
+OPTIMIZATION_RETURN_GRID_POLICIES = {"off", "first", "all"}
 RUN_EXECUTABLE_DENIED_KEYS = {
     "artifact_path",
     "callable",

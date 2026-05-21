@@ -4,7 +4,6 @@ import math
 from typing import Any
 
 import pandas as pd
-from vectorbtpro import vbt
 
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -28,7 +29,7 @@ def build_optimization_leaderboard(
     }
     held_out = selection.xs("held_out", level="set")
     if not isinstance(held_out.index, pd.MultiIndex):
-        raise ValueError("selection index must be a MultiIndex with split, params, and metric levels")
+        raise TypeError("selection index must be a MultiIndex with split, params, and metric levels")
     level_names = list(held_out.index.names)
     if "split" not in level_names or METRIC_INDEX_NAME not in level_names:
         raise ValueError(
@@ -73,8 +74,8 @@ def build_optimization_leaderboard(
             {
                 "candidate_key": candidate["candidate_key"],
                 "params": dict(candidate["params"]),
-                "metric_sums": {name: 0.0 for name in PORTFOLIO_METRIC_VALUE_KEYS},
-                "metric_weights": {name: 0.0 for name in PORTFOLIO_METRIC_VALUE_KEYS},
+                "metric_sums": dict.fromkeys(PORTFOLIO_METRIC_VALUE_KEYS, 0.0),
+                "metric_weights": dict.fromkeys(PORTFOLIO_METRIC_VALUE_KEYS, 0.0),
                 "split_refs": set(),
                 "oos_ranking_values": [],
             },
@@ -132,14 +133,16 @@ def build_optimization_leaderboard(
                 "oos_metric_max": max(oos_values) if oos_values else None,
             }
         )
-    rows.sort(
-        key=lambda row: (
-            float("-inf")
-            if row["ranking_metric_value"] is None
-            else row["ranking_metric_value"]
-        ),
-        reverse=ranking_direction == "desc",
-    )
+    def _sort_key(row: dict[str, Any]) -> tuple[int, float]:
+        value = row["ranking_metric_value"]
+        if value is None:
+            # Push missing values to the end regardless of direction.
+            return (1, 0.0)
+        if ranking_direction == "desc":
+            return (0, -float(value))
+        return (0, float(value))
+
+    rows.sort(key=_sort_key)
     return {
         "schema_version": OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION,
         "ranking_metric": ranking_metric,
@@ -156,8 +159,9 @@ def build_optimization_leaderboard(
     }
 
 
-def _canonical_params_key(params: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
-    return tuple(sorted((str(key), _canonical_value(value)) for key, value in params.items()))
+def _canonical_params_key(params: Mapping[str, Any]) -> str:
+    canonical = {str(key): _canonical_value(value) for key in sorted(params) for value in [params[key]]}
+    return json.dumps(canonical, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _append_failure(failures: list[dict[str, str]], subject: str, message: str) -> None:

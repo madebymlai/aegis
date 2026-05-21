@@ -160,9 +160,10 @@ split:
     length: 252
     offset: 252
     split: 0.8
-    set_labels: [selection, held_out]
   max_splits: 100
 ```
+
+Set roles are positional (set 0 = selection, set 1 = held_out); `set_labels` is rejected by config validation under any `split.params`.
 
 `split.method` must be an exact `vbt.Splitter` constructor method. Use `aerd show splitters from_rolling --json` or another discovered method to inspect signature-derived params and defaults. Compatible methods such as `from_rolling` and `from_purged_kfold` share the same scoring path when VBT returns exactly two non-overlapping sets per split. The first set is used for selection, the second set is used for held-out scoring, and native VBT set labels are preserved in evidence.
 

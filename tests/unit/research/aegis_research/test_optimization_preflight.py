@@ -4,12 +4,16 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.config import OptimizationConfig, OptimizationEvidenceConfig, RunSplitConfig
-from research.aegis_research.run_splits import RunSplit, RunSplitsResult
+from research.aegis_research.config import (
+    OptimizationConfig,
+    OptimizationEvidenceConfig,
+    RunSplitConfig,
+)
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
 )
+from research.aegis_research.run_splits import RunSplit, RunSplitsResult
 
 
 def test_preflight_reports_grid_shape_and_execution_policy() -> None:

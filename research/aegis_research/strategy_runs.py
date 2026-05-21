@@ -49,6 +49,22 @@ from research.aegis_research.data_arrays import (
     merge_data_arrays,
     with_data_array_contract_metadata,
 )
+from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
+from research.aegis_research.optimization.leaderboard import build_optimization_leaderboard
+from research.aegis_research.optimization.preflight import (
+    PreflightError,
+    build_preflight,
+)
+from research.aegis_research.optimization.runner import (
+    METRIC_INDEX_NAME,
+    execute_optimization,
+    serialize_optimization_run,
+)
+from research.aegis_research.optimization.source import (
+    OPTIMIZATION_SOURCE_CONTRACT,
+    OptimizationSourceError,
+    validate_optimization_source,
+)
 from research.aegis_research.playbook_registry import (
     FrozenPlaybookRegistry,
     PlaybookSelection,
@@ -66,23 +82,6 @@ from research.aegis_research.run_leaderboard import (
 )
 from research.aegis_research.run_splits import RunSplit, build_run_splits_result
 from research.aegis_research.split_leaderboard import build_split_leaderboard
-from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
-from research.aegis_research.optimization.leaderboard import build_optimization_leaderboard
-from research.aegis_research.optimization.preflight import (
-    PreflightError,
-    build_preflight,
-)
-from research.aegis_research.optimization.runner import (
-    METRIC_INDEX_NAME,
-    OptimizationRunnerError,
-    execute_optimization,
-    serialize_optimization_run,
-)
-from research.aegis_research.optimization.source import (
-    OPTIMIZATION_SOURCE_CONTRACT,
-    OptimizationSourceError,
-    validate_optimization_source,
-)
 
 STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v3"
 STRATEGY_OUTPUT_FORBIDDEN_KEYS = {
@@ -557,10 +556,10 @@ def _run_optimization_strategy_sweep(
             report=config.report,
             ranking=config.ranking,
         )
-    except OptimizationRunnerError as error:
+    except Exception as error:
         optimization_evidence["execution_failure"] = {
             "error_type": type(error).__name__,
-            "message": str(error),
+            "message": str(error)[:1000],
         }
         recorder.manifest.evidence["optimization"] = optimization_evidence
         recorder.persist()

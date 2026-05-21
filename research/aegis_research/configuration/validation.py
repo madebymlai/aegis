@@ -286,6 +286,19 @@ def _validate_optimization_random_policy(
         )
 
 
+OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
+    {
+        "random_subset",
+        "seed",
+        "merge_func",
+        "raise_no_results",
+        "filter_results",
+        "selection",
+        "return_grid",
+    }
+)
+
+
 def _validate_optimization_execute(value: Any, issues: list[ConfigValidationIssue]) -> None:
     path = "optimization.execute"
     if not isinstance(value, dict):
@@ -294,6 +307,16 @@ def _validate_optimization_execute(value: Any, issues: list[ConfigValidationIssu
     _validate_json_like(path, value, issues)
     _validate_no_inline_secrets(path, value, issues)
     _validate_no_run_executable_keys(path, value, issues)
+    reserved = sorted(set(value) & OPTIMIZATION_EXECUTE_RESERVED_KEYS)
+    if reserved:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                f"reserved keys {reserved} are owned by optimization.search / "
+                "optimization.evidence / Aegis ranking policy and must not appear "
+                "under optimization.execute",
+            )
+        )
 
 
 def _validate_optimization_evidence(value: Any, issues: list[ConfigValidationIssue]) -> None:

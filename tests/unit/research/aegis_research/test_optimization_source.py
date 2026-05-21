@@ -93,3 +93,22 @@ def test_optimization_source_contract_rejects_legacy_playbook_sweep_shape() -> N
         )
 
     assert OPTIMIZATION_SOURCE_CONTRACT in str(error.value)
+
+
+def test_optimization_source_rejects_hidden_vbt_params() -> None:
+    def pipeline(data, fast_window, slow_window):
+        return data, fast_window, slow_window
+
+    with pytest.raises(OptimizationSourceError, match="hide=True"):
+        validate_optimization_source(
+            {
+                "contract": OPTIMIZATION_SOURCE_CONTRACT,
+                "kind": OPTIMIZATION_SOURCE_KIND,
+                "pipeline": pipeline,
+                "params": {
+                    "fast_window": vbt.Param([2, 5]),
+                    "slow_window": vbt.Param([10, 20], hide=True),
+                },
+            },
+            source_evidence={"source": "test"},
+        )
