@@ -72,6 +72,7 @@ from research.aegis_research.optimization.preflight import (
     build_preflight,
 )
 from research.aegis_research.optimization.runner import (
+    METRIC_INDEX_NAME,
     OptimizationRunnerError,
     execute_optimization,
     serialize_optimization_run,
@@ -567,17 +568,14 @@ def _run_optimization_strategy_sweep(
     run_payload = serialize_optimization_run(optimization_run)
     optimization_evidence["execution"] = run_payload
 
-    candidate_index = (
-        optimization_run.grid.index
-        if optimization_run.grid is not None
-        else optimization_run.selection.index
-    )
     candidate_rows = candidate_rows_from_param_index(
-        candidate_index,
+        optimization_run.sampled_index,
         source_identity=optimization_source.evidence,
         portfolio_policy=to_builtin(asdict(config.portfolio)),
+        coordinate_levels=("split", "set", "symbol", METRIC_INDEX_NAME),
     )
     optimization_evidence["candidate_count"] = len(candidate_rows)
+    optimization_evidence["sampled_row_count"] = len(run_payload["sampled_rows"]["rows"])
     leaderboard = _build_optimization_leaderboard(
         run_payload=run_payload,
         ranking_metric=optimization_run.ranking_metric,

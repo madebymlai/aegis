@@ -294,11 +294,17 @@ def test_optimization_executes_cv_split_and_writes_strategy_run_artifact(
     assert "sharpe_ratio" in leaderboard_rows[0]["metrics"]
     assert artifact["candidates"], "expected non-empty candidates list"
     first_candidate = artifact["candidates"][0]
-    assert set(first_candidate["params"].keys()) >= {"fast_window", "slow_window"}
+    assert set(first_candidate["params"].keys()) == {"fast_window", "slow_window"}
     assert first_candidate["candidate_key"].startswith("cand_")
+    sampled = artifact["execution"]["sampled_rows"]
+    assert sampled["index_names"] == ["fast_window", "slow_window"]
+    assert len(sampled["rows"]) == 4
+    sampled_pairs = {(row["fast_window"], row["slow_window"]) for row in sampled["rows"]}
+    assert sampled_pairs == {(2, 10), (2, 20), (5, 10), (5, 20)}
 
     evidence = manifest["evidence"]["optimization"]
     assert evidence["candidate_count"] == len(artifact["candidates"])
+    assert evidence["sampled_row_count"] == 4
     assert "preflight_failure" not in evidence
     assert "execution_failure" not in evidence
 

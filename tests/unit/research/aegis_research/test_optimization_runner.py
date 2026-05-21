@@ -137,6 +137,90 @@ def test_runner_threads_random_subset_and_seed_into_parameterized_kwargs() -> No
 
     assert run.parameterized_kwargs["random_subset"] == 3
     assert run.parameterized_kwargs["seed"] == 7
+    assert len(run.sampled_index) == 3
+
+
+def test_runner_sampled_index_is_deterministic_under_same_seed() -> None:
+    close, open_prices = _close_open_frames()
+    source_a = _build_source(fast=[2, 3, 5, 8], slow=[10, 15, 20, 30])
+    source_b = _build_source(fast=[2, 3, 5, 8], slow=[10, 15, 20, 30])
+
+    run_a = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source_a,
+        optimization=_optimization_config(search="random", random_subset=5, seed=42),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+    run_b = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source_b,
+        optimization=_optimization_config(search="random", random_subset=5, seed=42),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+
+    assert list(run_a.sampled_index) == list(run_b.sampled_index)
+
+
+def test_runner_sampled_index_matches_grid_param_axis_for_grid_search() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(return_grid="first"),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+
+    assert len(run.sampled_index) == 4
+    sampled_pairs = set(map(tuple, run.sampled_index))
+    grid_param_pairs = set(
+        zip(
+            run.grid.index.get_level_values("fast_window"),
+            run.grid.index.get_level_values("slow_window"),
+            strict=True,
+        )
+    )
+    assert sampled_pairs == grid_param_pairs
+
+
+def test_runner_serializes_sampled_rows_independent_of_return_grid() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 3, 5, 8], slow=[10, 15, 20, 30])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(
+            search="random",
+            random_subset=4,
+            seed=11,
+            return_grid="off",
+        ),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+    payload = serialize_optimization_run(run)
+
+    assert run.grid is None
+    assert len(payload["sampled_rows"]["rows"]) == 4
+    sampled_param_names = set(payload["sampled_rows"]["index_names"])
+    assert sampled_param_names == {"fast_window", "slow_window"}
 
 
 def test_runner_selection_projects_on_ranking_metric_across_central_catalog() -> None:

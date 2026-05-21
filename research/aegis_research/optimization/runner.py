@@ -33,6 +33,7 @@ class OptimizationRunnerError(ValueError):
 class OptimizationRun:
     selection: pd.Series
     grid: pd.Series | None
+    sampled_index: pd.Index
     return_grid_mode: str
     ranking_metric: str
     ranking_direction: str
@@ -65,6 +66,7 @@ def execute_optimization(
         has_open_prices=open_prices is not None,
     )
     parameterized_kwargs = _build_parameterized_kwargs(optimization)
+    sampled_index = _build_sampled_index(source.params, optimization)
     return_grid_mode = optimization.evidence.return_grid
     return_grid_kw: str | None = return_grid_mode if return_grid_mode != "off" else None
     selection_fn = _build_selection_function(
@@ -95,11 +97,25 @@ def execute_optimization(
     return OptimizationRun(
         selection=_canonicalize_role_index(selection_series),
         grid=_canonicalize_role_index(grid_series) if grid_series is not None else None,
+        sampled_index=sampled_index,
         return_grid_mode=return_grid_mode,
         ranking_metric=ranking.metric,
         ranking_direction=ranking.direction,
         parameterized_kwargs=parameterized_kwargs,
     )
+
+
+def _build_sampled_index(
+    params: Mapping[str, vbt.Param],
+    optimization: OptimizationConfig,
+) -> pd.Index:
+    combine_kwargs: dict[str, Any] = {"build_index": True}
+    if optimization.search == "random":
+        combine_kwargs["random_subset"] = optimization.random_subset
+        combine_kwargs["seed"] = optimization.seed
+        combine_kwargs["random_sort"] = True
+    _, index = vbt.combine_params(dict(params), **combine_kwargs)
+    return index
 
 
 def _build_cv_callable(
@@ -252,7 +268,21 @@ def serialize_optimization_run(run: OptimizationRun) -> dict[str, Any]:
         "parameterized_kwargs": _scalar_mapping(run.parameterized_kwargs),
         "selection": _serialize_param_series(run.selection),
         "grid": _serialize_param_series(run.grid) if run.grid is not None else None,
+        "sampled_rows": _serialize_param_index(run.sampled_index),
     }
+
+
+def _serialize_param_index(index: pd.Index) -> dict[str, Any]:
+    names = list(index.names)
+    if isinstance(index, pd.MultiIndex):
+        tuples = list(index)
+    else:
+        tuples = [(value,) for value in index]
+    rows = [
+        {name: _scalar(component) for name, component in zip(names, key, strict=True)}
+        for key in tuples
+    ]
+    return {"index_names": names, "rows": rows}
 
 
 def _serialize_param_series(series: pd.Series) -> dict[str, Any]:
