@@ -6,7 +6,7 @@ This scaffold follows the VectorBT PRO docs around data classes, indicator pipel
 
 ```text
 data fetch/load
--> strategy/research evidence over playbooks or fixed components (`aerd run`)
+-> component-native strategy/research evidence (`aerd run`)
 -> VectorBT PRO portfolio evidence
 -> leaderboards and run artifacts
 ```
@@ -18,7 +18,7 @@ data fetch/load
 - `indicators.py`: component-backed indicator execution, feature lineage, and diagnostics.
 - `portfolios.py`: owns `vbt.Portfolio.from_signals` execution timing, Open-price validation, and resolved VBT settings.
 - `reports.py`: computes portfolio metrics and metric evidence.
-- `strategy_runs.py`: playbook-backed sweeps and fixed component-backed strategy orchestration.
+- `strategy_runs.py`: component-native optimization orchestration and strategy evidence.
 - `run_splits.py`: validates and materializes supported VBT splitter configs for run scoring.
 - `split_leaderboard.py`: ranks held-out split evidence for run split scoring.
 - `cli.py`: `aerd` dispatcher.
@@ -31,7 +31,7 @@ Use the single CLI command for local work:
 aerd run <config>
 ```
 
-`aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research evidence. Playbooks use the sweep contract: indicator playbooks emit candidate-indexed surfaces, strategy playbooks materialize requested signal batches, and Aegis centrally scores complete composed strategy candidates through VBT chunks. Components are fixed-param promoted implementations and do not emit candidate axes.
+`aerd run` selects strategy and indicator component IDs directly and writes component strategy/research evidence. Components may expose defaults and `param_space()` callables; Aegis composes them into one native VBT optimization source and centrally scores portfolio metrics.
 
 Both run configs require explicit config paths in v1. Local configs live flat under `research/configs/`; there is no local default experiment workflow and no mode inference from subdirectories.
 
@@ -82,14 +82,10 @@ portfolio:
   entry_budget: 1.0
 
 strategy:
-  source: playbook
-  id: ma_cross
+  id: example.ma_cross
 
 indicators:
-  - source: playbook
-    ids: [ma_explore]
-  - source: component
-    ids: all
+  - id: example.ma
 
 ranking:
   metric: total_return
@@ -99,21 +95,20 @@ ranking:
 
 ## Indicator Contract
 
-Run configs use the top-level `indicators` section for grouped source blocks with `ids: all` or explicit ID lists. Source selection does not define params, inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths.
+Run configs use one top-level `indicators` entry per component id. Source selectors and `ids` batching are removed so each component can carry its own `params`, `lock_id`, or `candidate_id` without ambiguity.
 
-Indicator components own fixed reviewed params, selected outputs, and feature transforms. Component callables receive a market-data bundle and request declared raw features with `data.feature("FeatureName")`, including `data.feature("Close")` for close-only indicators and `data.feature("High")` or `data.feature("Low")` for OHLCV-dependent indicators. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels. Cartesian products, constrained grids, and other sweeps belong in playbooks, not components or run YAML.
+Indicator components own reviewed params, selected outputs, defaults, and optional VBT-native param spaces. Component callables receive a market-data bundle and request declared raw features with `data.feature("FeatureName")`, including `data.feature("Close")` for close-only indicators and `data.feature("High")` or `data.feature("Low")` for OHLCV-dependent indicators. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels.
 
 Trusted custom indicators are added in project code, usually with `vbt.IF(...).with_apply_func(...)`, and then referenced by stable id from config:
 
 ```yaml
 indicators:
-  - source: component
-    ids: [custom_retvol]
+  - id: custom_retvol
 ```
 
 ## Signal And Portfolio Contract
 
-Strategy components and strategy playbooks emit aligned `entries` and `exits` only. Portfolio sizing, costs, direction, and timing remain config-owned. The runnable v1 portfolio contract is long-only and uses one shared cash pool across all configured symbols.
+Strategy components emit aligned `entries` and `exits` only. Portfolio sizing, costs, direction, and timing remain config-owned. The runnable v1 portfolio contract is long-only and uses one shared cash pool across all configured symbols.
 
 ```yaml
 portfolio:
@@ -127,7 +122,7 @@ Strategy runs require Close and Open data so bar-aligned signals can be scored w
 
 ## Native Optimization
 
-For runs that need parameter search, configs declare an `optimization` block and a strategy playbook that returns the `aegis.optimization_source.v1` contract. The playbook exposes a parameterized pipeline whose arguments come from `vbt.Param`; Aegis wraps that pipeline in `vbt.cv_split` and lets VBT enumerate, select, and evaluate parameter combinations. Aegis does not feed VBT-generated params back into a Python candidate grid.
+For runs that need parameter search, configs declare an `optimization` block and components expose `param_space()` callables whose values are `vbt.Param`. Aegis composes configured strategy and indicator components into one pipeline, wraps it in `vbt.cv_split`, and lets VBT enumerate, select, and evaluate parameter combinations. Aegis does not feed VBT-generated params back into a Python candidate grid.
 
 ```yaml
 optimization:
@@ -147,7 +142,7 @@ optimization:
 
 `optimization.split.method` maps to `vbt.cv_split(splitter=...)` and `optimization.split.params` to `splitter_kwargs`. Set roles are positional: VBT set index 0 is Aegis `selection`, VBT set index 1 is Aegis `held_out`. The selection function maps the configured `ranking.metric` and `ranking.direction` into VBT `selection`, with multi-metric selection handled via `grid_results.xs(metric_name).idxmax()`/`idxmin()`. Tied parameters use `vbt.Param(level=...)`; conditional parameters use `vbt.Param(condition=...)`; `vbt.Param(random_subset=...)` and the top-level `random_subset` interoperate with VBT's lazy-grid behavior. Resource gates (theoretical combinations, sampled combinations, expected result cells, artifact bytes) live on `optimization.preflight` and `optimization.split.max_*` knobs and fail closed before VBT execution. Partial failures (`vbt.NoResult`-only grids, missing metrics, runtime errors) surface as `evidence.optimization.execution_failure` rather than silently shrinking the leaderboard.
 
-`candidate_grid` is removed from the forward run contract. New work must use the `optimization` contract; `vbt.Param` jointly searches indicator and strategy parameters when the indicator is computed inside the pipeline.
+`candidate_grid` is removed from the forward run contract. New work must use component `param_space()` callables plus the `optimization` contract; `vbt.Param` jointly searches indicator and strategy parameters inside the composed pipeline.
 
 ## Deprecated Run Split Scoring (Scheduled For Removal)
 
@@ -201,13 +196,13 @@ JSON error categories use stable process exits:
 
 The CLI exposes explicit rerun intent with `--rerun-mode` and optional run lineage flags. The default creates a fresh immutable physical run. Overwrite mode creates a new superseding physical run rather than mutating prior evidence in place.
 
-## Components And Playbooks
+## Components
 
-Promoted components live under `research/components/{indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/components/*_component_example.py`.
+Components live under `research/components/{indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after validation selects that ID. Components can declare `defaults`, optional `param_space_callable`, produced indicator outputs, and consumed strategy outputs. See `docs/examples/components/*_component_example.py`.
 
-Playbooks live under `research/playbooks/{indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Strategy playbooks declare `result_schema: "aegis.optimization_source.v1"` for the forward VBT-native optimization path: one parameterized pipeline plus `vbt.Param` axes. The older `playbook_sweep_result.v1` strategy contract (a strategy candidate axis plus a bounded materializer) is deprecated and scheduled for removal. Indicator playbooks on `playbook_sweep_result.v1` are also deprecated; each indicator playbook ID represents one indicator idea/family that owns its default parameters and candidate axis, emits named candidate-indexed outputs for legacy strategy sweeps to consume, and a baseline may name exactly one component indicator ID. Optimization sources self-contain their indicators inside the pipeline rather than consuming indicator playbooks. See `docs/playbooks.md`, `docs/examples/playbooks/optimization_playbook_example.py` (forward path), `docs/examples/playbooks/strategy_playbook_example.py`, and `docs/examples/playbooks/indicator_playbook_example.py`.
+Playbooks under `research/playbooks/{indicators,strategies}/` are legacy historical artifacts, not a forward authoring path. See `docs/playbooks.md` for the removal boundary.
 
-Leaderboards rank complete composed strategy candidates, not raw indicators. Indicator playbook candidates become rankable only when a strategy playbook consumes their named surfaces and emits executable signals. Manual promotion means copying the winning indicator source/candidate/params into a fixed indicator component, copying the winning strategy source/candidate/params into a fixed strategy component, and rerunning with those component refs to verify the promoted implementation.
+Leaderboards rank complete composed strategy candidates, not raw indicators. Component promotion uses persisted candidate rows plus explicit `lock_id` or `candidate_id` refs; manual copying of playbook params is no longer the forward workflow.
 
 ## VectorBT PRO Notes
 

@@ -22,8 +22,8 @@ from research.aegis_research.optimization.promotion import (
 __all__ = [
     "CandidateStore",
     "CandidateStoreError",
-    "ComponentSourceError",
     "ComponentPromotionRef",
+    "ComponentSourceError",
     "PromotionResolutionError",
     "ResolvedPromotion",
     "build_component_optimization_source",

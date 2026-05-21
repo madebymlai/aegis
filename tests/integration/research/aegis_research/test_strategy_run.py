@@ -9,6 +9,7 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.market_data.contracts import MarketDataBundle
+from research.aegis_research.optimization.component_source import FIXED_CANDIDATE_PARAM
 from research.aegis_research.strategy_runs import StrategyInputs, validate_strategy_output
 
 
@@ -116,7 +117,7 @@ def test_strategy_run_rejects_component_indicator_side_path_without_optimization
     config_path = _write_run_config(
         tmp_path,
         strategy_id="demo.uses_ma",
-        indicators=[{"source": "component", "ids": ["demo.ma"]}],
+        indicators=[{"id": "demo.ma", "params": {"window": 2}}],
     )
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "indicator-run"]) == 6
@@ -156,6 +157,32 @@ def test_strategy_run_rejects_component_input_array_side_path_without_optimizati
     assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-strategy-arrays"]) == 6
 
     _assert_missing_optimization_config_error(capsys, tmp_path, "bad-strategy-arrays")
+
+
+def test_strategy_run_executes_fixed_component_through_native_optimization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+    config_path = _write_run_config(
+        tmp_path,
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-opt"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    artifact = json.loads((tmp_path / "runs" / "component-opt" / "strategy_run.json").read_text())
+
+    assert payload["status"] == "success"
+    assert artifact["evidence_type"] == "optimization"
+    assert artifact["strategy"]["family"] == "strategies"
+    assert artifact["strategy"]["id"] == "demo.cross"
+    assert artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
+    assert artifact["leaderboard"]["rows"]
+    assert len(artifact["candidates"]) == 1
 
 
 def test_strategy_run_rejects_data_quality_side_path_without_optimization(
@@ -241,7 +268,7 @@ def test_strategy_run_rejects_indicator_symbol_mismatch_side_path_without_optimi
     config_path = _write_run_config(
         tmp_path,
         strategy_id="demo.uses_ma",
-        indicators=[{"source": "component", "ids": ["demo.ma"]}],
+        indicators=[{"id": "demo.ma", "params": {"window": 2}}],
     )
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-indicator"]) == 6
@@ -369,8 +396,8 @@ def _write_run_config(
                 }
                 | (data or {}),
                 "portfolio": {"entry_budget": 1.0},
-                "strategy": {"source": "component", "id": strategy_id},
-                "indicators": indicators or [{"source": "component", "ids": "all"}],
+                "strategy": {"id": strategy_id},
+                "indicators": indicators or [],
                 "ranking": {"metric": "total_return", "direction": "desc"},
                 **({"split": split} if split is not None else {}),
                 **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
@@ -435,12 +462,13 @@ def _write_indicator_component(path: Path) -> None:
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma']}\n"
+        "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma'], "
+        "'defaults': {'window': 2}}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
-        "def run(data):\n"
+        "def run(data, window=2):\n"
         '    """Compute the fixed moving-average indicator."""\n'
-        "    return data.feature('Close').rolling(2).mean().bfill()\n"
+        "    return data.feature('Close').rolling(int(window)).mean().bfill()\n"
     )
 
 
@@ -495,12 +523,13 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.uses_ma', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
+        "'signal_outputs': ['entries', 'exits'], 'consumes_outputs': ['ma'], "
+        "'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
         '    """Generate signals from the selected moving-average indicator."""\n'
-        "    ma = bundle.indicators['demo.ma']\n"
+        "    ma = bundle.indicators['ma']\n"
         "    close = bundle.data.feature('Close')\n"
         "    entries = close > ma\n"
         "    exits = close < ma\n"

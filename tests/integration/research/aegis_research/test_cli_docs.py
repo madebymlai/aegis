@@ -38,7 +38,7 @@ def test_model_plugin_docs_are_removed_from_active_surface() -> None:
     assert not Path("docs/examples/model_plugins").exists()
 
 
-def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() -> None:
+def test_component_and_playbook_docs_keep_yaml_inert_and_component_refs_direct() -> None:
     docs = "\n".join(
         [
             Path("docs/components.md").read_text(),
@@ -47,14 +47,15 @@ def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() 
         ]
     )
 
-    assert "source: component" in docs
-    assert "source: playbook" in docs
-    assert "ids: all" in docs
+    assert "strategy:\n  id:" in docs
+    assert "indicators:\n  - id:" in docs
+    assert "Source selectors" in docs
+    assert "indicator `ids` batching" in docs
     assert "YAML never imports Python" in docs
     assert "arbitrary notebook paths" in docs
     assert "last-run refs" in docs
-    assert "one indicator idea/family" in docs
-    assert "exactly one component indicator ID" in docs
+    assert "one indicator entry per component id" in docs
+    assert "legacy historical artifacts" in docs
 
 
 def test_active_docs_remove_labeler_contract() -> None:
@@ -96,13 +97,12 @@ def test_docs_describe_composed_strategy_candidates_and_manual_promotion() -> No
     )
 
     assert "complete composed strategy candidates" in docs
-    assert "Indicator playbook candidates become rankable only when a strategy playbook consumes" in docs
+    assert "Component promotion uses persisted candidate rows" in docs
     assert "playbook_sweep_result.v1" in docs
     assert "candidate_grid.batch_size" not in docs
     assert "removed from the forward run contract" in docs
-    assert "chunks" in docs
-    assert "metric_source" in docs
-    assert "manual promotion" in docs
+    assert "lock_id" in docs
+    assert "candidate_id" in docs
     assert "best indicator" not in docs
 
 

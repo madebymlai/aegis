@@ -8,977 +8,192 @@ import yaml
 
 from research.aegis_research import cli, strategy_runs
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
+from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.component_source import component_param_key
 from research.aegis_research.provenance.manifest import RunStatus
 
 
-def test_run_cli_rejects_non_optimized_playbook_sweep_before_artifacts(
+def test_run_cli_rejects_playbook_source_selectors_before_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py"
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            _run_config_payload(
+                strategy={"source": "playbook", "id": "ma_cross"},
+                indicators=[{"source": "playbook", "ids": ["ma_explore"]}],
+            ),
+            sort_keys=False,
+        )
     )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "removed-playbook"]) == 6
+
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "strategy.source" in payload["error"]["message"]
+    assert "source selectors are removed" in payload["error"]["message"]
+    assert "indicators[0].ids" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "removed-playbook").exists()
+
+
+def test_run_cli_rejects_candidate_grid_on_component_config_before_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
     config_path = _write_run_config(
         tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "playbook-run"]) == 6
-    _assert_missing_optimization_config_error(capsys, tmp_path, "playbook-run")
-
-
-def test_run_cli_unknown_playbook_fails_before_artifacts(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="missing",
-        optimization={"search": "grid", "split": _rolling_split_config()},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "should-not-exist"]) == 6
-
-    output = capsys.readouterr()
-    assert output.out == ""
-    payload = json.loads(output.err)
-    assert payload["status"] == "error"
-    assert "unknown playbook id" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "should-not-exist").exists()
-
-
-def test_run_cli_rejects_duplicate_expanded_playbook_indicators_before_artifacts(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_playbook(
-        tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
-    )
-    _write_playbook(tmp_path / "research/playbooks/indicators/ma_one.py", "indicators", "ma_one")
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        indicators=[
-            {"source": "playbook", "ids": "all"},
-            {"source": "playbook", "ids": ["ma_one"]},
-        ],
-        optimization={"search": "grid", "split": _rolling_split_config()},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "duplicate-playbook"]) == 6
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    assert "duplicate expanded playbook indicator id" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "duplicate-playbook").exists()
-
-
-def test_run_cli_rejects_non_optimized_failed_playbook_before_manifest(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_failing_playbook(tmp_path / "research/playbooks/strategies/bad.py", "strategies", "bad")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py"
-    )
-    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="bad")
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "failed-playbook"]) == 6
-    _assert_missing_optimization_config_error(capsys, tmp_path, "failed-playbook")
-
-
-def test_run_cli_rejects_legacy_playbook_result_schema(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_playbook(
-        tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
-    )
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        optimization={"search": "grid", "split": _rolling_split_config()},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "legacy-rejected"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads((tmp_path / "runs" / "legacy-rejected" / "manifest.json").read_text())
-    assert payload["error"]["category"] == "execution_failure"
-    assert "aegis.optimization_source.v1" in payload["error"]["message"]
-    assert manifest["run"]["status"] == RunStatus.FAILED
-
-
-def test_run_cli_rejects_candidate_grid_strategy_sweep_candidates(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
         candidate_grid={"batch_size": 2},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-run"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-run")
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "candidate-grid"]) == 6
+
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "candidate_grid" in payload["error"]["message"]
+    assert "removed from the forward run contract" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "candidate-grid").exists()
 
 
-def test_optimization_routes_away_from_custom_candidate_grid(
+def test_component_optimization_routes_away_from_custom_candidate_grid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_optimization_ma_cross_playbook(tmp_path / "research/playbooks/strategies/ma_opt.py")
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
+    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
 
     def fail_if_called(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("legacy candidate sweep path should not run for optimization")
+        raise AssertionError("legacy candidate sweep path should not run for component optimization")
 
     monkeypatch.setattr(strategy_runs, "compose_candidate_grid", fail_if_called)
     monkeypatch.setattr(strategy_runs, "materialize_strategy_sweep_signals", fail_if_called)
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_opt",
-        optimization={"search": "grid", "split": _rolling_split_config()},
-    )
+    config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "optimization-boundary"]) == 0
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-boundary"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["status"] == "success"
-    artifact = json.loads(
-        (tmp_path / "runs" / "optimization-boundary" / "strategy_run.json").read_text()
-    )
-    assert artifact["evidence_type"] == "optimization"
-    assert artifact["leaderboard"]["rows"], (
-        "native CV run must produce a leaderboard without touching legacy candidate sweep helpers"
-    )
-
-
-def test_optimization_executes_cv_split_and_writes_strategy_run_artifact(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_optimization_ma_cross_playbook(tmp_path / "research/playbooks/strategies/ma_opt.py")
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_opt",
-        optimization={"search": "grid", "split": _rolling_split_config()},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "optimization-run"]) == 0
-
-    artifact = json.loads(
-        (tmp_path / "runs" / "optimization-run" / "strategy_run.json").read_text()
-    )
-    manifest = json.loads(
-        (tmp_path / "runs" / "optimization-run" / "manifest.json").read_text()
-    )
-    payload = json.loads(capsys.readouterr().out)
+    artifact = json.loads((tmp_path / "runs" / "component-boundary" / "strategy_run.json").read_text())
+    store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
+    fast_key = component_param_key("strategies", "demo.ma_opt", "strategy", "fast_window")
+    slow_key = component_param_key("strategies", "demo.ma_opt", "strategy", "slow_window")
 
     assert payload["status"] == "success"
     assert artifact["evidence_type"] == "optimization"
-    assert artifact["execution"]["ranking_metric"] == "total_return"
-    assert artifact["execution"]["ranking_direction"] == "desc"
-    assert artifact["execution"]["return_grid_mode"] == "first"
-    selection_rows = artifact["execution"]["selection"]["rows"]
-    selection_sets = {row["coordinates"]["set"] for row in selection_rows}
-    assert selection_sets == {"selection", "held_out"}
-    selection_metrics = {row["coordinates"]["metric_name"] for row in selection_rows}
-    assert "total_return" in selection_metrics
-    assert "sharpe_ratio" in selection_metrics
-    leaderboard_rows = artifact["leaderboard"]["rows"]
-    assert leaderboard_rows, "expected non-empty leaderboard"
-    assert leaderboard_rows[0]["ranking_metric"] == "total_return"
-    assert "metrics" in leaderboard_rows[0]
-    assert "total_return" in leaderboard_rows[0]["metrics"]
-    assert "sharpe_ratio" in leaderboard_rows[0]["metrics"]
-    assert leaderboard_rows[0]["weight_basis"] == "held_out_row_count"
-    assert leaderboard_rows[0]["candidate_key"].startswith("cand_")
-    assert leaderboard_rows[0]["selected_split_count"] >= 1
-    assert artifact["candidates"], "expected non-empty candidates list"
-    candidate_keys = {candidate["candidate_key"] for candidate in artifact["candidates"]}
-    for row in leaderboard_rows:
-        assert row["candidate_key"] in candidate_keys, (
-            f"leaderboard row candidate_key {row['candidate_key']!r} missing from candidates"
-        )
-    first_candidate = artifact["candidates"][0]
-    assert set(first_candidate["params"].keys()) == {"fast_window", "slow_window"}
-    assert first_candidate["candidate_key"].startswith("cand_")
-    assert first_candidate["identity"]["data_identity"]["source"] == "synthetic"
-    assert first_candidate["identity"]["data_identity"]["symbols"] == ["SYN"]
-    assert first_candidate["store_namespace"] == {
-        "kind": "artifact_only",
-        "run_id": "optimization-run",
-    }
-    selection_grid = artifact["execution"]["selection_grid"]
-    assert selection_grid is not None
-    selection_grid_sets = {row["coordinates"]["set"] for row in selection_grid["rows"]}
-    assert selection_grid_sets == {"selection"}, (
-        "return_grid='first' must drop the duplicated set_1 grid from evidence"
-    )
-    assert artifact["execution"]["held_out_grid"] is None
-    sampled = artifact["execution"]["sampled_rows"]
-    assert sampled["index_names"] == ["fast_window", "slow_window"]
-    assert len(sampled["rows"]) == 4
-    sampled_pairs = {(row["fast_window"], row["slow_window"]) for row in sampled["rows"]}
-    assert sampled_pairs == {(2, 10), (2, 20), (5, 10), (5, 20)}
-
-    evidence = manifest["evidence"]["optimization"]
-    assert evidence["candidate_count"] == len(artifact["candidates"])
-    assert evidence["sampled_row_count"] == 4
-    assert "preflight_failure" not in evidence
-    assert "execution_failure" not in evidence
+    assert artifact["strategy"]["family"] == "strategies"
+    assert artifact["strategy"]["id"] == "demo.ma_opt"
+    assert artifact["leaderboard"]["rows"]
+    assert artifact["execution"]["sampled_rows"]["index_names"] == [fast_key, slow_key]
+    assert len(artifact["execution"]["sampled_rows"]["rows"]) == 4
+    assert artifact["candidates"]
+    assert set(artifact["candidates"][0]["params"]) == {fast_key, slow_key}
+    assert artifact["candidate_store"]["path"] == ".candidate_store/candidates.sqlite3"
+    assert store_path.exists()
+    with CandidateStore(store_path) as store:
+        top = store.top_candidates_by_run("component-boundary", limit=1)
+    assert top[0]["leaderboard_row"]["candidate_key"] == artifact["leaderboard"]["rows"][0]["candidate_key"]
 
 
-def test_optimization_executes_cv_split_with_multi_symbol_shared_cash_portfolio(
+def test_component_optimization_runtime_error_records_failure_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_optimization_ma_cross_playbook(tmp_path / "research/playbooks/strategies/ma_opt.py")
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_opt",
-        symbols=["SYN_A", "SYN_B", "SYN_C"],
-        optimization={"search": "grid", "split": _rolling_split_config()},
-    )
-
-    assert (
-        cli.main(["run", str(config_path), "--json", "--run-id", "optimization-multi-symbol"])
-        == 0
-    )
-
-    artifact = json.loads(
-        (tmp_path / "runs" / "optimization-multi-symbol" / "strategy_run.json").read_text()
-    )
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["status"] == "success"
-    assert artifact["evidence_type"] == "optimization"
-
-    # Candidate identity must not pick up the symbol axis: with 3 symbols and
-    # 4 param rows we still expect 4 candidates, not 12.
-    assert len(artifact["candidates"]) == 4, (
-        "candidate identity must not include the symbol level; one candidate per param row"
-    )
-    candidate_params = [tuple(sorted(c["params"].items())) for c in artifact["candidates"]]
-    assert len(set(candidate_params)) == 4
-
-    # Leaderboard rows are aggregated metrics from the grouped portfolio
-    # (shared cash across all 3 symbols), so we expect a single
-    # ranking_metric_value per row, not a per-symbol breakdown.
-    leaderboard_rows = artifact["leaderboard"]["rows"]
-    assert leaderboard_rows, "expected non-empty leaderboard for multi-symbol run"
-    for row in leaderboard_rows:
-        ranking_value = row["ranking_metric_value"]
-        assert ranking_value is None or isinstance(ranking_value, int | float), (
-            "ranking_metric_value must be a scalar (grouped-portfolio metric), "
-            f"not per-symbol breakdown; got {ranking_value!r}"
-        )
-        # No symbol leak into params / coordinates.
-        assert "symbol" not in row["params"]
-
-    # Manifest config records all 3 symbols.
-    manifest = json.loads(
-        (tmp_path / "runs" / "optimization-multi-symbol" / "manifest.json").read_text()
-    )
-    assert sorted(manifest["config"]["data"]["symbols"]) == ["SYN_A", "SYN_B", "SYN_C"]
-
-
-def test_optimization_execute_kwargs_pass_through_to_parameterized_layer(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """optimization.execute kwargs (e.g. show_progress, chunk_len) reach vbt.parameterized.
-
-    Exercises the pass-through wire that enables mono-chunks and chunked
-    execution per VBT cookbook. Full mono_chunk_meta coverage with merged-array
-    pipelines is deferred to #32; this test confirms the kwargs surface works
-    and the run still completes with the configured passthrough recorded in
-    evidence.
-    """
-    monkeypatch.chdir(tmp_path)
-    _write_optimization_ma_cross_playbook(tmp_path / "research/playbooks/strategies/ma_opt.py")
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    optimization = {
-        "search": "grid",
-        "split": _rolling_split_config(),
-        "execute": {"show_progress": False, "chunk_len": 2},
-    }
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_opt",
-        optimization=optimization,
-    )
-
-    assert (
-        cli.main(["run", str(config_path), "--json", "--run-id", "optimization-execute-kwargs"])
-        == 0
-    )
-
-    artifact = json.loads(
-        (tmp_path / "runs" / "optimization-execute-kwargs" / "strategy_run.json").read_text()
-    )
-    parameterized_kwargs = artifact["execution"]["parameterized_kwargs"]
-    assert parameterized_kwargs.get("show_progress") is False, (
-        "optimization.execute.show_progress must reach vbt.parameterized's parameterized_kwargs"
-    )
-    assert parameterized_kwargs.get("chunk_len") == 2, (
-        "optimization.execute.chunk_len must reach vbt.parameterized's parameterized_kwargs"
-    )
-    # Aegis-owned kwargs are still preserved (not overridden by user execute kwargs).
-    assert parameterized_kwargs.get("merge_func") == "concat"
-
-
-def test_optimization_no_result_pipeline_publishes_visible_failure_diagnostics(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_optimization_no_result_playbook(
-        tmp_path / "research/playbooks/strategies/ma_skip.py"
-    )
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_skip",
-        optimization={"search": "grid", "split": _rolling_split_config()},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "no-result-failure"]) == 10
-
-    payload = json.loads(capsys.readouterr().err)
-    assert payload["error"]["category"] == "execution_failure"
-    assert "no usable results" in payload["error"]["message"]
-
-    manifest = json.loads(
-        (tmp_path / "runs" / "no-result-failure" / "manifest.json").read_text()
-    )
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    evidence = manifest["evidence"]["optimization"]
-    assert evidence["execution_failure"]["error_type"] == "OptimizationRunnerError"
-    assert "no usable results" in evidence["execution_failure"]["message"]
-    assert "preflight_failure" not in evidence, (
-        "preflight should pass; this is a runtime/empty-grid failure, not a preflight rejection"
-    )
-    assert not (tmp_path / "runs" / "no-result-failure" / "strategy_run.json").exists(), (
-        "completed leaderboard must not be published when every parameter row was filtered out"
-    )
-
-
-def test_optimization_pipeline_runtime_error_records_failure_diagnostics(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_optimization_runtime_error_playbook(
-        tmp_path / "research/playbooks/strategies/ma_boom.py"
-    )
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_boom",
-        optimization={"search": "grid", "split": _rolling_split_config()},
-    )
+    _write_runtime_error_strategy_component(tmp_path / "research/components/strategies/ma_boom.py")
+    config_path = _write_run_config(tmp_path, strategy_id="demo.ma_boom")
 
     exit_code = cli.main(["run", str(config_path), "--json", "--run-id", "runtime-failure"])
     assert exit_code != 0
 
-    manifest = json.loads(
-        (tmp_path / "runs" / "runtime-failure" / "manifest.json").read_text()
-    )
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert not (tmp_path / "runs" / "runtime-failure" / "strategy_run.json").exists()
+    manifest = json.loads((tmp_path / "runs" / "runtime-failure" / "manifest.json").read_text())
     payload = json.loads(capsys.readouterr().err)
-    assert "pipeline raised" in payload["error"]["message"], (
-        "pipeline runtime error must surface in the CLI error payload"
-    )
-    evidence = manifest["evidence"]["optimization"]
-    assert "execution_failure" in evidence, (
-        "generic pipeline exceptions must persist evidence.optimization.execution_failure "
-        "(R27); previously only OptimizationRunnerError was caught"
-    )
-    assert "pipeline raised" in evidence["execution_failure"]["message"]
+
+    assert payload["error"]["category"] == "execution_failure"
+    assert manifest["run"]["status"] == RunStatus.FAILED
+    assert manifest["evidence"]["optimization"]["execution_failure"]["error_type"] == "RuntimeError"
+    assert "component optimization failed intentionally" in manifest["stages"][-1]["diagnostic"]["message"]
 
 
-def test_optimization_preflight_failure_records_manifest_without_pipeline_execution(
+def test_component_optimization_preflight_failure_records_manifest_without_pipeline_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_optimization_strategy_playbook(
-        tmp_path / "research/playbooks/strategies/optimized_ma.py",
+    _write_parameterized_strategy_component(
+        tmp_path / "research/components/strategies/ma_opt.py",
         windows=range(1_000),
-        thresholds=range(1_000),
+        slow_windows=range(1_000, 2_000),
+        fail_if_executed=True,
     )
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
     split = _rolling_split_config()
     split["max_estimated_output_cells"] = 100
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="optimized_ma",
-        optimization={"search": "grid", "split": split},
-    )
+    config_path = _write_run_config(tmp_path, optimization={"search": "grid", "split": split})
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "preflight-failure"]) == 10
 
-    payload = json.loads(capsys.readouterr().err)
     manifest = json.loads((tmp_path / "runs" / "preflight-failure" / "manifest.json").read_text())
-    evidence = manifest["evidence"]["optimization"]
-    assert "max_estimated_output_cells" in payload["error"]["message"]
-    assert "pipeline should not execute" not in payload["error"]["message"]
-    assert evidence["preflight"]["theoretical_combinations"] == 1_000_000
-    assert evidence["preflight"]["sampled_combinations"] == 1_000_000
-    assert evidence["preflight_failure"]["error_type"] == "PreflightError"
-    assert not (tmp_path / "runs" / "preflight-failure" / "strategy_run.json").exists()
-
-
-def test_run_cli_rejects_candidate_grid_with_rolling_split(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"batch_size": 2},
-        split=_rolling_split_config(),
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "rolling-playbook"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "rolling-playbook")
-
-
-def test_run_cli_rejects_candidate_grid_final_smaller_candidate_batch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5, 8],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"batch_size": 4},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-final-chunk"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-final-chunk")
-
-
-def test_run_cli_rejects_non_optimized_non_batched_indicator_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py", "indicators", "ma_explore"
-    )
-    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "non-batched-indicator"]) == 6
-    _assert_missing_optimization_config_error(capsys, tmp_path, "non-batched-indicator")
-
-
-def test_run_cli_rejects_candidate_grid_before_batched_materializer_can_omit_candidate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(
-        tmp_path / "research/playbooks/strategies/ma_cross.py",
-        signal_mode="omit_last",
-    )
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"batch_size": 2},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-omits"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-omits")
-
-
-def test_run_cli_rejects_candidate_grid_before_batched_materializer_can_add_candidate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(
-        tmp_path / "research/playbooks/strategies/ma_cross.py",
-        signal_mode="extra_unrequested",
-    )
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"batch_size": 2},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-extra"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-extra")
-
-
-def test_run_cli_rejects_candidate_grid_before_failed_batched_chunk_context(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(
-        tmp_path / "research/playbooks/strategies/ma_cross.py",
-        signal_mode="fail_second_batch",
-    )
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"batch_size": 2},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-chunk-fails"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-chunk-fails")
-
-
-def test_run_cli_rejects_non_optimized_unconsumed_indicator_axis_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(
-        tmp_path / "research/playbooks/strategies/ma_cross.py",
-        consume_indicators=False,
-    )
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-unconsumed"]) == 6
-    _assert_missing_optimization_config_error(capsys, tmp_path, "batched-unconsumed")
-
-
-def test_run_cli_rejects_candidate_grid_before_batched_portfolio_failure_context(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-
-    def fail_portfolio_batch(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("portfolio batch failed intentionally")
-
-    monkeypatch.setattr(strategy_runs, "simulate_portfolio_batch", fail_portfolio_batch)
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"batch_size": 2},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-portfolio-fails"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-portfolio-fails")
-
-
-def test_run_cli_rejects_candidate_grid_before_partial_split_artifact_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    original_simulate_portfolio_batch = strategy_runs.simulate_portfolio_batch
-
-    def fail_second_candidate_batch(*args: object, **kwargs: object) -> object:
-        entries = args[1]
-        candidate_id = str(entries.columns.get_level_values("candidate_id")[0])
-        if ":slow-" in candidate_id:
-            raise RuntimeError("split portfolio batch failed intentionally")
-        return original_simulate_portfolio_batch(*args, **kwargs)
-
-    monkeypatch.setattr(
-        strategy_runs,
-        "simulate_portfolio_batch",
-        fail_second_candidate_batch,
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"batch_size": 1},
-        split=_rolling_split_config(),
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "split-partial"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "split-partial")
-
-
-def test_run_cli_rejects_candidate_grid_before_batched_metric_failure_context(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-
-    def fail_metric_extraction(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("metric extraction failed intentionally")
-
-    monkeypatch.setattr(
-        strategy_runs,
-        "portfolio_metrics_by_candidate_group",
-        fail_metric_extraction,
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"batch_size": 2},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-metrics-fail"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-metrics-fail")
-
-
-def test_run_cli_rejects_candidate_grid_before_composed_candidate_budget_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"max_candidates": 3, "batch_size": 2},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-over-budget"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-over-budget")
-
-
-def test_run_cli_rejects_candidate_grid_before_execution_batch_budget_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"max_estimated_cells": 500, "batch_size": 4},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-exec-budget"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-exec-budget")
-
-
-def test_run_cli_rejects_candidate_grid_before_indicator_preflight_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"max_estimated_cells": 1},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-preflight"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-preflight")
-
-
-def test_run_cli_rejects_candidate_grid_before_indicator_count_preflight_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        windows=[2, 5],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="ma_cross",
-        candidate_grid={"max_candidates": 1},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-count-preflight"]) == 6
-    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-count-preflight")
-
-
-def test_run_cli_rejects_playbook_indicators_with_component_strategy(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py",
-        "indicators",
-        "ma_explore",
-        indicator_windows=[2, 5],
-    )
-    _write_playbook_indicator_strategy_component(
-        tmp_path / "research/components/strategies/uses_playbook_ma.py"
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="component",
-        strategy_id="demo.uses_playbook_ma",
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-composed"]) == 6
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    assert payload["error"]["category"] == "config_validation"
-    assert "cannot enter the component runner" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "component-composed").exists()
-
-
-def test_run_cli_rejects_non_optimized_partial_leaderboard_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_no_trade_strategy_playbook(tmp_path / "research/playbooks/strategies/no_trades.py")
-    _write_batched_indicator_playbook(
-        tmp_path / "research/playbooks/indicators/ma_explore.py"
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="no_trades",
-        ranking_metric="win_rate",
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "partial-leaderboard"]) == 6
-    _assert_missing_optimization_config_error(capsys, tmp_path, "partial-leaderboard")
-
-
-def test_run_cli_rejects_playbook_that_does_not_support_requested_family(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_playbook(
-        tmp_path / "research/playbooks/strategies/indicators_only.py",
-        "strategies",
-        "indicators_only",
-        stages=["indicators"],
-    )
-    config_path = _write_run_config(
-        tmp_path,
-        strategy_source="playbook",
-        strategy_id="indicators_only",
-        optimization={"search": "grid", "split": _rolling_split_config()},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "should-not-exist"]) == 6
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    assert "does not support strategies" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "should-not-exist").exists()
-
-
-def test_playbook_roots_ignore_local_notebooks_except_readme_placeholders() -> None:
-    assert not Path("research/playbooks/labels/README.md").exists()
-
-    for family in ("indicators", "strategies"):
-        assert Path(f"research/playbooks/{family}/README.md").is_file()
-        ignored_notebook = pytest.importorskip("subprocess").run(
-            [
-                "git",
-                "check-ignore",
-                "--no-index",
-                "--quiet",
-                f"research/playbooks/{family}/local.py",
-            ],
-            check=False,
-        )
-        ignored_readme = pytest.importorskip("subprocess").run(
-            [
-                "git",
-                "check-ignore",
-                "--no-index",
-                "--quiet",
-                f"research/playbooks/{family}/README.md",
-            ],
-            check=False,
-        )
-
-        assert ignored_notebook.returncode == 0
-        assert ignored_readme.returncode == 1
-
-
-def _assert_candidate_grid_config_error(
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
-    run_id: str,
-) -> None:
-    output = capsys.readouterr()
-    assert output.out == ""
-    payload = json.loads(output.err)
-    assert payload["error"]["category"] == "config_validation"
-    assert "candidate_grid" in payload["error"]["message"]
-    assert "removed from the forward run contract" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / run_id).exists()
-
-
-def _assert_missing_optimization_config_error(
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
-    run_id: str,
-) -> None:
-    output = capsys.readouterr()
-    assert output.out == ""
-    payload = json.loads(output.err)
-    assert payload["error"]["category"] == "config_validation"
-    assert "optimization" in payload["error"]["message"]
-    assert "fixed/non-optimized strategy runs are removed" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / run_id).exists()
+    payload = json.loads(capsys.readouterr().err)
+
+    assert payload["error"]["category"] == "execution_failure"
+    assert manifest["run"]["status"] == RunStatus.FAILED
+    assert manifest["evidence"]["optimization"]["preflight_failure"]["error_type"] == "PreflightError"
+    assert "exceed optimization.split.max_estimated_output_cells" in manifest["stages"][-1]["diagnostic"]["message"]
 
 
 def _write_run_config(
     tmp_path: Path,
     *,
-    strategy_source: str,
-    strategy_id: str,
-    indicators: list[dict[str, object]] | None = None,
-    ranking_metric: str = "total_return",
+    strategy_id: str = "demo.ma_opt",
     candidate_grid: dict[str, object] | None = None,
-    split: dict[str, object] | None = None,
     optimization: dict[str, object] | None = None,
-    symbols: list[str] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
         yaml.safe_dump(
-            {
-                "schema_version": CONFIG_SCHEMA_VERSION,
-                "name": "run_playbook_source_test",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": symbols if symbols is not None else ["SYN"],
-                    "rows": 80,
-                    "arrays": ["OHLCV"],
-                },
-                "portfolio": {"entry_budget": 1.0},
-                "strategy": {"source": strategy_source, "id": strategy_id},
-                "indicators": indicators
-                if indicators is not None
-                else [{"source": "playbook", "ids": ["ma_explore"]}],
-                "ranking": {"metric": ranking_metric, "direction": "desc"},
-                **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
-                **({"split": split} if split is not None else {}),
-                **({"optimization": optimization} if optimization is not None else {}),
-            },
+            _run_config_payload(
+                strategy={"id": strategy_id},
+                indicators=[],
+                candidate_grid=candidate_grid,
+                optimization=optimization or {"search": "grid", "split": _rolling_split_config()},
+            ),
             sort_keys=False,
         )
     )
     return path
+
+
+def _run_config_payload(
+    *,
+    strategy: dict[str, object],
+    indicators: list[dict[str, object]],
+    candidate_grid: dict[str, object] | None = None,
+    optimization: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "component_optimization_contract",
+        "output_dir": "runs",
+        "data": {
+            "source": "synthetic",
+            "symbols": ["SYN"],
+            "rows": 80,
+            "arrays": ["OHLCV"],
+        },
+        "portfolio": {"entry_budget": 1.0},
+        "strategy": strategy,
+        "indicators": indicators,
+        "ranking": {"metric": "total_return", "direction": "desc"},
+        **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
+        **({"optimization": optimization} if optimization is not None else {}),
+    }
 
 
 def _rolling_split_config() -> dict[str, object]:
@@ -993,621 +208,69 @@ def _rolling_split_config() -> dict[str, object]:
     }
 
 
-def _write_playbook(
-    path: Path,
-    family: str,
-    playbook_id: str,
-    *,
-    stages: list[str] | None = None,
-    include_params: bool = True,
-    include_metrics: bool = False,
-    consume_indicators: bool = True,
-    indicator_windows: list[int] | None = None,
-    strategy_windows: list[int] | None = None,
-    params: dict[str, object] | None = None,
-    indicator_candidate_id: str | None = None,
-    strategy_variant_id: str | None = None,
-    indicator_extra_fields: dict[str, object] | None = None,
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "family": family,
-        "id": playbook_id,
-        "version": "1.0.0",
-        "stages": stages or [family],
-        "accepted_inputs": ["Close"],
-        "result_schema": "playbook_result.v1",
-    }
-    if family == "indicators":
-        manifest["indicator_family"] = "ma"
-    if family == "strategies":
-        windows = strategy_windows or [3]
-        consume_source = (
-            "    indicator_outputs = ["
-            "value['outputs']['ma'] for key, value in inputs.indicators.items() "
-            "if key.startswith('playbook:')"
-            "]\n"
-            "    if indicator_outputs:\n"
-            "        average = sum(indicator_outputs) / len(indicator_outputs)\n"
-            "    else:\n"
-            "        average = close.rolling(3).mean().bfill()\n"
-            if consume_indicators
-            else "    average = close.rolling(3).mean().bfill()\n"
-        )
-        records_source = "\n".join(
-            _strategy_record_source(
-                window,
-                include_params=include_params,
-                include_metrics=include_metrics,
-                params=params,
-                variant_id=strategy_variant_id,
-            )
-            for window in windows
-        )
-        body = (
-            "def run(inputs):\n"
-            '    """Generate moving-average crossover candidates for central scoring."""\n'
-            "    close = inputs.data.feature('Close')\n"
-            f"{consume_source}"
-            "    records = []\n"
-            f"{records_source}\n"
-            "    return {'variant_records': records}\n"
-        )
-    else:
-        windows = indicator_windows or [5]
-        records_source = "\n".join(
-            _indicator_record_source(
-                window,
-                include_params=include_params,
-                include_metrics=include_metrics,
-                params=params,
-                candidate_id=indicator_candidate_id,
-                extra_fields=indicator_extra_fields,
-            )
-            for window in windows
-        )
-        body = (
-            "def run(data):\n"
-            '    """Return fixture indicator candidates for playbook source tests."""\n'
-            "    close = data.feature('Close')\n"
-            "    records = []\n"
-            f"{records_source}\n"
-            "    return {'variant_records': records}\n"
-        )
-    path.write_text(
-        "# %% playbook overview\n"
-        "# Integration fixture playbook selected by stable ID.\n"
-        "# Source: synthetic Close data supplied by run config.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n" + body
-    )
-
-
-def _write_batched_indicator_playbook(path: Path, *, windows: list[int] | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    windows = windows or [2]
-    manifest = {
-        "family": "indicators",
-        "id": "ma_explore",
-        "version": "1.0.0",
-        "stages": ["indicators"],
-        "accepted_inputs": ["Close"],
-        "result_schema": "playbook_sweep_result.v1",
-        "indicator_family": "ma",
-    }
-    path.write_text(
-        "# %% playbook overview\n"
-        "# Sweep contract fixture for record-runner rejection.\n"
-        "# Source: synthetic Close data supplied by run config.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "import pandas as pd\n"
-        "\n"
-        "def run(data):\n"
-        '    """Return a forward batched indicator contract."""\n'
-        "    close = data.feature('Close')\n"
-        f"    candidate_ids = {[f'ma-{window}' for window in windows]!r}\n"
-        f"    windows = {windows!r}\n"
-        "    frames = []\n"
-        "    for candidate_id, window in zip(candidate_ids, windows):\n"
-        "        frame = close.rolling(window).mean().bfill()\n"
-        "        frame.columns = pd.MultiIndex.from_product(\n"
-        "            [[candidate_id], list(close.columns)], names=['candidate_id', 'symbol']\n"
-        "        )\n"
-        "        frames.append(frame)\n"
-        "    ma = pd.concat(frames, axis=1)\n"
-        "    return {\n"
-        "        'contract': 'aegis.playbook_sweep.v1',\n"
-        "        'kind': 'indicator_surface',\n"
-        "        'candidate_axis': [\n"
-        "            {'candidate_id': candidate_id, 'params': {'window': window}}\n"
-        "            for candidate_id, window in zip(candidate_ids, windows)\n"
-        "        ],\n"
-        "        'outputs': {'ma': ma},\n"
-        "    }\n"
-    )
-
-
-def _write_batched_strategy_playbook(
+def _write_parameterized_strategy_component(
     path: Path,
     *,
-    signal_mode: str = "requested",
-    consume_indicators: bool = True,
+    windows: range | list[int] | None = None,
+    slow_windows: range | list[int] | None = None,
+    fail_if_executed: bool = False,
 ) -> None:
-    if signal_mode not in {"requested", "omit_last", "extra_unrequested", "fail_second_batch"}:
-        raise ValueError(f"unknown batched strategy signal mode: {signal_mode}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    indicator_binding_source = (
-        "    indicators = inputs.indicators['playbook:ma_explore']\n"
-        "    ma_surface = indicators['outputs']['ma']\n"
-        if consume_indicators
-        else "    ma_surface = close.rolling(2).mean().bfill()\n"
-    )
-    indicator_frame_source = (
-        "            indicator_id = candidate.indicators[0].candidate_id\n"
-        "            ma = ma_surface.xs(indicator_id, level='candidate_id', axis=1, drop_level=True)\n"
-        "            ma.columns = close.columns\n"
-        if consume_indicators
-        else "            ma = ma_surface.copy()\n"
-    )
-    manifest = {
-        "family": "strategies",
-        "id": "ma_cross",
-        "version": "1.0.0",
-        "stages": ["strategies"],
-        "accepted_inputs": ["Close"],
-        "result_schema": "playbook_sweep_result.v1",
-    }
-    path.write_text(
-        "# %% playbook overview\n"
-        "# Strategy sweep fixture for candidate-grid tests.\n"
-        "# Source: synthetic Close data supplied by run config.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "import pandas as pd\n"
-        "from research.aegis_research.candidate_sweeps import candidate_id_from_params\n"
-        "\n"
-        "def run(inputs):\n"
-        '    """Discover strategy params and materialize requested signal batches."""\n'
-        "    close = inputs.data.feature('Close')\n"
-        f"{indicator_binding_source}"
-        "    strategy_candidates = []\n"
-        "    for name, threshold in (('fast', 0.0), ('slow', 0.01)):\n"
-        "        params = {'threshold': threshold}\n"
-        "        strategy_candidates.append({\n"
-        "            'candidate_id': candidate_id_from_params(name, params),\n"
-        "            'params': params,\n"
-        "        })\n"
-        "    materialize_call_count = 0\n"
-        "\n"
-        "    def materialize_signals(request):\n"
-        "        nonlocal materialize_call_count\n"
-        "        materialize_call_count += 1\n"
-        "        def candidate_signal_frames(candidate, output_candidate_id):\n"
-        f"{indicator_frame_source}"
-        "            threshold = candidate.strategy.params['threshold']\n"
-        "            entries = close > (ma * (1 + threshold))\n"
-        "            exits = close < ma\n"
-        "            entries.columns = pd.MultiIndex.from_product(\n"
-        "                [[output_candidate_id], list(close.columns)], names=['candidate_id', 'symbol']\n"
-        "            )\n"
-        "            exits.columns = pd.MultiIndex.from_product(\n"
-        "                [[output_candidate_id], list(close.columns)], names=['candidate_id', 'symbol']\n"
-        "            )\n"
-        "            return entries, exits\n"
-        "\n"
-        "        entry_frames = []\n"
-        "        exit_frames = []\n"
-        f"        signal_mode = {signal_mode!r}\n"
-        "        if signal_mode == 'fail_second_batch' and materialize_call_count == 2:\n"
-        "            raise RuntimeError('second batch failed intentionally')\n"
-        "        candidates = list(request.candidates)\n"
-        "        if signal_mode == 'omit_last':\n"
-        "            candidates = candidates[:-1]\n"
-        "        for candidate in candidates:\n"
-        "            entries, exits = candidate_signal_frames(candidate, candidate.candidate_id)\n"
-        "            entry_frames.append(entries)\n"
-        "            exit_frames.append(exits)\n"
-        "        if signal_mode == 'extra_unrequested':\n"
-        "            entries, exits = candidate_signal_frames(request.candidates[0], 'unexpected')\n"
-        "            entry_frames.append(entries)\n"
-        "            exit_frames.append(exits)\n"
-        "        return {\n"
-        "            'contract': 'aegis.playbook_sweep.v1',\n"
-        "            'kind': 'strategy_signals',\n"
-        "            'entries': pd.concat(entry_frames, axis=1),\n"
-        "            'exits': pd.concat(exit_frames, axis=1),\n"
-        "        }\n"
-        "\n"
-        "    return {\n"
-        "        'contract': 'aegis.playbook_sweep.v1',\n"
-        "        'kind': 'strategy_axis',\n"
-        "        'candidate_axis': strategy_candidates,\n"
-        "        'materialize_signals': materialize_signals,\n"
-        "    }\n"
-    )
-
-
-def _write_optimization_ma_cross_playbook(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "family": "strategies",
-        "id": "ma_opt",
-        "version": "1.0.0",
-        "stages": ["strategies"],
-        "accepted_inputs": ["Close"],
-        "result_schema": "aegis.optimization_source.v1",
-    }
-    path.write_text(
-        "# %% playbook overview\n"
-        "# MA-cross optimization source for end-to-end CV tests.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "from vectorbtpro import vbt\n"
-        "\n"
-        "def run(inputs):\n"
-        '    """Return an MA-cross optimization source contract."""\n'
-        "    def pipeline(close, fast_window, slow_window):\n"
-        "        fast = close.rolling(fast_window, min_periods=1).mean()\n"
-        "        slow = close.rolling(slow_window, min_periods=1).mean()\n"
-        "        return fast > slow, fast < slow\n"
-        "    return {\n"
-        "        'contract': 'aegis.optimization_source.v1',\n"
-        "        'kind': 'optimization_source',\n"
-        "        'pipeline': pipeline,\n"
-        "        'params': {\n"
-        "            'fast_window': vbt.Param([2, 5]),\n"
-        "            'slow_window': vbt.Param([10, 20]),\n"
-        "        },\n"
-        "    }\n"
-    )
-
-
-def _write_optimization_no_result_playbook(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "family": "strategies",
-        "id": "ma_skip",
-        "version": "1.0.0",
-        "stages": ["strategies"],
-        "accepted_inputs": ["Close"],
-        "result_schema": "aegis.optimization_source.v1",
-    }
-    path.write_text(
-        "# %% playbook overview\n"
-        "# Optimization source where every parameter row returns vbt.NoResult.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "from vectorbtpro import vbt\n"
-        "\n"
-        "def run(inputs):\n"
-        '    """Return an optimization source whose pipeline always skips."""\n'
-        "    def pipeline(close, fast_window, slow_window):\n"
-        "        return vbt.NoResult\n"
-        "    return {\n"
-        "        'contract': 'aegis.optimization_source.v1',\n"
-        "        'kind': 'optimization_source',\n"
-        "        'pipeline': pipeline,\n"
-        "        'params': {\n"
-        "            'fast_window': vbt.Param([2, 5]),\n"
-        "            'slow_window': vbt.Param([10, 20]),\n"
-        "        },\n"
-        "    }\n"
-    )
-
-
-def _write_optimization_runtime_error_playbook(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "family": "strategies",
-        "id": "ma_boom",
-        "version": "1.0.0",
-        "stages": ["strategies"],
-        "accepted_inputs": ["Close"],
-        "result_schema": "aegis.optimization_source.v1",
-    }
-    path.write_text(
-        "# %% playbook overview\n"
-        "# Optimization source whose pipeline raises a RuntimeError at execution.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "from vectorbtpro import vbt\n"
-        "\n"
-        "def run(inputs):\n"
-        '    """Return an optimization source whose pipeline always raises."""\n'
-        "    def pipeline(close, fast_window, slow_window):\n"
-        "        raise RuntimeError('pipeline raised at execution time')\n"
-        "    return {\n"
-        "        'contract': 'aegis.optimization_source.v1',\n"
-        "        'kind': 'optimization_source',\n"
-        "        'pipeline': pipeline,\n"
-        "        'params': {\n"
-        "            'fast_window': vbt.Param([2, 5]),\n"
-        "            'slow_window': vbt.Param([10, 20]),\n"
-        "        },\n"
-        "    }\n"
-    )
-
-
-def _write_optimization_strategy_playbook(
-    path: Path,
-    *,
-    windows: range,
-    thresholds: range,
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "family": "strategies",
-        "id": "optimized_ma",
-        "version": "1.0.0",
-        "stages": ["strategies"],
-        "accepted_inputs": ["Close"],
-        "result_schema": "aegis.optimization_source.v1",
-    }
-    windows_src = f"range({windows.start}, {windows.stop}, {windows.step})"
-    thresholds_src = f"range({thresholds.start}, {thresholds.stop}, {thresholds.step})"
-    path.write_text(
-        "# %% playbook overview\n"
-        "# Optimization source fixture for preflight tests.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "from vectorbtpro import vbt\n"
-        "\n"
-        "def run(inputs):\n"
-        '    """Return an optimization source contract."""\n'
-        "    def pipeline(*args, **kwargs):\n"
-        "        raise RuntimeError('pipeline should not execute')\n"
-        "    return {\n"
-        "        'contract': 'aegis.optimization_source.v1',\n"
-        "        'kind': 'optimization_source',\n"
-        "        'pipeline': pipeline,\n"
-        "        'params': {\n"
-        f"            'window': vbt.Param(list({windows_src})),\n"
-        f"            'threshold': vbt.Param(list({thresholds_src})),\n"
-        "        },\n"
-        "    }\n"
-    )
-
-
-def _strategy_record_source(
-    window: int,
-    *,
-    include_params: bool,
-    include_metrics: bool,
-    params: dict[str, object] | None,
-    variant_id: str | None,
-) -> str:
-    metrics_source = "'metrics': {'total_return': 1.5}, " if include_metrics else ""
-    params_value = {"window": window} if params is None else params
-    params_source = f"'params': {params_value!r}, " if include_params else ""
-    record_id = variant_id or f"ma-cross-{window}"
-    return (
-        "    records.append({"
-        f"'variant_id': {record_id!r}, "
-        f"{params_source}"
-        f"{metrics_source}"
-        "'entries': (close > average).fillna(False), "
-        "'exits': (close < average).fillna(False)})"
-    )
-
-
-def _indicator_record_source(
-    window: int,
-    *,
-    include_params: bool,
-    include_metrics: bool,
-    params: dict[str, object] | None,
-    candidate_id: str | None,
-    extra_fields: dict[str, object] | None,
-) -> str:
-    metrics_source = "'metrics': {'total_return': 1.5}, " if include_metrics else ""
-    params_value = {"window": window} if params is None else params
-    params_source = f"'params': {params_value!r}, " if include_params else ""
-    extra_source = "".join(
-        f"{key!r}: {value!r}, " for key, value in (extra_fields or {}).items()
-    )
-    record_id = candidate_id or f"ma-{window}"
-    return (
-        "    ma = close.rolling("
-        f"{window}"
-        ").mean().bfill()\n"
-        "    records.append({"
-        f"'candidate_id': {record_id!r}, "
-        f"{params_source}"
-        f"{metrics_source}"
-        f"{extra_source}"
-        "'outputs': {'ma': ma}})"
-    )
-
-
-def _write_single_indicator_strategy_playbook(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "family": "strategies",
-        "id": "ma_one_only",
-        "version": "1.0.0",
-        "stages": ["strategies"],
-        "accepted_inputs": ["Close"],
-        "result_schema": "playbook_result.v1",
-    }
-    path.write_text(
-        "# %% playbook overview\n"
-        "# Strategy fixture that consumes only one indicator playbook axis.\n"
-        "# Source: synthetic Close data supplied by run config.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "def run(inputs):\n"
-        '    """Use only ma_one so unused-axis validation can fail."""\n'
-        "    close = inputs.data.feature('Close')\n"
-        "    ma = inputs.indicators['playbook:ma_one']['outputs']['ma']\n"
-        "    return {'variant_records': [{'variant_id': 'uses-ma-one', "
-        "'params': {}, 'entries': (close > ma).fillna(False), "
-        "'exits': (close < ma).fillna(False)}]}\n"
-    )
-
-
-def _write_outputs_membership_strategy_playbook(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "family": "strategies",
-        "id": "check_outputs",
-        "version": "1.0.0",
-        "stages": ["strategies"],
-        "accepted_inputs": ["Close"],
-        "result_schema": "playbook_result.v1",
-    }
-    path.write_text(
-        "# %% playbook overview\n"
-        "# Strategy fixture that checks membership without consuming output frames.\n"
-        "# Source: synthetic Close data supplied by run config.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "def run(inputs):\n"
-        '    """Check output availability without using indicator values."""\n'
-        "    close = inputs.data.feature('Close')\n"
-        "    _has_outputs = 'outputs' in inputs.indicators['playbook:ma_explore']\n"
-        "    average = close.rolling(3).mean().bfill()\n"
-        "    return {'variant_records': [{'variant_id': 'membership-only', "
-        "'params': {}, 'entries': (close > average).fillna(False), "
-        "'exits': (close < average).fillna(False)}]}\n"
-    )
-
-
-def _write_no_trade_strategy_playbook(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "family": "strategies",
-        "id": "no_trades",
-        "version": "1.0.0",
-        "stages": ["strategies"],
-        "accepted_inputs": ["Close"],
-        "result_schema": "playbook_sweep_result.v1",
-    }
-    path.write_text(
-        "# %% playbook overview\n"
-        "# Strategy fixture that emits no trades for unavailable win-rate metrics.\n"
-        "# Source: synthetic Close data supplied by run config.\n"
-        "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "import pandas as pd\n"
-        "\n"
-        "def run(inputs):\n"
-        '    """Consume the selected indicator and intentionally emit no trades."""\n'
-        "    close = inputs.data.feature('Close')\n"
-        "    ma_surface = inputs.indicators['playbook:ma_explore']['outputs']['ma']\n"
-        "\n"
-        "    def materialize_signals(request):\n"
-        "        frames = []\n"
-        "        for candidate in request.candidates:\n"
-        "            indicator_id = candidate.indicators[0].candidate_id\n"
-        "            ma = ma_surface.xs(indicator_id, level='candidate_id', axis=1, drop_level=True)\n"
-        "            signals = (ma.notna() & False).astype(bool)\n"
-        "            signals.columns = pd.MultiIndex.from_product(\n"
-        "                [[candidate.candidate_id], list(close.columns)], names=['candidate_id', 'symbol']\n"
-        "            )\n"
-        "            frames.append(signals)\n"
-        "        signal_frame = pd.concat(frames, axis=1)\n"
-        "        return {\n"
-        "            'contract': 'aegis.playbook_sweep.v1',\n"
-        "            'kind': 'strategy_signals',\n"
-        "            'entries': signal_frame,\n"
-        "            'exits': signal_frame,\n"
-        "        }\n"
-        "\n"
-        "    return {\n"
-        "        'contract': 'aegis.playbook_sweep.v1',\n"
-        "        'kind': 'strategy_axis',\n"
-        "        'candidate_axis': [{'candidate_id': 'no-trades', 'params': {}}],\n"
-        "        'materialize_signals': materialize_signals,\n"
-        "    }\n"
-    )
-
-
-def _write_playbook_indicator_strategy_component(path: Path) -> None:
+    fast_values = list(range(2, 4) if windows is None else windows)
+    slow_values = list(range(5, 7) if slow_windows is None else slow_windows)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "# %% component overview\n"
-        "# Strategy fixture consuming an indicator playbook output.\n"
+        "# Parameterized moving-average strategy fixture.\n"
         "# Source: synthetic Close data supplied by the run config.\n"
         "\n"
         "# %% define component metadata\n"
+        "from vectorbtpro import vbt\n"
         "COMPONENT_MANIFEST = {"
-        "'family': 'strategies', 'id': 'demo.uses_playbook_ma', 'version': '1.0.0', "
-        "'input_names': ['Close'], "
-        "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
+        "'family': 'strategies', 'id': 'demo.ma_opt', 'version': '1.0.0', "
+        "'input_names': ['Close'], 'param_names': ['fast_window', 'slow_window'], "
+        "'signal_outputs': ['entries', 'exits'], "
+        "'defaults': {'fast_window': 2, 'slow_window': 5}, "
+        "'param_space_callable': 'param_space', 'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% parameter space\n"
+        "def param_space():\n"
+        f"    return {{'fast_window': vbt.Param({fast_values!r}), "
+        f"'slow_window': vbt.Param({slow_values!r})}}\n"
         "\n# %% main compute\n"
-        "def run(bundle):\n"
-        '    """Generate signals from the selected playbook moving average."""\n'
-        "    ma = bundle.indicators['playbook:ma_explore']['outputs']['ma']\n"
-        "    close = bundle.data.feature('Close')\n"
-        "    entries = close > ma\n"
-        "    exits = close < ma\n"
-        "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
+        "def run(inputs, fast_window, slow_window):\n"
+        '    """Generate moving-average crossover signals."""\n'
+        + (
+            "    raise RuntimeError('component should not execute after preflight failure')\n"
+            if fail_if_executed
+            else ""
+        )
+        + "    close = inputs.data.feature('Close')\n"
+        "    fast = close.rolling(int(fast_window), min_periods=1).mean()\n"
+        "    slow = close.rolling(int(slow_window), min_periods=1).mean()\n"
+        "    return {'entries': fast.gt(slow), 'exits': fast.lt(slow)}\n"
     )
 
 
-def _write_failing_playbook(path: Path, family: str, playbook_id: str) -> None:
+def _write_runtime_error_strategy_component(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "family": family,
-        "id": playbook_id,
-        "version": "1.0.0",
-        "stages": [family],
-        "accepted_inputs": ["Close"],
-        "result_schema": "playbook_sweep_result.v1",
-    }
     path.write_text(
-        "# %% playbook overview\n"
-        "# Integration fixture playbook that fails during callable execution.\n"
-        "# Source: synthetic Close data supplied by run config.\n"
+        "# %% component overview\n"
+        "# Strategy fixture that fails during component optimization execution.\n"
+        "# Source: synthetic Close data supplied by the run config.\n"
         "\n"
-        "# %% define playbook metadata\n"
-        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
-        "PLAYBOOK_CALLABLE = 'run'\n"
-        "\n"
-        "# %% main compute\n"
-        "def run(_inputs):\n"
-        '    """Raise a deterministic fixture error for failure-path tests."""\n'
-        "    raise RuntimeError('boom token=secret')\n"
+        "# %% define component metadata\n"
+        "from vectorbtpro import vbt\n"
+        "COMPONENT_MANIFEST = {"
+        "'family': 'strategies', 'id': 'demo.ma_boom', 'version': '1.0.0', "
+        "'input_names': ['Close'], 'param_names': ['window'], "
+        "'signal_outputs': ['entries', 'exits'], "
+        "'defaults': {'window': 2}, 'param_space_callable': 'param_space'}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% parameter space\n"
+        "def param_space():\n"
+        "    return {'window': vbt.Param([2])}\n"
+        "\n# %% main compute\n"
+        "def run(inputs, window):\n"
+        '    """Raise a deterministic execution failure."""\n'
+        "    raise RuntimeError('component optimization failed intentionally')\n"
     )

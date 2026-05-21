@@ -28,9 +28,9 @@ from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
 )
 from research.aegis_research.config import (
+    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     ConfigValidationError,
     ConfigValidationIssue,
-    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     ResolvedRunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
@@ -51,6 +51,10 @@ from research.aegis_research.data_arrays import (
     merge_data_arrays,
     with_data_array_contract_metadata,
 )
+from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.component_source import (
+    build_component_optimization_source,
+)
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
 from research.aegis_research.optimization.leaderboard import build_optimization_leaderboard
 from research.aegis_research.optimization.preflight import (
@@ -65,7 +69,6 @@ from research.aegis_research.optimization.runner import (
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_SOURCE_CONTRACT,
     OptimizationSourceError,
-    validate_optimization_source,
 )
 from research.aegis_research.playbook_registry import (
     FrozenPlaybookRegistry,
@@ -306,6 +309,7 @@ def run_strategy_sweep(
         if config.optimization is not None:
             return _run_optimization_strategy_sweep(
                 config,
+                component_registry=component_registry,
                 playbook_registry=playbooks,
                 recorder=recorder,
                 data_result=data_result,
@@ -479,6 +483,7 @@ def _assert_playbook_sweep_strategy(
 def _run_optimization_strategy_sweep(
     config: Any,
     *,
+    component_registry: FrozenComponentRegistry,
     playbook_registry: FrozenPlaybookRegistry,
     recorder: Any,
     data_result: Any,
@@ -487,40 +492,12 @@ def _run_optimization_strategy_sweep(
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
-    if config.strategy.source != "playbook":
-        raise OptimizationSourceError(
-            "optimization sources must be playbook strategies in #31; "
-            "component param spaces and component unification are #32"
-        )
-    definition = playbook_registry.get(PlaybookSelection("strategies", config.strategy.id))
-    if definition.manifest.result_schema != OPTIMIZATION_SOURCE_CONTRACT:
-        raise OptimizationSourceError(
-            f"strategy playbook {definition.id!r} must expose result_schema "
-            f"{OPTIMIZATION_SOURCE_CONTRACT!r} for optimization"
-        )
-
-    strategy_evidence = {
-        "source": "playbook",
-        "id": definition.id,
-        "version": definition.manifest.version,
-        **definition.identity.public(),
-        "consumes_runner_data": True,
-        "data_binding": "optimization_inputs",
-        "result_contract": OPTIMIZATION_SOURCE_CONTRACT,
-    }
-    inputs = StrategyInputs(
+    optimization_source = build_component_optimization_source(
+        config,
+        component_registry=component_registry,
         data=data,
-        indicators={},
-        metadata={
-            "strategy_id": definition.id,
-            "playbook_source_hash": definition.identity.source_hash,
-            "optimization_contract": OPTIMIZATION_SOURCE_CONTRACT,
-        },
     )
-    optimization_source = validate_optimization_source(
-        definition.load_callable()(inputs),
-        source_evidence=strategy_evidence,
-    )
+    strategy_evidence = optimization_source.evidence["strategy"]
     close = data.feature("Close")
     split_result = build_run_splits_result(close.index, config.optimization.split)
     optimization_evidence = {
@@ -579,12 +556,14 @@ def _run_optimization_strategy_sweep(
     run_payload = serialize_optimization_run(optimization_run)
     optimization_evidence["execution"] = run_payload
 
+    candidate_store_path = _candidate_store_path(config)
+    candidate_store_namespace = _candidate_store_namespace()
     candidate_rows = candidate_rows_from_param_index(
         optimization_run.evaluated_index,
         source_identity=optimization_source.evidence,
         data_identity=_candidate_data_identity(data_result, array_contract),
         portfolio_policy=to_builtin(asdict(config.portfolio)),
-        store_namespace={"kind": "artifact_only", "run_id": recorder.manifest.run_id},
+        store_namespace=candidate_store_namespace,
         coordinate_levels=("split", "set", "symbol", METRIC_INDEX_NAME),
     )
     optimization_evidence["candidate_count"] = len(candidate_rows)
@@ -601,6 +580,21 @@ def _run_optimization_strategy_sweep(
         ranking_direction=optimization_run.ranking_direction,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
+    candidate_store_provenance = _candidate_store_provenance(
+        recorder,
+        optimization_source=optimization_source.evidence,
+        data_result=data_result,
+        array_contract=array_contract,
+        config=config,
+        metric_registry_fingerprint=metric_registry_fingerprint,
+    )
+    with CandidateStore(candidate_store_path) as candidate_store:
+        candidate_store.insert_completed_run(
+            run_id=recorder.manifest.run_id,
+            candidate_rows=candidate_rows,
+            leaderboard=leaderboard,
+            provenance=candidate_store_provenance,
+        )
     recorder.manifest.evidence["optimization"] = optimization_evidence
 
     artifact_payload = {
@@ -624,6 +618,11 @@ def _run_optimization_strategy_sweep(
         "execution": run_payload,
         "candidates": [to_builtin(record) for record in candidate_rows],
         "leaderboard": leaderboard,
+        "candidate_store": {
+            "schema_version": "candidate_store_ref.v1",
+            "path": candidate_store_namespace["path"],
+            "provenance": candidate_store_provenance,
+        },
         "metric_registry_fingerprint": metric_registry_fingerprint,
     }
     _write_strategy_artifact(recorder, artifact_payload)
@@ -2260,6 +2259,42 @@ def _candidate_data_identity(data_result: Any, array_contract: DataArrayContract
         "index_evidence": metadata.get("index_evidence"),
         "source_metadata": metadata.get("source_metadata"),
         "array_contract": array_contract.metadata(),
+    }
+
+
+def _candidate_store_path(config: Any) -> Path:
+    return Path(config.output_dir) / ".candidate_store" / "candidates.sqlite3"
+
+
+def _candidate_store_namespace() -> dict[str, str]:
+    return {
+        "kind": "local_sqlite",
+        "path": ".candidate_store/candidates.sqlite3",
+    }
+
+
+def _candidate_store_provenance(
+    recorder: Any,
+    *,
+    optimization_source: dict[str, Any],
+    data_result: Any,
+    array_contract: DataArrayContract,
+    config: Any,
+    metric_registry_fingerprint: str | None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "candidate_store_provenance.v1",
+        "run_id": recorder.manifest.run_id,
+        "strategy_artifact_id": "strategy.run",
+        "source": optimization_source,
+        "data": _candidate_data_identity(data_result, array_contract),
+        "portfolio": to_builtin(asdict(config.portfolio)),
+        "ranking": {
+            "metric": config.ranking.metric,
+            "direction": config.ranking.direction,
+            "secondary_metrics": list(config.ranking.secondary_metrics),
+        },
+        "metric_registry_fingerprint": metric_registry_fingerprint,
     }
 
 

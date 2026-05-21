@@ -25,7 +25,7 @@ from research.aegis_research.optimization.source import OptimizationSource
 COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION = "component_optimization_source.v1"
 FIXED_CANDIDATE_PARAM = "__aegis_fixed_candidate__"
 PARAM_KEY_PREFIX = "component"
-PARAM_KEY_SEPARATOR = "|"
+PARAM_KEY_SEPARATOR = "__"
 
 ResolvedComponentParams = Mapping[tuple[ComponentFamily, str, str], Mapping[str, Any]]
 
@@ -49,6 +49,7 @@ class _ComponentRuntime:
     definition: ComponentDefinition
     callable: Any
     fixed_params: dict[str, Any]
+    param_space: dict[str, vbt.Param]
     param_keys: dict[str, str]
 
 
@@ -68,19 +69,22 @@ def component_param_key(
 ) -> str:
     parts = (PARAM_KEY_PREFIX, family, component_id, slot, param_name)
     for part in parts:
-        if not part or PARAM_KEY_SEPARATOR in part:
+        if not part:
             raise ComponentSourceError(
-                f"component param namespace part {part!r} must not be empty or contain "
-                f"{PARAM_KEY_SEPARATOR!r}"
+                "component param namespace parts must not be empty"
             )
-    return PARAM_KEY_SEPARATOR.join(parts)
+    return PARAM_KEY_SEPARATOR.join((PARAM_KEY_PREFIX, *(_encode_namespace_part(part) for part in parts[1:])))
 
 
 def parse_component_param_key(key: str) -> dict[str, str]:
     parts = key.split(PARAM_KEY_SEPARATOR)
     if len(parts) != 5 or parts[0] != PARAM_KEY_PREFIX:
         raise ComponentSourceError(f"not a component param key: {key!r}")
-    _, family, component_id, slot, param_name = parts
+    _, encoded_family, encoded_component_id, encoded_slot, encoded_param_name = parts
+    family = _decode_namespace_part(encoded_family)
+    component_id = _decode_namespace_part(encoded_component_id)
+    slot = _decode_namespace_part(encoded_slot)
+    param_name = _decode_namespace_part(encoded_param_name)
     if family not in {"indicators", "strategies"}:
         raise ComponentSourceError(f"unsupported component param family: {family!r}")
     return {
@@ -89,6 +93,17 @@ def parse_component_param_key(key: str) -> dict[str, str]:
         "slot": slot,
         "param_name": param_name,
     }
+
+
+def _encode_namespace_part(value: str) -> str:
+    return value.encode("utf-8").hex()
+
+
+def _decode_namespace_part(value: str) -> str:
+    try:
+        return bytes.fromhex(value).decode("utf-8")
+    except ValueError as error:
+        raise ComponentSourceError(f"invalid component param namespace part: {value!r}") from error
 
 
 def component_param_slices(param_row: Mapping[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
@@ -132,7 +147,7 @@ def build_component_optimization_source(
     params: dict[str, vbt.Param] = {}
     for runtime in (*indicators, strategy):
         for param_name, param_key in runtime.param_keys.items():
-            param = _load_param_space(runtime.definition)[param_name]
+            param = runtime.param_space[param_name]
             if param_key in params:
                 raise ComponentSourceError(f"duplicate component param key: {param_key}")
             params[param_key] = param
@@ -213,6 +228,7 @@ def _build_runtime(
         definition=definition,
         callable=definition.load_callable(),
         fixed_params=fixed_params,
+        param_space=dict(param_space),
         param_keys=param_keys,
     )
 

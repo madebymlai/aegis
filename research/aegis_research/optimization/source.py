@@ -21,10 +21,9 @@ Limitations carried by this contract (R18 follow-up):
   would silently collapse across hidden values. #32 will materialize hidden
   values into ``hidden_params`` on candidate evidence.
 
-- The run config's ``indicators: [...]`` list is ignored on the optimization
-  path; the source's pipeline is self-contained. #32 reframes this so
-  components own ``param_space()`` and the run config composes indicator +
-  strategy components via per-entry ``lock_id`` semantics.
+- Component-native optimization composes configured indicator and strategy
+  components before this generic runner contract. Legacy playbook optimization
+  sources are no longer a forward authoring path.
 """
 
 from __future__ import annotations
