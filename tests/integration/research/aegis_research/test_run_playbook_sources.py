@@ -226,7 +226,7 @@ def test_optimization_routes_away_from_custom_candidate_grid(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_batched_strategy_playbook(tmp_path / "research/playbooks/strategies/ma_cross.py")
+    _write_optimization_ma_cross_playbook(tmp_path / "research/playbooks/strategies/ma_opt.py")
     _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
 
     def fail_if_called(*_args: object, **_kwargs: object) -> object:
@@ -237,17 +237,21 @@ def test_optimization_routes_away_from_custom_candidate_grid(
     config_path = _write_run_config(
         tmp_path,
         strategy_source="playbook",
-        strategy_id="ma_cross",
+        strategy_id="ma_opt",
         optimization={"search": "grid", "split": _rolling_split_config()},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "optimization-boundary"]) == 10
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "optimization-boundary"]) == 0
 
-    payload = json.loads(capsys.readouterr().err)
-    assert payload["error"]["category"] == "execution_failure"
-    assert "aegis.optimization_source.v1" in payload["error"]["message"]
-    assert "legacy candidate sweep path" not in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "optimization-boundary" / "strategy_run.json").exists()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "success"
+    artifact = json.loads(
+        (tmp_path / "runs" / "optimization-boundary" / "strategy_run.json").read_text()
+    )
+    assert artifact["evidence_type"] == "optimization"
+    assert artifact["leaderboard"]["rows"], (
+        "native CV run must produce a leaderboard without touching legacy candidate sweep helpers"
+    )
 
 
 def test_optimization_executes_cv_split_and_writes_strategy_run_artifact(
@@ -322,6 +326,75 @@ def test_optimization_executes_cv_split_and_writes_strategy_run_artifact(
     assert evidence["sampled_row_count"] == 4
     assert "preflight_failure" not in evidence
     assert "execution_failure" not in evidence
+
+
+def test_optimization_no_result_pipeline_publishes_visible_failure_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_optimization_no_result_playbook(
+        tmp_path / "research/playbooks/strategies/ma_skip.py"
+    )
+    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_skip",
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "no-result-failure"]) == 10
+
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error"]["category"] == "execution_failure"
+    assert "no usable results" in payload["error"]["message"]
+
+    manifest = json.loads(
+        (tmp_path / "runs" / "no-result-failure" / "manifest.json").read_text()
+    )
+    assert manifest["run"]["status"] == RunStatus.FAILED
+    evidence = manifest["evidence"]["optimization"]
+    assert evidence["execution_failure"]["error_type"] == "OptimizationRunnerError"
+    assert "no usable results" in evidence["execution_failure"]["message"]
+    assert "preflight_failure" not in evidence, (
+        "preflight should pass; this is a runtime/empty-grid failure, not a preflight rejection"
+    )
+    assert not (tmp_path / "runs" / "no-result-failure" / "strategy_run.json").exists(), (
+        "completed leaderboard must not be published when every parameter row was filtered out"
+    )
+
+
+def test_optimization_pipeline_runtime_error_records_failure_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_optimization_runtime_error_playbook(
+        tmp_path / "research/playbooks/strategies/ma_boom.py"
+    )
+    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_boom",
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    exit_code = cli.main(["run", str(config_path), "--json", "--run-id", "runtime-failure"])
+    assert exit_code != 0
+
+    manifest = json.loads(
+        (tmp_path / "runs" / "runtime-failure" / "manifest.json").read_text()
+    )
+    assert manifest["run"]["status"] == RunStatus.FAILED
+    assert not (tmp_path / "runs" / "runtime-failure" / "strategy_run.json").exists()
+    payload = json.loads(capsys.readouterr().err)
+    assert "pipeline raised" in payload["error"]["message"], (
+        "pipeline runtime error must surface in the CLI error payload"
+    )
 
 
 def test_optimization_preflight_failure_records_manifest_without_pipeline_execution(
@@ -1304,6 +1377,80 @@ def _write_optimization_ma_cross_playbook(path: Path) -> None:
         "        fast = close.rolling(fast_window, min_periods=1).mean()\n"
         "        slow = close.rolling(slow_window, min_periods=1).mean()\n"
         "        return fast > slow, fast < slow\n"
+        "    return {\n"
+        "        'contract': 'aegis.optimization_source.v1',\n"
+        "        'kind': 'optimization_source',\n"
+        "        'pipeline': pipeline,\n"
+        "        'params': {\n"
+        "            'fast_window': vbt.Param([2, 5]),\n"
+        "            'slow_window': vbt.Param([10, 20]),\n"
+        "        },\n"
+        "    }\n"
+    )
+
+
+def _write_optimization_no_result_playbook(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "family": "strategies",
+        "id": "ma_skip",
+        "version": "1.0.0",
+        "stages": ["strategies"],
+        "accepted_inputs": ["Close"],
+        "result_schema": "aegis.optimization_source.v1",
+    }
+    path.write_text(
+        "# %% playbook overview\n"
+        "# Optimization source where every parameter row returns vbt.NoResult.\n"
+        "\n"
+        "# %% define playbook metadata\n"
+        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
+        "PLAYBOOK_CALLABLE = 'run'\n"
+        "\n"
+        "# %% main compute\n"
+        "from vectorbtpro import vbt\n"
+        "\n"
+        "def run(inputs):\n"
+        '    """Return an optimization source whose pipeline always skips."""\n'
+        "    def pipeline(close, fast_window, slow_window):\n"
+        "        return vbt.NoResult\n"
+        "    return {\n"
+        "        'contract': 'aegis.optimization_source.v1',\n"
+        "        'kind': 'optimization_source',\n"
+        "        'pipeline': pipeline,\n"
+        "        'params': {\n"
+        "            'fast_window': vbt.Param([2, 5]),\n"
+        "            'slow_window': vbt.Param([10, 20]),\n"
+        "        },\n"
+        "    }\n"
+    )
+
+
+def _write_optimization_runtime_error_playbook(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "family": "strategies",
+        "id": "ma_boom",
+        "version": "1.0.0",
+        "stages": ["strategies"],
+        "accepted_inputs": ["Close"],
+        "result_schema": "aegis.optimization_source.v1",
+    }
+    path.write_text(
+        "# %% playbook overview\n"
+        "# Optimization source whose pipeline raises a RuntimeError at execution.\n"
+        "\n"
+        "# %% define playbook metadata\n"
+        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
+        "PLAYBOOK_CALLABLE = 'run'\n"
+        "\n"
+        "# %% main compute\n"
+        "from vectorbtpro import vbt\n"
+        "\n"
+        "def run(inputs):\n"
+        '    """Return an optimization source whose pipeline always raises."""\n'
+        "    def pipeline(close, fast_window, slow_window):\n"
+        "        raise RuntimeError('pipeline raised at execution time')\n"
         "    return {\n"
         "        'contract': 'aegis.optimization_source.v1',\n"
         "        'kind': 'optimization_source',\n"
