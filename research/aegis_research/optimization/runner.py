@@ -14,9 +14,12 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     SignalConfig,
 )
+from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.source import OptimizationSource
 from research.aegis_research.portfolios import simulate_portfolio
 from research.aegis_research.reports import portfolio_metrics
+
+METRIC_INDEX_NAME = "metric_name"
 
 OPTIMIZATION_RUN_SCHEMA_VERSION = "optimization_run.v1"
 RANKING_DIRECTION_TO_SELECTION = {"desc": "max", "asc": "min"}
@@ -64,6 +67,10 @@ def execute_optimization(
     parameterized_kwargs = _build_parameterized_kwargs(optimization)
     return_grid_mode = optimization.evidence.return_grid
     return_grid_kw: str | None = return_grid_mode if return_grid_mode != "off" else None
+    selection_fn = _build_selection_function(
+        ranking_metric=ranking.metric,
+        direction=ranking.direction,
+    )
     decorated = vbt.cv_split(
         cv_callable,
         splitter=optimization.split.method,
@@ -71,7 +78,7 @@ def execute_optimization(
         takeable_args=takeable_args,
         parameterized_kwargs=parameterized_kwargs,
         merge_func="concat",
-        selection=RANKING_DIRECTION_TO_SELECTION[ranking.direction],
+        selection=vbt.RepFunc(selection_fn),
         return_grid=return_grid_kw,
     )
     call_args: tuple[Any, ...]
@@ -106,6 +113,11 @@ def _build_cv_callable(
     has_open_prices: bool,
 ) -> tuple[Any, list[str]]:
     pipeline = source.pipeline
+    if ranking_metric not in PORTFOLIO_METRIC_VALUE_KEYS:
+        raise OptimizationRunnerError(
+            f"optimization ranking metric {ranking_metric!r} is not in the central "
+            f"portfolio metric catalog: {sorted(PORTFOLIO_METRIC_VALUE_KEYS)}"
+        )
 
     if has_open_prices:
 
@@ -120,7 +132,7 @@ def _build_cv_callable(
                 open_prices=open_slice,
                 market_index=market_index,
             )
-            return _select_ranking_metric(result.portfolio, report, ranking_metric)
+            return _central_metric_series(result.portfolio, report)
 
         return cv_callable, ["close_slice", "open_slice"]
 
@@ -135,7 +147,7 @@ def _build_cv_callable(
             open_prices=None,
             market_index=market_index,
         )
-        return _select_ranking_metric(result.portfolio, report, ranking_metric)
+        return _central_metric_series(result.portfolio, report)
 
     return cv_callable_no_open, ["close_slice"]
 
@@ -158,13 +170,35 @@ def _coerce_pipeline_signals(value: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
     return entries, exits
 
 
-def _select_ranking_metric(portfolio: Any, report: ReportConfig, ranking_metric: str) -> Any:
+def _central_metric_series(portfolio: Any, report: ReportConfig) -> pd.Series:
     metrics = portfolio_metrics(portfolio, report)
-    if ranking_metric not in metrics:
+    missing = [name for name in PORTFOLIO_METRIC_VALUE_KEYS if name not in metrics]
+    if missing:
         raise OptimizationRunnerError(
-            f"optimization ranking metric {ranking_metric!r} missing from portfolio metrics"
+            f"central portfolio metrics missing keys {sorted(missing)}; "
+            f"got {sorted(set(metrics) & set(PORTFOLIO_METRIC_VALUE_KEYS))}"
         )
-    return metrics[ranking_metric]
+    series = pd.Series(
+        {name: metrics[name] for name in PORTFOLIO_METRIC_VALUE_KEYS},
+        name="value",
+    )
+    series.index.name = METRIC_INDEX_NAME
+    return series
+
+
+def _build_selection_function(*, ranking_metric: str, direction: str):
+    def selection(grid_results: pd.Series) -> Any:
+        per_param = grid_results.xs(ranking_metric, level=METRIC_INDEX_NAME)
+        if not isinstance(per_param, pd.Series):
+            per_param = pd.Series(per_param)
+        per_param = per_param.astype(float)
+        if direction == "desc":
+            label = per_param.idxmax()
+        else:
+            label = per_param.idxmin()
+        return vbt.LabelSel([label])
+
+    return selection
 
 
 def _build_parameterized_kwargs(optimization: OptimizationConfig) -> dict[str, Any]:

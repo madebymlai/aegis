@@ -283,6 +283,15 @@ def test_optimization_executes_cv_split_and_writes_strategy_run_artifact(
     selection_rows = artifact["execution"]["selection"]["rows"]
     selection_sets = {row["coordinates"]["set"] for row in selection_rows}
     assert selection_sets == {"selection", "held_out"}
+    selection_metrics = {row["coordinates"]["metric_name"] for row in selection_rows}
+    assert "total_return" in selection_metrics
+    assert "sharpe_ratio" in selection_metrics
+    leaderboard_rows = artifact["leaderboard"]["rows"]
+    assert leaderboard_rows, "expected non-empty leaderboard"
+    assert leaderboard_rows[0]["ranking_metric"] == "total_return"
+    assert "metrics" in leaderboard_rows[0]
+    assert "total_return" in leaderboard_rows[0]["metrics"]
+    assert "sharpe_ratio" in leaderboard_rows[0]["metrics"]
     assert artifact["candidates"], "expected non-empty candidates list"
     first_candidate = artifact["candidates"][0]
     assert set(first_candidate["params"].keys()) >= {"fast_window", "slow_window"}

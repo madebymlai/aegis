@@ -635,30 +635,46 @@ def _build_optimization_leaderboard(
         for row in run_payload["selection"]["rows"]
         if row["coordinates"].get("set") == "held_out"
     ]
+    grouped: dict[tuple[Any, tuple[tuple[str, Any], ...]], dict[str, Any]] = {}
+    for held_out in held_out_rows:
+        coords = held_out["coordinates"]
+        split = coords.get("split")
+        metric_name = coords.get("metric_name")
+        param_items = tuple(
+            sorted(
+                (key, value)
+                for key, value in coords.items()
+                if key not in {"split", "set", "metric_name"}
+            )
+        )
+        group_key = (split, param_items)
+        bucket = grouped.setdefault(
+            group_key,
+            {"split": split, "params": dict(param_items), "metrics": {}},
+        )
+        if metric_name is not None:
+            bucket["metrics"][metric_name] = held_out["value"]
     rows: list[dict[str, Any]] = []
     succeeded = 0
-    for held_out in held_out_rows:
-        value = held_out["value"]
-        is_succeeded = isinstance(value, (int, float)) and not math.isnan(float(value))
-        if is_succeeded:
+    for bucket in grouped.values():
+        ranking_value = bucket["metrics"].get(ranking_metric)
+        if isinstance(ranking_value, (int, float)) and not math.isnan(float(ranking_value)):
             succeeded += 1
-        params = {
-            key: held_out_value
-            for key, held_out_value in held_out["coordinates"].items()
-            if key not in {"split", "set"}
-        }
         rows.append(
             {
-                "split": held_out["coordinates"].get("split"),
-                "params": params,
+                "split": bucket["split"],
+                "params": bucket["params"],
                 "ranking_metric": ranking_metric,
                 "ranking_direction": ranking_direction,
-                "ranking_metric_value": value,
+                "ranking_metric_value": ranking_value,
+                "metrics": bucket["metrics"],
             }
         )
     rows.sort(
         key=lambda row: (
-            float("-inf") if not isinstance(row["ranking_metric_value"], (int, float)) else row["ranking_metric_value"]
+            float("-inf")
+            if not isinstance(row["ranking_metric_value"], (int, float))
+            else row["ranking_metric_value"]
         ),
         reverse=ranking_direction == "desc",
     )

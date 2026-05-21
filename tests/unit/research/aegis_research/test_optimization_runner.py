@@ -14,7 +14,9 @@ from research.aegis_research.configuration.schema import (
     RunSplitConfig,
     SignalConfig,
 )
+from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.runner import (
+    METRIC_INDEX_NAME,
     OPTIMIZATION_RUN_SCHEMA_VERSION,
     OptimizationRunnerError,
     execute_optimization,
@@ -83,11 +85,14 @@ def test_runner_emits_selection_and_held_out_winners_per_split() -> None:
     assert run.return_grid_mode == "off"
     assert run.grid is None
     assert run.selection.index.names[:2] == ["split", "set"]
+    assert run.selection.index.names[-1] == METRIC_INDEX_NAME
     set_values = set(run.selection.index.get_level_values("set"))
     assert set_values == {"selection", "held_out"}
+    metric_values = set(run.selection.index.get_level_values(METRIC_INDEX_NAME))
+    assert metric_values == set(PORTFOLIO_METRIC_VALUE_KEYS)
     assert run.parameterized_kwargs == {"merge_func": "concat"}
     split_count = len(set(run.selection.index.get_level_values("split")))
-    assert len(run.selection) == split_count * 2
+    assert len(run.selection) == split_count * 2 * len(PORTFOLIO_METRIC_VALUE_KEYS)
 
 
 def test_runner_returns_grid_when_return_grid_first_is_requested() -> None:
@@ -109,7 +114,10 @@ def test_runner_returns_grid_when_return_grid_first_is_requested() -> None:
     assert run.grid is not None
     assert "fast_window" in run.grid.index.names
     assert "slow_window" in run.grid.index.names
+    assert METRIC_INDEX_NAME in run.grid.index.names
     assert set(run.grid.index.get_level_values("set")) == {"selection", "held_out"}
+    grid_metrics = set(run.grid.index.get_level_values(METRIC_INDEX_NAME))
+    assert grid_metrics == set(PORTFOLIO_METRIC_VALUE_KEYS)
 
 
 def test_runner_threads_random_subset_and_seed_into_parameterized_kwargs() -> None:
@@ -129,6 +137,63 @@ def test_runner_threads_random_subset_and_seed_into_parameterized_kwargs() -> No
 
     assert run.parameterized_kwargs["random_subset"] == 3
     assert run.parameterized_kwargs["seed"] == 7
+
+
+def test_runner_selection_projects_on_ranking_metric_across_central_catalog() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run_desc = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+    run_asc = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="asc"),
+    )
+
+    desc_winners = (
+        run_desc.selection.xs("total_return", level=METRIC_INDEX_NAME)
+        .xs("selection", level="set")
+        .sort_index(level="split")
+        .to_numpy()
+    )
+    asc_winners = (
+        run_asc.selection.xs("total_return", level=METRIC_INDEX_NAME)
+        .xs("selection", level="set")
+        .sort_index(level="split")
+        .to_numpy()
+    )
+    assert (desc_winners >= asc_winners).all()
+
+
+def test_runner_rejects_ranking_metric_outside_central_catalog() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2], slow=[10])
+
+    with pytest.raises(OptimizationRunnerError, match="central portfolio metric catalog"):
+        execute_optimization(
+            close=close,
+            open_prices=open_prices,
+            source=source,
+            optimization=_optimization_config(),
+            portfolio=PortfolioConfig(fees=0, slippage=0),
+            signal=SignalConfig(),
+            report=ReportConfig(),
+            ranking=RankingConfig(metric="not_a_real_metric", direction="desc"),
+        )
 
 
 def test_runner_rejects_unsupported_ranking_direction() -> None:
