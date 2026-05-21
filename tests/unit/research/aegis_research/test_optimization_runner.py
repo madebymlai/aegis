@@ -18,7 +18,11 @@ from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.runner import (
     METRIC_INDEX_NAME,
     OPTIMIZATION_RUN_SCHEMA_VERSION,
+    SAMPLED_ROWS_SOURCE_PRECOMPUTED,
+    SAMPLED_ROWS_SOURCE_RESULT_GRID,
     OptimizationRunnerError,
+    _extract_param_index,
+    _verify_evaluated_subset,
     execute_optimization,
     serialize_optimization_run,
 )
@@ -461,3 +465,95 @@ def test_runner_rejects_invalid_pipeline_signal_shape() -> None:
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return", direction="desc"),
         )
+
+
+def test_runner_sampled_rows_sourced_from_result_grid_when_return_grid_first() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(return_grid="first"),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+
+    assert run.sampled_rows_source == SAMPLED_ROWS_SOURCE_RESULT_GRID, (
+        "return_grid='first' has a post-execution selection_grid so evidence must "
+        "come from VBT's returned index, not the pre-computed combine_params output"
+    )
+    evaluated_pairs = set(run.evaluated_index.to_list())
+    sampled_pairs = set(run.sampled_index.to_list())
+    assert evaluated_pairs <= sampled_pairs, (
+        "post-execution evaluated index must be a subset of the pre-computed sampled index"
+    )
+    payload = serialize_optimization_run(run)
+    assert payload["sampled_rows"]["source"] == SAMPLED_ROWS_SOURCE_RESULT_GRID
+
+
+def test_runner_sampled_rows_falls_back_to_precomputed_when_return_grid_off() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(return_grid="off"),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+
+    assert run.sampled_rows_source == SAMPLED_ROWS_SOURCE_PRECOMPUTED, (
+        "return_grid='off' has no post-execution grid so evidence falls back to "
+        "the pre-computed combine_params output"
+    )
+    assert run.evaluated_index.equals(run.sampled_index)
+    payload = serialize_optimization_run(run)
+    assert payload["sampled_rows"]["source"] == SAMPLED_ROWS_SOURCE_PRECOMPUTED
+
+
+def test_extract_param_index_drops_split_set_metric_levels_and_dedupes() -> None:
+    index = pd.MultiIndex.from_tuples(
+        [
+            (0, "selection", 2, 10, "total_return"),
+            (0, "selection", 2, 10, "sharpe_ratio"),
+            (0, "held_out", 2, 10, "total_return"),
+            (1, "selection", 5, 20, "total_return"),
+        ],
+        names=["split", "set", "fast_window", "slow_window", METRIC_INDEX_NAME],
+    )
+
+    projected = _extract_param_index(index)
+
+    assert list(projected.names) == ["fast_window", "slow_window"]
+    assert set(projected.to_list()) == {(2, 10), (5, 20)}
+
+
+def test_verify_evaluated_subset_raises_on_drift() -> None:
+    sampled = pd.MultiIndex.from_tuples(
+        [(2, 10), (5, 20)], names=["fast_window", "slow_window"]
+    )
+    drifted = pd.MultiIndex.from_tuples(
+        [(2, 10), (99, 99)], names=["fast_window", "slow_window"]
+    )
+
+    with pytest.raises(OptimizationRunnerError, match="candidate evidence drift"):
+        _verify_evaluated_subset(evaluated=drifted, sampled=sampled, label="test")
+
+
+def test_verify_evaluated_subset_passes_when_subset_holds() -> None:
+    sampled = pd.MultiIndex.from_tuples(
+        [(2, 10), (5, 20), (10, 50)], names=["fast_window", "slow_window"]
+    )
+    evaluated = pd.MultiIndex.from_tuples(
+        [(2, 10), (5, 20)], names=["fast_window", "slow_window"]
+    )
+
+    _verify_evaluated_subset(evaluated=evaluated, sampled=sampled, label="test")

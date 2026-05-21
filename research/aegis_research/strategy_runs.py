@@ -570,13 +570,14 @@ def _run_optimization_strategy_sweep(
     optimization_evidence["execution"] = run_payload
 
     candidate_rows = candidate_rows_from_param_index(
-        optimization_run.sampled_index,
+        optimization_run.evaluated_index,
         source_identity=optimization_source.evidence,
         portfolio_policy=to_builtin(asdict(config.portfolio)),
         coordinate_levels=("split", "set", "symbol", METRIC_INDEX_NAME),
     )
     optimization_evidence["candidate_count"] = len(candidate_rows)
     optimization_evidence["sampled_row_count"] = len(run_payload["sampled_rows"]["rows"])
+    optimization_evidence["sampled_rows_source"] = optimization_run.sampled_rows_source
     split_held_out_row_counts = {
         index: len(split.held_out_index) for index, split in enumerate(split_result.splits)
     }

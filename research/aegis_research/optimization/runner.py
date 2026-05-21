@@ -21,9 +21,13 @@ from research.aegis_research.portfolios import simulate_portfolio
 from research.aegis_research.reports import portfolio_metrics
 
 METRIC_INDEX_NAME = "metric_name"
+NON_PARAM_LEVEL_NAMES = frozenset({"split", "set", "symbol", METRIC_INDEX_NAME})
 
 OPTIMIZATION_RUN_SCHEMA_VERSION = "optimization_run.v1"
 RANKING_DIRECTION_TO_SELECTION = {"desc": "max", "asc": "min"}
+
+SAMPLED_ROWS_SOURCE_RESULT_GRID = "result_grid"
+SAMPLED_ROWS_SOURCE_PRECOMPUTED = "combine_params_precomputed"
 
 
 class OptimizationRunnerError(ValueError):
@@ -36,6 +40,8 @@ class OptimizationRun:
     selection_grid: pd.Series | None
     held_out_grid: pd.Series | None
     sampled_index: pd.Index
+    evaluated_index: pd.Index
+    sampled_rows_source: str
     return_grid_mode: str
     ranking_metric: str
     ranking_direction: str
@@ -111,16 +117,75 @@ def execute_optimization(
             held_out_grid = canon_grid.xs("held_out", level="set", drop_level=False)
         else:
             held_out_grid = None
+    canonical_selection = _canonicalize_role_index(selection_series)
+    winner_param_index = _extract_param_index(canonical_selection.index)
+    _verify_evaluated_subset(
+        evaluated=winner_param_index,
+        sampled=sampled_index,
+        label="selection winners",
+    )
+    if selection_grid is not None:
+        evaluated_index = _extract_param_index(selection_grid.index)
+        _verify_evaluated_subset(
+            evaluated=evaluated_index,
+            sampled=sampled_index,
+            label="selection grid",
+        )
+        sampled_rows_source = SAMPLED_ROWS_SOURCE_RESULT_GRID
+    else:
+        evaluated_index = sampled_index
+        sampled_rows_source = SAMPLED_ROWS_SOURCE_PRECOMPUTED
     return OptimizationRun(
-        selection=_canonicalize_role_index(selection_series),
+        selection=canonical_selection,
         selection_grid=selection_grid,
         held_out_grid=held_out_grid,
         sampled_index=sampled_index,
+        evaluated_index=evaluated_index,
+        sampled_rows_source=sampled_rows_source,
         return_grid_mode=return_grid_mode,
         ranking_metric=ranking.metric,
         ranking_direction=ranking.direction,
         parameterized_kwargs=parameterized_kwargs,
     )
+
+
+def _extract_param_index(index: pd.Index) -> pd.Index:
+    if not isinstance(index, pd.MultiIndex):
+        raise OptimizationRunnerError(
+            "cannot extract VBT param coordinates from a non-MultiIndex result"
+        )
+    param_levels = [name for name in index.names if name not in NON_PARAM_LEVEL_NAMES]
+    if not param_levels:
+        raise OptimizationRunnerError(
+            f"VBT result index carries no param levels; got {list(index.names)}"
+        )
+    projection = index.droplevel(
+        [name for name in index.names if name not in param_levels]
+    )
+    if isinstance(projection, pd.MultiIndex):
+        return projection.unique()
+    return pd.Index(projection.unique(), name=param_levels[0])
+
+
+def _verify_evaluated_subset(
+    *,
+    evaluated: pd.Index,
+    sampled: pd.Index,
+    label: str,
+) -> None:
+    evaluated_set = set(evaluated.to_list() if isinstance(evaluated, pd.MultiIndex) else evaluated.tolist())
+    sampled_set = set(sampled.to_list() if isinstance(sampled, pd.MultiIndex) else sampled.tolist())
+    missing = evaluated_set - sampled_set
+    if missing:
+        examples = sorted(repr(item) for item in list(missing)[:5])
+        raise OptimizationRunnerError(
+            f"optimization candidate evidence drift: {label} contains parameter rows "
+            f"not present in the pre-computed sampled set; execution evaluated "
+            f"combinations that combine_params did not enumerate. Examples: {examples}. "
+            "This indicates a divergence between the pre-execution sampling path "
+            "(used for preflight + evidence) and the actual execution sampling. "
+            "Fix the runner's sampled_index derivation."
+        )
 
 
 def _build_sampled_index(
@@ -291,6 +356,8 @@ def _role_for_set_label(label: Any) -> str:
 
 
 def serialize_optimization_run(run: OptimizationRun) -> dict[str, Any]:
+    sampled_rows_payload = _serialize_param_index(run.evaluated_index)
+    sampled_rows_payload["source"] = run.sampled_rows_source
     return {
         "schema_version": OPTIMIZATION_RUN_SCHEMA_VERSION,
         "ranking_metric": run.ranking_metric,
@@ -308,7 +375,7 @@ def serialize_optimization_run(run: OptimizationRun) -> dict[str, Any]:
             if run.held_out_grid is not None
             else None
         ),
-        "sampled_rows": _serialize_param_index(run.sampled_index),
+        "sampled_rows": sampled_rows_payload,
     }
 
 
