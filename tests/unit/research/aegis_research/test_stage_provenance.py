@@ -1,28 +1,10 @@
 from __future__ import annotations
 
-import inspect
-
 import pandas as pd
 
-from research.aegis_research import experiments
-from research.aegis_research.config import (
-    DataConfig,
-    SplitConfig,
-)
+from research.aegis_research.config import DataConfig
 from research.aegis_research.data import close_from_ohlcv, load_market_data_result
 from research.aegis_research.data_schema import ohlc_availability
-from research.aegis_research.labels import LabelConfig, build_label_result
-from research.aegis_research.splits import build_validation_splits_result
-from tests.support.research.aegis_research.indicator_result_fixtures import (
-    native_indicator_result,
-)
-
-
-def test_experiments_no_longer_imports_private_label_primary_close() -> None:
-    source = inspect.getsource(experiments)
-
-    assert "from research.aegis_research.labels import _primary_close" not in source
-    assert "_primary_close(" not in source
 
 
 def test_data_schema_reports_ohlc_availability() -> None:
@@ -48,43 +30,3 @@ def test_data_stage_result_exposes_metadata_without_recorder_ids() -> None:
     assert result.metadata["source"] == "synthetic"
     assert result.metadata["shape"]["rows"] == 10
     assert "artifact_id" not in result.metadata
-
-
-def test_indicator_and_label_results_expose_portable_metadata() -> None:
-    data = load_market_data_result(DataConfig(rows=120, symbols=["SYN"])).native_data
-    close = close_from_ohlcv(data)
-
-    indicators = native_indicator_result(close)
-    labels = build_label_result(close, LabelConfig())
-
-    assert indicators.frame.shape[0] == 120
-    assert indicators.metadata["specs"][0]["id"] == "returns"
-    assert indicators.metadata["specs"][0]["parameter_combinations"] == [
-        {"window": 1},
-        {"window": 5},
-        {"window": 20},
-    ]
-    assert indicators.native_objects["ma"] is not None
-    assert indicators.lineage[0]["symbol"] == "SYN"
-    assert list(labels.labels.columns) == ["SYN"]
-    assert labels.metadata["kind"] == "fixlb"
-    assert labels.native_object is not None
-
-
-def test_split_result_exposes_purged_metadata() -> None:
-    index = pd.date_range("2020-01-01", periods=120, tz="UTC")
-    close = pd.DataFrame({"SYN": range(1, 121)}, index=index, dtype=float)
-    label_result = build_label_result(close, LabelConfig())
-    eligible_index = label_result.labels.dropna().index
-
-    result = build_validation_splits_result(
-        eligible_index,
-        SplitConfig(kind="purged_kfold", n_folds=3, max_splits=3),
-        target_metadata={"split_safety": label_result.split_safety},
-        evaluation_evidence=label_result.evaluation_evidence,
-    )
-
-    assert result.metadata["kind"] == "purged_kfold"
-    assert result.metadata["n_splits"] == 3
-    assert result.metadata["purging_applied"] is True
-    assert result.native_object is not None

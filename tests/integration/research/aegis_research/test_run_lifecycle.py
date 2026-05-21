@@ -5,15 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from research.aegis_research.experiments import run_experiment
 from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus, hash_file
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
-from tests.support.research.aegis_research.experiment_config_fixtures import (
-    SYNTHETIC_ML_SCAFFOLD_CONFIG,
-    load_train_fixture_config,
-)
-from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
+from research.aegis_research.strategy_runs import run_strategy_sweep
+from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
 
 
 def test_run_recorder_starts_and_completes_manifest(tmp_path: Path) -> None:
@@ -128,50 +124,54 @@ def test_run_store_requires_lineage_for_lineage_modes(
         )
 
 
-def test_run_experiment_initializes_manifest_before_data_loading(
+def test_strategy_run_initializes_manifest_before_data_loading(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    registry = make_model_registry()
-    resolved = load_train_fixture_config(
-        SYNTHETIC_ML_SCAFFOLD_CONFIG,
-        model_registry=registry,
-        output_dir=str(tmp_path),
-    )
+    monkeypatch.chdir(tmp_path)
+    resolved = build_resolved_run_config(tmp_path)
 
     def fail_after_manifest(_config, **_kwargs):
-        manifest_path = tmp_path / "fixed-run" / "manifest.json"
+        manifest_path = tmp_path / "runs" / "fixed-run" / "manifest.json"
         assert manifest_path.exists()
         raise RuntimeError("data stage failed")
 
-    monkeypatch.setattr(
-        "research.aegis_research.experiments.load_market_data_result", fail_after_manifest
-    )
+    monkeypatch.setattr("research.aegis_research.strategy_runs.load_market_data_result", fail_after_manifest)
 
     with pytest.raises(RuntimeError, match="data stage failed"):
-        run_experiment(resolved, run_id="fixed-run")
+        run_strategy_sweep(
+            resolved,
+            component_registry=resolved.component_registry,
+            run_id="fixed-run",
+        )
 
-    manifest = json.loads((tmp_path / "fixed-run" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "fixed-run" / "manifest.json").read_text())
     assert manifest["run"]["status"] == RunStatus.FAILED
     assert manifest["stages"][0]["id"] == "run"
     assert manifest["stages"][0]["status"] == "failed"
 
 
-def test_run_experiment_marks_failed_when_run_started_callback_fails(tmp_path: Path) -> None:
-    registry = make_model_registry()
-    resolved = load_train_fixture_config(
-        SYNTHETIC_ML_SCAFFOLD_CONFIG,
-        model_registry=registry,
-        output_dir=str(tmp_path),
-    )
+def test_strategy_run_marks_failed_when_run_started_callback_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    resolved = build_resolved_run_config(tmp_path)
 
     def fail_callback(_refs):
         raise RuntimeError("callback failed")
 
     with pytest.raises(RuntimeError, match="callback failed"):
-        run_experiment(resolved, run_id="callback-failed-run", on_run_started=fail_callback)
+        run_strategy_sweep(
+            resolved,
+            component_registry=resolved.component_registry,
+            run_id="callback-failed-run",
+            on_run_started=fail_callback,
+        )
 
-    manifest = json.loads((tmp_path / "callback-failed-run" / "manifest.json").read_text())
+    manifest = json.loads(
+        (tmp_path / "runs" / "callback-failed-run" / "manifest.json").read_text()
+    )
     assert manifest["run"]["status"] == RunStatus.FAILED
     assert manifest["stages"][0]["id"] == "run"
     assert manifest["stages"][0]["status"] == "failed"
@@ -181,11 +181,10 @@ def test_failed_run_diagnostic_redacts_config_secret_values(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("REMOTE_TOKEN", "super-secret-token")
-    resolved = load_train_fixture_config(
-        SYNTHETIC_ML_SCAFFOLD_CONFIG,
-        model_registry=make_model_registry(),
-        output_dir=str(tmp_path),
+    resolved = build_resolved_run_config(
+        tmp_path,
         data={
             "source": "yf",
             "symbols": ["SYN"],
@@ -199,14 +198,16 @@ def test_failed_run_diagnostic_redacts_config_secret_values(
     def fail_with_secret(_config, **_kwargs):
         raise RuntimeError("provider returned super-secret-token")
 
-    monkeypatch.setattr(
-        "research.aegis_research.experiments.load_market_data_result", fail_with_secret
-    )
+    monkeypatch.setattr("research.aegis_research.strategy_runs.load_market_data_result", fail_with_secret)
 
     with pytest.raises(RuntimeError, match="provider returned"):
-        run_experiment(resolved, run_id="secret-failed-run")
+        run_strategy_sweep(
+            resolved,
+            component_registry=resolved.component_registry,
+            run_id="secret-failed-run",
+        )
 
-    manifest = json.loads((tmp_path / "secret-failed-run" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "secret-failed-run" / "manifest.json").read_text())
     diagnostic = manifest["stages"][0]["diagnostic"]
     assert diagnostic["message"] == "provider returned <redacted>"
     assert "super-secret-token" not in json.dumps(manifest)

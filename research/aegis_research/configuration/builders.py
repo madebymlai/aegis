@@ -6,26 +6,20 @@ from research.aegis_research.configuration.schema import (
     CandidateGridConfig,
     DataConfig,
     DataQualityConfig,
-    LabelerConfig,
     PortfolioConfig,
     RankingConfig,
     ReportConfig,
+    RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
     RunSplitConfig,
-    SignalConfig,
-    SplitConfig,
-    StrategyRunLaneConfig,
-    TrainLaneConfig,
-    TrainModelConfig,
 )
 
 
-def _build_strategy_run_lane_config(raw: dict[str, Any]) -> StrategyRunLaneConfig:
-    return StrategyRunLaneConfig(
+def _build_run_config(raw: dict[str, Any]) -> RunConfig:
+    return RunConfig(
         name=raw["name"],
         schema_version=raw["schema_version"],
-        lane="run",
         data=_build_data_config(raw.get("data", {})),
         portfolio=PortfolioConfig(**raw.get("portfolio", {})),
         report=ReportConfig(**raw.get("report", {})),
@@ -36,37 +30,6 @@ def _build_strategy_run_lane_config(raw: dict[str, Any]) -> StrategyRunLaneConfi
         candidate_grid=CandidateGridConfig(**raw.get("candidate_grid", {})),
         output_dir=raw.get("output_dir", "runs"),
     )
-
-
-def _build_train_lane_config(raw: dict[str, Any]) -> TrainLaneConfig:
-    train = raw["train"]
-    return TrainLaneConfig(
-        name=raw["name"],
-        schema_version=raw["schema_version"],
-        lane="train",
-        data=_build_data_config(raw.get("data", {})),
-        indicators=_build_run_indicator_sources(raw["indicators"]),
-        split=SplitConfig(**train.get("split", {})),
-        signals=SignalConfig(**train.get("signals", {})),
-        portfolio=PortfolioConfig(**raw.get("portfolio", {})),
-        report=ReportConfig(**raw.get("report", {})),
-        labeler=_build_labeler(raw["labeler"]),
-        model=_build_train_model(train["model"]),
-        output_dir=raw.get("output_dir", "runs"),
-    )
-
-
-def _build_train_model(raw: dict[str, Any]) -> TrainModelConfig:
-    return TrainModelConfig(
-        source=raw["source"],
-        id=raw["id"],
-        min_train_samples=raw.get("min_train_samples", 100),
-        params=dict(raw.get("params", {})),
-    )
-
-
-def _build_labeler(raw: dict[str, Any]) -> LabelerConfig:
-    return LabelerConfig(id=raw["id"])
 
 
 def _build_run_source_ref(raw: dict[str, Any]) -> RunSourceRefConfig:

@@ -7,11 +7,10 @@ def test_active_cli_docs_use_aerd_contract() -> None:
     docs = Path("docs/vectorbt-scaffold.md").read_text()
 
     assert "aerd run <config>" in docs
-    assert "aerd run --train <config>" in docs
+    assert "aerd run --train" not in docs
     assert "aerd play" not in docs
     assert "aerd exp" not in docs
-    assert "Both run modes require explicit config paths" in docs
-    assert "rejected` or `needs_more_evidence` report still exits `0`" in docs
+    assert "Both run configs require explicit config paths" in docs
     assert "| `execution_failure` | 10 |" in docs
     assert "aegis-research run" not in docs
     assert "python -m research.aegis_research.cli" not in docs
@@ -34,15 +33,9 @@ def test_active_docs_use_vbt_data_arrays_not_feature_map() -> None:
     assert "data.feature_map" not in docs
 
 
-def test_model_plugin_docs_keep_yaml_inert_and_aerd_registry_explicit() -> None:
-    docs = Path("docs/model-plugins.md").read_text()
-
-    assert "Run YAML selects a stable train-mode model ref; it never imports Python code" in docs
-    assert "aerd run --train" in docs
-    assert (
-        "Default `aerd run` is reserved for playbook-backed sweeps or fixed component-backed strategy/research evidence"
-        in docs
-    )
+def test_model_plugin_docs_are_removed_from_active_surface() -> None:
+    assert not Path("docs/model-plugins.md").exists()
+    assert not Path("docs/examples/model_plugins").exists()
 
 
 def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() -> None:
@@ -64,7 +57,7 @@ def test_component_and_playbook_docs_keep_yaml_inert_and_source_refs_explicit() 
     assert "exactly one component indicator ID" in docs
 
 
-def test_active_docs_describe_component_only_labeler_contract() -> None:
+def test_active_docs_remove_labeler_contract() -> None:
     docs = "\n".join(
         [
             Path("README.md").read_text(),
@@ -74,20 +67,22 @@ def test_active_docs_describe_component_only_labeler_contract() -> None:
         ]
     )
 
-    assert "labeler:" in docs
-    assert "labeler: {id: ...}" in docs
-    assert "`labeler` and top-level `strategy` are mutually exclusive" in docs
-    assert "Labels are not a playbook family" in docs
+    assert "labeler:" not in docs
+    assert "labeler: {id: ...}" not in docs
+    assert "top-level `labeler`" not in docs
     assert "train.label" not in docs
     assert "research/playbooks/{labels,indicators,strategies}/" not in docs
 
 
-def test_docs_examples_use_top_level_labeler_contract() -> None:
-    examples = "\n".join(path.read_text() for path in Path("docs/examples").rglob("*.ipynb"))
+def test_docs_examples_remove_train_notebooks() -> None:
+    examples = "\n".join(
+        path.read_text() for path in Path("docs/examples").rglob("*") if path.is_file()
+    )
 
-    assert "'labeler': {'id': 'example.fixlb'}" in examples
+    assert "labeler" not in examples
     assert "train.label" not in examples
-    assert "'label': {'source': 'component'" not in examples
+    assert "model_plugin" not in examples
+    assert not Path("docs/examples/scaffold_experiment_walkthrough.ipynb").exists()
 
 
 def test_docs_describe_composed_strategy_candidates_and_manual_promotion() -> None:
@@ -112,7 +107,6 @@ def test_docs_describe_composed_strategy_candidates_and_manual_promotion() -> No
 
 def test_component_and_playbook_placeholders_point_to_examples() -> None:
     paths = [
-        "research/components/labels/README.md",
         "research/components/indicators/README.md",
         "research/components/strategies/README.md",
         "research/playbooks/indicators/README.md",

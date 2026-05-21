@@ -17,18 +17,12 @@ from research.aegis_research.configuration.schema import (
     DATA_QUALITY_DEGRADATIONS,
     DENIED_PASSTHROUGH_KEYS,
     EXPERIMENT_NAME_RE,
-    LANE_EXECUTABLE_DENIED_KEYS,
-    LANES,
     MISSING_POLICIES,
-    MODEL_DENIED_KEYS,
-    MODEL_SOURCE_KINDS,
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
     RANKING_DIRECTIONS,
-    SIGNAL_EXECUTION_TIMINGS,
-    SIGNAL_POLICIES,
+    RUN_EXECUTABLE_DENIED_KEYS,
     SOURCE_KINDS,
-    SPLIT_KINDS,
     CandidateGridConfig,
     ConfigValidationIssue,
     DataConfig,
@@ -36,43 +30,26 @@ from research.aegis_research.configuration.schema import (
     PortfolioConfig,
     ReportConfig,
     RunSplitConfig,
-    SignalConfig,
-    SplitConfig,
     has_data_array_token_shape,
 )
 from research.aegis_research.configuration.secrets import _validate_no_inline_secrets
 from research.aegis_research.market_data.sources import LOCAL_DATA_SOURCES, remote_data_sources
 from research.aegis_research.metrics import FrozenMetricRegistry
-from research.aegis_research.model_registry import FrozenModelRegistry
 from research.aegis_research.run_splits import validate_run_split_config
 
 
-def _validate_raw_lane_config(
+def _validate_raw_run_config(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
-    model_registry: FrozenModelRegistry | None,
     metric_registry: FrozenMetricRegistry,
-    expected_lane: str | None,
 ) -> None:
-    lane = _effective_run_mode(raw, expected_lane)
-    _validate_top_level_lane_selection(raw, issues)
-    _validate_known_keys("$", raw, _lane_allowed_top_level_keys(lane), issues)
+    _validate_known_keys("$", raw, _run_allowed_top_level_keys(), issues)
     _require_int("schema_version", raw, issues, positive=True)
     if raw.get("schema_version") != CONFIG_SCHEMA_VERSION:
         issues.append(ConfigValidationIssue("schema_version", f"must be {CONFIG_SCHEMA_VERSION}"))
-    authored_lane = raw.get("lane")
-    if authored_lane is not None:
-        if not isinstance(authored_lane, str) or authored_lane not in LANES:
-            issues.append(ConfigValidationIssue("lane", f"must be one of {sorted(LANES)}"))
-        elif expected_lane is not None and authored_lane != expected_lane:
-            issues.append(
-                ConfigValidationIssue(
-                    "lane",
-                    "does not select run mode; use or omit --train instead",
-                )
-            )
+    _validate_removed_training_fields(raw, issues)
     if _require_str("name", raw, issues):
         _validate_experiment_name(raw["name"], issues)
     _validate_output_dir(raw, issues)
@@ -88,64 +65,36 @@ def _validate_raw_lane_config(
     _validate_data(data, issues, validate_paths=True)
     _validate_portfolio(portfolio, issues)
     _validate_report(report, issues)
-
-    if lane == "run":
-        _validate_strategy_run_lane(
-            raw,
-            issues,
-            component_registry=component_registry,
-            metric_registry=metric_registry,
-        )
-    elif lane == "train":
-        _validate_train_lane(
-            raw,
-            issues,
-            component_registry=component_registry,
-            model_registry=model_registry,
-            metric_registry=metric_registry,
-        )
+    _validate_run_config(
+        raw,
+        issues,
+        component_registry=component_registry,
+        metric_registry=metric_registry,
+    )
 
 
-def _effective_run_mode(raw: dict[str, Any], expected_lane: str | None) -> str:
-    if expected_lane is not None:
-        return expected_lane
-    authored_lane = raw.get("lane")
-    if isinstance(authored_lane, str) and authored_lane in LANES:
-        return authored_lane
-    if "labeler" in raw and not {"strategy", "ranking"}.intersection(raw):
-        return "train"
-    if "train" in raw and not {"strategy", "ranking"}.intersection(raw):
-        return "train"
-    return "run"
+def _run_allowed_top_level_keys() -> set[str]:
+    return {
+        "schema_version",
+        "name",
+        "data",
+        "portfolio",
+        "report",
+        "output_dir",
+        "candidate_grid",
+        "indicators",
+        "ranking",
+        "split",
+        "strategy",
+    }
 
-
-def _lane_allowed_top_level_keys(lane: Any) -> set[str]:
-    common = {"schema_version", "lane", "name", "data", "portfolio", "report", "output_dir"}
-    if lane == "train":
-        return common | {"indicators", "labeler", "train"}
-    return common | {"candidate_grid", "indicators", "ranking", "split", "strategy"}
-
-
-def _validate_top_level_lane_selection(
-    raw: dict[str, Any], issues: list[ConfigValidationIssue]
-) -> None:
-    if "strategy" in raw and "labeler" in raw:
-        issues.append(
-            ConfigValidationIssue(
-                "labeler",
-                "is mutually exclusive with top-level strategy selection",
-            )
-        )
-
-
-def _validate_strategy_run_lane(
+def _validate_run_config(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
     metric_registry: FrozenMetricRegistry,
 ) -> None:
-    _validate_training_fields_absent(raw, issues)
     _validate_run_source_ref(
         "strategy",
         raw.get("strategy"),
@@ -162,7 +111,7 @@ def _validate_strategy_run_lane(
         allowed_sources={"component", "playbook"},
     )
     _validate_run_source_combination(raw, issues)
-    _validate_ranking("ranking", raw.get("ranking"), issues, lane="run", registry=metric_registry)
+    _validate_ranking("ranking", raw.get("ranking"), issues, registry=metric_registry)
     if raw.get("split") is not None:
         split = _section(raw, "split", set(RunSplitConfig.__dataclass_fields__), issues)
         _validate_run_split(split, issues)
@@ -196,57 +145,6 @@ def _validate_run_source_combination(
             )
 
 
-def _validate_train_lane(
-    raw: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-    *,
-    component_registry: FrozenComponentRegistry,
-    model_registry: FrozenModelRegistry | None,
-    metric_registry: FrozenMetricRegistry,
-) -> None:
-    if "train" not in raw:
-        issues.append(
-            ConfigValidationIssue(
-                "train",
-                "is required for train mode; pass strategy sweeps to aerd run without --train",
-            )
-        )
-        return
-    train = _section(
-        raw,
-        "train",
-        {"label", "model", "split", "signals"},
-        issues,
-    )
-    if "label" in train:
-        issues.append(
-            ConfigValidationIssue(
-                "train.label",
-                "was removed; move the stable component id to top-level labeler: {id: ...}",
-            )
-        )
-    _validate_labeler_ref(
-        "labeler",
-        raw.get("labeler"),
-        issues,
-        component_registry=component_registry,
-    )
-    _validate_indicator_sources(
-        "indicators",
-        raw.get("indicators"),
-        issues,
-        component_registry=component_registry,
-        allowed_sources={"component"},
-    )
-    split = _section(train, "split", set(SplitConfig.__dataclass_fields__), issues)
-    signals = _section(train, "signals", set(SignalConfig.__dataclass_fields__), issues)
-    _validate_split(split, issues)
-    _validate_signals(signals, issues)
-    _validate_train_model_ref(
-        "train.model", train.get("model"), issues, model_registry=model_registry
-    )
-
-
 def _validate_run_split(split: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
     _optional_int("split.max_splits", split, issues, positive=True)
     _optional_int("split.max_estimated_output_cells", split, issues, positive=True)
@@ -258,110 +156,20 @@ def _validate_run_split(split: dict[str, Any], issues: list[ConfigValidationIssu
     else:
         _validate_json_like("split.params", params, issues)
         _validate_no_inline_secrets("split.params", params, issues)
-        _validate_no_lane_executable_keys("split.params", params, issues)
+        _validate_no_run_executable_keys("split.params", params, issues)
     validate_run_split_config(split, issues)
 
 
-def _validate_train_model_ref(
-    path: str,
-    value: Any,
-    issues: list[ConfigValidationIssue],
-    *,
-    model_registry: FrozenModelRegistry | None,
-) -> None:
-    if not isinstance(value, dict):
-        issues.append(ConfigValidationIssue(path, "must be a mapping"))
-        return
-    _validate_known_keys(path, value, {"source", "id", "min_train_samples", "params"}, issues)
-    _validate_no_lane_executable_keys(path, value, issues)
-    source = value.get("source")
-    if not isinstance(source, str) or source not in MODEL_SOURCE_KINDS:
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.source",
-                f"must be one of {sorted(MODEL_SOURCE_KINDS)}",
-            )
-        )
-    model_id = value.get("id")
-    if not isinstance(model_id, str) or not model_id:
-        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty model id"))
-    elif not EXPERIMENT_NAME_RE.fullmatch(model_id):
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.id",
-                "must contain only letters, numbers, dots, underscores, and hyphens",
-            )
-        )
-    elif model_registry is not None and model_id not in model_registry:
-        issues.append(ConfigValidationIssue(f"{path}.id", "unknown registered model plugin id"))
-    _optional_int(f"{path}.min_train_samples", value, issues, positive=True)
-    params = value.get("params", {})
-    if not isinstance(params, dict):
-        issues.append(ConfigValidationIssue(f"{path}.params", "must be a mapping"))
-    else:
-        _validate_json_like(f"{path}.params", params, issues)
-        _validate_no_inline_secrets(f"{path}.params", params, issues)
-        _validate_no_denied_model_keys(f"{path}.params", params, issues)
-        _validate_no_lane_executable_keys(f"{path}.params", params, issues)
-        if model_registry is not None and isinstance(model_id, str) and model_id in model_registry:
-            definition = model_registry.get(model_id)
-            if definition.validate_params is not None:
-                for param_path, message in definition.validate_params(params).items():
-                    child_path = f"{path}.params.{param_path}" if param_path else f"{path}.params"
-                    issues.append(ConfigValidationIssue(child_path, message))
-
-
-def _validate_labeler_ref(
-    path: str,
-    value: Any,
-    issues: list[ConfigValidationIssue],
-    *,
-    component_registry: FrozenComponentRegistry,
-) -> None:
-    if value is None:
-        issues.append(ConfigValidationIssue(path, "is required for train mode"))
-        return
-    if not isinstance(value, dict):
-        issues.append(ConfigValidationIssue(path, "must be a mapping"))
-        return
-    _validate_known_keys(path, value, {"id"}, issues)
-    _validate_no_lane_executable_keys(path, value, issues)
-    labeler_id = value.get("id")
-    if not isinstance(labeler_id, str):
-        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
-        return
-    if labeler_id == "":
-        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
-        return
-    if labeler_id == "all":
-        issues.append(ConfigValidationIssue(f"{path}.id", "must select one labeler id"))
-        return
-    if not EXPERIMENT_NAME_RE.fullmatch(labeler_id):
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.id",
-                "must contain only letters, numbers, dots, underscores, and hyphens",
-            )
-        )
-        return
-    try:
-        component_registry.get(ComponentSelection("labels", labeler_id))
-    except ComponentRegistryError:
-        issues.append(ConfigValidationIssue(f"{path}.id", "unknown label component id"))
-
-
-def _validate_training_fields_absent(
+def _validate_removed_training_fields(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
 ) -> None:
-    for key in ("train", "model", "labels", "label", "labeler", "signals"):
+    for key in ("lane", "train", "model", "labels", "label", "labeler", "signals"):
         if key in raw:
-            if key == "labeler" and "strategy" in raw:
-                continue
             issues.append(
                 ConfigValidationIssue(
                     key,
-                    "model training fields are not valid at top level; use aerd run --train with a train section",
+                    "training and lane fields are not supported by the single run config contract",
                 )
             )
 
@@ -378,7 +186,7 @@ def _validate_indicator_sources(
         issues.append(
             ConfigValidationIssue(
                 path,
-                "must use source refs; legacy indicators.specs is not accepted in lane configs",
+                "must use source refs; legacy indicators.specs is not accepted in run configs",
             )
         )
         return
@@ -393,7 +201,7 @@ def _validate_indicator_sources(
             issues.append(ConfigValidationIssue(item_path, "must be a mapping"))
             continue
         _validate_known_keys(item_path, item, {"source", "ids"}, issues)
-        _validate_no_lane_executable_keys(item_path, item, issues)
+        _validate_no_run_executable_keys(item_path, item, issues)
         source = item.get("source")
         if not isinstance(source, str) or source not in allowed_sources:
             issues.append(
@@ -505,7 +313,7 @@ def _validate_source_ref_value(
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
     _validate_known_keys(path, value, {"source", "id"}, issues)
-    _validate_no_lane_executable_keys(path, value, issues)
+    _validate_no_run_executable_keys(path, value, issues)
     source = value.get("source")
     allowed_source_values = allowed_sources or SOURCE_KINDS
     if not isinstance(source, str) or source not in allowed_source_values:
@@ -549,7 +357,6 @@ def _validate_ranking(
     value: Any,
     issues: list[ConfigValidationIssue],
     *,
-    lane: str,
     registry: FrozenMetricRegistry,
 ) -> None:
     if not isinstance(value, dict):
@@ -564,7 +371,6 @@ def _validate_ranking(
             f"{path}.metric",
             metric,
             issues,
-            lane=lane,
             registry=registry,
             require_primary=True,
         )
@@ -587,7 +393,6 @@ def _validate_ranking(
         value.get("secondary_metrics", []),
         issues,
         primary_metric=metric if isinstance(metric, str) else None,
-        lane=lane,
         registry=registry,
     )
 
@@ -598,7 +403,6 @@ def _validate_secondary_metrics(
     issues: list[ConfigValidationIssue],
     *,
     primary_metric: str | None,
-    lane: str,
     registry: FrozenMetricRegistry,
 ) -> None:
     if not isinstance(value, list):
@@ -621,7 +425,6 @@ def _validate_secondary_metrics(
             item_path,
             metric_id,
             issues,
-            lane=lane,
             registry=registry,
             require_primary=False,
         )
@@ -632,7 +435,6 @@ def _validate_metric_selection(
     metric_id: str,
     issues: list[ConfigValidationIssue],
     *,
-    lane: str,
     registry: FrozenMetricRegistry,
     require_primary: bool,
 ) -> None:
@@ -640,16 +442,13 @@ def _validate_metric_selection(
         issues.append(ConfigValidationIssue(path, f"must be one of {sorted(registry.ids())}"))
         return
     definition = registry.get(metric_id)
-    if lane not in definition.supported_lanes:
-        issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not supported for {lane!r} lane"))
-        return
     if require_primary and not definition.primary_eligible:
         issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not primary-eligible"))
     if not require_primary and not definition.secondary_eligible:
         issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not secondary-eligible"))
 
 
-def _validate_no_lane_executable_keys(
+def _validate_no_run_executable_keys(
     path: str,
     value: Any,
     issues: list[ConfigValidationIssue],
@@ -657,18 +456,18 @@ def _validate_no_lane_executable_keys(
     if isinstance(value, dict):
         for key, item in value.items():
             child_path = f"{path}.{key}"
-            if str(key).lower() in LANE_EXECUTABLE_DENIED_KEYS:
+            if str(key).lower() in RUN_EXECUTABLE_DENIED_KEYS:
                 issues.append(
                     ConfigValidationIssue(
                         child_path,
                         "is not allowed in run config; select trusted component or playbook IDs",
                     )
                 )
-            _validate_no_lane_executable_keys(child_path, item, issues)
+            _validate_no_run_executable_keys(child_path, item, issues)
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
-            _validate_no_lane_executable_keys(f"{path}[{index}]", item, issues)
+            _validate_no_run_executable_keys(f"{path}[{index}]", item, issues)
 
 
 def _validate_output_dir(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -861,93 +660,6 @@ def _quality_degradations(data: dict[str, Any]) -> set[str]:
     return {str(item) for item in degradations}
 
 
-def _validate_split(split: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    kind = split.get("kind", SplitConfig.kind)
-    if not _optional_enum("split.kind", split, SPLIT_KINDS, issues):
-        return
-    kind = str(kind)
-    _validate_purged_kfold_split(split, kind, issues)
-
-
-def _validate_purged_kfold_split(
-    split: dict[str, Any],
-    kind: str,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    _optional_int("split.n_folds", split, issues, minimum=2)
-    _optional_int("split.n_test_folds", split, issues, positive=True)
-    _optional_timedelta("split.purge_td", split, issues, minimum=pd.Timedelta(0))
-    _optional_timedelta("split.embargo_td", split, issues, minimum=pd.Timedelta(0))
-    _optional_int("split.max_splits", split, issues, positive=True)
-    _optional_int("split.max_estimated_output_cells", split, issues, positive=True)
-    _optional_int("split.max_public_artifact_bytes", split, issues, positive=True)
-
-    if kind != "purged_kfold":
-        return
-
-    n_folds_value = split.get("n_folds", SplitConfig.n_folds)
-    n_test_folds_value = split.get("n_test_folds", SplitConfig.n_test_folds)
-    max_splits_value = split.get("max_splits", SplitConfig.max_splits)
-    if not (_is_int(n_folds_value) and _is_int(n_test_folds_value) and _is_int(max_splits_value)):
-        return
-
-    n_folds = int(n_folds_value)
-    n_test_folds = int(n_test_folds_value)
-    if n_test_folds != 1:
-        issues.append(
-            ConfigValidationIssue(
-                "split.n_test_folds",
-                "must be 1 until overlapping CPCV aggregation is supported",
-            )
-        )
-        return
-    if n_test_folds >= n_folds:
-        issues.append(
-            ConfigValidationIssue(
-                "split.n_test_folds",
-                "must be less than split.n_folds for purged_kfold",
-            )
-        )
-        return
-    max_splits = int(max_splits_value)
-    split_count = math.comb(n_folds, n_test_folds)
-    if split_count > max_splits:
-        issues.append(
-            ConfigValidationIssue(
-                "split.max_splits",
-                f"must be at least {split_count} for purged_kfold",
-            )
-        )
-
-
-def _validate_signals(signals: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    _optional_enum("signals.policy", signals, SIGNAL_POLICIES, issues)
-    _optional_enum("signals.execution_timing", signals, SIGNAL_EXECUTION_TIMINGS, issues)
-    long_entry_threshold = signals.get("long_entry_threshold", 0.55)
-    long_exit_threshold = signals.get("long_exit_threshold", 0.50)
-    entry_ok = _optional_number(
-        "signals.long_entry_threshold",
-        signals,
-        issues,
-        minimum=0,
-        maximum=1,
-    )
-    exit_ok = _optional_number(
-        "signals.long_exit_threshold",
-        signals,
-        issues,
-        minimum=0,
-        maximum=1,
-    )
-    if entry_ok and exit_ok and float(long_exit_threshold) >= float(long_entry_threshold):
-        issues.append(
-            ConfigValidationIssue(
-                "signals.long_exit_threshold",
-                "must be less than signals.long_entry_threshold",
-            )
-        )
-
-
 def _validate_candidate_grid(
     candidate_grid: dict[str, Any],
     issues: list[ConfigValidationIssue],
@@ -997,7 +709,7 @@ def _validate_portfolio(portfolio: dict[str, Any], issues: list[ConfigValidation
             issues.append(
                 ConfigValidationIssue(
                     "portfolio.direction",
-                    "v1 positive_class_probability signal contract is long-only; use longonly",
+                    "v1 strategy signal contract is long-only; use longonly",
                 )
             )
         else:
@@ -1093,20 +805,6 @@ def _validate_no_denied_passthrough_keys(
         value,
         DENIED_PASSTHROUGH_KEYS,
         "is not allowed in passthrough config",
-        issues,
-    )
-
-
-def _validate_no_denied_model_keys(
-    path: str,
-    value: Any,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    _validate_no_denied_keys(
-        path,
-        value,
-        MODEL_DENIED_KEYS,
-        "is not allowed in model config; register trusted plugin code before validation",
         issues,
     )
 
@@ -1327,34 +1025,6 @@ def _optional_number(
         return False
     if maximum is not None and number > maximum:
         issues.append(ConfigValidationIssue(path, f"must be at most {maximum}"))
-        return False
-    return True
-
-
-def _optional_timedelta(
-    path: str,
-    mapping: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-    *,
-    minimum: pd.Timedelta | None = None,
-) -> bool:
-    key = path.rsplit(".", 1)[-1]
-    if key not in mapping:
-        return True
-    value = mapping[key]
-    if isinstance(value, bool):
-        issues.append(ConfigValidationIssue(path, "must be a timedelta-compatible value"))
-        return False
-    timedelta = _parse_timedelta(
-        path,
-        value,
-        issues,
-        message="must be a timedelta-compatible value",
-    )
-    if timedelta is None:
-        return False
-    if minimum is not None and timedelta < minimum:
-        issues.append(ConfigValidationIssue(path, f"must be at least {minimum}"))
         return False
     return True
 

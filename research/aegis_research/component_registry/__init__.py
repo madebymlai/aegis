@@ -7,7 +7,6 @@ from research.aegis_research.component_registry.contracts import (
     ComponentSelection,
     ComponentSourceIdentity,
     IndicatorManifest,
-    LabelManifest,
     StrategyManifest,
 )
 from research.aegis_research.component_registry.registry import (
@@ -27,7 +26,6 @@ __all__ = [
     "ComponentSourceIdentity",
     "FrozenComponentRegistry",
     "IndicatorManifest",
-    "LabelManifest",
     "StrategyManifest",
     "discover_component_registry",
 ]

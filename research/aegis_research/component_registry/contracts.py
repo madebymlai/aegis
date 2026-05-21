@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-ComponentFamily = Literal["labels", "indicators", "strategies"]
-COMPONENT_FAMILIES: tuple[ComponentFamily, ...] = ("labels", "indicators", "strategies")
+ComponentFamily = Literal["indicators", "strategies"]
+COMPONENT_FAMILIES: tuple[ComponentFamily, ...] = ("indicators", "strategies")
 
 
 class ComponentRegistryError(ValueError):
@@ -43,21 +43,10 @@ class ComponentManifest:
 
 
 @dataclass(frozen=True)
-class LabelManifest(ComponentManifest):
-    input_names: tuple[str, ...]
-    target_role: str
-    target_kind: str
-    output_names: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class IndicatorManifest(ComponentManifest):
     input_names: tuple[str, ...]
     param_names: tuple[str, ...]
     output_names: tuple[str, ...]
-    default_outputs: tuple[str, ...]
-    default_model_features: tuple[Mapping[str, str], ...]
-    supported_transforms: tuple[str, ...]
     bar_aligned: bool = True
 
 
@@ -70,7 +59,7 @@ class StrategyManifest(ComponentManifest):
 
 @dataclass(frozen=True)
 class ComponentDefinition:
-    manifest: LabelManifest | IndicatorManifest | StrategyManifest
+    manifest: IndicatorManifest | StrategyManifest
     callable_name: str
     file_path: Path
     identity: ComponentSourceIdentity

@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from research.aegis_research.component_registry import (
-    COMPONENT_FAMILIES,
-    discover_component_registry,
-)
+from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.playbook_registry import (
     PLAYBOOK_FAMILIES,
     PlaybookRegistryError,
@@ -30,9 +27,8 @@ def test_playbook_registry_discovers_stable_ids_and_loads_selected_playbook(tmp_
     assert result["candidate_axis"] == [{"candidate_id": "ma_explore-5", "params": {"window": 5}}]
 
 
-def test_active_playbook_families_exclude_labels_while_components_keep_labels() -> None:
+def test_active_playbook_families_are_run_only() -> None:
     assert PLAYBOOK_FAMILIES == ("indicators", "strategies")
-    assert "labels" in COMPONENT_FAMILIES
 
 
 def test_playbook_owns_static_params(tmp_path) -> None:
@@ -90,7 +86,7 @@ def test_playbook_allows_literal_candidate_id_for_named_logic_without_params(
     assert registry.ids(family) == (f"bad_{family}",)
 
 
-def test_playbook_registry_rejects_ids_that_lane_configs_cannot_reference(tmp_path) -> None:
+def test_playbook_registry_rejects_ids_that_run_configs_cannot_reference(tmp_path) -> None:
     root = tmp_path / "research" / "playbooks"
     _write_playbook(root / "indicators" / "bad.py", "indicators", "bad/id")
 

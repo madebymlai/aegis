@@ -34,7 +34,7 @@ def test_run_cli_executes_repo_controlled_playbooks_by_id(
     payload = json.loads(output.out)
     artifact = json.loads((tmp_path / "runs" / "playbook-run" / "strategy_run.json").read_text())
     assert payload["status"] == "success"
-    assert payload["lane"] == "run"
+    assert "lane" not in payload
     assert artifact["strategy"]["source"] == "playbook"
     assert artifact["strategy"]["id"] == "ma_cross"
     assert artifact["strategy"]["consumes_runner_data"] is True

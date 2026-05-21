@@ -357,7 +357,7 @@ def _reject_unsupported_family_files(root: Path) -> None:
         files = _playbook_files(child, root)
         if files:
             raise PlaybookRegistryError(
-                f"{child}: unsupported playbook family; labels must be reviewed components"
+                f"{child}: unsupported playbook family; supported families are {PLAYBOOK_FAMILIES}"
             )
 
 

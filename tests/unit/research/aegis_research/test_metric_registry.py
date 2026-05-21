@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from research.aegis_research.metrics import (
-    LANE_RUN,
     SOURCE_TYPE_VBT_STATS,
     MetricDefinition,
     MetricRegistry,
@@ -139,7 +138,6 @@ def _definition(metric_id: str, *, title: str = "Total Return") -> MetricDefinit
         source_type=SOURCE_TYPE_VBT_STATS,
         unit="ratio",
         value_semantics="larger_is_better",
-        supported_lanes=(LANE_RUN,),
         primary_eligible=True,
         secondary_eligible=True,
         direction_hint="desc",

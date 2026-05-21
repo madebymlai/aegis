@@ -17,11 +17,6 @@ def test_component_discovery_is_deterministic_and_fingerprinted(tmp_path) -> Non
         "demo.second",
     )
     _write_component(
-        root / "labels" / "labeler.py",
-        "labels",
-        "demo.same",
-    )
-    _write_component(
         root / "indicators" / "a_first.py",
         "indicators",
         "demo.first",
@@ -37,7 +32,6 @@ def test_component_discovery_is_deterministic_and_fingerprinted(tmp_path) -> Non
 
     assert first.fingerprint == second.fingerprint
     assert first.ids("indicators") == ("demo.first", "demo.second")
-    assert first.ids("labels") == ("demo.same",)
     assert first.ids("strategies") == ("demo.same",)
     assert first.get(ComponentSelection("indicators", "demo.first")).identity.source_hash
     assert first.get(
@@ -156,9 +150,6 @@ def test_component_discovery_does_not_execute_top_level_code(tmp_path) -> None:
         "    'input_names': ['Close'],\n"
         "    'param_names': ['window'],\n"
         "    'output_names': ['value'],\n"
-        "    'default_outputs': ['value'],\n"
-        "    'default_model_features': [{'output': 'value', 'transform': 'identity'}],\n"
-        "    'supported_transforms': ['identity'],\n"
         "}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
@@ -206,15 +197,13 @@ def test_component_callable_loads_only_after_selection(tmp_path) -> None:
     assert definition.load_callable()() == "loadable"
 
 
-def test_component_manifest_exposes_input_names_for_all_families(tmp_path) -> None:
+def test_component_manifest_exposes_input_names_for_supported_families(tmp_path) -> None:
     root = tmp_path / "research" / "components"
-    _write_component(root / "labels" / "labeler.py", "labels", "demo.label")
     _write_component(root / "indicators" / "indicator.py", "indicators", "demo.indicator")
     _write_component(root / "strategies" / "strategy.py", "strategies", "demo.strategy")
 
     registry = discover_component_registry(root=root, repo_root=tmp_path)
 
-    assert registry.get(ComponentSelection("labels", "demo.label")).input_names == ("Close",)
     assert registry.get(ComponentSelection("indicators", "demo.indicator")).input_names == (
         "Close",
     )
@@ -277,24 +266,12 @@ def _write_component(path, family: str, component_id: str) -> None:
 
 def _manifest_for(family: str, component_id: str) -> dict[str, object]:
     base = {"family": family, "id": component_id, "version": "1.0.0"}
-    if family == "labels":
-        return {
-            **base,
-            "input_names": ["Close"],
-            "target_role": "supervised_target",
-            "target_kind": "binary_classification",
-            "output_names": ["labels"],
-            "split_safety": {"purging_required": True},
-        }
     if family == "indicators":
         return {
             **base,
             "input_names": ["Close"],
             "param_names": ["window"],
             "output_names": ["value"],
-            "default_outputs": ["value"],
-            "default_model_features": [{"output": "value", "transform": "identity"}],
-            "supported_transforms": ["identity"],
         }
     if family == "strategies":
         return {

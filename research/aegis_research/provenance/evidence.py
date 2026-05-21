@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from research.aegis_research.config import (
-    ResolvedLaneConfig,
+    ResolvedRunConfig,
     redact_config,
     redact_text,
     to_builtin,
@@ -29,9 +29,7 @@ PACKAGE_NAMES = (
     "vectorbtpro",
     "pandas",
     "numpy",
-    "scikit-learn",
     "numba",
-    "joblib",
     "pyyaml",
     "aegis-rd",
 )
@@ -50,7 +48,7 @@ VBT_SETTINGS_SECTIONS = (
 
 
 def capture_run_start_evidence(
-    config: ResolvedLaneConfig,
+    config: ResolvedRunConfig,
     *,
     repo_path: str | Path,
 ) -> dict[str, Any]:
@@ -63,13 +61,12 @@ def capture_run_start_evidence(
         "seed_policy": {
             "data_seed": config.config.data.seed,
             "run_seed": config.config.data.seed,
-            "model_random_state": 42,
             "vectorbt_set_seed": True,
         },
     }
 
 
-def capture_config_evidence(config: ResolvedLaneConfig) -> dict[str, Any]:
+def capture_config_evidence(config: ResolvedRunConfig) -> dict[str, Any]:
     evidence = {
         "schema_version": config.config.schema_version,
         "source_path": _sanitize_text(config.source_path) if config.source_path else None,

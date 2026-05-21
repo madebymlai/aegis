@@ -16,13 +16,9 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "dill" },
-    { name = "joblib" },
-    { name = "nbclient" },
-    { name = "nbformat" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyyaml" },
-    { name = "scikit-learn" },
     { name = "tomlkit" },
     { name = "vectorbtpro" },
     { name = "yfinance" },
@@ -43,13 +39,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "dill" },
-    { name = "joblib" },
-    { name = "nbclient", specifier = ">=0.10.2" },
-    { name = "nbformat", specifier = ">=5.10.4" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyyaml" },
-    { name = "scikit-learn" },
     { name = "tomlkit" },
     { name = "vectorbtpro", git = "https://github.com/polakowo/vectorbt.pro.git?branch=develop" },
     { name = "yfinance", specifier = ">=0.2.56" },
@@ -872,21 +864,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/6e/371856a3fb9d31ca8dac321cda606860fa4548858c0cc45d9d1d4ca2628b/mypy_extensions-1.1.0.tar.gz", hash = "sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558", size = 6343, upload-time = "2025-04-22T14:54:24.164Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505", size = 4963, upload-time = "2025-04-22T14:54:22.983Z" },
-]
-
-[[package]]
-name = "nbclient"
-version = "0.10.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "jupyter-client" },
-    { name = "jupyter-core" },
-    { name = "nbformat" },
-    { name = "traitlets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/56/91/1c1d5a4b9a9ebba2b4e32b8c852c2975c872aec1fe42ab5e516b2cecd193/nbclient-0.10.4.tar.gz", hash = "sha256:1e54091b16e6da39e297b0ece3e10f6f29f4ac4e8ee515d29f8a7099bd6553c9", size = 62554, upload-time = "2025-12-23T07:45:46.369Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/a0/5b0c2f11142ed1dddec842457d3f65eaf71a0080894eb6f018755b319c3a/nbclient-0.10.4-py3-none-any.whl", hash = "sha256:9162df5a7373d70d606527300a95a975a47c137776cd942e52d9c7e29ff83440", size = 25465, upload-time = "2025-12-23T07:45:44.51Z" },
 ]
 
 [[package]]

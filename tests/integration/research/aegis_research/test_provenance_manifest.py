@@ -23,11 +23,7 @@ from research.aegis_research.provenance.manifest import (
     hash_file,
     validate_manifest,
 )
-from tests.support.research.aegis_research.experiment_config_fixtures import (
-    SYNTHETIC_ML_SCAFFOLD_CONFIG,
-    load_train_fixture_config,
-)
-from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
+from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
 
 
 def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
@@ -323,11 +319,8 @@ def test_git_evidence_includes_staged_and_untracked_content_identity(tmp_path: P
     assert second_untracked["diff_hash"] != first_untracked["diff_hash"]
 
 
-def test_run_start_evidence_uses_public_redacted_config_hashes() -> None:
-    config = load_train_fixture_config(
-        SYNTHETIC_ML_SCAFFOLD_CONFIG,
-        model_registry=make_model_registry(),
-    )
+def test_run_start_evidence_uses_public_redacted_config_hashes(tmp_path: Path) -> None:
+    config = build_resolved_run_config(tmp_path)
 
     evidence = capture_run_start_evidence(config, repo_path=Path.cwd())
 
