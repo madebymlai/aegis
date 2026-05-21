@@ -7,7 +7,6 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.candidate_sweeps import SYMBOL_LEVEL
 from research.aegis_research.config import ReportConfig, to_builtin
 from research.aegis_research.metrics.stats import (
     PORTFOLIO_METRIC_CATALOG,
@@ -15,6 +14,7 @@ from research.aegis_research.metrics.stats import (
     PORTFOLIO_STATS_METRICS,
 )
 
+SYMBOL_LEVEL = "symbol"
 PORTFOLIO_METRIC_SCOPE = "shared_cash_group"
 METRICS_SCHEMA_VERSION = "metrics.v3"
 METRIC_AVAILABILITY_AVAILABLE = "available"

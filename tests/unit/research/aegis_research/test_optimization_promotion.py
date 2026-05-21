@@ -177,7 +177,7 @@ def _candidate_rows() -> list[dict[str, object]]:
     )
     return candidate_rows_from_param_index(
         index,
-        source_identity={"source": "playbook", "id": "ma_opt", "source_hash": "abc"},
+        source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
         portfolio_policy={"entry_budget": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},

@@ -6,9 +6,9 @@ from typing import Any
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.candidate_sweeps import SYMBOL_LEVEL
 from research.aegis_research.config import PortfolioConfig, SignalConfig
 
+SYMBOL_LEVEL = "symbol"
 PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v2"
 VBT_PORTFOLIO_FACTORY = "Portfolio.from_signals"
 VBT_RESOLVED_SIZE_TYPE = "valuepercent"

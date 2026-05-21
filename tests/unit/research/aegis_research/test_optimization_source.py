@@ -28,14 +28,14 @@ def test_optimization_source_contract_accepts_vbt_params_and_pipeline() -> None:
             },
             "diagnostics": {"fixture": True},
         },
-        source_evidence={"source": "playbook", "id": "native_rsi"},
+        source_evidence={"source": "component", "id": "native_rsi"},
     )
 
     assert source.pipeline is pipeline
     assert source.params["rsi_window"].value == [7, 14]
     assert source.params["entry_threshold"].level == 0
     assert source.params["exit_threshold"].level == 0
-    assert source.evidence == {"source": "playbook", "id": "native_rsi"}
+    assert source.evidence == {"source": "component", "id": "native_rsi"}
     assert source.diagnostics == {"fixture": True}
 
 
@@ -53,7 +53,7 @@ def test_optimization_source_contract_accepts_vbt_condition_params() -> None:
                 "slow_window": vbt.Param([20, 50]),
             },
         },
-        source_evidence={"source": "playbook", "id": "native_ma"},
+        source_evidence={"source": "component", "id": "native_ma"},
     )
 
     assert source.params["fast_window"].condition == "fast_window < slow_window"

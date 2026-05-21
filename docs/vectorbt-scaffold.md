@@ -20,7 +20,6 @@ data fetch/load
 - `reports.py`: computes portfolio metrics and metric evidence.
 - `strategy_runs.py`: component-native optimization orchestration and strategy evidence.
 - `run_splits.py`: validates and materializes supported VBT splitter configs for run scoring.
-- `split_leaderboard.py`: ranks held-out split evidence for run split scoring.
 - `cli.py`: `aerd` dispatcher.
 
 ## CLI Contract
@@ -37,7 +36,7 @@ Both run configs require explicit config paths in v1. Local configs live flat un
 
 ## Config Contract
 
-YAML is a versioned public contract. Every config must declare `schema_version: 5`. Static config validation runs before any run directory exists. Data-array contract failures discovered from selected components happen before provider data is loaded and mark the run failed with manifest evidence. This in-repo schema v5 contract is forward-first: stale configs that use `lane`, `train`, `model`, `labels`, `label`, `labeler`, `signals`, removed feature-map fields, or invalid split method params are intentionally rejected rather than compatibility-shimmed.
+YAML is a versioned public contract. Every config must declare `schema_version: 6`. Static config validation runs before any run directory exists. Data-array contract failures discovered from selected components happen before provider data is loaded and mark the run failed with manifest evidence. This in-repo schema v6 contract is forward-first: stale configs that use `lane`, `train`, `model`, `labels`, `label`, `labeler`, `signals`, removed feature-map fields, source selectors, indicator `ids`, `candidate_grid`, top-level `split`, or invalid split method params are intentionally rejected rather than compatibility-shimmed.
 
 Validation is strict by default:
 
@@ -68,7 +67,7 @@ There is no universal catalog of all possible `data.arrays` values in Aegis. Vec
 ## Run Config Example
 
 ```yaml
-schema_version: 5
+schema_version: 6
 name: ma_cross_run
 output_dir: runs
 
@@ -95,7 +94,7 @@ ranking:
 
 ## Indicator Contract
 
-Run configs use one top-level `indicators` entry per component id. Source selectors and `ids` batching are removed so each component can carry its own `params`, `lock_id`, or `candidate_id` without ambiguity.
+Run configs use one top-level `indicators` entry per component id: one indicator entry per component id. Source selectors and `ids` batching are removed so each component can carry its own `params`, `lock_id`, or `candidate_id` without ambiguity.
 
 Indicator components own reviewed params, selected outputs, defaults, and optional VBT-native param spaces. Component callables receive a market-data bundle and request declared raw features with `data.feature("FeatureName")`, including `data.feature("Close")` for close-only indicators and `data.feature("High")` or `data.feature("Low")` for OHLCV-dependent indicators. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels.
 
@@ -142,25 +141,15 @@ optimization:
 
 `optimization.split.method` maps to `vbt.cv_split(splitter=...)` and `optimization.split.params` to `splitter_kwargs`. Set roles are positional: VBT set index 0 is Aegis `selection`, VBT set index 1 is Aegis `held_out`. The selection function maps the configured `ranking.metric` and `ranking.direction` into VBT `selection`, with multi-metric selection handled via `grid_results.xs(metric_name).idxmax()`/`idxmin()`. Tied parameters use `vbt.Param(level=...)`; conditional parameters use `vbt.Param(condition=...)`; `vbt.Param(random_subset=...)` and the top-level `random_subset` interoperate with VBT's lazy-grid behavior. Resource gates (theoretical combinations, sampled combinations, expected result cells, artifact bytes) live on `optimization.preflight` and `optimization.split.max_*` knobs and fail closed before VBT execution. Partial failures (`vbt.NoResult`-only grids, missing metrics, runtime errors) surface as `evidence.optimization.execution_failure` rather than silently shrinking the leaderboard.
 
-`candidate_grid` is removed from the forward run contract. New work must use component `param_space()` callables plus the `optimization` contract; `vbt.Param` jointly searches indicator and strategy parameters inside the composed pipeline.
+`candidate_grid` is unknown to the forward schema. New work must use component `param_space()` callables plus the `optimization` contract; `vbt.Param` jointly searches indicator and strategy parameters inside the composed pipeline.
 
-## Deprecated Run Split Scoring (Scheduled For Removal)
+## Removed Run Split Scoring
 
-The top-level `split` block is legacy non-optimization scoring shape. Forward configs must use `optimization.split` on the optimization contract. Historical read/reporting code may still understand old artifacts, but new authored configs must not use the candidate-sweep contract.
+The top-level `split` block is no longer a run contract field. Forward configs must use `optimization.split` on the optimization contract.
 
-```yaml
-split:
-  method: from_rolling
-  params:
-    length: 252
-    offset: 252
-    split: 0.8
-  max_splits: 100
-```
+Set roles are positional (set 0 = selection, set 1 = held_out); `set_labels` is rejected by config validation under `optimization.split.params`.
 
-Set roles are positional (set 0 = selection, set 1 = held_out); `set_labels` is rejected by config validation under any `split.params`.
-
-`split.method` must be an exact `vbt.Splitter` constructor method. Use `aerd show splitters from_rolling --json` or another discovered method to inspect signature-derived params and defaults. Compatible methods such as `from_rolling` and `from_purged_kfold` share the same scoring path when VBT returns exactly two non-overlapping sets per split. The first set is used for selection, the second set is used for held-out scoring, and native VBT set labels are preserved in evidence.
+`optimization.split.method` must be an exact `vbt.Splitter` constructor method. Use `aerd show splitters from_rolling --json` or another discovered method to inspect signature-derived params and defaults. Compatible methods such as `from_rolling` and `from_purged_kfold` share the same scoring path when VBT returns exactly two non-overlapping sets per split. The first set is used for selection, the second set is used for held-out scoring, and native VBT set labels are preserved in evidence.
 
 ## Run Manifest And Artifacts
 
@@ -200,7 +189,7 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 Components live under `research/components/{indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after validation selects that ID. Components can declare `defaults`, optional `param_space_callable`, produced indicator outputs, and consumed strategy outputs. See `docs/examples/components/*_component_example.py`.
 
-Playbooks under `research/playbooks/{indicators,strategies}/` are legacy historical artifacts, not a forward authoring path. See `docs/playbooks.md` for the removal boundary.
+Playbooks are no longer a forward authoring path. See `docs/playbooks.md` for the removal boundary.
 
 Leaderboards rank complete composed strategy candidates, not raw indicators. Component promotion uses persisted candidate rows plus explicit `lock_id` or `candidate_id` refs; manual copying of playbook params is no longer the forward workflow.
 

@@ -247,7 +247,7 @@ def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
         )
 
     assert "candidate_grid" in str(error.value)
-    assert "removed from the forward run contract" in str(error.value)
+    assert "unknown field" in str(error.value)
 
 
 def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
@@ -316,12 +316,9 @@ def test_run_accepts_component_lock_and_candidate_refs(tmp_path: Path) -> None:
         component_registry=_component_registry(tmp_path),
     )
 
-    assert resolved.config.strategy.source == "component"
     assert resolved.config.strategy.lock_id == "lock_strategy_best"
     assert resolved.config.strategy.candidate_id is None
-    assert resolved.config.indicators[0].source == "component"
     assert resolved.config.indicators[0].candidate_id == "cand_indicator_row"
-    assert resolved.config.indicators[0].expanded_ids(("demo.returns",)) == ("demo.returns",)
 
 
 def test_run_rejects_component_lock_and_candidate_together(tmp_path: Path) -> None:
@@ -469,7 +466,7 @@ def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> 
     assert "owned by Aegis" in str(error.value)
 
 
-def test_run_rejects_top_level_split_as_optimization_split(tmp_path: Path) -> None:
+def test_run_rejects_top_level_split_as_unknown_field(tmp_path: Path) -> None:
     raw = _run_config()
     raw["optimization"] = {"search": "grid"}
     raw["split"] = _optimization_split()
@@ -480,8 +477,8 @@ def test_run_rejects_top_level_split_as_optimization_split(tmp_path: Path) -> No
             component_registry=_component_registry(tmp_path),
         )
 
-    assert "optimization.split" in str(error.value)
-    assert "move the split policy under optimization.split" in str(error.value)
+    assert "split" in str(error.value)
+    assert "unknown field" in str(error.value)
 
 
 def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> None:
@@ -496,10 +493,10 @@ def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> No
         )
 
     assert "candidate_grid" in str(error.value)
-    assert "removed from the forward run contract" in str(error.value)
+    assert "unknown field" in str(error.value)
 
 
-def test_run_rejects_removed_source_selectors_and_indicator_ids(tmp_path: Path) -> None:
+def test_run_rejects_source_selectors_and_indicator_ids_as_unknown_fields(tmp_path: Path) -> None:
     raw = _run_config()
     raw["strategy"] = {"source": "component", "id": "demo.strategy"}
     raw["indicators"] = [{"source": "component", "ids": ["demo.returns"]}]
@@ -511,9 +508,8 @@ def test_run_rejects_removed_source_selectors_and_indicator_ids(tmp_path: Path) 
         )
 
     assert "strategy.source" in str(error.value)
-    assert "source selectors are removed" in str(error.value)
     assert "indicators[0].ids" in str(error.value)
-    assert "ids batching is removed" in str(error.value)
+    assert "unknown field" in str(error.value)
 
 
 def test_run_rejects_playbook_source_selectors(tmp_path: Path) -> None:
@@ -528,33 +524,8 @@ def test_run_rejects_playbook_source_selectors(tmp_path: Path) -> None:
         )
 
     assert "strategy.source" in str(error.value)
-    assert "source selectors are removed" in str(error.value)
     assert "indicators[0].source" in str(error.value)
-
-
-@pytest.mark.parametrize(
-    ("policy", "expected_path"),
-    [
-        ({"max_candidates": 0}, "candidate_grid.max_candidates"),
-        ({"batch_size": 0}, "candidate_grid.batch_size"),
-        ({"batch_size": "100"}, "candidate_grid.batch_size"),
-    ],
-)
-def test_run_rejects_invalid_candidate_grid_policy(
-    tmp_path: Path,
-    policy: dict[str, object],
-    expected_path: str,
-) -> None:
-    raw = _run_config()
-    raw["candidate_grid"] = policy
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
-
-    assert expected_path in str(error.value)
+    assert "unknown field" in str(error.value)
 
 
 def _run_config() -> dict[str, object]:

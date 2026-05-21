@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from research.aegis_research.configuration.schema import (
-    CandidateGridConfig,
     DataConfig,
     DataQualityConfig,
     OptimizationConfig,
@@ -29,8 +28,6 @@ def _build_run_config(raw: dict[str, Any]) -> RunConfig:
         indicators=_build_run_indicator_sources(raw["indicators"]),
         ranking=_build_ranking(raw["ranking"]),
         optimization=_build_optimization(raw.get("optimization")),
-        split=_build_run_split(raw.get("split")),
-        candidate_grid=CandidateGridConfig(**raw.get("candidate_grid", {})),
         output_dir=raw.get("output_dir", "runs"),
     )
 

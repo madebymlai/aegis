@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from research.aegis_research import cli, strategy_runs
+from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import (
@@ -38,7 +38,7 @@ def test_run_cli_rejects_playbook_source_selectors_before_artifacts(
     payload = json.loads(capsys.readouterr().err)
     assert payload["error"]["category"] == "config_validation"
     assert "strategy.source" in payload["error"]["message"]
-    assert "source selectors are removed" in payload["error"]["message"]
+    assert "unknown field" in payload["error"]["message"]
     assert "indicators[0].ids" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "removed-playbook").exists()
 
@@ -60,23 +60,17 @@ def test_run_cli_rejects_candidate_grid_on_component_config_before_artifacts(
     payload = json.loads(capsys.readouterr().err)
     assert payload["error"]["category"] == "config_validation"
     assert "candidate_grid" in payload["error"]["message"]
-    assert "removed from the forward run contract" in payload["error"]["message"]
+    assert "unknown field" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "candidate-grid").exists()
 
 
-def test_component_optimization_routes_away_from_custom_candidate_grid(
+def test_component_optimization_uses_component_native_candidate_grid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
-
-    def fail_if_called(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("legacy candidate sweep path should not run for component optimization")
-
-    monkeypatch.setattr(strategy_runs, "compose_candidate_grid", fail_if_called)
-    monkeypatch.setattr(strategy_runs, "materialize_strategy_sweep_signals", fail_if_called)
     config_path = _write_run_config(tmp_path)
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "component-boundary"]) == 0

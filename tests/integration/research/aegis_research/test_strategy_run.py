@@ -8,26 +8,7 @@ import yaml
 
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
-from research.aegis_research.market_data.contracts import MarketDataBundle
 from research.aegis_research.optimization.component_source import FIXED_CANDIDATE_PARAM
-from research.aegis_research.strategy_runs import StrategyInputs, validate_strategy_output
-
-
-def test_strategy_output_boundary_rejects_portfolio_fields() -> None:
-    close = _frame()
-    inputs = StrategyInputs(
-        data=MarketDataBundle(features={"Close": close}, loaded_features=("Close",)),
-        indicators={},
-        metadata={},
-    )
-    output = {
-        "entries": close > 1,
-        "exits": close < 1,
-        "size": 0.5,
-    }
-
-    with pytest.raises(ValueError, match="portfolio"):
-        validate_strategy_output(output, inputs)
 
 
 def test_strategy_run_cli_rejects_component_strategy_without_optimization(
@@ -88,7 +69,7 @@ def test_strategy_run_rejects_candidate_grid_before_split_execution_budget_path(
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
     assert "candidate_grid" in payload["error"]["message"]
-    assert "removed from the forward run contract" in payload["error"]["message"]
+    assert "unknown field" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "split-over-budget").exists()
 
 
@@ -588,9 +569,3 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         "    exits = fast < slow\n"
         "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
     )
-
-
-def _frame():
-    import pandas as pd
-
-    return pd.DataFrame({"SYN": [1.0, 2.0, 1.5]}, index=pd.date_range("2020-01-01", periods=3))

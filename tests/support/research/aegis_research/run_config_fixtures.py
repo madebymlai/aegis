@@ -35,9 +35,17 @@ def build_resolved_run_config(
             "arrays": ["OHLCV"],
         },
         "portfolio": {"entry_budget": 1.0},
-        "strategy": {"source": "component", "id": "demo.strategy"},
-        "indicators": [{"source": "component", "ids": ["demo.returns"]}],
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return", "direction": "desc"},
+        "optimization": {
+            "search": "grid",
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 40, "offset": 40, "split": 0.5},
+                "max_splits": 2,
+            },
+        },
     }
     if data is not None:
         raw["data"] = {**raw["data"], **data}

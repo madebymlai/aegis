@@ -7,7 +7,6 @@ from vectorbtpro import vbt
 
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
 
-
 DATA_IDENTITY = {
     "source": "synthetic",
     "symbols": ["SYN"],
@@ -29,7 +28,7 @@ def test_candidate_rows_are_derived_from_vbt_param_index() -> None:
 
     rows = candidate_rows_from_param_index(
         index,
-        source_identity={"source": "playbook", "id": "native_rsi", "source_hash": "abc"},
+        source_identity={"source": "component", "id": "native_rsi", "source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         portfolio_policy={"entry_budget": 1.0},
     )

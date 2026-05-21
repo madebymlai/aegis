@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 5
+CONFIG_SCHEMA_VERSION = 6
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
@@ -27,7 +27,6 @@ DATA_QUALITY_DEGRADATIONS = {
     "non_monotonic_index",
     "skipped_symbols",
 }
-SOURCE_KINDS = {"component", "playbook"}
 FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
     "is required; fixed/non-optimized strategy runs are removed from the forward "
     "run contract; use optimization.search and optimization.split"
@@ -188,10 +187,6 @@ class RunSourceRefConfig:
     candidate_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
-    @property
-    def source(self) -> str:
-        return "component"
-
 
 @dataclass(frozen=True)
 class RunIndicatorSourceConfig:
@@ -200,30 +195,12 @@ class RunIndicatorSourceConfig:
     candidate_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
-    @property
-    def source(self) -> str:
-        return "component"
-
-    @property
-    def ids(self) -> tuple[str, ...]:
-        return (self.id,)
-
-    def expanded_ids(self, available_ids: tuple[str, ...]) -> tuple[str, ...]:
-        return self.ids
-
 
 @dataclass(frozen=True)
 class RankingConfig:
     metric: str
     direction: str
     secondary_metrics: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class CandidateGridConfig:
-    max_candidates: int = 100_000
-    max_estimated_cells: int = 50_000_000
-    batch_size: int = 1_000
 
 
 @dataclass(frozen=True)
@@ -252,8 +229,6 @@ class RunConfig:
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
     optimization: OptimizationConfig | None = None
-    split: RunSplitConfig | None = None
-    candidate_grid: CandidateGridConfig = field(default_factory=CandidateGridConfig)
     output_dir: str = "runs"
 
 

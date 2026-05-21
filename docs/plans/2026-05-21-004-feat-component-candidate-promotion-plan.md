@@ -1,7 +1,7 @@
 ---
 title: feat: Add Component Candidate Promotion
 type: feat
-status: active
+status: completed
 date: 2026-05-21
 origin: docs/brainstorms/2026-05-21-component-candidate-promotion-requirements.md
 deepened: 2026-05-21

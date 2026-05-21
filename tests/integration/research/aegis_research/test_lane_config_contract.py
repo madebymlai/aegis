@@ -8,11 +8,13 @@ from research.aegis_research.component_registry import discover_component_regist
 from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
+    OptimizationConfig,
     PortfolioConfig,
     RankingConfig,
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
+    RunSplitConfig,
     load_run_config,
     resolve_run_config,
 )
@@ -31,15 +33,22 @@ def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     config = RunConfig(
         name="typed_strategy_demo",
-        strategy=RunSourceRefConfig(source="component", id="demo.strategy"),
-        indicators=[RunIndicatorSourceConfig(source="component", ids=["demo.indicator"])],
+        strategy=RunSourceRefConfig(id="demo.strategy"),
+        indicators=[RunIndicatorSourceConfig(id="demo.indicator")],
         ranking=RankingConfig(metric="sharpe_ratio", direction="desc"),
         portfolio=PortfolioConfig(entry_budget=1.0),
+        optimization=OptimizationConfig(
+            search="grid",
+            split=RunSplitConfig(
+                method="from_rolling",
+                params={"length": 20, "offset": 20, "split": 0.5},
+            ),
+        ),
     )
 
     resolved = resolve_run_config(config, component_registry=registry)
 
-    assert resolved.config.indicators[0].ids == ["demo.indicator"]
+    assert resolved.config.indicators[0].id == "demo.indicator"
 
 
 def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
@@ -65,23 +74,22 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
     ("mutations", "expected_path"),
     [
         (
-            {"strategy": {"source": "component", "id": "demo.strategy", "import": "x.y"}},
+            {"strategy": {"id": "demo.strategy", "import": "x.y"}},
             "strategy.import",
         ),
         (
-            {"strategy": {"source": "component", "id": "demo.strategy", "path": "strategy.py"}},
+            {"strategy": {"id": "demo.strategy", "path": "strategy.py"}},
             "strategy.path",
         ),
         (
-            {"strategy": {"source": "component", "id": "demo.strategy", "params": {"window": 5}}},
+            {"strategy": {"id": "demo.strategy", "params": {"window": 5}}},
             "strategy.params",
         ),
         (
             {
                 "indicators": [
                     {
-                        "source": "playbook",
-                        "ids": ["ma_explore"],
+                        "id": "demo.indicator",
                         "notebook_path": "../unsafe.ipynb",
                     }
                 ]
@@ -102,7 +110,11 @@ def test_run_configs_reject_inline_code_and_arbitrary_paths(
         resolve_run_config(raw, component_registry=registry)
 
     assert expected_path in str(error.value)
-    assert "not allowed" in str(error.value) or "unknown field" in str(error.value)
+    assert (
+        "not allowed" in str(error.value)
+        or "unknown field" in str(error.value)
+        or "params must be declared by the component manifest" in str(error.value)
+    )
 
 
 @pytest.mark.parametrize(
@@ -135,24 +147,24 @@ def test_run_indicator_selection_rejects_config_params(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     raw = _merge(
         _run_config(),
-        {"indicators": [{"source": "component", "ids": "all", "params": {"path": "x.py"}}]},
+        {"indicators": [{"id": "demo.indicator", "params": {"path": "x.py"}}]},
     )
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
     assert "indicators[0].params" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "not allowed" in str(error.value)
 
 
-def test_run_all_component_indicator_ref_rejects_expanded_duplicates(tmp_path: Path) -> None:
+def test_run_indicator_ref_rejects_duplicate_component_ids(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     raw = _merge(
         _run_config(),
         {
             "indicators": [
-                {"source": "component", "ids": "all"},
-                {"source": "component", "ids": ["demo.indicator"]},
+                {"id": "demo.indicator"},
+                {"id": "demo.indicator"},
             ]
         },
     )
@@ -160,8 +172,8 @@ def test_run_all_component_indicator_ref_rejects_expanded_duplicates(tmp_path: P
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
-    assert "indicators[1].ids[0]" in str(error.value)
-    assert "duplicates expanded component indicator id" in str(error.value)
+    assert "indicators[1].id" in str(error.value)
+    assert "duplicates indicator component id" in str(error.value)
 
 
 def test_run_config_rejects_unimplemented_failure_policy(tmp_path: Path) -> None:
@@ -210,27 +222,6 @@ def test_run_output_dir_rejects_symlink_escape(
     assert "symlink" in str(error.value)
 
 
-def test_run_accepts_playbook_and_component_indicator_sources_together(
-    tmp_path: Path,
-) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _merge(
-        _run_config(),
-        {
-            "strategy": {"source": "playbook", "id": "strategy_explore"},
-            "indicators": [
-                {"source": "playbook", "ids": ["ma_explore"]},
-                {"source": "component", "ids": "all"},
-            ],
-        },
-    )
-
-    resolved = resolve_run_config(raw, component_registry=registry)
-
-    assert resolved.config.strategy.source == "playbook"
-    assert [ref.source for ref in resolved.config.indicators] == ["playbook", "component"]
-
-
 @pytest.mark.parametrize(
     ("ranking", "expected"),
     [
@@ -273,100 +264,90 @@ def test_run_ranking_accepts_vbt_metric_ids_and_secondary_metrics(tmp_path: Path
 
 def test_run_accepts_dynamic_vbt_splitter_config(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    raw = _merge(
-        _run_config(),
+    raw = _run_config_with_split(
         {
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 20, "split": 0.8},
-                "max_splits": 10,
-            }
-        },
+            "method": "from_rolling",
+            "params": {"length": 20, "split": 0.8},
+            "max_splits": 10,
+        }
     )
 
     resolved = resolve_run_config(raw, component_registry=registry)
 
-    assert resolved.config.split is not None
-    assert resolved.config.split.method == "from_rolling"
-    assert resolved.config.split.params == {"length": 20, "split": 0.8}
-    assert resolved.config.split.max_splits == 10
+    assert resolved.config.optimization is not None
+    assert resolved.config.optimization.split.method == "from_rolling"
+    assert resolved.config.optimization.split.params == {"length": 20, "split": 0.8}
+    assert resolved.config.optimization.split.max_splits == 10
 
 
 def test_run_accepts_purged_kfold_splitter_method(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    raw = _merge(
-        _run_config(),
-        {"split": {"method": "from_purged_kfold", "params": {"n_folds": 4}}},
-    )
+    raw = _run_config_with_split({"method": "from_purged_kfold", "params": {"n_folds": 4}})
 
     resolved = resolve_run_config(raw, component_registry=registry)
 
-    assert resolved.config.split is not None
-    assert resolved.config.split.method == "from_purged_kfold"
+    assert resolved.config.optimization is not None
+    assert resolved.config.optimization.split.method == "from_purged_kfold"
 
 
 def test_run_rejects_unknown_splitter_method(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    raw = _merge(_run_config(), {"split": {"method": "walk_forward", "params": {}}})
+    raw = _run_config_with_split({"method": "walk_forward", "params": {}})
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
-    assert "split.method" in str(error.value)
+    assert "optimization.split.method" in str(error.value)
     assert "from_rolling" in str(error.value)
 
 
 def test_run_rejects_unknown_splitter_param(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    raw = _merge(
-        _run_config(),
-        {"split": {"method": "from_rolling", "params": {"length": 20, "made_up": 1}}},
+    raw = _run_config_with_split(
+        {"method": "from_rolling", "params": {"length": 20, "made_up": 1}}
     )
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
-    assert "split.params.made_up" in str(error.value)
+    assert "optimization.split.params.made_up" in str(error.value)
 
 
 def test_run_rejects_missing_required_splitter_param(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    raw = _merge(_run_config(), {"split": {"method": "from_rolling", "params": {}}})
+    raw = _run_config_with_split({"method": "from_rolling", "params": {}})
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
-    assert "split.params.length" in str(error.value)
+    assert "optimization.split.params.length" in str(error.value)
     assert "is required" in str(error.value)
 
 
 def test_run_rejects_splitter_method_requiring_runtime_object(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    raw = _merge(_run_config(), {"split": {"method": "from_split_func", "params": {}}})
+    raw = _run_config_with_split({"method": "from_split_func", "params": {}})
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
-    assert "split.method" in str(error.value)
+    assert "optimization.split.method" in str(error.value)
     assert "split_func" in str(error.value)
 
 
 def test_run_rejects_internal_splitter_param(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    raw = _merge(
-        _run_config(),
+    raw = _run_config_with_split(
         {
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 20, "template_context": {"x": "y"}},
-            }
-        },
+            "method": "from_rolling",
+            "params": {"length": 20, "template_context": {"x": "y"}},
+        }
     )
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
-    assert "split.params.template_context" in str(error.value)
+    assert "optimization.split.params.template_context" in str(error.value)
     assert "managed internally" in str(error.value)
 
 
@@ -432,10 +413,23 @@ def _run_config() -> dict[str, object]:
         "name": "strategy_demo",
         "data": {"source": "synthetic", "rows": 50, "arrays": ["OHLCV"]},
         "portfolio": {"entry_budget": 1.0},
-        "strategy": {"source": "component", "id": "demo.strategy"},
-        "indicators": [{"source": "component", "ids": ["demo.indicator"]}],
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.indicator"}],
         "ranking": {"metric": "sharpe_ratio", "direction": "desc"},
+        "optimization": {
+            "search": "grid",
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 20, "offset": 20, "split": 0.5},
+            },
+        },
     }
+
+
+def _run_config_with_split(split: dict[str, object]) -> dict[str, object]:
+    raw = _run_config()
+    raw["optimization"] = {"search": "grid", "split": split}
+    return raw
 
 
 def _component_registry(tmp_path: Path):
@@ -471,6 +465,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "input_names": ["Close"],
             "param_names": ["window"],
             "output_names": ["value"],
+            "defaults": {"window": 2},
         }
     if family == "strategies":
         return {

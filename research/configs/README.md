@@ -4,7 +4,7 @@ Local `aerd run` configs are ignored by git by default. Keep reviewed strategy/r
 
 Use `aerd run <config>` for strategy or research sweeps over direct component refs.
 
-Run configs must include an `optimization` block. Put split policy under `optimization.split`; top-level `split` and `candidate_grid` are removed forward fields. `optimization.split.method` is the exact `vbt.Splitter` constructor method, and `optimization.split.params` are kwargs for that method. Inspect available methods and signature-derived params with `aerd show splitters <method>` before authoring YAML.
+Run configs must include an `optimization` block. Put split policy under `optimization.split`; top-level `split` and `candidate_grid` are unknown to the forward schema. `optimization.split.method` is the exact `vbt.Splitter` constructor method, and `optimization.split.params` are kwargs for that method. Inspect available methods and signature-derived params with `aerd show splitters <method>` before authoring YAML.
 
 ```yaml
 optimization:
