@@ -16,7 +16,6 @@ from research.aegis_research.market_data.contracts import (
 )
 from research.aegis_research.provenance.manifest import RunStatus
 from research.aegis_research.strategy_runs import StrategyInputs, validate_strategy_output
-from tests.support.research.aegis_research.model_plugin_fixtures import model_config_dict
 
 
 def test_strategy_output_boundary_rejects_portfolio_fields() -> None:
@@ -51,7 +50,7 @@ def test_strategy_run_cli_executes_component_strategy_and_writes_manifest(
     assert output.err == ""
     payload = json.loads(output.out)
     assert payload["status"] == "success"
-    assert payload["lane"] == "run"
+    assert "lane" not in payload
     assert payload["evidence_type"] == "strategy_sweep"
     assert payload["run"]["id"] == "strategy-run"
     assert payload["run"]["status"] == RunStatus.COMPLETED
@@ -403,7 +402,7 @@ def test_strategy_run_keyboard_interrupt_marks_manifest_interrupted(
     assert manifest["run"]["status"] == RunStatus.INTERRUPTED
 
 
-def test_run_rejects_model_training_config_and_points_to_train(
+def test_run_rejects_removed_model_training_config_without_train_guidance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -416,8 +415,13 @@ def test_run_rejects_model_training_config_and_points_to_train(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "ml_config",
                 "output_dir": "runs",
-                "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120},
-                "model": model_config_dict(min_train_samples=1),
+                "data": {
+                    "source": "synthetic",
+                    "symbols": ["SYN"],
+                    "rows": 120,
+                    "arrays": ["OHLCV"],
+                },
+                "model": {"source": "plugin", "id": "demo.model"},
                 "portfolio": {"entry_budget": 1.0},
             },
             sort_keys=False,
@@ -429,7 +433,8 @@ def test_run_rejects_model_training_config_and_points_to_train(
     output = capsys.readouterr()
     assert output.out == ""
     message = json.loads(output.err)["error"]["message"]
-    assert "aerd run --train" in message
+    assert "single run config contract" in message
+    assert "aerd run --train" not in message
     assert not (tmp_path / "runs" / "should-not-exist").exists()
 
 
@@ -538,10 +543,7 @@ def _write_indicator_component(path: Path) -> None:
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma'], "
-        "'default_outputs': ['ma'], "
-        "'default_model_features': [{'output': 'ma', 'transform': 'identity'}], "
-        "'supported_transforms': ['identity']}\n"
+        "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(data):\n"
@@ -560,10 +562,7 @@ def _write_misaligned_indicator_component(path: Path) -> None:
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': [], 'output_names': ['ma'], "
-        "'default_outputs': ['ma'], "
-        "'default_model_features': [{'output': 'ma', 'transform': 'identity'}], "
-        "'supported_transforms': ['identity']}\n"
+        "'input_names': ['Close'], 'param_names': [], 'output_names': ['ma']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(data):\n"
@@ -584,10 +583,7 @@ def _write_named_indicator_component(path: Path, component_id: str) -> None:
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {"
         f"'family': 'indicators', 'id': {component_id!r}, 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': [], 'output_names': ['value'], "
-        "'default_outputs': ['value'], "
-        "'default_model_features': [{'output': 'value', 'transform': 'identity'}], "
-        "'supported_transforms': ['identity']}\n"
+        "'input_names': ['Close'], 'param_names': [], 'output_names': ['value']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(data):\n"

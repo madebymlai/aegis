@@ -9,7 +9,6 @@ from typing import Any
 
 from research.aegis_research.metrics.contracts import (
     METRIC_DIRECTIONS,
-    METRIC_LANES,
     METRIC_SOURCE_TYPES,
     MetricDefinition,
     MetricRegistryError,
@@ -93,13 +92,6 @@ def _validate_definition(definition: MetricDefinition) -> None:
         raise MetricRegistryError(f"metric {definition.id} unit must be non-empty")
     if not definition.value_semantics:
         raise MetricRegistryError(f"metric {definition.id} value semantics must be non-empty")
-    if not definition.supported_lanes:
-        raise MetricRegistryError(f"metric {definition.id} must support at least one lane")
-    unsupported_lanes = sorted(set(definition.supported_lanes) - set(METRIC_LANES))
-    if unsupported_lanes:
-        raise MetricRegistryError(
-            f"metric {definition.id} supports unknown lanes: {unsupported_lanes}"
-        )
     if definition.direction_hint is not None and definition.direction_hint not in METRIC_DIRECTIONS:
         raise MetricRegistryError(f"metric {definition.id} direction hint is unsupported")
     if not definition.primary_eligible and not definition.secondary_eligible:

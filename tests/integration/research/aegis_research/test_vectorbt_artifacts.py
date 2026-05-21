@@ -3,10 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
-from research.aegis_research.experiments import run_experiment
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
     ArtifactVisibility,
@@ -17,15 +15,6 @@ from research.aegis_research.provenance.native import (
     NativeArtifactSafetyError,
     NativeArtifactWriter,
 )
-from tests.support.research.aegis_research.experiment_config_fixtures import (
-    SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
-    load_train_fixture_config,
-)
-from tests.support.research.aegis_research.indicator_result_fixtures import (
-    native_indicator_result,
-)
-from tests.support.research.aegis_research.label_result_fixtures import native_label_result
-from tests.support.research.aegis_research.model_plugin_fixtures import make_model_registry
 
 
 def test_native_writer_persists_private_artifact_and_public_metadata(tmp_path: Path) -> None:
@@ -220,74 +209,6 @@ def test_native_writer_fails_sidecar_when_metadata_write_fails(tmp_path: Path) -
     validate_manifest(manifest.to_dict(), run_dir=tmp_path)
 
 
-@pytest.mark.parametrize(
-    "secret_section", ["wrapper_kwargs", "provider_kwargs", "execution_kwargs"]
-)
-def test_remote_native_artifact_scans_resolved_remote_secrets(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    secret_section: str,
-) -> None:
-    monkeypatch.setenv("REMOTE_TOKEN", "super-secret-token")
-    monkeypatch.setattr("research.aegis_research.data.vbt.YFData", _RemoteDataWithSecret)
-    data_kwargs = {
-        secret_section: {"api_token": {"env": "REMOTE_TOKEN"}},
-    }
-    config = load_train_fixture_config(
-        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
-        model_registry=make_model_registry(),
-        output_dir=str(tmp_path),
-        data={
-            "source": "yf",
-            "symbols": ["SYN"],
-            "start": "2020-01-01",
-            "end": "2021-01-01",
-            "timeframe": "1D",
-            **data_kwargs,
-        },
-    )
-
-    with pytest.raises(NativeArtifactSafetyError):
-        run_experiment(config, run_id="remote-run")
-
-    run_dir = tmp_path / "remote-run"
-    payload = json.loads((run_dir / "manifest.json").read_text())
-    artifacts = {artifact["id"]: artifact for artifact in payload["artifacts"]}
-    assert artifacts["data.metadata"]["status"] == ArtifactStatus.COMPLETED
-    assert artifacts["data.native"]["status"] == ArtifactStatus.FAILED
-    assert not (run_dir / "native" / "data.pkl").exists()
-    assert "super-secret-token" not in json.dumps(payload)
-
-
-def test_indicator_native_artifact_uses_private_bundle_and_public_sidecar(tmp_path: Path) -> None:
-    config = load_train_fixture_config(
-        SYNTHETIC_PURGED_FIXLB_SCAFFOLD_CONFIG,
-        model_registry=make_model_registry(),
-        output_dir=str(tmp_path),
-        data={"source": "synthetic", "symbols": ["SYN"], "rows": 260},
-        split={"n_folds": 3, "max_splits": 3},
-    )
-
-    result = run_experiment(
-        config,
-        run_id="indicator-native-run",
-        label_result_builder=native_label_result,
-        indicator_result_builder=native_indicator_result,
-    )
-
-    run_dir = Path(result["run_dir"])
-    payload = json.loads((run_dir / "manifest.json").read_text())
-    artifacts = {artifact["id"]: artifact for artifact in payload["artifacts"]}
-    sidecar = json.loads((run_dir / "native" / "indicators.pkl.metadata.json").read_text())
-
-    assert artifacts["indicators.native"]["visibility"] == ArtifactVisibility.PRIVATE
-    assert artifacts["indicators.native.metadata"]["visibility"] == ArtifactVisibility.PUBLIC
-    assert artifacts["indicators.native"]["status"] == ArtifactStatus.COMPLETED
-    assert "ma" in sidecar["metadata"]["native_object_ids"]
-    assert "rsi" in sidecar["metadata"]["native_object_ids"]
-    assert "/home/" not in json.dumps(sidecar)
-
-
 class _NativeObject:
     def __init__(self, payload: bytes) -> None:
         self.payload = payload
@@ -302,66 +223,3 @@ class _NativeObjectWithSensitiveState:
 
     def save(self, path: str | Path) -> None:
         Path(path).write_bytes(b"safe-bytes")
-
-
-class _RemoteDataWithSecret:
-    def __init__(self, api_token: str) -> None:
-        self.api_token = api_token
-        self._data: dict[str, pd.DataFrame] = {}
-
-    @classmethod
-    def pull(
-        cls,
-        _symbols,
-        *,
-        api_token: str | None = None,
-        wrapper_kwargs: dict | None = None,
-        execute_kwargs: dict | None = None,
-        **_kwargs,
-    ):
-        api_token = api_token or (wrapper_kwargs or {}).get("api_token")
-        api_token = api_token or (execute_kwargs or {}).get("api_token")
-        return [(cls._raw_frame(), {"api_token": api_token})]
-
-    @classmethod
-    def from_data(
-        cls,
-        data,
-        *,
-        wrapper_kwargs: dict | None = None,
-        fetch_kwargs: dict | None = None,
-        returned_kwargs: dict | None = None,
-        **_kwargs,
-    ):
-        api_token = (wrapper_kwargs or {}).get("api_token")
-        api_token = api_token or next(iter((fetch_kwargs or {}).values()), {}).get("api_token")
-        api_token = api_token or next(iter((returned_kwargs or {}).values()), {}).get("api_token")
-        instance = cls(api_token)
-        instance._data = data
-        return instance
-
-    @staticmethod
-    def _raw_frame() -> pd.DataFrame:
-        index = pd.date_range("2020-01-01", periods=180, freq="1D", tz="UTC", name="Open time")
-        return pd.DataFrame(
-            {
-                "Open": range(180),
-                "High": [value + 1 for value in range(180)],
-                "Low": range(180),
-                "Close": [value + 0.5 for value in range(180)],
-                "Volume": [1000] * 180,
-            },
-            index=index,
-        )
-
-    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
-        frame = self._data["SYN"].copy()
-        frame.columns = pd.MultiIndex.from_product(
-            [["SYN"], frame.columns], names=["symbol", "feature"]
-        )
-        if feature is not None:
-            return frame.xs(feature, axis=1, level="feature")
-        return frame
-
-    def save(self, path: str | Path) -> None:
-        Path(path).write_bytes(f"token={self.api_token}".encode())

@@ -14,9 +14,6 @@ COMPONENT_MANIFEST = {
     "input_names": ["Close"],
     "param_names": ["window", "wtype"],
     "output_names": ["ma"],
-    "default_outputs": ["ma"],
-    "default_model_features": [{"output": "ma", "transform": "distance_to_close"}],
-    "supported_transforms": ["identity", "distance_to_close"],
 }
 COMPONENT_CALLABLE = "run"
 

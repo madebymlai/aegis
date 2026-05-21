@@ -6,7 +6,6 @@ from typing import Any
 from research.aegis_research.metrics.contracts import (
     DIRECTION_ASC,
     DIRECTION_DESC,
-    LANE_RUN,
     SOURCE_TYPE_VBT_STATS,
     MetricDefinition,
     MetricRegistryError,
@@ -122,7 +121,6 @@ def _portfolio_metric_definition(
         source_type=SOURCE_TYPE_VBT_STATS,
         unit=str(overlay["unit"]),
         value_semantics=str(overlay["value_semantics"]),
-        supported_lanes=(LANE_RUN,),
         primary_eligible=True,
         secondary_eligible=True,
         direction_hint=str(overlay["direction_hint"]),

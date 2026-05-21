@@ -5,17 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aegis-rd"
 version = "0.1.0"
-description = "VectorBT PRO-first research loop for labeling, training, signal experiments, and backtesting."
+description = "VectorBT PRO-first research loop for strategy evidence and backtesting."
 requires-python = ">=3.12"
 dependencies = [
   "dill",
-  "joblib",
   "numpy",
-  "nbclient>=0.10.2",
-  "nbformat>=5.10.4",
   "pandas",
   "pyyaml",
-  "scikit-learn",
   "tomlkit",
   "vectorbtpro",
   "yfinance>=0.2.56",

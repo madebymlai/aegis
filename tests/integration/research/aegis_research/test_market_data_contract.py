@@ -22,7 +22,6 @@ from research.aegis_research.data import (
     market_data_bundle,
     required_ohlcv_features,
 )
-from research.aegis_research.labels import LabelConfig, LabelGeneratorConfig
 from research.aegis_research.market_data.sources import vbt_data_source_classes
 
 
@@ -344,16 +343,8 @@ def test_future_provider_adapter_uses_same_result_contract() -> None:
     assert result.feature("Close").shape == (5, 1)
 
 
-def test_required_features_follow_label_kind() -> None:
-    assert required_ohlcv_features("fixlb") == ("Close",)
-    assert required_ohlcv_features("trendlb") == ("Close", "High", "Low")
-    assert required_ohlcv_features("pivotlb") == ("Close", "High", "Low")
-    assert required_ohlcv_features(LabelConfig()) == ("Close",)
-    assert required_ohlcv_features(LabelConfig(generator=LabelGeneratorConfig(kind="trendlb"))) == (
-        "Close",
-        "High",
-        "Low",
-    )
+def test_required_features_default_to_close() -> None:
+    assert required_ohlcv_features() == ("Close",)
 
 
 class _DemoRemoteData:

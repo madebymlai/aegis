@@ -24,7 +24,6 @@ from research.aegis_research.configuration.secrets import (
 )
 from research.aegis_research.configuration.validation import _is_absolute_or_user_path
 from research.aegis_research.data_arrays import merge_data_arrays
-from research.aegis_research.labels import LabelConfig
 from research.aegis_research.market_data.contracts import (
     OHLCV_FEATURES,
     QUALITY_DEGRADED_ALLOWED,
@@ -165,18 +164,14 @@ def _provider_failed_result(
     )
 
 
-def required_ohlcv_features(label_config: LabelConfig | str | None = None) -> tuple[str, ...]:
-    label_kind = label_config.kind if isinstance(label_config, LabelConfig) else label_config
-    if label_kind in {"trendlb", "pivotlb"}:
-        return ("Close", "High", "Low")
+def required_ohlcv_features() -> tuple[str, ...]:
     return ("Close",)
 
 
 def required_experiment_ohlcv_features(
-    label_config: LabelConfig | str | None = None,
     signal_config: SignalConfig | None = None,
 ) -> tuple[str, ...]:
-    features = list(required_ohlcv_features(label_config))
+    features = list(required_ohlcv_features())
     signal_config = signal_config or SignalConfig()
     if signal_config.execution_timing == "next_open" and "Open" not in features:
         features.append("Open")

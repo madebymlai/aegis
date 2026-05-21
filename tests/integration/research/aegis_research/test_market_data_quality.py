@@ -18,7 +18,6 @@ from research.aegis_research.data import (
     load_market_data_result,
     required_experiment_ohlcv_features,
 )
-from research.aegis_research.labels import LabelConfig, LabelGeneratorConfig
 
 
 def test_duplicate_csv_index_is_rejected_before_vectorbt_normalizes(tmp_path: Path) -> None:
@@ -108,7 +107,7 @@ def test_close_only_array_does_not_require_unconfigured_ohlcv_features(tmp_path:
     assert result.quality.warnings == ()
 
 
-def test_next_open_signal_timing_requires_open_feature_for_fixlb() -> None:
+def test_next_open_signal_timing_requires_open_feature() -> None:
     assert required_experiment_ohlcv_features() == ("Close", "Open")
     assert required_experiment_ohlcv_features(signal_config=SignalConfig()) == ("Close", "Open")
 
@@ -117,17 +116,6 @@ def test_same_close_signal_timing_does_not_require_open_feature() -> None:
     assert required_experiment_ohlcv_features(
         signal_config=SignalConfig(execution_timing="same_close")
     ) == ("Close",)
-
-
-def test_next_open_preserves_high_low_label_feature_requirements() -> None:
-    label_config = LabelConfig(generator=LabelGeneratorConfig(kind="trendlb"))
-
-    assert required_experiment_ohlcv_features(label_config, SignalConfig()) == (
-        "Close",
-        "High",
-        "Low",
-        "Open",
-    )
 
 
 def test_next_open_feature_requirement_rejects_close_only_data(tmp_path: Path) -> None:
@@ -165,7 +153,7 @@ def test_same_close_feature_requirement_allows_close_only_data(tmp_path: Path) -
     assert result.quality.state == "healthy"
 
 
-def test_high_low_label_requirement_rejects_close_only_data(tmp_path: Path) -> None:
+def test_explicit_high_low_requirement_rejects_close_only_data(tmp_path: Path) -> None:
     path = tmp_path / "close_only.csv"
     frame = pd.DataFrame(
         {"Close": [1.0, 2.0, 3.0]},

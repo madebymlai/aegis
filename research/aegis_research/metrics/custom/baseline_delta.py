@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from research.aegis_research.metrics.contracts import (
-    LANE_RUN,
     SOURCE_TYPE_ADAPTER,
     MetricDefinition,
 )
@@ -18,7 +17,6 @@ def baseline_delta_definition() -> MetricDefinition:
         source_type=SOURCE_TYPE_ADAPTER,
         unit="metric_delta",
         value_semantics="candidate_primary_minus_baseline_primary",
-        supported_lanes=(LANE_RUN,),
         primary_eligible=False,
         secondary_eligible=True,
         direction_hint=None,

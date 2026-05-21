@@ -13,13 +13,9 @@ from research.aegis_research.component_registry.contracts import (
     ComponentRegistryError,
     ComponentSourceIdentity,
     IndicatorManifest,
-    LabelManifest,
     StrategyManifest,
 )
-from research.aegis_research.configuration.schema import (
-    LABEL_TARGET_ROLES,
-    has_data_array_token_shape,
-)
+from research.aegis_research.configuration.schema import has_data_array_token_shape
 
 COMPONENT_MANIFEST_NAME = "COMPONENT_MANIFEST"
 COMPONENT_CALLABLE_NAME = "COMPONENT_CALLABLE"
@@ -27,7 +23,6 @@ COMPONENT_PERCENT_CELL_MARKER = "# %%"
 COMPONENT_PERCENT_CELL_RE = re.compile(r"^# %%.*$", re.MULTILINE)
 COMPONENT_MAIN_CELL_RE = re.compile(r"^# %%\s+main\b", re.MULTILINE)
 COMPONENT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-LABEL_TARGET_KINDS = {"binary_classification", "continuous", "regime", "sparse_event"}
 STRATEGY_SIGNAL_OUTPUTS = {"entries", "exits"}
 STRATEGY_FORBIDDEN_KEYS = {
     "costs",
@@ -69,14 +64,12 @@ def build_manifest(
     *,
     expected_family: ComponentFamily,
     path: Path,
-) -> LabelManifest | IndicatorManifest | StrategyManifest:
+) -> IndicatorManifest | StrategyManifest:
     if not isinstance(payload, dict):
         raise ComponentRegistryError(f"{path}: {COMPONENT_MANIFEST_NAME} must be a literal mapping")
     payload = dict(payload)
     _validate_common(payload, expected_family=expected_family, path=path)
     family = payload["family"]
-    if family == "labels":
-        return _label_manifest(payload, path)
     if family == "indicators":
         return _indicator_manifest(payload, path)
     if family == "strategies":
@@ -167,40 +160,10 @@ def _validate_common(payload: dict[str, Any], *, expected_family: str, path: Pat
         raise ComponentRegistryError(f"{path}: component version must be a non-empty string")
 
 
-def _label_manifest(payload: dict[str, Any], path: Path) -> LabelManifest:
-    input_names = _required_input_names(payload, path)
-    target_role = _required_string(payload, "target_role", path)
-    target_kind = _required_string(payload, "target_kind", path)
-    if target_role not in LABEL_TARGET_ROLES:
-        raise ComponentRegistryError(f"{path}: unsupported label target_role {target_role!r}")
-    if target_kind not in LABEL_TARGET_KINDS:
-        raise ComponentRegistryError(f"{path}: unsupported label target_kind {target_kind!r}")
-    output_names = _required_string_tuple(payload, "output_names", path)
-    return LabelManifest(
-        family="labels",
-        id=payload["id"],
-        version=payload["version"],
-        payload=payload,
-        input_names=input_names,
-        target_role=target_role,
-        target_kind=target_kind,
-        output_names=output_names,
-    )
-
-
 def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifest:
     input_names = _required_input_names(payload, path)
     param_names = _required_string_tuple(payload, "param_names", path, allow_empty=True)
     output_names = _required_string_tuple(payload, "output_names", path)
-    default_outputs = _required_string_tuple(payload, "default_outputs", path)
-    supported_transforms = _required_string_tuple(payload, "supported_transforms", path)
-    if missing := sorted(set(default_outputs) - set(output_names)):
-        raise ComponentRegistryError(
-            f"{path}: default_outputs not declared in output_names: {missing}"
-        )
-    default_model_features = _default_model_features(
-        payload, output_names, supported_transforms, path
-    )
     bar_aligned = payload.get("bar_aligned", True)
     if bar_aligned is not True:
         raise ComponentRegistryError(f"{path}: indicator components must be bar-aligned in v1")
@@ -212,9 +175,6 @@ def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifes
         input_names=input_names,
         param_names=param_names,
         output_names=output_names,
-        default_outputs=default_outputs,
-        default_model_features=default_model_features,
-        supported_transforms=supported_transforms,
         bar_aligned=True,
     )
 
@@ -241,37 +201,6 @@ def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
         signal_outputs=signal_outputs,
         owns_portfolio=False,
     )
-
-
-def _default_model_features(
-    payload: dict[str, Any],
-    output_names: tuple[str, ...],
-    supported_transforms: tuple[str, ...],
-    path: Path,
-) -> tuple[dict[str, str], ...]:
-    raw = payload.get("default_model_features")
-    if not isinstance(raw, list) or not raw:
-        raise ComponentRegistryError(
-            f"{path}: default_model_features must be a non-empty literal list"
-        )
-    rows: list[dict[str, str]] = []
-    for index, item in enumerate(raw):
-        if not isinstance(item, dict):
-            raise ComponentRegistryError(
-                f"{path}: default_model_features[{index}] must be a mapping"
-            )
-        output = item.get("output")
-        transform = item.get("transform", "identity")
-        if not isinstance(output, str) or output not in output_names:
-            raise ComponentRegistryError(
-                f"{path}: default_model_features[{index}].output must be one of {output_names}"
-            )
-        if not isinstance(transform, str) or transform not in supported_transforms:
-            raise ComponentRegistryError(
-                f"{path}: default_model_features[{index}].transform must be one of {supported_transforms}"
-            )
-        rows.append({"output": output, "transform": transform})
-    return tuple(rows)
 
 
 def _required_input_names(payload: dict[str, Any], path: Path) -> tuple[str, ...]:

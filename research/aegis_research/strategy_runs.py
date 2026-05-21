@@ -29,10 +29,12 @@ from research.aegis_research.component_registry import (
 )
 from research.aegis_research.config import (
     ConfigValidationError,
-    ResolvedLaneConfig,
+    ResolvedRunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
     SignalConfig,
+    known_config_secret_values,
+    redact_text,
     to_builtin,
 )
 from research.aegis_research.data import (
@@ -228,7 +230,7 @@ class IndicatorContext:
 
 
 def run_strategy_sweep(
-    resolved_config: ResolvedLaneConfig,
+    resolved_config: ResolvedRunConfig,
     *,
     component_registry: FrozenComponentRegistry,
     playbook_registry: FrozenPlaybookRegistry | None = None,
@@ -239,8 +241,6 @@ def run_strategy_sweep(
     on_run_started: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     config = resolved_config.config
-    if config.lane != "run":
-        raise ValueError("run_strategy_sweep requires a run lane config")
     playbooks = playbook_registry or discover_playbook_registry(
         component_registry=component_registry
     )
@@ -255,17 +255,17 @@ def run_strategy_sweep(
         supersedes_run_id=supersedes_run_id,
     )
     recorder.manifest.evidence = {
-        "lane": "run",
         "evidence_type": "strategy_sweep",
         "component_registry_fingerprint": component_registry.fingerprint,
         "playbook_registry_fingerprint": playbooks.fingerprint,
         "data_arrays": array_contract.metadata(),
     }
     recorder.persist()
-    if on_run_started is not None:
-        on_run_started(_run_refs(recorder))
+    known_secrets = known_config_secret_values(resolved_config.authored_config)
 
     try:
+        if on_run_started is not None:
+            on_run_started(_run_refs(recorder))
         array_contract.assert_configured()
         data_result = load_market_data_result(
             config.data,
@@ -345,7 +345,6 @@ def run_strategy_sweep(
         _assert_leaderboard_complete(leaderboard)
         payload = {
             "schema_version": STRATEGY_ARTIFACT_SCHEMA_VERSION,
-            "lane": "run",
             "evidence_type": "strategy_sweep",
             "strategy": strategy_evidence,
             "indicators": indicator_evidence,
@@ -364,7 +363,6 @@ def run_strategy_sweep(
         recorder.mark_run_completed()
         return {
             **_run_refs(recorder),
-            "lane": "run",
             "evidence_type": "strategy_sweep",
             "strategy_artifact_id": "strategy.run",
             "leaderboard": leaderboard,
@@ -376,14 +374,21 @@ def run_strategy_sweep(
         raise
     except ConfigValidationError as error:
         recorder.mark_run_failed(
-            diagnostic={"error_type": type(error).__name__, "message": str(error)[:1000]}
+            diagnostic=_failure_diagnostic(error, known_secrets=known_secrets)
         )
         raise
     except Exception as error:
         recorder.mark_run_failed(
-            diagnostic={"error_type": type(error).__name__, "message": str(error)[:1000]}
+            diagnostic=_failure_diagnostic(error, known_secrets=known_secrets)
         )
         raise
+
+
+def _failure_diagnostic(error: Exception, *, known_secrets: tuple[str, ...]) -> dict[str, str]:
+    return {
+        "error_type": type(error).__name__,
+        "message": redact_text(str(error), known_secrets)[:1000],
+    }
 
 
 def _resolve_indicator_refs(
@@ -661,7 +666,6 @@ def _run_playbook_strategy_sweep(
     _assert_leaderboard_complete(leaderboard)
     payload = {
         "schema_version": STRATEGY_ARTIFACT_SCHEMA_VERSION,
-        "lane": "run",
         "evidence_type": "strategy_sweep",
         "strategy": strategy_evidence,
         "indicators": indicator_evidence,
@@ -682,7 +686,6 @@ def _run_playbook_strategy_sweep(
     recorder.mark_run_completed()
     return {
         **_run_refs(recorder),
-        "lane": "run",
         "evidence_type": "strategy_sweep",
         "strategy_artifact_id": "strategy.run",
         "leaderboard": leaderboard,
@@ -930,7 +933,6 @@ def _run_split_playbook_strategy_sweep(
     recorder.mark_run_completed()
     return {
         **_run_refs(recorder),
-        "lane": "run",
         "evidence_type": "strategy_sweep",
         "strategy_artifact_id": "strategy.run",
         "leaderboard": leaderboard,
@@ -1081,7 +1083,6 @@ def _run_split_component_strategy_sweep(
     recorder.mark_run_completed()
     return {
         **_run_refs(recorder),
-        "lane": "run",
         "evidence_type": "strategy_sweep",
         "strategy_artifact_id": "strategy.run",
         "leaderboard": leaderboard,
@@ -1274,7 +1275,6 @@ def _split_strategy_payload(
 ) -> dict[str, Any]:
     payload = {
         "schema_version": STRATEGY_ARTIFACT_SCHEMA_VERSION,
-        "lane": "run",
         "evidence_type": "strategy_sweep",
         "strategy": strategy_evidence,
         "indicators": indicator_evidence,
@@ -2007,13 +2007,7 @@ def _validate_indicator_output(output: Any, close: pd.DataFrame, component_id: s
     if isinstance(frame, pd.DataFrame):
         _assert_indicator_frame(frame, close, component_id)
         return frame
-    result_frame = getattr(output, "frame", None)
-    if isinstance(result_frame, pd.DataFrame):
-        _assert_indicator_frame(result_frame, close, component_id)
-        return output
-    raise TypeError(
-        f"indicator component {component_id!r} must return a pandas object or IndicatorResult"
-    )
+    raise TypeError(f"indicator component {component_id!r} must return a pandas object")
 
 
 def _assert_indicator_frame(frame: pd.DataFrame, close: pd.DataFrame, component_id: str) -> None:

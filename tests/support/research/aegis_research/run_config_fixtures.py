@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from research.aegis_research.component_registry import discover_component_registry
+from research.aegis_research.config import (
+    CONFIG_SCHEMA_VERSION,
+    ResolvedRunConfig,
+    resolve_run_config,
+)
+from tests.support.research.aegis_research.component_fixtures import (
+    write_indicator_component,
+    write_strategy_component,
+)
+
+
+def build_resolved_run_config(
+    tmp_path: Path,
+    *,
+    output_dir: str | None = None,
+    data: dict[str, Any] | None = None,
+) -> ResolvedRunConfig:
+    root = tmp_path / "research" / "components"
+    write_indicator_component(root / "indicators" / "returns.py")
+    write_strategy_component(root / "strategies" / "strategy.py")
+    raw: dict[str, Any] = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "run_fixture",
+        "output_dir": output_dir or "runs",
+        "data": {
+            "source": "synthetic",
+            "symbols": ["SYN"],
+            "rows": 120,
+            "arrays": ["OHLCV"],
+        },
+        "portfolio": {"entry_budget": 1.0},
+        "strategy": {"source": "component", "id": "demo.strategy"},
+        "indicators": [{"source": "component", "ids": ["demo.returns"]}],
+        "ranking": {"metric": "total_return", "direction": "desc"},
+    }
+    if data is not None:
+        raw["data"] = {**raw["data"], **data}
+    return resolve_run_config(
+        raw,
+        component_registry=discover_component_registry(root=root, repo_root=tmp_path),
+    )
