@@ -53,19 +53,19 @@ def test_portfolio_metrics_use_shared_cash_group_scope() -> None:
         "benchmark_status": "none",
         "benchmark_source": None,
     }
-    assert metrics["total_return_pct"] == pytest.approx(18.0)
-    assert metrics["per_symbol"]["total_return_pct"]["A"] == pytest.approx(12.0)
-    assert metrics["per_symbol"]["total_return_pct"]["B"] == pytest.approx(6.0)
-    assert metrics["metric_roles"]["total_return_pct"]["required_gate_input"] is False
+    assert metrics["total_return"] == pytest.approx(18.0)
+    assert metrics["per_symbol"]["total_return"]["A"] == pytest.approx(12.0)
+    assert metrics["per_symbol"]["total_return"]["B"] == pytest.approx(6.0)
+    assert metrics["metric_roles"]["total_return"]["required_gate_input"] is False
     assert metrics["metric_roles"]["sharpe_ratio"]["required_gate_input"] is True
-    assert metrics["metric_evidence"]["total_return_pct"]["source"]["identity"] == "total_return"
+    assert metrics["metric_evidence"]["total_return"]["source"]["identity"] == "total_return"
     assert metrics["metric_evidence"]["sharpe_ratio"]["settings"]["year_freq"] == "252D"
-    assert metrics["metric_evidence"]["max_drawdown_pct"]["unit"] == ("percent_loss_magnitude")
+    assert metrics["metric_evidence"]["max_dd"]["unit"] == ("percent_loss_magnitude")
     assert set(metrics["optional_diagnostics"]) == {
         "probabilistic_sharpe_ratio",
         "deflated_sharpe_ratio",
     }
-    assert metrics["per_symbol_metric_evidence"]["total_return_pct"]["A"]["availability"] == (
+    assert metrics["per_symbol_metric_evidence"]["total_return"]["A"]["availability"] == (
         "available"
     )
 
@@ -118,9 +118,9 @@ def test_portfolio_metrics_by_candidate_group_preserves_candidate_scope() -> Non
     )
 
     assert set(metrics) == {"candidate-a", "candidate-b"}
-    assert metrics["candidate-a"]["total_return_pct"] == pytest.approx(18.0)
-    assert metrics["candidate-b"]["total_return_pct"] == pytest.approx(18.0)
-    assert metrics["candidate-a"]["per_symbol"]["total_return_pct"] == {
+    assert metrics["candidate-a"]["total_return"] == pytest.approx(18.0)
+    assert metrics["candidate-b"]["total_return"] == pytest.approx(18.0)
+    assert metrics["candidate-a"]["per_symbol"]["total_return"] == {
         "A": pytest.approx(12.0),
         "B": pytest.approx(6.0),
     }
@@ -160,7 +160,7 @@ def test_portfolio_metrics_by_candidate_group_handles_single_candidate_batch() -
         ["candidate-a"],
     )
 
-    assert metrics["candidate-a"]["total_return_pct"] == pytest.approx(18.0)
+    assert metrics["candidate-a"]["total_return"] == pytest.approx(18.0)
 
 
 def test_portfolio_metrics_records_warning_and_non_finite_evidence() -> None:
@@ -194,7 +194,7 @@ def test_non_decision_grade_validation_cannot_survive_by_metrics() -> None:
         test_metrics=_passing_metrics(),
         config=ReportConfig(),
         split_metric_evidence=[
-            _split_row("split_0", sharpe_ratio=0.0, max_drawdown_pct=50.0, total_trades=0),
+            _split_row("split_0", sharpe_ratio=0.0, max_dd=50.0, total_trades=0),
         ],
         validation_metadata={"decision_grade": False},
     )
@@ -238,12 +238,12 @@ def test_split_first_gates_can_survive_with_passing_split_evidence() -> None:
     report = build_survival_report(
         "passing-splits",
         train_metrics=_passing_metrics(),
-        test_metrics={"sharpe_ratio": -10.0, "max_drawdown_pct": 99.0, "total_trades": 0},
+        test_metrics={"sharpe_ratio": -10.0, "max_dd": 99.0, "total_trades": 0},
         config=ReportConfig(min_oos_sharpe=1.0, max_oos_drawdown=0.2, min_oos_trades=10),
         validation_metadata={"decision_grade": True},
         split_metric_evidence=[
-            _split_row("split_0", sharpe_ratio=1.1, max_drawdown_pct=10.0, total_trades=4),
-            _split_row("split_1", sharpe_ratio=1.2, max_drawdown_pct=15.0, total_trades=6),
+            _split_row("split_0", sharpe_ratio=1.1, max_dd=10.0, total_trades=4),
+            _split_row("split_1", sharpe_ratio=1.2, max_dd=15.0, total_trades=6),
         ],
     )
 
@@ -262,12 +262,12 @@ def test_split_first_gates_reject_when_aggregate_passes_but_split_fails() -> Non
     report = build_survival_report(
         "failed-split",
         train_metrics=_passing_metrics(),
-        test_metrics={"sharpe_ratio": 2.0, "max_drawdown_pct": 5.0, "total_trades": 99},
+        test_metrics={"sharpe_ratio": 2.0, "max_dd": 5.0, "total_trades": 99},
         config=ReportConfig(min_oos_sharpe=1.0, max_oos_drawdown=0.2, min_oos_trades=10),
         validation_metadata={"decision_grade": True},
         split_metric_evidence=[
-            _split_row("split_0", sharpe_ratio=1.2, max_drawdown_pct=10.0, total_trades=5),
-            _split_row("split_1", sharpe_ratio=0.5, max_drawdown_pct=15.0, total_trades=5),
+            _split_row("split_0", sharpe_ratio=1.2, max_dd=10.0, total_trades=5),
+            _split_row("split_1", sharpe_ratio=0.5, max_dd=15.0, total_trades=5),
         ],
     )
 
@@ -284,8 +284,8 @@ def test_mixed_required_failure_and_unavailable_metric_rejects() -> None:
         config=ReportConfig(min_oos_sharpe=1.0, max_oos_drawdown=0.2, min_oos_trades=10),
         validation_metadata={"decision_grade": True},
         split_metric_evidence=[
-            _split_row("split_0", sharpe_ratio=0.5, max_drawdown_pct=10.0, total_trades=5),
-            _split_row("split_1", sharpe_ratio=None, max_drawdown_pct=15.0, total_trades=5),
+            _split_row("split_0", sharpe_ratio=0.5, max_dd=10.0, total_trades=5),
+            _split_row("split_1", sharpe_ratio=None, max_dd=15.0, total_trades=5),
         ],
     )
 
@@ -302,7 +302,7 @@ def test_unavailable_required_metric_without_failure_needs_more_evidence() -> No
         config=ReportConfig(min_oos_sharpe=1.0, max_oos_drawdown=0.2, min_oos_trades=10),
         validation_metadata={"decision_grade": True},
         split_metric_evidence=[
-            _split_row("split_0", sharpe_ratio=None, max_drawdown_pct=10.0, total_trades=10),
+            _split_row("split_0", sharpe_ratio=None, max_dd=10.0, total_trades=10),
         ],
     )
 
@@ -321,7 +321,7 @@ def test_gate_uses_metric_evidence_availability_over_scalar_value() -> None:
             _split_row(
                 "split_0",
                 sharpe_ratio=2.0,
-                max_drawdown_pct=10.0,
+                max_dd=10.0,
                 total_trades=1,
                 sharpe_availability="unavailable_metric",
                 sharpe_warnings=[{"category": "RuntimeWarning", "message": "requires frequency"}],
@@ -353,12 +353,12 @@ def test_total_trades_gate_uses_sum_and_low_total_is_inconclusive() -> None:
     report = build_survival_report(
         "too-few-trades",
         train_metrics=_passing_metrics(),
-        test_metrics={"sharpe_ratio": 2.0, "max_drawdown_pct": 5.0, "total_trades": 99},
+        test_metrics={"sharpe_ratio": 2.0, "max_dd": 5.0, "total_trades": 99},
         config=ReportConfig(min_oos_sharpe=1.0, max_oos_drawdown=0.2, min_oos_trades=10),
         validation_metadata={"decision_grade": True},
         split_metric_evidence=[
-            _split_row("split_0", sharpe_ratio=1.2, max_drawdown_pct=10.0, total_trades=4),
-            _split_row("split_1", sharpe_ratio=1.2, max_drawdown_pct=10.0, total_trades=5),
+            _split_row("split_0", sharpe_ratio=1.2, max_dd=10.0, total_trades=4),
+            _split_row("split_1", sharpe_ratio=1.2, max_dd=10.0, total_trades=5),
         ],
     )
 
@@ -377,7 +377,7 @@ def test_drawdown_gate_compares_loss_magnitude() -> None:
         config=ReportConfig(min_oos_sharpe=1.0, max_oos_drawdown=0.2, min_oos_trades=1),
         validation_metadata={"decision_grade": True},
         split_metric_evidence=[
-            _split_row("split_0", sharpe_ratio=1.2, max_drawdown_pct=-35.0, total_trades=1),
+            _split_row("split_0", sharpe_ratio=1.2, max_dd=-35.0, total_trades=1),
         ],
     )
 
@@ -395,7 +395,7 @@ def test_string_nan_gate_metric_is_unavailable() -> None:
         config=ReportConfig(min_oos_sharpe=1.0, max_oos_drawdown=0.2, min_oos_trades=1),
         validation_metadata={"decision_grade": True},
         split_metric_evidence=[
-            _split_row("split_0", sharpe_ratio="NaN", max_drawdown_pct="NaN", total_trades=1),
+            _split_row("split_0", sharpe_ratio="NaN", max_dd="NaN", total_trades=1),
         ],
     )
 
@@ -411,7 +411,7 @@ def test_string_nan_gate_metric_is_unavailable() -> None:
 def _passing_metrics() -> dict[str, float | int]:
     return {
         "sharpe_ratio": 1.0,
-        "max_drawdown_pct": 10.0,
+        "max_dd": 10.0,
         "total_trades": 10,
     }
 
@@ -420,14 +420,14 @@ def _split_row(
     split: str,
     *,
     sharpe_ratio: object,
-    max_drawdown_pct: object,
+    max_dd: object,
     total_trades: object,
     sharpe_availability: str | None = None,
     sharpe_warnings: list[dict[str, str]] | None = None,
 ) -> dict[str, object]:
     metrics = {
         "sharpe_ratio": sharpe_ratio,
-        "max_drawdown_pct": max_drawdown_pct,
+        "max_dd": max_dd,
         "total_trades": total_trades,
     }
     return {
@@ -442,7 +442,7 @@ def _split_row(
                 availability=sharpe_availability,
                 warnings=sharpe_warnings,
             ),
-            "max_drawdown_pct": _evidence("max_drawdown_pct", max_drawdown_pct),
+            "max_dd": _evidence("max_dd", max_dd),
             "total_trades": _evidence("total_trades", total_trades),
         },
         "optional_diagnostics": {},
@@ -464,12 +464,12 @@ def _evidence(
         "normalized_value": value if availability == "available" else None,
         "availability": availability,
         "non_finite": None if availability == "available" else "missing",
-        "unit": "percent_loss_magnitude" if name == "max_drawdown_pct" else "ratio",
+        "unit": "percent_loss_magnitude" if name == "max_dd" else "ratio",
         "source": {"engine": "vectorbtpro", "identity": name, "method": "test"},
         "settings": {"freq": "1D", "year_freq": "252D"},
         "warnings": warnings or [],
         "required_report_output": True,
-        "required_gate_input": name in {"sharpe_ratio", "max_drawdown_pct", "total_trades"},
+        "required_gate_input": name in {"sharpe_ratio", "max_dd", "total_trades"},
     }
 
 

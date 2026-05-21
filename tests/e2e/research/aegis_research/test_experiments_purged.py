@@ -135,7 +135,7 @@ def test_synthetic_purged_experiment_preserves_multi_asset_axis(tmp_path: Path) 
 
     assert "AAA" in probabilities
     assert "BBB" in probabilities
-    assert set(report["test_metrics"]["per_symbol"]["total_return_pct"]) == {"AAA", "BBB"}
+    assert set(report["test_metrics"]["per_symbol"]["total_return"]) == {"AAA", "BBB"}
 
 
 def test_purged_fixlb_runs_with_close_only_csv(tmp_path: Path) -> None:

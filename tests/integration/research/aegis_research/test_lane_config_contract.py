@@ -293,8 +293,8 @@ def test_train_rejects_strategy_sweep_config_with_missing_training_contract(tmp_
     ("ranking", "expected"),
     [
         ({"metric": "not_a_metric", "direction": "desc"}, "ranking.metric"),
-        ({"metric": "total_return_pct", "direction": "sideways"}, "ranking.direction"),
-        ({"metric": "total_return_pct"}, "ranking.direction"),
+        ({"metric": "total_return", "direction": "sideways"}, "ranking.direction"),
+        ({"metric": "total_return"}, "ranking.direction"),
     ],
 )
 def test_lane_ranking_metric_and_direction_validation(
@@ -310,6 +310,91 @@ def test_lane_ranking_metric_and_direction_validation(
         resolve_lane_config(raw, component_registry=registry, expected_lane="run")
 
     assert expected in str(error.value)
+
+
+def test_lane_ranking_accepts_vbt_metric_ids_and_secondary_metrics(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+    raw["ranking"] = {
+        "metric": "total_return",
+        "direction": "desc",
+        "secondary_metrics": ["sharpe_ratio", "max_dd"],
+    }
+
+    resolved = resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert resolved.config.ranking.metric == "total_return"
+    assert resolved.config.ranking.secondary_metrics == ["sharpe_ratio", "max_dd"]
+    assert resolved.metric_registry is not None
+    assert len(resolved.manifest()["metric_registry_fingerprint"]) == 64
+
+
+@pytest.mark.parametrize(
+    ("secondary_metrics", "expected"),
+    [
+        ("sharpe_ratio", "ranking.secondary_metrics"),
+        (["sharpe_ratio", "sharpe_ratio"], "duplicate secondary metric"),
+        (["total_return"], "must not repeat primary metric"),
+        (["not_a_metric"], "ranking.secondary_metrics[0]"),
+        ([{"id": "sharpe_ratio"}], "must be a non-empty metric id string"),
+    ],
+)
+def test_lane_ranking_rejects_invalid_secondary_metrics(
+    tmp_path: Path,
+    secondary_metrics: object,
+    expected: str,
+) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+    raw["ranking"] = {
+        "metric": "total_return",
+        "direction": "desc",
+        "secondary_metrics": secondary_metrics,
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert expected in str(error.value)
+
+
+def test_lane_ranking_rejects_removed_rank_by_mode(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+    raw["ranking"] = {
+        "metric": "total_return",
+        "direction": "desc",
+        "rank_by": "baseline_delta",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert "ranking.rank_by" in str(error.value)
+    assert "secondary_metrics" in str(error.value)
+
+
+def test_lane_ranking_rejects_secondary_only_metric_as_primary(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+    raw["ranking"] = {"metric": "baseline_delta", "direction": "desc"}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="run")
+
+    assert "primary-eligible" in str(error.value)
+
+
+def test_train_lane_rejects_ranking_block(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _train_config()
+    raw["ranking"] = {"metric": "total_return", "direction": "desc"}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_lane_config(raw, component_registry=registry, expected_lane="train")
+
+    assert "ranking" in str(error.value)
+    assert "unknown field" in str(error.value)
 
 
 def _run_config() -> dict[str, object]:

@@ -7,7 +7,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-RUN_LEADERBOARD_SCHEMA_VERSION = "run_leaderboard.v1"
+from research.aegis_research.metrics.custom.baseline_delta import (
+    baseline_delta_value,
+    baseline_metric_value,
+)
+
+RUN_LEADERBOARD_SCHEMA_VERSION = "run_leaderboard.v2"
 MAX_LEADERBOARD_ROWS = 10
 MAX_FAILURE_SAMPLES = 10
 METRIC_SOURCE_CENTRAL_PORTFOLIO = "central_portfolio"
@@ -26,11 +31,13 @@ def build_run_leaderboard(
     *,
     metric: str,
     direction: str,
-    rank_by: str = "primary_metric",
+    secondary_metrics: Sequence[str] = (),
+    metric_registry_fingerprint: str | None = None,
 ) -> dict[str, Any]:
+    secondary_metrics = tuple(secondary_metrics)
     ranked_rows: list[_RankedRow] = []
     failures: list[dict[str, str]] = []
-    reverse = rank_by == "baseline_delta" or direction == "desc"
+    reverse = direction == "desc"
     succeeded = 0
     failed = 0
     excluded = 0
@@ -40,16 +47,33 @@ def build_run_leaderboard(
             failed += 1
             _append_failure_sample(failures, variant_id, record["error"])
             continue
-        _assert_central_metric_source(record, variant_id, metric)
+        _assert_central_metric_source(
+            record,
+            variant_id,
+            metric,
+            require_baseline="baseline_delta" in secondary_metrics,
+        )
         value = _metric_value(record, metric)
         if value is None:
             excluded += 1
             _append_failure_sample(failures, variant_id, f"metric {metric!r} unavailable")
             continue
-        row = _leaderboard_row(record, variant_id, metric, value, direction)
+        row_metrics = {metric: value}
+        missing_metric = _populate_secondary_metrics(
+            row_metrics,
+            record,
+            primary_metric=metric,
+            primary_value=value,
+            secondary_metrics=secondary_metrics,
+        )
+        if missing_metric is not None:
+            excluded += 1
+            _append_failure_sample(failures, variant_id, f"metric {missing_metric!r} unavailable")
+            continue
+        row = _leaderboard_row(record, variant_id, row_metrics, metric, direction)
         ranked_rows.append(
             _RankedRow(
-                sort_value=_sort_value(row, direction=direction, rank_by=rank_by),
+                sort_value=value,
                 variant_id=row["variant_id"],
                 index=index,
                 row=row,
@@ -63,9 +87,10 @@ def build_run_leaderboard(
     attempted = len(candidate_records)
     return {
         "schema_version": RUN_LEADERBOARD_SCHEMA_VERSION,
-        "metric": metric,
+        "primary_metric": metric,
         "direction": direction,
-        "rank_by": rank_by,
+        "secondary_metrics": list(secondary_metrics),
+        "metric_registry_fingerprint": metric_registry_fingerprint,
         "rows": [ranked.row for ranked in ranked_rows],
         "failure_samples": failures,
         "summary": {
@@ -83,15 +108,14 @@ def build_run_leaderboard(
 def _leaderboard_row(
     record: Mapping[str, Any],
     variant_id: str,
+    metrics: Mapping[str, float],
     metric: str,
-    value: float,
     direction: str,
 ) -> dict[str, Any]:
     row = {
         "variant_id": variant_id,
         "composed_candidate_id": record.get("composed_candidate_id"),
-        "primary_metric": metric,
-        "primary_metric_value": value,
+        "metrics": dict(metrics),
         "strategy_source": record.get("strategy_source"),
         "strategy_id": record.get("strategy_id"),
         "strategy_candidate_id": record.get("strategy_candidate_id"),
@@ -110,16 +134,34 @@ def _leaderboard_row(
         "source_hash": record.get("source_hash"),
         "component_source_hash": record.get("component_source_hash"),
     }
-    baseline_value = _baseline_metric_value(record, metric)
-    if baseline_value is not None:
-        raw_delta = value - baseline_value
+    baseline_value = baseline_metric_value(record, metric)
+    if baseline_value is not None and "baseline_delta" in metrics:
+        raw_delta = metrics["baseline_delta"]
         row |= {
             "baseline_component_indicator_id": record.get("baseline_component_indicator_id"),
             "baseline_metric_value": baseline_value,
-            "baseline_delta": raw_delta,
             "direction_adjusted_delta": raw_delta if direction == "desc" else -raw_delta,
         }
     return row
+
+
+def _populate_secondary_metrics(
+    row_metrics: dict[str, float],
+    record: Mapping[str, Any],
+    *,
+    primary_metric: str,
+    primary_value: float,
+    secondary_metrics: Sequence[str],
+) -> str | None:
+    for metric in secondary_metrics:
+        if metric == "baseline_delta":
+            value = baseline_delta_value(record, primary_metric, primary_value)
+        else:
+            value = _metric_value(record, metric)
+        if value is None:
+            return metric
+        row_metrics[metric] = value
+    return None
 
 
 def _metric_value(record: Mapping[str, Any], metric: str) -> float | None:
@@ -132,28 +174,19 @@ def _assert_central_metric_source(
     record: Mapping[str, Any],
     variant_id: str,
     metric: str,
+    *,
+    require_baseline: bool,
 ) -> None:
     if record.get("metric_source") != METRIC_SOURCE_CENTRAL_PORTFOLIO:
         raise ValueError(
             f"variant {variant_id!r} metric source must be "
             f"{METRIC_SOURCE_CENTRAL_PORTFOLIO!r}"
         )
-    baseline_metrics = record.get("baseline_metrics", {})
-    has_baseline_metric = isinstance(baseline_metrics, Mapping) and metric in baseline_metrics
-    has_baseline_metric = has_baseline_metric or record.get("baseline_metric_value") is not None
-    if has_baseline_metric and record.get("baseline_metric_source") != METRIC_SOURCE_CENTRAL_PORTFOLIO:
+    if require_baseline and record.get("baseline_metric_source") != METRIC_SOURCE_CENTRAL_PORTFOLIO:
         raise ValueError(
             f"variant {variant_id!r} baseline metric source must be "
             f"{METRIC_SOURCE_CENTRAL_PORTFOLIO!r}"
         )
-
-
-def _baseline_metric_value(record: Mapping[str, Any], metric: str) -> float | None:
-    metrics = record.get("baseline_metrics", {})
-    value = (
-        metrics.get(metric) if isinstance(metrics, Mapping) else record.get("baseline_metric_value")
-    )
-    return _finite_float(value)
 
 
 def _finite_float(value: Any) -> float | None:
@@ -164,14 +197,6 @@ def _finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
-
-
-def _sort_value(row: Mapping[str, Any], *, direction: str, rank_by: str) -> float:
-    if rank_by == "baseline_delta" and row.get("direction_adjusted_delta") is not None:
-        return float(row["direction_adjusted_delta"])
-    if rank_by == "baseline_delta" and direction == "asc":
-        return -float(row["primary_metric_value"])
-    return float(row["primary_metric_value"])
 
 
 def _ranked_row_key(

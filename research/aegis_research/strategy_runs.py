@@ -282,6 +282,11 @@ def run_strategy_sweep(
                 data=data_bundle,
                 open_prices=open_prices,
                 array_contract=array_contract,
+                metric_registry_fingerprint=(
+                    resolved_config.metric_registry.fingerprint
+                    if resolved_config.metric_registry
+                    else None
+                ),
             )
         indicators, indicator_evidence = _resolve_indicator_refs(
             config.indicators,
@@ -310,7 +315,10 @@ def run_strategy_sweep(
             strategy_candidate_records,
             metric=config.ranking.metric,
             direction=config.ranking.direction,
-            rank_by=config.ranking.rank_by,
+            secondary_metrics=config.ranking.secondary_metrics,
+            metric_registry_fingerprint=(
+                resolved_config.metric_registry.fingerprint if resolved_config.metric_registry else None
+            ),
         )
         _assert_leaderboard_complete(leaderboard)
         payload = {
@@ -409,6 +417,7 @@ def _run_playbook_strategy_sweep(
     data: MarketDataBundle,
     open_prices: pd.DataFrame,
     array_contract: DataArrayContract,
+    metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     try:
         indicators, indicator_evidence, indicator_axes, indicator_candidate_evidence, preflight = (
@@ -601,7 +610,8 @@ def _run_playbook_strategy_sweep(
         strategy_records,
         metric=config.ranking.metric,
         direction=config.ranking.direction,
-        rank_by=config.ranking.rank_by,
+        secondary_metrics=config.ranking.secondary_metrics,
+        metric_registry_fingerprint=metric_registry_fingerprint,
     )
     _assert_leaderboard_complete(leaderboard)
     payload = {

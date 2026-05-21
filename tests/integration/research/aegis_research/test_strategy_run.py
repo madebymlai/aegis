@@ -177,10 +177,11 @@ def test_strategy_run_fails_partial_leaderboards_before_writing_evidence(
 
     def partial_leaderboard(*_args, **_kwargs):
         return {
-            "schema_version": "run_leaderboard.v1",
-            "metric": "total_return_pct",
+            "schema_version": "run_leaderboard.v2",
+            "primary_metric": "total_return",
             "direction": "desc",
-            "rank_by": "primary_metric",
+            "secondary_metrics": [],
+            "metric_registry_fingerprint": None,
             "rows": [],
             "failure_samples": [{"variant_id": "failed", "code": "runtime", "message": "boom"}],
             "summary": {
@@ -368,7 +369,7 @@ def _write_run_config(
                 "portfolio": {"entry_budget": 1.0},
                 "strategy": {"source": "component", "id": strategy_id},
                 "indicators": indicators or [{"source": "component", "ids": "all"}],
-                "ranking": {"metric": "total_return_pct", "direction": "desc"},
+                "ranking": {"metric": "total_return", "direction": "desc"},
             },
             sort_keys=False,
         )

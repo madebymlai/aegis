@@ -16,6 +16,11 @@ from research.aegis_research.config import (
     ReportConfig,
     to_builtin,
 )
+from research.aegis_research.metrics.stats import (
+    PORTFOLIO_METRIC_CATALOG,
+    PORTFOLIO_METRIC_VALUE_KEYS,
+    PORTFOLIO_STATS_METRICS,
+)
 from research.aegis_research.splits import split_purging_passed
 
 PORTFOLIO_METRIC_SCOPE = "shared_cash_group"
@@ -28,63 +33,7 @@ GATE_STATUS_FAIL = "fail"
 GATE_STATUS_INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 GATE_STATUS_UNAVAILABLE_METRIC = "unavailable_metric"
 GATE_STATUS_INVALID_VALIDATION = "invalid_validation"
-METRIC_VALUE_KEYS = (
-    "total_return_pct",
-    "sharpe_ratio",
-    "max_drawdown_pct",
-    "total_trades",
-    "win_rate_pct",
-    "total_fees_paid",
-)
-PORTFOLIO_METRIC_CATALOG: dict[str, dict[str, Any]] = {
-    "total_return_pct": {
-        "vbt_metric": "total_return",
-        "unit": "percent",
-        "source_method": "stats",
-        "required_report_output": True,
-        "required_gate_input": False,
-    },
-    "max_drawdown_pct": {
-        "vbt_metric": "max_dd",
-        "unit": "percent_loss_magnitude",
-        "source_method": "stats",
-        "required_report_output": True,
-        "required_gate_input": True,
-    },
-    "total_trades": {
-        "vbt_metric": "total_trades",
-        "unit": "count",
-        "source_method": "stats",
-        "required_report_output": True,
-        "required_gate_input": True,
-    },
-    "win_rate_pct": {
-        "vbt_metric": "win_rate",
-        "unit": "percent",
-        "source_method": "stats",
-        "required_report_output": True,
-        "required_gate_input": False,
-    },
-    "total_fees_paid": {
-        "vbt_metric": "total_fees_paid",
-        "unit": "cash",
-        "source_method": "stats",
-        "required_report_output": True,
-        "required_gate_input": False,
-    },
-    "sharpe_ratio": {
-        "vbt_metric": "sharpe_ratio",
-        "unit": "ratio",
-        "source_method": "get_sharpe_ratio",
-        "required_report_output": True,
-        "required_gate_input": True,
-    },
-}
-PORTFOLIO_STATS_METRICS = tuple(
-    metric["vbt_metric"]
-    for metric in PORTFOLIO_METRIC_CATALOG.values()
-    if metric["source_method"] == "stats"
-)
+METRIC_VALUE_KEYS = PORTFOLIO_METRIC_VALUE_KEYS
 OPTIONAL_DIAGNOSTICS = {
     "probabilistic_sharpe_ratio": {
         "method": "get_prob_sharpe_ratio",
@@ -389,7 +338,7 @@ def _decision_policy(config: ReportConfig) -> dict[str, Any]:
                 "comparator": ">=",
                 "rationale": "Every test split must meet the configured Sharpe floor.",
             },
-            "max_drawdown_pct": {
+            "max_dd": {
                 "policy": "all_splits_pass",
                 "threshold": config.max_oos_drawdown * 100,
                 "comparator": "<=",
@@ -515,12 +464,12 @@ def _split_threshold_gates(
                 ),
             )
         )
-        drawdown = _row_metric_value(row, "max_drawdown_pct")
+        drawdown = _row_metric_value(row, "max_dd")
         threshold_pct = config.max_oos_drawdown * 100
         gates.append(
             _threshold_gate(
                 name="oos_drawdown",
-                metric="max_drawdown_pct",
+                metric="max_dd",
                 split=split,
                 metric_value=drawdown,
                 threshold=threshold_pct,
@@ -661,7 +610,7 @@ def _row_metric_value(row: Mapping[str, Any], metric: str) -> dict[str, Any]:
 def _gate_metric_value(metric: str, value: Any) -> Any:
     if _non_finite_reason(value) is not None:
         return None
-    if metric == "max_drawdown_pct":
+    if metric == "max_dd":
         return _drawdown_loss_magnitude_pct(value)
     return to_builtin(value)
 
@@ -1005,7 +954,7 @@ def _raw_value_map(value: Any) -> dict[str, Any]:
 
 
 def _normalized_metric_value(metric_name: str, value: Any) -> Any:
-    if metric_name == "max_drawdown_pct":
+    if metric_name == "max_dd":
         return _drawdown_loss_magnitude_pct(value)
     return to_builtin(value)
 

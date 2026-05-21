@@ -239,7 +239,7 @@ class RunIndicatorSourceConfig:
 class RankingConfig:
     metric: str
     direction: str
-    rank_by: str = "primary_metric"
+    secondary_metrics: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

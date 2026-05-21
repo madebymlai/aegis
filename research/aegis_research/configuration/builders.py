@@ -86,7 +86,7 @@ def _build_ranking(raw: dict[str, Any]) -> RankingConfig:
     return RankingConfig(
         metric=raw["metric"],
         direction=raw["direction"],
-        rank_by=raw.get("rank_by", "primary_metric"),
+        secondary_metrics=list(raw.get("secondary_metrics", [])),
     )
 
 

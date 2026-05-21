@@ -277,21 +277,21 @@ def _aggregate_metrics(metrics: pd.DataFrame) -> dict[str, Any]:
     def numeric_column(name: str) -> pd.Series:
         return pd.to_numeric(metrics[name], errors="coerce").dropna()
 
-    total_return = numeric_column("total_return_pct")
+    total_return = numeric_column("total_return")
     sharpe = numeric_column("sharpe_ratio")
-    max_drawdown = numeric_column("max_drawdown_pct")
+    max_drawdown = numeric_column("max_dd")
     trades = numeric_column("total_trades")
-    win_rate = numeric_column("win_rate_pct")
+    win_rate = numeric_column("win_rate")
     fees = numeric_column("total_fees_paid")
     for name in ("metric_scope", "metric_assumptions"):
         if name not in metrics:
             raise ValueError(f"{name} is required for split metric aggregation")
     aggregated = {
-        "total_return_pct": total_return.mean() if len(total_return) else None,
+        "total_return": total_return.mean() if len(total_return) else None,
         "sharpe_ratio": sharpe.mean() if len(sharpe) else None,
-        "max_drawdown_pct": max_drawdown.max() if len(max_drawdown) else None,
+        "max_dd": max_drawdown.max() if len(max_drawdown) else None,
         "total_trades": trades.sum() if len(trades) else None,
-        "win_rate_pct": win_rate.mean() if len(win_rate) else None,
+        "win_rate": win_rate.mean() if len(win_rate) else None,
         "total_fees_paid": fees.sum() if len(fees) else None,
     }
     if "per_symbol" in metrics:
@@ -309,11 +309,11 @@ def _aggregate_metrics(metrics: pd.DataFrame) -> dict[str, Any]:
 
 def _split_metrics_row(metrics: dict[str, Any]) -> dict[str, Any]:
     return {
-        "total_return_pct": metrics.get("total_return_pct"),
+        "total_return": metrics.get("total_return"),
         "sharpe_ratio": metrics.get("sharpe_ratio"),
-        "max_drawdown_pct": metrics.get("max_drawdown_pct"),
+        "max_dd": metrics.get("max_dd"),
         "total_trades": metrics.get("total_trades"),
-        "win_rate_pct": metrics.get("win_rate_pct"),
+        "win_rate": metrics.get("win_rate"),
         "total_fees_paid": metrics.get("total_fees_paid"),
         "metric_scope": metrics.get("metric_scope"),
         "metric_assumptions": metrics.get("metric_assumptions"),
@@ -420,7 +420,7 @@ def _aggregate_symbol_values(metric_name: str, values: list[float]) -> Any:
         return None
     if metric_name in {"total_trades", "total_fees_paid"}:
         return sum(values)
-    if metric_name == "max_drawdown_pct":
+    if metric_name == "max_dd":
         return max(values)
     return sum(values) / len(values)
 
@@ -465,11 +465,11 @@ def _decision_grade(
 
 def _aggregation_methods() -> dict[str, str]:
     return {
-        "total_return_pct": "mean_across_splits",
+        "total_return": "mean_across_splits",
         "sharpe_ratio": "mean_across_splits",
-        "max_drawdown_pct": "max_across_splits",
+        "max_dd": "max_across_splits",
         "total_trades": "sum_across_splits",
-        "win_rate_pct": "mean_across_splits",
+        "win_rate": "mean_across_splits",
         "total_fees_paid": "sum_across_splits",
         "per_symbol": "metric_specific_across_splits",
     }

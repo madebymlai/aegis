@@ -98,7 +98,7 @@ def test_run_experiment_writes_manifest_backed_artifacts(tmp_path: Path) -> None
     assert metrics["metric_scope"] == "shared_cash_group"
     assert metrics["metric_assumptions"]["benchmark_status"] == "none"
     assert metrics["metric_evidence"]["sharpe_ratio"]["source"]["identity"] == "sharpe_ratio"
-    assert metrics["metric_roles"]["total_return_pct"]["required_gate_input"] is False
+    assert metrics["metric_roles"]["total_return"]["required_gate_input"] is False
     assert portfolio_sidecar["metadata"]["signal_diagnostics"]["set_name"] == "test"
     assert portfolio_sidecar["metadata"]["portfolio_diagnostics"]["execution"]["timing"] == (
         "next_open"
