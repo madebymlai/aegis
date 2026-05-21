@@ -1,3 +1,28 @@
+"""Optimization runner.
+
+Wraps an :class:`OptimizationSource` pipeline in ``vbt.cv_split`` for native
+parameter optimization and emits the canonical evidence shape (selection
+winners, optional grid, post-execution sampled rows, parameterized kwargs).
+
+VBT execution-policy layering
+-----------------------------
+
+``optimization.execute`` in the run config flows into ``parameterized_kwargs``
+of ``vbt.cv_split`` -- the **inner** per-(split, set) parameter execution
+layer. It controls how the param grid is executed within a single
+(split, set), e.g. ``mono_chunk_meta``, ``n_chunks``, ``chunk_len``,
+``show_progress``, and ``jitted``. Aegis reserves keys that own search,
+evidence, ranking, and merge semantics (see
+``OPTIMIZATION_EXECUTE_RESERVED_KEYS`` in ``configuration/validation.py``).
+
+The **outer** split-execution layer (cv_split's ``execute_kwargs``) is **not**
+exposed by this runner. VBT requires that "train and test sets within each
+split must execute in the same thread/process due to the way grid results are
+stored and accessed using grid_results_map." Defaulting outer execution to
+sequential keeps that invariant safe; any future opt-in for parallel split
+execution must preserve set co-residency per split.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

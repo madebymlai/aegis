@@ -328,6 +328,110 @@ def test_optimization_executes_cv_split_and_writes_strategy_run_artifact(
     assert "execution_failure" not in evidence
 
 
+def test_optimization_executes_cv_split_with_multi_symbol_shared_cash_portfolio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_optimization_ma_cross_playbook(tmp_path / "research/playbooks/strategies/ma_opt.py")
+    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_opt",
+        symbols=["SYN_A", "SYN_B", "SYN_C"],
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    assert (
+        cli.main(["run", str(config_path), "--json", "--run-id", "optimization-multi-symbol"])
+        == 0
+    )
+
+    artifact = json.loads(
+        (tmp_path / "runs" / "optimization-multi-symbol" / "strategy_run.json").read_text()
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "success"
+    assert artifact["evidence_type"] == "optimization"
+
+    # Candidate identity must not pick up the symbol axis: with 3 symbols and
+    # 4 param rows we still expect 4 candidates, not 12.
+    assert len(artifact["candidates"]) == 4, (
+        "candidate identity must not include the symbol level; one candidate per param row"
+    )
+    candidate_params = [tuple(sorted(c["params"].items())) for c in artifact["candidates"]]
+    assert len(set(candidate_params)) == 4
+
+    # Leaderboard rows are aggregated metrics from the grouped portfolio
+    # (shared cash across all 3 symbols), so we expect a single
+    # ranking_metric_value per row, not a per-symbol breakdown.
+    leaderboard_rows = artifact["leaderboard"]["rows"]
+    assert leaderboard_rows, "expected non-empty leaderboard for multi-symbol run"
+    for row in leaderboard_rows:
+        ranking_value = row["ranking_metric_value"]
+        assert ranking_value is None or isinstance(ranking_value, int | float), (
+            "ranking_metric_value must be a scalar (grouped-portfolio metric), "
+            f"not per-symbol breakdown; got {ranking_value!r}"
+        )
+        # No symbol leak into params / coordinates.
+        assert "symbol" not in row["params"]
+
+    # Manifest config records all 3 symbols.
+    manifest = json.loads(
+        (tmp_path / "runs" / "optimization-multi-symbol" / "manifest.json").read_text()
+    )
+    assert sorted(manifest["config"]["data"]["symbols"]) == ["SYN_A", "SYN_B", "SYN_C"]
+
+
+def test_optimization_execute_kwargs_pass_through_to_parameterized_layer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """optimization.execute kwargs (e.g. show_progress, chunk_len) reach vbt.parameterized.
+
+    Exercises the pass-through wire that enables mono-chunks and chunked
+    execution per VBT cookbook. Full mono_chunk_meta coverage with merged-array
+    pipelines is deferred to #32; this test confirms the kwargs surface works
+    and the run still completes with the configured passthrough recorded in
+    evidence.
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_optimization_ma_cross_playbook(tmp_path / "research/playbooks/strategies/ma_opt.py")
+    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
+    optimization = {
+        "search": "grid",
+        "split": _rolling_split_config(),
+        "execute": {"show_progress": False, "chunk_len": 2},
+    }
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_opt",
+        optimization=optimization,
+    )
+
+    assert (
+        cli.main(["run", str(config_path), "--json", "--run-id", "optimization-execute-kwargs"])
+        == 0
+    )
+
+    artifact = json.loads(
+        (tmp_path / "runs" / "optimization-execute-kwargs" / "strategy_run.json").read_text()
+    )
+    parameterized_kwargs = artifact["execution"]["parameterized_kwargs"]
+    assert parameterized_kwargs.get("show_progress") is False, (
+        "optimization.execute.show_progress must reach vbt.parameterized's parameterized_kwargs"
+    )
+    assert parameterized_kwargs.get("chunk_len") == 2, (
+        "optimization.execute.chunk_len must reach vbt.parameterized's parameterized_kwargs"
+    )
+    # Aegis-owned kwargs are still preserved (not overridden by user execute kwargs).
+    assert parameterized_kwargs.get("merge_func") == "concat"
+
+
 def test_optimization_no_result_pipeline_publishes_visible_failure_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1068,6 +1172,7 @@ def _write_run_config(
     candidate_grid: dict[str, object] | None = None,
     split: dict[str, object] | None = None,
     optimization: dict[str, object] | None = None,
+    symbols: list[str] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
@@ -1077,7 +1182,7 @@ def _write_run_config(
                 "name": "run_playbook_source_test",
                 "data": {
                     "source": "synthetic",
-                    "symbols": ["SYN"],
+                    "symbols": symbols if symbols is not None else ["SYN"],
                     "rows": 80,
                     "arrays": ["OHLCV"],
                 },

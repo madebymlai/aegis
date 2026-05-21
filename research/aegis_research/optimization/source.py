@@ -1,3 +1,32 @@
+"""Optimization source contract.
+
+#31 scope: signal-side parameter optimization only. A source exposes a
+``pipeline`` callable plus a ``params`` mapping of ``vbt.Param`` axes; VBT
+sweeps that grid via ``vbt.cv_split`` and Aegis computes central portfolio
+metrics from the returned (entries, exits) signals.
+
+Limitations carried by this contract (R18 follow-up):
+
+- Portfolio-side params (``sl_stop``, ``tp_stop``, ``fees``, ``slippage``,
+  ``init_cash``, ``entry_budget``, ``direction``) cannot currently be wrapped
+  in ``vbt.Param``. ``simulate_portfolio`` receives a static
+  ``PortfolioConfig`` per run, so any portfolio-axis sweep would not flow
+  through the Aegis-owned portfolio policy boundary. Issue #32 will extend
+  the source contract with an optional portfolio-param hook that threads
+  ``vbt.Param`` values into ``Portfolio.from_signals`` while preserving
+  long-only, entry-budget, next-open validation, and shared-cash grouping.
+
+- Hidden params (``vbt.Param(..., hide=True)``) are rejected at validation
+  time. They are excluded from the VBT result index, so candidate identity
+  would silently collapse across hidden values. #32 will materialize hidden
+  values into ``hidden_params`` on candidate evidence.
+
+- The run config's ``indicators: [...]`` list is ignored on the optimization
+  path; the source's pipeline is self-contained. #32 reframes this so
+  components own ``param_space()`` and the run config composes indicator +
+  strategy components via per-entry ``lock_id`` semantics.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
