@@ -167,6 +167,21 @@ class CandidateStore:
         row = self._candidate_lookup(candidate_key, run_id=run_id)
         return _json_loads(row["params_json"])
 
+    def candidate_by_key(
+        self,
+        candidate_key: str,
+        *,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        row = self._candidate_lookup(candidate_key, run_id=run_id)
+        return {
+            "run_id": row["run_id"],
+            "candidate_key": row["candidate_key"],
+            "candidate": _json_loads(row["candidate_row_json"]),
+            "params": _json_loads(row["params_json"]),
+            "provenance": _json_loads(row["provenance_json"]),
+        }
+
     def provenance_by_candidate(
         self,
         candidate_key: str,
@@ -177,13 +192,25 @@ class CandidateStore:
         return _json_loads(row["provenance_json"])
 
     def params_by_promotion_token(self, token: str) -> dict[str, Any]:
+        return self.promotion_by_token(token)["params"]
+
+    def promotion_by_token(self, token: str) -> dict[str, Any]:
         row = self._connection.execute(
-            "SELECT params_json FROM candidate_promotions WHERE token = ?",
+            "SELECT * FROM candidate_promotions WHERE token = ?",
             (token,),
         ).fetchone()
         if row is None:
             raise CandidateStoreError(f"unknown promotion token: {token}")
-        return _json_loads(row["params_json"])
+        return {
+            "token": row["token"],
+            "run_id": row["run_id"],
+            "component_family": row["component_family"],
+            "component_id": row["component_id"],
+            "component_slot": row["component_slot"],
+            "candidate_key": row["candidate_key"],
+            "params": _json_loads(row["params_json"]),
+            "provenance": _json_loads(row["provenance_json"]),
+        }
 
     def _ensure_schema(self) -> None:
         self._connection.executescript(
