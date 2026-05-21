@@ -114,6 +114,7 @@ def _validate_run_config(
         issues,
         component_registry=component_registry,
         allowed_sources={"component", "playbook"},
+        allow_empty=raw.get("optimization") is not None,
     )
     _validate_run_source_combination(raw, issues)
     _validate_ranking("ranking", raw.get("ranking"), issues, registry=metric_registry)
@@ -335,6 +336,7 @@ def _validate_indicator_sources(
     *,
     component_registry: FrozenComponentRegistry,
     allowed_sources: set[str],
+    allow_empty: bool = False,
 ) -> None:
     if isinstance(value, dict) and "specs" in value:
         issues.append(
@@ -344,7 +346,10 @@ def _validate_indicator_sources(
             )
         )
         return
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list):
+        issues.append(ConfigValidationIssue(path, "must be a list"))
+        return
+    if not value and not allow_empty:
         issues.append(ConfigValidationIssue(path, "must be a non-empty list"))
         return
 

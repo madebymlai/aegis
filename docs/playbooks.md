@@ -55,7 +55,47 @@ Leaderboards rank complete composed strategy candidates, not raw indicators. A r
 
 Full completed-run evidence is normalized under `strategy_run.json` `catalogs`: source records, indicator candidates, strategy candidates, composed candidates, chunks, and metric payloads are keyed by refs. Leaderboard rows stay compact and readable but include refs so agents can resolve full provenance without reconstructing hidden batch dimensions.
 
-Candidate-grid policy is configured under `candidate_grid`. `candidate_grid.batch_size` bounds how many complete composed strategy candidates Aegis asks a strategy materializer to return per chunk; `candidate_grid.max_candidates` and `candidate_grid.max_estimated_cells` fail closed before scoring when a selected grid is too large:
+## Optimization (Native VBT Path)
+
+Run configs that need parameter optimization use the `optimization` block, which routes execution through `vbt.cv_split` around a shared parameterized pipeline. The strategy playbook must return the `aegis.optimization_source.v1` contract: a Python callable with `vbt.Param` arguments plus a `params` mapping that names the parameter axes. Aegis does not build a Python candidate grid for these runs; VBT generates parameter rows from `vbt.Param` and Aegis records the resulting parameter index as candidate evidence.
+
+```yaml
+strategy:
+  source: playbook
+  id: rsi_reversion_opt
+
+indicators: []
+
+ranking:
+  metric: total_return
+  direction: desc
+
+optimization:
+  search: random
+  random_subset: 16
+  seed: 42
+  evidence:
+    return_grid: first
+  split:
+    method: from_rolling
+    params:
+      length: 252
+      offset: 252
+      split: 0.8
+    max_splits: 10
+```
+
+`optimization.search` is `grid` (full cartesian product) or `random` (lazy subset). Random search requires `random_subset` and a `seed`; Aegis persists the actual sampled parameter rows under `execution.sampled_rows` so reviewers can reproduce the search without rerunning. `optimization.split.method` maps to `vbt.cv_split(splitter=...)` and `optimization.split.params` to `splitter_kwargs`; `optimization.split.max_splits` is an Aegis-owned safety gate, not a VBT kwarg. `optimization.evidence.return_grid` controls whether the full selection grid is retained (`off`, `first`, or `all`); `first` is the default and only persists the selection-set grid to keep artifacts compact.
+
+Set roles are positional: VBT set index 0 is Aegis `selection`, VBT set index 1 is Aegis `held_out`. `set_labels` is rejected under `optimization.split.params` because the role mapping is owned by Aegis. Tied parameters use `vbt.Param(..., level=...)`; conditional parameters use `vbt.Param(..., condition=...)`. Hidden params, `keys`, and other VBT param features stay inside the playbook.
+
+The held-out leaderboard is derived from VBT-selected parameter combinations and held-out metrics, weighted by `held_out_row_count`. Each leaderboard row carries a stable `candidate_key` linking back to the candidate evidence record built from the VBT parameter index. Preflight rejections (oversized grids, missing Open prices, evidence-budget overruns) and runtime failures (`vbt.NoResult`-only grids, pipeline exceptions) write `evidence.optimization.execution_failure` to the manifest and do not publish a completed `strategy_run.json`.
+
+`optimization` and `candidate_grid` cannot coexist in a single config. Configs without an `optimization` block remain fixed/non-optimized runs and may still use the legacy `candidate_grid` + top-level `split` shape; that legacy path is retained for non-optimization sweep contracts and is not the forward optimization contract. Candidate persistence, promotion, playbook removal, and component param spaces are deferred to issue #32.
+
+## Legacy Candidate Sweep (Non-Optimization Path)
+
+Configs that use a `playbook_sweep_result.v1` strategy without an `optimization` block follow the legacy candidate-sweep contract. `candidate_grid.batch_size` bounds how many composed strategy candidates Aegis asks a strategy materializer to return per chunk; `candidate_grid.max_candidates` and `candidate_grid.max_estimated_cells` fail closed before scoring when a selected grid is too large:
 
 ```yaml
 candidate_grid:
@@ -66,7 +106,7 @@ candidate_grid:
 
 Completed strategy sweeps require every planned candidate chunk to score and produce the requested ranking metric. Preflight rejections and chunk failures write diagnostic evidence to the manifest, including planned counts, chunk indexes, candidate IDs, stage, error type, and message, but they do not publish completed `strategy_run.json` leaderboard evidence.
 
-Run configs can optionally add top-level split scoring. The selected strategy candidate set is unchanged: fixed component runs are one-candidate sets, and playbook sweeps are composed strategy x indicator candidate sets. Aegis builds VBT split sets from the source index, scores candidates only on each split's selection set, evaluates the selected candidate on the held-out set with fresh portfolio state, and writes one final split-based leaderboard plus `split_metrics` and `split_diagnostics` in `strategy_run.json`.
+Non-optimization runs can also add top-level split scoring. Aegis builds VBT split sets from the source index, scores candidates only on each split's selection set, evaluates the selected candidate on the held-out set with fresh portfolio state, and writes one final split-based leaderboard plus `split_metrics` and `split_diagnostics` in `strategy_run.json`.
 
 ```yaml
 split:

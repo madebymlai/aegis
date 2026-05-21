@@ -125,9 +125,33 @@ portfolio:
 
 Strategy runs require Close and Open data so bar-aligned signals can be scored with next-open execution. Missing, misaligned, or null Open prices at required execution rows fail the run instead of falling back to same-close or VBT `NextValidOpen` behavior.
 
-## Run Split Scoring
+## Native Optimization
 
-Run configs can optionally add top-level split scoring. The selected strategy candidate set is unchanged: fixed component runs are one-candidate sets, and playbook sweeps are composed strategy x indicator candidate sets. Aegis builds VBT split sets from the source index, scores candidates only on each split's selection set, evaluates the selected candidate on the held-out set with fresh portfolio state, and writes one final split-based leaderboard plus `split_metrics` and `split_diagnostics` in `strategy_run.json`.
+For runs that need parameter search, configs declare an `optimization` block and a strategy playbook that returns the `aegis.optimization_source.v1` contract. The playbook exposes a parameterized pipeline whose arguments come from `vbt.Param`; Aegis wraps that pipeline in `vbt.cv_split` and lets VBT enumerate, select, and evaluate parameter combinations. Aegis does not feed VBT-generated params back into a Python candidate grid.
+
+```yaml
+optimization:
+  search: random       # or "grid" for exhaustive
+  random_subset: 16
+  seed: 42
+  evidence:
+    return_grid: first  # off | first | all
+  split:
+    method: from_rolling
+    params:
+      length: 252
+      offset: 252
+      split: 0.8
+    max_splits: 10
+```
+
+`optimization.split.method` maps to `vbt.cv_split(splitter=...)` and `optimization.split.params` to `splitter_kwargs`. Set roles are positional: VBT set index 0 is Aegis `selection`, VBT set index 1 is Aegis `held_out`. The selection function maps the configured `ranking.metric` and `ranking.direction` into VBT `selection`, with multi-metric selection handled via `grid_results.xs(metric_name).idxmax()`/`idxmin()`. Tied parameters use `vbt.Param(level=...)`; conditional parameters use `vbt.Param(condition=...)`; `vbt.Param(random_subset=...)` and the top-level `random_subset` interoperate with VBT's lazy-grid behavior. Resource gates (theoretical combinations, sampled combinations, expected result cells, artifact bytes) live on `optimization.preflight` and `optimization.split.max_*` knobs and fail closed before VBT execution. Partial failures (`vbt.NoResult`-only grids, missing metrics, runtime errors) surface as `evidence.optimization.execution_failure` rather than silently shrinking the leaderboard.
+
+`optimization` and `candidate_grid` are mutually exclusive. Configs without an `optimization` block remain fixed/non-optimized runs and may still use the legacy candidate-sweep + top-level `split` contract.
+
+## Run Split Scoring (Non-Optimization Path)
+
+Configs without `optimization` can optionally add top-level split scoring for the legacy candidate-sweep contract. The selected strategy candidate set is unchanged: fixed component runs are one-candidate sets, and playbook sweeps are composed strategy x indicator candidate sets. Aegis builds VBT split sets from the source index, scores candidates only on each split's selection set, evaluates the selected candidate on the held-out set with fresh portfolio state, and writes one final split-based leaderboard plus `split_metrics` and `split_diagnostics` in `strategy_run.json`.
 
 ```yaml
 split:
@@ -180,7 +204,7 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 Promoted components live under `research/components/{indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/components/*_component_example.py`.
 
-Playbooks live under `research/playbooks/{indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Indicator and strategy playbooks declare `result_schema: "playbook_sweep_result.v1"` and return contract marker `"aegis.playbook_sweep.v1"`. Indicator playbook IDs represent one indicator idea/family; the playbook owns its default parameters and candidate axis, emits named candidate-indexed outputs for strategy sweeps to consume, and a baseline may name exactly one component indicator ID. Strategy playbooks expose strategy candidate axes and materialize bounded signal chunks. See `docs/playbooks.md`, `docs/examples/playbooks/indicator_playbook_example.py`, and `docs/examples/playbooks/strategy_playbook_example.py`.
+Playbooks live under `research/playbooks/{indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Strategy playbooks may declare one of two `result_schema` contracts: `aegis.optimization_source.v1` for the forward VBT-native optimization path (one parameterized pipeline plus `vbt.Param` axes), or `playbook_sweep_result.v1` for the legacy candidate-sweep path (a strategy candidate axis plus a bounded materializer). Indicator playbooks remain on `playbook_sweep_result.v1`; each indicator playbook ID represents one indicator idea/family that owns its default parameters and candidate axis, emits named candidate-indexed outputs for legacy strategy sweeps to consume, and a baseline may name exactly one component indicator ID. #31 optimization sources self-contain their indicators inside the pipeline rather than consuming indicator playbooks. See `docs/playbooks.md`, `docs/examples/playbooks/optimization_playbook_example.py` (forward path), `docs/examples/playbooks/strategy_playbook_example.py`, and `docs/examples/playbooks/indicator_playbook_example.py`.
 
 Leaderboards rank complete composed strategy candidates, not raw indicators. Indicator playbook candidates become rankable only when a strategy playbook consumes their named surfaces and emits executable signals. Manual promotion means copying the winning indicator source/candidate/params into a fixed indicator component, copying the winning strategy source/candidate/params into a fixed strategy component, and rerunning with those component refs to verify the promoted implementation.
 

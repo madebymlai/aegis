@@ -1,3 +1,12 @@
+"""Legacy candidate-sweep contract coverage (playbook_sweep_result.v1).
+
+These tests cover the non-optimization sweep path that remains for configs
+without an `optimization` block. The forward VBT-native optimization path
+(#31, aegis.optimization_source.v1) is covered by the
+``tests/unit/research/aegis_research/test_optimization_*`` suites. This file
+should not be extended with new candidate-axis features; #32 owns the
+deprecation/removal decisions for this contract.
+"""
 from __future__ import annotations
 
 import pandas as pd
