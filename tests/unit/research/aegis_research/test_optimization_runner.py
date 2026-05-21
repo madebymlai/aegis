@@ -83,7 +83,8 @@ def test_runner_emits_selection_and_held_out_winners_per_split() -> None:
     )
 
     assert run.return_grid_mode == "off"
-    assert run.grid is None
+    assert run.selection_grid is None
+    assert run.held_out_grid is None
     assert run.selection.index.names[:2] == ["split", "set"]
     assert run.selection.index.names[-1] == METRIC_INDEX_NAME
     set_values = set(run.selection.index.get_level_values("set"))
@@ -111,13 +112,45 @@ def test_runner_returns_grid_when_return_grid_first_is_requested() -> None:
     )
 
     assert run.return_grid_mode == "first"
-    assert run.grid is not None
-    assert "fast_window" in run.grid.index.names
-    assert "slow_window" in run.grid.index.names
-    assert METRIC_INDEX_NAME in run.grid.index.names
-    assert set(run.grid.index.get_level_values("set")) == {"selection", "held_out"}
-    grid_metrics = set(run.grid.index.get_level_values(METRIC_INDEX_NAME))
+    assert run.selection_grid is not None
+    assert run.held_out_grid is None, "return_grid='first' must not surface duplicated set_1 grid"
+    assert "fast_window" in run.selection_grid.index.names
+    assert "slow_window" in run.selection_grid.index.names
+    assert METRIC_INDEX_NAME in run.selection_grid.index.names
+    assert set(run.selection_grid.index.get_level_values("set")) == {"selection"}
+    grid_metrics = set(run.selection_grid.index.get_level_values(METRIC_INDEX_NAME))
     assert grid_metrics == set(PORTFOLIO_METRIC_VALUE_KEYS)
+
+
+def test_runner_return_grid_all_emits_distinct_selection_and_held_out_grids() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(return_grid="all"),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+
+    assert run.return_grid_mode == "all"
+    assert run.selection_grid is not None
+    assert run.held_out_grid is not None
+    selection_sets = set(run.selection_grid.index.get_level_values("set"))
+    held_out_sets = set(run.held_out_grid.index.get_level_values("set"))
+    assert selection_sets == {"selection"}
+    assert held_out_sets == {"held_out"}
+    # In return_grid="all", set_0 and set_1 grids are independent evaluations
+    # over different windows, so they must not be identical row-for-row.
+    selection_values = run.selection_grid.reset_index(level="set", drop=True)
+    held_out_values = run.held_out_grid.reset_index(level="set", drop=True)
+    assert not selection_values.equals(held_out_values), (
+        "return_grid='all' must produce distinct selection and held-out grid evaluations"
+    )
 
 
 def test_runner_threads_random_subset_and_seed_into_parameterized_kwargs() -> None:
@@ -188,8 +221,8 @@ def test_runner_sampled_index_matches_grid_param_axis_for_grid_search() -> None:
     sampled_pairs = set(map(tuple, run.sampled_index))
     grid_param_pairs = set(
         zip(
-            run.grid.index.get_level_values("fast_window"),
-            run.grid.index.get_level_values("slow_window"),
+            run.selection_grid.index.get_level_values("fast_window"),
+            run.selection_grid.index.get_level_values("slow_window"),
             strict=True,
         )
     )
@@ -217,7 +250,10 @@ def test_runner_serializes_sampled_rows_independent_of_return_grid() -> None:
     )
     payload = serialize_optimization_run(run)
 
-    assert run.grid is None
+    assert run.selection_grid is None
+    assert run.held_out_grid is None
+    assert payload["selection_grid"] is None
+    assert payload["held_out_grid"] is None
     assert len(payload["sampled_rows"]["rows"]) == 4
     sampled_param_names = set(payload["sampled_rows"]["index_names"])
     assert sampled_param_names == {"fast_window", "slow_window"}
@@ -308,8 +344,8 @@ def test_runner_tied_param_levels_emit_paired_rows_only() -> None:
     assert sampled_pairs == {(2, 20), (5, 50), (10, 100)}
     grid_param_pairs = set(
         zip(
-            run.grid.index.get_level_values("fast_window"),
-            run.grid.index.get_level_values("slow_window"),
+            run.selection_grid.index.get_level_values("fast_window"),
+            run.selection_grid.index.get_level_values("slow_window"),
             strict=True,
         )
     )
@@ -344,8 +380,8 @@ def test_runner_conditional_params_filter_invalid_combinations() -> None:
     assert sampled_pairs == {(2, 3), (2, 8), (5, 8)}
     grid_param_pairs = set(
         zip(
-            run.grid.index.get_level_values("fast_window"),
-            run.grid.index.get_level_values("slow_window"),
+            run.selection_grid.index.get_level_values("fast_window"),
+            run.selection_grid.index.get_level_values("slow_window"),
             strict=True,
         )
     )
@@ -369,7 +405,7 @@ def test_runner_rejects_unsupported_ranking_direction() -> None:
         )
 
 
-def test_serialize_optimization_run_emits_jsonable_selection_and_grid_rows() -> None:
+def test_serialize_optimization_run_emits_jsonable_selection_and_selection_grid() -> None:
     close, open_prices = _close_open_frames()
     source = _build_source(fast=[2, 5], slow=[10, 20])
 
@@ -393,8 +429,11 @@ def test_serialize_optimization_run_emits_jsonable_selection_and_grid_rows() -> 
     first_row = payload["selection"]["rows"][0]
     assert {"selection", "held_out"} >= {first_row["coordinates"]["set"]}
     assert isinstance(first_row["value"], float)
-    assert payload["grid"] is not None
-    assert payload["grid"]["index_names"][:2] == ["split", "set"]
+    assert payload["selection_grid"] is not None
+    assert payload["selection_grid"]["index_names"][:2] == ["split", "set"]
+    grid_sets = {row["coordinates"]["set"] for row in payload["selection_grid"]["rows"]}
+    assert grid_sets == {"selection"}
+    assert payload["held_out_grid"] is None
 
 
 def test_runner_rejects_invalid_pipeline_signal_shape() -> None:

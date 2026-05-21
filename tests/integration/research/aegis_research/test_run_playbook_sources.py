@@ -292,10 +292,25 @@ def test_optimization_executes_cv_split_and_writes_strategy_run_artifact(
     assert "metrics" in leaderboard_rows[0]
     assert "total_return" in leaderboard_rows[0]["metrics"]
     assert "sharpe_ratio" in leaderboard_rows[0]["metrics"]
+    assert leaderboard_rows[0]["weight_basis"] == "held_out_row_count"
+    assert leaderboard_rows[0]["candidate_key"].startswith("cand_")
+    assert leaderboard_rows[0]["selected_split_count"] >= 1
     assert artifact["candidates"], "expected non-empty candidates list"
+    candidate_keys = {candidate["candidate_key"] for candidate in artifact["candidates"]}
+    for row in leaderboard_rows:
+        assert row["candidate_key"] in candidate_keys, (
+            f"leaderboard row candidate_key {row['candidate_key']!r} missing from candidates"
+        )
     first_candidate = artifact["candidates"][0]
     assert set(first_candidate["params"].keys()) == {"fast_window", "slow_window"}
     assert first_candidate["candidate_key"].startswith("cand_")
+    selection_grid = artifact["execution"]["selection_grid"]
+    assert selection_grid is not None
+    selection_grid_sets = {row["coordinates"]["set"] for row in selection_grid["rows"]}
+    assert selection_grid_sets == {"selection"}, (
+        "return_grid='first' must drop the duplicated set_1 grid from evidence"
+    )
+    assert artifact["execution"]["held_out_grid"] is None
     sampled = artifact["execution"]["sampled_rows"]
     assert sampled["index_names"] == ["fast_window", "slow_window"]
     assert len(sampled["rows"]) == 4

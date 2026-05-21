@@ -32,7 +32,8 @@ class OptimizationRunnerError(ValueError):
 @dataclass(frozen=True)
 class OptimizationRun:
     selection: pd.Series
-    grid: pd.Series | None
+    selection_grid: pd.Series | None
+    held_out_grid: pd.Series | None
     sampled_index: pd.Index
     return_grid_mode: str
     ranking_metric: str
@@ -91,12 +92,20 @@ def execute_optimization(
     output = decorated(*call_args, **dict(source.params))
     if return_grid_kw is None:
         selection_series = output
-        grid_series: pd.Series | None = None
+        selection_grid: pd.Series | None = None
+        held_out_grid: pd.Series | None = None
     else:
-        grid_series, selection_series = output
+        raw_grid, selection_series = output
+        canon_grid = _canonicalize_role_index(raw_grid)
+        selection_grid = canon_grid.xs("selection", level="set", drop_level=False)
+        if return_grid_mode == "all":
+            held_out_grid = canon_grid.xs("held_out", level="set", drop_level=False)
+        else:
+            held_out_grid = None
     return OptimizationRun(
         selection=_canonicalize_role_index(selection_series),
-        grid=_canonicalize_role_index(grid_series) if grid_series is not None else None,
+        selection_grid=selection_grid,
+        held_out_grid=held_out_grid,
         sampled_index=sampled_index,
         return_grid_mode=return_grid_mode,
         ranking_metric=ranking.metric,
@@ -267,7 +276,16 @@ def serialize_optimization_run(run: OptimizationRun) -> dict[str, Any]:
         "return_grid_mode": run.return_grid_mode,
         "parameterized_kwargs": _scalar_mapping(run.parameterized_kwargs),
         "selection": _serialize_param_series(run.selection),
-        "grid": _serialize_param_series(run.grid) if run.grid is not None else None,
+        "selection_grid": (
+            _serialize_param_series(run.selection_grid)
+            if run.selection_grid is not None
+            else None
+        ),
+        "held_out_grid": (
+            _serialize_param_series(run.held_out_grid)
+            if run.held_out_grid is not None
+            else None
+        ),
         "sampled_rows": _serialize_param_index(run.sampled_index),
     }
 

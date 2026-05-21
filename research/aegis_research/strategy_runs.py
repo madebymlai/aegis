@@ -67,6 +67,7 @@ from research.aegis_research.run_leaderboard import (
 from research.aegis_research.run_splits import RunSplit, build_run_splits_result
 from research.aegis_research.split_leaderboard import build_split_leaderboard
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
+from research.aegis_research.optimization.leaderboard import build_optimization_leaderboard
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
@@ -576,10 +577,16 @@ def _run_optimization_strategy_sweep(
     )
     optimization_evidence["candidate_count"] = len(candidate_rows)
     optimization_evidence["sampled_row_count"] = len(run_payload["sampled_rows"]["rows"])
-    leaderboard = _build_optimization_leaderboard(
-        run_payload=run_payload,
+    split_held_out_row_counts = {
+        index: len(split.held_out_index) for index, split in enumerate(split_result.splits)
+    }
+    leaderboard = build_optimization_leaderboard(
+        selection=optimization_run.selection,
+        candidate_rows=candidate_rows,
+        split_held_out_row_counts=split_held_out_row_counts,
         ranking_metric=optimization_run.ranking_metric,
         ranking_direction=optimization_run.ranking_direction,
+        metric_registry_fingerprint=metric_registry_fingerprint,
     )
     recorder.manifest.evidence["optimization"] = optimization_evidence
 
@@ -619,72 +626,6 @@ def _run_optimization_strategy_sweep(
             "selection_row_count": len(optimization_run.selection),
             "candidate_count": len(candidate_rows),
         },
-    }
-
-
-def _build_optimization_leaderboard(
-    *,
-    run_payload: dict[str, Any],
-    ranking_metric: str,
-    ranking_direction: str,
-) -> dict[str, Any]:
-    held_out_rows = [
-        row
-        for row in run_payload["selection"]["rows"]
-        if row["coordinates"].get("set") == "held_out"
-    ]
-    grouped: dict[tuple[Any, tuple[tuple[str, Any], ...]], dict[str, Any]] = {}
-    for held_out in held_out_rows:
-        coords = held_out["coordinates"]
-        split = coords.get("split")
-        metric_name = coords.get("metric_name")
-        param_items = tuple(
-            sorted(
-                (key, value)
-                for key, value in coords.items()
-                if key not in {"split", "set", "metric_name"}
-            )
-        )
-        group_key = (split, param_items)
-        bucket = grouped.setdefault(
-            group_key,
-            {"split": split, "params": dict(param_items), "metrics": {}},
-        )
-        if metric_name is not None:
-            bucket["metrics"][metric_name] = held_out["value"]
-    rows: list[dict[str, Any]] = []
-    succeeded = 0
-    for bucket in grouped.values():
-        ranking_value = bucket["metrics"].get(ranking_metric)
-        if isinstance(ranking_value, (int, float)) and not math.isnan(float(ranking_value)):
-            succeeded += 1
-        rows.append(
-            {
-                "split": bucket["split"],
-                "params": bucket["params"],
-                "ranking_metric": ranking_metric,
-                "ranking_direction": ranking_direction,
-                "ranking_metric_value": ranking_value,
-                "metrics": bucket["metrics"],
-            }
-        )
-    rows.sort(
-        key=lambda row: (
-            float("-inf")
-            if not isinstance(row["ranking_metric_value"], (int, float))
-            else row["ranking_metric_value"]
-        ),
-        reverse=ranking_direction == "desc",
-    )
-    return {
-        "schema_version": "optimization_leaderboard.v1",
-        "ranking_metric": ranking_metric,
-        "ranking_direction": ranking_direction,
-        "summary": {
-            "attempted": len(rows),
-            "succeeded": succeeded,
-        },
-        "rows": rows,
     }
 
 
