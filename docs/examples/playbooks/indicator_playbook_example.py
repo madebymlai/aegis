@@ -1,9 +1,11 @@
 # %% playbook overview
-# Indicator playbook example for the legacy candidate-sweep contract
-# (result_schema: "playbook_sweep_result.v1"). Indicator playbooks apply only
-# to legacy sweep-contract strategies; #31 optimization sources compute their
+# DEPRECATED — scheduled for removal under issue #32.
+# Indicator playbook example for the deprecated candidate-sweep contract
+# (result_schema: "playbook_sweep_result.v1"). Indicator playbooks feed only
+# the deprecated sweep-contract strategies; optimization sources compute their
 # own indicators inline via `vbt.Param`. See `optimization_playbook_example.py`
-# for the forward path.
+# for the forward path; do not author new indicator playbooks against this
+# contract.
 # Source: run-provided Close feature. Indicator variants provide named outputs
 # that strategy sources consume; they do not provide leaderboard metrics.
 

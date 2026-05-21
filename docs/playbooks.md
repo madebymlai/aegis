@@ -91,11 +91,13 @@ Set roles are positional: VBT set index 0 is Aegis `selection`, VBT set index 1 
 
 The held-out leaderboard is derived from VBT-selected parameter combinations and held-out metrics, weighted by `held_out_row_count`. Each leaderboard row carries a stable `candidate_key` linking back to the candidate evidence record built from the VBT parameter index. Preflight rejections (oversized grids, missing Open prices, evidence-budget overruns) and runtime failures (`vbt.NoResult`-only grids, pipeline exceptions) write `evidence.optimization.execution_failure` to the manifest and do not publish a completed `strategy_run.json`.
 
-`optimization` and `candidate_grid` cannot coexist in a single config. Configs without an `optimization` block remain fixed/non-optimized runs and may still use the legacy `candidate_grid` + top-level `split` shape; that legacy path is retained for non-optimization sweep contracts and is not the forward optimization contract. Candidate persistence, promotion, playbook removal, and component param spaces are deferred to issue #32.
+`optimization` and `candidate_grid` cannot coexist in a single config. Configs without an `optimization` block currently still accept the `candidate_grid` + top-level `split` shape, but that path is the deprecated candidate-sweep contract documented below; new work must use the optimization contract above. `vbt.Param` jointly searches indicator and strategy parameters when the indicator is computed inside the parameterized pipeline, so the optimization contract subsumes the candidate-sweep use case for parameter optimization.
 
-## Legacy Candidate Sweep (Non-Optimization Path)
+## Deprecated Candidate Sweep (Scheduled For Removal)
 
-Configs that use a `playbook_sweep_result.v1` strategy without an `optimization` block follow the legacy candidate-sweep contract. `candidate_grid.batch_size` bounds how many composed strategy candidates Aegis asks a strategy materializer to return per chunk; `candidate_grid.max_candidates` and `candidate_grid.max_estimated_cells` fail closed before scoring when a selected grid is too large:
+The `playbook_sweep_result.v1` strategy contract with `candidate_grid` policy is **deprecated and scheduled for removal** under issue #32. It is retained in this release only for already-authored configs and external read/reporting tools that still reference the existing artifact shape. Do not extend it, do not author new playbooks against it, and do not treat it as an alternative to the optimization contract.
+
+`candidate_grid.batch_size` bounds how many composed strategy candidates Aegis asks a strategy materializer to return per chunk; `candidate_grid.max_candidates` and `candidate_grid.max_estimated_cells` fail closed before scoring when a selected grid is too large:
 
 ```yaml
 candidate_grid:
@@ -106,7 +108,7 @@ candidate_grid:
 
 Completed strategy sweeps require every planned candidate chunk to score and produce the requested ranking metric. Preflight rejections and chunk failures write diagnostic evidence to the manifest, including planned counts, chunk indexes, candidate IDs, stage, error type, and message, but they do not publish completed `strategy_run.json` leaderboard evidence.
 
-Non-optimization runs can also add top-level split scoring. Aegis builds VBT split sets from the source index, scores candidates only on each split's selection set, evaluates the selected candidate on the held-out set with fresh portfolio state, and writes one final split-based leaderboard plus `split_metrics` and `split_diagnostics` in `strategy_run.json`.
+Configs on the deprecated contract can also add top-level split scoring. Aegis builds VBT split sets from the source index, scores candidates only on each split's selection set, evaluates the selected candidate on the held-out set with fresh portfolio state, and writes one final split-based leaderboard plus `split_metrics` and `split_diagnostics` in `strategy_run.json`. This top-level `split` block is also scheduled for removal under issue #32; new configs should use `optimization.split` on the optimization contract.
 
 ```yaml
 split:

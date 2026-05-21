@@ -1,9 +1,10 @@
 # %% playbook overview
-# Strategy playbook example for the legacy candidate-sweep contract
+# DEPRECATED — scheduled for removal under issue #32.
+# Strategy playbook example for the deprecated candidate-sweep contract
 # (result_schema: "playbook_sweep_result.v1"). This shape composes its own
-# strategy candidate axis and materializes signal batches per chunk. For the
-# forward VBT-native optimization path (#31), see
-# `optimization_playbook_example.py` instead.
+# strategy candidate axis and materializes signal batches per chunk; do not
+# author new playbooks against it. For the forward VBT-native optimization
+# path, see `optimization_playbook_example.py` instead.
 # Source: run-provided Close feature plus source-scoped indicator candidates.
 # Aegis centrally computes portfolio metrics from returned signals.
 
