@@ -11,7 +11,7 @@ from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.provenance.manifest import RunStatus
 
 
-def test_run_cli_executes_repo_controlled_playbooks_by_id(
+def test_run_cli_rejects_non_optimized_playbook_sweep_before_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -27,25 +27,8 @@ def test_run_cli_executes_repo_controlled_playbooks_by_id(
         strategy_id="ma_cross",
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "playbook-run"]) == 0
-
-    output = capsys.readouterr()
-    assert output.err == ""
-    payload = json.loads(output.out)
-    artifact = json.loads((tmp_path / "runs" / "playbook-run" / "strategy_run.json").read_text())
-    assert payload["status"] == "success"
-    assert "lane" not in payload
-    assert artifact["strategy"]["source"] == "playbook"
-    assert artifact["strategy"]["id"] == "ma_cross"
-    assert artifact["strategy"]["consumes_runner_data"] is True
-    assert artifact["strategy"]["data_binding"] == "strategy_sweep_inputs"
-    assert artifact["data"]["strategy_consumed_runner_data"] is True
-    assert artifact["data"]["strategy_data_binding"] == "strategy_sweep_inputs"
-    assert artifact["indicators"][0]["source"] == "playbook"
-    assert artifact["indicators"][0]["id"] == "ma_explore"
-    assert artifact["leaderboard"]["summary"]["succeeded"] == 2
-    assert artifact["leaderboard"]["rows"][0]["strategy_source"] == "playbook"
-    assert artifact["leaderboard"]["rows"][0]["metric_source"] == "central_portfolio"
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "playbook-run"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "playbook-run")
 
 
 def test_run_cli_unknown_playbook_fails_before_artifacts(
@@ -54,7 +37,12 @@ def test_run_cli_unknown_playbook_fails_before_artifacts(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="missing")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="missing",
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "should-not-exist"]) == 6
 
@@ -84,6 +72,7 @@ def test_run_cli_rejects_duplicate_expanded_playbook_indicators_before_artifacts
             {"source": "playbook", "ids": "all"},
             {"source": "playbook", "ids": ["ma_one"]},
         ],
+        optimization={"search": "grid", "split": _rolling_split_config()},
     )
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "duplicate-playbook"]) == 6
@@ -94,7 +83,7 @@ def test_run_cli_rejects_duplicate_expanded_playbook_indicators_before_artifacts
     assert not (tmp_path / "runs" / "duplicate-playbook").exists()
 
 
-def test_run_cli_reports_failed_playbook_execution_on_run_manifest(
+def test_run_cli_rejects_non_optimized_failed_playbook_before_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -106,14 +95,8 @@ def test_run_cli_reports_failed_playbook_execution_on_run_manifest(
     )
     config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="bad")
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "failed-playbook"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads((tmp_path / "runs" / "failed-playbook" / "manifest.json").read_text())
-    assert payload["error"]["category"] == "execution_failure"
-    assert payload["run"]["status"] == RunStatus.FAILED
-    assert manifest["run"]["status"] == RunStatus.FAILED
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "failed-playbook"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "failed-playbook")
 
 
 def test_run_cli_rejects_legacy_playbook_result_schema(
@@ -126,7 +109,12 @@ def test_run_cli_rejects_legacy_playbook_result_schema(
         tmp_path / "research/playbooks/strategies/ma_cross.py", "strategies", "ma_cross"
     )
     _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
-    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="ma_cross",
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "legacy-rejected"]) == 10
 
@@ -134,11 +122,11 @@ def test_run_cli_rejects_legacy_playbook_result_schema(
     payload = json.loads(output.err)
     manifest = json.loads((tmp_path / "runs" / "legacy-rejected" / "manifest.json").read_text())
     assert payload["error"]["category"] == "execution_failure"
-    assert "playbook_sweep_result.v1" in payload["error"]["message"]
+    assert "aegis.optimization_source.v1" in payload["error"]["message"]
     assert manifest["run"]["status"] == RunStatus.FAILED
 
 
-def test_run_cli_executes_playbook_strategy_sweep_candidates(
+def test_run_cli_rejects_candidate_grid_strategy_sweep_candidates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -156,68 +144,8 @@ def test_run_cli_executes_playbook_strategy_sweep_candidates(
         candidate_grid={"batch_size": 2},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-run"]) == 0
-
-    output = capsys.readouterr()
-    artifact = json.loads((tmp_path / "runs" / "batched-run" / "strategy_run.json").read_text())
-    manifest = json.loads((tmp_path / "runs" / "batched-run" / "manifest.json").read_text())
-    assert json.loads(output.out)["status"] == "success"
-    assert artifact["schema_version"] == "strategy_run.v3"
-    assert artifact["strategy"]["result_contract"] == "aegis.playbook_sweep.v1"
-    assert artifact["composition"]["planned"]["indicator_preflight"]["indicator_context_count"] == 2
-    assert artifact["composition"]["planned"]["strategy_candidate_count"] == 2
-    assert artifact["composition"]["planned"]["total_composed_candidates"] == 4
-    assert artifact["composition"]["planned"]["batch_count"] == 2
-    assert artifact["leaderboard"]["summary"]["attempted"] == 4
-    candidate_ids = {candidate["variant_id"] for candidate in artifact["candidates"]}
-    assert candidate_ids == {
-        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-2]",
-        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-2]",
-        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-5]",
-        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-5]",
-    }
-    row = artifact["leaderboard"]["rows"][0]
-    composed = artifact["catalogs"]["composed_candidates"][row["composed_candidate_id"]]
-    assert row["metric_source"] == "central_portfolio"
-    assert row["strategy_candidate_ref"] == composed["strategy_candidate_ref"]
-    assert row["indicator_candidate_refs"] == composed["indicator_candidate_refs"]
-    assert row["metric_ref"] == composed["metric_ref"]
-    assert row["chunk_ref"] == composed["chunk_ref"]
-    assert row["strategy_params"]
-    assert row["indicator_candidates"][0]["params"]
-    assert artifact["catalogs"]["strategy_candidates"][row["strategy_candidate_ref"]]["params"]
-    assert artifact["catalogs"]["indicator_candidates"][row["indicator_candidate_refs"][0]]["params"]
-    assert artifact["catalogs"]["metrics"][row["metric_ref"]]["metric_scope"] == "shared_cash_group"
-    assert artifact["catalogs"]["chunks"][row["chunk_ref"]]["status"] == "succeeded"
-    assert set(artifact["candidates"][0]) == {
-        "variant_id",
-        "composed_candidate_id",
-        "strategy_candidate_ref",
-        "indicator_candidate_refs",
-        "metric_ref",
-        "chunk_ref",
-        "metric_source",
-    }
-    strategy_artifact = next(item for item in manifest["artifacts"] if item["id"] == "strategy.run")
-    assert strategy_artifact["shape"] | {
-        "leaderboard_rows": 4,
-        "candidate_count": 4,
-        "indicator_candidate_count": 2,
-        "strategy_candidate_count": 2,
-        "composed_candidate_count": 4,
-        "chunk_count": 2,
-        "metric_count": 4,
-    } == strategy_artifact["shape"]
-    assert {item["batch_index"] for item in artifact["signal_diagnostics"]["candidates"].values()} == {
-        0,
-        1,
-    }
-    assert set(artifact["portfolio_diagnostics"]["chunks"]) == {"batch-000000", "batch-000001"}
-    first_portfolio_candidate = next(iter(artifact["portfolio_diagnostics"]["candidates"].values()))
-    assert set(first_portfolio_candidate) == {
-        "batch_index",
-        "chunk_ref",
-    }
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-run"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-run")
 
 
 def test_optimization_routes_away_from_custom_candidate_grid(
@@ -541,7 +469,7 @@ def test_optimization_preflight_failure_records_manifest_without_pipeline_execut
     assert not (tmp_path / "runs" / "preflight-failure" / "strategy_run.json").exists()
 
 
-def test_run_cli_executes_playbook_strategy_sweep_with_rolling_split(
+def test_run_cli_rejects_candidate_grid_with_rolling_split(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -557,29 +485,11 @@ def test_run_cli_executes_playbook_strategy_sweep_with_rolling_split(
         split=_rolling_split_config(),
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "rolling-playbook"]) == 0
-
-    output = capsys.readouterr()
-    artifact = json.loads((tmp_path / "runs" / "rolling-playbook" / "strategy_run.json").read_text())
-    manifest = json.loads((tmp_path / "runs" / "rolling-playbook" / "manifest.json").read_text())
-    assert json.loads(output.out)["status"] == "success"
-    assert artifact["split"]["method"] == "from_rolling"
-    assert artifact["leaderboard"]["schema_version"] == "split_run_leaderboard.v1"
-    assert artifact["leaderboard"]["summary"]["attempted_splits"] == artifact["split"]["n_splits"]
-    assert artifact["leaderboard"]["rows"][0]["metric_source"] == "central_portfolio"
-    assert artifact["leaderboard"]["rows"][0]["selected_split_count"] >= 1
-    assert {record["set"] for record in artifact["split_metrics"]} == {"selection", "held_out"}
-    assert sum(1 for record in artifact["split_metrics"] if record["set"] == "held_out") == artifact[
-        "split"
-    ]["n_splits"]
-    assert artifact["catalogs"]["metrics"] == {}
-    strategy_artifact = next(item for item in manifest["artifacts"] if item["id"] == "strategy.run")
-    assert strategy_artifact["status"] == "completed"
-    assert strategy_artifact["shape"]["split_count"] == artifact["split"]["n_splits"]
-    assert strategy_artifact["shape"]["split_metric_count"] == len(artifact["split_metrics"])
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "rolling-playbook"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "rolling-playbook")
 
 
-def test_run_cli_batches_playbook_strategy_sweep_final_smaller_candidate_batch(
+def test_run_cli_rejects_candidate_grid_final_smaller_candidate_batch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -597,23 +507,11 @@ def test_run_cli_batches_playbook_strategy_sweep_final_smaller_candidate_batch(
         candidate_grid={"batch_size": 4},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-final-chunk"]) == 0
-
-    output = capsys.readouterr()
-    artifact = json.loads(
-        (tmp_path / "runs" / "batched-final-chunk" / "strategy_run.json").read_text()
-    )
-    assert json.loads(output.out)["status"] == "success"
-    assert artifact["composition"]["planned"]["total_composed_candidates"] == 6
-    assert artifact["composition"]["planned"]["batch_count"] == 2
-    batch_indexes = [
-        item["batch_index"] for item in artifact["signal_diagnostics"]["candidates"].values()
-    ]
-    assert batch_indexes.count(0) == 4
-    assert batch_indexes.count(1) == 2
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-final-chunk"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-final-chunk")
 
 
-def test_run_cli_rejects_non_batched_indicator_for_batched_strategy(
+def test_run_cli_rejects_non_optimized_non_batched_indicator_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -625,21 +523,11 @@ def test_run_cli_rejects_non_batched_indicator_for_batched_strategy(
     )
     config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "non-batched-indicator"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "non-batched-indicator" / "manifest.json").read_text()
-    )
-    assert payload["error"]["category"] == "execution_failure"
-    assert "result_schema" in payload["error"]["message"]
-    assert "playbook_sweep_result.v1" in payload["error"]["message"]
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert not (tmp_path / "runs" / "non-batched-indicator" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "non-batched-indicator"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "non-batched-indicator")
 
 
-def test_run_cli_rejects_batched_materializer_that_omits_requested_candidate(
+def test_run_cli_rejects_candidate_grid_before_batched_materializer_can_omit_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -660,21 +548,11 @@ def test_run_cli_rejects_batched_materializer_that_omits_requested_candidate(
         candidate_grid={"batch_size": 2},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-omits"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads((tmp_path / "runs" / "batched-omits" / "manifest.json").read_text())
-    assert payload["error"]["category"] == "execution_failure"
-    assert "candidate axis mismatch" in payload["error"]["message"]
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert manifest["evidence"]["composition"]["total_composed_candidates"] == 4
-    assert manifest["evidence"]["chunks"]["chunks"][0]["status"] == "failed"
-    assert manifest["evidence"]["chunks"]["chunks"][0]["error"]["stage"] == "materialize_signals"
-    assert not (tmp_path / "runs" / "batched-omits" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-omits"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-omits")
 
 
-def test_run_cli_rejects_batched_materializer_that_adds_unrequested_candidate(
+def test_run_cli_rejects_candidate_grid_before_batched_materializer_can_add_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -695,21 +573,11 @@ def test_run_cli_rejects_batched_materializer_that_adds_unrequested_candidate(
         candidate_grid={"batch_size": 2},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-extra"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads((tmp_path / "runs" / "batched-extra" / "manifest.json").read_text())
-    assert payload["error"]["category"] == "execution_failure"
-    assert "candidate axis mismatch" in payload["error"]["message"]
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert manifest["evidence"]["composition"]["total_composed_candidates"] == 4
-    assert manifest["evidence"]["chunks"]["chunks"][0]["status"] == "failed"
-    assert manifest["evidence"]["chunks"]["chunks"][0]["error"]["stage"] == "materialize_signals"
-    assert not (tmp_path / "runs" / "batched-extra" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-extra"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-extra")
 
 
-def test_run_cli_records_failed_batched_chunk_candidate_context(
+def test_run_cli_rejects_candidate_grid_before_failed_batched_chunk_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -730,27 +598,11 @@ def test_run_cli_records_failed_batched_chunk_candidate_context(
         candidate_grid={"batch_size": 2},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-chunk-fails"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "batched-chunk-fails" / "manifest.json").read_text()
-    )
-    chunks = manifest["evidence"]["chunks"]["chunks"]
-    assert payload["error"]["category"] == "execution_failure"
-    assert "second batch failed intentionally" in payload["error"]["message"]
-    assert chunks[0]["status"] == "succeeded"
-    assert chunks[1]["status"] == "failed"
-    assert chunks[1]["error"]["stage"] == "materialize_signals"
-    assert chunks[1]["candidate_ids"] == [
-        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-5]",
-        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-5]",
-    ]
-    assert not (tmp_path / "runs" / "batched-chunk-fails" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-chunk-fails"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-chunk-fails")
 
 
-def test_run_cli_rejects_batched_strategy_that_does_not_consume_indicator_axis(
+def test_run_cli_rejects_non_optimized_unconsumed_indicator_axis_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -763,22 +615,11 @@ def test_run_cli_rejects_batched_strategy_that_does_not_consume_indicator_axis(
     _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
     config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="ma_cross")
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-unconsumed"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "batched-unconsumed" / "manifest.json").read_text()
-    )
-    chunks = manifest["evidence"]["chunks"]["chunks"]
-    assert payload["error"]["category"] == "execution_failure"
-    assert "did not consume selected indicator playbook axes" in payload["error"]["message"]
-    assert chunks[0]["status"] == "failed"
-    assert chunks[0]["error"]["stage"] == "indicator_consumption_validation"
-    assert not (tmp_path / "runs" / "batched-unconsumed" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-unconsumed"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "batched-unconsumed")
 
 
-def test_run_cli_records_batched_portfolio_simulation_failure_context(
+def test_run_cli_rejects_candidate_grid_before_batched_portfolio_failure_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -801,26 +642,11 @@ def test_run_cli_records_batched_portfolio_simulation_failure_context(
         candidate_grid={"batch_size": 2},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-portfolio-fails"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "batched-portfolio-fails" / "manifest.json").read_text()
-    )
-    chunk = manifest["evidence"]["chunks"]["chunks"][0]
-    assert payload["error"]["category"] == "execution_failure"
-    assert "portfolio batch failed intentionally" in payload["error"]["message"]
-    assert chunk["status"] == "failed"
-    assert chunk["error"]["stage"] == "portfolio_simulation"
-    assert chunk["candidate_ids"] == [
-        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-2]",
-        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-2]",
-    ]
-    assert not (tmp_path / "runs" / "batched-portfolio-fails" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-portfolio-fails"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-portfolio-fails")
 
 
-def test_run_cli_preserves_partial_split_artifact_after_later_chunk_failure(
+def test_run_cli_rejects_candidate_grid_before_partial_split_artifact_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -850,26 +676,11 @@ def test_run_cli_preserves_partial_split_artifact_after_later_chunk_failure(
         split=_rolling_split_config(),
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "split-partial"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads((tmp_path / "runs" / "split-partial" / "manifest.json").read_text())
-    artifact = json.loads((tmp_path / "runs" / "split-partial" / "strategy_run.json").read_text())
-    strategy_artifact = next(item for item in manifest["artifacts"] if item["id"] == "strategy.run")
-    chunks = manifest["evidence"]["chunks"]["chunks"]
-    assert payload["error"]["category"] == "execution_failure"
-    assert "split portfolio batch failed intentionally" in payload["error"]["message"]
-    assert chunks[0]["status"] == "succeeded"
-    assert chunks[1]["status"] == "failed"
-    assert chunks[1]["error"]["stage"] == "split_portfolio_simulation"
-    assert strategy_artifact["status"] == "partial"
-    assert strategy_artifact["shape"]["split_metric_count"] == len(artifact["split_metrics"])
-    assert artifact["split_metrics"]
-    assert artifact["leaderboard"]["summary"]["partial_leaderboard"] is True
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "split-partial"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "split-partial")
 
 
-def test_run_cli_records_batched_metric_extraction_failure_context(
+def test_run_cli_rejects_candidate_grid_before_batched_metric_failure_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -896,26 +707,11 @@ def test_run_cli_records_batched_metric_extraction_failure_context(
         candidate_grid={"batch_size": 2},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-metrics-fail"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "batched-metrics-fail" / "manifest.json").read_text()
-    )
-    chunk = manifest["evidence"]["chunks"]["chunks"][0]
-    assert payload["error"]["category"] == "execution_failure"
-    assert "metric extraction failed intentionally" in payload["error"]["message"]
-    assert chunk["status"] == "failed"
-    assert chunk["error"]["stage"] == "metric_extraction"
-    assert chunk["candidate_ids"] == [
-        "strategy:playbook:ma_cross:fast-0+indicators:[playbook:ma_explore:ma-2]",
-        "strategy:playbook:ma_cross:slow-0.01+indicators:[playbook:ma_explore:ma-2]",
-    ]
-    assert not (tmp_path / "runs" / "batched-metrics-fail" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-metrics-fail"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-metrics-fail")
 
 
-def test_run_cli_rejects_over_budget_batched_composed_candidates_with_manifest_evidence(
+def test_run_cli_rejects_candidate_grid_before_composed_candidate_budget_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -933,23 +729,11 @@ def test_run_cli_rejects_over_budget_batched_composed_candidates_with_manifest_e
         candidate_grid={"max_candidates": 3, "batch_size": 2},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-over-budget"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "batched-over-budget" / "manifest.json").read_text()
-    )
-    assert payload["error"]["category"] == "execution_failure"
-    assert "above candidate_grid.max_candidates=3" in payload["error"]["message"]
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert manifest["evidence"]["composition"]["total_composed_candidates"] == 4
-    assert manifest["evidence"]["composition"]["batch_count"] == 2
-    assert "chunks" not in manifest["evidence"]
-    assert not (tmp_path / "runs" / "batched-over-budget" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-over-budget"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-over-budget")
 
 
-def test_run_cli_rejects_over_budget_batched_execution_batch_with_manifest_evidence(
+def test_run_cli_rejects_candidate_grid_before_execution_batch_budget_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -967,24 +751,11 @@ def test_run_cli_rejects_over_budget_batched_execution_batch_with_manifest_evide
         candidate_grid={"max_estimated_cells": 500, "batch_size": 4},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-exec-budget"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "batched-exec-budget" / "manifest.json").read_text()
-    )
-    execution_preflight = manifest["evidence"]["composition"]["execution_preflight"]
-    assert payload["error"]["category"] == "execution_failure"
-    assert "candidate_grid.max_estimated_cells=500" in payload["error"]["message"]
-    assert "candidate_grid.batch_size" in payload["error"]["message"]
-    assert execution_preflight["batch_candidate_count"] == 4
-    assert execution_preflight["estimated_cells"] == 1600
-    assert "chunks" not in manifest["evidence"]
-    assert not (tmp_path / "runs" / "batched-exec-budget" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-exec-budget"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-exec-budget")
 
 
-def test_run_cli_persists_batched_indicator_preflight_rejection(
+def test_run_cli_rejects_candidate_grid_before_indicator_preflight_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1002,22 +773,11 @@ def test_run_cli_persists_batched_indicator_preflight_rejection(
         candidate_grid={"max_estimated_cells": 1},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-preflight"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "batched-preflight" / "manifest.json").read_text()
-    )
-    preflight = manifest["evidence"]["composition"]["indicator_preflight"]
-    assert payload["error"]["category"] == "execution_failure"
-    assert "candidate_grid.max_estimated_cells=1" in payload["error"]["message"]
-    assert preflight["indicator_context_count"] == 2
-    assert preflight["estimated_cells"] == 160
-    assert not (tmp_path / "runs" / "batched-preflight" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-preflight"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-preflight")
 
 
-def test_run_cli_persists_batched_indicator_count_preflight_rejection(
+def test_run_cli_rejects_candidate_grid_before_indicator_count_preflight_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1035,19 +795,8 @@ def test_run_cli_persists_batched_indicator_count_preflight_rejection(
         candidate_grid={"max_candidates": 1},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-count-preflight"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "batched-count-preflight" / "manifest.json").read_text()
-    )
-    preflight = manifest["evidence"]["composition"]["indicator_preflight"]
-    assert payload["error"]["category"] == "execution_failure"
-    assert "candidate_grid.max_candidates=1" in payload["error"]["message"]
-    assert preflight["indicator_context_count"] == 2
-    assert preflight["limits"]["max_candidates"] == 1
-    assert not (tmp_path / "runs" / "batched-count-preflight" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "batched-count-preflight"]) == 6
+    _assert_candidate_grid_config_error(capsys, tmp_path, "batched-count-preflight")
 
 
 def test_run_cli_rejects_playbook_indicators_with_component_strategy(
@@ -1080,7 +829,7 @@ def test_run_cli_rejects_playbook_indicators_with_component_strategy(
     assert not (tmp_path / "runs" / "component-composed").exists()
 
 
-def test_run_cli_does_not_write_completed_strategy_artifact_for_partial_leaderboard(
+def test_run_cli_rejects_non_optimized_partial_leaderboard_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1097,17 +846,8 @@ def test_run_cli_does_not_write_completed_strategy_artifact_for_partial_leaderbo
         ranking_metric="win_rate",
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "partial-leaderboard"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads(
-        (tmp_path / "runs" / "partial-leaderboard" / "manifest.json").read_text()
-    )
-    assert payload["error"]["category"] == "execution_failure"
-    assert "complete leaderboard" in payload["error"]["message"]
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert not (tmp_path / "runs" / "partial-leaderboard" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "partial-leaderboard"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "partial-leaderboard")
 
 
 def test_run_cli_rejects_playbook_that_does_not_support_requested_family(
@@ -1122,7 +862,12 @@ def test_run_cli_rejects_playbook_that_does_not_support_requested_family(
         "indicators_only",
         stages=["indicators"],
     )
-    config_path = _write_run_config(tmp_path, strategy_source="playbook", strategy_id="indicators_only")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="indicators_only",
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "should-not-exist"]) == 6
 
@@ -1160,6 +905,34 @@ def test_playbook_roots_ignore_local_notebooks_except_readme_placeholders() -> N
 
         assert ignored_notebook.returncode == 0
         assert ignored_readme.returncode == 1
+
+
+def _assert_candidate_grid_config_error(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    run_id: str,
+) -> None:
+    output = capsys.readouterr()
+    assert output.out == ""
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "candidate_grid" in payload["error"]["message"]
+    assert "removed from the forward run contract" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / run_id).exists()
+
+
+def _assert_missing_optimization_config_error(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    run_id: str,
+) -> None:
+    output = capsys.readouterr()
+    assert output.out == ""
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "optimization" in payload["error"]["message"]
+    assert "fixed/non-optimized strategy runs are removed" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / run_id).exists()
 
 
 def _write_run_config(

@@ -21,6 +21,7 @@ from research.aegis_research.optimization.runner import (
     SAMPLED_ROWS_SOURCE_PRECOMPUTED,
     SAMPLED_ROWS_SOURCE_RESULT_GRID,
     OptimizationRunnerError,
+    _build_selection_function,
     _extract_param_index,
     _verify_evaluated_subset,
     execute_optimization,
@@ -407,6 +408,24 @@ def test_runner_rejects_unsupported_ranking_direction() -> None:
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return", direction="sideways"),
         )
+
+
+def test_runner_rejects_all_non_finite_ranking_metric_values() -> None:
+    selection_fn = _build_selection_function(ranking_metric="total_return", direction="desc")
+    grid_results = pd.Series(
+        [float("nan"), float("inf"), float("-inf")],
+        index=pd.MultiIndex.from_tuples(
+            [
+                (1, "total_return"),
+                (2, "total_return"),
+                (3, "total_return"),
+            ],
+            names=["window", METRIC_INDEX_NAME],
+        ),
+    )
+
+    with pytest.raises(OptimizationRunnerError, match="non-finite"):
+        selection_fn(grid_results)
 
 
 def test_serialize_optimization_run_emits_jsonable_selection_and_selection_grid() -> None:

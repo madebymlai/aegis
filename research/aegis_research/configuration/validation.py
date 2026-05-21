@@ -17,6 +17,7 @@ from research.aegis_research.configuration.schema import (
     DATA_QUALITY_DEGRADATIONS,
     DENIED_PASSTHROUGH_KEYS,
     EXPERIMENT_NAME_RE,
+    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     MISSING_POLICIES,
     OPTIMIZATION_RETURN_GRID_POLICIES,
     OPTIMIZATION_SEARCH_POLICIES,
@@ -118,6 +119,13 @@ def _validate_run_config(
     )
     _validate_run_source_combination(raw, issues)
     _validate_ranking("ranking", raw.get("ranking"), issues, registry=metric_registry)
+    if "optimization" not in raw:
+        issues.append(
+            ConfigValidationIssue(
+                "optimization",
+                FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
+            )
+        )
     _validate_optimization(raw, issues)
     if raw.get("split") is not None:
         split = _section(raw, "split", set(RunSplitConfig.__dataclass_fields__), issues)
@@ -129,11 +137,12 @@ def _validate_run_config(
         issues,
     )
     _validate_candidate_grid(candidate_grid, issues)
-    if "optimization" in raw and "candidate_grid" in raw:
+    if "candidate_grid" in raw:
         issues.append(
             ConfigValidationIssue(
                 "candidate_grid",
-                "optimization uses optimization.search and VBT params; candidate_grid is not accepted",
+                "candidate_grid is removed from the forward run contract; use "
+                "optimization.search, optimization.split, and VBT params instead",
             )
         )
 

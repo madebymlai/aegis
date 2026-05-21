@@ -147,11 +147,11 @@ optimization:
 
 `optimization.split.method` maps to `vbt.cv_split(splitter=...)` and `optimization.split.params` to `splitter_kwargs`. Set roles are positional: VBT set index 0 is Aegis `selection`, VBT set index 1 is Aegis `held_out`. The selection function maps the configured `ranking.metric` and `ranking.direction` into VBT `selection`, with multi-metric selection handled via `grid_results.xs(metric_name).idxmax()`/`idxmin()`. Tied parameters use `vbt.Param(level=...)`; conditional parameters use `vbt.Param(condition=...)`; `vbt.Param(random_subset=...)` and the top-level `random_subset` interoperate with VBT's lazy-grid behavior. Resource gates (theoretical combinations, sampled combinations, expected result cells, artifact bytes) live on `optimization.preflight` and `optimization.split.max_*` knobs and fail closed before VBT execution. Partial failures (`vbt.NoResult`-only grids, missing metrics, runtime errors) surface as `evidence.optimization.execution_failure` rather than silently shrinking the leaderboard.
 
-`optimization` and `candidate_grid` are mutually exclusive. Configs without an `optimization` block currently still accept the candidate-sweep contract plus top-level `split`, but that contract is **deprecated and scheduled for removal under issue #32**. New work must use the optimization contract; `vbt.Param` jointly searches indicator and strategy parameters when the indicator is computed inside the pipeline.
+`candidate_grid` is removed from the forward run contract. New work must use the `optimization` contract; `vbt.Param` jointly searches indicator and strategy parameters when the indicator is computed inside the pipeline.
 
 ## Deprecated Run Split Scoring (Scheduled For Removal)
 
-The top-level `split` block plus `candidate_grid` is the deprecated non-optimization scoring path. It is retained only for already-authored configs and external read/reporting tools; new configs must use `optimization.split` on the optimization contract. Under the deprecated path, Aegis builds VBT split sets from the source index, scores candidates only on each split's selection set, evaluates the selected candidate on the held-out set with fresh portfolio state, and writes one final split-based leaderboard plus `split_metrics` and `split_diagnostics` in `strategy_run.json`.
+The top-level `split` block is legacy non-optimization scoring shape. Forward configs must use `optimization.split` on the optimization contract. Historical read/reporting code may still understand old artifacts, but new authored configs must not use the candidate-sweep contract.
 
 ```yaml
 split:

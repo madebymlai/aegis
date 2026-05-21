@@ -28,6 +28,10 @@ DATA_QUALITY_DEGRADATIONS = {
     "skipped_symbols",
 }
 SOURCE_KINDS = {"component", "playbook"}
+FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
+    "is required; fixed/non-optimized strategy runs are removed from the forward "
+    "run contract; use optimization.search and optimization.split"
+)
 RANKING_DIRECTIONS = {"asc", "desc"}
 OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
 OPTIMIZATION_RETURN_GRID_POLICIES = {"off", "first", "all"}

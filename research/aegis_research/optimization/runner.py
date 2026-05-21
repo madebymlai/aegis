@@ -29,6 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
@@ -320,7 +321,7 @@ def _build_selection_function(*, ranking_metric: str, direction: str):
         if not isinstance(per_param, pd.Series):
             per_param = pd.Series(per_param)
         per_param = per_param.astype(float)
-        finite = per_param.dropna()
+        finite = per_param[np.isfinite(per_param.to_numpy())]
         if finite.empty:
             raise OptimizationRunnerError(
                 f"optimization selection cannot rank by {ranking_metric!r}: every "

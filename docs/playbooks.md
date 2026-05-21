@@ -91,20 +91,11 @@ Set roles are positional: VBT set index 0 is Aegis `selection`, VBT set index 1 
 
 The held-out leaderboard is derived from VBT-selected parameter combinations and held-out metrics, weighted by `held_out_row_count`. Each leaderboard row carries a stable `candidate_key` linking back to the candidate evidence record built from the VBT parameter index. Preflight rejections (oversized grids, missing Open prices, evidence-budget overruns) and runtime failures (`vbt.NoResult`-only grids, pipeline exceptions) write `evidence.optimization.execution_failure` to the manifest and do not publish a completed `strategy_run.json`.
 
-`optimization` and `candidate_grid` cannot coexist in a single config. Configs without an `optimization` block currently still accept the `candidate_grid` + top-level `split` shape, but that path is the deprecated candidate-sweep contract documented below; new work must use the optimization contract above. `vbt.Param` jointly searches indicator and strategy parameters when the indicator is computed inside the parameterized pipeline, so the optimization contract subsumes the candidate-sweep use case for parameter optimization.
+`candidate_grid` is removed from the forward run contract. New work must use the optimization contract above. `vbt.Param` jointly searches indicator and strategy parameters when the indicator is computed inside the parameterized pipeline, so the optimization contract subsumes the candidate-sweep use case for parameter optimization.
 
 ## Deprecated Candidate Sweep (Scheduled For Removal)
 
-The `playbook_sweep_result.v1` strategy contract with `candidate_grid` policy is **deprecated and scheduled for removal** under issue #32. It is retained in this release only for already-authored configs and external read/reporting tools that still reference the existing artifact shape. Do not extend it, do not author new playbooks against it, and do not treat it as an alternative to the optimization contract.
-
-`candidate_grid.batch_size` bounds how many composed strategy candidates Aegis asks a strategy materializer to return per chunk; `candidate_grid.max_candidates` and `candidate_grid.max_estimated_cells` fail closed before scoring when a selected grid is too large:
-
-```yaml
-candidate_grid:
-  batch_size: 1000
-  max_candidates: 100000
-  max_estimated_cells: 50000000
-```
+The `playbook_sweep_result.v1` strategy contract is legacy historical shape scheduled for removal under issue #32. It may remain only for explicitly scoped artifact read/reporting needs. Do not extend it, do not author new playbooks against it, and do not treat it as an alternative to the optimization contract.
 
 Completed strategy sweeps require every planned candidate chunk to score and produce the requested ranking metric. Preflight rejections and chunk failures write diagnostic evidence to the manifest, including planned counts, chunk indexes, candidate IDs, stage, error type, and message, but they do not publish completed `strategy_run.json` leaderboard evidence.
 

@@ -29,6 +29,8 @@ from research.aegis_research.component_registry import (
 )
 from research.aegis_research.config import (
     ConfigValidationError,
+    ConfigValidationIssue,
+    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     ResolvedRunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
@@ -257,6 +259,15 @@ def run_strategy_sweep(
     on_run_started: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     config = resolved_config.config
+    if config.optimization is None:
+        raise ConfigValidationError(
+            [
+                ConfigValidationIssue(
+                    "optimization",
+                    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
+                )
+            ]
+        )
     playbooks = playbook_registry or discover_playbook_registry(
         component_registry=component_registry
     )

@@ -236,18 +236,32 @@ def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, mo
     assert secrets == ["super-secret-token"]
 
 
-def test_run_accepts_candidate_grid_policy(tmp_path: Path) -> None:
+def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
     raw = _run_config()
     raw["candidate_grid"] = {"max_candidates": 100, "max_estimated_cells": 10_000, "batch_size": 25}
 
-    resolved = resolve_run_config(
-        raw,
-        component_registry=_component_registry(tmp_path),
-    )
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
 
-    assert resolved.config.candidate_grid.max_candidates == 100
-    assert resolved.config.candidate_grid.max_estimated_cells == 10_000
-    assert resolved.config.candidate_grid.batch_size == 25
+    assert "candidate_grid" in str(error.value)
+    assert "removed from the forward run contract" in str(error.value)
+
+
+def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw.pop("optimization")
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "optimization" in str(error.value)
+    assert "fixed/non-optimized strategy runs are removed" in str(error.value)
 
 
 def test_run_accepts_grid_optimization_with_nested_split(tmp_path: Path) -> None:
@@ -432,7 +446,7 @@ def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> No
         )
 
     assert "candidate_grid" in str(error.value)
-    assert "optimization uses optimization.search" in str(error.value)
+    assert "removed from the forward run contract" in str(error.value)
 
 
 def test_run_rejects_optimization_component_param_space_boundary(tmp_path: Path) -> None:
@@ -499,6 +513,7 @@ def _run_config() -> dict[str, object]:
         "strategy": {"source": "playbook", "id": "ma_cross"},
         "indicators": [{"source": "playbook", "ids": ["ma_explore"]}],
         "ranking": {"metric": "total_return", "direction": "desc"},
+        "optimization": _optimization_block(search="grid"),
     }
 
 
