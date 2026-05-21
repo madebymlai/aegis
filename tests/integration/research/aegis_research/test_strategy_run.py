@@ -437,7 +437,7 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
     assert not (tmp_path / "runs" / "should-not-exist").exists()
 
 
-def test_run_rejects_native_optimization_without_nested_split_before_run_creation(
+def test_run_rejects_optimization_without_nested_split_before_run_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -446,13 +446,13 @@ def test_run_rejects_native_optimization_without_nested_split_before_run_creatio
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, optimization={"search": "grid"})
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "native-no-split"]) == 6
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "no-optimization-split"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
     assert "optimization.split" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "native-no-split").exists()
+    assert not (tmp_path / "runs" / "no-optimization-split").exists()
 
 
 def test_run_missing_config_is_config_error(

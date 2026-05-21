@@ -132,7 +132,7 @@ def _validate_run_config(
         issues.append(
             ConfigValidationIssue(
                 "candidate_grid",
-                "native optimization uses optimization.search and VBT params; candidate_grid is not accepted",
+                "optimization uses optimization.search and VBT params; candidate_grid is not accepted",
             )
         )
 
@@ -150,7 +150,7 @@ def _validate_run_source_combination(
         issues.append(
             ConfigValidationIssue(
                 "strategy.source",
-                "component param spaces are #32; #31 native optimization requires a native playbook source",
+                "component param spaces are #32; #31 optimization requires a playbook source",
             )
         )
     if not isinstance(strategy, dict) or strategy.get("source") != "component":
@@ -239,11 +239,11 @@ def _validate_optimization_split(
         issues.append(
             ConfigValidationIssue(
                 "split",
-                "native optimization configs must move the split policy under optimization.split",
+                "optimization configs must move the split policy under optimization.split",
             )
         )
     if "split" not in optimization:
-        message = "is required for native optimization"
+        message = "is required for optimization"
         if raw.get("split") is not None:
             message += "; move the split policy under optimization.split"
         issues.append(ConfigValidationIssue("optimization.split", message))

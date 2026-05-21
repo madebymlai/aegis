@@ -66,9 +66,15 @@ from research.aegis_research.run_leaderboard import (
 )
 from research.aegis_research.run_splits import RunSplit, build_run_splits_result
 from research.aegis_research.split_leaderboard import build_split_leaderboard
+from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
+)
+from research.aegis_research.optimization.runner import (
+    OptimizationRunnerError,
+    execute_optimization,
+    serialize_optimization_run,
 )
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_SOURCE_CONTRACT,
@@ -286,7 +292,7 @@ def run_strategy_sweep(
         data_bundle = market_data_bundle(data_result)
         open_prices = data_bundle.feature("Open")
         if config.optimization is not None:
-            return _run_native_optimization_strategy_sweep(
+            return _run_optimization_strategy_sweep(
                 config,
                 playbook_registry=playbooks,
                 recorder=recorder,
@@ -458,7 +464,7 @@ def _assert_playbook_sweep_strategy(
         )
 
 
-def _run_native_optimization_strategy_sweep(
+def _run_optimization_strategy_sweep(
     config: Any,
     *,
     playbook_registry: FrozenPlaybookRegistry,
@@ -471,14 +477,14 @@ def _run_native_optimization_strategy_sweep(
 ) -> dict[str, Any]:
     if config.strategy.source != "playbook":
         raise OptimizationSourceError(
-            "native optimization sources must be playbook strategies in #31; "
+            "optimization sources must be playbook strategies in #31; "
             "component param spaces and component unification are #32"
         )
     definition = playbook_registry.get(PlaybookSelection("strategies", config.strategy.id))
     if definition.manifest.result_schema != OPTIMIZATION_SOURCE_CONTRACT:
         raise OptimizationSourceError(
             f"strategy playbook {definition.id!r} must expose result_schema "
-            f"{OPTIMIZATION_SOURCE_CONTRACT!r} for native optimization"
+            f"{OPTIMIZATION_SOURCE_CONTRACT!r} for optimization"
         )
 
     strategy_evidence = {
@@ -487,7 +493,7 @@ def _run_native_optimization_strategy_sweep(
         "version": definition.manifest.version,
         **definition.identity.public(),
         "consumes_runner_data": True,
-        "data_binding": "native_optimization_inputs",
+        "data_binding": "optimization_inputs",
         "result_contract": OPTIMIZATION_SOURCE_CONTRACT,
     }
     inputs = StrategyInputs(
@@ -499,17 +505,17 @@ def _run_native_optimization_strategy_sweep(
             "optimization_contract": OPTIMIZATION_SOURCE_CONTRACT,
         },
     )
-    native_source = validate_optimization_source(
+    optimization_source = validate_optimization_source(
         definition.load_callable()(inputs),
         source_evidence=strategy_evidence,
     )
     close = data.feature("Close")
     split_result = build_run_splits_result(close.index, config.optimization.split)
-    native_optimization_evidence = {
-        "schema_version": "native_optimization_route.v1",
+    optimization_evidence = {
+        "schema_version": "optimization_route.v1",
         "contract": OPTIMIZATION_SOURCE_CONTRACT,
-        "source": native_source.evidence,
-        "param_names": list(native_source.params),
+        "source": optimization_source.evidence,
+        "param_names": list(optimization_source.params),
         "optimization": to_builtin(asdict(config.optimization)),
         "split": split_result.metadata,
         "data": _strategy_data_evidence_payload(
@@ -521,28 +527,151 @@ def _run_native_optimization_strategy_sweep(
         "open_prices_available": open_prices is not None,
     }
     try:
-        native_optimization_evidence["preflight"] = build_preflight(
-            params=native_source.params,
+        optimization_evidence["preflight"] = build_preflight(
+            params=optimization_source.params,
             optimization=config.optimization,
             split_result=split_result,
             symbol_count=len(close.columns),
             has_open_prices=open_prices is not None,
         )
     except PreflightError as error:
-        native_optimization_evidence["preflight"] = error.diagnostics
-        native_optimization_evidence["preflight_failure"] = {
+        optimization_evidence["preflight"] = error.diagnostics
+        optimization_evidence["preflight_failure"] = {
             "error_type": type(error).__name__,
             "message": str(error),
         }
-        recorder.manifest.evidence["native_optimization"] = native_optimization_evidence
+        recorder.manifest.evidence["optimization"] = optimization_evidence
         recorder.persist()
         raise OptimizationSourceError(str(error)) from error
 
-    recorder.manifest.evidence["native_optimization"] = native_optimization_evidence
-    recorder.persist()
-    raise OptimizationSourceError(
-        "native optimization source contract validated; vbt.cv_split execution is not implemented yet"
+    try:
+        optimization_run = execute_optimization(
+            close=close,
+            open_prices=open_prices,
+            source=optimization_source,
+            optimization=config.optimization,
+            portfolio=config.portfolio,
+            signal=SignalConfig(),
+            report=config.report,
+            ranking=config.ranking,
+        )
+    except OptimizationRunnerError as error:
+        optimization_evidence["execution_failure"] = {
+            "error_type": type(error).__name__,
+            "message": str(error),
+        }
+        recorder.manifest.evidence["optimization"] = optimization_evidence
+        recorder.persist()
+        raise
+
+    run_payload = serialize_optimization_run(optimization_run)
+    optimization_evidence["execution"] = run_payload
+
+    candidate_index = (
+        optimization_run.grid.index
+        if optimization_run.grid is not None
+        else optimization_run.selection.index
     )
+    candidate_rows = candidate_rows_from_param_index(
+        candidate_index,
+        source_identity=optimization_source.evidence,
+        portfolio_policy=to_builtin(asdict(config.portfolio)),
+    )
+    optimization_evidence["candidate_count"] = len(candidate_rows)
+    leaderboard = _build_optimization_leaderboard(
+        run_payload=run_payload,
+        ranking_metric=optimization_run.ranking_metric,
+        ranking_direction=optimization_run.ranking_direction,
+    )
+    recorder.manifest.evidence["optimization"] = optimization_evidence
+
+    artifact_payload = {
+        "schema_version": STRATEGY_ARTIFACT_SCHEMA_VERSION,
+        "evidence_type": "optimization",
+        "strategy": strategy_evidence,
+        "data": _strategy_data_evidence_payload(
+            data_result,
+            array_contract,
+            strategy_source=config.strategy.source,
+        ),
+        "ranking": {
+            "metric": config.ranking.metric,
+            "direction": config.ranking.direction,
+            "secondary_metrics": list(config.ranking.secondary_metrics),
+        },
+        "portfolio": to_builtin(asdict(config.portfolio)),
+        "optimization": to_builtin(asdict(config.optimization)),
+        "split": split_result.metadata,
+        "preflight": optimization_evidence["preflight"],
+        "execution": run_payload,
+        "candidates": [to_builtin(record) for record in candidate_rows],
+        "leaderboard": leaderboard,
+        "metric_registry_fingerprint": metric_registry_fingerprint,
+    }
+    _write_strategy_artifact(recorder, artifact_payload)
+    recorder.mark_run_completed()
+    return {
+        **_run_refs(recorder),
+        "evidence_type": "optimization",
+        "strategy_artifact_id": "strategy.run",
+        "optimization": {
+            "ranking_metric": optimization_run.ranking_metric,
+            "ranking_direction": optimization_run.ranking_direction,
+            "split_count": split_result.metadata["n_splits"],
+            "selection_row_count": len(optimization_run.selection),
+            "candidate_count": len(candidate_rows),
+        },
+    }
+
+
+def _build_optimization_leaderboard(
+    *,
+    run_payload: dict[str, Any],
+    ranking_metric: str,
+    ranking_direction: str,
+) -> dict[str, Any]:
+    held_out_rows = [
+        row
+        for row in run_payload["selection"]["rows"]
+        if row["coordinates"].get("set") == "held_out"
+    ]
+    rows: list[dict[str, Any]] = []
+    succeeded = 0
+    for held_out in held_out_rows:
+        value = held_out["value"]
+        is_succeeded = isinstance(value, (int, float)) and not math.isnan(float(value))
+        if is_succeeded:
+            succeeded += 1
+        params = {
+            key: held_out_value
+            for key, held_out_value in held_out["coordinates"].items()
+            if key not in {"split", "set"}
+        }
+        rows.append(
+            {
+                "split": held_out["coordinates"].get("split"),
+                "params": params,
+                "ranking_metric": ranking_metric,
+                "ranking_direction": ranking_direction,
+                "ranking_metric_value": value,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            float("-inf") if not isinstance(row["ranking_metric_value"], (int, float)) else row["ranking_metric_value"]
+        ),
+        reverse=ranking_direction == "desc",
+    )
+    return {
+        "schema_version": "optimization_leaderboard.v1",
+        "ranking_metric": ranking_metric,
+        "ranking_direction": ranking_direction,
+        "summary": {
+            "attempted": len(rows),
+            "succeeded": succeeded,
+        },
+        "rows": rows,
+    }
 
 
 def _run_playbook_strategy_sweep(

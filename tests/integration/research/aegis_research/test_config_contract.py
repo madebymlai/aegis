@@ -250,9 +250,9 @@ def test_run_accepts_candidate_grid_policy(tmp_path: Path) -> None:
     assert resolved.config.candidate_grid.batch_size == 25
 
 
-def test_run_accepts_native_grid_optimization_with_nested_split(tmp_path: Path) -> None:
+def test_run_accepts_grid_optimization_with_nested_split(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["optimization"] = _native_optimization(search="grid")
+    raw["optimization"] = _optimization_block(search="grid")
 
     resolved = resolve_run_config(
         raw,
@@ -269,9 +269,9 @@ def test_run_accepts_native_grid_optimization_with_nested_split(tmp_path: Path) 
     assert "set_labels" not in resolved.config.optimization.split.params
 
 
-def test_run_accepts_native_random_optimization_policy(tmp_path: Path) -> None:
+def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["optimization"] = _native_optimization(
+    raw["optimization"] = _optimization_block(
         search="random",
         random_subset=5,
         seed=42,
@@ -361,7 +361,7 @@ def test_run_accepts_native_random_optimization_policy(tmp_path: Path) -> None:
         ),
     ],
 )
-def test_run_rejects_invalid_native_optimization_policy(
+def test_run_rejects_invalid_optimization_policy(
     tmp_path: Path,
     optimization: dict[str, object],
     expected_path: str,
@@ -405,7 +405,7 @@ def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> 
     assert "owned by Aegis" in str(error.value)
 
 
-def test_run_rejects_top_level_split_as_native_optimization_split(tmp_path: Path) -> None:
+def test_run_rejects_top_level_split_as_optimization_split(tmp_path: Path) -> None:
     raw = _run_config()
     raw["optimization"] = {"search": "grid"}
     raw["split"] = _optimization_split()
@@ -420,9 +420,9 @@ def test_run_rejects_top_level_split_as_native_optimization_split(tmp_path: Path
     assert "move the split policy under optimization.split" in str(error.value)
 
 
-def test_run_rejects_candidate_grid_on_native_optimization_config(tmp_path: Path) -> None:
+def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["optimization"] = _native_optimization(search="grid")
+    raw["optimization"] = _optimization_block(search="grid")
     raw["candidate_grid"] = {"max_candidates": 100, "max_estimated_cells": 10_000}
 
     with pytest.raises(ConfigValidationError) as error:
@@ -432,12 +432,12 @@ def test_run_rejects_candidate_grid_on_native_optimization_config(tmp_path: Path
         )
 
     assert "candidate_grid" in str(error.value)
-    assert "native optimization uses optimization.search" in str(error.value)
+    assert "optimization uses optimization.search" in str(error.value)
 
 
-def test_run_rejects_native_optimization_component_param_space_boundary(tmp_path: Path) -> None:
+def test_run_rejects_optimization_component_param_space_boundary(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["optimization"] = _native_optimization(search="grid")
+    raw["optimization"] = _optimization_block(search="grid")
     raw["strategy"] = {"source": "component", "id": "demo.strategy"}
     raw["indicators"] = [{"source": "component", "ids": ["demo.returns"]}]
 
@@ -502,7 +502,7 @@ def _run_config() -> dict[str, object]:
     }
 
 
-def _native_optimization(search: str, **overrides: object) -> dict[str, object]:
+def _optimization_block(search: str, **overrides: object) -> dict[str, object]:
     return {"search": search, "split": _optimization_split(), **overrides}
 
 

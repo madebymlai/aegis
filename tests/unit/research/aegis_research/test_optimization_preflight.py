@@ -12,7 +12,7 @@ from research.aegis_research.optimization.preflight import (
 )
 
 
-def test_native_preflight_reports_grid_shape_and_execution_policy() -> None:
+def test_preflight_reports_grid_shape_and_execution_policy() -> None:
     diagnostics = build_preflight(
         params={
             "fast_window": vbt.Param([5, 10]),
@@ -40,7 +40,7 @@ def test_native_preflight_reports_grid_shape_and_execution_policy() -> None:
     assert diagnostics["execute"] == {"chunk_len": "auto", "mono_chunk_len": 50}
 
 
-def test_native_preflight_allows_random_subset_when_sampled_shape_fits() -> None:
+def test_preflight_allows_random_subset_when_sampled_shape_fits() -> None:
     diagnostics = build_preflight(
         params={
             "fast_window": vbt.Param(range(1_000)),
@@ -57,7 +57,7 @@ def test_native_preflight_allows_random_subset_when_sampled_shape_fits() -> None
     assert diagnostics["estimated_portfolio_broadcast_cells"] == 400
 
 
-def test_native_preflight_rejects_oversized_exhaustive_grid_before_execution() -> None:
+def test_preflight_rejects_oversized_exhaustive_grid_before_execution() -> None:
     with pytest.raises(PreflightError) as error:
         build_preflight(
             params={
@@ -75,7 +75,7 @@ def test_native_preflight_rejects_oversized_exhaustive_grid_before_execution() -
     assert error.value.diagnostics["sampled_combinations"] == 1_000_000
 
 
-def test_native_preflight_rejects_random_sample_above_evidence_budget() -> None:
+def test_preflight_rejects_random_sample_above_evidence_budget() -> None:
     with pytest.raises(PreflightError) as error:
         build_preflight(
             params={
@@ -98,7 +98,7 @@ def test_native_preflight_rejects_random_sample_above_evidence_budget() -> None:
     assert error.value.diagnostics["estimated_public_rows"] == 202
 
 
-def test_native_preflight_return_grid_all_retains_all_set_grid_rows() -> None:
+def test_preflight_return_grid_all_retains_all_set_grid_rows() -> None:
     diagnostics = build_preflight(
         params={"window": vbt.Param([5, 10, 20])},
         optimization=_optimization(return_grid="all"),
