@@ -183,17 +183,33 @@ class ReportConfig:
 
 @dataclass(frozen=True)
 class RunSourceRefConfig:
-    source: str
     id: str
+    lock_id: str | None = None
+    candidate_id: str | None = None
+    params: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def source(self) -> str:
+        return "component"
 
 
 @dataclass(frozen=True)
 class RunIndicatorSourceConfig:
-    source: str
-    ids: str | list[str]
+    id: str
+    lock_id: str | None = None
+    candidate_id: str | None = None
+    params: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def source(self) -> str:
+        return "component"
+
+    @property
+    def ids(self) -> tuple[str, ...]:
+        return (self.id,)
 
     def expanded_ids(self, available_ids: tuple[str, ...]) -> tuple[str, ...]:
-        return available_ids if self.ids == "all" else tuple(self.ids)
+        return self.ids
 
 
 @dataclass(frozen=True)

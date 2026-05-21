@@ -86,3 +86,8 @@ class ComponentDefinition:
         from research.aegis_research.component_registry.registry import load_component_callable
 
         return load_component_callable(self)
+
+    def load_attribute(self, attribute_name: str) -> Any:
+        from research.aegis_research.component_registry.registry import load_component_attribute
+
+        return load_component_attribute(self, attribute_name)

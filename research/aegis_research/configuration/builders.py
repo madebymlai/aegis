@@ -36,17 +36,25 @@ def _build_run_config(raw: dict[str, Any]) -> RunConfig:
 
 
 def _build_run_source_ref(raw: dict[str, Any]) -> RunSourceRefConfig:
-    return RunSourceRefConfig(source=raw["source"], id=raw["id"])
+    return RunSourceRefConfig(
+        id=raw["id"],
+        lock_id=raw.get("lock_id"),
+        candidate_id=raw.get("candidate_id"),
+        params=dict(raw.get("params", {})),
+    )
 
 
 def _build_run_indicator_sources(raw: list[dict[str, Any]]) -> list[RunIndicatorSourceConfig]:
     refs: list[RunIndicatorSourceConfig] = []
     for item in raw:
-        ids = item["ids"]
-        if ids == "all":
-            refs.append(RunIndicatorSourceConfig(source=item["source"], ids="all"))
-            continue
-        refs.append(RunIndicatorSourceConfig(source=item["source"], ids=list(ids)))
+        refs.append(
+            RunIndicatorSourceConfig(
+                id=item["id"],
+                lock_id=item.get("lock_id"),
+                candidate_id=item.get("candidate_id"),
+                params=dict(item.get("params", {})),
+            )
+        )
     return refs
 
 

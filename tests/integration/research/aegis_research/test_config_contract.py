@@ -63,7 +63,7 @@ def test_run_config_rejects_removed_labeler_field(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
             raw,
-            component_registry=_component_registry(tmp_path, include_strategy=True),
+            component_registry=_component_registry(tmp_path),
         )
 
     assert "labeler" in str(error.value)
@@ -306,6 +306,56 @@ def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
     assert resolved.config.optimization.evidence.return_grid == "all"
 
 
+def test_run_accepts_component_lock_and_candidate_refs(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["strategy"] = {"id": "demo.strategy", "lock_id": "lock_strategy_best"}
+    raw["indicators"] = [{"id": "demo.returns", "candidate_id": "cand_indicator_row"}]
+
+    resolved = resolve_run_config(
+        raw,
+        component_registry=_component_registry(tmp_path),
+    )
+
+    assert resolved.config.strategy.source == "component"
+    assert resolved.config.strategy.lock_id == "lock_strategy_best"
+    assert resolved.config.strategy.candidate_id is None
+    assert resolved.config.indicators[0].source == "component"
+    assert resolved.config.indicators[0].candidate_id == "cand_indicator_row"
+    assert resolved.config.indicators[0].expanded_ids(("demo.returns",)) == ("demo.returns",)
+
+
+def test_run_rejects_component_lock_and_candidate_together(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["strategy"] = {
+        "id": "demo.strategy",
+        "lock_id": "lock_strategy_best",
+        "candidate_id": "cand_strategy_row",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "strategy" in str(error.value)
+    assert "mutually exclusive" in str(error.value)
+
+
+def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["indicators"] = []
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "strategy.consumes_outputs" in str(error.value)
+    assert "not produced" in str(error.value)
+
+
 @pytest.mark.parametrize(
     ("optimization", "expected_path", "expected_message"),
     [
@@ -449,34 +499,37 @@ def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> No
     assert "removed from the forward run contract" in str(error.value)
 
 
-def test_run_rejects_optimization_component_param_space_boundary(tmp_path: Path) -> None:
+def test_run_rejects_removed_source_selectors_and_indicator_ids(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["optimization"] = _optimization_block(search="grid")
     raw["strategy"] = {"source": "component", "id": "demo.strategy"}
     raw["indicators"] = [{"source": "component", "ids": ["demo.returns"]}]
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
             raw,
-            component_registry=_component_registry(tmp_path, include_strategy=True),
+            component_registry=_component_registry(tmp_path),
         )
 
     assert "strategy.source" in str(error.value)
-    assert "component param spaces are #32" in str(error.value)
+    assert "source selectors are removed" in str(error.value)
+    assert "indicators[0].ids" in str(error.value)
+    assert "ids batching is removed" in str(error.value)
 
 
-def test_run_rejects_playbook_indicators_with_component_strategy(tmp_path: Path) -> None:
+def test_run_rejects_playbook_source_selectors(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["strategy"] = {"source": "component", "id": "demo.strategy"}
+    raw["strategy"] = {"source": "playbook", "id": "ma_cross"}
+    raw["indicators"] = [{"source": "playbook", "ids": ["ma_explore"]}]
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
             raw,
-            component_registry=_component_registry(tmp_path, include_strategy=True),
+            component_registry=_component_registry(tmp_path),
         )
 
+    assert "strategy.source" in str(error.value)
+    assert "source selectors are removed" in str(error.value)
     assert "indicators[0].source" in str(error.value)
-    assert "cannot enter the component runner" in str(error.value)
 
 
 @pytest.mark.parametrize(
@@ -510,8 +563,8 @@ def _run_config() -> dict[str, object]:
         "name": "canonical_run",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
         "portfolio": {"entry_budget": 1.0},
-        "strategy": {"source": "playbook", "id": "ma_cross"},
-        "indicators": [{"source": "playbook", "ids": ["ma_explore"]}],
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return", "direction": "desc"},
         "optimization": _optimization_block(search="grid"),
     }
@@ -529,11 +582,10 @@ def _optimization_split() -> dict[str, object]:
     }
 
 
-def _component_registry(tmp_path: Path, *, include_strategy: bool = False):
+def _component_registry(tmp_path: Path):
     root = tmp_path / "research" / "components"
     write_indicator_component(root / "indicators" / "returns.py")
-    if include_strategy:
-        _write_strategy_component(root / "strategies" / "strategy.py")
+    _write_strategy_component(root / "strategies" / "strategy.py")
     return discover_component_registry(root=root, repo_root=tmp_path)
 
 
@@ -547,7 +599,8 @@ def _write_strategy_component(path: Path) -> None:
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'signal_outputs': ['entries', 'exits']}\n"
+        "'input_names': ['Close'], 'signal_outputs': ['entries', 'exits'], "
+        "'consumes_outputs': ['returns']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"

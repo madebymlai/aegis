@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from research.aegis_research.component_registry import (
+    ComponentDefinition,
     ComponentRegistryError,
     ComponentSelection,
     FrozenComponentRegistry,
@@ -101,23 +102,20 @@ def _validate_run_config(
     component_registry: FrozenComponentRegistry,
     metric_registry: FrozenMetricRegistry,
 ) -> None:
-    _validate_run_source_ref(
+    strategy_definition = _validate_component_ref(
         "strategy",
         raw.get("strategy"),
         "strategies",
         issues,
         component_registry=component_registry,
-        allowed_sources={"component", "playbook"},
     )
-    _validate_indicator_sources(
+    indicator_definitions = _validate_component_indicator_refs(
         "indicators",
         raw.get("indicators"),
         issues,
         component_registry=component_registry,
-        allowed_sources={"component", "playbook"},
-        allow_empty=raw.get("optimization") is not None,
     )
-    _validate_run_source_combination(raw, issues)
+    _validate_component_output_contract(strategy_definition, indicator_definitions, issues)
     _validate_ranking("ranking", raw.get("ranking"), issues, registry=metric_registry)
     if "optimization" not in raw:
         issues.append(
@@ -145,39 +143,6 @@ def _validate_run_config(
                 "optimization.search, optimization.split, and VBT params instead",
             )
         )
-
-
-def _validate_run_source_combination(
-    raw: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    strategy = raw.get("strategy")
-    if (
-        raw.get("optimization") is not None
-        and isinstance(strategy, dict)
-        and strategy.get("source") == "component"
-    ):
-        issues.append(
-            ConfigValidationIssue(
-                "strategy.source",
-                "component param spaces are #32; #31 optimization requires a playbook source",
-            )
-        )
-    if not isinstance(strategy, dict) or strategy.get("source") != "component":
-        return
-    indicators = raw.get("indicators")
-    if not isinstance(indicators, list):
-        return
-    for index, indicator in enumerate(indicators):
-        if isinstance(indicator, dict) and indicator.get("source") == "playbook":
-            issues.append(
-                ConfigValidationIssue(
-                    f"indicators[{index}].source",
-                    "playbook indicators cannot enter the component runner; use a playbook "
-                    "strategy or promote the indicator candidate to a fixed component",
-                )
-            )
-
 
 def _validate_run_split(
     split: dict[str, Any],
@@ -359,6 +324,213 @@ def _validate_removed_training_fields(
                     "training and lane fields are not supported by the single run config contract",
                 )
             )
+
+
+def _validate_component_indicator_refs(
+    path: str,
+    value: Any,
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+) -> tuple[tuple[str, ComponentDefinition], ...]:
+    if isinstance(value, dict) and "specs" in value:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                "must use component refs; legacy indicators.specs is not accepted in run configs",
+            )
+        )
+        return ()
+    if not isinstance(value, list):
+        issues.append(ConfigValidationIssue(path, "must be a list"))
+        return ()
+
+    seen: dict[str, str] = {}
+    definitions: list[tuple[str, ComponentDefinition]] = []
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        definition = _validate_component_ref(
+            item_path,
+            item,
+            "indicators",
+            issues,
+            component_registry=component_registry,
+            indicator_entry=True,
+        )
+        if definition is None:
+            continue
+        previous = seen.get(definition.id)
+        if previous is not None:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{item_path}.id",
+                    f"duplicates indicator component id {definition.id!r} from {previous}",
+                )
+            )
+            continue
+        seen[definition.id] = f"{item_path}.id"
+        definitions.append((item_path, definition))
+    return tuple(definitions)
+
+
+def _validate_component_ref(
+    path: str,
+    value: Any,
+    family: str,
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+    indicator_entry: bool = False,
+) -> ComponentDefinition | None:
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return None
+    allowed = {"id", "lock_id", "candidate_id", "params", "source"}
+    if indicator_entry:
+        allowed.add("ids")
+    _validate_known_keys(path, value, allowed, issues)
+    if "source" in value:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.source",
+                "source selectors are removed from the forward run contract; "
+                f"name the component id directly with {path}.id",
+            )
+        )
+    if indicator_entry and "ids" in value:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.ids",
+                "indicator ids batching is removed from the forward run contract; "
+                "use one indicator entry per component id",
+            )
+        )
+    _validate_no_run_executable_keys(path, value, issues)
+    if not _require_str(f"{path}.id", value, issues):
+        return None
+    component_id = value["id"]
+    if component_id == "all":
+        issues.append(ConfigValidationIssue(f"{path}.id", "must select one component id"))
+        return None
+    if not EXPERIMENT_NAME_RE.fullmatch(component_id):
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.id",
+                "must contain only letters, numbers, dots, underscores, and hyphens",
+            )
+        )
+        return None
+    _optional_str(f"{path}.lock_id", value, issues)
+    _optional_str(f"{path}.candidate_id", value, issues)
+    if value.get("lock_id") is not None and value.get("candidate_id") is not None:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                "lock_id and candidate_id are mutually exclusive",
+            )
+        )
+
+    try:
+        definition = component_registry.get(ComponentSelection(family, component_id))
+    except ComponentRegistryError:
+        singular = family[:-1] if family.endswith("s") else family
+        issues.append(ConfigValidationIssue(f"{path}.id", f"unknown {singular} component id"))
+        return None
+
+    params = _validate_component_params(
+        f"{path}.params",
+        value.get("params", {}),
+        tuple(getattr(definition.manifest, "param_names", ())),
+        issues,
+        explicit="params" in value,
+    )
+    _validate_component_param_sources(path, value, definition, params, issues)
+    return definition
+
+
+def _validate_component_params(
+    path: str,
+    value: Any,
+    param_names: tuple[str, ...],
+    issues: list[ConfigValidationIssue],
+    *,
+    explicit: bool,
+) -> dict[str, Any] | None:
+    if not explicit:
+        return {}
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return None
+    _validate_json_like(path, value, issues)
+    _validate_no_inline_secrets(path, value, issues)
+    _validate_no_run_executable_keys(path, value, issues)
+    unknown = sorted(set(value) - set(param_names))
+    if unknown:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                f"params must be declared by the component manifest; unknown: {unknown}",
+            )
+        )
+    return dict(value)
+
+
+def _validate_component_param_sources(
+    path: str,
+    value: dict[str, Any],
+    definition: ComponentDefinition,
+    params: dict[str, Any] | None,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    param_names = tuple(getattr(definition.manifest, "param_names", ()))
+    if not param_names:
+        return
+    if value.get("lock_id") is not None or value.get("candidate_id") is not None:
+        return
+    if getattr(definition.manifest, "param_space_callable", None):
+        return
+    provided = set(params or {})
+    defaults = set(getattr(definition.manifest, "defaults", {}))
+    missing = sorted(set(param_names) - provided - defaults)
+    if missing:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                "must provide params, component defaults, lock_id, candidate_id, or "
+                f"param_space_callable for params {missing}",
+            )
+        )
+
+
+def _validate_component_output_contract(
+    strategy_definition: ComponentDefinition | None,
+    indicator_definitions: tuple[tuple[str, ComponentDefinition], ...],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if strategy_definition is None:
+        return
+    produced: dict[str, str] = {}
+    for path, definition in indicator_definitions:
+        for output_name in getattr(definition.manifest, "output_names", ()):
+            previous = produced.get(output_name)
+            if previous is not None:
+                issues.append(
+                    ConfigValidationIssue(
+                        f"{path}.id",
+                        f"duplicates produced indicator output {output_name!r} from {previous}",
+                    )
+                )
+                continue
+            produced[output_name] = f"{path}.id"
+
+    missing = sorted(set(getattr(strategy_definition.manifest, "consumes_outputs", ())) - set(produced))
+    if missing:
+        issues.append(
+            ConfigValidationIssue(
+                "strategy.consumes_outputs",
+                f"strategy consumes outputs not produced by configured indicators: {missing}",
+            )
+        )
 
 
 def _validate_indicator_sources(
