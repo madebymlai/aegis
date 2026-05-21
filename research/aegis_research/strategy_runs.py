@@ -66,6 +66,10 @@ from research.aegis_research.run_leaderboard import (
 )
 from research.aegis_research.run_splits import RunSplit, build_run_splits_result
 from research.aegis_research.split_leaderboard import build_split_leaderboard
+from research.aegis_research.optimization.preflight import (
+    PreflightError,
+    build_preflight,
+)
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_SOURCE_CONTRACT,
     OptimizationSourceError,
@@ -516,6 +520,24 @@ def _run_native_optimization_strategy_sweep(
         "metric_registry_fingerprint": metric_registry_fingerprint,
         "open_prices_available": open_prices is not None,
     }
+    try:
+        native_optimization_evidence["preflight"] = build_preflight(
+            params=native_source.params,
+            optimization=config.optimization,
+            split_result=split_result,
+            symbol_count=len(close.columns),
+            has_open_prices=open_prices is not None,
+        )
+    except PreflightError as error:
+        native_optimization_evidence["preflight"] = error.diagnostics
+        native_optimization_evidence["preflight_failure"] = {
+            "error_type": type(error).__name__,
+            "message": str(error),
+        }
+        recorder.manifest.evidence["native_optimization"] = native_optimization_evidence
+        recorder.persist()
+        raise OptimizationSourceError(str(error)) from error
+
     recorder.manifest.evidence["native_optimization"] = native_optimization_evidence
     recorder.persist()
     raise OptimizationSourceError(

@@ -250,6 +250,40 @@ def test_native_optimization_routes_away_from_custom_candidate_grid(
     assert not (tmp_path / "runs" / "native-boundary" / "strategy_run.json").exists()
 
 
+def test_native_optimization_preflight_failure_records_manifest_without_pipeline_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_native_strategy_playbook(
+        tmp_path / "research/playbooks/strategies/native_ma.py",
+        windows=range(1_000),
+        thresholds=range(1_000),
+    )
+    _write_batched_indicator_playbook(tmp_path / "research/playbooks/indicators/ma_explore.py")
+    split = _rolling_split_config()
+    split["max_estimated_output_cells"] = 100
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_source="playbook",
+        strategy_id="native_ma",
+        optimization={"search": "grid", "split": split},
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "native-preflight"]) == 10
+
+    payload = json.loads(capsys.readouterr().err)
+    manifest = json.loads((tmp_path / "runs" / "native-preflight" / "manifest.json").read_text())
+    native_evidence = manifest["evidence"]["native_optimization"]
+    assert "max_estimated_output_cells" in payload["error"]["message"]
+    assert "native pipeline should not execute" not in payload["error"]["message"]
+    assert native_evidence["preflight"]["theoretical_combinations"] == 1_000_000
+    assert native_evidence["preflight"]["sampled_combinations"] == 1_000_000
+    assert native_evidence["preflight_failure"]["error_type"] == "PreflightError"
+    assert not (tmp_path / "runs" / "native-preflight" / "strategy_run.json").exists()
+
+
 def test_run_cli_executes_playbook_strategy_sweep_with_rolling_split(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1170,6 +1204,50 @@ def _write_batched_strategy_playbook(
         "        'kind': 'strategy_axis',\n"
         "        'candidate_axis': strategy_candidates,\n"
         "        'materialize_signals': materialize_signals,\n"
+        "    }\n"
+    )
+
+
+def _write_native_strategy_playbook(
+    path: Path,
+    *,
+    windows: range,
+    thresholds: range,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "family": "strategies",
+        "id": "native_ma",
+        "version": "1.0.0",
+        "stages": ["strategies"],
+        "accepted_inputs": ["Close"],
+        "result_schema": "aegis.optimization_source.v1",
+    }
+    windows_src = f"range({windows.start}, {windows.stop}, {windows.step})"
+    thresholds_src = f"range({thresholds.start}, {thresholds.stop}, {thresholds.step})"
+    path.write_text(
+        "# %% playbook overview\n"
+        "# Native VBT optimization source fixture for preflight tests.\n"
+        "\n"
+        "# %% define playbook metadata\n"
+        f"PLAYBOOK_MANIFEST = {manifest!r}\n"
+        "PLAYBOOK_CALLABLE = 'run'\n"
+        "\n"
+        "# %% main compute\n"
+        "from vectorbtpro import vbt\n"
+        "\n"
+        "def run(inputs):\n"
+        '    """Return a VBT-native optimization source contract."""\n'
+        "    def pipeline(*args, **kwargs):\n"
+        "        raise RuntimeError('native pipeline should not execute')\n"
+        "    return {\n"
+        "        'contract': 'aegis.optimization_source.v1',\n"
+        "        'kind': 'optimization_source',\n"
+        "        'pipeline': pipeline,\n"
+        "        'params': {\n"
+        f"            'window': vbt.Param(list({windows_src})),\n"
+        f"            'threshold': vbt.Param(list({thresholds_src})),\n"
+        "        },\n"
         "    }\n"
     )
 
