@@ -153,7 +153,11 @@ def test_component_optimization_resolves_candidate_id_pin_as_fixed_params(
 
     pinned_config_path = _write_run_config(
         tmp_path,
-        strategy={"id": "demo.ma_opt", "candidate_id": pinned_row["candidate_key"]},
+        strategy={
+            "id": "demo.ma_opt",
+            "candidate_id": pinned_row["candidate_key"],
+            "run_id": "candidate-source",
+        },
     )
 
     assert cli.main(["run", str(pinned_config_path), "--json", "--run-id", "candidate-pin"]) == 0

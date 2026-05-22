@@ -112,3 +112,22 @@ def test_optimization_source_rejects_hidden_vbt_params() -> None:
             },
             source_evidence={"source": "test"},
         )
+
+
+@pytest.mark.parametrize("param_name", ["split", "set", "symbol", "metric_name"])
+def test_optimization_source_rejects_reserved_result_coordinate_param_names(
+    param_name: str,
+) -> None:
+    def pipeline(data, **params):
+        return data, params
+
+    with pytest.raises(OptimizationSourceError, match="reserved"):
+        validate_optimization_source(
+            {
+                "contract": OPTIMIZATION_SOURCE_CONTRACT,
+                "kind": OPTIMIZATION_SOURCE_KIND,
+                "pipeline": pipeline,
+                "params": {param_name: vbt.Param([1, 2])},
+            },
+            source_evidence={"source": "test"},
+        )

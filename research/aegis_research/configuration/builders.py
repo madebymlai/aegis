@@ -37,6 +37,7 @@ def _build_run_source_ref(raw: dict[str, Any]) -> RunSourceRefConfig:
         id=raw["id"],
         lock_id=raw.get("lock_id"),
         candidate_id=raw.get("candidate_id"),
+        run_id=raw.get("run_id"),
         params=dict(raw.get("params", {})),
     )
 
@@ -49,6 +50,7 @@ def _build_run_indicator_sources(raw: list[dict[str, Any]]) -> list[RunIndicator
                 id=item["id"],
                 lock_id=item.get("lock_id"),
                 candidate_id=item.get("candidate_id"),
+                run_id=item.get("run_id"),
                 params=dict(item.get("params", {})),
             )
         )

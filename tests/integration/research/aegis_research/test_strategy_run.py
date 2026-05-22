@@ -163,6 +163,7 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert artifact["strategy"]["id"] == "demo.cross"
     assert artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
     assert artifact["leaderboard"]["rows"]
+    assert payload["leaderboard"]["top_rows"] == artifact["leaderboard"]["rows"][:10]
     assert len(artifact["candidates"]) == 1
 
 

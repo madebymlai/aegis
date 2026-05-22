@@ -207,6 +207,23 @@ def test_runner_sampled_index_is_deterministic_under_same_seed() -> None:
     assert list(run_a.sampled_index) == list(run_b.sampled_index)
 
 
+def test_runner_requires_seed_for_random_search() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 3, 5, 8], slow=[10, 15, 20, 30])
+
+    with pytest.raises(OptimizationRunnerError, match=r"optimization\.seed"):
+        execute_optimization(
+            close=close,
+            open_prices=open_prices,
+            source=source,
+            optimization=_optimization_config(search="random", random_subset=3),
+            portfolio=PortfolioConfig(fees=0, slippage=0),
+            signal=SignalConfig(),
+            report=ReportConfig(),
+            ranking=RankingConfig(metric="total_return", direction="desc"),
+        )
+
+
 def test_runner_sampled_index_matches_grid_param_axis_for_grid_search() -> None:
     close, open_prices = _close_open_frames()
     source = _build_source(fast=[2, 5], slow=[10, 20])
@@ -318,6 +335,34 @@ def test_runner_rejects_ranking_metric_outside_central_catalog() -> None:
             signal=SignalConfig(),
             report=ReportConfig(),
             ranking=RankingConfig(metric="not_a_real_metric", direction="desc"),
+        )
+
+
+@pytest.mark.parametrize("param_name", ["split", "set", "symbol", METRIC_INDEX_NAME])
+def test_runner_rejects_reserved_param_names_in_manual_source(param_name: str) -> None:
+    close, open_prices = _close_open_frames()
+
+    def pipeline(close: pd.DataFrame, **_params: object):
+        return close > 0, close < 0
+
+    source = OptimizationSource(
+        pipeline=pipeline,
+        params={param_name: vbt.Param([1])},
+        evidence={},
+        diagnostics={},
+        metadata={},
+    )
+
+    with pytest.raises(OptimizationRunnerError, match="reserved"):
+        execute_optimization(
+            close=close,
+            open_prices=open_prices,
+            source=source,
+            optimization=_optimization_config(),
+            portfolio=PortfolioConfig(),
+            signal=SignalConfig(),
+            report=ReportConfig(),
+            ranking=RankingConfig(metric="total_return", direction="desc"),
         )
 
 

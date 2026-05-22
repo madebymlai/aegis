@@ -45,6 +45,7 @@ OPTIMIZATION_SOURCE_ALLOWED_KEYS = {
     "diagnostics",
     "metadata",
 }
+OPTIMIZATION_PARAM_RESERVED_NAMES = frozenset({"split", "set", "symbol", "metric_name"})
 OPTIMIZATION_SOURCE_FORBIDDEN_KEYS = {
     "baseline_metric_source",
     "baseline_metrics",
@@ -124,6 +125,11 @@ def _source_params(value: Any) -> dict[str, vbt.Param]:
     for name, param in value.items():
         if not isinstance(name, str) or not name:
             raise OptimizationSourceError("optimization param names must be non-empty strings")
+        if name in OPTIMIZATION_PARAM_RESERVED_NAMES:
+            raise OptimizationSourceError(
+                f"optimization param name {name!r} is reserved for Aegis/VBT result "
+                "coordinates; choose a distinct parameter name"
+            )
         if not isinstance(param, vbt.Param):
             raise OptimizationSourceError(
                 f"optimization param {name!r} must be a vectorbtpro vbt.Param"

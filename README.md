@@ -23,7 +23,7 @@ Aegis RD gives each research loop a clear contract:
 
 ## Research Command
 
-- `aerd run <config>` runs strategy/research evidence over direct component strategy/indicator refs. Component `param_space_callable` definitions produce native VBT parameter grids, `optimization.split` names the exact VBT `Splitter` method such as `from_rolling` or `from_purged_kfold`, and completed runs persist candidate rows plus promotion refs for later `lock_id` or `candidate_id` execution.
+- `aerd run <config>` runs strategy/research evidence over direct component strategy/indicator refs. Component `param_space_callable` definitions produce native VBT parameter grids, `optimization.split` names the exact VBT `Splitter` method such as `from_rolling` or `from_purged_kfold`, and completed runs persist candidate rows plus promotion refs for later `lock_id` or `candidate_id` plus source `run_id` execution.
 
 Configs stay inert: YAML selects trusted IDs and parameters only. It cannot import Python, execute formulas, point at arbitrary notebooks/scripts, or reference generated run artifacts as reproducible inputs. Stale lane, train, model, label, labeler, or signals fields are rejected before a run directory is created.
 

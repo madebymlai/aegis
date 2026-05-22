@@ -335,6 +335,7 @@ def _run_optimization_strategy_sweep(
             "selection_row_count": len(optimization_run.selection),
             "candidate_count": len(candidate_rows),
         },
+        "leaderboard": leaderboard,
     }
 
 
@@ -425,6 +426,7 @@ def _component_promotion_refs(
             component_slot="strategy",
             lock_id=config.strategy.lock_id,
             candidate_id=config.strategy.candidate_id,
+            run_id=config.strategy.run_id,
         )
     for ref in config.indicators:
         if ref.lock_id is None and ref.candidate_id is None:
@@ -436,6 +438,7 @@ def _component_promotion_refs(
             component_slot=ref.id,
             lock_id=ref.lock_id,
             candidate_id=ref.candidate_id,
+            run_id=ref.run_id,
         )
 
 

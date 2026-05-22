@@ -224,6 +224,13 @@ def _validate_optimization_random_policy(
                 "is required when optimization.search is 'random'",
             )
         )
+    if search == "random" and optimization.get("seed") is None:
+        issues.append(
+            ConfigValidationIssue(
+                "optimization.seed",
+                "is required when optimization.search is 'random' so sampled evidence is deterministic",
+            )
+        )
     if search == "grid" and random_subset is not None:
         issues.append(
             ConfigValidationIssue(
@@ -356,7 +363,7 @@ def _validate_component_ref(
     if not isinstance(value, dict):
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return None
-    allowed = {"id", "lock_id", "candidate_id", "params"}
+    allowed = {"id", "lock_id", "candidate_id", "run_id", "params"}
     _validate_known_keys(path, value, allowed, issues)
     _validate_no_run_executable_keys(path, value, issues)
     if not _require_str(f"{path}.id", value, issues):
@@ -375,11 +382,26 @@ def _validate_component_ref(
         return None
     _optional_str(f"{path}.lock_id", value, issues, allow_none=True)
     _optional_str(f"{path}.candidate_id", value, issues, allow_none=True)
+    _optional_str(f"{path}.run_id", value, issues, allow_none=True)
     if value.get("lock_id") is not None and value.get("candidate_id") is not None:
         issues.append(
             ConfigValidationIssue(
                 path,
                 "lock_id and candidate_id are mutually exclusive",
+            )
+        )
+    if value.get("candidate_id") is not None and value.get("run_id") is None:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.run_id",
+                "is required when candidate_id is set",
+            )
+        )
+    if value.get("run_id") is not None and value.get("candidate_id") is None:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.run_id",
+                "is only valid when candidate_id is set",
             )
         )
 

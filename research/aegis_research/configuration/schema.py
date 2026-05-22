@@ -185,6 +185,7 @@ class RunSourceRefConfig:
     id: str
     lock_id: str | None = None
     candidate_id: str | None = None
+    run_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
 
@@ -193,6 +194,7 @@ class RunIndicatorSourceConfig:
     id: str
     lock_id: str | None = None
     candidate_id: str | None = None
+    run_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
 

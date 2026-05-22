@@ -42,12 +42,15 @@ from research.aegis_research.configuration.schema import (
     SignalConfig,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.optimization.source import (
+    OPTIMIZATION_PARAM_RESERVED_NAMES,
+    OptimizationSource,
+)
 from research.aegis_research.portfolios import simulate_portfolio
 from research.aegis_research.reports import portfolio_metrics
 
 METRIC_INDEX_NAME = "metric_name"
-NON_PARAM_LEVEL_NAMES = frozenset({"split", "set", "symbol", METRIC_INDEX_NAME})
+NON_PARAM_LEVEL_NAMES = OPTIMIZATION_PARAM_RESERVED_NAMES
 
 OPTIMIZATION_RUN_SCHEMA_VERSION = "optimization_run.v1"
 RANKING_DIRECTION_TO_SELECTION = {"desc": "max", "asc": "min"}
@@ -90,6 +93,7 @@ def execute_optimization(
             f"optimization ranking direction must be one of "
             f"{sorted(RANKING_DIRECTION_TO_SELECTION)}; got {ranking.direction!r}"
         )
+    _validate_source_param_names(source.params)
     cv_callable, takeable_args = _build_cv_callable(
         source=source,
         portfolio=portfolio,
@@ -189,6 +193,15 @@ def _extract_param_index(index: pd.Index) -> pd.Index:
     if isinstance(projection, pd.MultiIndex):
         return projection.unique()
     return pd.Index(projection.unique(), name=param_levels[0])
+
+
+def _validate_source_param_names(params: Mapping[str, vbt.Param]) -> None:
+    reserved = sorted(set(params) & OPTIMIZATION_PARAM_RESERVED_NAMES)
+    if reserved:
+        raise OptimizationRunnerError(
+            f"optimization param names {reserved} are reserved for Aegis/VBT result "
+            "coordinates; choose distinct parameter names"
+        )
 
 
 def _verify_evaluated_subset(
@@ -340,6 +353,11 @@ def _build_parameterized_kwargs(optimization: OptimizationConfig) -> dict[str, A
         if optimization.random_subset is None:
             raise OptimizationRunnerError(
                 "optimization.random_subset is required when optimization.search is 'random'"
+            )
+        if optimization.seed is None:
+            raise OptimizationRunnerError(
+                "optimization.seed is required when optimization.search is 'random' so "
+                "precomputed sampled evidence matches VBT execution"
             )
         parameterized_kwargs["random_subset"] = optimization.random_subset
     if optimization.seed is not None:
