@@ -1,8 +1,10 @@
+import numpy as np
 import pandas as pd
 import pytest
 
-from research.aegis_research.config import PortfolioConfig, SignalConfig
+from research.aegis_research.config import PortfolioConfig
 from research.aegis_research.portfolios import (
+    PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION,
     PortfolioSimulationResult,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio,
@@ -10,186 +12,260 @@ from research.aegis_research.portfolios import (
 )
 
 
-def test_next_open_simulation_uses_open_prices_and_records_diagnostics() -> None:
-    close, open_prices, entries, exits = _portfolio_inputs()
+def test_simulate_portfolio_returns_result_and_v3_diagnostics_schema_version() -> None:
+    close, allocations = _two_symbol_inputs()
 
-    result = simulate_portfolio(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(fees=0, slippage=0),
-        SignalConfig(),
-        open_prices=open_prices,
-    )
-    orders = result.portfolio.orders.records_readable
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
 
     assert isinstance(result, PortfolioSimulationResult)
-    assert orders["Price"].tolist() == [11.5, 13.5]
-    assert result.diagnostics["execution"]["timing"] == "next_open"
-    assert result.diagnostics["execution"]["vbt_price"] == "nextopen"
-    assert result.diagnostics["vbt_settings"]["upon_long_conflict"] == "ignore"
-    assert result.diagnostics["contract"]["not_applicable_vbt_settings"]["upon_short_conflict"] == (
-        "not_applicable_long_only_v1"
-    )
-    assert result.diagnostics["records"]["order_count"] == 2
-    assert result.diagnostics["records"]["trade_count"] == 1
+    assert result.diagnostics["schema_version"] == PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION
 
 
-def test_same_close_simulation_does_not_require_open_prices() -> None:
-    close, _open_prices, entries, exits = _portfolio_inputs()
-
-    result = simulate_portfolio(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(fees=0, slippage=0),
-        SignalConfig(execution_timing="same_close"),
-    )
-
-    orders = result.portfolio.orders.records_readable
-
-    assert orders["Price"].tolist() == [10.0, 12.0]
-    assert result.diagnostics["execution"]["timing"] == "same_close"
-    assert result.diagnostics["execution"]["vbt_price"] == "close"
-
-
-def test_entry_budget_is_split_across_same_bar_executable_entries() -> None:
-    index = pd.date_range("2024-01-01", periods=3)
+def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
     close = pd.DataFrame(
-        {"A": [10.0, 11.0, 12.0], "B": [20.0, 21.0, 22.0]},
+        {"A": [10.0, 10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0, 20.0]},
         index=index,
     )
-    open_prices = close + 0.5
-    entries = pd.DataFrame(
-        {"A": [True, False, False], "B": [True, False, False]},
+    allocations = pd.DataFrame(
+        {"A": [0.5, np.nan, np.nan, np.nan], "B": [0.5, np.nan, np.nan, np.nan]},
         index=index,
     )
-    exits = pd.DataFrame(False, index=index, columns=close.columns)
 
-    result = simulate_portfolio(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(entry_budget=0.6, fees=0, slippage=0),
-        SignalConfig(),
-        open_prices=open_prices,
-    )
-    orders = result.portfolio.orders.records_readable
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    alloc_dates = [row[0] for row in result.diagnostics["allocations"]["rebalance_rows"]]
 
-    assert result.diagnostics["vbt_settings"]["factory"] == "Portfolio.from_signals"
-    assert result.diagnostics["vbt_settings"]["size_type"] == "valuepercent"
-    assert result.diagnostics["vbt_settings"]["cash_sharing"] is True
-    assert result.diagnostics["vbt_settings"]["group_by"] is True
-    assert result.diagnostics["vbt_settings"]["call_seq"] == "auto"
-    assert "predetermined" in result.diagnostics["vbt_settings"]["call_sequence_caveat"]
-    assert result.diagnostics["contract"]["allocation_mode"] == "event_style_signals"
-    assert result.diagnostics["contract"]["entry_budget"] == 0.6
-    assert result.diagnostics["contract"]["rebalances_existing_positions"] is False
-    assert result.diagnostics["grouping"] == {
-        "cash_sharing": True,
-        "group_by": True,
-        "group_count": 1,
-        "group_scope": "all_symbols_single_cash_pool",
-    }
-    assert result.diagnostics["sizing"]["active_entry_rows"] == 1
-    assert result.diagnostics["sizing"]["max_entries_per_row"] == 2
-    assert result.diagnostics["sizing"]["nonzero_size_cells"] == 2
-    assert result.diagnostics["sizing"]["min_nonzero_valuepercent"] == pytest.approx(0.3)
-    assert result.diagnostics["sizing"]["max_nonzero_valuepercent"] == pytest.approx(0.3)
-    assert result.diagnostics["records"]["order_count"] == 2
-    assert result.diagnostics["records"]["orders_per_group"] == {"portfolio": 2}
-    assert result.diagnostics["records"]["orders_per_symbol"] == {"A": 1, "B": 1}
-    assert (orders["Size"] * orders["Price"]).tolist() == pytest.approx([3000.0, 3000.0])
+    assert alloc_dates == ["2024-01-01T00:00:00", "2024-01-04T00:00:00"]
+    holdings_before_terminal = result.portfolio.assets.iloc[-2]
+    assert holdings_before_terminal["A"] > 0
+    assert holdings_before_terminal["B"] > 0
 
 
-def test_batched_portfolio_groups_cash_by_candidate() -> None:
-    index = pd.date_range("2024-01-01", periods=3)
+def test_all_zero_allocations_row_in_non_terminal_location_closes_positions_at_close() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
     close = pd.DataFrame(
-        {"A": [10.0, 11.0, 12.0], "B": [20.0, 21.0, 22.0]},
+        {"A": [10.0, 10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0, 20.0]},
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {"A": [0.5, 0.0, np.nan, np.nan], "B": [0.5, 0.0, np.nan, np.nan]},
+        index=index,
+    )
+
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    assets = result.portfolio.assets
+
+    assert assets.iloc[1].to_dict() == pytest.approx({"A": 0.0, "B": 0.0})
+    orders = result.portfolio.orders.records_readable
+    second_bar_orders = orders[orders["Index"].astype(str) == "2024-01-02"]
+    assert set(second_bar_orders["Side"]) == {"Sell"}
+    assert (second_bar_orders["Price"] == 10.0).any()
+    assert (second_bar_orders["Price"] == 20.0).any()
+
+
+def test_full_a_to_full_b_switch_under_shared_cash_executes_single_rebalance() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {"A": [10.0, 10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0, 20.0]},
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {"A": [1.0, np.nan, 0.0, np.nan], "B": [0.0, np.nan, 1.0, np.nan]},
+        index=index,
+    )
+
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    orders = result.portfolio.orders.records_readable
+    third_bar = orders[orders["Index"].astype(str) == "2024-01-03"]
+    sides_by_symbol = {row["Column"]: row["Side"] for _, row in third_bar.iterrows()}
+
+    assert sides_by_symbol == {"A": "Sell", "B": "Buy"}
+    assert result.portfolio.assets.iloc[2]["A"] == pytest.approx(0.0)
+    assert result.portfolio.assets.iloc[2]["B"] > 0
+
+
+def test_consecutive_identical_target_rows_appear_as_separate_rebalance_records() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {"A": [10.0, 10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0, 20.0]},
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {"A": [0.5, 0.5, np.nan, np.nan], "B": [0.5, 0.5, np.nan, np.nan]},
+        index=index,
+    )
+
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    alloc_dates = [row[0] for row in result.diagnostics["allocations"]["rebalance_rows"]]
+
+    assert "2024-01-01T00:00:00" in alloc_dates
+    assert "2024-01-02T00:00:00" in alloc_dates
+
+
+def test_terminal_liquidation_sells_all_held_positions_at_last_close() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0], "B": [20.0, 21.0, 22.0, 23.0]},
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {"A": [0.5, np.nan, np.nan, np.nan], "B": [0.5, np.nan, np.nan, np.nan]},
+        index=index,
+    )
+
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    final_assets = result.portfolio.assets.iloc[-1]
+    final_cash = float(result.portfolio.cash.iloc[-1])
+    final_equity = float(result.portfolio.value.iloc[-1])
+
+    assert final_assets.to_dict() == pytest.approx({"A": 0.0, "B": 0.0})
+    assert final_cash == pytest.approx(final_equity)
+    orders = result.portfolio.orders.records_readable
+    last_bar = orders[orders["Index"].astype(str) == "2024-01-04"]
+    assert set(last_bar["Side"]) == {"Sell"}
+    assert set(last_bar["Column"]) == {"A", "B"}
+
+
+def test_batched_three_candidate_run_preserves_candidate_identity_in_pfo_columns() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0], "B": [20.0, 21.0, 22.0, 23.0]},
         index=index,
     )
     columns = pd.MultiIndex.from_product(
-        [["candidate-a", "candidate-b"], ["A", "B"]],
+        [["cand-a", "cand-b", "cand-c"], ["A", "B"]],
         names=["candidate_id", "symbol"],
     )
-    entries = pd.DataFrame(False, index=index, columns=columns)
-    entries.loc[index[0], :] = True
-    exits = pd.DataFrame(False, index=index, columns=columns)
+    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
+    allocations.loc[index[0], :] = 0.5
 
     result = simulate_portfolio_batch(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(entry_budget=1.0, fees=0, slippage=0),
-        SignalConfig(execution_timing="same_close"),
+        close, allocations, PortfolioConfig(fees=0, slippage=0)
     )
-    orders = result.portfolio.orders.records_readable
-    order_values = orders["Size"] * orders["Price"]
 
-    assert result.diagnostics["grouping"] == {
-        "cash_sharing": True,
-        "group_by": "except_level:symbol",
-        "group_count": 2,
-        "group_scope": "candidate_symbols_single_cash_pool",
-        "candidate_ids": ["candidate-a", "candidate-b"],
+    assert result.diagnostics["grouping"]["candidate_ids"] == [
+        "cand-a",
+        "cand-b",
+        "cand-c",
+    ]
+    assert result.diagnostics["grouping"]["group_by"] == "except_level:symbol"
+    assert result.diagnostics["grouping"]["group_count"] == 3
+    candidate_index = result.portfolio.wrapper.grouper.get_index()
+    assert list(candidate_index) == ["cand-a", "cand-b", "cand-c"]
+    pf_columns = result.portfolio.wrapper.columns
+    assert set(pf_columns) == {
+        ("cand-a", "A"), ("cand-a", "B"),
+        ("cand-b", "A"), ("cand-b", "B"),
+        ("cand-c", "A"), ("cand-c", "B"),
     }
-    assert result.diagnostics["shape"]["candidate_count"] == 2
-    assert order_values.tolist() == pytest.approx([5000.0, 5000.0, 5000.0, 5000.0])
 
 
-def test_batched_portfolio_groups_cash_by_native_param_levels() -> None:
-    index = pd.date_range("2024-01-01", periods=3)
+def test_split_gap_row_is_masked_before_pfo_and_counted_in_non_executable_diagnostics() -> None:
+    market_index = pd.date_range("2024-01-01", periods=5)
+    split_index = market_index[[0, 1, 3, 4]]
     close = pd.DataFrame(
-        {"A": [10.0, 11.0, 12.0], "B": [20.0, 21.0, 22.0]},
-        index=index,
+        {"A": [10.0, 11.0, 13.0, 14.0], "B": [20.0, 21.0, 23.0, 24.0]},
+        index=split_index,
     )
-    columns = pd.MultiIndex.from_tuples(
-        [
-            (5, "A", 20),
-            (5, "B", 20),
-            (10, "A", 30),
-            (10, "B", 30),
-        ],
-        names=["fast_window", "symbol", "slow_window"],
+    allocations = pd.DataFrame(
+        {"A": [0.5, 0.5, 0.5, np.nan], "B": [0.5, 0.5, 0.5, np.nan]},
+        index=split_index,
     )
-    entries = pd.DataFrame(False, index=index, columns=columns)
-    entries.loc[index[0], :] = True
-    exits = pd.DataFrame(False, index=index, columns=columns)
 
-    result = simulate_portfolio_batch(
+    result = simulate_portfolio(
         close,
-        entries,
-        exits,
-        PortfolioConfig(entry_budget=1.0, fees=0, slippage=0),
-        SignalConfig(execution_timing="same_close"),
+        allocations,
+        PortfolioConfig(fees=0, slippage=0),
+        market_index=market_index,
     )
-    orders = result.portfolio.orders.records_readable
-    order_values = orders["Size"] * orders["Price"]
 
-    assert result.diagnostics["grouping"] == {
-        "cash_sharing": True,
-        "group_by": "except_level:symbol",
-        "group_count": 2,
-        "group_scope": "candidate_symbols_single_cash_pool",
-        "candidate_ids": [(5, 20), (10, 30)],
+    assert result.diagnostics["non_executable"]["non_executable_rows"] == 1
+    assert result.diagnostics["non_executable"]["non_executable_by_symbol"] == {
+        "A": 1,
+        "B": 1,
     }
-    assert result.diagnostics["shape"]["candidate_count"] == 2
-    assert result.diagnostics["sizing"]["min_nonzero_valuepercent"] == pytest.approx(0.5)
-    assert result.diagnostics["sizing"]["max_nonzero_valuepercent"] == pytest.approx(0.5)
-    assert order_values.tolist() == pytest.approx([5000.0, 5000.0, 5000.0, 5000.0])
+    assert result.diagnostics["non_executable"]["terminal_liquidation"] is True
+    alloc_dates = [row[0] for row in result.diagnostics["allocations"]["rebalance_rows"]]
+    assert "2024-01-04T00:00:00" not in alloc_dates
+    assert "2024-01-05T00:00:00" in alloc_dates
+
+
+def test_diagnostics_v3_payload_contains_required_blocks_and_no_legacy_fields() -> None:
+    close, allocations = _two_symbol_inputs()
+
+    diagnostics = simulate_portfolio(
+        close, allocations, PortfolioConfig(fees=0, slippage=0)
+    ).diagnostics
+
+    assert diagnostics["schema_version"] == "portfolio_diagnostics.v3"
+    assert diagnostics["vbt_settings"]["factory"] == "Portfolio.from_optimizer"
+    assert diagnostics["vbt_settings"]["pf_method"] == "from_orders"
+    assert diagnostics["vbt_settings"]["size_type"] == "targetpercent"
+    assert diagnostics["vbt_settings"]["cash_sharing"] is True
+    assert diagnostics["vbt_settings"]["call_seq"] == "auto"
+    assert diagnostics["vbt_settings"]["one_order_per_bar"] is True
+    assert diagnostics["contract"]["execution_timing"] == "close"
+    assert diagnostics["contract"]["terminal_liquidation"] is True
+    assert diagnostics["contract"]["target_exposure_cap"] == 1.0
+    assert diagnostics["contract"]["direction_scope"] == "long_only_v1"
+    assert set(diagnostics["allocations"]) == {
+        "rebalance_rows",
+        "requested",
+        "realized_at_fill",
+    }
+    assert set(diagnostics["order_rejections"]) == {
+        "NoCash",
+        "PartialFill",
+        "SizeNaN",
+        "SizeZero",
+    }
+    assert set(diagnostics["non_executable"]) == {
+        "non_executable_rows",
+        "non_executable_by_symbol",
+        "terminal_liquidation",
+    }
+    not_applicable = diagnostics["contract"]["not_applicable_vbt_settings"]
+    assert "upon_short_conflict" in not_applicable
+    assert "upon_opposite_entry" in not_applicable
+    for legacy_field in (
+        "allocation_mode",
+        "entry_budget",
+        "sizing",
+        "raw_signals",
+        "simulation_signals",
+        "rebalances_existing_positions",
+    ):
+        assert legacy_field not in diagnostics
+        for block in diagnostics.values():
+            if isinstance(block, dict):
+                assert legacy_field not in block
+
+
+def test_diagnostics_records_realized_weights_at_each_rebalance_row() -> None:
+    close, allocations = _two_symbol_inputs()
+
+    diagnostics = simulate_portfolio(
+        close, allocations, PortfolioConfig(fees=0, slippage=0)
+    ).diagnostics
+    realized = diagnostics["allocations"]["realized_at_fill"]
+
+    assert len(realized) == len(diagnostics["allocations"]["rebalance_rows"])
+    for record in realized:
+        assert set(record["weights"]) == {"A", "B"}
 
 
 def test_expand_market_frame_to_candidate_columns_preserves_candidate_symbol_order() -> None:
-    close, _open_prices, _entries, _exits = _portfolio_inputs()
+    close = pd.DataFrame(
+        {"SYN": [10.0, 11.0, 12.0, 13.0]},
+        index=pd.date_range("2024-01-01", periods=4),
+    )
     target_columns = pd.MultiIndex.from_tuples(
         [("candidate-b", "SYN"), ("candidate-a", "SYN")],
         names=["candidate_id", "symbol"],
     )
 
     expanded = expand_market_frame_to_candidate_columns(
-        close,
-        target_columns,
-        feature_name="Close",
+        close, target_columns, feature_name="Close"
     )
 
     assert expanded.columns.equals(target_columns)
@@ -197,268 +273,30 @@ def test_expand_market_frame_to_candidate_columns_preserves_candidate_symbol_ord
     assert expanded[("candidate-a", "SYN")].tolist() == close["SYN"].tolist()
 
 
-def test_batched_next_open_gap_policy_handles_native_param_level_columns() -> None:
-    market_index = pd.date_range("2024-01-01", periods=5)
-    split_index = market_index[[0, 1, 3, 4]]
-    close = pd.DataFrame({"SYN": [10.0, 11.0, 13.0, 14.0]}, index=split_index)
-    open_prices = close + 0.5
-    columns = pd.MultiIndex.from_tuples(
-        [(5, "SYN", 20), (10, "SYN", 30)],
-        names=["fast_window", "symbol", "slow_window"],
-    )
-    entries = pd.DataFrame(False, index=split_index, columns=columns)
-    entries.loc[split_index[1], :] = True
-    exits = pd.DataFrame(False, index=split_index, columns=columns)
-
-    result = simulate_portfolio_batch(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(fees=0, slippage=0),
-        SignalConfig(),
-        open_prices=open_prices,
-        market_index=market_index,
-    )
-
-    assert result.diagnostics["execution"]["gap_non_executable_signals"] == 2
-    assert result.diagnostics["execution"]["gap_non_executable_by_symbol"] == {"SYN": 2}
-    assert result.diagnostics["execution"]["non_executable_signals"] == 2
-    assert result.diagnostics["simulation_signals"]["entry_states"] == 0
-    assert result.diagnostics["sizing"]["nonzero_size_cells"] == 0
-    assert result.diagnostics["records"]["order_count"] == 0
-
-
-def test_batched_portfolio_rejects_missing_open_prices_for_next_open() -> None:
-    close, _open_prices, _entries, _exits = _portfolio_inputs()
-    columns = pd.MultiIndex.from_product(
-        [["candidate-a"], list(close.columns)],
-        names=["candidate_id", "symbol"],
-    )
-    entries = pd.DataFrame(True, index=close.index, columns=columns)
-    exits = pd.DataFrame(False, index=close.index, columns=columns)
-
-    with pytest.raises(ValueError, match="open prices"):
-        simulate_portfolio_batch(
-            close,
-            entries,
-            exits,
-            PortfolioConfig(),
-            SignalConfig(),
-        )
-
-
-def test_single_entry_uses_explicit_entry_budget_not_implicit_full_allocation() -> None:
-    close, open_prices, entries, exits = _portfolio_inputs()
-
-    result = simulate_portfolio(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(entry_budget=0.6, fees=0, slippage=0),
-        SignalConfig(),
-        open_prices=open_prices,
-    )
-    orders = result.portfolio.orders.records_readable
-
-    assert result.diagnostics["sizing"]["active_entry_rows"] == 1
-    assert result.diagnostics["sizing"]["max_entries_per_row"] == 1
-    assert result.diagnostics["sizing"]["min_nonzero_valuepercent"] == pytest.approx(0.6)
-    assert result.diagnostics["sizing"]["max_nonzero_valuepercent"] == pytest.approx(0.6)
-    assert (orders["Size"] * orders["Price"]).iloc[0] == pytest.approx(6000.0)
-
-
-def test_same_bar_shared_cash_exit_can_fund_new_entry() -> None:
-    index = pd.date_range("2024-01-01", periods=4)
-    close = pd.DataFrame(
-        {"A": [10.0, 10.0, 10.0, 10.0], "B": [10.0, 10.0, 10.0, 10.0]},
-        index=index,
-    )
-    entries = pd.DataFrame(
-        {"A": [True, False, False, False], "B": [False, False, True, False]},
-        index=index,
-    )
-    exits = pd.DataFrame(
-        {"A": [False, False, True, False], "B": [False, False, False, False]},
-        index=index,
-    )
-
-    result = simulate_portfolio(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(entry_budget=1.0, fees=0, slippage=0),
-        SignalConfig(execution_timing="same_close"),
-    )
-    orders = result.portfolio.orders.records_readable
-
-    assert orders["Column"].tolist() == ["A", "A", "B"]
-    assert orders["Side"].tolist() == ["Buy", "Sell", "Buy"]
-    assert orders["Signal Index"].astype(str).tolist() == [
-        "2024-01-01",
-        "2024-01-03",
-        "2024-01-03",
-    ]
-    assert result.diagnostics["records"]["order_count"] == 3
-    assert result.diagnostics["records"]["orders_per_symbol"] == {"A": 2, "B": 1}
-
-
-def test_later_entries_do_not_rebalance_existing_positions() -> None:
-    index = pd.date_range("2024-01-01", periods=4)
-    close = pd.DataFrame(
-        {"A": [10.0, 10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0, 20.0]},
-        index=index,
-    )
-    entries = pd.DataFrame(
-        {"A": [True, False, False, False], "B": [False, False, True, False]},
-        index=index,
-    )
-    exits = pd.DataFrame(False, index=index, columns=close.columns)
-
-    result = simulate_portfolio(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(entry_budget=0.4, fees=0, slippage=0),
-        SignalConfig(execution_timing="same_close"),
-    )
-    orders = result.portfolio.orders.records_readable
-
-    assert orders["Column"].tolist() == ["A", "B"]
-    assert orders["Side"].tolist() == ["Buy", "Buy"]
-    assert orders["Signal Index"].astype(str).tolist() == ["2024-01-01", "2024-01-03"]
-    assert orders.loc[orders["Column"] == "A", "Size"].iloc[0] == pytest.approx(400.0)
-
-
-def test_repeated_raw_entries_are_delegated_to_vbt_order_resolution() -> None:
-    index = pd.date_range("2024-01-01", periods=5)
-    close = pd.DataFrame({"SYN": [10.0, 11.0, 12.0, 13.0, 14.0]}, index=index)
-    open_prices = close + 0.5
-    entries = pd.DataFrame({"SYN": [True, True, True, False, False]}, index=index)
-    exits = pd.DataFrame({"SYN": [False, False, False, True, False]}, index=index)
-
-    result = simulate_portfolio(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(fees=0, slippage=0),
-        SignalConfig(),
-        open_prices=open_prices,
-    )
-
-    assert result.diagnostics["raw_signals"]["raw_entry_states"] == 3
-    assert result.diagnostics["simulation_signals"]["entry_states"] == 3
-    assert result.diagnostics["records"]["order_count"] == 2
-    assert result.diagnostics["records"]["trade_count"] == 1
-
-
-def test_next_open_requires_open_prices() -> None:
-    close, _open_prices, entries, exits = _portfolio_inputs()
-
-    with pytest.raises(ValueError, match="open prices"):
-        simulate_portfolio(
-            close,
-            entries,
-            exits,
-            PortfolioConfig(),
-            SignalConfig(),
-        )
-
-
-def test_next_open_rejects_null_execution_open_prices() -> None:
-    close, open_prices, entries, exits = _portfolio_inputs()
-    open_prices.loc[open_prices.index[1], "SYN"] = pd.NA
-
-    with pytest.raises(ValueError, match="Open"):
-        simulate_portfolio(
-            close,
-            entries,
-            exits,
-            PortfolioConfig(),
-            SignalConfig(),
-            open_prices=open_prices,
-        )
-
-
 def test_portfolio_inputs_reject_symbol_mismatches_instead_of_dropping_columns() -> None:
-    close, open_prices, entries, exits = _portfolio_inputs()
-    entries["EXTRA"] = False
+    close, allocations = _two_symbol_inputs()
+    allocations["EXTRA"] = 0.0
 
     with pytest.raises(ValueError, match="columns"):
-        simulate_portfolio(
-            close,
-            entries,
-            exits,
-            PortfolioConfig(),
-            SignalConfig(),
-            open_prices=open_prices,
-        )
+        simulate_portfolio(close, allocations, PortfolioConfig())
 
 
 def test_portfolio_inputs_reject_index_mismatches_instead_of_dropping_rows() -> None:
-    close, open_prices, entries, exits = _portfolio_inputs()
-    entries = entries.iloc[:-1]
+    close, allocations = _two_symbol_inputs()
+    allocations = allocations.iloc[:-1]
 
     with pytest.raises(ValueError, match="index"):
-        simulate_portfolio(
-            close,
-            entries,
-            exits,
-            PortfolioConfig(),
-            SignalConfig(),
-            open_prices=open_prices,
-        )
+        simulate_portfolio(close, allocations, PortfolioConfig())
 
 
-def test_last_bar_next_open_signal_is_non_executable_within_split() -> None:
-    index = pd.date_range("2024-01-01", periods=3)
-    close = pd.DataFrame({"SYN": [10.0, 11.0, 12.0]}, index=index)
-    open_prices = close + 0.5
-    entries = pd.DataFrame({"SYN": [False, False, True]}, index=index)
-    exits = pd.DataFrame({"SYN": [False, False, False]}, index=index)
-
-    result = simulate_portfolio(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(fees=0, slippage=0),
-        SignalConfig(),
-        open_prices=open_prices,
-    )
-
-    assert result.diagnostics["execution"]["terminal_non_executable_signals"] == 1
-    assert result.diagnostics["sizing"]["nonzero_size_cells"] == 0
-    assert result.diagnostics["records"]["order_count"] == 0
-
-
-def test_next_open_signal_before_market_index_gap_is_non_executable() -> None:
-    market_index = pd.date_range("2024-01-01", periods=5)
-    split_index = market_index[[0, 1, 3, 4]]
-    close = pd.DataFrame({"SYN": [10.0, 11.0, 13.0, 14.0]}, index=split_index)
-    open_prices = close + 0.5
-    entries = pd.DataFrame({"SYN": [False, True, False, False]}, index=split_index)
-    exits = pd.DataFrame({"SYN": [False, False, False, False]}, index=split_index)
-
-    result = simulate_portfolio(
-        close,
-        entries,
-        exits,
-        PortfolioConfig(fees=0, slippage=0),
-        SignalConfig(),
-        open_prices=open_prices,
-        market_index=market_index,
-    )
-
-    assert result.diagnostics["execution"]["gap_non_executable_signals"] == 1
-    assert result.diagnostics["execution"]["non_executable_signals"] == 1
-    assert result.diagnostics["simulation_signals"]["entry_states"] == 0
-    assert result.diagnostics["sizing"]["nonzero_size_cells"] == 0
-    assert result.diagnostics["records"]["order_count"] == 0
-
-
-def _portfolio_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def _two_symbol_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
     index = pd.date_range("2024-01-01", periods=4)
-    close = pd.DataFrame({"SYN": [10.0, 11.0, 12.0, 13.0]}, index=index)
-    open_prices = close + 0.5
-    entries = pd.DataFrame({"SYN": [True, False, False, False]}, index=index)
-    exits = pd.DataFrame({"SYN": [False, False, True, False]}, index=index)
-    return close, open_prices, entries, exits
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0], "B": [20.0, 21.0, 22.0, 23.0]},
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {"A": [0.5, np.nan, 0.5, np.nan], "B": [0.5, np.nan, 0.5, np.nan]},
+        index=index,
+    )
+    return close, allocations
