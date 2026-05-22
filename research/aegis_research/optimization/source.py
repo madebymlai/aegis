@@ -8,7 +8,7 @@ metrics from the returned (entries, exits) signals.
 Limitations carried by this contract:
 
 - Portfolio-side params (``sl_stop``, ``tp_stop``, ``fees``, ``slippage``,
-  ``init_cash``, ``entry_budget``, ``direction``) cannot currently be wrapped
+  ``init_cash``, ``target_exposure_cap``, ``direction``) cannot currently be wrapped
   in ``vbt.Param``. ``simulate_portfolio`` receives a static
   ``PortfolioConfig`` per run, so any portfolio-axis sweep would not flow
   through the Aegis-owned portfolio policy boundary.
