@@ -1,6 +1,7 @@
 # %% component overview
 # Parameterized moving-average crossover strategy component.
-# Source: run-provided Close feature and centrally configured Aegis portfolio settings.
+# Emits a single allocation-native `active` frame consumed by the portfolio policy
+# layer; portfolio sizing, direction, and timing remain centrally configured.
 
 # %% imports
 from vectorbtpro import vbt
@@ -12,7 +13,7 @@ COMPONENT_MANIFEST = {
     "version": "1.0.0",
     "input_names": ["Close"],
     "param_names": ["fast_window", "slow_window"],
-    "signal_outputs": ["entries", "exits"],
+    "output_name": "active",
     "defaults": {"fast_window": 10, "slow_window": 20},
     "param_space_callable": "param_space",
     "owns_portfolio": False,
@@ -32,12 +33,17 @@ def param_space():
 
 # %% main compute
 def run(inputs, fast_window, slow_window):
-    """Emit entries/exits for one moving-average parameter row."""
+    """Return one `active` frame for the moving-average parameter row.
+
+    Selection convention: non-NaN cells = selected this rebalance row, NaN = excluded.
+    The portfolio policy layer converts the `active` frame to a validated
+    target-allocation frame, applies the executable mask, normalizes against
+    `portfolio.target_exposure_cap`, and writes the terminal-liquidation row.
+    """
 
     close = inputs.data.feature("Close")
     fast = close.rolling(int(fast_window), min_periods=1).mean()
     slow = close.rolling(int(slow_window), min_periods=1).mean()
-    return {
-        "entries": fast.gt(slow).fillna(False),
-        "exits": fast.lt(slow).fillna(False),
-    }
+    selected = fast.gt(slow)
+    # 1.0 where selected this rebalance row, NaN where excluded.
+    return selected.where(selected, other=float("nan")).astype(float)
