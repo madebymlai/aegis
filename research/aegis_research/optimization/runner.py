@@ -44,6 +44,7 @@ from research.aegis_research.configuration.schema import (
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
+    OPTIMIZATION_SOURCE_FORBIDDEN_KEYS,
     OptimizationSource,
 )
 from research.aegis_research.portfolios import simulate_portfolio
@@ -51,6 +52,7 @@ from research.aegis_research.reports import portfolio_metrics
 
 METRIC_INDEX_NAME = "metric_name"
 NON_PARAM_LEVEL_NAMES = OPTIMIZATION_PARAM_RESERVED_NAMES
+PIPELINE_SIGNAL_FORBIDDEN_KEYS = OPTIMIZATION_SOURCE_FORBIDDEN_KEYS - {"entries", "exits"}
 
 OPTIMIZATION_RUN_SCHEMA_VERSION = "optimization_run.v1"
 RANKING_DIRECTION_TO_SELECTION = {"desc": "max", "asc": "min"}
@@ -120,9 +122,7 @@ def execute_optimization(
         selection=vbt.RepFunc(selection_fn),
         return_grid=return_grid_kw,
     )
-    call_args: tuple[Any, ...] = (
-        (close, open_prices) if open_prices is not None else (close,)
-    )
+    call_args: tuple[Any, ...] = (close, open_prices) if open_prices is not None else (close,)
     try:
         output = decorated(*call_args, **dict(source.params))
     except NoResultsException as error:
@@ -188,9 +188,7 @@ def _extract_param_index(index: pd.Index) -> pd.Index:
         raise OptimizationRunnerError(
             f"VBT result index carries no param levels; got {list(index.names)}"
         )
-    projection = index.droplevel(
-        [name for name in index.names if name not in param_levels]
-    )
+    projection = index.droplevel([name for name in index.names if name not in param_levels])
     if isinstance(projection, pd.MultiIndex):
         return projection.unique()
     return pd.Index(projection.unique(), name=param_levels[0])
@@ -211,7 +209,9 @@ def _verify_evaluated_subset(
     sampled: pd.Index,
     label: str,
 ) -> None:
-    evaluated_set = set(evaluated.to_list() if isinstance(evaluated, pd.MultiIndex) else evaluated.tolist())
+    evaluated_set = set(
+        evaluated.to_list() if isinstance(evaluated, pd.MultiIndex) else evaluated.tolist()
+    )
     sampled_set = set(sampled.to_list() if isinstance(sampled, pd.MultiIndex) else sampled.tolist())
     missing = evaluated_set - sampled_set
     if missing:
@@ -318,6 +318,12 @@ def _coerce_pipeline_signals(value: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
     if isinstance(value, tuple) and len(value) == 2:
         entries, exits = value
     elif isinstance(value, Mapping) and "entries" in value and "exits" in value:
+        forbidden = sorted(set(value) & PIPELINE_SIGNAL_FORBIDDEN_KEYS)
+        if forbidden:
+            raise OptimizationRunnerError(
+                "optimization pipeline signal mappings must not return authoritative metrics, "
+                f"portfolio fields, or candidate-axis fields: {forbidden}"
+            )
         entries = value["entries"]
         exits = value["exits"]
     else:
@@ -425,14 +431,10 @@ def serialize_optimization_run(run: OptimizationRun) -> dict[str, Any]:
         "parameterized_kwargs": _scalar_mapping(run.parameterized_kwargs),
         "selection": _serialize_param_series(run.selection),
         "selection_grid": (
-            _serialize_param_series(run.selection_grid)
-            if run.selection_grid is not None
-            else None
+            _serialize_param_series(run.selection_grid) if run.selection_grid is not None else None
         ),
         "held_out_grid": (
-            _serialize_param_series(run.held_out_grid)
-            if run.held_out_grid is not None
-            else None
+            _serialize_param_series(run.held_out_grid) if run.held_out_grid is not None else None
         ),
         "sampled_rows": sampled_rows_payload,
     }
@@ -459,8 +461,7 @@ def _serialize_param_series(series: pd.Series) -> dict[str, Any]:
         rows.append(
             {
                 "coordinates": {
-                    name: _scalar(component)
-                    for name, component in zip(names, key, strict=True)
+                    name: _scalar(component) for name, component in zip(names, key, strict=True)
                 },
                 "value": _scalar(value),
             }

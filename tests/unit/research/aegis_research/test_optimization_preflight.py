@@ -37,10 +37,14 @@ def test_preflight_reports_grid_shape_and_execution_policy() -> None:
     assert diagnostics["selection_rows"] == 6
     assert diagnostics["held_out_rows"] == 4
     assert diagnostics["symbol_count"] == 2
-    assert diagnostics["estimated_result_cells"] == 16
+    assert diagnostics["metric_count"] == 6
+    assert diagnostics["estimated_result_cells"] == 96
     assert diagnostics["estimated_portfolio_broadcast_cells"] == 400
-    assert diagnostics["retained_selection_grid_rows"] == 8
-    assert diagnostics["selected_held_out_rows"] == 2
+    assert diagnostics["retained_selection_grid_rows"] == 48
+    assert diagnostics["selection_result_rows"] == 24
+    assert diagnostics["candidate_row_count"] == 4
+    assert diagnostics["leaderboard_row_count"] == 4
+    assert diagnostics["promotion_row_count"] == 1
     assert diagnostics["execute"] == {"chunk_len": "auto", "mono_chunk_len": 50}
 
 
@@ -59,6 +63,23 @@ def test_preflight_allows_random_subset_when_sampled_shape_fits() -> None:
     assert diagnostics["theoretical_combinations"] == 1_000_000
     assert diagnostics["sampled_combinations"] == 10
     assert diagnostics["estimated_portfolio_broadcast_cells"] == 400
+
+
+def test_preflight_rejects_random_subset_above_executable_combinations() -> None:
+    with pytest.raises(PreflightError, match="random_subset") as error:
+        build_preflight(
+            params={
+                "fast_window": vbt.Param([2, 5]),
+                "slow_window": vbt.Param([10, 20]),
+            },
+            optimization=_optimization(search="random", random_subset=100, seed=42),
+            split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+            symbol_count=1,
+            has_open_prices=False,
+        )
+
+    assert error.value.diagnostics["sampled_combinations"] == 4
+    assert error.value.diagnostics["sampled_count_source"] == "shape_estimate"
 
 
 def test_preflight_rejects_oversized_exhaustive_grid_before_execution() -> None:
@@ -99,7 +120,7 @@ def test_preflight_rejects_random_sample_above_evidence_budget() -> None:
     assert "max_public_artifact_bytes" in str(error.value)
     assert error.value.diagnostics["theoretical_combinations"] == 1_000_000
     assert error.value.diagnostics["sampled_combinations"] == 100
-    assert error.value.diagnostics["estimated_public_rows"] == 202
+    assert error.value.diagnostics["estimated_public_rows"] == 1525
 
 
 def test_preflight_return_grid_all_retains_all_set_grid_rows() -> None:
@@ -111,15 +132,51 @@ def test_preflight_return_grid_all_retains_all_set_grid_rows() -> None:
         has_open_prices=False,
     )
 
-    assert diagnostics["retained_selection_grid_rows"] == 6
-    assert diagnostics["retained_grid_rows"] == 12
-    assert diagnostics["estimated_public_rows"] == 14
+    assert diagnostics["retained_selection_grid_rows"] == 36
+    assert diagnostics["retained_grid_rows"] == 72
+    assert diagnostics["estimated_public_rows"] == 106
+
+
+def test_preflight_conditioned_grid_uses_vbt_executable_combinations() -> None:
+    diagnostics = build_preflight(
+        params={
+            "fast_window": vbt.Param([2, 5, 10], condition="fast_window < slow_window"),
+            "slow_window": vbt.Param([3, 8]),
+        },
+        optimization=_optimization(),
+        split_result=_split_result(split_count=1, selection_rows=3, held_out_rows=2),
+        symbol_count=1,
+        has_open_prices=False,
+    )
+
+    assert diagnostics["theoretical_combinations"] == 6
+    assert diagnostics["conditioned_combinations"] == 3
+    assert diagnostics["sampled_combinations"] == 3
+    assert diagnostics["sampled_count_source"] == "vbt.combine_params"
+
+
+def test_preflight_return_grid_off_excludes_grid_rows_but_counts_public_payloads() -> None:
+    diagnostics = build_preflight(
+        params={"window": vbt.Param([5, 10, 20])},
+        optimization=_optimization(return_grid="off"),
+        split_result=_split_result(split_count=2, selection_rows=3, held_out_rows=2),
+        symbol_count=1,
+        has_open_prices=False,
+    )
+
+    assert diagnostics["retained_selection_grid_rows"] == 0
+    assert diagnostics["retained_grid_rows"] == 0
+    assert diagnostics["sampled_row_count"] == 3
+    assert diagnostics["candidate_row_count"] == 3
+    assert diagnostics["leaderboard_row_count"] == 3
+    assert diagnostics["estimated_public_rows"] == 34
 
 
 def _optimization(
     *,
     search: str = "grid",
     random_subset: int | None = None,
+    seed: int | None = None,
     return_grid: str = "first",
     max_estimated_output_cells: int = 1_000_000,
     max_public_artifact_bytes: int = 1_000_000,
@@ -135,6 +192,7 @@ def _optimization(
             max_public_artifact_bytes=max_public_artifact_bytes,
         ),
         random_subset=random_subset,
+        seed=seed,
         execute=execute or {},
         evidence=OptimizationEvidenceConfig(return_grid=return_grid),
     )
@@ -150,7 +208,9 @@ def _split_result(
     for split_number in range(split_count):
         offset = split_number * (selection_rows + held_out_rows)
         selection_index = pd.RangeIndex(offset, offset + selection_rows)
-        held_out_index = pd.RangeIndex(offset + selection_rows, offset + selection_rows + held_out_rows)
+        held_out_index = pd.RangeIndex(
+            offset + selection_rows, offset + selection_rows + held_out_rows
+        )
         splits.append(
             RunSplit(
                 label=f"split_{split_number}",

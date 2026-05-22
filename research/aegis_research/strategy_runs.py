@@ -37,7 +37,11 @@ from research.aegis_research.data_arrays import (
     merge_data_arrays,
     with_data_array_contract_metadata,
 )
-from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.candidate_store import (
+    PUBLICATION_PENDING,
+    CandidateStore,
+    CandidateStoreError,
+)
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
     build_component_optimization_source,
@@ -71,7 +75,7 @@ from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.run_splits import build_run_splits_result
 
-STRATEGY_ARTIFACT_SCHEMA_VERSION = "strategy_run.v3"
+OPTIMIZATION_ARTIFACT_SCHEMA_VERSION = "optimization_artifact.v1"
 COMPONENT_PROMOTION_SCHEMA_VERSION = "component_promotion.v1"
 COMPONENT_PROMOTION_PROVENANCE_SCHEMA_VERSION = "component_promotion_provenance.v1"
 
@@ -107,7 +111,7 @@ def run_strategy_sweep(
         supersedes_run_id=supersedes_run_id,
     )
     recorder.manifest.evidence = {
-        "evidence_type": "strategy_sweep",
+        "evidence_type": "optimization",
         "component_registry_fingerprint": component_registry.fingerprint,
         "data_arrays": array_contract.metadata(),
     }
@@ -147,14 +151,10 @@ def run_strategy_sweep(
         )
         raise
     except ConfigValidationError as error:
-        recorder.mark_run_failed(
-            diagnostic=_failure_diagnostic(error, known_secrets=known_secrets)
-        )
+        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error, known_secrets=known_secrets))
         raise
     except Exception as error:
-        recorder.mark_run_failed(
-            diagnostic=_failure_diagnostic(error, known_secrets=known_secrets)
-        )
+        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error, known_secrets=known_secrets))
         raise
 
 
@@ -285,6 +285,7 @@ def _run_optimization_strategy_sweep(
             candidate_rows=candidate_rows,
             leaderboard=leaderboard,
             provenance=candidate_store_provenance,
+            publication_state=PUBLICATION_PENDING,
         )
         for promotion in promotion_records:
             candidate_store.insert_promotion(
@@ -296,12 +297,13 @@ def _run_optimization_strategy_sweep(
                 candidate_key=promotion["candidate_key"],
                 params=promotion["params"],
                 provenance=promotion["provenance"],
+                publication_state=PUBLICATION_PENDING,
             )
     optimization_evidence["promotions"] = promotion_records
     recorder.manifest.evidence["optimization"] = optimization_evidence
 
     artifact_payload = {
-        "schema_version": STRATEGY_ARTIFACT_SCHEMA_VERSION,
+        "schema_version": OPTIMIZATION_ARTIFACT_SCHEMA_VERSION,
         "evidence_type": "optimization",
         "strategy": strategy_evidence,
         "data": _strategy_data_evidence_payload(data_result, array_contract),
@@ -328,10 +330,18 @@ def _run_optimization_strategy_sweep(
     }
     _write_strategy_artifact(recorder, artifact_payload)
     recorder.mark_run_completed()
+    try:
+        with CandidateStore(candidate_store_path) as candidate_store:
+            candidate_store.activate_run(recorder.manifest.run_id)
+    except CandidateStoreError as error:
+        raise CandidateStoreError(f"candidate_store_activation_failed: {error}") from error
     return {
         **_run_refs(recorder),
         "evidence_type": "optimization",
         "strategy_artifact_id": "strategy.run",
+        "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
+        "candidate_store_path": str(candidate_store_path),
+        "promotions": promotion_records,
         "optimization": {
             "ranking_metric": optimization_run.ranking_metric,
             "ranking_direction": optimization_run.ranking_direction,
@@ -411,9 +421,7 @@ def _resolve_component_promotions(
         for key, ref in refs:
             resolved = resolve_component_promotion(ref, store=candidate_store)
             if key in resolved_params:
-                raise OptimizationSourceError(
-                    f"duplicate promotion resolution for component {key}"
-                )
+                raise OptimizationSourceError(f"duplicate promotion resolution for component {key}")
             resolved_params[key] = dict(resolved.params)
             resolved_records.append(_resolved_promotion_record(resolved))
     return resolved_params, resolved_records
@@ -424,25 +432,31 @@ def _component_promotion_refs(
 ) -> Iterator[tuple[tuple[str, str, str], ComponentPromotionRef]]:
     if config.strategy.lock_id is not None or config.strategy.candidate_id is not None:
         key = component_ref_key("strategies", config.strategy.id, "strategy")
-        yield key, ComponentPromotionRef(
-            component_family="strategies",
-            component_id=config.strategy.id,
-            component_slot="strategy",
-            lock_id=config.strategy.lock_id,
-            candidate_id=config.strategy.candidate_id,
-            run_id=config.strategy.run_id,
+        yield (
+            key,
+            ComponentPromotionRef(
+                component_family="strategies",
+                component_id=config.strategy.id,
+                component_slot="strategy",
+                lock_id=config.strategy.lock_id,
+                candidate_id=config.strategy.candidate_id,
+                run_id=config.strategy.run_id,
+            ),
         )
     for ref in config.indicators:
         if ref.lock_id is None and ref.candidate_id is None:
             continue
         key = component_ref_key("indicators", ref.id, ref.id)
-        yield key, ComponentPromotionRef(
-            component_family="indicators",
-            component_id=ref.id,
-            component_slot=ref.id,
-            lock_id=ref.lock_id,
-            candidate_id=ref.candidate_id,
-            run_id=ref.run_id,
+        yield (
+            key,
+            ComponentPromotionRef(
+                component_family="indicators",
+                component_id=ref.id,
+                component_slot=ref.id,
+                lock_id=ref.lock_id,
+                candidate_id=ref.candidate_id,
+                run_id=ref.run_id,
+            ),
         )
 
 
@@ -633,11 +647,11 @@ def _plan_strategy_artifact_if_needed(recorder: Any) -> None:
         return
     recorder.artifacts.plan_artifact(
         artifact_id="strategy.run",
-        role="strategy_sweep_evidence",
+        role="optimization_evidence",
         artifact_type="json",
         producer_stage="strategy_run",
         path="strategy_run.json",
-        schema_version=STRATEGY_ARTIFACT_SCHEMA_VERSION,
+        schema_version=OPTIMIZATION_ARTIFACT_SCHEMA_VERSION,
     )
 
 

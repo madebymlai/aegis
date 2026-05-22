@@ -5,7 +5,10 @@ from enum import Enum
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
+from research.aegis_research.optimization.evidence import (
+    candidate_rows_from_param_index,
+    canonical_params_key,
+)
 
 DATA_IDENTITY = {
     "source": "synthetic",
@@ -95,6 +98,22 @@ def test_candidate_values_are_serialized_deterministically() -> None:
         "array_param": [1, 2],
     }
     assert rows[0]["identity"]["hidden_params"] == {"no_stop_value": None}
+
+
+def test_canonical_params_key_matches_candidate_row_param_canonicalization() -> None:
+    params = {"sl_stop": float("nan"), "array_param": (1, 2), "stop_kind": StopKind.TRAILING}
+    index = pd.MultiIndex.from_tuples(
+        [(float("nan"), (1, 2), StopKind.TRAILING)],
+        names=["sl_stop", "array_param", "stop_kind"],
+    )
+
+    rows = candidate_rows_from_param_index(
+        index,
+        source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
+    )
+
+    assert canonical_params_key(params) == canonical_params_key(rows[0]["params"])
 
 
 def test_candidate_key_includes_hidden_source_and_portfolio_identity() -> None:

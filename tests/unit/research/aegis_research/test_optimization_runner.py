@@ -531,6 +531,38 @@ def test_runner_rejects_invalid_pipeline_signal_shape() -> None:
         )
 
 
+@pytest.mark.parametrize("forbidden_key", ["metrics", "portfolio", "metric_source"])
+def test_runner_rejects_authoritative_fields_in_pipeline_signal_mapping(forbidden_key: str) -> None:
+    close, open_prices = _close_open_frames()
+
+    def smuggling_pipeline(close, fast_window):
+        return {
+            "entries": close > 0,
+            "exits": close < 0,
+            forbidden_key: {},
+        }
+
+    source = OptimizationSource(
+        pipeline=smuggling_pipeline,
+        params={"fast_window": vbt.Param([2, 5])},
+        evidence={},
+        diagnostics={},
+        metadata={},
+    )
+
+    with pytest.raises(OptimizationRunnerError, match="authoritative"):
+        execute_optimization(
+            close=close,
+            open_prices=open_prices,
+            source=source,
+            optimization=_optimization_config(),
+            portfolio=PortfolioConfig(),
+            signal=SignalConfig(),
+            report=ReportConfig(),
+            ranking=RankingConfig(metric="total_return", direction="desc"),
+        )
+
+
 def test_runner_sampled_rows_sourced_from_result_grid_when_return_grid_first() -> None:
     close, open_prices = _close_open_frames()
     source = _build_source(fast=[2, 5], slow=[10, 20])
@@ -601,12 +633,8 @@ def test_extract_param_index_drops_split_set_metric_levels_and_dedupes() -> None
 
 
 def test_verify_evaluated_subset_raises_on_drift() -> None:
-    sampled = pd.MultiIndex.from_tuples(
-        [(2, 10), (5, 20)], names=["fast_window", "slow_window"]
-    )
-    drifted = pd.MultiIndex.from_tuples(
-        [(2, 10), (99, 99)], names=["fast_window", "slow_window"]
-    )
+    sampled = pd.MultiIndex.from_tuples([(2, 10), (5, 20)], names=["fast_window", "slow_window"])
+    drifted = pd.MultiIndex.from_tuples([(2, 10), (99, 99)], names=["fast_window", "slow_window"])
 
     with pytest.raises(OptimizationRunnerError, match="candidate evidence drift"):
         _verify_evaluated_subset(evaluated=drifted, sampled=sampled, label="test")
@@ -616,8 +644,6 @@ def test_verify_evaluated_subset_passes_when_subset_holds() -> None:
     sampled = pd.MultiIndex.from_tuples(
         [(2, 10), (5, 20), (10, 50)], names=["fast_window", "slow_window"]
     )
-    evaluated = pd.MultiIndex.from_tuples(
-        [(2, 10), (5, 20)], names=["fast_window", "slow_window"]
-    )
+    evaluated = pd.MultiIndex.from_tuples([(2, 10), (5, 20)], names=["fast_window", "slow_window"])
 
     _verify_evaluated_subset(evaluated=evaluated, sampled=sampled, label="test")

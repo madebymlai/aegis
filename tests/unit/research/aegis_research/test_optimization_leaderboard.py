@@ -160,3 +160,9 @@ def test_leaderboard_weights_aggregate_by_held_out_row_counts() -> None:
     expected = (0.10 * 30 + 0.20 * 10) / 40
     assert math.isclose(row["ranking_metric_value"], expected)
     assert row["held_out_row_count"] == 40
+
+
+def test_leaderboard_imports_public_evidence_canonicalization_api() -> None:
+    import research.aegis_research.optimization.leaderboard as leaderboard_module
+
+    assert "_canonical_value" not in leaderboard_module.__dict__

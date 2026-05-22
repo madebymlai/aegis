@@ -7,7 +7,10 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+PUBLICATION_PENDING = "pending"
+PUBLICATION_ACTIVE = "active"
+PUBLICATION_STATES = frozenset({PUBLICATION_PENDING, PUBLICATION_ACTIVE})
 
 
 class CandidateStoreError(RuntimeError):
@@ -42,14 +45,21 @@ class CandidateStore:
         candidate_rows: Sequence[Mapping[str, Any]],
         leaderboard: Mapping[str, Any],
         provenance: Mapping[str, Any],
+        publication_state: str = PUBLICATION_ACTIVE,
     ) -> None:
+        _validate_publication_state(publication_state)
         if not candidate_rows:
             raise CandidateStoreError("completed optimization run has no candidate rows to persist")
         rank_scope = _rank_scope(leaderboard)
         ranking_metric = str(leaderboard["ranking_metric"])
         ranking_direction = str(leaderboard["ranking_direction"])
         candidate_values = [
-            _candidate_insert_values(run_id=run_id, row=row, provenance=provenance)
+            _candidate_insert_values(
+                run_id=run_id,
+                row=row,
+                provenance=provenance,
+                publication_state=publication_state,
+            )
             for row in candidate_rows
         ]
         candidate_payloads = [(value[1], value[6]) for value in candidate_values]
@@ -79,14 +89,23 @@ class CandidateStore:
                     identity_json,
                     store_namespace_json,
                     candidate_row_json,
-                    provenance_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    provenance_json,
+                    publication_state
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 candidate_values,
             )
             self._assert_candidate_payloads_match(
                 run_id=run_id,
                 candidate_payloads=candidate_payloads,
+            )
+            self._connection.executemany(
+                """
+                UPDATE candidates
+                SET publication_state = ?
+                WHERE run_id = ? AND candidate_key = ?
+                """,
+                ((publication_state, run_id, str(row["candidate_key"])) for row in candidate_rows),
             )
             self._connection.execute(
                 "DELETE FROM candidate_rankings WHERE run_id = ? AND rank_scope = ?",
@@ -104,10 +123,11 @@ class CandidateStore:
                     ranking_metric_value,
                     metric_sort_value,
                     metrics_json,
-                    leaderboard_row_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    leaderboard_row_json,
+                    publication_state
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ranking_values,
+                [(*value, publication_state) for value in ranking_values],
             )
 
     def insert_promotion(
@@ -121,7 +141,9 @@ class CandidateStore:
         candidate_key: str,
         params: Mapping[str, Any],
         provenance: Mapping[str, Any],
+        publication_state: str = PUBLICATION_ACTIVE,
     ) -> None:
+        _validate_publication_state(publication_state)
         row_payload = {
             "run_id": run_id,
             "component_family": component_family,
@@ -130,6 +152,7 @@ class CandidateStore:
             "candidate_key": candidate_key,
             "params_json": _json_dumps(params),
             "provenance_json": _json_dumps(provenance),
+            "publication_state": publication_state,
         }
         with self._connection:
             existing = self._connection.execute(
@@ -153,8 +176,9 @@ class CandidateStore:
                     component_slot,
                     candidate_key,
                     params_json,
-                    provenance_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    provenance_json,
+                    publication_state
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     token,
@@ -165,7 +189,29 @@ class CandidateStore:
                     row_payload["candidate_key"],
                     row_payload["params_json"],
                     row_payload["provenance_json"],
+                    row_payload["publication_state"],
                 ),
+            )
+
+    def activate_run(self, run_id: str) -> None:
+        with self._connection:
+            candidate_count = self._connection.execute(
+                "SELECT COUNT(*) FROM candidates WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+            if candidate_count == 0:
+                raise CandidateStoreError(f"cannot activate unknown candidate-store run: {run_id}")
+            self._connection.execute(
+                "UPDATE candidates SET publication_state = ? WHERE run_id = ?",
+                (PUBLICATION_ACTIVE, run_id),
+            )
+            self._connection.execute(
+                "UPDATE candidate_rankings SET publication_state = ? WHERE run_id = ?",
+                (PUBLICATION_ACTIVE, run_id),
+            )
+            self._connection.execute(
+                "UPDATE candidate_promotions SET publication_state = ? WHERE run_id = ?",
+                (PUBLICATION_ACTIVE, run_id),
             )
 
     def top_candidates_by_run(self, run_id: str, *, limit: int = 5) -> list[dict[str, Any]]:
@@ -175,10 +221,12 @@ class CandidateStore:
             FROM candidate_rankings r
             JOIN candidates c ON c.run_id = r.run_id AND c.candidate_key = r.candidate_key
             WHERE r.run_id = ?
+                AND r.publication_state = ?
+                AND c.publication_state = ?
             ORDER BY r.rank ASC
             LIMIT ?
             """,
-            (run_id, limit),
+            (run_id, PUBLICATION_ACTIVE, PUBLICATION_ACTIVE, limit),
         ).fetchall()
         return [_ranked_result(row) for row in rows]
 
@@ -194,11 +242,14 @@ class CandidateStore:
             SELECT r.rank, r.leaderboard_row_json, c.candidate_row_json, c.provenance_json
             FROM candidate_rankings r
             JOIN candidates c ON c.run_id = r.run_id AND c.candidate_key = r.candidate_key
-            WHERE r.ranking_metric = ? AND r.ranking_direction = ?
+            WHERE r.ranking_metric = ?
+                AND r.ranking_direction = ?
+                AND r.publication_state = ?
+                AND c.publication_state = ?
             ORDER BY r.metric_sort_value ASC, r.run_id ASC, r.candidate_key ASC
             LIMIT ?
             """,
-            (metric, direction, limit),
+            (metric, direction, PUBLICATION_ACTIVE, PUBLICATION_ACTIVE, limit),
         ).fetchall()
         return [_ranked_result(row) for row in rows]
 
@@ -240,8 +291,15 @@ class CandidateStore:
 
     def promotion_by_token(self, token: str) -> dict[str, Any]:
         row = self._connection.execute(
-            "SELECT * FROM candidate_promotions WHERE token = ?",
-            (token,),
+            """
+            SELECT p.*
+            FROM candidate_promotions p
+            JOIN candidates c ON c.run_id = p.run_id AND c.candidate_key = p.candidate_key
+            WHERE p.token = ?
+                AND p.publication_state = ?
+                AND c.publication_state = ?
+            """,
+            (token, PUBLICATION_ACTIVE, PUBLICATION_ACTIVE),
         ).fetchone()
         if row is None:
             raise CandidateStoreError(f"unknown promotion token: {token}")
@@ -290,6 +348,7 @@ class CandidateStore:
                 store_namespace_json TEXT NOT NULL,
                 candidate_row_json TEXT NOT NULL,
                 provenance_json TEXT NOT NULL,
+                publication_state TEXT NOT NULL,
                 PRIMARY KEY (run_id, candidate_key)
             );
             CREATE INDEX IF NOT EXISTS idx_candidates_key ON candidates(candidate_key);
@@ -305,6 +364,7 @@ class CandidateStore:
                 metric_sort_value REAL NOT NULL,
                 metrics_json TEXT NOT NULL,
                 leaderboard_row_json TEXT NOT NULL,
+                publication_state TEXT NOT NULL,
                 PRIMARY KEY (run_id, rank_scope, candidate_key),
                 UNIQUE (run_id, rank_scope, rank),
                 FOREIGN KEY (run_id, candidate_key) REFERENCES candidates(run_id, candidate_key)
@@ -323,6 +383,7 @@ class CandidateStore:
                 candidate_key TEXT NOT NULL,
                 params_json TEXT NOT NULL,
                 provenance_json TEXT NOT NULL,
+                publication_state TEXT NOT NULL,
                 FOREIGN KEY (run_id, candidate_key) REFERENCES candidates(run_id, candidate_key)
             );
             CREATE INDEX IF NOT EXISTS idx_candidate_promotions_candidate
@@ -371,8 +432,12 @@ class CandidateStore:
     def _candidate_lookup(self, candidate_key: str, *, run_id: str | None) -> sqlite3.Row:
         if run_id is None:
             rows = self._connection.execute(
-                "SELECT * FROM candidates WHERE candidate_key = ? ORDER BY run_id ASC",
-                (candidate_key,),
+                """
+                SELECT * FROM candidates
+                WHERE candidate_key = ? AND publication_state = ?
+                ORDER BY run_id ASC
+                """,
+                (candidate_key, PUBLICATION_ACTIVE),
             ).fetchall()
             if len(rows) > 1:
                 raise CandidateStoreError(
@@ -381,8 +446,11 @@ class CandidateStore:
             row = rows[0] if rows else None
         else:
             row = self._connection.execute(
-                "SELECT * FROM candidates WHERE run_id = ? AND candidate_key = ?",
-                (run_id, candidate_key),
+                """
+                SELECT * FROM candidates
+                WHERE run_id = ? AND candidate_key = ? AND publication_state = ?
+                """,
+                (run_id, candidate_key, PUBLICATION_ACTIVE),
             ).fetchone()
         if row is None:
             raise CandidateStoreError(f"unknown candidate key: {candidate_key}")
@@ -423,6 +491,7 @@ def _candidate_insert_values(
     run_id: str,
     row: Mapping[str, Any],
     provenance: Mapping[str, Any],
+    publication_state: str,
 ) -> tuple[Any, ...]:
     return (
         run_id,
@@ -433,7 +502,15 @@ def _candidate_insert_values(
         _json_dumps(row.get("store_namespace", {})),
         _json_dumps(row),
         _json_dumps(provenance),
+        publication_state,
     )
+
+
+def _validate_publication_state(value: str) -> None:
+    if value not in PUBLICATION_STATES:
+        raise CandidateStoreError(
+            f"candidate publication_state must be one of {sorted(PUBLICATION_STATES)}; got {value!r}"
+        )
 
 
 def _chunks(values: Sequence[str], size: int) -> Iterator[tuple[str, ...]]:

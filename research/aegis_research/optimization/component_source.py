@@ -71,10 +71,10 @@ def component_param_key(
     parts = (PARAM_KEY_PREFIX, family, component_id, slot, param_name)
     for part in parts:
         if not part:
-            raise ComponentSourceError(
-                "component param namespace parts must not be empty"
-            )
-    return PARAM_KEY_SEPARATOR.join((PARAM_KEY_PREFIX, *(_encode_namespace_part(part) for part in parts[1:])))
+            raise ComponentSourceError("component param namespace parts must not be empty")
+    return PARAM_KEY_SEPARATOR.join(
+        (PARAM_KEY_PREFIX, *(_encode_namespace_part(part) for part in parts[1:]))
+    )
 
 
 def parse_component_param_key(key: str) -> dict[str, str]:
@@ -107,7 +107,9 @@ def _decode_namespace_part(value: str) -> str:
         raise ComponentSourceError(f"invalid component param namespace part: {value!r}") from error
 
 
-def component_param_slices(param_row: Mapping[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+def component_param_slices(
+    param_row: Mapping[str, Any],
+) -> dict[tuple[str, str, str], dict[str, Any]]:
     slices: dict[tuple[str, str, str], dict[str, Any]] = {}
     for key, value in param_row.items():
         if key == FIXED_CANDIDATE_PARAM:
@@ -323,6 +325,13 @@ def _load_param_space(
                 f"component {definition.family}/{definition.id} param {param_name!r} "
                 "must be a vectorbtpro vbt.Param"
             )
+        if bool(param.resolve_field("hide")):
+            raise ComponentSourceError(
+                f"component {definition.family}/{definition.id} param {param_name!r} has hide=True, "
+                "which excludes it from the VBT result index; candidate identity would then "
+                "collapse different values to the same candidate_key. Remove hide=True until "
+                "hidden component params are represented in candidate identity."
+            )
         params[param_name] = param
     unknown = sorted(set(params) - set(getattr(definition.manifest, "param_names", ())))
     if unknown:
@@ -348,7 +357,9 @@ def _validate_component_param_sources(
         )
 
 
-def _params_for_runtime(runtime: _ComponentRuntime, raw_params: Mapping[str, Any]) -> dict[str, Any]:
+def _params_for_runtime(
+    runtime: _ComponentRuntime, raw_params: Mapping[str, Any]
+) -> dict[str, Any]:
     params = dict(runtime.fixed_params)
     for param_name, param_key in runtime.param_keys.items():
         params[param_name] = raw_params[param_key]
@@ -376,7 +387,9 @@ def _slice_data(
 ) -> MarketDataBundle:
     features: dict[str, pd.DataFrame] = {}
     for name in input_names:
-        features[name] = close_slice if name == "Close" else data.feature(name).loc[close_slice.index]
+        features[name] = (
+            close_slice if name == "Close" else data.feature(name).loc[close_slice.index]
+        )
     return MarketDataBundle(
         features=features,
         metadata=dict(data.metadata),
@@ -434,7 +447,9 @@ def _assert_output_contract(
                     f"and {runtime.definition.id!r}"
                 )
             produced[output_name] = runtime.definition.id
-    missing = sorted(set(getattr(strategy.definition.manifest, "consumes_outputs", ())) - set(produced))
+    missing = sorted(
+        set(getattr(strategy.definition.manifest, "consumes_outputs", ())) - set(produced)
+    )
     if missing:
         raise ComponentSourceError(
             f"strategy {strategy.definition.id!r} consumes outputs not produced by indicators: {missing}"
@@ -453,7 +468,9 @@ def _source_evidence(
         "strategy": _runtime_evidence(strategy),
         "indicators": [_runtime_evidence(runtime) for runtime in indicators],
         "param_names": list(params),
-        "fixed_candidate_param": FIXED_CANDIDATE_PARAM if list(params) == [FIXED_CANDIDATE_PARAM] else None,
+        "fixed_candidate_param": FIXED_CANDIDATE_PARAM
+        if list(params) == [FIXED_CANDIDATE_PARAM]
+        else None,
         "produced_outputs": [
             output_name
             for runtime in indicators

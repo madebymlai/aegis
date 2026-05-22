@@ -9,10 +9,12 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration.schema import OptimizationConfig
+from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.run_splits import RunSplitsResult
 
 PREFLIGHT_SCHEMA_VERSION = "optimization_preflight.v1"
 PREFLIGHT_PUBLIC_BYTES_PER_ROW = 1024
+PREFLIGHT_MAX_EXACT_COMBINE_PARAMS = 100_000
 
 
 class PreflightError(ValueError):
@@ -43,45 +45,79 @@ def build_preflight(
 ) -> dict[str, Any]:
     param_shapes = _param_shapes(params)
     theoretical_combinations = _combination_count(param_shapes, sampled=False)
-    param_sampled_combinations = _combination_count(param_shapes, sampled=True)
-    sampled_combinations = _sampled_combination_count(
-        optimization,
-        param_sampled_combinations,
+    has_condition = any(shape.has_condition for shape in param_shapes)
+    param_sampled_combinations, param_sampled_source, param_sampled_error = _safe_vbt_count(
+        params,
+        theoretical_combinations=theoretical_combinations,
+        optimization=None,
     )
+    if param_sampled_combinations is None:
+        param_sampled_combinations = _combination_count(param_shapes, sampled=True)
+    sampled_combinations, sampled_source, sampled_error = _safe_vbt_count(
+        params,
+        theoretical_combinations=theoretical_combinations,
+        optimization=optimization,
+    )
+    if sampled_combinations is None:
+        sampled_combinations = _sampled_combination_count(
+            optimization,
+            param_sampled_combinations,
+        )
     selection_rows = sum(len(split.selection_index) for split in split_result.splits)
     held_out_rows = sum(len(split.held_out_index) for split in split_result.splits)
     total_window_rows = selection_rows + held_out_rows
     set_count = 2
+    metric_count = len(PORTFOLIO_METRIC_VALUE_KEYS)
     materialized_frame_count = 4 + int(has_open_prices)
-    estimated_result_cells = sampled_combinations * len(split_result.splits) * set_count
+    estimated_result_cells = (
+        sampled_combinations * len(split_result.splits) * set_count * metric_count
+    )
     estimated_portfolio_broadcast_cells = (
         sampled_combinations * total_window_rows * symbol_count * materialized_frame_count
     )
     estimated_output_cells = max(estimated_result_cells, estimated_portfolio_broadcast_cells)
-    retained_selection_grid_rows = sampled_combinations * len(split_result.splits)
+    selection_result_rows = len(split_result.splits) * set_count * metric_count
+    retained_selection_grid_rows = 0
+    if optimization.evidence.return_grid in {"first", "all"}:
+        retained_selection_grid_rows = (
+            sampled_combinations * len(split_result.splits) * metric_count
+        )
     retained_grid_rows = retained_selection_grid_rows
     if optimization.evidence.return_grid == "all":
         retained_grid_rows *= set_count
-    selected_held_out_rows = len(split_result.splits)
-    estimated_public_rows = retained_grid_rows + selected_held_out_rows
-    estimated_public_artifact_bytes = (
-        estimated_public_rows * PREFLIGHT_PUBLIC_BYTES_PER_ROW
+    sampled_row_count = sampled_combinations
+    candidate_row_count = sampled_combinations
+    leaderboard_row_count = sampled_combinations
+    promotion_row_count = 1 if sampled_combinations else 0
+    estimated_public_rows = (
+        selection_result_rows
+        + retained_grid_rows
+        + sampled_row_count
+        + candidate_row_count
+        + leaderboard_row_count
+        + promotion_row_count
     )
+    estimated_public_artifact_bytes = estimated_public_rows * PREFLIGHT_PUBLIC_BYTES_PER_ROW
     diagnostics = {
         "schema_version": PREFLIGHT_SCHEMA_VERSION,
         "search": optimization.search,
         "return_grid": optimization.evidence.return_grid,
         "param_shapes": [_param_shape_payload(shape) for shape in param_shapes],
         "theoretical_combinations": theoretical_combinations,
-        "conditioned_combinations": (
-            None if any(shape.has_condition for shape in param_shapes) else theoretical_combinations
-        ),
+        "conditioned_combinations": param_sampled_combinations
+        if has_condition
+        else theoretical_combinations,
         "param_sampled_combinations": param_sampled_combinations,
+        "param_sampled_count_source": param_sampled_source,
+        "param_sampled_count_error": param_sampled_error,
         "sampled_combinations": sampled_combinations,
+        "sampled_count_source": sampled_source,
+        "sampled_count_error": sampled_error,
         "random_subset": optimization.random_subset,
         "seed": optimization.seed,
         "split_count": len(split_result.splits),
         "set_count": set_count,
+        "metric_count": metric_count,
         "selection_rows": selection_rows,
         "held_out_rows": held_out_rows,
         "total_window_rows": total_window_rows,
@@ -91,9 +127,13 @@ def build_preflight(
         "estimated_result_cells": estimated_result_cells,
         "estimated_portfolio_broadcast_cells": estimated_portfolio_broadcast_cells,
         "estimated_output_cells": estimated_output_cells,
+        "selection_result_rows": selection_result_rows,
         "retained_selection_grid_rows": retained_selection_grid_rows,
         "retained_grid_rows": retained_grid_rows,
-        "selected_held_out_rows": selected_held_out_rows,
+        "sampled_row_count": sampled_row_count,
+        "candidate_row_count": candidate_row_count,
+        "leaderboard_row_count": leaderboard_row_count,
+        "promotion_row_count": promotion_row_count,
         "estimated_public_rows": estimated_public_rows,
         "estimated_public_artifact_bytes": estimated_public_artifact_bytes,
         "limits": {
@@ -186,6 +226,44 @@ def _sampled_combination_count(
     return param_sampled_combinations
 
 
+def _safe_vbt_count(
+    params: Mapping[str, vbt.Param],
+    *,
+    theoretical_combinations: int,
+    optimization: OptimizationConfig | None,
+) -> tuple[int | None, str, str | None]:
+    has_condition = any(param.resolve_field("condition") is not None for param in params.values())
+    if theoretical_combinations > PREFLIGHT_MAX_EXACT_COMBINE_PARAMS:
+        if optimization is not None and optimization.search == "random" and not has_condition:
+            if optimization.random_subset is None:
+                raise ValueError("optimization.random_subset is required for random search")
+            return (
+                min(theoretical_combinations, optimization.random_subset),
+                "bounded_shape_estimate",
+                None,
+            )
+        if not has_condition:
+            return None, "shape_estimate", None
+        return (
+            None,
+            "shape_estimate",
+            "conditioned grid exceeds bounded exact combine_params count",
+        )
+
+    combine_kwargs: dict[str, Any] = {"build_index": True}
+    if optimization is not None and optimization.search == "random":
+        if optimization.random_subset is None:
+            raise ValueError("optimization.random_subset is required for random search")
+        combine_kwargs["random_subset"] = optimization.random_subset
+        combine_kwargs["seed"] = optimization.seed
+        combine_kwargs["random_sort"] = True
+    try:
+        _, index = vbt.combine_params(dict(params), **combine_kwargs)
+    except Exception as error:  # pragma: no cover - VBT failures are version-specific
+        return None, "shape_estimate", str(error)
+    return len(index), "vbt.combine_params", None
+
+
 def _param_shape_payload(shape: _ParamShape) -> dict[str, Any]:
     return {
         "name": shape.name,
@@ -208,7 +286,19 @@ def _raise_if_over_budget(
             "optimization estimated output cells exceed optimization.split.max_estimated_output_cells",
             diagnostics=diagnostics,
         )
-    if diagnostics["estimated_public_artifact_bytes"] > optimization.split.max_public_artifact_bytes:
+    if (
+        optimization.search == "random"
+        and optimization.random_subset is not None
+        and diagnostics["sampled_combinations"] < optimization.random_subset
+    ):
+        raise PreflightError(
+            "optimization.random_subset exceeds executable parameter combinations",
+            diagnostics=diagnostics,
+        )
+    if (
+        diagnostics["estimated_public_artifact_bytes"]
+        > optimization.split.max_public_artifact_bytes
+    ):
         raise PreflightError(
             "optimization evidence exceeds optimization.split.max_public_artifact_bytes",
             diagnostics=diagnostics,

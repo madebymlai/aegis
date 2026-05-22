@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -8,7 +7,7 @@ from typing import Any
 import pandas as pd
 
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.optimization.evidence import _canonical_value
+from research.aegis_research.optimization.evidence import canonical_params_key
 from research.aegis_research.optimization.runner import METRIC_INDEX_NAME
 
 OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION = "optimization_leaderboard.v1"
@@ -25,11 +24,13 @@ def build_optimization_leaderboard(
     metric_registry_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     candidate_by_params = {
-        _canonical_params_key(candidate["params"]): candidate for candidate in candidate_rows
+        canonical_params_key(candidate["params"]): candidate for candidate in candidate_rows
     }
     held_out = selection.xs("held_out", level="set")
     if not isinstance(held_out.index, pd.MultiIndex):
-        raise TypeError("selection index must be a MultiIndex with split, params, and metric levels")
+        raise TypeError(
+            "selection index must be a MultiIndex with split, params, and metric levels"
+        )
     level_names = list(held_out.index.names)
     if "split" not in level_names or METRIC_INDEX_NAME not in level_names:
         raise ValueError(
@@ -50,9 +51,7 @@ def build_optimization_leaderboard(
         params_dict = dict(zip(param_levels, index_key[1:], strict=True))
         split_label = index_key[0]
         attempted_splits.add(split_label)
-        canonical_key = _canonical_params_key(
-            {name: _canonical_value(value) for name, value in params_dict.items()}
-        )
+        canonical_key = canonical_params_key(params_dict)
         candidate = candidate_by_params.get(canonical_key)
         if candidate is None:
             _append_failure(
@@ -105,9 +104,7 @@ def build_optimization_leaderboard(
         for metric_name in PORTFOLIO_METRIC_VALUE_KEYS:
             weight_total = bucket["metric_weights"][metric_name]
             if weight_total > 0:
-                metrics_aggregate[metric_name] = (
-                    bucket["metric_sums"][metric_name] / weight_total
-                )
+                metrics_aggregate[metric_name] = bucket["metric_sums"][metric_name] / weight_total
             else:
                 metrics_aggregate[metric_name] = None
         oos_values = bucket["oos_ranking_values"]
@@ -133,6 +130,7 @@ def build_optimization_leaderboard(
                 "oos_metric_max": max(oos_values) if oos_values else None,
             }
         )
+
     def _sort_key(row: dict[str, Any]) -> tuple[int, float]:
         value = row["ranking_metric_value"]
         if value is None:
@@ -157,11 +155,6 @@ def build_optimization_leaderboard(
         "rows": rows,
         "failure_samples": failure_samples[:10],
     }
-
-
-def _canonical_params_key(params: Mapping[str, Any]) -> str:
-    canonical = {str(key): _canonical_value(params[key]) for key in sorted(params)}
-    return json.dumps(canonical, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _append_failure(failures: list[dict[str, str]], subject: str, message: str) -> None:

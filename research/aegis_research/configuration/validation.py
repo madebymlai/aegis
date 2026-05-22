@@ -91,6 +91,7 @@ def _run_allowed_top_level_keys() -> set[str]:
         "strategy",
     }
 
+
 def _validate_run_config(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
@@ -121,6 +122,8 @@ def _validate_run_config(
             )
         )
     _validate_optimization(raw, issues)
+
+
 def _validate_run_split(
     split: dict[str, Any],
     issues: list[ConfigValidationIssue],
@@ -333,9 +336,9 @@ def _validate_component_indicator_refs(
             item_path,
             item,
             "indicators",
-        issues,
-        component_registry=component_registry,
-    )
+            issues,
+            component_registry=component_registry,
+        )
         if definition is None:
             continue
         previous = seen.get(definition.id)
@@ -402,6 +405,16 @@ def _validate_component_ref(
             ConfigValidationIssue(
                 f"{path}.run_id",
                 "is only valid when candidate_id is set",
+            )
+        )
+    if (
+        value.get("lock_id") is not None or value.get("candidate_id") is not None
+    ) and "params" in value:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.params",
+                "must not be set when lock_id or candidate_id is set; locked refs load "
+                "params from the candidate store",
             )
         )
 
@@ -498,7 +511,9 @@ def _validate_component_output_contract(
                 continue
             produced[output_name] = f"{path}.id"
 
-    missing = sorted(set(getattr(strategy_definition.manifest, "consumes_outputs", ())) - set(produced))
+    missing = sorted(
+        set(getattr(strategy_definition.manifest, "consumes_outputs", ())) - set(produced)
+    )
     if missing:
         issues.append(
             ConfigValidationIssue(
@@ -518,7 +533,9 @@ def _validate_ranking(
     if not isinstance(value, dict):
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
-    _validate_known_keys(path, value, {"metric", "direction", "secondary_metrics", "rank_by"}, issues)
+    _validate_known_keys(
+        path, value, {"metric", "direction", "secondary_metrics", "rank_by"}, issues
+    )
     metric = value.get("metric")
     if not isinstance(metric, str) or not metric:
         issues.append(ConfigValidationIssue(f"{path}.metric", "must be a non-empty string"))
@@ -601,7 +618,9 @@ def _validate_metric_selection(
     if require_primary and not definition.primary_eligible:
         issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not primary-eligible"))
     if not require_primary and not definition.secondary_eligible:
-        issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not secondary-eligible"))
+        issues.append(
+            ConfigValidationIssue(path, f"metric {metric_id!r} is not secondary-eligible")
+        )
 
 
 def _validate_no_run_executable_keys(

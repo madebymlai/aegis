@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from research.aegis_research.optimization.candidate_store import (
+    PUBLICATION_PENDING,
     CandidateStore,
     CandidateStoreError,
 )
@@ -22,7 +23,7 @@ def test_candidate_store_persists_completed_run_and_queries_top_candidates(tmp_p
     store_path = tmp_path / "candidate-store" / "candidates.sqlite3"
     candidates = _candidate_rows()
     leaderboard = _leaderboard(candidates, values=[0.10, 0.30, 0.20])
-    provenance = {"run_id": "run-a", "artifact_schema": "strategy_run.v3"}
+    provenance = {"run_id": "run-a", "artifact_schema": "optimization_artifact.v1"}
 
     with CandidateStore(store_path) as store:
         store.insert_completed_run(
@@ -69,6 +70,96 @@ def test_candidate_store_queries_top_candidates_by_metric_across_runs(tmp_path: 
 
     assert [row["leaderboard_row"]["ranking_metric_value"] for row in top] == [0.40, 0.30, 0.20]
     assert [row["provenance"]["run_id"] for row in top] == ["run-b", "run-a", "run-a"]
+
+
+def test_candidate_store_queries_ascending_metric_with_missing_values_last(tmp_path: Path) -> None:
+    store_path = tmp_path / "candidates.sqlite3"
+    candidates = _candidate_rows()
+
+    with CandidateStore(store_path) as store:
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=candidates,
+            leaderboard=_leaderboard(candidates, values=[0.10, None, 0.05], direction="asc"),
+            provenance={"run_id": "run-a"},
+        )
+
+        top = store.top_candidates_by_metric("total_return", direction="asc", limit=3)
+
+    assert [row["leaderboard_row"]["ranking_metric_value"] for row in top] == [0.05, 0.10, None]
+
+
+def test_candidate_store_pending_run_is_not_queryable_until_activation(tmp_path: Path) -> None:
+    store_path = tmp_path / "candidates.sqlite3"
+    candidates = _candidate_rows()
+    candidate = candidates[0]
+
+    with CandidateStore(store_path) as store:
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=candidates,
+            leaderboard=_leaderboard(candidates, values=[0.10, 0.30, 0.20]),
+            provenance={"run_id": "run-a"},
+            publication_state=PUBLICATION_PENDING,
+        )
+        store.insert_promotion(
+            token="lock_pending",
+            run_id="run-a",
+            component_family="strategies",
+            component_id="demo.ma_cross",
+            component_slot="strategy:demo.ma_cross",
+            candidate_key=candidate["candidate_key"],
+            params=candidate["params"],
+            provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
+            publication_state=PUBLICATION_PENDING,
+        )
+
+        assert store.top_candidates_by_run("run-a", limit=1) == []
+        assert store.top_candidates_by_metric("total_return", direction="desc", limit=1) == []
+        with pytest.raises(CandidateStoreError, match="unknown candidate key"):
+            store.params_by_candidate_key(candidate["candidate_key"], run_id="run-a")
+        with pytest.raises(CandidateStoreError, match="unknown promotion token"):
+            store.params_by_promotion_token("lock_pending")
+
+        store.activate_run("run-a")
+
+        assert store.top_candidates_by_run("run-a", limit=1)
+        assert store.params_by_promotion_token("lock_pending") == candidate["params"]
+
+
+def test_candidate_store_active_promotion_requires_active_candidate(tmp_path: Path) -> None:
+    store_path = tmp_path / "candidates.sqlite3"
+    candidates = _candidate_rows()
+    candidate = candidates[0]
+
+    with CandidateStore(store_path) as store:
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=candidates,
+            leaderboard=_leaderboard(candidates, values=[0.10, 0.30, 0.20]),
+            provenance={"run_id": "run-a"},
+            publication_state=PUBLICATION_PENDING,
+        )
+        store.insert_promotion(
+            token="lock_active_promotion_pending_candidate",
+            run_id="run-a",
+            component_family="strategies",
+            component_id="demo.ma_cross",
+            component_slot="strategy:demo.ma_cross",
+            candidate_key=candidate["candidate_key"],
+            params=candidate["params"],
+            provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
+        )
+
+        with pytest.raises(CandidateStoreError, match="unknown promotion token"):
+            store.params_by_promotion_token("lock_active_promotion_pending_candidate")
+
+        store.activate_run("run-a")
+
+        assert (
+            store.params_by_promotion_token("lock_active_promotion_pending_candidate")
+            == candidate["params"]
+        )
 
 
 def test_candidate_store_resolves_promotion_token_params(tmp_path: Path) -> None:
@@ -137,6 +228,92 @@ def test_candidate_store_rejects_conflicting_duplicate_candidate_payload(tmp_pat
             )
 
 
+def test_candidate_store_reinserting_same_promotion_token_is_idempotent(tmp_path: Path) -> None:
+    candidates = _candidate_rows()
+    candidate = candidates[0]
+
+    with CandidateStore(tmp_path / "candidates.sqlite3") as store:
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=candidates,
+            leaderboard=_leaderboard(candidates, values=[0.10, 0.30, 0.20]),
+            provenance={"run_id": "run-a"},
+        )
+        for _ in range(2):
+            store.insert_promotion(
+                token="lock_duplicate",
+                run_id="run-a",
+                component_family="strategies",
+                component_id="demo.ma_cross",
+                component_slot="strategy:demo.ma_cross",
+                candidate_key=candidate["candidate_key"],
+                params=candidate["params"],
+                provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
+            )
+
+        assert store.params_by_promotion_token("lock_duplicate") == candidate["params"]
+
+
+def test_candidate_store_rejects_conflicting_duplicate_promotion_payload(tmp_path: Path) -> None:
+    candidates = _candidate_rows()
+    candidate = candidates[0]
+
+    with CandidateStore(tmp_path / "candidates.sqlite3") as store:
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=candidates,
+            leaderboard=_leaderboard(candidates, values=[0.10, 0.30, 0.20]),
+            provenance={"run_id": "run-a"},
+        )
+        store.insert_promotion(
+            token="lock_conflict",
+            run_id="run-a",
+            component_family="strategies",
+            component_id="demo.ma_cross",
+            component_slot="strategy:demo.ma_cross",
+            candidate_key=candidate["candidate_key"],
+            params=candidate["params"],
+            provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
+        )
+
+        with pytest.raises(CandidateStoreError, match="different payload"):
+            store.insert_promotion(
+                token="lock_conflict",
+                run_id="run-a",
+                component_family="strategies",
+                component_id="demo.ma_cross",
+                component_slot="strategy:demo.ma_cross",
+                candidate_key=candidate["candidate_key"],
+                params={"fast_window": 99},
+                provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
+            )
+
+
+def test_candidate_store_rejects_group_or_other_readable_directory(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX permissions only")
+    store_dir = tmp_path / "candidate-store"
+    store_dir.mkdir()
+    store_dir.chmod(0o755)
+
+    with pytest.raises(CandidateStoreError, match="directory"):
+        CandidateStore(store_dir / "candidates.sqlite3")
+
+
+def test_candidate_store_rejects_group_or_other_readable_sqlite_file(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX permissions only")
+    store_dir = tmp_path / "candidate-store"
+    store_dir.mkdir(mode=0o700)
+    store_dir.chmod(0o700)
+    store_path = store_dir / "candidates.sqlite3"
+    store_path.touch()
+    store_path.chmod(0o644)
+
+    with pytest.raises(CandidateStoreError, match="candidate store"):
+        CandidateStore(store_path)
+
+
 def _candidate_rows(*, data_symbol: str = "SYN") -> list[dict[str, object]]:
     index = pd.MultiIndex.from_tuples(
         [(2, 10), (5, 10), (8, 20)],
@@ -151,18 +328,26 @@ def _candidate_rows(*, data_symbol: str = "SYN") -> list[dict[str, object]]:
     )
 
 
-def _leaderboard(candidates: list[dict[str, object]], *, values: list[float | None]) -> dict[str, object]:
+def _leaderboard(
+    candidates: list[dict[str, object]],
+    *,
+    values: list[float | None],
+    direction: str = "desc",
+) -> dict[str, object]:
     rows = []
     for candidate, value in sorted(
         zip(candidates, values, strict=True),
-        key=lambda item: (item[1] is None, -(item[1] or 0.0)),
+        key=lambda item: (
+            item[1] is None,
+            float(item[1] or 0.0) if direction == "asc" else -float(item[1] or 0.0),
+        ),
     ):
         rows.append(
             {
                 "candidate_key": candidate["candidate_key"],
                 "params": candidate["params"],
                 "ranking_metric": "total_return",
-                "ranking_direction": "desc",
+                "ranking_direction": direction,
                 "ranking_metric_value": value,
                 "metrics": {"total_return": value, "sharpe_ratio": None},
                 "selected_split_count": 1,
@@ -178,7 +363,7 @@ def _leaderboard(candidates: list[dict[str, object]], *, values: list[float | No
     return {
         "schema_version": OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION,
         "ranking_metric": "total_return",
-        "ranking_direction": "desc",
+        "ranking_direction": direction,
         "metric_registry_fingerprint": "fp-test",
         "weight_basis": WEIGHT_BASIS,
         "summary": {"attempted_splits": 1, "selected_splits": len(rows)},

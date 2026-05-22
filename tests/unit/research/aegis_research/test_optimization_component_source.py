@@ -93,7 +93,24 @@ def test_component_source_rejects_unresolved_lock_refs(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ComponentSourceError, match="requires resolved"):
-        build_component_optimization_source(config, component_registry=registry, data=_data_bundle())
+        build_component_optimization_source(
+            config, component_registry=registry, data=_data_bundle()
+        )
+
+
+def test_component_source_rejects_hidden_param_space_axes(tmp_path: Path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_hidden_strategy(root / "strategies" / "hidden_strategy.py")
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    config = _config(
+        strategy=RunSourceRefConfig(id="demo.hidden_strategy"),
+        indicators=[],
+    )
+
+    with pytest.raises(ComponentSourceError, match="hide=True"):
+        build_component_optimization_source(
+            config, component_registry=registry, data=_data_bundle()
+        )
 
 
 def test_component_source_rejects_duplicate_produced_outputs(tmp_path: Path) -> None:
@@ -108,7 +125,9 @@ def test_component_source_rejects_duplicate_produced_outputs(tmp_path: Path) -> 
     )
 
     with pytest.raises(ComponentSourceError, match="produced by both"):
-        build_component_optimization_source(config, component_registry=registry, data=_data_bundle())
+        build_component_optimization_source(
+            config, component_registry=registry, data=_data_bundle()
+        )
 
 
 def test_component_param_keys_round_trip_to_component_slices() -> None:
@@ -133,7 +152,9 @@ def _config(
     return RunConfig(
         name="component_source",
         strategy=strategy or RunSourceRefConfig(id="demo.strategy"),
-        indicators=indicators if indicators is not None else [RunIndicatorSourceConfig(id="demo.trend")],
+        indicators=indicators
+        if indicators is not None
+        else [RunIndicatorSourceConfig(id="demo.trend")],
         ranking=RankingConfig(metric="total_return", direction="desc"),
     )
 
@@ -197,6 +218,32 @@ def _write_strategy(path: Path) -> None:
         "    trend = inputs.indicators['trend']\n"
         "    entries = trend.ge(close * float(threshold))\n"
         "    exits = trend.lt(close * float(threshold))\n"
+        "    return {'entries': entries, 'exits': exits}\n"
+    )
+
+
+def _write_hidden_strategy(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Hidden parameter strategy fixture.\n"
+        "# %% define component metadata\n"
+        "from vectorbtpro import vbt\n"
+        "COMPONENT_MANIFEST = {"
+        "'family': 'strategies', 'id': 'demo.hidden_strategy', 'version': '1.0.0', "
+        "'input_names': ['Close'], 'param_names': ['threshold'], "
+        "'signal_outputs': ['entries', 'exits'], 'defaults': {'threshold': 1.0}, "
+        "'param_space_callable': 'param_space'}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "# %% parameter space\n"
+        "def param_space():\n"
+        "    return {'threshold': vbt.Param([0.95, 1.0], hide=True)}\n"
+        "# %% main compute\n"
+        "def run(inputs, threshold):\n"
+        "    '''Return thresholded hidden-param fixture signals.'''\n"
+        "    close = inputs.data.feature('Close')\n"
+        "    entries = close.gt(close.shift(1)).fillna(False)\n"
+        "    exits = close.lt(close.shift(1)).fillna(False)\n"
         "    return {'entries': entries, 'exits': exits}\n"
     )
 

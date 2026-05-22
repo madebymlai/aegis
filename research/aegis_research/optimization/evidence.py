@@ -38,7 +38,7 @@ def candidate_rows_from_param_index(
         coordinates: dict[str, Any] = {}
         raw_values: dict[str, Any] = {}
         for name, value in zip(level_names, values, strict=True):
-            canonical = _canonical_value(value)
+            canonical = canonical_value(value)
             raw_values[name] = canonical
             if name in coordinate_names:
                 coordinates[name] = canonical
@@ -86,21 +86,26 @@ def _level_name(name: Any, position: int) -> str:
 
 
 def _canonical_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
-    return {str(key): _canonical_value(value[key]) for key in sorted(value)}
+    return {str(key): canonical_value(value[key]) for key in sorted(value)}
 
 
-def _canonical_value(value: Any) -> Any:
+def canonical_params_key(params: Mapping[str, Any]) -> str:
+    canonical = {str(key): canonical_value(params[key]) for key in sorted(params)}
+    return json.dumps(canonical, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def canonical_value(value: Any) -> Any:
     if isinstance(value, Enum):
         return {
             "kind": "enum",
             "type": f"{type(value).__module__}.{type(value).__qualname__}",
             "name": value.name,
-            "value": _canonical_value(value.value),
+            "value": canonical_value(value.value),
         }
     if value is None:
         return None
     if isinstance(value, np.generic):
-        return _canonical_value(value.item())
+        return canonical_value(value.item())
     if isinstance(value, bool | str):
         return value
     if isinstance(value, int) and not isinstance(value, bool):
@@ -118,9 +123,9 @@ def _canonical_value(value: Any) -> Any:
     if isinstance(value, Mapping):
         return _canonical_mapping(value)
     if isinstance(value, tuple | list):
-        return [_canonical_value(item) for item in value]
+        return [canonical_value(item) for item in value]
     if isinstance(value, np.ndarray):
-        return [_canonical_value(item) for item in value.tolist()]
+        return [canonical_value(item) for item in value.tolist()]
     return {
         "kind": "repr",
         "type": f"{type(value).__module__}.{type(value).__qualname__}",

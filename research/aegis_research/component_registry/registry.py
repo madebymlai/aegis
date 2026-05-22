@@ -40,15 +40,11 @@ class FrozenComponentRegistry:
 
     def public_snapshot(self) -> dict[str, Any]:
         return {
+            "schema_version": "component_registry_snapshot.v1",
             "fingerprint": self.fingerprint,
             "families": {
                 family: {
-                    component_id: {
-                        "family": definition.family,
-                        "id": definition.id,
-                        "version": definition.manifest.version,
-                        "source_hash": definition.identity.source_hash,
-                    }
+                    component_id: _definition_public_snapshot(definition)
                     for component_id, definition in definitions.items()
                 }
                 for family, definitions in self.definitions.items()
@@ -91,6 +87,35 @@ def discover_component_registry(
 
 def load_component_callable(definition: ComponentDefinition) -> Any:
     return load_component_attribute(definition, definition.callable_name)
+
+
+def _definition_public_snapshot(definition: ComponentDefinition) -> dict[str, Any]:
+    manifest = definition.manifest
+    payload: dict[str, Any] = {
+        "family": definition.family,
+        "id": definition.id,
+        "version": manifest.version,
+        "callable": definition.callable_name,
+        "source_hash": definition.identity.source_hash,
+        "source": definition.identity.public(),
+        "inputs": list(manifest.input_names),
+        "params": {
+            "names": list(manifest.param_names),
+            "defaults": dict(manifest.defaults),
+            "param_space": {
+                "available": manifest.param_space_callable is not None,
+                "callable": manifest.param_space_callable,
+            },
+        },
+    }
+    if definition.family == "indicators":
+        payload["outputs"] = list(manifest.output_names)
+        payload["bar_aligned"] = manifest.bar_aligned
+    else:
+        payload["signal_outputs"] = list(manifest.signal_outputs)
+        payload["consumes_outputs"] = list(manifest.consumes_outputs)
+        payload["owns_portfolio"] = manifest.owns_portfolio
+    return payload
 
 
 def load_component_attribute(definition: ComponentDefinition, attribute_name: str) -> Any:

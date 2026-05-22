@@ -324,6 +324,29 @@ def test_run_accepts_component_lock_and_candidate_refs(tmp_path: Path) -> None:
     assert resolved.config.indicators[0].run_id == "source-run"
 
 
+def test_run_rejects_params_on_locked_component_refs(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["strategy"] = {"id": "demo.strategy", "lock_id": "lock_strategy_best", "params": {}}
+    raw["indicators"] = [
+        {
+            "id": "demo.returns",
+            "candidate_id": "cand_indicator_row",
+            "run_id": "source-run",
+            "params": {"window": 5},
+        }
+    ]
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "strategy.params" in str(error.value)
+    assert "indicators[0].params" in str(error.value)
+    assert "must not be set when lock_id or candidate_id is set" in str(error.value)
+
+
 def test_run_rejects_component_lock_and_candidate_together(tmp_path: Path) -> None:
     raw = _run_config()
     raw["strategy"] = {
@@ -607,6 +630,6 @@ def _write_strategy_component(path: Path) -> None:
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
-        "    \"\"\"Return fixed strategy signals for config validation tests.\"\"\"\n"
+        '    """Return fixed strategy signals for config validation tests."""\n'
         "    raise RuntimeError('not executed during config tests')\n"
     )
