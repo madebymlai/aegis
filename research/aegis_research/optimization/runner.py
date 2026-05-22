@@ -104,7 +104,6 @@ def execute_optimization(
         has_open_prices=open_prices is not None,
     )
     parameterized_kwargs = _build_parameterized_kwargs(optimization)
-    sampled_index = _build_sampled_index(source.params, optimization)
     return_grid_mode = optimization.evidence.return_grid
     return_grid_kw: str | None = return_grid_mode if return_grid_mode != "off" else None
     selection_fn = _build_selection_function(
@@ -147,20 +146,22 @@ def execute_optimization(
             held_out_grid = None
     canonical_selection = _canonicalize_role_index(selection_series)
     winner_param_index = _extract_param_index(canonical_selection.index)
-    _verify_evaluated_subset(
-        evaluated=winner_param_index,
-        sampled=sampled_index,
-        label="selection winners",
-    )
     if selection_grid is not None:
-        evaluated_index = _extract_param_index(selection_grid.index)
+        sampled_index = _extract_param_index(selection_grid.index)
         _verify_evaluated_subset(
-            evaluated=evaluated_index,
+            evaluated=winner_param_index,
             sampled=sampled_index,
-            label="selection grid",
+            label="selection winners",
         )
+        evaluated_index = sampled_index
         sampled_rows_source = SAMPLED_ROWS_SOURCE_RESULT_GRID
     else:
+        sampled_index = _build_sampled_index(source.params, optimization)
+        _verify_evaluated_subset(
+            evaluated=winner_param_index,
+            sampled=sampled_index,
+            label="selection winners",
+        )
         evaluated_index = sampled_index
         sampled_rows_source = SAMPLED_ROWS_SOURCE_PRECOMPUTED
     return OptimizationRun(
@@ -258,40 +259,59 @@ def _build_cv_callable(
     if has_open_prices:
 
         def cv_callable(close_slice, open_slice, **params):
-            pipeline_output = pipeline(close_slice, **params)
-            if pipeline_output is vbt.NoResult:
-                return vbt.NoResult
-            entries, exits = _coerce_pipeline_signals(pipeline_output)
-            result = simulate_portfolio(
-                close_slice,
-                entries,
-                exits,
-                portfolio,
-                signal,
-                open_prices=open_slice,
+            return _evaluate_cv_slice(
+                close_slice=close_slice,
+                open_slice=open_slice,
+                pipeline=pipeline,
+                portfolio=portfolio,
+                signal=signal,
+                report=report,
                 market_index=market_index,
+                params=params,
             )
-            return _central_metric_series(result.portfolio, report)
 
         return cv_callable, ["close_slice", "open_slice"]
 
     def cv_callable_no_open(close_slice, **params):
-        pipeline_output = pipeline(close_slice, **params)
-        if pipeline_output is vbt.NoResult:
-            return vbt.NoResult
-        entries, exits = _coerce_pipeline_signals(pipeline_output)
-        result = simulate_portfolio(
-            close_slice,
-            entries,
-            exits,
-            portfolio,
-            signal,
-            open_prices=None,
+        return _evaluate_cv_slice(
+            close_slice=close_slice,
+            open_slice=None,
+            pipeline=pipeline,
+            portfolio=portfolio,
+            signal=signal,
+            report=report,
             market_index=market_index,
+            params=params,
         )
-        return _central_metric_series(result.portfolio, report)
 
     return cv_callable_no_open, ["close_slice"]
+
+
+def _evaluate_cv_slice(
+    *,
+    close_slice: pd.DataFrame,
+    open_slice: pd.DataFrame | None,
+    pipeline: Any,
+    portfolio: PortfolioConfig,
+    signal: SignalConfig,
+    report: ReportConfig,
+    market_index: pd.Index,
+    params: Mapping[str, Any],
+) -> Any:
+    pipeline_output = pipeline(close_slice, **params)
+    if pipeline_output is vbt.NoResult:
+        return vbt.NoResult
+    entries, exits = _coerce_pipeline_signals(pipeline_output)
+    result = simulate_portfolio(
+        close_slice,
+        entries,
+        exits,
+        portfolio,
+        signal,
+        open_prices=open_slice,
+        market_index=market_index,
+    )
+    return _central_metric_series(result.portfolio, report)
 
 
 def _coerce_pipeline_signals(value: Any) -> tuple[pd.DataFrame, pd.DataFrame]:

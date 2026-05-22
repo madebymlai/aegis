@@ -10,6 +10,8 @@ from typing import Any
 import pandas as pd
 
 from research.aegis_research.component_registry import (
+    COMPONENT_FAMILIES,
+    ComponentFamily,
     ComponentSelection,
     FrozenComponentRegistry,
 )
@@ -37,8 +39,10 @@ from research.aegis_research.data_arrays import (
 )
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import (
+    ComponentSourceError,
     build_component_optimization_source,
     component_param_slices,
+    component_params_from_slices,
     component_ref_key,
 )
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
@@ -471,18 +475,20 @@ def _component_promotion_records(
     component_slices = component_param_slices(candidate_params)
     records: list[dict[str, Any]] = []
     for runtime in _promotion_runtime_records(optimization_source):
-        component_family = str(runtime["family"])
+        component_family = _component_family(runtime["family"])
         component_id = str(runtime["id"])
         component_slot = str(runtime["slot"])
-        params = dict(runtime.get("fixed_params", {}))
-        slice_key = (component_family, component_id, component_slot)
-        params.update(component_slices.get(slice_key, {}))
-        missing = sorted(set(runtime.get("param_keys", {})) - set(params))
-        if missing:
-            raise OptimizationSourceError(
-                f"candidate {candidate_key} is missing promotion params for component "
-                f"{component_family}/{component_id} slot {component_slot!r}: {missing}"
+        try:
+            params = component_params_from_slices(
+                component_family=component_family,
+                component_id=component_id,
+                component_slot=component_slot,
+                component_slices=component_slices,
+                runtime=runtime,
+                candidate_key=candidate_key,
             )
+        except ComponentSourceError as error:
+            raise OptimizationSourceError(str(error)) from error
         token = _component_promotion_token(
             run_id=run_id,
             rank=1,
@@ -529,6 +535,12 @@ def _promotion_runtime_records(optimization_source: Mapping[str, Any]) -> list[d
         if isinstance(runtime, Mapping):
             runtimes.append(dict(runtime))
     return runtimes
+
+
+def _component_family(value: Any) -> ComponentFamily:
+    if value not in COMPONENT_FAMILIES:
+        raise OptimizationSourceError(f"unknown component family in optimization source: {value!r}")
+    return value
 
 
 def _component_promotion_token(

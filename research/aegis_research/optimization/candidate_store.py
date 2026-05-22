@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -48,43 +48,67 @@ class CandidateStore:
         rank_scope = _rank_scope(leaderboard)
         ranking_metric = str(leaderboard["ranking_metric"])
         ranking_direction = str(leaderboard["ranking_direction"])
+        candidate_values = [
+            _candidate_insert_values(run_id=run_id, row=row, provenance=provenance)
+            for row in candidate_rows
+        ]
+        candidate_payloads = [(value[1], value[6]) for value in candidate_values]
+        ranking_values = [
+            (
+                run_id,
+                rank_scope,
+                str(row["candidate_key"]),
+                rank,
+                ranking_metric,
+                ranking_direction,
+                _float_or_none(row.get("ranking_metric_value")),
+                _metric_sort_value(row.get("ranking_metric_value"), ranking_direction),
+                _json_dumps(row.get("metrics", {})),
+                _json_dumps(row),
+            )
+            for rank, row in enumerate(leaderboard.get("rows", ()), start=1)
+        ]
         with self._connection:
-            for row in candidate_rows:
-                self._insert_candidate(run_id=run_id, row=row, provenance=provenance)
+            self._connection.executemany(
+                """
+                INSERT OR IGNORE INTO candidates (
+                    run_id,
+                    candidate_key,
+                    row_index,
+                    params_json,
+                    identity_json,
+                    store_namespace_json,
+                    candidate_row_json,
+                    provenance_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                candidate_values,
+            )
+            self._assert_candidate_payloads_match(
+                run_id=run_id,
+                candidate_payloads=candidate_payloads,
+            )
             self._connection.execute(
                 "DELETE FROM candidate_rankings WHERE run_id = ? AND rank_scope = ?",
                 (run_id, rank_scope),
             )
-            for rank, row in enumerate(leaderboard.get("rows", ()), start=1):
-                candidate_key = str(row["candidate_key"])
-                self._connection.execute(
-                    """
-                    INSERT INTO candidate_rankings (
-                        run_id,
-                        rank_scope,
-                        candidate_key,
-                        rank,
-                        ranking_metric,
-                        ranking_direction,
-                        ranking_metric_value,
-                        metric_sort_value,
-                        metrics_json,
-                        leaderboard_row_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        run_id,
-                        rank_scope,
-                        candidate_key,
-                        rank,
-                        ranking_metric,
-                        ranking_direction,
-                        _float_or_none(row.get("ranking_metric_value")),
-                        _metric_sort_value(row.get("ranking_metric_value"), ranking_direction),
-                        _json_dumps(row.get("metrics", {})),
-                        _json_dumps(row),
-                    ),
-                )
+            self._connection.executemany(
+                """
+                INSERT INTO candidate_rankings (
+                    run_id,
+                    rank_scope,
+                    candidate_key,
+                    rank,
+                    ranking_metric,
+                    ranking_direction,
+                    ranking_metric_value,
+                    metric_sort_value,
+                    metrics_json,
+                    leaderboard_row_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ranking_values,
+            )
 
     def insert_promotion(
         self,
@@ -306,49 +330,43 @@ class CandidateStore:
             """
         )
 
-    def _insert_candidate(
+    def _assert_candidate_payloads_match(
         self,
         *,
         run_id: str,
-        row: Mapping[str, Any],
-        provenance: Mapping[str, Any],
+        candidate_payloads: Sequence[tuple[Any, Any]],
     ) -> None:
-        candidate_key = str(row["candidate_key"])
-        candidate_row_json = _json_dumps(row)
-        existing = self._connection.execute(
-            "SELECT candidate_row_json FROM candidates WHERE run_id = ? AND candidate_key = ?",
-            (run_id, candidate_key),
-        ).fetchone()
-        if existing is not None:
-            if existing["candidate_row_json"] != candidate_row_json:
+        expected_payloads: dict[str, str] = {}
+        for candidate_key_value, payload_value in candidate_payloads:
+            candidate_key = str(candidate_key_value)
+            payload = str(payload_value)
+            existing_payload = expected_payloads.setdefault(candidate_key, payload)
+            if existing_payload != payload:
                 raise CandidateStoreError(
                     f"candidate {candidate_key} already exists for run {run_id} with different payload"
                 )
-            return
-        self._connection.execute(
-            """
-            INSERT INTO candidates (
-                run_id,
-                candidate_key,
-                row_index,
-                params_json,
-                identity_json,
-                store_namespace_json,
-                candidate_row_json,
-                provenance_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                candidate_key,
-                int(row["row_index"]),
-                _json_dumps(row["params"]),
-                _json_dumps(row["identity"]),
-                _json_dumps(row.get("store_namespace", {})),
-                candidate_row_json,
-                _json_dumps(provenance),
-            ),
-        )
+
+        for candidate_keys in _chunks(tuple(expected_payloads), 500):
+            placeholders = ",".join("?" for _ in candidate_keys)
+            rows = self._connection.execute(
+                f"""
+                SELECT candidate_key, candidate_row_json
+                FROM candidates
+                WHERE run_id = ? AND candidate_key IN ({placeholders})
+                """,
+                (run_id, *candidate_keys),
+            ).fetchall()
+            stored_payloads = {row["candidate_key"]: row["candidate_row_json"] for row in rows}
+            missing = sorted(set(candidate_keys) - set(stored_payloads))
+            if missing:
+                raise CandidateStoreError(
+                    f"candidate rows were not persisted for run {run_id}: {missing[:5]}"
+                )
+            for candidate_key in candidate_keys:
+                if stored_payloads[candidate_key] != expected_payloads[candidate_key]:
+                    raise CandidateStoreError(
+                        f"candidate {candidate_key} already exists for run {run_id} with different payload"
+                    )
 
     def _candidate_lookup(self, candidate_key: str, *, run_id: str | None) -> sqlite3.Row:
         if run_id is None:
@@ -398,6 +416,29 @@ def _rank_scope(leaderboard: Mapping[str, Any]) -> str:
             "weight_basis": leaderboard.get("weight_basis"),
         }
     )
+
+
+def _candidate_insert_values(
+    *,
+    run_id: str,
+    row: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+) -> tuple[Any, ...]:
+    return (
+        run_id,
+        str(row["candidate_key"]),
+        int(row["row_index"]),
+        _json_dumps(row["params"]),
+        _json_dumps(row["identity"]),
+        _json_dumps(row.get("store_namespace", {})),
+        _json_dumps(row),
+        _json_dumps(provenance),
+    )
+
+
+def _chunks(values: Sequence[str], size: int) -> Iterator[tuple[str, ...]]:
+    for start in range(0, len(values), size):
+        yield tuple(values[start : start + size])
 
 
 def _ranked_result(row: sqlite3.Row) -> dict[str, Any]:

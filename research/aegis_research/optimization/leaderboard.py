@@ -160,7 +160,7 @@ def build_optimization_leaderboard(
 
 
 def _canonical_params_key(params: Mapping[str, Any]) -> str:
-    canonical = {str(key): _canonical_value(value) for key in sorted(params) for value in [params[key]]}
+    canonical = {str(key): _canonical_value(params[key]) for key in sorted(params)}
     return json.dumps(canonical, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 

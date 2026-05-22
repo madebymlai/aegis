@@ -8,6 +8,7 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry import (
+    COMPONENT_FAMILIES,
     ComponentDefinition,
     ComponentFamily,
     ComponentSelection,
@@ -85,7 +86,7 @@ def parse_component_param_key(key: str) -> dict[str, str]:
     component_id = _decode_namespace_part(encoded_component_id)
     slot = _decode_namespace_part(encoded_slot)
     param_name = _decode_namespace_part(encoded_param_name)
-    if family not in {"indicators", "strategies"}:
+    if family not in COMPONENT_FAMILIES:
         raise ComponentSourceError(f"unsupported component param family: {family!r}")
     return {
         "family": family,
@@ -115,6 +116,27 @@ def component_param_slices(param_row: Mapping[str, Any]) -> dict[tuple[str, str,
         slice_key = (parsed["family"], parsed["component_id"], parsed["slot"])
         slices.setdefault(slice_key, {})[parsed["param_name"]] = value
     return slices
+
+
+def component_params_from_slices(
+    *,
+    component_family: ComponentFamily,
+    component_id: str,
+    component_slot: str,
+    component_slices: Mapping[tuple[str, str, str], Mapping[str, Any]],
+    runtime: Mapping[str, Any],
+    candidate_key: str,
+) -> dict[str, Any]:
+    params = dict(runtime.get("fixed_params", {}))
+    slice_key = (component_family, component_id, component_slot)
+    params.update(component_slices.get(slice_key, {}))
+    missing = sorted(set(runtime.get("param_keys", {})) - set(params))
+    if missing:
+        raise ComponentSourceError(
+            f"candidate {candidate_key} is missing params for component "
+            f"{component_family}/{component_id} slot {component_slot!r}: {missing}"
+        )
+    return params
 
 
 def build_component_optimization_source(
@@ -206,7 +228,18 @@ def _build_runtime(
     resolved_component_params: ResolvedComponentParams,
 ) -> _ComponentRuntime:
     definition = component_registry.get(ComponentSelection(family, ref.id))
-    param_space = {} if _is_locked(ref) else _load_param_space(definition)
+    param_space_callable_name = (
+        None if _is_locked(ref) else getattr(definition.manifest, "param_space_callable", None)
+    )
+    attribute_names = [definition.callable_name]
+    if param_space_callable_name is not None:
+        attribute_names.append(param_space_callable_name)
+    attributes = definition.load_attributes(attribute_names)
+    param_space = (
+        {}
+        if param_space_callable_name is None
+        else _load_param_space(definition, attributes[param_space_callable_name])
+    )
     fixed_params = _fixed_params_for_ref(
         family,
         slot,
@@ -226,7 +259,7 @@ def _build_runtime(
         slot=slot,
         ref=ref,
         definition=definition,
-        callable=definition.load_callable(),
+        callable=attributes[definition.callable_name],
         fixed_params=fixed_params,
         param_space=dict(param_space),
         param_keys=param_keys,
@@ -270,11 +303,11 @@ def _is_locked(ref: RunSourceRefConfig | RunIndicatorSourceConfig) -> bool:
     return ref.lock_id is not None or ref.candidate_id is not None
 
 
-def _load_param_space(definition: ComponentDefinition) -> dict[str, vbt.Param]:
-    callable_name = getattr(definition.manifest, "param_space_callable", None)
-    if callable_name is None:
-        return {}
-    result = definition.load_attribute(callable_name)()
+def _load_param_space(
+    definition: ComponentDefinition,
+    param_space_callable: Any,
+) -> dict[str, vbt.Param]:
+    result = param_space_callable()
     if not isinstance(result, Mapping):
         raise ComponentSourceError(
             f"component {definition.family}/{definition.id} param space must return a mapping"

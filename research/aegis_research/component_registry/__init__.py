@@ -14,6 +14,7 @@ from research.aegis_research.component_registry.registry import (
     FrozenComponentRegistry,
     discover_component_registry,
     load_component_attribute,
+    load_component_attributes,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "StrategyManifest",
     "discover_component_registry",
     "load_component_attribute",
+    "load_component_attributes",
 ]

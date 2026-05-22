@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from enum import Enum
 from typing import Any
 
@@ -70,13 +70,13 @@ def candidate_rows_from_param_index(
     return rows
 
 
-def _index_rows(index: pd.Index) -> tuple[tuple[str, ...], list[tuple[Any, ...]]]:
+def _index_rows(index: pd.Index) -> tuple[tuple[str, ...], Iterable[tuple[Any, ...]]]:
     if isinstance(index, pd.MultiIndex):
         return (
             tuple(_level_name(name, position) for position, name in enumerate(index.names)),
-            [tuple(row) for row in index],
+            index,
         )
-    return ((_level_name(index.name, 0),), [(value,) for value in index])
+    return ((_level_name(index.name, 0),), ((value,) for value in index))
 
 
 def _level_name(name: Any, position: int) -> str:

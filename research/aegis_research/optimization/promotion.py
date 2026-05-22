@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from research.aegis_research.component_registry import ComponentFamily
 from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
@@ -10,6 +11,7 @@ from research.aegis_research.optimization.candidate_store import (
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
     component_param_slices,
+    component_params_from_slices,
 )
 
 
@@ -19,7 +21,7 @@ class PromotionResolutionError(ValueError):
 
 @dataclass(frozen=True)
 class ComponentPromotionRef:
-    component_family: str
+    component_family: ComponentFamily
     component_id: str
     component_slot: str
     lock_id: str | None = None
@@ -30,7 +32,7 @@ class ComponentPromotionRef:
 @dataclass(frozen=True)
 class ResolvedPromotion:
     reference_kind: str
-    component_family: str
+    component_family: ComponentFamily
     component_id: str
     component_slot: str
     candidate_key: str
@@ -121,20 +123,18 @@ def _component_params_from_candidate(
     provenance: dict[str, Any],
 ) -> dict[str, Any]:
     runtime = _candidate_component_runtime(ref, provenance)
-    params = dict(runtime.get("fixed_params", {}))
     try:
         slices = component_param_slices(candidate_params)
+        return component_params_from_slices(
+            component_family=ref.component_family,
+            component_id=ref.component_id,
+            component_slot=ref.component_slot,
+            component_slices=slices,
+            runtime=runtime,
+            candidate_key=str(ref.candidate_id),
+        )
     except ComponentSourceError as error:
         raise PromotionResolutionError(str(error)) from error
-    slice_key = (ref.component_family, ref.component_id, ref.component_slot)
-    params.update(slices.get(slice_key, {}))
-    missing = sorted(set(runtime.get("param_keys", {})) - set(params))
-    if missing:
-        raise PromotionResolutionError(
-            f"candidate key {ref.candidate_id!r} is missing params for component "
-            f"{ref.component_family}/{ref.component_id} slot {ref.component_slot!r}: {missing}"
-        )
-    return params
 
 
 def _candidate_component_runtime(

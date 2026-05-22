@@ -1,25 +1,21 @@
 """Optimization source contract.
 
-#31 scope: signal-side parameter optimization only. A source exposes a
+Signal-side parameter optimization only. A source exposes a
 ``pipeline`` callable plus a ``params`` mapping of ``vbt.Param`` axes; VBT
 sweeps that grid via ``vbt.cv_split`` and Aegis computes central portfolio
 metrics from the returned (entries, exits) signals.
 
-Limitations carried by this contract (R18 follow-up):
+Limitations carried by this contract:
 
 - Portfolio-side params (``sl_stop``, ``tp_stop``, ``fees``, ``slippage``,
   ``init_cash``, ``entry_budget``, ``direction``) cannot currently be wrapped
   in ``vbt.Param``. ``simulate_portfolio`` receives a static
   ``PortfolioConfig`` per run, so any portfolio-axis sweep would not flow
-  through the Aegis-owned portfolio policy boundary. Issue #32 will extend
-  the source contract with an optional portfolio-param hook that threads
-  ``vbt.Param`` values into ``Portfolio.from_signals`` while preserving
-  long-only, entry-budget, next-open validation, and shared-cash grouping.
+  through the Aegis-owned portfolio policy boundary.
 
 - Hidden params (``vbt.Param(..., hide=True)``) are rejected at validation
   time. They are excluded from the VBT result index, so candidate identity
-  would silently collapse across hidden values. #32 will materialize hidden
-  values into ``hidden_params`` on candidate evidence.
+  would silently collapse across hidden values.
 
 - Component-native optimization composes configured indicator and strategy
   components before this generic runner contract. Legacy playbook optimization
@@ -138,10 +134,8 @@ def _source_params(value: Any) -> dict[str, vbt.Param]:
             raise OptimizationSourceError(
                 f"optimization param {name!r} has hide=True, which excludes it from the "
                 "VBT result index; candidate identity would then collapse different "
-                "values to the same candidate_key. Hidden params are deferred to #32 "
-                "(which materializes hidden_params alongside the param index). For now, "
-                "remove hide=True or fold the hidden axis into the pipeline as a "
-                "fixed constant."
+                "values to the same candidate_key. For now, remove hide=True or fold "
+                "the hidden axis into the pipeline as a fixed constant."
             )
         params[name] = param
     return params

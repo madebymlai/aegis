@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -91,3 +91,8 @@ class ComponentDefinition:
         from research.aegis_research.component_registry.registry import load_component_attribute
 
         return load_component_attribute(self, attribute_name)
+
+    def load_attributes(self, attribute_names: Sequence[str]) -> dict[str, Any]:
+        from research.aegis_research.component_registry.registry import load_component_attributes
+
+        return load_component_attributes(self, tuple(attribute_names))
