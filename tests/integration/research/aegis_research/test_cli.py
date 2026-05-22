@@ -87,7 +87,7 @@ def test_show_components_lists_registry_json(
     assert payload["status"] == "success"
     assert payload["schema_version"] == "component_registry_snapshot.v1"
     assert payload["fingerprint"]
-    assert strategy["signal_outputs"] == ["entries", "exits"]
+    assert strategy["output_name"] == "active"
     assert strategy["params"]["param_space"]["available"] is False
     assert indicator["outputs"] == ["returns"]
 

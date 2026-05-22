@@ -401,12 +401,12 @@ def _write_run_config(
                 "output_dir": "runs",
                 "data": {
                     "source": "synthetic",
-                    "symbols": ["SYN"],
+                    "symbols": ["SYN", "SYN2"],
                     "rows": 80,
                     "arrays": arrays or ["OHLCV"],
                 }
                 | (data or {}),
-                "portfolio": {"entry_budget": 1.0},
+                "portfolio": {"target_exposure_cap": 1.0},
                 "strategy": {"id": strategy_id},
                 "indicators": indicators or [],
                 "ranking": {"metric": "total_return", "direction": "desc"},
@@ -448,18 +448,21 @@ def _write_strategy_component(path: Path) -> None:
         "# Source: synthetic Close data supplied by the run config.\n"
         "\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.cross', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
+        "'output_name': 'active', 'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
-        '    """Generate fixed moving-average crossover entry and exit signals."""\n'
+        '    """Emit a deterministic active allocation frame from a fixed MA crossover."""\n'
         "    close = bundle.data.feature('Close')\n"
-        "    entries = close > close.rolling(3).mean()\n"
-        "    exits = close < close.rolling(3).mean()\n"
-        "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
+        "    selected = close.gt(close.rolling(3).mean()).fillna(False)\n"
+        "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
+        "    active.loc[:] = selected.astype(object)\n"
+        "    return active\n"
     )
 
 
@@ -531,20 +534,23 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "# Source: synthetic Close data supplied by the run config.\n"
         "\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.uses_ma', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'signal_outputs': ['entries', 'exits'], 'consumes_outputs': ['ma'], "
+        "'output_name': 'active', 'consumes_outputs': ['ma'], "
         "'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
-        '    """Generate signals from the selected moving-average indicator."""\n'
+        '    """Emit an active allocation frame from the selected MA indicator."""\n'
         "    ma = bundle.indicators['ma']\n"
         "    close = bundle.data.feature('Close')\n"
-        "    entries = close > ma\n"
-        "    exits = close < ma\n"
-        "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
+        "    selected = close.gt(ma).fillna(False)\n"
+        "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
+        "    active.loc[:] = selected.astype(object)\n"
+        "    return active\n"
     )
 
 
@@ -556,17 +562,21 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         "# Source: synthetic Close data supplied by the run config.\n"
         "\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.uses_all', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
+        "'output_name': 'active', 'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
-        '    """Generate signals from fixed fast and slow indicator outputs."""\n'
+        '    """Emit an active allocation frame from fast and slow indicator outputs."""\n'
         "    fast = bundle.indicators['demo.fast']\n"
         "    slow = bundle.indicators['demo.slow']\n"
-        "    entries = fast >= slow\n"
-        "    exits = fast < slow\n"
-        "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
+        "    close = bundle.data.feature('Close')\n"
+        "    selected = fast.ge(slow).fillna(False)\n"
+        "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
+        "    active.loc[:] = selected.astype(object)\n"
+        "    return active\n"
     )

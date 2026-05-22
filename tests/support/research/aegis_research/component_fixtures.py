@@ -30,15 +30,18 @@ def write_strategy_component(path: Path) -> None:
         "# Source: synthetic Close data supplied by the test fixture.\n"
         "\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'signal_outputs': ['entries', 'exits']}\n"
+        "'input_names': ['Close'], 'output_name': 'active', 'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(inputs):\n"
-        '    """Emit a deterministic long-only signal for fixture runs."""\n'
+        '    """Emit a deterministic active allocation frame for fixture runs."""\n'
         "    close = inputs.data.feature('Close')\n"
-        "    entries = close.gt(close.shift(1)).fillna(False)\n"
-        "    exits = close.lt(close.shift(1)).fillna(False)\n"
-        "    return {'entries': entries, 'exits': exits}\n"
+        "    selected = close.gt(close.shift(1)).fillna(False)\n"
+        "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
+        "    active.loc[:] = selected.astype(object)\n"
+        "    return active\n"
     )

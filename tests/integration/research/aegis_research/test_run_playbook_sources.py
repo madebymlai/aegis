@@ -386,11 +386,11 @@ def _run_config_payload(
         "output_dir": "runs",
         "data": {
             "source": "synthetic",
-            "symbols": ["SYN"],
+            "symbols": ["SYN", "SYN2"],
             "rows": 80,
             "arrays": ["OHLCV"],
         },
-        "portfolio": {"entry_budget": 1.0},
+        "portfolio": {"target_exposure_cap": 1.0},
         "strategy": strategy,
         "indicators": indicators,
         "ranking": {"metric": "total_return", "direction": "desc"},
@@ -427,11 +427,13 @@ def _write_parameterized_strategy_component(
         "# Source: synthetic Close data supplied by the run config.\n"
         "\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
         "from vectorbtpro import vbt\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.ma_opt', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['fast_window', 'slow_window'], "
-        "'signal_outputs': ['entries', 'exits'], "
+        "'output_name': 'active', "
         "'defaults': {'fast_window': 2, 'slow_window': 5}, "
         "'param_space_callable': 'param_space', 'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
@@ -441,7 +443,7 @@ def _write_parameterized_strategy_component(
         f"'slow_window': vbt.Param({slow_values!r})}}\n"
         "\n# %% main compute\n"
         "def run(inputs, fast_window, slow_window):\n"
-        '    """Generate moving-average crossover signals."""\n'
+        '    """Emit an active allocation frame from fixed MA crossover params."""\n'
         + (
             "    raise RuntimeError('component should not execute after preflight failure')\n"
             if fail_if_executed
@@ -450,7 +452,10 @@ def _write_parameterized_strategy_component(
         + "    close = inputs.data.feature('Close')\n"
         "    fast = close.rolling(int(fast_window), min_periods=1).mean()\n"
         "    slow = close.rolling(int(slow_window), min_periods=1).mean()\n"
-        "    return {'entries': fast.gt(slow), 'exits': fast.lt(slow)}\n"
+        "    selected = fast.gt(slow).fillna(False)\n"
+        "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
+        "    active.loc[:] = selected.astype(object)\n"
+        "    return active\n"
     )
 
 
@@ -466,7 +471,7 @@ def _write_runtime_error_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.ma_boom', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['window'], "
-        "'signal_outputs': ['entries', 'exits'], "
+        "'output_name': 'active', 'owns_portfolio': False, "
         "'defaults': {'window': 2}, 'param_space_callable': 'param_space'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% parameter space\n"
