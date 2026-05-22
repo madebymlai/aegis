@@ -36,7 +36,7 @@ def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
         strategy=RunSourceRefConfig(id="demo.strategy"),
         indicators=[RunIndicatorSourceConfig(id="demo.indicator")],
         ranking=RankingConfig(metric="sharpe_ratio", direction="desc"),
-        portfolio=PortfolioConfig(entry_budget=1.0),
+        portfolio=PortfolioConfig(target_exposure_cap=1.0),
         optimization=OptimizationConfig(
             search="grid",
             split=RunSplitConfig(
@@ -61,7 +61,7 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
                 "strategy: {}",
                 "strategy: {}",
                 "portfolio:",
-                "  entry_budget: 1.0",
+                "  target_exposure_cap: 1.0",
             ]
         )
     )
@@ -412,7 +412,7 @@ def _run_config() -> dict[str, object]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "strategy_demo",
         "data": {"source": "synthetic", "rows": 50, "arrays": ["OHLCV"]},
-        "portfolio": {"entry_budget": 1.0},
+        "portfolio": {"target_exposure_cap": 1.0},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.indicator"}],
         "ranking": {"metric": "sharpe_ratio", "direction": "desc"},
@@ -471,7 +471,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
         return {
             **base,
             "input_names": ["Close"],
-            "signal_outputs": ["entries", "exits"],
+            "output_name": "active",
             "owns_portfolio": False,
         }
     raise AssertionError(family)

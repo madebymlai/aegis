@@ -56,6 +56,72 @@ def test_resolved_run_config_attaches_default_metric_registry(tmp_path: Path) ->
     assert reresolved.metric_registry is not None
 
 
+def test_removed_entry_budget_field_fails_as_unknown_field(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["portfolio"] = {"entry_budget": 0.6}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    paths = [issue.path for issue in error.value.issues]
+    assert "portfolio.entry_budget" in paths
+    entry_budget_issue = next(
+        issue for issue in error.value.issues if issue.path == "portfolio.entry_budget"
+    )
+    assert "renamed to portfolio.target_exposure_cap" in entry_budget_issue.message
+
+
+def test_portfolio_target_exposure_cap_validates(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["portfolio"] = {"target_exposure_cap": 0.8}
+
+    resolved = resolve_run_config(
+        raw,
+        component_registry=_component_registry(tmp_path),
+    )
+
+    assert resolved.config.portfolio.target_exposure_cap == 0.8
+
+
+@pytest.mark.parametrize("value", [0.0, -0.1, 1.5, 2.0])
+def test_portfolio_target_exposure_cap_out_of_range_fails(
+    tmp_path: Path,
+    value: float,
+) -> None:
+    raw = _run_config()
+    raw["portfolio"] = {"target_exposure_cap": value}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "portfolio.target_exposure_cap" in str(error.value)
+
+
+def test_portfolio_rejects_entry_budget_when_target_exposure_cap_also_present(
+    tmp_path: Path,
+) -> None:
+    raw = _run_config()
+    raw["portfolio"] = {"entry_budget": 0.6, "target_exposure_cap": 0.8}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    portfolio_issues = [
+        issue for issue in error.value.issues if issue.path.startswith("portfolio.")
+    ]
+    assert portfolio_issues[0].path == "portfolio.entry_budget"
+    assert "renamed to portfolio.target_exposure_cap" in portfolio_issues[0].message
+
+
 def test_run_config_rejects_removed_labeler_field(tmp_path: Path) -> None:
     raw = _run_config()
     raw["labeler"] = {"id": "demo.fixlb"}
@@ -182,7 +248,7 @@ def test_legacy_train_shape_is_not_a_run_config(tmp_path: Path) -> None:
                 "name": "legacy_shape",
                 "labels": {"generator": {"kind": "fixlb"}},
                 "model": {"plugin_id": "aegis.sklearn_logistic"},
-                "portfolio": {"entry_budget": 1.0},
+                "portfolio": {"target_exposure_cap": 1.0},
             },
             component_registry=_component_registry(tmp_path),
         )
@@ -204,7 +270,7 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
                 "data:",
                 "  source: synthetic",
                 "portfolio:",
-                "  entry_budget: 1.0",
+                "  target_exposure_cap: 1.0",
                 "strategy: {}",
                 "indicators: []",
                 "",
@@ -588,7 +654,7 @@ def _run_config() -> dict[str, object]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "canonical_run",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
-        "portfolio": {"entry_budget": 1.0},
+        "portfolio": {"target_exposure_cap": 1.0},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return", "direction": "desc"},
@@ -625,7 +691,7 @@ def _write_strategy_component(path: Path) -> None:
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'signal_outputs': ['entries', 'exits'], "
+        "'input_names': ['Close'], 'output_name': 'active', "
         "'consumes_outputs': ['returns']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
