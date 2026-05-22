@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from research.aegis_research.configuration.schema import (
-    CandidateGridConfig,
     DataConfig,
     DataQualityConfig,
+    OptimizationConfig,
+    OptimizationEvidenceConfig,
     PortfolioConfig,
     RankingConfig,
     ReportConfig,
@@ -26,24 +27,33 @@ def _build_run_config(raw: dict[str, Any]) -> RunConfig:
         strategy=_build_run_source_ref(raw["strategy"]),
         indicators=_build_run_indicator_sources(raw["indicators"]),
         ranking=_build_ranking(raw["ranking"]),
-        split=_build_run_split(raw.get("split")),
-        candidate_grid=CandidateGridConfig(**raw.get("candidate_grid", {})),
+        optimization=_build_optimization(raw.get("optimization")),
         output_dir=raw.get("output_dir", "runs"),
     )
 
 
 def _build_run_source_ref(raw: dict[str, Any]) -> RunSourceRefConfig:
-    return RunSourceRefConfig(source=raw["source"], id=raw["id"])
+    return RunSourceRefConfig(
+        id=raw["id"],
+        lock_id=raw.get("lock_id"),
+        candidate_id=raw.get("candidate_id"),
+        run_id=raw.get("run_id"),
+        params=dict(raw.get("params", {})),
+    )
 
 
 def _build_run_indicator_sources(raw: list[dict[str, Any]]) -> list[RunIndicatorSourceConfig]:
     refs: list[RunIndicatorSourceConfig] = []
     for item in raw:
-        ids = item["ids"]
-        if ids == "all":
-            refs.append(RunIndicatorSourceConfig(source=item["source"], ids="all"))
-            continue
-        refs.append(RunIndicatorSourceConfig(source=item["source"], ids=list(ids)))
+        refs.append(
+            RunIndicatorSourceConfig(
+                id=item["id"],
+                lock_id=item.get("lock_id"),
+                candidate_id=item.get("candidate_id"),
+                run_id=item.get("run_id"),
+                params=dict(item.get("params", {})),
+            )
+        )
     return refs
 
 
@@ -65,6 +75,26 @@ def _build_run_split(raw: dict[str, Any] | None) -> RunSplitConfig | None:
         max_estimated_output_cells=raw.get("max_estimated_output_cells", 25_000_000),
         max_public_artifact_bytes=raw.get("max_public_artifact_bytes", 10_000_000),
     )
+
+
+def _build_optimization(raw: dict[str, Any] | None) -> OptimizationConfig | None:
+    if raw is None:
+        return None
+    split = _build_run_split(raw["split"])
+    if split is None:
+        raise ValueError("optimization.split is required")
+    return OptimizationConfig(
+        search=raw["search"],
+        split=split,
+        random_subset=raw.get("random_subset"),
+        seed=raw.get("seed"),
+        execute=dict(raw.get("execute", {})),
+        evidence=_build_optimization_evidence(raw.get("evidence", {})),
+    )
+
+
+def _build_optimization_evidence(raw: dict[str, Any]) -> OptimizationEvidenceConfig:
+    return OptimizationEvidenceConfig(return_grid=raw.get("return_grid", "first"))
 
 
 def _build_data_config(raw: dict[str, Any]) -> DataConfig:

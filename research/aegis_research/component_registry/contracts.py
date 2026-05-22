@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -47,13 +47,19 @@ class IndicatorManifest(ComponentManifest):
     input_names: tuple[str, ...]
     param_names: tuple[str, ...]
     output_names: tuple[str, ...]
+    defaults: Mapping[str, Any]
+    param_space_callable: str | None = None
     bar_aligned: bool = True
 
 
 @dataclass(frozen=True)
 class StrategyManifest(ComponentManifest):
     input_names: tuple[str, ...]
+    param_names: tuple[str, ...]
     signal_outputs: tuple[str, ...]
+    consumes_outputs: tuple[str, ...]
+    defaults: Mapping[str, Any]
+    param_space_callable: str | None = None
     owns_portfolio: bool = False
 
 
@@ -80,3 +86,13 @@ class ComponentDefinition:
         from research.aegis_research.component_registry.registry import load_component_callable
 
         return load_component_callable(self)
+
+    def load_attribute(self, attribute_name: str) -> Any:
+        from research.aegis_research.component_registry.registry import load_component_attribute
+
+        return load_component_attribute(self, attribute_name)
+
+    def load_attributes(self, attribute_names: Sequence[str]) -> dict[str, Any]:
+        from research.aegis_research.component_registry.registry import load_component_attributes
+
+        return load_component_attributes(self, tuple(attribute_names))

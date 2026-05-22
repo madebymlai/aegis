@@ -283,7 +283,7 @@ def build_run_splits_result(index: pd.Index, config: RunSplitConfig) -> RunSplit
         "n_splits": len(splits),
         "set_usage_policy": RUN_SCORING_SET_POLICY,
         "resource_estimate": resource_estimate,
-        "sets": _set_summary(splits),
+        "sets": _set_summary(),
         "splits": _split_membership_metadata(index, splits),
     }
     return RunSplitsResult(splits=splits, metadata=metadata, native_object=splitter)
@@ -329,22 +329,11 @@ def _run_splits_from_index_slices(index_slices: Any) -> list[RunSplit]:
     return splits
 
 
-def _set_summary(splits: list[RunSplit]) -> list[dict[str, Any]]:
-    seen: dict[str, dict[str, Any]] = {}
-    for split in splits:
-        for position, set_label in enumerate(split.set_indices):
-            record = seen.setdefault(
-                set_label,
-                {
-                    "label": set_label,
-                    "first_seen_position": position,
-                    "used_for_selection": False,
-                    "used_for_held_out": False,
-                },
-            )
-            record["used_for_selection"] = record["used_for_selection"] or set_label == split.selection_set
-            record["used_for_held_out"] = record["used_for_held_out"] or set_label == split.held_out_set
-    return list(seen.values())
+def _set_summary() -> list[dict[str, Any]]:
+    return [
+        {"role": "selection", "position": 0},
+        {"role": "held_out", "position": 1},
+    ]
 
 
 def _resource_estimate(
@@ -369,19 +358,19 @@ def _resource_estimate(
 def _split_membership_metadata(source_index: pd.Index, splits: list[RunSplit]) -> list[dict[str, Any]]:
     records = []
     for split in splits:
-        sets = {}
-        for set_label, member_index in split.set_indices.items():
-            sets[set_label] = {
-                **index_identity(member_index),
-                "membership": _membership_representation(source_index, member_index),
-                "used_for_selection": set_label == split.selection_set,
-                "used_for_held_out": set_label == split.held_out_set,
-            }
+        sets = {
+            "selection": {
+                **index_identity(split.selection_index),
+                "membership": _membership_representation(source_index, split.selection_index),
+            },
+            "held_out": {
+                **index_identity(split.held_out_index),
+                "membership": _membership_representation(source_index, split.held_out_index),
+            },
+        }
         records.append(
             {
                 "label": split.label,
-                "selection_set": split.selection_set,
-                "held_out_set": split.held_out_set,
                 "sets": sets,
             }
         )

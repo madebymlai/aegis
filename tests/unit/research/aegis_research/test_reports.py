@@ -129,6 +129,50 @@ def test_portfolio_metrics_by_candidate_group_preserves_candidate_scope() -> Non
     }
 
 
+def test_portfolio_metrics_by_candidate_group_handles_native_param_levels() -> None:
+    index = pd.date_range("2024-01-01", periods=5)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0, 14.0], "B": [20.0, 21.0, 22.0, 23.0, 24.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_tuples(
+        [
+            (5, "A", 20),
+            (5, "B", 20),
+            (10, "A", 30),
+            (10, "B", 30),
+        ],
+        names=["fast_window", "symbol", "slow_window"],
+    )
+    entries = pd.DataFrame(False, index=index, columns=columns)
+    entries.loc[index[0], :] = True
+    exits = pd.DataFrame(False, index=index, columns=columns)
+    simulation = simulate_portfolio_batch(
+        close,
+        entries,
+        exits,
+        PortfolioConfig(entry_budget=0.6, fees=0, slippage=0),
+        SignalConfig(execution_timing="same_close"),
+    )
+
+    metrics = portfolio_metrics_by_candidate_group(
+        simulation.portfolio,
+        ReportConfig(freq="1D", year_freq="252D"),
+        [(5, 20), (10, 30)],
+    )
+
+    assert set(metrics) == {(5, 20), (10, 30)}
+    assert metrics[(5, 20)]["total_return"] == pytest.approx(18.0)
+    assert metrics[(5, 20)]["per_symbol"]["total_return"] == {
+        "A": pytest.approx(12.0),
+        "B": pytest.approx(6.0),
+    }
+    assert set(metrics[(5, 20)]["optional_diagnostics"]) == {
+        "probabilistic_sharpe_ratio",
+        "deflated_sharpe_ratio",
+    }
+
+
 def test_portfolio_metrics_by_candidate_group_handles_single_candidate_batch() -> None:
     index = pd.date_range("2024-01-01", periods=5)
     close = pd.DataFrame(

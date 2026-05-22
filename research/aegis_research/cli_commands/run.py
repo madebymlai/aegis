@@ -27,11 +27,6 @@ from research.aegis_research.config import (
     redact_text,
     with_run_config_selection,
 )
-from research.aegis_research.playbook_registry import (
-    PlaybookRegistryError,
-    PlaybookSelection,
-    discover_playbook_registry,
-)
 from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.strategy_runs import run_strategy_sweep
 
@@ -74,7 +69,6 @@ def _handle_strategy_run(
     run_refs: dict[str, Any] = {}
     try:
         component_registry = discover_component_registry()
-        playbook_registry = discover_playbook_registry(component_registry=component_registry)
         resolved = load_run_config(
             config_path,
             component_registry=component_registry,
@@ -83,8 +77,7 @@ def _handle_strategy_run(
             resolved,
             ConfigSelectionEvidence(source="explicit", config_path=safe_path(config_path)),
         )
-        _validate_run_playbook_refs(resolved.config, playbook_registry)
-    except (ConfigValidationError, ComponentRegistryError, PlaybookRegistryError) as error:
+    except (ConfigValidationError, ComponentRegistryError) as error:
         raise ConfigCliError(str(error)) from error
     except OSError as error:
         raise ConfigCliError(str(error)) from error
@@ -94,7 +87,6 @@ def _handle_strategy_run(
         result = run_strategy_sweep(
             resolved,
             component_registry=component_registry,
-            playbook_registry=playbook_registry,
             rerun_mode=args.rerun_mode,
             run_id=args.run_id,
             parent_run_id=args.parent_run_id,
@@ -131,35 +123,10 @@ def _handle_strategy_run(
     )
 
 
-def _validate_run_playbook_refs(config: Any, playbook_registry: Any) -> None:
-    if config.strategy.source == "playbook":
-        definition = playbook_registry.get(PlaybookSelection("strategies", config.strategy.id))
-        _require_playbook_stage(definition.manifest.stages, "strategies", config.strategy.id)
-    seen_playbook_ids: dict[str, str] = {}
-    for ref in config.indicators:
-        if ref.source != "playbook":
-            continue
-        playbook_ids = ref.expanded_ids(playbook_registry.ids("indicators"))
-        for playbook_id in playbook_ids:
-            definition = playbook_registry.get(PlaybookSelection("indicators", playbook_id))
-            _require_playbook_stage(definition.manifest.stages, "indicators", playbook_id)
-            previous = seen_playbook_ids.get(playbook_id)
-            if previous is not None:
-                raise PlaybookRegistryError(
-                    f"duplicate expanded playbook indicator id {playbook_id!r} from {previous}"
-                )
-            seen_playbook_ids[playbook_id] = str(ref.ids)
-
-
-def _require_playbook_stage(stages: tuple[str, ...], stage: str, playbook_id: str) -> None:
-    if stage not in stages:
-        raise PlaybookRegistryError(f"playbook {playbook_id!r} does not support {stage} runs")
-
-
 def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[str, Any]:
     leaderboard = result.get("leaderboard", {})
     return {
-        "evidence_type": "strategy_sweep",
+        "evidence_type": result.get("evidence_type"),
         "selection": selection,
         "run": {
             "id": result.get("run_id"),
@@ -169,7 +136,14 @@ def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[s
             "started_at": result.get("started_at"),
             "finished_at": result.get("finished_at"),
         },
-        "artifacts": {"strategy_artifact_id": result.get("strategy_artifact_id")},
+        "artifacts": {
+            "strategy_artifact_id": result.get("strategy_artifact_id"),
+            "strategy_artifact_path": safe_path(result.get("strategy_artifact_path")),
+        },
+        "candidate_store": {
+            "path": safe_path(result.get("candidate_store_path")),
+        },
+        "promotions": result.get("promotions", []),
         "leaderboard": {
             "summary": leaderboard.get("summary"),
             "top_rows": leaderboard.get("rows", [])[:10],
@@ -180,7 +154,7 @@ def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[s
 def _human_run_lines(result: dict[str, Any]) -> tuple[str, ...]:
     return (
         f"Run: {safe_path(result.get('run_dir'))}",
-        "Evidence: strategy_sweep",
+        f"Evidence: {result.get('evidence_type')}",
         f"Status: {result.get('status')}",
     )
 

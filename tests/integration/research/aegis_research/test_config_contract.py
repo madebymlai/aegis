@@ -37,6 +37,7 @@ def test_public_config_exports_only_run_config_contract() -> None:
     for name in removed:
         assert not hasattr(config_module, name)
     assert hasattr(config_module, "RunConfig")
+    assert hasattr(config_module, "OptimizationConfig")
     assert hasattr(config_module, "ResolvedRunConfig")
     assert hasattr(config_module, "load_run_config")
     assert hasattr(config_module, "resolve_run_config")
@@ -62,7 +63,7 @@ def test_run_config_rejects_removed_labeler_field(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
             raw,
-            component_registry=_component_registry(tmp_path, include_strategy=True),
+            component_registry=_component_registry(tmp_path),
         )
 
     assert "labeler" in str(error.value)
@@ -235,49 +236,255 @@ def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, mo
     assert secrets == ["super-secret-token"]
 
 
-def test_run_accepts_candidate_grid_policy(tmp_path: Path) -> None:
+def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
     raw = _run_config()
     raw["candidate_grid"] = {"max_candidates": 100, "max_estimated_cells": 10_000, "batch_size": 25}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "candidate_grid" in str(error.value)
+    assert "unknown field" in str(error.value)
+
+
+def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw.pop("optimization")
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "optimization" in str(error.value)
+    assert "fixed/non-optimized strategy runs are removed" in str(error.value)
+
+
+def test_run_accepts_grid_optimization_with_nested_split(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = _optimization_block(search="grid")
 
     resolved = resolve_run_config(
         raw,
         component_registry=_component_registry(tmp_path),
     )
 
-    assert resolved.config.candidate_grid.max_candidates == 100
-    assert resolved.config.candidate_grid.max_estimated_cells == 10_000
-    assert resolved.config.candidate_grid.batch_size == 25
+    assert resolved.config.optimization is not None
+    assert resolved.config.optimization.search == "grid"
+    assert resolved.config.optimization.random_subset is None
+    assert resolved.config.optimization.seed is None
+    assert resolved.config.optimization.execute == {}
+    assert resolved.config.optimization.evidence.return_grid == "first"
+    assert resolved.config.optimization.split.method == "from_rolling"
+    assert "set_labels" not in resolved.config.optimization.split.params
 
 
-def test_run_rejects_playbook_indicators_with_component_strategy(tmp_path: Path) -> None:
+def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["strategy"] = {"source": "component", "id": "demo.strategy"}
+    raw["optimization"] = _optimization_block(
+        search="random",
+        random_subset=5,
+        seed=42,
+        execute={"engine": "threadpool", "chunk_len": "auto"},
+        evidence={"return_grid": "all"},
+    )
+
+    resolved = resolve_run_config(
+        raw,
+        component_registry=_component_registry(tmp_path),
+    )
+
+    assert resolved.config.optimization is not None
+    assert resolved.config.optimization.search == "random"
+    assert resolved.config.optimization.random_subset == 5
+    assert resolved.config.optimization.seed == 42
+    assert resolved.config.optimization.execute == {"engine": "threadpool", "chunk_len": "auto"}
+    assert resolved.config.optimization.evidence.return_grid == "all"
+
+
+def test_run_accepts_component_lock_and_candidate_refs(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["strategy"] = {"id": "demo.strategy", "lock_id": "lock_strategy_best"}
+    raw["indicators"] = [
+        {"id": "demo.returns", "candidate_id": "cand_indicator_row", "run_id": "source-run"}
+    ]
+
+    resolved = resolve_run_config(
+        raw,
+        component_registry=_component_registry(tmp_path),
+    )
+
+    assert resolved.config.strategy.lock_id == "lock_strategy_best"
+    assert resolved.config.strategy.candidate_id is None
+    assert resolved.config.indicators[0].candidate_id == "cand_indicator_row"
+    assert resolved.config.indicators[0].run_id == "source-run"
+
+
+def test_run_rejects_params_on_locked_component_refs(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["strategy"] = {"id": "demo.strategy", "lock_id": "lock_strategy_best", "params": {}}
+    raw["indicators"] = [
+        {
+            "id": "demo.returns",
+            "candidate_id": "cand_indicator_row",
+            "run_id": "source-run",
+            "params": {"window": 5},
+        }
+    ]
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
             raw,
-            component_registry=_component_registry(tmp_path, include_strategy=True),
+            component_registry=_component_registry(tmp_path),
         )
 
-    assert "indicators[0].source" in str(error.value)
-    assert "cannot enter the component runner" in str(error.value)
+    assert "strategy.params" in str(error.value)
+    assert "indicators[0].params" in str(error.value)
+    assert "must not be set when lock_id or candidate_id is set" in str(error.value)
+
+
+def test_run_rejects_component_lock_and_candidate_together(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["strategy"] = {
+        "id": "demo.strategy",
+        "lock_id": "lock_strategy_best",
+        "candidate_id": "cand_strategy_row",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "strategy" in str(error.value)
+    assert "mutually exclusive" in str(error.value)
+
+
+def test_run_rejects_candidate_ref_without_source_run_id(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["strategy"] = {"id": "demo.strategy", "candidate_id": "cand_strategy_row"}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "strategy.run_id" in str(error.value)
+    assert "required when candidate_id is set" in str(error.value)
+
+
+def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["indicators"] = []
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "strategy.consumes_outputs" in str(error.value)
+    assert "not produced" in str(error.value)
 
 
 @pytest.mark.parametrize(
-    ("policy", "expected_path"),
+    ("optimization", "expected_path", "expected_message"),
     [
-        ({"max_candidates": 0}, "candidate_grid.max_candidates"),
-        ({"batch_size": 0}, "candidate_grid.batch_size"),
-        ({"batch_size": "100"}, "candidate_grid.batch_size"),
+        (
+            {
+                "search": "grid",
+                "split": {
+                    "method": "from_rolling",
+                    "params": {
+                        "length": 20,
+                        "split": 0.5,
+                    },
+                },
+                "engine": "custom",
+            },
+            "optimization.engine",
+            "unknown field",
+        ),
+        (
+            {
+                "search": "grid",
+                "split": {
+                    "method": "from_rolling",
+                    "params": {
+                        "length": 20,
+                        "split": 0.5,
+                    },
+                },
+                "mode": "native",
+            },
+            "optimization.mode",
+            "unknown field",
+        ),
+        (
+            {
+                "search": "random",
+                "split": {
+                    "method": "from_rolling",
+                    "params": {
+                        "length": 20,
+                        "split": 0.5,
+                    },
+                },
+            },
+            "optimization.random_subset",
+            "is required",
+        ),
+        (
+            {
+                "search": "random",
+                "split": {
+                    "method": "from_rolling",
+                    "params": {
+                        "length": 20,
+                        "split": 0.5,
+                    },
+                },
+                "random_subset": 5,
+            },
+            "optimization.seed",
+            "is required",
+        ),
+        (
+            {
+                "search": "grid",
+                "split": {
+                    "method": "from_rolling",
+                    "params": {
+                        "length": 20,
+                        "split": 0.5,
+                    },
+                },
+                "random_subset": 5,
+            },
+            "optimization.random_subset",
+            "only valid when optimization.search is 'random'",
+        ),
+        (
+            {"search": "grid"},
+            "optimization.split",
+            "is required",
+        ),
     ],
 )
-def test_run_rejects_invalid_candidate_grid_policy(
+def test_run_rejects_invalid_optimization_policy(
     tmp_path: Path,
-    policy: dict[str, object],
+    optimization: dict[str, object],
     expected_path: str,
+    expected_message: str,
 ) -> None:
     raw = _run_config()
-    raw["candidate_grid"] = policy
+    raw["optimization"] = optimization
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
@@ -286,6 +493,94 @@ def test_run_rejects_invalid_candidate_grid_policy(
         )
 
     assert expected_path in str(error.value)
+    assert expected_message in str(error.value)
+
+
+def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = {
+        "search": "grid",
+        "split": {
+            "method": "from_rolling",
+            "params": {
+                "length": 20,
+                "split": 0.5,
+                "set_labels": ["selection", "held_out"],
+            },
+            "max_splits": 10,
+        },
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "optimization.split.params.set_labels" in str(error.value)
+    assert "owned by Aegis" in str(error.value)
+
+
+def test_run_rejects_top_level_split_as_unknown_field(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = {"search": "grid"}
+    raw["split"] = _optimization_split()
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "split" in str(error.value)
+    assert "unknown field" in str(error.value)
+
+
+def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = _optimization_block(search="grid")
+    raw["candidate_grid"] = {"max_candidates": 100, "max_estimated_cells": 10_000}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "candidate_grid" in str(error.value)
+    assert "unknown field" in str(error.value)
+
+
+def test_run_rejects_source_selectors_and_indicator_ids_as_unknown_fields(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["strategy"] = {"source": "component", "id": "demo.strategy"}
+    raw["indicators"] = [{"source": "component", "ids": ["demo.returns"]}]
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "strategy.source" in str(error.value)
+    assert "indicators[0].ids" in str(error.value)
+    assert "unknown field" in str(error.value)
+
+
+def test_run_rejects_playbook_source_selectors(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["strategy"] = {"source": "playbook", "id": "ma_cross"}
+    raw["indicators"] = [{"source": "playbook", "ids": ["ma_explore"]}]
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert "strategy.source" in str(error.value)
+    assert "indicators[0].source" in str(error.value)
+    assert "unknown field" in str(error.value)
 
 
 def _run_config() -> dict[str, object]:
@@ -294,17 +589,29 @@ def _run_config() -> dict[str, object]:
         "name": "canonical_run",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
         "portfolio": {"entry_budget": 1.0},
-        "strategy": {"source": "playbook", "id": "ma_cross"},
-        "indicators": [{"source": "playbook", "ids": ["ma_explore"]}],
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return", "direction": "desc"},
+        "optimization": _optimization_block(search="grid"),
     }
 
 
-def _component_registry(tmp_path: Path, *, include_strategy: bool = False):
+def _optimization_block(search: str, **overrides: object) -> dict[str, object]:
+    return {"search": search, "split": _optimization_split(), **overrides}
+
+
+def _optimization_split() -> dict[str, object]:
+    return {
+        "method": "from_rolling",
+        "params": {"length": 20, "split": 0.5},
+        "max_splits": 10,
+    }
+
+
+def _component_registry(tmp_path: Path):
     root = tmp_path / "research" / "components"
     write_indicator_component(root / "indicators" / "returns.py")
-    if include_strategy:
-        _write_strategy_component(root / "strategies" / "strategy.py")
+    _write_strategy_component(root / "strategies" / "strategy.py")
     return discover_component_registry(root=root, repo_root=tmp_path)
 
 
@@ -318,10 +625,11 @@ def _write_strategy_component(path: Path) -> None:
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'signal_outputs': ['entries', 'exits']}\n"
+        "'input_names': ['Close'], 'signal_outputs': ['entries', 'exits'], "
+        "'consumes_outputs': ['returns']}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
-        "    \"\"\"Return fixed strategy signals for config validation tests.\"\"\"\n"
+        '    """Return fixed strategy signals for config validation tests."""\n'
         "    raise RuntimeError('not executed during config tests')\n"
     )

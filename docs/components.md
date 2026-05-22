@@ -1,25 +1,30 @@
 # Components
 
-Promoted components are reviewed Python files under `research/components/{indicators,strategies}/`. `run` configs select strategy by one explicit source ref and indicators by grouped source blocks; playbook refs use the same `source` discriminator:
+Components are reviewed Python percent-cell files under `research/components/{indicators,strategies}/`. Forward `run` configs name component IDs directly:
 
 ```yaml
 strategy:
-  source: component
   id: demo.cross
 
 indicators:
-  - source: component
-    ids: all
-  - source: component
-    ids: [demo.ma]
+  - id: demo.ma
 ```
+
+Each entry may carry `params`, `lock_id`, or `candidate_id`. `candidate_id` pins must also include the source `run_id`; `lock_id` and `candidate_id` are mutually exclusive. Source selectors and indicator `ids` batching are removed so each lockable component slot is explicit.
 
 YAML never imports Python, names modules, embeds formulas, or points at arbitrary files. Discovery reads only literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` metadata without executing the component file. Callable code loads only after validation selects a known ID under the fixed component root.
 
-Component files are Jupytext-compatible Python percent-cell sources. Use purposeful cells: a broad overview cell that explains the promoted idea and source data, an imports/definitions cell when needed, a literal metadata cell, and a `# %% main ...` compute cell. The callable named by `COMPONENT_CALLABLE` must have a docstring explaining the indicator or strategy logic.
+Component manifests declare:
 
-Indicator components should use the same VectorBT-native helper path as built-ins (`vbt.MA`, `vbt.RSI`, custom `vbt.IF`, primitive returns/volatility normalization). Indicator and strategy manifests declare exact VBT raw-data dependencies in `input_names`, for example `input_names: ["Close"]` or `input_names: ["High", "Low", "Close"]`. Indicator callables receive a market-data bundle and request every declared raw feature through `data.feature("FeatureName")`; Aegis does not expose hardcoded OHLCV bundle fields. Strategy components receive a strategy bundle and should read prices through `bundle.data.feature("FeatureName")`; they emit aligned `entries` and `exits` only. Portfolio sizing, costs, direction, and timing remain config-owned. Component callables own fixed reviewed defaults/params. They must not emit parameter sweeps, candidate grids, sweep candidate axes, or consume playbook indicator surfaces through the component runner; configs that pair a component strategy with playbook indicators are rejected before run execution. Use a playbook for sweeps, then manually promote one composed winner into fixed indicator and strategy components. Run configs do not pass per-run params into component code.
+- `input_names`: exact VBT raw-data features the component reads, such as `Close` or `High`.
+- Indicator `output_names`: named outputs available to strategies.
+- Strategy `consumes_outputs`: named indicator outputs required by the strategy.
+- `param_names`: lockable/optimizable parameter names.
+- `defaults`: fixed values for one-candidate execution.
+- `param_space_callable`: optional callable returning a mapping of parameter names to `vbt.Param` axes.
 
-Manual promotion starts from a composed leaderboard row: the indicator side identifies the source/candidate/params to freeze into an indicator component, and the strategy side identifies the source/candidate/params to freeze into a strategy component. Aegis does not generate those component files automatically; a component author creates reviewed source files and reruns with `source: component` refs to verify the promoted pair.
+Indicator callables receive a market-data bundle and request declared raw features through `data.feature("FeatureName")`. Strategy callables receive an inputs object with `inputs.data`, `inputs.indicators`, and `inputs.metadata`; they emit aligned `entries` and `exits` only. Portfolio sizing, costs, direction, and timing remain config-owned.
 
-Local component files are ignored by git by default except the placeholder READMEs. Ignored files are not secret management; do not store credentials in local research code. Public component examples live under `docs/examples/components/`.
+Runs with no unlocked axes still execute through the native optimization path as one candidate. Runs with unlocked component params compose all indicator and strategy axes into one VBT-native grid. Completed runs write component promotion records under `strategy_run.json` `promotions`; use a promotion record `token` as a later component `lock_id`. Use a leaderboard row `candidate_key` as `candidate_id` plus that leaderboard's `run_id` to pin a specific non-best candidate row. Promotion locks resolve persisted component params into constants before execution.
+
+Local component files are ignored by git by default except placeholder READMEs. Ignored files are not secret management; do not store credentials in local research code. Public component examples live under `docs/examples/components/`.

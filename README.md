@@ -8,7 +8,7 @@ Aegis RD is a research operating system for turning market hypotheses into repro
 
 It gives every idea the same audit trail: source data, indicator construction, strategy signals, split scoring, execution assumptions, costs, metrics, and promotion evidence. The result is a research process that can be rerun, inspected, rejected, or promoted without relying on memory, notebooks, or hand-waved assumptions.
 
-Each valid run writes a local `manifest.json` that records lifecycle status, config evidence, environment and Git evidence, artifact hashes, schema versions, and lineage. Failed runs remain inspectable, and split-based validation keeps per-split artifacts separate from aggregate reports. Playbook-backed exploration and fixed promoted components both write source-labeled immutable run evidence.
+Each valid run writes a local `manifest.json` that records lifecycle status, config evidence, environment and Git evidence, artifact hashes, schema versions, and lineage. Failed runs remain inspectable, and split-based validation keeps per-split artifacts separate from aggregate reports. Component-native optimization writes immutable candidate, leaderboard, and promotion evidence.
 
 ## What It Does
 
@@ -16,14 +16,14 @@ Aegis RD gives each research loop a clear contract:
 
 - Load market data through a native VectorBT `Data` contract with explicit provider, symbol, feature, timeframe, timezone, missing-data, and quality behavior.
 - Build indicator outputs with preserved parameter metadata.
-- Generate strategy signals from reviewed playbooks or promoted components.
+- Generate strategy signals from reviewed components.
 - Optionally split run scoring into selection and held-out windows with native VBT splitter labels preserved as evidence.
 - Simulate shared-cash portfolios with explicit entry budgets, costs, execution timing, direction, metric scope, and benchmark assumptions.
 - Produce leaderboards that rank complete composed strategy candidates, not isolated indicators.
 
 ## Research Command
 
-- `aerd run <config>` runs strategy/research evidence over explicit playbook or component strategy/indicator refs. Playbooks use candidate-sweep axes and bounded signal chunks; components are fixed-param promoted implementations. Indicator candidates are ranked only as part of complete composed strategy candidates scored by Aegis central VBT execution. An optional top-level `split` block names an exact VBT `Splitter` method such as `from_rolling` or `from_purged_kfold`; run scoring requires exactly two materialized sets per split, and params can be inspected with `aerd show splitters <method>`.
+- `aerd run <config>` runs strategy/research evidence over direct component strategy/indicator refs. Component `param_space_callable` definitions produce native VBT parameter grids, `optimization.split` names the exact VBT `Splitter` method such as `from_rolling` or `from_purged_kfold`, and completed runs persist candidate rows plus promotion refs for later `lock_id` or `candidate_id` plus source `run_id` execution.
 
 Configs stay inert: YAML selects trusted IDs and parameters only. It cannot import Python, execute formulas, point at arbitrary notebooks/scripts, or reference generated run artifacts as reproducible inputs. Stale lane, train, model, label, labeler, or signals fields are rejected before a run directory is created.
 

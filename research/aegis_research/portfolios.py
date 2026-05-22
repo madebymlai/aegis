@@ -6,9 +6,9 @@ from typing import Any
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.candidate_sweeps import SYMBOL_LEVEL
 from research.aegis_research.config import PortfolioConfig, SignalConfig
 
+SYMBOL_LEVEL = "symbol"
 PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v2"
 VBT_PORTFOLIO_FACTORY = "Portfolio.from_signals"
 VBT_RESOLVED_SIZE_TYPE = "valuepercent"
@@ -21,6 +21,7 @@ VBT_SHARED_CASH_SETTINGS = {
     "group_by": True,
     "call_seq": "auto",
 }
+VBT_CANDIDATE_GROUP_BY = f"except_level:{SYMBOL_LEVEL}"
 VBT_CALL_SEQUENCE_CAVEAT = (
     "VectorBT automatic call sequencing sorts approximate order value using predetermined "
     "prices; it is not a custom path-dependent execution engine."
@@ -168,9 +169,10 @@ def simulate_portfolio_batch(
         execution_diagnostics,
     )
     candidate_ids = _candidate_group_ids(entries.columns)
+    diagnostics["vbt_settings"]["group_by"] = VBT_CANDIDATE_GROUP_BY
     diagnostics["grouping"] = {
         "cash_sharing": True,
-        "group_by": f"except_level:{SYMBOL_LEVEL}",
+        "group_by": VBT_CANDIDATE_GROUP_BY,
         "group_count": len(candidate_ids),
         "group_scope": "candidate_symbols_single_cash_pool",
         "candidate_ids": candidate_ids,
@@ -347,7 +349,7 @@ def _simulation_signals(
     *,
     market_index: pd.Index | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    zero_counts = dict.fromkeys(map(str, entries.columns), 0)
+    zero_counts = _zero_counts_by_symbol(entries.columns)
     if signal_config.execution_timing == "same_close":
         return (
             entries,
@@ -424,7 +426,7 @@ def _sizing_summary(
 ) -> dict[str, Any]:
     active_entries = entries.sum(axis=1)
     nonzero_count = int(active_entries.sum())
-    nonzero_sizes = entry_budget / active_entries[active_entries > 0]
+    nonzero_sizes = size.to_numpy(dtype=float)[entries.to_numpy(dtype=bool)]
     return {
         "entry_budget": entry_budget,
         "size_type": VBT_RESOLVED_SIZE_TYPE,
@@ -516,7 +518,19 @@ def _true_count(value: pd.DataFrame | pd.Series) -> int:
     return int(value.to_numpy(dtype=bool).sum())
 
 
+def _zero_counts_by_symbol(columns: pd.Index) -> dict[str, int]:
+    if isinstance(columns, pd.MultiIndex) and SYMBOL_LEVEL in columns.names:
+        return {str(symbol): 0 for symbol in dict.fromkeys(columns.get_level_values(SYMBOL_LEVEL))}
+    return dict.fromkeys(map(str, columns), 0)
+
+
 def _count_by_symbol(value: pd.DataFrame) -> dict[str, int]:
+    if isinstance(value.columns, pd.MultiIndex) and SYMBOL_LEVEL in value.columns.names:
+        symbols = value.columns.get_level_values(SYMBOL_LEVEL)
+        return {
+            str(symbol): _true_count(value.iloc[:, symbols == symbol])
+            for symbol in dict.fromkeys(symbols)
+        }
     return {str(column): _true_count(value.loc[:, column]) for column in value.columns}
 
 

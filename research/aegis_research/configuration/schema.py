@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 5
+CONFIG_SCHEMA_VERSION = 6
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
@@ -27,8 +27,13 @@ DATA_QUALITY_DEGRADATIONS = {
     "non_monotonic_index",
     "skipped_symbols",
 }
-SOURCE_KINDS = {"component", "playbook"}
+FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
+    "is required; fixed/non-optimized strategy runs are removed from the forward "
+    "run contract; use optimization.search and optimization.split"
+)
 RANKING_DIRECTIONS = {"asc", "desc"}
+OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
+OPTIMIZATION_RETURN_GRID_POLICIES = {"off", "first", "all"}
 RUN_EXECUTABLE_DENIED_KEYS = {
     "artifact_path",
     "callable",
@@ -177,17 +182,20 @@ class ReportConfig:
 
 @dataclass(frozen=True)
 class RunSourceRefConfig:
-    source: str
     id: str
+    lock_id: str | None = None
+    candidate_id: str | None = None
+    run_id: str | None = None
+    params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class RunIndicatorSourceConfig:
-    source: str
-    ids: str | list[str]
-
-    def expanded_ids(self, available_ids: tuple[str, ...]) -> tuple[str, ...]:
-        return available_ids if self.ids == "all" else tuple(self.ids)
+    id: str
+    lock_id: str | None = None
+    candidate_id: str | None = None
+    run_id: str | None = None
+    params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -198,10 +206,18 @@ class RankingConfig:
 
 
 @dataclass(frozen=True)
-class CandidateGridConfig:
-    max_candidates: int = 100_000
-    max_estimated_cells: int = 50_000_000
-    batch_size: int = 1_000
+class OptimizationEvidenceConfig:
+    return_grid: str = "first"
+
+
+@dataclass(frozen=True)
+class OptimizationConfig:
+    search: str
+    split: RunSplitConfig
+    random_subset: int | None = None
+    seed: int | None = None
+    execute: dict[str, Any] = field(default_factory=dict)
+    evidence: OptimizationEvidenceConfig = field(default_factory=OptimizationEvidenceConfig)
 
 
 @dataclass(frozen=True)
@@ -214,8 +230,7 @@ class RunConfig:
     data: DataConfig = field(default_factory=DataConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
-    split: RunSplitConfig | None = None
-    candidate_grid: CandidateGridConfig = field(default_factory=CandidateGridConfig)
+    optimization: OptimizationConfig | None = None
     output_dir: str = "runs"
 
 

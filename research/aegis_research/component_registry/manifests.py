@@ -164,6 +164,9 @@ def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifes
     input_names = _required_input_names(payload, path)
     param_names = _required_string_tuple(payload, "param_names", path, allow_empty=True)
     output_names = _required_string_tuple(payload, "output_names", path)
+    defaults = _optional_mapping(payload, "defaults", path)
+    _validate_param_defaults(defaults, param_names, path)
+    param_space_callable = _optional_string(payload, "param_space_callable", path)
     bar_aligned = payload.get("bar_aligned", True)
     if bar_aligned is not True:
         raise ComponentRegistryError(f"{path}: indicator components must be bar-aligned in v1")
@@ -175,13 +178,20 @@ def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifes
         input_names=input_names,
         param_names=param_names,
         output_names=output_names,
+        defaults=defaults,
+        param_space_callable=param_space_callable,
         bar_aligned=True,
     )
 
 
 def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
     input_names = _required_input_names(payload, path)
+    param_names = _optional_string_tuple(payload, "param_names", path)
     signal_outputs = _required_string_tuple(payload, "signal_outputs", path)
+    consumes_outputs = _optional_string_tuple(payload, "consumes_outputs", path)
+    defaults = _optional_mapping(payload, "defaults", path)
+    _validate_param_defaults(defaults, param_names, path)
+    param_space_callable = _optional_string(payload, "param_space_callable", path)
     if unsupported := sorted(set(signal_outputs) - STRATEGY_SIGNAL_OUTPUTS):
         raise ComponentRegistryError(f"{path}: unsupported strategy outputs: {unsupported}")
     if set(signal_outputs) != STRATEGY_SIGNAL_OUTPUTS:
@@ -198,7 +208,11 @@ def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
         version=payload["version"],
         payload=payload,
         input_names=input_names,
+        param_names=param_names,
         signal_outputs=signal_outputs,
+        consumes_outputs=consumes_outputs,
+        defaults=defaults,
+        param_space_callable=param_space_callable,
         owns_portfolio=False,
     )
 
@@ -236,6 +250,41 @@ def _required_string_tuple(
     if not all(isinstance(item, str) and item for item in value):
         raise ComponentRegistryError(f"{path}: {key} must contain only non-empty strings")
     return tuple(value)
+
+
+def _optional_string_tuple(payload: dict[str, Any], key: str, path: Path) -> tuple[str, ...]:
+    if key not in payload:
+        return ()
+    return _required_string_tuple(payload, key, path, allow_empty=True)
+
+
+def _optional_string(payload: dict[str, Any], key: str, path: Path) -> str | None:
+    if key not in payload:
+        return None
+    return _required_string(payload, key, path)
+
+
+def _optional_mapping(payload: dict[str, Any], key: str, path: Path) -> dict[str, Any]:
+    if key not in payload:
+        return {}
+    value = payload[key]
+    if not isinstance(value, dict):
+        raise ComponentRegistryError(f"{path}: {key} must be a literal mapping")
+    if not all(isinstance(item, str) and item for item in value):
+        raise ComponentRegistryError(f"{path}: {key} keys must be non-empty strings")
+    return dict(value)
+
+
+def _validate_param_defaults(
+    defaults: dict[str, Any],
+    param_names: tuple[str, ...],
+    path: Path,
+) -> None:
+    unknown = sorted(set(defaults) - set(param_names))
+    if unknown:
+        raise ComponentRegistryError(
+            f"{path}: defaults keys must be declared in param_names; unknown: {unknown}"
+        )
 
 
 def _source_identity(path: Path, *, repo_root: Path, source_hash: str) -> ComponentSourceIdentity:

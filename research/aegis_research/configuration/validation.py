@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from research.aegis_research.component_registry import (
+    ComponentDefinition,
     ComponentRegistryError,
     ComponentSelection,
     FrozenComponentRegistry,
@@ -17,16 +18,19 @@ from research.aegis_research.configuration.schema import (
     DATA_QUALITY_DEGRADATIONS,
     DENIED_PASSTHROUGH_KEYS,
     EXPERIMENT_NAME_RE,
+    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     MISSING_POLICIES,
+    OPTIMIZATION_RETURN_GRID_POLICIES,
+    OPTIMIZATION_SEARCH_POLICIES,
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
     RANKING_DIRECTIONS,
     RUN_EXECUTABLE_DENIED_KEYS,
-    SOURCE_KINDS,
-    CandidateGridConfig,
     ConfigValidationIssue,
     DataConfig,
     DataQualityConfig,
+    OptimizationConfig,
+    OptimizationEvidenceConfig,
     PortfolioConfig,
     ReportConfig,
     RunSplitConfig,
@@ -81,12 +85,12 @@ def _run_allowed_top_level_keys() -> set[str]:
         "portfolio",
         "report",
         "output_dir",
-        "candidate_grid",
+        "optimization",
         "indicators",
         "ranking",
-        "split",
         "strategy",
     }
+
 
 def _validate_run_config(
     raw: dict[str, Any],
@@ -95,69 +99,200 @@ def _validate_run_config(
     component_registry: FrozenComponentRegistry,
     metric_registry: FrozenMetricRegistry,
 ) -> None:
-    _validate_run_source_ref(
+    strategy_definition = _validate_component_ref(
         "strategy",
         raw.get("strategy"),
         "strategies",
         issues,
         component_registry=component_registry,
-        allowed_sources={"component", "playbook"},
     )
-    _validate_indicator_sources(
+    indicator_definitions = _validate_component_indicator_refs(
         "indicators",
         raw.get("indicators"),
         issues,
         component_registry=component_registry,
-        allowed_sources={"component", "playbook"},
     )
-    _validate_run_source_combination(raw, issues)
+    _validate_component_output_contract(strategy_definition, indicator_definitions, issues)
     _validate_ranking("ranking", raw.get("ranking"), issues, registry=metric_registry)
-    if raw.get("split") is not None:
-        split = _section(raw, "split", set(RunSplitConfig.__dataclass_fields__), issues)
-        _validate_run_split(split, issues)
-    candidate_grid = _section(
-        raw,
-        "candidate_grid",
-        set(CandidateGridConfig.__dataclass_fields__),
-        issues,
-    )
-    _validate_candidate_grid(candidate_grid, issues)
-
-
-def _validate_run_source_combination(
-    raw: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    strategy = raw.get("strategy")
-    if not isinstance(strategy, dict) or strategy.get("source") != "component":
-        return
-    indicators = raw.get("indicators")
-    if not isinstance(indicators, list):
-        return
-    for index, indicator in enumerate(indicators):
-        if isinstance(indicator, dict) and indicator.get("source") == "playbook":
-            issues.append(
-                ConfigValidationIssue(
-                    f"indicators[{index}].source",
-                    "playbook indicators cannot enter the component runner; use a playbook "
-                    "strategy or promote the indicator candidate to a fixed component",
-                )
+    if "optimization" not in raw:
+        issues.append(
+            ConfigValidationIssue(
+                "optimization",
+                FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
             )
+        )
+    _validate_optimization(raw, issues)
 
 
-def _validate_run_split(split: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    _optional_int("split.max_splits", split, issues, positive=True)
-    _optional_int("split.max_estimated_output_cells", split, issues, positive=True)
-    _optional_int("split.max_public_artifact_bytes", split, issues, positive=True)
+def _validate_run_split(
+    split: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    path: str = "split",
+) -> None:
+    _optional_int(f"{path}.max_splits", split, issues, positive=True)
+    _optional_int(f"{path}.max_estimated_output_cells", split, issues, positive=True)
+    _optional_int(f"{path}.max_public_artifact_bytes", split, issues, positive=True)
 
     params = split.get("params", {})
     if not isinstance(params, dict):
-        issues.append(ConfigValidationIssue("split.params", "must be a mapping"))
+        issues.append(ConfigValidationIssue(f"{path}.params", "must be a mapping"))
     else:
-        _validate_json_like("split.params", params, issues)
-        _validate_no_inline_secrets("split.params", params, issues)
-        _validate_no_run_executable_keys("split.params", params, issues)
-    validate_run_split_config(split, issues)
+        _validate_json_like(f"{path}.params", params, issues)
+        _validate_no_inline_secrets(f"{path}.params", params, issues)
+        _validate_no_run_executable_keys(f"{path}.params", params, issues)
+        if "set_labels" in params:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}.params.set_labels",
+                    "set roles are owned by Aegis and assigned positionally "
+                    "(set 0 selection, set 1 held_out); set_labels is not configurable",
+                )
+            )
+    validate_run_split_config(split, issues, path=path)
+
+
+def _validate_optimization(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
+    if "optimization" not in raw:
+        return
+    optimization = raw.get("optimization")
+    if not isinstance(optimization, dict):
+        issues.append(ConfigValidationIssue("optimization", "must be a mapping"))
+        return
+
+    _validate_known_keys(
+        "optimization",
+        optimization,
+        set(OptimizationConfig.__dataclass_fields__),
+        issues,
+    )
+    if _require_str("optimization.search", optimization, issues):
+        search = optimization["search"]
+        if search not in OPTIMIZATION_SEARCH_POLICIES:
+            issues.append(
+                ConfigValidationIssue(
+                    "optimization.search",
+                    f"must be one of {sorted(OPTIMIZATION_SEARCH_POLICIES)}",
+                )
+            )
+    else:
+        search = None
+
+    _validate_optimization_split(optimization, issues)
+    _validate_optimization_random_policy(optimization, issues, search=search)
+    _optional_int("optimization.seed", optimization, issues, minimum=0, allow_none=True)
+    _validate_optimization_execute(optimization.get("execute", {}), issues)
+    _validate_optimization_evidence(optimization.get("evidence", {}), issues)
+
+
+def _validate_optimization_split(
+    optimization: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if "split" not in optimization:
+        issues.append(ConfigValidationIssue("optimization.split", "is required for optimization"))
+        return
+    split = optimization["split"]
+    if not isinstance(split, dict):
+        issues.append(ConfigValidationIssue("optimization.split", "must be a mapping"))
+        return
+    _validate_known_keys(
+        "optimization.split",
+        split,
+        set(RunSplitConfig.__dataclass_fields__),
+        issues,
+    )
+    _validate_run_split(split, issues, path="optimization.split")
+
+
+def _validate_optimization_random_policy(
+    optimization: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    search: str | None,
+) -> None:
+    random_subset = optimization.get("random_subset")
+    if "random_subset" in optimization:
+        _optional_int(
+            "optimization.random_subset",
+            optimization,
+            issues,
+            positive=True,
+            allow_none=True,
+        )
+    if search == "random" and random_subset is None:
+        issues.append(
+            ConfigValidationIssue(
+                "optimization.random_subset",
+                "is required when optimization.search is 'random'",
+            )
+        )
+    if search == "random" and optimization.get("seed") is None:
+        issues.append(
+            ConfigValidationIssue(
+                "optimization.seed",
+                "is required when optimization.search is 'random' so sampled evidence is deterministic",
+            )
+        )
+    if search == "grid" and random_subset is not None:
+        issues.append(
+            ConfigValidationIssue(
+                "optimization.random_subset",
+                "only valid when optimization.search is 'random'",
+            )
+        )
+
+
+OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
+    {
+        "random_subset",
+        "seed",
+        "merge_func",
+        "raise_no_results",
+        "filter_results",
+        "selection",
+        "return_grid",
+    }
+)
+
+
+def _validate_optimization_execute(value: Any, issues: list[ConfigValidationIssue]) -> None:
+    path = "optimization.execute"
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_json_like(path, value, issues)
+    _validate_no_inline_secrets(path, value, issues)
+    _validate_no_run_executable_keys(path, value, issues)
+    reserved = sorted(set(value) & OPTIMIZATION_EXECUTE_RESERVED_KEYS)
+    if reserved:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                f"reserved keys {reserved} are owned by optimization.search / "
+                "optimization.evidence / Aegis ranking policy and must not appear "
+                "under optimization.execute",
+            )
+        )
+
+
+def _validate_optimization_evidence(value: Any, issues: list[ConfigValidationIssue]) -> None:
+    path = "optimization.evidence"
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return
+    _validate_known_keys(path, value, set(OptimizationEvidenceConfig.__dataclass_fields__), issues)
+    _validate_json_like(path, value, issues)
+    _validate_no_inline_secrets(path, value, issues)
+    if "return_grid" in value:
+        return_grid = value["return_grid"]
+        if not isinstance(return_grid, str) or return_grid not in OPTIMIZATION_RETURN_GRID_POLICIES:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}.return_grid",
+                    f"must be one of {sorted(OPTIMIZATION_RETURN_GRID_POLICIES)}",
+                )
+            )
 
 
 def _validate_removed_training_fields(
@@ -174,165 +309,72 @@ def _validate_removed_training_fields(
             )
 
 
-def _validate_indicator_sources(
+def _validate_component_indicator_refs(
     path: str,
     value: Any,
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
-    allowed_sources: set[str],
-) -> None:
+) -> tuple[tuple[str, ComponentDefinition], ...]:
     if isinstance(value, dict) and "specs" in value:
         issues.append(
             ConfigValidationIssue(
                 path,
-                "must use source refs; legacy indicators.specs is not accepted in run configs",
+                "must use component refs; legacy indicators.specs is not accepted in run configs",
             )
         )
-        return
-    if not isinstance(value, list) or not value:
-        issues.append(ConfigValidationIssue(path, "must be a non-empty list"))
-        return
+        return ()
+    if not isinstance(value, list):
+        issues.append(ConfigValidationIssue(path, "must be a list"))
+        return ()
 
-    seen: dict[tuple[str, str], str] = {}
+    seen: dict[str, str] = {}
+    definitions: list[tuple[str, ComponentDefinition]] = []
     for index, item in enumerate(value):
         item_path = f"{path}[{index}]"
-        if not isinstance(item, dict):
-            issues.append(ConfigValidationIssue(item_path, "must be a mapping"))
-            continue
-        _validate_known_keys(item_path, item, {"source", "ids"}, issues)
-        _validate_no_run_executable_keys(item_path, item, issues)
-        source = item.get("source")
-        if not isinstance(source, str) or source not in allowed_sources:
-            issues.append(
-                ConfigValidationIssue(
-                    f"{item_path}.source", f"must be one of {sorted(allowed_sources)}"
-                )
-            )
-            continue
-        ids = item.get("ids")
-        expanded = _validate_indicator_source_ids(
-            f"{item_path}.ids",
-            ids,
-            source,
+        definition = _validate_component_ref(
+            item_path,
+            item,
+            "indicators",
             issues,
             component_registry=component_registry,
         )
-        for indicator_id, id_path in expanded:
-            previous = seen.get((source, indicator_id))
-            if previous is not None:
-                issues.append(
-                    ConfigValidationIssue(
-                        id_path,
-                        f"duplicates expanded {source} indicator id {indicator_id!r} from {previous}",
-                    )
-                )
-                continue
-            seen[(source, indicator_id)] = id_path
-
-
-def _validate_indicator_source_ids(
-    path: str,
-    value: Any,
-    source: str,
-    issues: list[ConfigValidationIssue],
-    *,
-    component_registry: FrozenComponentRegistry,
-) -> tuple[tuple[str, str], ...]:
-    if value == "all":
-        ids = component_registry.ids("indicators") if source == "component" else ("all",)
-        return tuple((indicator_id, path) for indicator_id in ids)
-    if not isinstance(value, list) or not value:
-        issues.append(
-            ConfigValidationIssue(path, "must be 'all' or a non-empty list of stable ids")
-        )
-        return ()
-
-    expanded: list[tuple[str, str]] = []
-    for index, indicator_id in enumerate(value):
-        id_path = f"{path}[{index}]"
-        if not isinstance(indicator_id, str) or not indicator_id:
-            issues.append(ConfigValidationIssue(id_path, "must be a non-empty stable id"))
+        if definition is None:
             continue
-        if indicator_id == "all":
-            issues.append(
-                ConfigValidationIssue(id_path, "must use ids: all instead of listing 'all'")
-            )
-            continue
-        if not EXPERIMENT_NAME_RE.fullmatch(indicator_id):
+        previous = seen.get(definition.id)
+        if previous is not None:
             issues.append(
                 ConfigValidationIssue(
-                    id_path,
-                    "must contain only letters, numbers, dots, underscores, and hyphens",
+                    f"{item_path}.id",
+                    f"duplicates indicator component id {definition.id!r} from {previous}",
                 )
             )
             continue
-        if source == "component":
-            try:
-                component_registry.get(ComponentSelection("indicators", indicator_id))
-            except ComponentRegistryError:
-                issues.append(ConfigValidationIssue(id_path, "unknown indicator component id"))
-                continue
-        expanded.append((indicator_id, id_path))
-    return tuple(expanded)
+        seen[definition.id] = f"{item_path}.id"
+        definitions.append((item_path, definition))
+    return tuple(definitions)
 
 
-def _validate_run_source_ref(
+def _validate_component_ref(
     path: str,
     value: Any,
     family: str,
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
-    allowed_sources: set[str] | None = None,
-) -> None:
-    _validate_source_ref_value(
-        path,
-        value,
-        family,
-        issues,
-        component_registry=component_registry,
-        allowed_sources=allowed_sources,
-        non_string_id_message="must be a non-empty stable id",
-        all_id_message="must select one strategy id",
-    )
-
-
-def _validate_source_ref_value(
-    path: str,
-    value: Any,
-    family: str,
-    issues: list[ConfigValidationIssue],
-    *,
-    component_registry: FrozenComponentRegistry,
-    allowed_sources: set[str] | None,
-    non_string_id_message: str,
-    all_id_message: str,
-) -> None:
+) -> ComponentDefinition | None:
     if not isinstance(value, dict):
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
-        return
-    _validate_known_keys(path, value, {"source", "id"}, issues)
+        return None
+    allowed = {"id", "lock_id", "candidate_id", "run_id", "params"}
+    _validate_known_keys(path, value, allowed, issues)
     _validate_no_run_executable_keys(path, value, issues)
-    source = value.get("source")
-    allowed_source_values = allowed_sources or SOURCE_KINDS
-    if not isinstance(source, str) or source not in allowed_source_values:
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.source", f"must be one of {sorted(allowed_source_values)}"
-            )
-        )
-        return
-    component_id = value.get("id")
-    if not isinstance(component_id, str):
-        issues.append(ConfigValidationIssue(f"{path}.id", non_string_id_message))
-        return
-    if component_id == "":
-        issues.append(ConfigValidationIssue(f"{path}.id", "must be a non-empty stable id"))
-        return
+    if not _require_str(f"{path}.id", value, issues):
+        return None
+    component_id = value["id"]
     if component_id == "all":
-        issues.append(ConfigValidationIssue(f"{path}.id", all_id_message))
-        return
+        issues.append(ConfigValidationIssue(f"{path}.id", "must select one component id"))
+        return None
     if not EXPERIMENT_NAME_RE.fullmatch(component_id):
         issues.append(
             ConfigValidationIssue(
@@ -340,16 +382,145 @@ def _validate_source_ref_value(
                 "must contain only letters, numbers, dots, underscores, and hyphens",
             )
         )
-    if source == "component":
-        try:
-            component_registry.get(ComponentSelection(family, component_id))
-        except ComponentRegistryError:
-            issues.append(
-                ConfigValidationIssue(
-                    f"{path}.id",
-                    f"unknown {family[:-1] if family.endswith('s') else family} component id",
-                )
+        return None
+    _optional_str(f"{path}.lock_id", value, issues, allow_none=True)
+    _optional_str(f"{path}.candidate_id", value, issues, allow_none=True)
+    _optional_str(f"{path}.run_id", value, issues, allow_none=True)
+    if value.get("lock_id") is not None and value.get("candidate_id") is not None:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                "lock_id and candidate_id are mutually exclusive",
             )
+        )
+    if value.get("candidate_id") is not None and value.get("run_id") is None:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.run_id",
+                "is required when candidate_id is set",
+            )
+        )
+    if value.get("run_id") is not None and value.get("candidate_id") is None:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.run_id",
+                "is only valid when candidate_id is set",
+            )
+        )
+    if (
+        value.get("lock_id") is not None or value.get("candidate_id") is not None
+    ) and "params" in value:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.params",
+                "must not be set when lock_id or candidate_id is set; locked refs load "
+                "params from the candidate store",
+            )
+        )
+
+    try:
+        definition = component_registry.get(ComponentSelection(family, component_id))
+    except ComponentRegistryError:
+        singular = family[:-1] if family.endswith("s") else family
+        issues.append(ConfigValidationIssue(f"{path}.id", f"unknown {singular} component id"))
+        return None
+
+    params = _validate_component_params(
+        f"{path}.params",
+        value.get("params", {}),
+        tuple(getattr(definition.manifest, "param_names", ())),
+        issues,
+        explicit="params" in value,
+    )
+    _validate_component_param_sources(path, value, definition, params, issues)
+    return definition
+
+
+def _validate_component_params(
+    path: str,
+    value: Any,
+    param_names: tuple[str, ...],
+    issues: list[ConfigValidationIssue],
+    *,
+    explicit: bool,
+) -> dict[str, Any] | None:
+    if not explicit:
+        return {}
+    if not isinstance(value, dict):
+        issues.append(ConfigValidationIssue(path, "must be a mapping"))
+        return None
+    _validate_json_like(path, value, issues)
+    _validate_no_inline_secrets(path, value, issues)
+    _validate_no_run_executable_keys(path, value, issues)
+    unknown = sorted(set(value) - set(param_names))
+    if unknown:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                f"params must be declared by the component manifest; unknown: {unknown}",
+            )
+        )
+    return dict(value)
+
+
+def _validate_component_param_sources(
+    path: str,
+    value: dict[str, Any],
+    definition: ComponentDefinition,
+    params: dict[str, Any] | None,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    param_names = tuple(getattr(definition.manifest, "param_names", ()))
+    if not param_names:
+        return
+    if value.get("lock_id") is not None or value.get("candidate_id") is not None:
+        return
+    if getattr(definition.manifest, "param_space_callable", None):
+        return
+    provided = set(params or {})
+    defaults = set(getattr(definition.manifest, "defaults", {}))
+    missing = sorted(set(param_names) - provided - defaults)
+    if missing:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                "must provide params, component defaults, lock_id, candidate_id, or "
+                f"param_space_callable for params {missing}",
+            )
+        )
+
+
+def _validate_component_output_contract(
+    strategy_definition: ComponentDefinition | None,
+    indicator_definitions: tuple[tuple[str, ComponentDefinition], ...],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if strategy_definition is None:
+        return
+    produced: dict[str, str] = {}
+    for path, definition in indicator_definitions:
+        for output_name in getattr(definition.manifest, "output_names", ()):
+            previous = produced.get(output_name)
+            if previous is not None:
+                issues.append(
+                    ConfigValidationIssue(
+                        f"{path}.id",
+                        f"duplicates produced indicator output {output_name!r} from {previous}",
+                    )
+                )
+                continue
+            produced[output_name] = f"{path}.id"
+
+    missing = sorted(
+        set(getattr(strategy_definition.manifest, "consumes_outputs", ())) - set(produced)
+    )
+    if missing:
+        issues.append(
+            ConfigValidationIssue(
+                "strategy.consumes_outputs",
+                f"strategy consumes outputs not produced by configured indicators: {missing}",
+            )
+        )
 
 
 def _validate_ranking(
@@ -362,7 +533,9 @@ def _validate_ranking(
     if not isinstance(value, dict):
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
-    _validate_known_keys(path, value, {"metric", "direction", "secondary_metrics", "rank_by"}, issues)
+    _validate_known_keys(
+        path, value, {"metric", "direction", "secondary_metrics", "rank_by"}, issues
+    )
     metric = value.get("metric")
     if not isinstance(metric, str) or not metric:
         issues.append(ConfigValidationIssue(f"{path}.metric", "must be a non-empty string"))
@@ -445,7 +618,9 @@ def _validate_metric_selection(
     if require_primary and not definition.primary_eligible:
         issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not primary-eligible"))
     if not require_primary and not definition.secondary_eligible:
-        issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not secondary-eligible"))
+        issues.append(
+            ConfigValidationIssue(path, f"metric {metric_id!r} is not secondary-eligible")
+        )
 
 
 def _validate_no_run_executable_keys(
@@ -460,7 +635,7 @@ def _validate_no_run_executable_keys(
                 issues.append(
                     ConfigValidationIssue(
                         child_path,
-                        "is not allowed in run config; select trusted component or playbook IDs",
+                        "is not allowed in run config; select trusted component IDs",
                     )
                 )
             _validate_no_run_executable_keys(child_path, item, issues)
@@ -658,15 +833,6 @@ def _quality_degradations(data: dict[str, Any]) -> set[str]:
     if not isinstance(degradations, list):
         return set()
     return {str(item) for item in degradations}
-
-
-def _validate_candidate_grid(
-    candidate_grid: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    _optional_int("candidate_grid.max_candidates", candidate_grid, issues, positive=True)
-    _optional_int("candidate_grid.max_estimated_cells", candidate_grid, issues, positive=True)
-    _optional_int("candidate_grid.batch_size", candidate_grid, issues, positive=True)
 
 
 def _validate_portfolio(portfolio: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
@@ -948,9 +1114,12 @@ def _optional_int(
     *,
     positive: bool = False,
     minimum: int | None = None,
+    allow_none: bool = False,
 ) -> bool:
     key = path.rsplit(".", 1)[-1]
     if key not in mapping:
+        return True
+    if mapping[key] is None and allow_none:
         return True
     return _validate_int(path, mapping[key], issues, positive=positive, minimum=minimum)
 

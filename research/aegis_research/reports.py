@@ -14,6 +14,7 @@ from research.aegis_research.metrics.stats import (
     PORTFOLIO_STATS_METRICS,
 )
 
+SYMBOL_LEVEL = "symbol"
 PORTFOLIO_METRIC_SCOPE = "shared_cash_group"
 METRICS_SCHEMA_VERSION = "metrics.v3"
 METRIC_AVAILABILITY_AVAILABLE = "available"
@@ -118,8 +119,8 @@ def portfolio_metrics(pf: Any, config: ReportConfig) -> dict[str, Any]:
 def portfolio_metrics_by_candidate_group(
     pf: Any,
     config: ReportConfig,
-    candidate_ids: Iterable[str],
-) -> dict[str, dict[str, Any]]:
+    candidate_ids: Iterable[Any],
+) -> dict[Any, dict[str, Any]]:
     candidate_ids = tuple(candidate_ids)
     sharpe_kwargs = {
         "freq": pd.Timedelta(config.freq),
@@ -356,10 +357,10 @@ def _optional_diagnostics(
 
 def _optional_diagnostics_by_candidate(
     pf: Any,
-    candidate_ids: Iterable[str],
+    candidate_ids: Iterable[Any],
     sharpe_kwargs: dict[str, Any],
     settings: Mapping[str, Any],
-) -> dict[str, dict[str, Any]]:
+) -> dict[Any, dict[str, Any]]:
     diagnostics = {candidate_id: {} for candidate_id in candidate_ids}
     for name, spec in OPTIONAL_DIAGNOSTICS.items():
         method_name = spec["method"]
@@ -438,7 +439,7 @@ def _raw_metric_map(stats: Any, name: str) -> dict[str, Any]:
     return {"portfolio": stats.get(name)}
 
 
-def _candidate_stat_value(stats: Any, title: str, candidate_id: str) -> Any:
+def _candidate_stat_value(stats: Any, title: str, candidate_id: Any) -> Any:
     if isinstance(stats, pd.DataFrame):
         if candidate_id in stats.index and title in stats.columns:
             return stats.loc[candidate_id, title]
@@ -451,21 +452,15 @@ def _candidate_stat_value(stats: Any, title: str, candidate_id: str) -> Any:
     return None
 
 
-def _candidate_symbol_stat_values(stats: Any, title: str, candidate_id: str) -> dict[str, Any]:
+def _candidate_symbol_stat_values(stats: Any, title: str, candidate_id: Any) -> dict[str, Any]:
     if not isinstance(stats, pd.DataFrame):
         return {}
     if title not in stats.columns:
         return {}
-    values = stats[title]
-    if not isinstance(values.index, pd.MultiIndex) or "candidate_id" not in values.index.names:
-        return {}
-    if candidate_id not in values.index.get_level_values("candidate_id"):
-        return {}
-    candidate_values = values.xs(candidate_id, level="candidate_id")
-    return {str(symbol): value for symbol, value in candidate_values.items()}
+    return _candidate_symbol_values(stats[title], candidate_id)
 
 
-def _candidate_raw_value(value: Any, candidate_id: str) -> Any:
+def _candidate_raw_value(value: Any, candidate_id: Any) -> Any:
     if isinstance(value, pd.DataFrame):
         if candidate_id in value.index and len(value.columns) == 1:
             return value.iloc[value.index.get_loc(candidate_id), 0]
@@ -476,15 +471,26 @@ def _candidate_raw_value(value: Any, candidate_id: str) -> Any:
     return value
 
 
-def _candidate_symbol_raw_values(value: Any, candidate_id: str) -> dict[str, Any]:
+def _candidate_symbol_raw_values(value: Any, candidate_id: Any) -> dict[str, Any]:
     if not isinstance(value, pd.Series):
         return {}
-    if not isinstance(value.index, pd.MultiIndex) or "candidate_id" not in value.index.names:
+    return _candidate_symbol_values(value, candidate_id)
+
+
+def _candidate_symbol_values(value: pd.Series, candidate_id: Any) -> dict[str, Any]:
+    index = value.index
+    if not isinstance(index, pd.MultiIndex) or SYMBOL_LEVEL not in index.names:
         return {}
-    if candidate_id not in value.index.get_level_values("candidate_id"):
+    candidate_levels = [name for name in index.names if name != SYMBOL_LEVEL]
+    if len(candidate_levels) == 1:
+        mask = index.get_level_values(candidate_levels[0]) == candidate_id
+    else:
+        mask = index.droplevel(SYMBOL_LEVEL) == candidate_id
+    if not mask.any():
         return {}
-    candidate_values = value.xs(candidate_id, level="candidate_id")
-    return {str(symbol): item for symbol, item in candidate_values.items()}
+    candidate_values = value.loc[mask]
+    symbols = candidate_values.index.get_level_values(SYMBOL_LEVEL)
+    return {str(symbol): item for symbol, item in zip(symbols, candidate_values, strict=True)}
 
 
 def _headline_raw_metric(stats: Any, name: str) -> Any:

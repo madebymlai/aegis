@@ -6,36 +6,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from research.aegis_research import cli, strategy_runs
+from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
-from research.aegis_research.market_data.contracts import (
-    QUALITY_REJECTED,
-    MarketDataBundle,
-    MarketDataQuality,
-    MarketDataResult,
-)
-from research.aegis_research.provenance.manifest import RunStatus
-from research.aegis_research.strategy_runs import StrategyInputs, validate_strategy_output
+from research.aegis_research.optimization.component_source import FIXED_CANDIDATE_PARAM
 
 
-def test_strategy_output_boundary_rejects_portfolio_fields() -> None:
-    close = _frame()
-    inputs = StrategyInputs(
-        data=MarketDataBundle(features={"Close": close}, loaded_features=("Close",)),
-        indicators={},
-        metadata={},
-    )
-    output = {
-        "entries": close > 1,
-        "exits": close < 1,
-        "size": 0.5,
-    }
-
-    with pytest.raises(ValueError, match="portfolio"):
-        validate_strategy_output(output, inputs)
-
-
-def test_strategy_run_cli_executes_component_strategy_and_writes_manifest(
+def test_strategy_run_cli_rejects_component_strategy_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -44,20 +20,11 @@ def test_strategy_run_cli_executes_component_strategy_and_writes_manifest(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "strategy-run"]) == 0
-
-    output = capsys.readouterr()
-    assert output.err == ""
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert "lane" not in payload
-    assert payload["evidence_type"] == "strategy_sweep"
-    assert payload["run"]["id"] == "strategy-run"
-    assert payload["run"]["status"] == RunStatus.COMPLETED
-    assert (tmp_path / "runs" / "strategy-run" / "strategy_run.json").is_file()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "strategy-run"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "strategy-run")
 
 
-def test_strategy_run_cli_executes_component_strategy_with_rolling_split(
+def test_strategy_run_cli_rejects_component_strategy_with_top_level_rolling_split(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -66,20 +33,11 @@ def test_strategy_run_cli_executes_component_strategy_with_rolling_split(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, split=_rolling_split_config())
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-rolling"]) == 0
-
-    output = capsys.readouterr()
-    artifact = json.loads((tmp_path / "runs" / "component-rolling" / "strategy_run.json").read_text())
-    assert json.loads(output.out)["status"] == "success"
-    assert artifact["strategy"]["source"] == "component"
-    assert artifact["split"]["method"] == "from_rolling"
-    assert artifact["leaderboard"]["schema_version"] == "split_run_leaderboard.v1"
-    assert artifact["leaderboard"]["summary"]["candidate_count"] == 1
-    assert artifact["leaderboard"]["rows"][0]["selected_split_count"] == artifact["split"]["n_splits"]
-    assert {record["set"] for record in artifact["split_metrics"]} == {"selection", "held_out"}
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-rolling"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "component-rolling")
 
 
-def test_strategy_run_cli_scores_component_strategy_with_purged_kfold_split(
+def test_strategy_run_cli_rejects_component_strategy_with_top_level_purged_split(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -88,19 +46,11 @@ def test_strategy_run_cli_scores_component_strategy_with_purged_kfold_split(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, split=_purged_kfold_split_config())
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-purged"]) == 0
-
-    output = capsys.readouterr()
-    artifact = json.loads((tmp_path / "runs" / "component-purged" / "strategy_run.json").read_text())
-    assert json.loads(output.out)["status"] == "success"
-    assert artifact["split"]["method"] == "from_purged_kfold"
-    assert artifact["split"]["sets"][0]["label"] == "train"
-    assert artifact["split"]["sets"][1]["label"] == "test"
-    assert {record["native_set"] for record in artifact["split_metrics"]} == {"train", "test"}
-    assert artifact["leaderboard"]["summary"]["candidate_count"] == 1
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-purged"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "component-purged")
 
 
-def test_strategy_run_rejects_split_execution_over_budget_before_portfolio_simulation(
+def test_strategy_run_rejects_candidate_grid_before_split_execution_budget_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -108,29 +58,22 @@ def test_strategy_run_rejects_split_execution_over_budget_before_portfolio_simul
     monkeypatch.chdir(tmp_path)
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
 
-    def fail_if_called(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("portfolio simulation should not run after split preflight rejection")
-
-    monkeypatch.setattr(strategy_runs, "simulate_portfolio_batch", fail_if_called)
     config_path = _write_run_config(
         tmp_path,
         split=_rolling_split_config(),
         candidate_grid={"max_estimated_cells": 1},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "split-over-budget"]) == 10
-
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "split-over-budget"]) == 6
     output = capsys.readouterr()
     payload = json.loads(output.err)
-    manifest = json.loads((tmp_path / "runs" / "split-over-budget" / "manifest.json").read_text())
-    preflight = manifest["evidence"]["composition"]["split_execution_preflight"]
-    assert payload["error"]["category"] == "execution_failure"
-    assert "candidate_grid.max_estimated_cells=1" in payload["error"]["message"]
-    assert preflight["estimated_cells"] > preflight["limits"]["max_estimated_cells"]
-    assert not (tmp_path / "runs" / "split-over-budget" / "strategy_run.json").exists()
+    assert payload["error"]["category"] == "config_validation"
+    assert "candidate_grid" in payload["error"]["message"]
+    assert "unknown field" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "split-over-budget").exists()
 
 
-def test_strategy_run_preserves_partial_component_split_artifact_on_scoring_failure(
+def test_strategy_run_rejects_component_split_failure_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -138,29 +81,13 @@ def test_strategy_run_preserves_partial_component_split_artifact_on_scoring_fail
     monkeypatch.chdir(tmp_path)
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
 
-    def fail_portfolio_batch(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("component split portfolio failed intentionally")
-
-    monkeypatch.setattr(strategy_runs, "simulate_portfolio_batch", fail_portfolio_batch)
     config_path = _write_run_config(tmp_path, split=_rolling_split_config())
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-split-fails"]) == 10
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads((tmp_path / "runs" / "component-split-fails" / "manifest.json").read_text())
-    artifact = json.loads(
-        (tmp_path / "runs" / "component-split-fails" / "strategy_run.json").read_text()
-    )
-    strategy_artifact = next(item for item in manifest["artifacts"] if item["id"] == "strategy.run")
-    assert payload["error"]["category"] == "execution_failure"
-    assert "component split portfolio failed intentionally" in payload["error"]["message"]
-    assert strategy_artifact["status"] == "partial"
-    assert artifact["split"]["method"] == "from_rolling"
-    assert artifact["leaderboard"]["summary"]["partial_leaderboard"] is True
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-split-fails"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "component-split-fails")
 
 
-def test_strategy_run_passes_component_indicator_sources_to_strategy(
+def test_strategy_run_rejects_component_indicator_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -171,20 +98,14 @@ def test_strategy_run_passes_component_indicator_sources_to_strategy(
     config_path = _write_run_config(
         tmp_path,
         strategy_id="demo.uses_ma",
-        indicators=[{"source": "component", "ids": ["demo.ma"]}],
+        indicators=[{"id": "demo.ma", "params": {"window": 2}}],
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "indicator-run"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    artifact = json.loads((tmp_path / "runs" / "indicator-run" / "strategy_run.json").read_text())
-    assert payload["status"] == "success"
-    assert artifact["indicators"][0]["id"] == "demo.ma"
-    assert artifact["leaderboard"]["rows"][0]["indicators"][0]["id"] == "demo.ma"
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "indicator-run"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "indicator-run")
 
 
-def test_strategy_run_expands_all_component_indicators_to_strategy(
+def test_strategy_run_rejects_all_component_indicator_expansion_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -199,22 +120,11 @@ def test_strategy_run_expands_all_component_indicators_to_strategy(
     _write_two_indicator_strategy_component(tmp_path / "research/components/strategies/uses_all.py")
     config_path = _write_run_config(tmp_path, strategy_id="demo.uses_all")
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "all-indicators-run"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    artifact = json.loads(
-        (tmp_path / "runs" / "all-indicators-run" / "strategy_run.json").read_text()
-    )
-    assert payload["status"] == "success"
-    assert [item["id"] for item in artifact["indicators"]] == ["demo.fast", "demo.slow"]
-    assert [item["id"] for item in artifact["leaderboard"]["rows"][0]["indicators"]] == [
-        "demo.fast",
-        "demo.slow",
-    ]
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "all-indicators-run"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "all-indicators-run")
 
 
-def test_strategy_run_preflights_component_input_arrays_before_data_load(
+def test_strategy_run_rejects_component_input_array_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -227,15 +137,66 @@ def test_strategy_run_preflights_component_input_arrays_before_data_load(
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-strategy-arrays"]) == 6
 
-    payload = json.loads(capsys.readouterr().err)
-    manifest = json.loads((tmp_path / "runs" / "bad-strategy-arrays" / "manifest.json").read_text())
-    assert payload["error"]["category"] == "config_validation"
-    assert "missing required data arrays" in payload["error"]["message"]
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert not (tmp_path / "runs" / "bad-strategy-arrays" / "strategy_run.json").exists()
+    _assert_missing_optimization_config_error(capsys, tmp_path, "bad-strategy-arrays")
 
 
-def test_strategy_run_writes_data_metadata_before_quality_failure(
+def test_strategy_run_executes_fixed_component_through_native_optimization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+    config_path = _write_run_config(
+        tmp_path,
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-opt"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    artifact = json.loads((tmp_path / "runs" / "component-opt" / "strategy_run.json").read_text())
+
+    assert payload["status"] == "success"
+    assert artifact["evidence_type"] == "optimization"
+    assert artifact["strategy"]["family"] == "strategies"
+    assert artifact["strategy"]["id"] == "demo.cross"
+    assert artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
+    assert artifact["leaderboard"]["rows"]
+    assert payload["leaderboard"]["top_rows"] == artifact["leaderboard"]["rows"][:10]
+    assert len(artifact["candidates"]) == 1
+
+
+def test_strategy_run_emits_strategy_and_indicator_promotion_locks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_indicator_component(tmp_path / "research/components/indicators/ma.py")
+    _write_indicator_strategy_component(tmp_path / "research/components/strategies/uses_ma.py")
+    config_path = _write_run_config(
+        tmp_path,
+        strategy_id="demo.uses_ma",
+        indicators=[{"id": "demo.ma", "params": {"window": 2}}],
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-locks"]) == 0
+
+    capsys.readouterr()
+    artifact = json.loads((tmp_path / "runs" / "component-locks" / "strategy_run.json").read_text())
+    promotions = {
+        (promotion["component_family"], promotion["component_id"]): promotion
+        for promotion in artifact["promotions"]
+    }
+
+    assert set(promotions) == {("strategies", "demo.uses_ma"), ("indicators", "demo.ma")}
+    assert promotions[("indicators", "demo.ma")]["params"] == {"window": 2}
+    assert promotions[("strategies", "demo.uses_ma")]["params"] == {}
+
+
+def test_strategy_run_rejects_data_quality_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -244,31 +205,11 @@ def test_strategy_run_writes_data_metadata_before_quality_failure(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    def rejected_data(*_args, **_kwargs):
-        return MarketDataResult(
-            native_data=None,
-            metadata={
-                "source": "synthetic",
-                "quality_state": QUALITY_REJECTED,
-                "loaded_arrays": [],
-                "unavailable_arrays": ["Close"],
-            },
-            diagnostics=({"code": "missing_close"},),
-            quality=MarketDataQuality(QUALITY_REJECTED, reasons=("Close unavailable",)),
-        )
-
-    monkeypatch.setattr(strategy_runs, "load_market_data_result", rejected_data)
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-data"]) == 10
-
-    payload = json.loads(capsys.readouterr().err)
-    metadata = json.loads((tmp_path / "runs" / "bad-data" / "data_metadata.json").read_text())
-    assert payload["run"]["status"] == RunStatus.FAILED
-    assert metadata["quality_state"] == QUALITY_REJECTED
-    assert metadata["unavailable_arrays"] == ["Close"]
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-data"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "bad-data")
 
 
-def test_strategy_run_fails_partial_leaderboards_before_writing_evidence(
+def test_strategy_run_rejects_partial_leaderboard_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -277,38 +218,11 @@ def test_strategy_run_fails_partial_leaderboards_before_writing_evidence(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    def partial_leaderboard(*_args, **_kwargs):
-        return {
-            "schema_version": "run_leaderboard.v2",
-            "primary_metric": "total_return",
-            "direction": "desc",
-            "secondary_metrics": [],
-            "metric_registry_fingerprint": None,
-            "rows": [],
-            "failure_samples": [{"variant_id": "failed", "code": "runtime", "message": "boom"}],
-            "summary": {
-                "attempted": 1,
-                "succeeded": 0,
-                "failed": 1,
-                "excluded": 0,
-                "success_ratio": 0.0,
-                "partial_leaderboard": True,
-                "failure_gating_status": "partial",
-            },
-        }
-
-    monkeypatch.setattr(strategy_runs, "build_run_leaderboard", partial_leaderboard)
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "partial-run"]) == 10
-
-    payload = json.loads(capsys.readouterr().err)
-    manifest = json.loads((tmp_path / "runs" / "partial-run" / "manifest.json").read_text())
-    assert payload["error"]["category"] == "execution_failure"
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert not (tmp_path / "runs" / "partial-run" / "strategy_run.json").exists()
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "partial-run"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "partial-run")
 
 
-def test_strategy_run_redacts_known_config_secrets_on_default_run_failure(
+def test_strategy_run_redacts_known_config_secrets_on_validation_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -327,16 +241,13 @@ def test_strategy_run_redacts_known_config_secrets_on_default_run_failure(
         },
     )
 
-    def leaking_load(*_args, **_kwargs):
-        raise OSError("provider returned hunter2")
-
-    monkeypatch.setattr(strategy_runs, "load_market_data_result", leaking_load)
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "secret-run"]) == 10
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "secret-run"]) == 6
 
     output = capsys.readouterr()
     assert "hunter2" not in output.err
-    assert json.loads(output.err)["error"]["category"] == "execution_failure"
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "fixed/non-optimized strategy runs are removed" in payload["error"]["message"]
 
 
 def test_strategy_run_maps_component_registry_errors_to_config_errors(
@@ -357,7 +268,7 @@ def test_strategy_run_maps_component_registry_errors_to_config_errors(
     assert not (tmp_path / "runs" / "bad-registry").exists()
 
 
-def test_strategy_run_rejects_indicator_symbol_mismatch(
+def test_strategy_run_rejects_indicator_symbol_mismatch_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -368,17 +279,14 @@ def test_strategy_run_rejects_indicator_symbol_mismatch(
     config_path = _write_run_config(
         tmp_path,
         strategy_id="demo.uses_ma",
-        indicators=[{"source": "component", "ids": ["demo.ma"]}],
+        indicators=[{"id": "demo.ma", "params": {"window": 2}}],
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-indicator"]) == 10
-
-    payload = json.loads(capsys.readouterr().err)
-    assert payload["error"]["category"] == "execution_failure"
-    assert "misaligned symbols" in payload["error"]["message"]
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-indicator"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "bad-indicator")
 
 
-def test_strategy_run_keyboard_interrupt_marks_manifest_interrupted(
+def test_strategy_run_rejects_interrupt_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -387,19 +295,8 @@ def test_strategy_run_keyboard_interrupt_marks_manifest_interrupted(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    def interrupting_load(*_args, **_kwargs):
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(strategy_runs, "load_market_data_result", interrupting_load)
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "interrupted-run"]) == 130
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    manifest = json.loads((tmp_path / "runs" / "interrupted-run" / "manifest.json").read_text())
-    assert payload["error"]["category"] == "interrupted"
-    assert payload["run"]["status"] == RunStatus.INTERRUPTED
-    assert manifest["run"]["status"] == RunStatus.INTERRUPTED
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "interrupted-run"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "interrupted-run")
 
 
 def test_run_rejects_removed_model_training_config_without_train_guidance(
@@ -438,6 +335,24 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
     assert not (tmp_path / "runs" / "should-not-exist").exists()
 
 
+def test_run_rejects_optimization_without_nested_split_before_run_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+    config_path = _write_run_config(tmp_path, optimization={"search": "grid"})
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "no-optimization-split"]) == 6
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "optimization.split" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "no-optimization-split").exists()
+
+
 def test_run_missing_config_is_config_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -452,6 +367,20 @@ def test_run_missing_config_is_config_error(
     assert payload["error"]["category"] == "config_validation"
 
 
+def _assert_missing_optimization_config_error(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    run_id: str,
+) -> None:
+    output = capsys.readouterr()
+    assert output.out == ""
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "optimization" in payload["error"]["message"]
+    assert "fixed/non-optimized strategy runs are removed" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / run_id).exists()
+
+
 def _write_run_config(
     tmp_path: Path,
     *,
@@ -461,6 +390,7 @@ def _write_run_config(
     data: dict[str, object] | None = None,
     split: dict[str, object] | None = None,
     candidate_grid: dict[str, object] | None = None,
+    optimization: dict[str, object] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
     path.write_text(
@@ -477,11 +407,12 @@ def _write_run_config(
                 }
                 | (data or {}),
                 "portfolio": {"entry_budget": 1.0},
-                "strategy": {"source": "component", "id": strategy_id},
-                "indicators": indicators or [{"source": "component", "ids": "all"}],
+                "strategy": {"id": strategy_id},
+                "indicators": indicators or [],
                 "ranking": {"metric": "total_return", "direction": "desc"},
                 **({"split": split} if split is not None else {}),
                 **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
+                **({"optimization": optimization} if optimization is not None else {}),
             },
             sort_keys=False,
         )
@@ -496,7 +427,6 @@ def _rolling_split_config() -> dict[str, object]:
             "length": 20,
             "offset": 20,
             "split": 0.5,
-            "set_labels": ["selection", "held_out"],
         },
         "max_splits": 5,
     }
@@ -543,12 +473,13 @@ def _write_indicator_component(path: Path) -> None:
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma']}\n"
+        "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma'], "
+        "'defaults': {'window': 2}}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
-        "def run(data):\n"
+        "def run(data, window=2):\n"
         '    """Compute the fixed moving-average indicator."""\n'
-        "    return data.feature('Close').rolling(2).mean().bfill()\n"
+        "    return data.feature('Close').rolling(int(window)).mean().bfill()\n"
     )
 
 
@@ -603,12 +534,13 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.uses_ma', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'signal_outputs': ['entries', 'exits'], 'owns_portfolio': False}\n"
+        "'signal_outputs': ['entries', 'exits'], 'consumes_outputs': ['ma'], "
+        "'owns_portfolio': False}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
         '    """Generate signals from the selected moving-average indicator."""\n'
-        "    ma = bundle.indicators['demo.ma']\n"
+        "    ma = bundle.indicators['ma']\n"
         "    close = bundle.data.feature('Close')\n"
         "    entries = close > ma\n"
         "    exits = close < ma\n"
@@ -638,9 +570,3 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         "    exits = fast < slow\n"
         "    return {'entries': entries.fillna(False), 'exits': exits.fillna(False)}\n"
     )
-
-
-def _frame():
-    import pandas as pd
-
-    return pd.DataFrame({"SYN": [1.0, 2.0, 1.5]}, index=pd.date_range("2020-01-01", periods=3))

@@ -137,6 +137,48 @@ def test_batched_portfolio_groups_cash_by_candidate() -> None:
     assert order_values.tolist() == pytest.approx([5000.0, 5000.0, 5000.0, 5000.0])
 
 
+def test_batched_portfolio_groups_cash_by_native_param_levels() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0], "B": [20.0, 21.0, 22.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_tuples(
+        [
+            (5, "A", 20),
+            (5, "B", 20),
+            (10, "A", 30),
+            (10, "B", 30),
+        ],
+        names=["fast_window", "symbol", "slow_window"],
+    )
+    entries = pd.DataFrame(False, index=index, columns=columns)
+    entries.loc[index[0], :] = True
+    exits = pd.DataFrame(False, index=index, columns=columns)
+
+    result = simulate_portfolio_batch(
+        close,
+        entries,
+        exits,
+        PortfolioConfig(entry_budget=1.0, fees=0, slippage=0),
+        SignalConfig(execution_timing="same_close"),
+    )
+    orders = result.portfolio.orders.records_readable
+    order_values = orders["Size"] * orders["Price"]
+
+    assert result.diagnostics["grouping"] == {
+        "cash_sharing": True,
+        "group_by": "except_level:symbol",
+        "group_count": 2,
+        "group_scope": "candidate_symbols_single_cash_pool",
+        "candidate_ids": [(5, 20), (10, 30)],
+    }
+    assert result.diagnostics["shape"]["candidate_count"] == 2
+    assert result.diagnostics["sizing"]["min_nonzero_valuepercent"] == pytest.approx(0.5)
+    assert result.diagnostics["sizing"]["max_nonzero_valuepercent"] == pytest.approx(0.5)
+    assert order_values.tolist() == pytest.approx([5000.0, 5000.0, 5000.0, 5000.0])
+
+
 def test_expand_market_frame_to_candidate_columns_preserves_candidate_symbol_order() -> None:
     close, _open_prices, _entries, _exits = _portfolio_inputs()
     target_columns = pd.MultiIndex.from_tuples(
@@ -153,6 +195,37 @@ def test_expand_market_frame_to_candidate_columns_preserves_candidate_symbol_ord
     assert expanded.columns.equals(target_columns)
     assert expanded[("candidate-b", "SYN")].tolist() == close["SYN"].tolist()
     assert expanded[("candidate-a", "SYN")].tolist() == close["SYN"].tolist()
+
+
+def test_batched_next_open_gap_policy_handles_native_param_level_columns() -> None:
+    market_index = pd.date_range("2024-01-01", periods=5)
+    split_index = market_index[[0, 1, 3, 4]]
+    close = pd.DataFrame({"SYN": [10.0, 11.0, 13.0, 14.0]}, index=split_index)
+    open_prices = close + 0.5
+    columns = pd.MultiIndex.from_tuples(
+        [(5, "SYN", 20), (10, "SYN", 30)],
+        names=["fast_window", "symbol", "slow_window"],
+    )
+    entries = pd.DataFrame(False, index=split_index, columns=columns)
+    entries.loc[split_index[1], :] = True
+    exits = pd.DataFrame(False, index=split_index, columns=columns)
+
+    result = simulate_portfolio_batch(
+        close,
+        entries,
+        exits,
+        PortfolioConfig(fees=0, slippage=0),
+        SignalConfig(),
+        open_prices=open_prices,
+        market_index=market_index,
+    )
+
+    assert result.diagnostics["execution"]["gap_non_executable_signals"] == 2
+    assert result.diagnostics["execution"]["gap_non_executable_by_symbol"] == {"SYN": 2}
+    assert result.diagnostics["execution"]["non_executable_signals"] == 2
+    assert result.diagnostics["simulation_signals"]["entry_states"] == 0
+    assert result.diagnostics["sizing"]["nonzero_size_cells"] == 0
+    assert result.diagnostics["records"]["order_count"] == 0
 
 
 def test_batched_portfolio_rejects_missing_open_prices_for_next_open() -> None:

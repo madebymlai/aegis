@@ -9,6 +9,10 @@ import yaml
 
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
+from tests.support.research.aegis_research.component_fixtures import (
+    write_indicator_component,
+    write_strategy_component,
+)
 
 
 def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
@@ -64,6 +68,28 @@ def test_show_splitters_lists_catalog_json(capsys: pytest.CaptureFixture[str]) -
     assert payload["schema_version"] == "splitter_catalog.v1"
     assert payload["run_scoring_set_policy"] == "exactly_two_sets_first_selection_second_held_out"
     assert any(method["method"] == "from_rolling" for method in payload["methods"])
+
+
+def test_show_components_lists_registry_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_indicator_component(tmp_path / "research/components/indicators/returns.py")
+    write_strategy_component(tmp_path / "research/components/strategies/strategy.py")
+
+    assert cli.main(["show", "components", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    strategy = payload["families"]["strategies"]["demo.strategy"]
+    indicator = payload["families"]["indicators"]["demo.returns"]
+    assert payload["status"] == "success"
+    assert payload["schema_version"] == "component_registry_snapshot.v1"
+    assert payload["fingerprint"]
+    assert strategy["signal_outputs"] == ["entries", "exits"]
+    assert strategy["params"]["param_space"]["available"] is False
+    assert indicator["outputs"] == ["returns"]
 
 
 def test_show_splitters_unknown_method_json(capsys: pytest.CaptureFixture[str]) -> None:
@@ -148,9 +174,9 @@ def test_run_rejects_removed_labeler_without_train_guidance(
                     "arrays": ["OHLCV"],
                 },
                 "portfolio": {"entry_budget": 1.0},
-                "strategy": {"source": "playbook", "id": "missing_strategy"},
+                "strategy": {"id": "missing_strategy"},
                 "labeler": {"id": "demo.fixlb"},
-                "indicators": [{"source": "playbook", "ids": ["missing_indicator"]}],
+                "indicators": [{"id": "missing_indicator"}],
                 "ranking": {"metric": "total_return", "direction": "desc"},
             },
             sort_keys=False,
@@ -179,10 +205,15 @@ def test_run_rejects_stale_train_shaped_config_before_run_directory(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "stale_train",
                 "output_dir": "runs",
-                "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
+                "data": {
+                    "source": "synthetic",
+                    "symbols": ["SYN"],
+                    "rows": 120,
+                    "arrays": ["OHLCV"],
+                },
                 "portfolio": {"entry_budget": 1.0},
                 "labeler": {"id": "demo.fixlb"},
-                "indicators": [{"source": "component", "ids": ["demo.returns"]}],
+                "indicators": [{"id": "demo.returns"}],
                 "train": {"model": {"source": "plugin", "id": "demo.model"}},
             },
             sort_keys=False,

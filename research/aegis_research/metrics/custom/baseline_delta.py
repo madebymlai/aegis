@@ -22,7 +22,7 @@ def baseline_delta_definition() -> MetricDefinition:
         direction_hint=None,
         required_inputs=("selected_primary_metric", "candidate_metric", "baseline_metric"),
         provider="aegis",
-        target="run_leaderboard",
+        target="optimization_leaderboard",
         source_method="contextual_secondary",
     )
 

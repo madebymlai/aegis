@@ -6,7 +6,7 @@ This scaffold follows the VectorBT PRO docs around data classes, indicator pipel
 
 ```text
 data fetch/load
--> strategy/research evidence over playbooks or fixed components (`aerd run`)
+-> component-native strategy/research evidence (`aerd run`)
 -> VectorBT PRO portfolio evidence
 -> leaderboards and run artifacts
 ```
@@ -18,9 +18,8 @@ data fetch/load
 - `indicators.py`: component-backed indicator execution, feature lineage, and diagnostics.
 - `portfolios.py`: owns `vbt.Portfolio.from_signals` execution timing, Open-price validation, and resolved VBT settings.
 - `reports.py`: computes portfolio metrics and metric evidence.
-- `strategy_runs.py`: playbook-backed sweeps and fixed component-backed strategy orchestration.
+- `strategy_runs.py`: component-native optimization orchestration and strategy evidence.
 - `run_splits.py`: validates and materializes supported VBT splitter configs for run scoring.
-- `split_leaderboard.py`: ranks held-out split evidence for run split scoring.
 - `cli.py`: `aerd` dispatcher.
 
 ## CLI Contract
@@ -31,13 +30,13 @@ Use the single CLI command for local work:
 aerd run <config>
 ```
 
-`aerd run` selects strategy and indicator component/playbook IDs by explicit source refs and writes source-labeled strategy/research evidence. Playbooks use the sweep contract: indicator playbooks emit candidate-indexed surfaces, strategy playbooks materialize requested signal batches, and Aegis centrally scores complete composed strategy candidates through VBT chunks. Components are fixed-param promoted implementations and do not emit candidate axes.
+`aerd run` selects strategy and indicator component IDs directly and writes component strategy/research evidence. Components may expose defaults and `param_space()` callables; Aegis composes them into one native VBT optimization source and centrally scores portfolio metrics.
 
 Both run configs require explicit config paths in v1. Local configs live flat under `research/configs/`; there is no local default experiment workflow and no mode inference from subdirectories.
 
 ## Config Contract
 
-YAML is a versioned public contract. Every config must declare `schema_version: 5`. Static config validation runs before any run directory exists. Data-array contract failures discovered from selected components happen before provider data is loaded and mark the run failed with manifest evidence. This in-repo schema v5 contract is forward-first: stale configs that use `lane`, `train`, `model`, `labels`, `label`, `labeler`, `signals`, removed feature-map fields, or invalid split method params are intentionally rejected rather than compatibility-shimmed.
+YAML is a versioned public contract. Every config must declare `schema_version: 6`. Static config validation runs before any run directory exists. Data-array contract failures discovered from selected components happen before provider data is loaded and mark the run failed with manifest evidence. This in-repo schema v6 contract is forward-first: stale configs that use `lane`, `train`, `model`, `labels`, `label`, `labeler`, `signals`, removed feature-map fields, source selectors, indicator `ids`, `candidate_grid`, top-level `split`, or invalid split method params are intentionally rejected rather than compatibility-shimmed.
 
 Validation is strict by default:
 
@@ -68,7 +67,7 @@ There is no universal catalog of all possible `data.arrays` values in Aegis. Vec
 ## Run Config Example
 
 ```yaml
-schema_version: 5
+schema_version: 6
 name: ma_cross_run
 output_dir: runs
 
@@ -82,14 +81,10 @@ portfolio:
   entry_budget: 1.0
 
 strategy:
-  source: playbook
-  id: ma_cross
+  id: example.ma_cross
 
 indicators:
-  - source: playbook
-    ids: [ma_explore]
-  - source: component
-    ids: all
+  - id: example.ma
 
 ranking:
   metric: total_return
@@ -99,21 +94,20 @@ ranking:
 
 ## Indicator Contract
 
-Run configs use the top-level `indicators` section for grouped source blocks with `ids: all` or explicit ID lists. Source selection does not define params, inline formulas, imports, Python snippets, arbitrary functions, or arbitrary notebook paths.
+Run configs use one top-level `indicators` entry per component id: one indicator entry per component id. Source selectors and `ids` batching are removed so each component can carry its own `params`, `lock_id`, or `candidate_id` without ambiguity. Direct `candidate_id` pins include the source `run_id` so repeat runs with the same candidate key remain unambiguous.
 
-Indicator components own fixed reviewed params, selected outputs, and feature transforms. Component callables receive a market-data bundle and request declared raw features with `data.feature("FeatureName")`, including `data.feature("Close")` for close-only indicators and `data.feature("High")` or `data.feature("Low")` for OHLCV-dependent indicators. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels. Cartesian products, constrained grids, and other sweeps belong in playbooks, not components or run YAML.
+Indicator components own reviewed params, selected outputs, defaults, and optional VBT-native param spaces. Component callables receive a market-data bundle and request declared raw features with `data.feature("FeatureName")`, including `data.feature("Close")` for close-only indicators and `data.feature("High")` or `data.feature("Low")` for OHLCV-dependent indicators. Built-in VectorBT-backed components should run through their indicator class `.run(...)` methods with visible params so native outputs preserve effective `window`, `wtype`, and symbol levels.
 
 Trusted custom indicators are added in project code, usually with `vbt.IF(...).with_apply_func(...)`, and then referenced by stable id from config:
 
 ```yaml
 indicators:
-  - source: component
-    ids: [custom_retvol]
+  - id: custom_retvol
 ```
 
 ## Signal And Portfolio Contract
 
-Strategy components and strategy playbooks emit aligned `entries` and `exits` only. Portfolio sizing, costs, direction, and timing remain config-owned. The runnable v1 portfolio contract is long-only and uses one shared cash pool across all configured symbols.
+Strategy components emit aligned `entries` and `exits` only. Portfolio sizing, costs, direction, and timing remain config-owned. The runnable v1 portfolio contract is long-only and uses one shared cash pool across all configured symbols.
 
 ```yaml
 portfolio:
@@ -125,22 +119,37 @@ portfolio:
 
 Strategy runs require Close and Open data so bar-aligned signals can be scored with next-open execution. Missing, misaligned, or null Open prices at required execution rows fail the run instead of falling back to same-close or VBT `NextValidOpen` behavior.
 
-## Run Split Scoring
+## Native Optimization
 
-Run configs can optionally add top-level split scoring. The selected strategy candidate set is unchanged: fixed component runs are one-candidate sets, and playbook sweeps are composed strategy x indicator candidate sets. Aegis builds VBT split sets from the source index, scores candidates only on each split's selection set, evaluates the selected candidate on the held-out set with fresh portfolio state, and writes one final split-based leaderboard plus `split_metrics` and `split_diagnostics` in `strategy_run.json`.
+For runs that need parameter search, configs declare an `optimization` block and components expose `param_space()` callables whose values are `vbt.Param`. Aegis composes configured strategy and indicator components into one pipeline, wraps it in `vbt.cv_split`, and lets VBT enumerate, select, and evaluate parameter combinations. Aegis does not feed VBT-generated params back into a Python candidate grid.
 
 ```yaml
-split:
-  method: from_rolling
-  params:
-    length: 252
-    offset: 252
-    split: 0.8
-    set_labels: [selection, held_out]
-  max_splits: 100
+optimization:
+  search: random       # or "grid" for exhaustive
+  random_subset: 16
+  seed: 42
+  evidence:
+    return_grid: first  # off | first | all
+  split:
+    method: from_rolling
+    params:
+      length: 252
+      offset: 252
+      split: 0.8
+    max_splits: 10
 ```
 
-`split.method` must be an exact `vbt.Splitter` constructor method. Use `aerd show splitters from_rolling --json` or another discovered method to inspect signature-derived params and defaults. Compatible methods such as `from_rolling` and `from_purged_kfold` share the same scoring path when VBT returns exactly two non-overlapping sets per split. The first set is used for selection, the second set is used for held-out scoring, and native VBT set labels are preserved in evidence.
+`optimization.split.method` maps to `vbt.cv_split(splitter=...)` and `optimization.split.params` to `splitter_kwargs`. Set roles are positional: VBT set index 0 is Aegis `selection`, VBT set index 1 is Aegis `held_out`. The selection function maps the configured `ranking.metric` and `ranking.direction` into VBT `selection`, with multi-metric selection handled via `grid_results.xs(metric_name).idxmax()`/`idxmin()`. Tied parameters use `vbt.Param(level=...)`; conditional parameters use `vbt.Param(condition=...)`; `vbt.Param(random_subset=...)` and the top-level `random_subset` interoperate with VBT's lazy-grid behavior. Random optimization requires `optimization.seed` so precomputed sampled-row evidence and VBT execution use the same deterministic sample. Resource gates (theoretical combinations, sampled combinations, expected result cells, artifact bytes) live on `optimization.preflight` and `optimization.split.max_*` knobs and fail closed before VBT execution. Partial failures (`vbt.NoResult`-only grids, missing metrics, runtime errors) surface as `evidence.optimization.execution_failure` rather than silently shrinking the leaderboard.
+
+`candidate_grid` is unknown to the forward schema. New work must use component `param_space()` callables plus the `optimization` contract; `vbt.Param` jointly searches indicator and strategy parameters inside the composed pipeline.
+
+## Removed Run Split Scoring
+
+The top-level `split` block is no longer a run contract field. Forward configs must use `optimization.split` on the optimization contract.
+
+Set roles are positional (set 0 = selection, set 1 = held_out); `set_labels` is rejected by config validation under `optimization.split.params`.
+
+`optimization.split.method` must be an exact `vbt.Splitter` constructor method. Use `aerd show splitters from_rolling --json` or another discovered method to inspect signature-derived params and defaults. Compatible methods such as `from_rolling` and `from_purged_kfold` share the same scoring path when VBT returns exactly two non-overlapping sets per split. The first set is used for selection, the second set is used for held-out scoring, and native VBT set labels are preserved in evidence.
 
 ## Run Manifest And Artifacts
 
@@ -176,13 +185,13 @@ JSON error categories use stable process exits:
 
 The CLI exposes explicit rerun intent with `--rerun-mode` and optional run lineage flags. The default creates a fresh immutable physical run. Overwrite mode creates a new superseding physical run rather than mutating prior evidence in place.
 
-## Components And Playbooks
+## Components
 
-Promoted components live under `research/components/{indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after validation selects that ID. Local component files are ignored by git except each placeholder README. See `docs/components.md` and `docs/examples/components/*_component_example.py`.
+Components live under `research/components/{indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after validation selects that ID. Components can declare `defaults`, optional `param_space_callable`, produced indicator outputs, and consumed strategy outputs. See `docs/examples/components/*_component_example.py`.
 
-Playbooks live under `research/playbooks/{indicators,strategies}/` as Jupytext-compatible Python percent-cell files and are selected by stable ID from `PLAYBOOK_MANIFEST`, not by path. Indicator and strategy playbooks declare `result_schema: "playbook_sweep_result.v1"` and return contract marker `"aegis.playbook_sweep.v1"`. Indicator playbook IDs represent one indicator idea/family; the playbook owns its default parameters and candidate axis, emits named candidate-indexed outputs for strategy sweeps to consume, and a baseline may name exactly one component indicator ID. Strategy playbooks expose strategy candidate axes and materialize bounded signal chunks. See `docs/playbooks.md`, `docs/examples/playbooks/indicator_playbook_example.py`, and `docs/examples/playbooks/strategy_playbook_example.py`.
+Playbooks are no longer a forward authoring path. See `docs/playbooks.md` for the removal boundary.
 
-Leaderboards rank complete composed strategy candidates, not raw indicators. Indicator playbook candidates become rankable only when a strategy playbook consumes their named surfaces and emits executable signals. Manual promotion means copying the winning indicator source/candidate/params into a fixed indicator component, copying the winning strategy source/candidate/params into a fixed strategy component, and rerunning with those component refs to verify the promoted implementation.
+Leaderboards rank complete composed strategy candidates, not raw indicators. Component promotion uses persisted candidate rows plus explicit `lock_id` or `candidate_id` plus source `run_id` refs; manual copying of playbook params is no longer the forward workflow.
 
 ## VectorBT PRO Notes
 
