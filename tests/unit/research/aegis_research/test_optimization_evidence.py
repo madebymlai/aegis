@@ -33,7 +33,7 @@ def test_candidate_rows_are_derived_from_vbt_param_index() -> None:
         index,
         source_identity={"source": "component", "id": "native_rsi", "source_hash": "abc"},
         data_identity=DATA_IDENTITY,
-        portfolio_policy={"entry_budget": 1.0},
+        portfolio_policy={"target_exposure_cap": 1.0},
     )
 
     assert len(rows) == 1
@@ -47,7 +47,7 @@ def test_candidate_rows_are_derived_from_vbt_param_index() -> None:
     assert rows[0]["coordinates"] == {}
     assert rows[0]["identity"]["source_identity"]["source_hash"] == "abc"
     assert rows[0]["identity"]["data_identity"] == DATA_IDENTITY
-    assert rows[0]["identity"]["portfolio_policy"] == {"entry_budget": 1.0}
+    assert rows[0]["identity"]["portfolio_policy"] == {"target_exposure_cap": 1.0}
 
 
 def test_candidate_key_excludes_split_set_symbol_coordinates() -> None:
