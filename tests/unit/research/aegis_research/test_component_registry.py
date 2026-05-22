@@ -225,8 +225,8 @@ def test_component_manifest_exposes_param_space_defaults_and_consumed_outputs(tm
     )
     strategy_path.write_text(
         strategy_path.read_text().replace(
-            "'signal_outputs': ['entries', 'exits']",
-            "'param_names': ['threshold'], 'signal_outputs': ['entries', 'exits'], "
+            "'output_name': 'active'",
+            "'param_names': ['threshold'], 'output_name': 'active', "
             "'consumes_outputs': ['value'], 'defaults': {'threshold': 0.0}, "
             "'param_space_callable': 'param_space'",
         )
@@ -239,6 +239,7 @@ def test_component_manifest_exposes_param_space_defaults_and_consumed_outputs(tm
     assert indicator.defaults == {"window": 20}
     assert indicator.param_space_callable == "param_space"
     assert strategy.param_names == ("threshold",)
+    assert strategy.output_name == "active"
     assert strategy.consumes_outputs == ("value",)
     assert strategy.defaults == {"threshold": 0.0}
     assert strategy.param_space_callable == "param_space"
@@ -295,6 +296,146 @@ def test_component_callable_module_is_registered_while_loading(tmp_path) -> None
     assert definition.load_callable()() is True
 
 
+@pytest.mark.parametrize("output_name", ["active", "scores", "ranks", "target_weights"])
+def test_strategy_manifest_registers_all_allocation_native_shapes(tmp_path, output_name) -> None:
+    root = tmp_path / "research" / "components"
+    _write_strategy_component(
+        root / "strategies" / "strategy.py",
+        component_id=f"demo.{output_name}",
+        output_name=output_name,
+    )
+
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    definition = registry.get(ComponentSelection("strategies", f"demo.{output_name}"))
+
+    assert definition.manifest.output_name == output_name
+    snapshot = registry.public_snapshot()
+    strategy_snapshot = snapshot["families"]["strategies"][f"demo.{output_name}"]
+    assert strategy_snapshot["output_name"] == output_name
+    assert "signal_outputs" not in strategy_snapshot
+
+
+@pytest.mark.parametrize("legacy_output", ["entries", "exits"])
+def test_strategy_manifest_rejects_legacy_signal_output_names(tmp_path, legacy_output) -> None:
+    root = tmp_path / "research" / "components"
+    _write_strategy_component(
+        root / "strategies" / "strategy.py",
+        component_id="demo.legacy",
+        output_name=legacy_output,
+    )
+
+    with pytest.raises(ComponentRegistryError) as excinfo:
+        discover_component_registry(root=root, repo_root=tmp_path)
+    message = str(excinfo.value)
+    assert "unsupported allocation output" in message
+    assert "active" in message and "scores" in message
+    assert "ranks" in message and "target_weights" in message
+
+
+def test_strategy_manifest_rejects_unknown_output_name(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_strategy_component(
+        root / "strategies" / "strategy.py",
+        component_id="demo.unknown",
+        output_name="momentum",
+    )
+
+    with pytest.raises(ComponentRegistryError) as excinfo:
+        discover_component_registry(root=root, repo_root=tmp_path)
+    message = str(excinfo.value)
+    assert "unsupported allocation output" in message
+    assert "'momentum'" in message
+    assert "target_weights" in message
+
+
+def test_strategy_manifest_rejects_legacy_signal_outputs_field(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    path = root / "strategies" / "strategy.py"
+    path.parent.mkdir(parents=True)
+    manifest = {
+        "family": "strategies",
+        "id": "demo.legacy_field",
+        "version": "1.0.0",
+        "input_names": ["Close"],
+        "signal_outputs": ["entries", "exits"],
+        "owns_portfolio": False,
+    }
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture used to verify legacy signal_outputs field is rejected.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {manifest!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return a fixture value."""\n'
+        "    return 'legacy'\n"
+    )
+
+    with pytest.raises(ComponentRegistryError, match="output_name must be a non-empty string"):
+        discover_component_registry(root=root, repo_root=tmp_path)
+
+
+def test_strategy_manifest_rejects_forbidden_target_exposure_cap_key(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    path = root / "strategies" / "strategy.py"
+    path.parent.mkdir(parents=True)
+    manifest = {
+        "family": "strategies",
+        "id": "demo.forbidden",
+        "version": "1.0.0",
+        "input_names": ["Close"],
+        "output_name": "active",
+        "target_exposure_cap": 0.5,
+        "owns_portfolio": False,
+    }
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture used to verify components cannot own portfolio-cap config.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {manifest!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return a fixture value."""\n'
+        "    return 'forbidden'\n"
+    )
+
+    with pytest.raises(
+        ComponentRegistryError, match="'target_exposure_cap' is forbidden"
+    ):
+        discover_component_registry(root=root, repo_root=tmp_path)
+
+
+def _write_strategy_component(path, *, component_id: str, output_name: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "family": "strategies",
+        "id": component_id,
+        "version": "1.0.0",
+        "input_names": ["Close"],
+        "output_name": output_name,
+        "owns_portfolio": False,
+    }
+    path.write_text(
+        "# %% component overview\n"
+        "# Allocation-native strategy fixture component.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {manifest!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return a deterministic fixture value."""\n'
+        f"    return {component_id!r}\n"
+    )
+
+
 def _write_component(path, family: str, component_id: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest = _manifest_for(family, component_id)
@@ -326,7 +467,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
         return {
             **base,
             "input_names": ["Close"],
-            "signal_outputs": ["entries", "exits"],
+            "output_name": "active",
             "owns_portfolio": False,
         }
     raise AssertionError(f"unknown family {family}")
