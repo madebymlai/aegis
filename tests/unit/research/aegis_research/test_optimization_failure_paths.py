@@ -73,6 +73,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
             signal=SignalConfig(),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return", direction="desc"),
+            mono_chunk_len=10000,
         )
 
 
@@ -123,6 +124,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
             signal=SignalConfig(),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return", direction="desc"),
+            mono_chunk_len=10000,
         )
 
 

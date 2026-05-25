@@ -15,6 +15,7 @@ from research.aegis_research.run_splits import RunSplitsResult
 PREFLIGHT_SCHEMA_VERSION = "optimization_preflight.v1"
 PREFLIGHT_PUBLIC_BYTES_PER_ROW = 1024
 PREFLIGHT_MAX_EXACT_COMBINE_PARAMS = 100_000
+PREFLIGHT_DTYPE_BYTES = 8
 
 
 class PreflightError(ValueError):
@@ -98,6 +99,20 @@ def build_preflight(
         + promotion_row_count
     )
     estimated_public_artifact_bytes = estimated_public_rows * PREFLIGHT_PUBLIC_BYTES_PER_ROW
+    max_set_rows = max(
+        max(len(split.selection_index), len(split.held_out_index))
+        for split in split_result.splits
+    )
+    batch_bytes_per_candidate = (
+        symbol_count * max_set_rows * PREFLIGHT_DTYPE_BYTES * materialized_frame_count
+    )
+    if batch_bytes_per_candidate > 0:
+        computed_mono_chunk_len = min(
+            optimization.split.max_batch_expansion_bytes // batch_bytes_per_candidate,
+            sampled_combinations,
+        )
+    else:
+        computed_mono_chunk_len = sampled_combinations
     diagnostics = {
         "schema_version": PREFLIGHT_SCHEMA_VERSION,
         "search": optimization.search,
@@ -136,9 +151,13 @@ def build_preflight(
         "promotion_row_count": promotion_row_count,
         "estimated_public_rows": estimated_public_rows,
         "estimated_public_artifact_bytes": estimated_public_artifact_bytes,
+        "max_set_rows": max_set_rows,
+        "batch_bytes_per_candidate": batch_bytes_per_candidate,
+        "computed_mono_chunk_len": computed_mono_chunk_len,
         "limits": {
             "max_estimated_output_cells": optimization.split.max_estimated_output_cells,
             "max_public_artifact_bytes": optimization.split.max_public_artifact_bytes,
+            "max_batch_expansion_bytes": optimization.split.max_batch_expansion_bytes,
         },
         "execute": dict(optimization.execute),
     }
@@ -281,6 +300,18 @@ def _raise_if_over_budget(
     diagnostics: Mapping[str, Any],
     optimization: OptimizationConfig,
 ) -> None:
+    if diagnostics["computed_mono_chunk_len"] < 1:
+        raise PreflightError(
+            f"batch expansion per candidate "
+            f"({diagnostics['batch_bytes_per_candidate']} bytes: "
+            f"{diagnostics['symbol_count']} symbols × "
+            f"{diagnostics['max_set_rows']} bars × "
+            f"{PREFLIGHT_DTYPE_BYTES} dtype × "
+            f"{diagnostics['materialized_frame_count']} frames) "
+            f"exceeds optimization.split.max_batch_expansion_bytes "
+            f"({optimization.split.max_batch_expansion_bytes})",
+            diagnostics=diagnostics,
+        )
     if diagnostics["estimated_output_cells"] > optimization.split.max_estimated_output_cells:
         raise PreflightError(
             "optimization estimated output cells exceed optimization.split.max_estimated_output_cells",

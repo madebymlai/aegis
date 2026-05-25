@@ -74,6 +74,7 @@ def _build_run_split(raw: dict[str, Any] | None) -> RunSplitConfig | None:
         max_splits=raw.get("max_splits", 100),
         max_estimated_output_cells=raw.get("max_estimated_output_cells", 25_000_000),
         max_public_artifact_bytes=raw.get("max_public_artifact_bytes", 10_000_000),
+        max_batch_expansion_bytes=raw.get("max_batch_expansion_bytes", 2_000_000_000),
     )
 
 

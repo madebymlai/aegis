@@ -229,6 +229,7 @@ def _run_optimization_strategy_sweep(
             signal=SignalConfig(),
             report=config.report,
             ranking=config.ranking,
+            mono_chunk_len=optimization_evidence["preflight"]["computed_mono_chunk_len"],
         )
     except Exception as error:
         optimization_evidence["execution_failure"] = {

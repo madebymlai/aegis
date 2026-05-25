@@ -90,6 +90,7 @@ def execute_optimization(
     signal: SignalConfig,
     report: ReportConfig,
     ranking: RankingConfig,
+    mono_chunk_len: int,
 ) -> OptimizationRun:
     if ranking.direction not in RANKING_DIRECTION_TO_SELECTION:
         raise OptimizationRunnerError(
@@ -106,7 +107,7 @@ def execute_optimization(
         market_index=close.index,
         has_open_prices=open_prices is not None,
     )
-    parameterized_kwargs = _build_parameterized_kwargs(optimization)
+    parameterized_kwargs = _build_parameterized_kwargs(optimization, mono_chunk_len=mono_chunk_len)
     return_grid_mode = optimization.evidence.return_grid
     return_grid_kw: str | None = return_grid_mode if return_grid_mode != "off" else None
     selection_fn = _build_selection_function(
@@ -384,8 +385,12 @@ def _build_selection_function(*, ranking_metric: str, direction: str):
     return selection
 
 
-def _build_parameterized_kwargs(optimization: OptimizationConfig) -> dict[str, Any]:
-    parameterized_kwargs: dict[str, Any] = {"merge_func": "row_stack", "mono_chunk_len": 10000}
+def _build_parameterized_kwargs(
+    optimization: OptimizationConfig,
+    *,
+    mono_chunk_len: int,
+) -> dict[str, Any]:
+    parameterized_kwargs: dict[str, Any] = {"merge_func": "row_stack", "mono_chunk_len": mono_chunk_len}
     if optimization.search == "random":
         if optimization.random_subset is None:
             raise OptimizationRunnerError(

@@ -90,6 +90,7 @@ def test_runner_emits_selection_and_held_out_winners_per_split() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     assert run.return_grid_mode == "off"
@@ -118,6 +119,7 @@ def test_runner_returns_grid_when_return_grid_first_is_requested() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     assert run.return_grid_mode == "first"
@@ -143,6 +145,7 @@ def test_runner_return_grid_all_emits_distinct_selection_and_held_out_grids() ->
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     assert run.return_grid_mode == "all"
@@ -172,6 +175,7 @@ def test_runner_threads_random_subset_and_seed_into_parameterized_kwargs() -> No
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     assert run.parameterized_kwargs["random_subset"] == 3
@@ -194,6 +198,7 @@ def test_runner_sampled_index_is_deterministic_under_same_seed() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
     run_b = execute_optimization(
         close=close,
@@ -204,6 +209,7 @@ def test_runner_sampled_index_is_deterministic_under_same_seed() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     assert list(run_a.sampled_index) == list(run_b.sampled_index)
@@ -223,6 +229,7 @@ def test_runner_requires_seed_for_random_search() -> None:
             signal=SignalConfig(),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=10000,
         )
 
 
@@ -239,6 +246,7 @@ def test_runner_sampled_index_matches_grid_param_axis_for_grid_search() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     assert len(run.sampled_index) == 4
@@ -271,6 +279,7 @@ def test_runner_serializes_sampled_rows_independent_of_return_grid() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
     payload = serialize_optimization_run(run)
 
@@ -296,6 +305,7 @@ def test_runner_selection_projects_on_ranking_metric_across_central_catalog() ->
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
     run_asc = execute_optimization(
         close=close,
@@ -306,6 +316,7 @@ def test_runner_selection_projects_on_ranking_metric_across_central_catalog() ->
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="asc"),
+    mono_chunk_len=10000,
     )
 
     desc_winners = (
@@ -335,6 +346,7 @@ def test_runner_rejects_ranking_metric_outside_central_catalog() -> None:
             signal=SignalConfig(),
             report=ReportConfig(),
             ranking=RankingConfig(metric="not_a_real_metric", direction="desc"),
+        mono_chunk_len=10000,
         )
 
 
@@ -364,6 +376,7 @@ def test_runner_rejects_reserved_param_names_in_manual_source(param_name: str) -
             signal=SignalConfig(),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=10000,
         )
 
 
@@ -390,6 +403,7 @@ def test_runner_tied_param_levels_emit_paired_rows_only() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     sampled_pairs = set(map(tuple, run.sampled_index))
@@ -427,6 +441,7 @@ def test_runner_conditional_params_filter_invalid_combinations() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     sampled_pairs = set(map(tuple, run.sampled_index))
@@ -455,6 +470,7 @@ def test_runner_rejects_unsupported_ranking_direction() -> None:
             signal=SignalConfig(),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return", direction="sideways"),
+        mono_chunk_len=10000,
         )
 
 
@@ -482,6 +498,7 @@ def test_serialize_optimization_run_emits_jsonable_selection_and_selection_grid(
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     payload = serialize_optimization_run(run)
@@ -526,6 +543,7 @@ def test_runner_rejects_invalid_pipeline_output_shape() -> None:
             signal=SignalConfig(),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=10000,
         )
 
 
@@ -558,6 +576,7 @@ def test_runner_rejects_authoritative_fields_in_pipeline_output_mapping(forbidde
             signal=SignalConfig(),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=10000,
         )
 
 
@@ -574,6 +593,7 @@ def test_runner_sampled_rows_sourced_from_result_grid_when_return_grid_first() -
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     assert run.sampled_rows_source == SAMPLED_ROWS_SOURCE_RESULT_GRID, (
@@ -602,6 +622,7 @@ def test_runner_sampled_rows_falls_back_to_precomputed_when_return_grid_off() ->
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     assert run.sampled_rows_source == SAMPLED_ROWS_SOURCE_PRECOMPUTED, (
@@ -660,6 +681,7 @@ def test_batched_path_preserves_candidate_identity_across_splits() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     grid = run.selection_grid
@@ -702,6 +724,7 @@ def test_batched_path_filters_noresult_candidates_without_failing() -> None:
         signal=SignalConfig(),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", direction="desc"),
+    mono_chunk_len=10000,
     )
 
     grid = run.selection_grid
@@ -723,6 +746,25 @@ def test_batched_path_filters_noresult_candidates_without_failing() -> None:
             winner.index.get_level_values("slow_window"), strict=True)
     )
     assert all(k != (15, 10) for k in winner_params)
+
+
+def test_runner_uses_mono_chunk_len_from_caller() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=7,
+    )
+
+    assert run.parameterized_kwargs["mono_chunk_len"] == 7
 
 
 def test_batched_path_no_scalar_simulate_portfolio_import() -> None:
