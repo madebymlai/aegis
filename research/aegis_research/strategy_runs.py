@@ -61,7 +61,6 @@ from research.aegis_research.optimization.promotion import (
     resolve_component_promotion,
 )
 from research.aegis_research.optimization.runner import (
-    METRIC_INDEX_NAME,
     execute_optimization,
     serialize_optimization_run,
 )
@@ -250,7 +249,7 @@ def _run_optimization_strategy_sweep(
         data_identity=_candidate_data_identity(data_result, array_contract),
         portfolio_policy=to_builtin(asdict(config.portfolio)),
         store_namespace=candidate_store_namespace,
-        coordinate_levels=("split", "set", "symbol", METRIC_INDEX_NAME),
+        coordinate_levels=("split", "set", "symbol"),
     )
     optimization_evidence["candidate_count"] = len(candidate_rows)
     optimization_evidence["sampled_row_count"] = len(run_payload["sampled_rows"]["rows"])

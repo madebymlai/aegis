@@ -95,15 +95,14 @@ def test_runner_emits_selection_and_held_out_winners_per_split() -> None:
     assert run.return_grid_mode == "off"
     assert run.selection_grid is None
     assert run.held_out_grid is None
+    assert isinstance(run.selection, pd.DataFrame)
     assert run.selection.index.names[:2] == ["split", "set"]
-    assert run.selection.index.names[-1] == METRIC_INDEX_NAME
+    assert set(run.selection.columns) == set(PORTFOLIO_METRIC_VALUE_KEYS)
     set_values = set(run.selection.index.get_level_values("set"))
     assert set_values == {"selection", "held_out"}
-    metric_values = set(run.selection.index.get_level_values(METRIC_INDEX_NAME))
-    assert metric_values == set(PORTFOLIO_METRIC_VALUE_KEYS)
-    assert run.parameterized_kwargs == {"merge_func": "concat"}
+    assert run.parameterized_kwargs["merge_func"] == "row_stack"
     split_count = len(set(run.selection.index.get_level_values("split")))
-    assert len(run.selection) == split_count * 2 * len(PORTFOLIO_METRIC_VALUE_KEYS)
+    assert len(run.selection) == split_count * 2
 
 
 def test_runner_returns_grid_when_return_grid_first_is_requested() -> None:
@@ -124,12 +123,11 @@ def test_runner_returns_grid_when_return_grid_first_is_requested() -> None:
     assert run.return_grid_mode == "first"
     assert run.selection_grid is not None
     assert run.held_out_grid is None, "return_grid='first' must not surface duplicated set_1 grid"
+    assert isinstance(run.selection_grid, pd.DataFrame)
     assert "fast_window" in run.selection_grid.index.names
     assert "slow_window" in run.selection_grid.index.names
-    assert METRIC_INDEX_NAME in run.selection_grid.index.names
+    assert set(run.selection_grid.columns) == set(PORTFOLIO_METRIC_VALUE_KEYS)
     assert set(run.selection_grid.index.get_level_values("set")) == {"selection"}
-    grid_metrics = set(run.selection_grid.index.get_level_values(METRIC_INDEX_NAME))
-    assert grid_metrics == set(PORTFOLIO_METRIC_VALUE_KEYS)
 
 
 def test_runner_return_grid_all_emits_distinct_selection_and_held_out_grids() -> None:
@@ -154,8 +152,6 @@ def test_runner_return_grid_all_emits_distinct_selection_and_held_out_grids() ->
     held_out_sets = set(run.held_out_grid.index.get_level_values("set"))
     assert selection_sets == {"selection"}
     assert held_out_sets == {"held_out"}
-    # In return_grid="all", set_0 and set_1 grids are independent evaluations
-    # over different windows, so they must not be identical row-for-row.
     selection_values = run.selection_grid.reset_index(level="set", drop=True)
     held_out_values = run.held_out_grid.reset_index(level="set", drop=True)
     assert not selection_values.equals(held_out_values), (
@@ -180,6 +176,7 @@ def test_runner_threads_random_subset_and_seed_into_parameterized_kwargs() -> No
 
     assert run.parameterized_kwargs["random_subset"] == 3
     assert run.parameterized_kwargs["seed"] == 7
+    assert run.parameterized_kwargs["merge_func"] == "row_stack"
     assert len(run.sampled_index) == 3
 
 
@@ -312,15 +309,13 @@ def test_runner_selection_projects_on_ranking_metric_across_central_catalog() ->
     )
 
     desc_winners = (
-        run_desc.selection.xs("total_return", level=METRIC_INDEX_NAME)
-        .xs("selection", level="set")
-        .sort_index(level="split")
+        run_desc.selection.xs("selection", level="set")
+        .sort_index(level="split")["total_return"]
         .to_numpy()
     )
     asc_winners = (
-        run_asc.selection.xs("total_return", level=METRIC_INDEX_NAME)
-        .xs("selection", level="set")
-        .sort_index(level="split")
+        run_asc.selection.xs("selection", level="set")
+        .sort_index(level="split")["total_return"]
         .to_numpy()
     )
     assert (desc_winners >= asc_winners).all()
@@ -465,16 +460,9 @@ def test_runner_rejects_unsupported_ranking_direction() -> None:
 
 def test_runner_rejects_all_non_finite_ranking_metric_values() -> None:
     selection_fn = _build_selection_function(ranking_metric="total_return", direction="desc")
-    grid_results = pd.Series(
-        [float("nan"), float("inf"), float("-inf")],
-        index=pd.MultiIndex.from_tuples(
-            [
-                (1, "total_return"),
-                (2, "total_return"),
-                (3, "total_return"),
-            ],
-            names=["window", METRIC_INDEX_NAME],
-        ),
+    grid_results = pd.DataFrame(
+        {"total_return": [float("nan"), float("inf"), float("-inf")]},
+        index=pd.Index([1, 2, 3], name="window"),
     )
 
     with pytest.raises(OptimizationRunnerError, match="non-finite"):
@@ -502,9 +490,10 @@ def test_serialize_optimization_run_emits_jsonable_selection_and_selection_grid(
     assert payload["ranking_direction"] == "desc"
     assert payload["return_grid_mode"] == "first"
     assert payload["selection"]["index_names"][:2] == ["split", "set"]
+    assert set(payload["selection"]["columns"]) == set(PORTFOLIO_METRIC_VALUE_KEYS)
     first_row = payload["selection"]["rows"][0]
     assert {"selection", "held_out"} >= {first_row["coordinates"]["set"]}
-    assert isinstance(first_row["value"], float)
+    assert isinstance(first_row["metrics"]["total_return"], float)
     assert payload["selection_grid"] is not None
     assert payload["selection_grid"]["index_names"][:2] == ["split", "set"]
     grid_sets = {row["coordinates"]["set"] for row in payload["selection_grid"]["rows"]}
@@ -624,15 +613,15 @@ def test_runner_sampled_rows_falls_back_to_precomputed_when_return_grid_off() ->
     assert payload["sampled_rows"]["source"] == SAMPLED_ROWS_SOURCE_PRECOMPUTED
 
 
-def test_extract_param_index_drops_split_set_metric_levels_and_dedupes() -> None:
+def test_extract_param_index_drops_split_set_levels_and_dedupes() -> None:
     index = pd.MultiIndex.from_tuples(
         [
-            (0, "selection", 2, 10, "total_return"),
-            (0, "selection", 2, 10, "sharpe_ratio"),
-            (0, "held_out", 2, 10, "total_return"),
-            (1, "selection", 5, 20, "total_return"),
+            (0, "selection", 2, 10),
+            (0, "held_out", 2, 10),
+            (1, "selection", 5, 20),
+            (1, "held_out", 5, 20),
         ],
-        names=["split", "set", "fast_window", "slow_window", METRIC_INDEX_NAME],
+        names=["split", "set", "fast_window", "slow_window"],
     )
 
     projected = _extract_param_index(index)
@@ -656,3 +645,88 @@ def test_verify_evaluated_subset_passes_when_subset_holds() -> None:
     evaluated = pd.MultiIndex.from_tuples([(2, 10), (5, 20)], names=["fast_window", "slow_window"])
 
     _verify_evaluated_subset(evaluated=evaluated, sampled=sampled, label="test")
+
+
+def test_batched_path_preserves_candidate_identity_across_splits() -> None:
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(return_grid="first"),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+
+    grid = run.selection_grid
+    assert isinstance(grid, pd.DataFrame)
+    param_tuples = set(
+        zip(
+            grid.index.get_level_values("fast_window"),
+            grid.index.get_level_values("slow_window"),
+            strict=True,
+        )
+    )
+    assert param_tuples == {(2, 10), (2, 20), (5, 10), (5, 20)}
+    for col in PORTFOLIO_METRIC_VALUE_KEYS:
+        assert col in grid.columns
+
+
+def test_batched_path_filters_noresult_candidates_without_failing() -> None:
+    close, open_prices = _close_open_frames()
+
+    def noresult_pipeline(close: pd.DataFrame, fast_window: int, slow_window: int) -> object:
+        if fast_window >= slow_window:
+            return vbt.NoResult
+        return _ma_pipeline(close, fast_window, slow_window)
+
+    source = OptimizationSource(
+        pipeline=noresult_pipeline,
+        params={"fast_window": vbt.Param([2, 15]), "slow_window": vbt.Param([10])},
+        output_name="active",
+        evidence={},
+        diagnostics={},
+        metadata={},
+    )
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(return_grid="first"),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+    )
+
+    grid = run.selection_grid
+    grid_params = set(
+        zip(
+            grid.index.get_level_values("fast_window"),
+            grid.index.get_level_values("slow_window"),
+            strict=True,
+        )
+    )
+    assert (2, 10) in grid_params
+    assert (15, 10) in grid_params
+    noresult_rows = grid.xs(15, level="fast_window").xs(10, level="slow_window")
+    assert noresult_rows["total_return"].isna().all()
+    winner = run.selection.xs("selection", level="set")
+    assert (winner["fast_window"] == 2).all() if "fast_window" in winner.columns else True
+    winner_params = set(
+        zip(winner.index.get_level_values("fast_window"),
+            winner.index.get_level_values("slow_window"), strict=True)
+    )
+    assert all(k != (15, 10) for k in winner_params)
+
+
+def test_batched_path_no_scalar_simulate_portfolio_import() -> None:
+    import research.aegis_research.optimization.runner as runner_mod
+
+    assert not hasattr(runner_mod, "simulate_portfolio")
+    assert not hasattr(runner_mod, "_evaluate_cv_slice")

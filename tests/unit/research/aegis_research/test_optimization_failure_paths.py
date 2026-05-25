@@ -19,7 +19,6 @@ from research.aegis_research.configuration.schema import (
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
 from research.aegis_research.optimization.leaderboard import build_optimization_leaderboard
 from research.aegis_research.optimization.runner import (
-    METRIC_INDEX_NAME,
     OptimizationRunnerError,
     _build_selection_function,
     execute_optimization,
@@ -79,13 +78,9 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
 
 def test_selection_function_rejects_all_nan_metrics_with_visible_diagnostic() -> None:
     selection = _build_selection_function(ranking_metric="total_return", direction="desc")
-    grid = pd.Series(
-        [float("nan"), float("nan"), float("nan")],
-        index=pd.MultiIndex.from_tuples(
-            [(2, "total_return"), (5, "total_return"), (10, "total_return")],
-            names=["fast_window", METRIC_INDEX_NAME],
-        ),
-        name="value",
+    grid = pd.DataFrame(
+        {"total_return": [float("nan"), float("nan"), float("nan")]},
+        index=pd.Index([2, 5, 10], name="fast_window"),
     )
 
     with pytest.raises(OptimizationRunnerError, match="non-finite"):
@@ -94,13 +89,9 @@ def test_selection_function_rejects_all_nan_metrics_with_visible_diagnostic() ->
 
 def test_selection_function_picks_finite_winner_even_when_some_rows_are_nan() -> None:
     selection = _build_selection_function(ranking_metric="total_return", direction="desc")
-    grid = pd.Series(
-        [float("nan"), 0.30, 0.10],
-        index=pd.MultiIndex.from_tuples(
-            [(2, "total_return"), (5, "total_return"), (10, "total_return")],
-            names=["fast_window", METRIC_INDEX_NAME],
-        ),
-        name="value",
+    grid = pd.DataFrame(
+        {"total_return": [float("nan"), 0.30, 0.10]},
+        index=pd.Index([2, 5, 10], name="fast_window"),
     )
 
     label_sel = selection(grid)
@@ -135,26 +126,23 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
         )
 
 
-def _selection_series_with_missing_metric(
+def _selection_dataframe_with_missing_metric(
     *,
     winner_params: tuple[int, int],
     available_metrics: dict[str, float],
-) -> pd.Series:
+) -> pd.DataFrame:
     rows = []
-    values = []
     for set_label in ("selection", "held_out"):
-        for metric_name, value in available_metrics.items():
-            rows.append((0, set_label, *winner_params, metric_name))
-            values.append(value)
+        rows.append((0, set_label, *winner_params))
     index = pd.MultiIndex.from_tuples(
         rows,
-        names=["split", "set", "fast_window", "slow_window", METRIC_INDEX_NAME],
+        names=["split", "set", "fast_window", "slow_window"],
     )
-    return pd.Series(values, index=index, name="value")
+    return pd.DataFrame([available_metrics] * len(rows), index=index)
 
 
 def test_leaderboard_records_failure_when_winner_ranking_metric_missing() -> None:
-    selection = _selection_series_with_missing_metric(
+    selection = _selection_dataframe_with_missing_metric(
         winner_params=(5, 10),
         available_metrics={"max_dd": 0.1, "sharpe_ratio": 1.2},
     )
@@ -186,7 +174,7 @@ def test_leaderboard_records_failure_when_winner_ranking_metric_missing() -> Non
 
 
 def test_leaderboard_skips_split_with_zero_held_out_rows_and_records_failure() -> None:
-    selection = _selection_series_with_missing_metric(
+    selection = _selection_dataframe_with_missing_metric(
         winner_params=(5, 10),
         available_metrics={"total_return": 0.15},
     )
@@ -214,19 +202,19 @@ def test_leaderboard_skips_split_with_zero_held_out_rows_and_records_failure() -
 
 def test_leaderboard_nan_held_out_metric_does_not_inflate_aggregate() -> None:
     rows = []
-    values = []
+    metric_rows = []
     for split_idx in (0, 1):
         for set_label in ("selection", "held_out"):
-            rows.append((split_idx, set_label, 5, 10, "total_return"))
+            rows.append((split_idx, set_label, 5, 10))
             if set_label == "held_out" and split_idx == 1:
-                values.append(float("nan"))
+                metric_rows.append({"total_return": float("nan")})
             else:
-                values.append(0.20 if split_idx == 0 else 0.10)
+                metric_rows.append({"total_return": 0.20 if split_idx == 0 else 0.10})
     index = pd.MultiIndex.from_tuples(
         rows,
-        names=["split", "set", "fast_window", "slow_window", METRIC_INDEX_NAME],
+        names=["split", "set", "fast_window", "slow_window"],
     )
-    selection = pd.Series(values, index=index, name="value")
+    selection = pd.DataFrame(metric_rows, index=index)
     sampled_index = pd.MultiIndex.from_tuples([(5, 10)], names=["fast_window", "slow_window"])
     candidate_rows = candidate_rows_from_param_index(
         sampled_index,
@@ -255,18 +243,15 @@ def test_leaderboard_nan_held_out_metric_does_not_inflate_aggregate() -> None:
 
 
 def test_leaderboard_canonical_key_supports_nan_and_complex_param_values() -> None:
-    # NaN params would previously canonicalize to a dict ({'kind': 'nan'}) and
-    # crash _canonical_params_key with TypeError: unhashable type. JSON-encoded
-    # keys round-trip these cleanly.
     rows = []
-    values = []
+    metric_rows = []
     for set_label in ("selection", "held_out"):
-        rows.append((0, set_label, float("nan"), 0.10, "total_return"))
-        values.append(0.20 if set_label == "selection" else 0.15)
+        rows.append((0, set_label, float("nan"), 0.10))
+        metric_rows.append({"total_return": 0.20 if set_label == "selection" else 0.15})
     index = pd.MultiIndex.from_tuples(
-        rows, names=["split", "set", "sl_stop", "tp_stop", METRIC_INDEX_NAME]
+        rows, names=["split", "set", "sl_stop", "tp_stop"]
     )
-    selection = pd.Series(values, index=index, name="value")
+    selection = pd.DataFrame(metric_rows, index=index)
     sampled_index = pd.MultiIndex.from_tuples(
         [(float("nan"), 0.10)], names=["sl_stop", "tp_stop"]
     )
@@ -289,26 +274,22 @@ def test_leaderboard_canonical_key_supports_nan_and_complex_param_values() -> No
 
 
 def test_leaderboard_none_ranking_metric_sorts_last_for_both_directions() -> None:
-    # Three winners; one of them has NaN held-out ranking metric. The bucket for
-    # that winner gets created (its held-out row exists), but its ranking value
-    # is unavailable -> ranking_metric_value should be None and that row must
-    # sort to the end in both directions.
     rows = []
-    values = []
+    metric_rows = []
     for split_idx, params, held_out_ret in (
         (0, (2, 10), 0.10),
         (1, (5, 20), 0.30),
         (2, (10, 50), float("nan")),
     ):
-        rows.append((split_idx, "selection", *params, "total_return"))
-        values.append(held_out_ret if not (isinstance(held_out_ret, float) and math.isnan(held_out_ret)) else 0.0)
-        rows.append((split_idx, "held_out", *params, "total_return"))
-        values.append(held_out_ret)
+        rows.append((split_idx, "selection", *params))
+        metric_rows.append({"total_return": held_out_ret if not (isinstance(held_out_ret, float) and math.isnan(held_out_ret)) else 0.0})
+        rows.append((split_idx, "held_out", *params))
+        metric_rows.append({"total_return": held_out_ret})
     index = pd.MultiIndex.from_tuples(
         rows,
-        names=["split", "set", "fast_window", "slow_window", METRIC_INDEX_NAME],
+        names=["split", "set", "fast_window", "slow_window"],
     )
-    selection = pd.Series(values, index=index, name="value")
+    selection = pd.DataFrame(metric_rows, index=index)
     sampled_index = pd.MultiIndex.from_tuples(
         [(2, 10), (5, 20), (10, 50)], names=["fast_window", "slow_window"]
     )

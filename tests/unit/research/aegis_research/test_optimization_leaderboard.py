@@ -11,28 +11,27 @@ from research.aegis_research.optimization.leaderboard import (
     OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION,
     build_optimization_leaderboard,
 )
-from research.aegis_research.optimization.runner import METRIC_INDEX_NAME
 
 DATA_IDENTITY = {"source": "test", "symbols": ["SYN"], "timeframe": "1D"}
 
 
-def _build_selection_series(
+def _build_selection_dataframe(
     winners_per_split: dict[int, tuple[int, int]],
     metric_values: dict[tuple[int, str, str], dict[str, float]],
-) -> pd.Series:
+) -> pd.DataFrame:
     rows: list[tuple[Any, ...]] = []
-    values: list[float] = []
+    metric_rows: list[dict[str, float]] = []
     for split_idx, (fast, slow) in winners_per_split.items():
         for set_label in ("selection", "held_out"):
             metrics = metric_values[(split_idx, set_label, f"{fast}-{slow}")]
-            for metric_name in PORTFOLIO_METRIC_VALUE_KEYS:
-                rows.append((split_idx, set_label, fast, slow, metric_name))
-                values.append(metrics.get(metric_name, float("nan")))
+            rows.append((split_idx, set_label, fast, slow))
+            row_dict = {name: metrics.get(name, float("nan")) for name in PORTFOLIO_METRIC_VALUE_KEYS}
+            metric_rows.append(row_dict)
     index = pd.MultiIndex.from_tuples(
         rows,
-        names=["split", "set", "fast_window", "slow_window", METRIC_INDEX_NAME],
+        names=["split", "set", "fast_window", "slow_window"],
     )
-    return pd.Series(values, index=index, name="value")
+    return pd.DataFrame(metric_rows, index=index)
 
 
 def _build_candidate_rows() -> list[dict[str, Any]]:
@@ -57,7 +56,7 @@ def test_leaderboard_aggregates_held_out_winners_with_candidate_keys() -> None:
         (2, "selection", "5-10"): {"total_return": 0.30, "sharpe_ratio": 2.0},
         (2, "held_out", "5-10"): {"total_return": 0.25, "sharpe_ratio": 1.8},
     }
-    selection = _build_selection_series(winners, metric_values)
+    selection = _build_selection_dataframe(winners, metric_values)
     candidate_rows = _build_candidate_rows()
     split_held_out_row_counts = {0: 10, 1: 10, 2: 10}
 
@@ -99,7 +98,7 @@ def test_leaderboard_ascending_direction_orders_by_minimum_first() -> None:
         (1, "selection", "5-20"): {"max_dd": 0.50, "total_return": 0.2},
         (1, "held_out", "5-20"): {"max_dd": 0.30, "total_return": 0.2},
     }
-    selection = _build_selection_series(winners, metric_values)
+    selection = _build_selection_dataframe(winners, metric_values)
     candidate_rows = _build_candidate_rows()
 
     leaderboard = build_optimization_leaderboard(
@@ -121,7 +120,7 @@ def test_leaderboard_missing_winner_in_candidates_emits_failure_sample() -> None
         (0, "selection", "99-99"): {"total_return": 0.5},
         (0, "held_out", "99-99"): {"total_return": 0.4},
     }
-    selection = _build_selection_series(winners, metric_values)
+    selection = _build_selection_dataframe(winners, metric_values)
     candidate_rows = _build_candidate_rows()
 
     leaderboard = build_optimization_leaderboard(
@@ -145,7 +144,7 @@ def test_leaderboard_weights_aggregate_by_held_out_row_counts() -> None:
         (1, "selection", "5-10"): {"total_return": 0.20},
         (1, "held_out", "5-10"): {"total_return": 0.20},
     }
-    selection = _build_selection_series(winners, metric_values)
+    selection = _build_selection_dataframe(winners, metric_values)
     candidate_rows = _build_candidate_rows()
 
     leaderboard = build_optimization_leaderboard(

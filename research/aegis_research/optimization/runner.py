@@ -41,7 +41,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     SignalConfig,
 )
-from research.aegis_research.metrics.accessors import central_metrics_from_accessors
+from research.aegis_research.metrics.accessors import central_metrics_from_grouped_accessors
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
@@ -49,7 +49,7 @@ from research.aegis_research.optimization.source import (
     OptimizationSource,
 )
 from research.aegis_research.portfolio_policy import convert_to_allocations
-from research.aegis_research.portfolios import simulate_portfolio
+from research.aegis_research.portfolios import SYMBOL_LEVEL, simulate_portfolio_batch
 
 METRIC_INDEX_NAME = "metric_name"
 NON_PARAM_LEVEL_NAMES = OPTIMIZATION_PARAM_RESERVED_NAMES
@@ -68,9 +68,9 @@ class OptimizationRunnerError(ValueError):
 
 @dataclass(frozen=True)
 class OptimizationRun:
-    selection: pd.Series
-    selection_grid: pd.Series | None
-    held_out_grid: pd.Series | None
+    selection: pd.DataFrame
+    selection_grid: pd.DataFrame | None
+    held_out_grid: pd.DataFrame | None
     sampled_index: pd.Index
     evaluated_index: pd.Index
     sampled_rows_source: str
@@ -119,7 +119,7 @@ def execute_optimization(
         splitter_kwargs=dict(optimization.split.params),
         takeable_args=takeable_args,
         parameterized_kwargs=parameterized_kwargs,
-        merge_func="concat",
+        merge_func="row_stack",
         selection=vbt.RepFunc(selection_fn),
         return_grid=return_grid_kw,
     )
@@ -134,18 +134,18 @@ def execute_optimization(
             "they remain visible in evidence"
         ) from error
     if return_grid_kw is None:
-        selection_series = output
-        selection_grid: pd.Series | None = None
-        held_out_grid: pd.Series | None = None
+        selection_df = output
+        selection_grid: pd.DataFrame | None = None
+        held_out_grid: pd.DataFrame | None = None
     else:
-        raw_grid, selection_series = output
+        raw_grid, selection_df = output
         canon_grid = _canonicalize_role_index(raw_grid)
         selection_grid = canon_grid.xs("selection", level="set", drop_level=False)
         if return_grid_mode == "all":
             held_out_grid = canon_grid.xs("held_out", level="set", drop_level=False)
         else:
             held_out_grid = None
-    canonical_selection = _canonicalize_role_index(selection_series)
+    canonical_selection = _canonicalize_role_index(selection_df)
     winner_param_index = _extract_param_index(canonical_selection.index)
     if selection_grid is not None:
         sampled_index = _extract_param_index(selection_grid.index)
@@ -259,67 +259,57 @@ def _build_cv_callable(
 
     declared_shape = source.output_name
     target_exposure_cap = portfolio.target_exposure_cap
+    param_names = sorted(source.params)
+
+    def _evaluate_batch(close_slice: pd.DataFrame, **params: Any) -> Any:
+        combo_lists = {name: (vals if isinstance(vals, list) else [vals]) for name, vals in params.items()}
+        n_combos = len(next(iter(combo_lists.values())))
+        combos = [
+            {name: combo_lists[name][i] for name in param_names}
+            for i in range(n_combos)
+        ]
+        all_keys = [tuple(combo[name] for name in param_names) for combo in combos]
+        alloc_frames: list[pd.DataFrame] = []
+        valid_keys: list[tuple] = []
+        valid_positions: list[int] = []
+        for i, combo in enumerate(combos):
+            pipeline_output = pipeline(close_slice, **combo)
+            if pipeline_output is vbt.NoResult:
+                continue
+            raw_output = _coerce_pipeline_output(pipeline_output, declared_shape)
+            allocations = convert_to_allocations(
+                raw_output,
+                declared_shape,
+                close_columns=close_slice.columns,
+                target_exposure_cap=target_exposure_cap,
+                direction=portfolio.direction,
+            )
+            alloc_frames.append(allocations)
+            valid_keys.append(all_keys[i])
+            valid_positions.append(i)
+        if not alloc_frames:
+            return vbt.NoResult
+        wide = _column_stack_allocations(alloc_frames, valid_keys, param_names, close_slice.columns)
+        result = simulate_portfolio_batch(close_slice, wide, portfolio, market_index=market_index)
+        valid_metrics = central_metrics_from_grouped_accessors(
+            result.portfolio, report, valid_keys, param_names,
+        )
+        full_index = pd.MultiIndex.from_tuples(all_keys, names=param_names)
+        full_df = pd.DataFrame(np.nan, index=full_index, columns=valid_metrics.columns)
+        full_df.iloc[valid_positions] = valid_metrics.values
+        return full_df
 
     if has_open_prices:
 
         def cv_callable(close_slice, open_slice, **params):
-            return _evaluate_cv_slice(
-                close_slice=close_slice,
-                pipeline=pipeline,
-                portfolio=portfolio,
-                report=report,
-                market_index=market_index,
-                params=params,
-                declared_shape=declared_shape,
-                target_exposure_cap=target_exposure_cap,
-            )
+            return _evaluate_batch(close_slice, **params)
 
         return cv_callable, ["close_slice", "open_slice"]
 
     def cv_callable_no_open(close_slice, **params):
-        return _evaluate_cv_slice(
-            close_slice=close_slice,
-            pipeline=pipeline,
-            portfolio=portfolio,
-            report=report,
-            market_index=market_index,
-            params=params,
-            declared_shape=declared_shape,
-            target_exposure_cap=target_exposure_cap,
-        )
+        return _evaluate_batch(close_slice, **params)
 
     return cv_callable_no_open, ["close_slice"]
-
-
-def _evaluate_cv_slice(
-    *,
-    close_slice: pd.DataFrame,
-    pipeline: Any,
-    portfolio: PortfolioConfig,
-    report: ReportConfig,
-    market_index: pd.Index,
-    params: Mapping[str, Any],
-    declared_shape: str,
-    target_exposure_cap: float,
-) -> Any:
-    pipeline_output = pipeline(close_slice, **params)
-    if pipeline_output is vbt.NoResult:
-        return vbt.NoResult
-    raw_output = _coerce_pipeline_output(pipeline_output, declared_shape)
-    allocations = convert_to_allocations(
-        raw_output,
-        declared_shape,
-        close_columns=close_slice.columns,
-        target_exposure_cap=target_exposure_cap,
-        direction=portfolio.direction,
-    )
-    result = simulate_portfolio(
-        close_slice,
-        allocations,
-        portfolio,
-        market_index=market_index,
-    )
-    return central_metrics_from_accessors(result.portfolio, report)
 
 
 def _coerce_pipeline_output(value: Any, declared_shape: str) -> pd.DataFrame:
@@ -359,13 +349,28 @@ def _coerce_pipeline_output(value: Any, declared_shape: str) -> pd.DataFrame:
 
 
 
+def _column_stack_allocations(
+    alloc_frames: list[pd.DataFrame],
+    candidate_keys: list[tuple],
+    param_names: list[str],
+    symbol_columns: pd.Index,
+) -> pd.DataFrame:
+    all_columns: list[tuple] = []
+    all_data: dict[tuple, pd.Series] = {}
+    for key, alloc in zip(candidate_keys, alloc_frames, strict=True):
+        for symbol in symbol_columns:
+            col = (*key, symbol) if len(param_names) > 1 else (key[0], symbol)
+            all_columns.append(col)
+            all_data[col] = alloc[symbol]
+    mi = pd.MultiIndex.from_tuples(all_columns, names=param_names + [SYMBOL_LEVEL])
+    wide = pd.DataFrame(all_data, index=alloc_frames[0].index)
+    wide.columns = mi
+    return wide
+
 
 def _build_selection_function(*, ranking_metric: str, direction: str):
-    def selection(grid_results: pd.Series) -> Any:
-        per_param = grid_results.xs(ranking_metric, level=METRIC_INDEX_NAME)
-        if not isinstance(per_param, pd.Series):
-            per_param = pd.Series(per_param)
-        per_param = per_param.astype(float)
+    def selection(grid_results: pd.DataFrame) -> Any:
+        per_param = grid_results[ranking_metric].astype(float)
         finite = per_param[np.isfinite(per_param.to_numpy())]
         if finite.empty:
             raise OptimizationRunnerError(
@@ -380,7 +385,7 @@ def _build_selection_function(*, ranking_metric: str, direction: str):
 
 
 def _build_parameterized_kwargs(optimization: OptimizationConfig) -> dict[str, Any]:
-    parameterized_kwargs: dict[str, Any] = {"merge_func": "concat"}
+    parameterized_kwargs: dict[str, Any] = {"merge_func": "row_stack", "mono_chunk_len": 10000}
     if optimization.search == "random":
         if optimization.random_subset is None:
             raise OptimizationRunnerError(
@@ -398,19 +403,19 @@ def _build_parameterized_kwargs(optimization: OptimizationConfig) -> dict[str, A
     return parameterized_kwargs
 
 
-def _canonicalize_role_index(series: pd.Series) -> pd.Series:
-    if not isinstance(series.index, pd.MultiIndex):
-        return series
-    if "set" not in series.index.names:
-        return series
-    set_position = series.index.names.index("set")
-    level_arrays = [series.index.get_level_values(i) for i in range(series.index.nlevels)]
+def _canonicalize_role_index(frame: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(frame.index, pd.MultiIndex):
+        return frame
+    if "set" not in frame.index.names:
+        return frame
+    set_position = frame.index.names.index("set")
+    level_arrays = [frame.index.get_level_values(i) for i in range(frame.index.nlevels)]
     level_arrays[set_position] = pd.Index(
         [_role_for_set_label(value) for value in level_arrays[set_position]],
         name="set",
     )
-    canonical = series.copy()
-    canonical.index = pd.MultiIndex.from_arrays(level_arrays, names=series.index.names)
+    canonical = frame.copy()
+    canonical.index = pd.MultiIndex.from_arrays(level_arrays, names=frame.index.names)
     return canonical
 
 
@@ -435,12 +440,12 @@ def serialize_optimization_run(run: OptimizationRun) -> dict[str, Any]:
         "ranking_direction": run.ranking_direction,
         "return_grid_mode": run.return_grid_mode,
         "parameterized_kwargs": _scalar_mapping(run.parameterized_kwargs),
-        "selection": _serialize_param_series(run.selection),
+        "selection": _serialize_param_dataframe(run.selection),
         "selection_grid": (
-            _serialize_param_series(run.selection_grid) if run.selection_grid is not None else None
+            _serialize_param_dataframe(run.selection_grid) if run.selection_grid is not None else None
         ),
         "held_out_grid": (
-            _serialize_param_series(run.held_out_grid) if run.held_out_grid is not None else None
+            _serialize_param_dataframe(run.held_out_grid) if run.held_out_grid is not None else None
         ),
         "sampled_rows": sampled_rows_payload,
     }
@@ -456,23 +461,23 @@ def _serialize_param_index(index: pd.Index) -> dict[str, Any]:
     return {"index_names": names, "rows": rows}
 
 
-def _serialize_param_series(series: pd.Series) -> dict[str, Any]:
+def _serialize_param_dataframe(frame: pd.DataFrame) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
-    names = list(series.index.names)
-    if isinstance(series.index, pd.MultiIndex):
-        tuples = list(series.index)
+    names = list(frame.index.names)
+    if isinstance(frame.index, pd.MultiIndex):
+        tuples = list(frame.index)
     else:
-        tuples = [(value,) for value in series.index]
-    for value, key in zip(series.to_numpy(), tuples, strict=True):
+        tuples = [(value,) for value in frame.index]
+    for key, (_, row) in zip(tuples, frame.iterrows(), strict=True):
         rows.append(
             {
                 "coordinates": {
                     name: _scalar(component) for name, component in zip(names, key, strict=True)
                 },
-                "value": _scalar(value),
+                "metrics": {col: _scalar(row[col]) for col in frame.columns},
             }
         )
-    return {"index_names": names, "rows": rows}
+    return {"index_names": names, "columns": list(frame.columns), "rows": rows}
 
 
 def _scalar_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
