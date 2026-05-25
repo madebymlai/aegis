@@ -94,6 +94,7 @@ def simulate_portfolio_batch(
     config: PortfolioConfig,
     *,
     market_index: pd.Index | None = None,
+    compute_diagnostics: bool = True,
 ) -> PortfolioSimulationResult:
     _validate_candidate_columns(allocations.columns, field_name="allocations")
     expanded_close = expand_market_frame_to_candidate_columns(
@@ -125,6 +126,8 @@ def simulate_portfolio_batch(
         slippage=config.slippage,
         init_cash=config.init_cash,
     )
+    if not compute_diagnostics:
+        return PortfolioSimulationResult(portfolio=pf, diagnostics={})
     candidate_ids = _candidate_group_ids(allocations.columns)
     diagnostics = _portfolio_diagnostics(
         pf=pf,
@@ -185,10 +188,6 @@ def _validate_candidate_columns(columns: pd.Index, *, field_name: str) -> None:
         raise ValueError(f"sweep {field_name} must include candidate and symbol levels")
     if columns.has_duplicates:
         raise ValueError(f"sweep {field_name} must not contain duplicate columns")
-    for candidate_id in _candidate_group_ids(columns):
-        mask = _candidate_group_mask(columns, candidate_id)
-        if not mask.any():
-            raise ValueError(f"sweep {field_name} candidate {candidate_id!r} has no symbols")
 
 
 def portfolio_record_counts(pf: vbt.Portfolio) -> dict[str, Any]:
@@ -374,12 +373,6 @@ def _candidate_group_ids(columns: pd.MultiIndex) -> list[Any]:
         return list(dict.fromkeys(columns.get_level_values(candidate_levels[0])))
     return list(dict.fromkeys(columns.droplevel(SYMBOL_LEVEL)))
 
-
-def _candidate_group_mask(columns: pd.MultiIndex, candidate_id: Any) -> pd.Series:
-    candidate_levels = [name for name in columns.names if name != SYMBOL_LEVEL]
-    if len(candidate_levels) == 1:
-        return pd.Series(columns.get_level_values(candidate_levels[0]) == candidate_id, index=columns)
-    return pd.Series(columns.droplevel(SYMBOL_LEVEL) == candidate_id, index=columns)
 
 
 def _assert_same_index(name: str, expected: pd.DataFrame, actual: pd.DataFrame) -> None:

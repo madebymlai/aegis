@@ -48,6 +48,7 @@ class IndicatorManifest(ComponentManifest):
     param_names: tuple[str, ...]
     output_names: tuple[str, ...]
     defaults: Mapping[str, Any]
+    wide_callable: str
     param_space_callable: str | None = None
     bar_aligned: bool = True
 
@@ -68,6 +69,7 @@ class StrategyManifest(ComponentManifest):
     output_name: str
     consumes_outputs: tuple[str, ...]
     defaults: Mapping[str, Any]
+    wide_callable: str
     param_space_callable: str | None = None
     owns_portfolio: bool = False
 

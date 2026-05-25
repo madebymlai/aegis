@@ -10,20 +10,50 @@ Run `tokf raw last` to see the full uncompressed output of the last command.
 - **LSP** — Objects of a supertype shall be replaceable with objects of a subtype without altering program correctness.
 - **ISP** — No client should be forced to depend on methods it does not use; prefer many client-specific interfaces over one general-purpose interface.
 - **DIP** — High-level modules should not depend on low-level modules — both should depend on abstractions; abstractions should not depend on details.
+- **Composition Over Inheritance** — Default to composition; use inheritance only when the subtype genuinely satisfies LSP and the hierarchy is closed to further extension.
+- **Command-Query Separation** — Every method should either be a command that performs an action or a query that returns data, but never both.
 - **KISS** — Every system works best when simplicity is a key goal and unnecessary complexity is avoided.
-- **DRY** — Every piece of knowledge must have a single, unambiguous, authoritative representation within a system.
+- **YAGNI** — Do not introduce abstractions, parameters, or code paths that serve no current caller. If no concrete use case exercises it today, delete it.
 - **Forward-First** — Design for the current and next contract version; never introduce backward-compatibility shims or legacy code paths that increase maintenance surface.
-- **No Defensive Garbage** — Trust established preconditions and module contracts; let violated invariants surface as immediate failures instead of masking them with silent fallbacks.
-- **Tell, Don't Ask** — Rather than querying an object's state and acting on it, tell the object what to do and let it use its own state to decide how.
-- **Fail Fast** — Detect and report errors at the earliest possible point, at the interface where the fault originates, rather than allowing bad state to propagate.
-- **No Silent Error Swallowing** — Never catch an exception and discard it without logging, re-raising, or making the failure visible; every error must produce an observable signal.
-- **Explicit Error Types** — Represent each distinct failure mode as a named, typed value in the return signature rather than relying on generic exceptions or sentinel values.
+- **No Primitive Obsession** — Represent domain concepts as named types rather than raw strings, numbers, or booleans. A customer ID is not a string; a price is not a float.
+
+# Agent skills
+
+## Issue tracker
+
+Use bd (beads) for issue tracking.
+
+- Run `bd prime` for workflow context and command guidance.
+- Use `bd ready`, `bd show <id>`, `bd update <id> --claim`, and `bd close <id>`.
+- Use `bd remember "insight"` for persistent project memory; do not create MEMORY.md files.
+- Do not use markdown TODO lists for task tracking.
+- See `docs/agents/issue-tracker.md`.
+
+## Triage labels
+
+Two **category** roles:
+
+- `bug` — something is broken
+- `enhancement` — new feature or improvement
+
+Five **state** roles:
+
+- `needs-triage` — maintainer needs to evaluate
+- `needs-info` — waiting on reporter
+- `ready-for-agent` — fully specified, AFK-ready (an agent can pick it up with no human context)
+- `ready-for-human` — needs human implementation
+- `wontfix` — will not be actioned
+
+## Domain docs
+
+Domain language and terminology defined in `CONTEXT.md` at the repo root.
 
 ## Documented Solutions
 
 `docs/solutions/` contains documented solutions to past problems and practices (bugs, best practices, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing, debugging, or making decisions in documented areas.
 
-## Workflow
+# Workflow
+
 **Documentation**:
 [Documentation Sitemap](https://vectorbt.pro/pvt_16ebf9ef/llms.txt)
 

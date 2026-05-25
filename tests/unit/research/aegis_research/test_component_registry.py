@@ -150,6 +150,7 @@ def test_component_discovery_does_not_execute_top_level_code(tmp_path) -> None:
         "    'input_names': ['Close'],\n"
         "    'param_names': ['window'],\n"
         "    'output_names': ['value'],\n"
+        "    'wide_callable': 'run_wide',\n"
         "}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
@@ -390,6 +391,7 @@ def test_strategy_manifest_rejects_forbidden_target_exposure_cap_key(tmp_path) -
         "output_name": "active",
         "target_exposure_cap": 0.5,
         "owns_portfolio": False,
+        "wide_callable": "run_wide",
     }
     path.write_text(
         "# %% component overview\n"
@@ -420,6 +422,7 @@ def _write_strategy_component(path, *, component_id: str, output_name: str) -> N
         "input_names": ["Close"],
         "output_name": output_name,
         "owns_portfolio": False,
+        "wide_callable": "run_wide",
     }
     path.write_text(
         "# %% component overview\n"
@@ -462,6 +465,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "input_names": ["Close"],
             "param_names": ["window"],
             "output_names": ["value"],
+            "wide_callable": "run_wide",
         }
     if family == "strategies":
         return {
@@ -469,5 +473,31 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "input_names": ["Close"],
             "output_name": "active",
             "owns_portfolio": False,
+            "wide_callable": "run_wide",
         }
     raise AssertionError(f"unknown family {family}")
+
+
+@pytest.mark.parametrize("family", ["indicators", "strategies"])
+def test_manifest_rejects_missing_wide_callable(tmp_path, family) -> None:
+    root = tmp_path / "research" / "components"
+    manifest = _manifest_for(family, "demo.no_wide")
+    del manifest["wide_callable"]
+    path = root / family / "no_wide.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture missing wide_callable.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {manifest!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return fixture value."""\n'
+        "    return 'no_wide'\n"
+    )
+
+    with pytest.raises(ComponentRegistryError) as excinfo:
+        discover_component_registry(root=root, repo_root=tmp_path)
+    assert "wide_callable" in str(excinfo.value)

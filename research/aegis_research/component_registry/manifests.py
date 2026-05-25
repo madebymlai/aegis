@@ -166,6 +166,7 @@ def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifes
     output_names = _required_string_tuple(payload, "output_names", path)
     defaults = _optional_mapping(payload, "defaults", path)
     _validate_param_defaults(defaults, param_names, path)
+    wide_callable = _required_string(payload, "wide_callable", path)
     param_space_callable = _optional_string(payload, "param_space_callable", path)
     bar_aligned = payload.get("bar_aligned", True)
     if bar_aligned is not True:
@@ -179,6 +180,7 @@ def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifes
         param_names=param_names,
         output_names=output_names,
         defaults=defaults,
+        wide_callable=wide_callable,
         param_space_callable=param_space_callable,
         bar_aligned=True,
     )
@@ -191,6 +193,7 @@ def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
     consumes_outputs = _optional_string_tuple(payload, "consumes_outputs", path)
     defaults = _optional_mapping(payload, "defaults", path)
     _validate_param_defaults(defaults, param_names, path)
+    wide_callable = _required_string(payload, "wide_callable", path)
     param_space_callable = _optional_string(payload, "param_space_callable", path)
     if output_name not in STRATEGY_ALLOCATION_OUTPUTS:
         raise ComponentRegistryError(
@@ -213,6 +216,7 @@ def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
         output_name=output_name,
         consumes_outputs=consumes_outputs,
         defaults=defaults,
+        wide_callable=wide_callable,
         param_space_callable=param_space_callable,
         owns_portfolio=False,
     )

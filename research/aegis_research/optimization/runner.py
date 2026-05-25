@@ -45,15 +45,12 @@ from research.aegis_research.metrics.accessors import central_metrics_from_group
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
-    OPTIMIZATION_SOURCE_FORBIDDEN_KEYS,
     OptimizationSource,
 )
-from research.aegis_research.portfolio_policy import convert_to_allocations
-from research.aegis_research.portfolios import SYMBOL_LEVEL, simulate_portfolio_batch
+from research.aegis_research.portfolios import simulate_portfolio_batch
 
 METRIC_INDEX_NAME = "metric_name"
 NON_PARAM_LEVEL_NAMES = OPTIMIZATION_PARAM_RESERVED_NAMES
-PIPELINE_OUTPUT_FORBIDDEN_KEYS = OPTIMIZATION_SOURCE_FORBIDDEN_KEYS
 
 OPTIMIZATION_RUN_SCHEMA_VERSION = "optimization_run.v1"
 RANKING_DIRECTION_TO_SELECTION = {"desc": "max", "asc": "min"}
@@ -265,39 +262,35 @@ def _build_cv_callable(
     def _evaluate_batch(close_slice: pd.DataFrame, **params: Any) -> Any:
         combo_lists = {name: (vals if isinstance(vals, list) else [vals]) for name, vals in params.items()}
         n_combos = len(next(iter(combo_lists.values())))
-        combos = [
-            {name: combo_lists[name][i] for name in param_names}
+        all_keys = [
+            tuple(combo_lists[name][i] for name in param_names)
             for i in range(n_combos)
         ]
-        all_keys = [tuple(combo[name] for name in param_names) for combo in combos]
-        alloc_frames: list[pd.DataFrame] = []
-        valid_keys: list[tuple] = []
-        valid_positions: list[int] = []
-        for i, combo in enumerate(combos):
-            pipeline_output = pipeline(close_slice, **combo)
-            if pipeline_output is vbt.NoResult:
-                continue
-            raw_output = _coerce_pipeline_output(pipeline_output, declared_shape)
-            allocations = convert_to_allocations(
-                raw_output,
-                declared_shape,
-                close_columns=close_slice.columns,
-                target_exposure_cap=target_exposure_cap,
-                direction=portfolio.direction,
-            )
-            alloc_frames.append(allocations)
-            valid_keys.append(all_keys[i])
-            valid_positions.append(i)
-        if not alloc_frames:
+        wide_allocations = pipeline(close_slice, n_combos, **combo_lists)
+        if wide_allocations is vbt.NoResult:
             return vbt.NoResult
-        wide = _column_stack_allocations(alloc_frames, valid_keys, param_names, close_slice.columns)
-        result = simulate_portfolio_batch(close_slice, wide, portfolio, market_index=market_index)
+        n_symbols = len(close_slice.columns)
+        n_valid = len(wide_allocations.columns) // n_symbols
+        if n_valid == n_combos:
+            result = simulate_portfolio_batch(
+                close_slice, wide_allocations, portfolio,
+                market_index=market_index, compute_diagnostics=False,
+            )
+            return central_metrics_from_grouped_accessors(
+                result.portfolio, report, all_keys, param_names,
+            )
+        valid_keys = _extract_valid_keys(wide_allocations.columns, param_names)
+        result = simulate_portfolio_batch(
+            close_slice, wide_allocations, portfolio,
+            market_index=market_index, compute_diagnostics=False,
+        )
         valid_metrics = central_metrics_from_grouped_accessors(
             result.portfolio, report, valid_keys, param_names,
         )
         full_index = pd.MultiIndex.from_tuples(all_keys, names=param_names)
         full_df = pd.DataFrame(np.nan, index=full_index, columns=valid_metrics.columns)
-        full_df.iloc[valid_positions] = valid_metrics.values
+        valid_index = pd.MultiIndex.from_tuples(valid_keys, names=param_names)
+        full_df.loc[valid_index] = valid_metrics.values
         return full_df
 
     if has_open_prices:
@@ -313,60 +306,15 @@ def _build_cv_callable(
     return cv_callable_no_open, ["close_slice"]
 
 
-def _coerce_pipeline_output(value: Any, declared_shape: str) -> pd.DataFrame:
-    if isinstance(value, pd.DataFrame):
-        frame = value
-    elif isinstance(value, Mapping):
-        forbidden = sorted(set(value) & PIPELINE_OUTPUT_FORBIDDEN_KEYS)
-        if forbidden:
-            raise OptimizationRunnerError(
-                "optimization pipeline output mappings must not return authoritative metrics, "
-                f"portfolio fields, or candidate-axis fields: {forbidden}"
-            )
-        emitted = {key for key in value if isinstance(value[key], pd.DataFrame)}
-        if declared_shape not in value:
-            raise OptimizationRunnerError(
-                f"component declared {declared_shape!r} but pipeline did not emit {declared_shape!r}; "
-                f"emitted shapes: {sorted(emitted)}"
-            )
-        other_shapes = sorted(emitted - {declared_shape})
-        if other_shapes:
-            raise OptimizationRunnerError(
-                f"optimization pipeline emitted {other_shapes} alongside declared shape "
-                f"{declared_shape!r}; pipeline must emit exactly the declared shape"
-            )
-        frame = value[declared_shape]
-    else:
-        raise OptimizationRunnerError(
-            f"optimization pipeline must return a pandas DataFrame for declared shape "
-            f"{declared_shape!r} or a mapping containing it; got {type(value).__name__}"
-        )
-    if not isinstance(frame, pd.DataFrame):
-        raise OptimizationRunnerError(
-            f"optimization pipeline must return declared shape {declared_shape!r} "
-            "as a pandas DataFrame"
-        )
-    return frame
-
-
-
-def _column_stack_allocations(
-    alloc_frames: list[pd.DataFrame],
-    candidate_keys: list[tuple],
-    param_names: list[str],
-    symbol_columns: pd.Index,
-) -> pd.DataFrame:
-    all_columns: list[tuple] = []
-    all_data: dict[tuple, pd.Series] = {}
-    for key, alloc in zip(candidate_keys, alloc_frames, strict=True):
-        for symbol in symbol_columns:
-            col = (*key, symbol) if len(param_names) > 1 else (key[0], symbol)
-            all_columns.append(col)
-            all_data[col] = alloc[symbol]
-    mi = pd.MultiIndex.from_tuples(all_columns, names=param_names + [SYMBOL_LEVEL])
-    wide = pd.DataFrame(all_data, index=alloc_frames[0].index)
-    wide.columns = mi
-    return wide
+def _extract_valid_keys(
+    columns: pd.MultiIndex, param_names: list[str]
+) -> list[tuple]:
+    seen: list[tuple] = []
+    for col_tuple in columns:
+        key = col_tuple[:-1]
+        if not seen or seen[-1] != key:
+            seen.append(key)
+    return seen
 
 
 def _build_selection_function(*, ranking_metric: str, direction: str):

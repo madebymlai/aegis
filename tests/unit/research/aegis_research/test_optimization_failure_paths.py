@@ -51,7 +51,7 @@ def _optimization_config() -> OptimizationConfig:
 def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
     close, open_prices = _close_open_frames()
 
-    def always_skip(close_slice, fast_window):
+    def always_skip(close_slice, n_candidates, **param_lists):
         return vbt.NoResult
 
     source = OptimizationSource(
@@ -102,7 +102,7 @@ def test_selection_function_picks_finite_winner_even_when_some_rows_are_nan() ->
 def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
     close, open_prices = _close_open_frames()
 
-    def exploding_pipeline(close_slice, fast_window):
+    def exploding_pipeline(close_slice, n_candidates, **param_lists):
         raise RuntimeError("pipeline blew up while running")
 
     source = OptimizationSource(

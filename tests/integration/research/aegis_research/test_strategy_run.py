@@ -453,7 +453,7 @@ def _write_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.cross', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'output_name': 'active', 'owns_portfolio': False}\n"
+        "'output_name': 'active', 'owns_portfolio': False, 'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
@@ -463,6 +463,20 @@ def _write_strategy_component(path: Path) -> None:
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
+        "\n# %% wide compute\n"
+        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        '    """Return wide allocation from a fixed MA crossover."""\n'
+        "    close = inputs.data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    close_arr = close.values\n"
+        "    alloc = np.full((T, n_candidates * S), np.nan)\n"
+        "    ma3 = pd.DataFrame(close_arr).rolling(3, min_periods=1).mean().values\n"
+        "    for i in range(n_candidates):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        selected = close_arr > ma3\n"
+        "        n_sel = selected.sum(axis=1, keepdims=True).clip(min=1)\n"
+        "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
+        "    return alloc\n"
     )
 
 
@@ -474,15 +488,28 @@ def _write_indicator_component(path: Path) -> None:
         "# Source: synthetic Close data supplied by the run config.\n"
         "\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma'], "
-        "'defaults': {'window': 2}}\n"
+        "'defaults': {'window': 2}, 'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(data, window=2):\n"
         '    """Compute the fixed moving-average indicator."""\n'
         "    return data.feature('Close').rolling(int(window)).mean().bfill()\n"
+        "\n# %% wide compute\n"
+        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        '    """Return wide indicator output."""\n'
+        "    close = data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    windows = param_lists.get('window', [2] * n_candidates)\n"
+        "    result = np.zeros((T, n_candidates * S))\n"
+        "    for i, w in enumerate(windows):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        result[:, cols] = pd.DataFrame(close.values).rolling(int(w)).mean().bfill().values\n"
+        "    return result\n"
     )
 
 
@@ -494,9 +521,11 @@ def _write_misaligned_indicator_component(path: Path) -> None:
         "# Source: synthetic Close data supplied by the run config.\n"
         "\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': [], 'output_names': ['ma']}\n"
+        "'input_names': ['Close'], 'param_names': [], 'output_names': ['ma'], "
+        "'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(data):\n"
@@ -504,6 +533,12 @@ def _write_misaligned_indicator_component(path: Path) -> None:
         "    result = data.feature('Close').copy()\n"
         "    result.columns = ['OTHER']\n"
         "    return result\n"
+        "\n# %% wide compute\n"
+        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        '    """Return wide output for misaligned fixture."""\n'
+        "    close = data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    return np.zeros((T, n_candidates * S))\n"
     )
 
 
@@ -515,14 +550,27 @@ def _write_named_indicator_component(path: Path, component_id: str) -> None:
         "# Source: synthetic Close data supplied by the run config.\n"
         "\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
         "COMPONENT_MANIFEST = {"
         f"'family': 'indicators', 'id': {component_id!r}, 'version': '1.0.0', "
-        "'input_names': ['Close'], 'param_names': [], 'output_names': ['value']}\n"
+        "'input_names': ['Close'], 'param_names': [], 'output_names': ['value'], "
+        "'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(data):\n"
         '    """Compute a fixed moving-average indicator fixture."""\n'
         "    return data.feature('Close').rolling(2).mean().bfill()\n"
+        "\n# %% wide compute\n"
+        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        '    """Return wide indicator output."""\n'
+        "    close = data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    result = np.zeros((T, n_candidates * S))\n"
+        "    for i in range(n_candidates):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        result[:, cols] = pd.DataFrame(close.values).rolling(2).mean().bfill().values\n"
+        "    return result\n"
     )
 
 
@@ -540,7 +588,7 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "'family': 'strategies', 'id': 'demo.uses_ma', 'version': '1.0.0', "
         "'input_names': ['Close'], "
         "'output_name': 'active', 'consumes_outputs': ['ma'], "
-        "'owns_portfolio': False}\n"
+        "'owns_portfolio': False, 'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
@@ -551,6 +599,20 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
+        "\n# %% wide compute\n"
+        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        '    """Return wide allocation from MA indicator."""\n'
+        "    close = inputs.data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    ma_arr = inputs.indicators['ma']\n"
+        "    close_arr = close.values\n"
+        "    alloc = np.full((T, n_candidates * S), np.nan)\n"
+        "    for i in range(n_candidates):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        selected = close_arr > ma_arr[:, cols]\n"
+        "        n_sel = selected.sum(axis=1, keepdims=True).clip(min=1)\n"
+        "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
+        "    return alloc\n"
     )
 
 
@@ -567,7 +629,7 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.uses_all', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'output_name': 'active', 'owns_portfolio': False}\n"
+        "'output_name': 'active', 'owns_portfolio': False, 'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
@@ -579,4 +641,18 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
+        "\n# %% wide compute\n"
+        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        '    """Return wide allocation from fast and slow indicators."""\n'
+        "    close = inputs.data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    alloc = np.full((T, n_candidates * S), np.nan)\n"
+        "    for i in range(n_candidates):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        fast = inputs.indicators.get('demo.fast', np.zeros((T, n_candidates * S)))[:, cols]\n"
+        "        slow = inputs.indicators.get('demo.slow', np.zeros((T, n_candidates * S)))[:, cols]\n"
+        "        selected = fast >= slow\n"
+        "        n_sel = selected.sum(axis=1, keepdims=True).clip(min=1)\n"
+        "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
+        "    return alloc\n"
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -40,13 +42,27 @@ def _close_open_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     return close, open_prices
 
 
-def _ma_pipeline(close: pd.DataFrame, fast_window: int, slow_window: int) -> pd.DataFrame:
-    fast = close.rolling(fast_window, min_periods=1).mean()
-    slow = close.rolling(slow_window, min_periods=1).mean()
-    selected = (fast > slow).astype(object)
-    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)
-    active.loc[:] = selected
-    return active
+def _ma_pipeline(close: pd.DataFrame, n_candidates: int, **param_lists: Any) -> pd.DataFrame:
+    fast_windows = param_lists["fast_window"]
+    slow_windows = param_lists["slow_window"]
+    symbols = close.columns
+    n_symbols = len(symbols)
+    T = len(close)
+    alloc_arr = np.full((T, n_candidates * n_symbols), np.nan)
+    for i in range(n_candidates):
+        fast = close.rolling(int(fast_windows[i]), min_periods=1).mean()
+        slow = close.rolling(int(slow_windows[i]), min_periods=1).mean()
+        selected = fast > slow
+        n_sel = selected.sum(axis=1).clip(lower=1)
+        weights = selected.div(n_sel, axis=0).astype(float)
+        alloc_arr[:, i * n_symbols : (i + 1) * n_symbols] = weights.values
+    param_names = sorted(param_lists)
+    col_tuples = []
+    for i in range(n_candidates):
+        for sym in symbols:
+            col_tuples.append(tuple(param_lists[k][i] for k in param_names) + (sym,))
+    col_mi = pd.MultiIndex.from_tuples(col_tuples, names=param_names + ["symbol"])
+    return pd.DataFrame(alloc_arr, index=close.index, columns=col_mi)
 
 
 def _build_source(*, fast: list[int], slow: list[int]) -> OptimizationSource:
@@ -354,7 +370,7 @@ def test_runner_rejects_ranking_metric_outside_central_catalog() -> None:
 def test_runner_rejects_reserved_param_names_in_manual_source(param_name: str) -> None:
     close, open_prices = _close_open_frames()
 
-    def pipeline(close: pd.DataFrame, **_params: object) -> pd.DataFrame:
+    def pipeline(close: pd.DataFrame, n_candidates: int, **_params: object) -> pd.DataFrame:
         return close.notna().astype(object)
 
     source = OptimizationSource(
@@ -518,66 +534,6 @@ def test_serialize_optimization_run_emits_jsonable_selection_and_selection_grid(
     assert payload["held_out_grid"] is None
 
 
-def test_runner_rejects_invalid_pipeline_output_shape() -> None:
-    close, open_prices = _close_open_frames()
-
-    def bad_pipeline(close, fast_window):
-        return "not a dataframe"
-
-    source = OptimizationSource(
-        pipeline=bad_pipeline,
-        params={"fast_window": vbt.Param([2, 5])},
-        output_name="active",
-        evidence={},
-        diagnostics={},
-        metadata={},
-    )
-
-    with pytest.raises(OptimizationRunnerError, match=r"declared shape 'active'"):
-        execute_optimization(
-            close=close,
-            open_prices=open_prices,
-            source=source,
-            optimization=_optimization_config(),
-            portfolio=PortfolioConfig(),
-            signal=SignalConfig(),
-            report=ReportConfig(),
-            ranking=RankingConfig(metric="total_return", direction="desc"),
-        mono_chunk_len=10000,
-        )
-
-
-@pytest.mark.parametrize("forbidden_key", ["metrics", "portfolio", "metric_source"])
-def test_runner_rejects_authoritative_fields_in_pipeline_output_mapping(forbidden_key: str) -> None:
-    close, open_prices = _close_open_frames()
-
-    def smuggling_pipeline(close, fast_window):
-        return {
-            "active": close.notna().astype(object),
-            forbidden_key: {},
-        }
-
-    source = OptimizationSource(
-        pipeline=smuggling_pipeline,
-        params={"fast_window": vbt.Param([2, 5])},
-        output_name="active",
-        evidence={},
-        diagnostics={},
-        metadata={},
-    )
-
-    with pytest.raises(OptimizationRunnerError, match="authoritative"):
-        execute_optimization(
-            close=close,
-            open_prices=open_prices,
-            source=source,
-            optimization=_optimization_config(),
-            portfolio=PortfolioConfig(),
-            signal=SignalConfig(),
-            report=ReportConfig(),
-            ranking=RankingConfig(metric="total_return", direction="desc"),
-        mono_chunk_len=10000,
-        )
 
 
 def test_runner_sampled_rows_sourced_from_result_grid_when_return_grid_first() -> None:
@@ -701,10 +657,16 @@ def test_batched_path_preserves_candidate_identity_across_splits() -> None:
 def test_batched_path_filters_noresult_candidates_without_failing() -> None:
     close, open_prices = _close_open_frames()
 
-    def noresult_pipeline(close: pd.DataFrame, fast_window: int, slow_window: int) -> object:
-        if fast_window >= slow_window:
+    def noresult_pipeline(close: pd.DataFrame, n_candidates: int, **param_lists: Any) -> object:
+        fast_windows = param_lists["fast_window"]
+        slow_windows = param_lists["slow_window"]
+        valid_indices = [i for i in range(n_candidates) if fast_windows[i] < slow_windows[i]]
+        if not valid_indices:
             return vbt.NoResult
-        return _ma_pipeline(close, fast_window, slow_window)
+        valid_param_lists = {
+            k: [v[i] for i in valid_indices] for k, v in param_lists.items()
+        }
+        return _ma_pipeline(close, len(valid_indices), **valid_param_lists)
 
     source = OptimizationSource(
         pipeline=noresult_pipeline,
