@@ -41,6 +41,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     SignalConfig,
 )
+from research.aegis_research.metrics.accessors import central_metrics_from_accessors
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
@@ -49,7 +50,6 @@ from research.aegis_research.optimization.source import (
 )
 from research.aegis_research.portfolio_policy import convert_to_allocations
 from research.aegis_research.portfolios import simulate_portfolio
-from research.aegis_research.reports import portfolio_metrics
 
 METRIC_INDEX_NAME = "metric_name"
 NON_PARAM_LEVEL_NAMES = OPTIMIZATION_PARAM_RESERVED_NAMES
@@ -319,7 +319,7 @@ def _evaluate_cv_slice(
         portfolio,
         market_index=market_index,
     )
-    return _central_metric_series(result.portfolio, report)
+    return central_metrics_from_accessors(result.portfolio, report)
 
 
 def _coerce_pipeline_output(value: Any, declared_shape: str) -> pd.DataFrame:
@@ -358,20 +358,6 @@ def _coerce_pipeline_output(value: Any, declared_shape: str) -> pd.DataFrame:
     return frame
 
 
-def _central_metric_series(portfolio: Any, report: ReportConfig) -> pd.Series:
-    metrics = portfolio_metrics(portfolio, report)
-    missing = [name for name in PORTFOLIO_METRIC_VALUE_KEYS if name not in metrics]
-    if missing:
-        raise OptimizationRunnerError(
-            f"central portfolio metrics missing keys {sorted(missing)}; "
-            f"got {sorted(set(metrics) & set(PORTFOLIO_METRIC_VALUE_KEYS))}"
-        )
-    series = pd.Series(
-        {name: metrics[name] for name in PORTFOLIO_METRIC_VALUE_KEYS},
-        name="value",
-    )
-    series.index.name = METRIC_INDEX_NAME
-    return series
 
 
 def _build_selection_function(*, ranking_metric: str, direction: str):
