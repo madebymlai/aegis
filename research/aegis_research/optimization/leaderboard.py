@@ -81,7 +81,7 @@ def build_optimization_leaderboard(
         ranking_value: float | None = None
         for metric_name in metric_columns:
             value = row[metric_name]
-            if isinstance(value, float) and math.isnan(value):
+            if value is None or (isinstance(value, float) and math.isnan(value)):
                 continue
             bucket["metric_sums"][metric_name] += float(value) * weight
             bucket["metric_weights"][metric_name] += weight
