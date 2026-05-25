@@ -13,7 +13,7 @@ def _base_config(execute: dict[str, object] | None = None) -> dict:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "p10",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80, "arrays": ["OHLCV"]},
-        "portfolio": {"entry_budget": 1.0},
+        "portfolio": {"target_exposure_cap": 1.0},
         "strategy": {"id": "demo.strategy"},
         "indicators": [],
         "ranking": {"metric": "total_return", "direction": "desc"},

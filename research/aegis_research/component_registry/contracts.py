@@ -54,9 +54,18 @@ class IndicatorManifest(ComponentManifest):
 
 @dataclass(frozen=True)
 class StrategyManifest(ComponentManifest):
+    """Strategy component manifest.
+
+    `output_name` is the declared allocation-native channel emitted by the
+    component. It must be one of the four registered shapes — `active`,
+    `scores`, `ranks`, or `target_weights` — consumed by the portfolio policy
+    layer (see `STRATEGY_ALLOCATION_OUTPUTS`). Legacy `entries`/`exits`
+    signal pairs are rejected.
+    """
+
     input_names: tuple[str, ...]
     param_names: tuple[str, ...]
-    signal_outputs: tuple[str, ...]
+    output_name: str
     consumes_outputs: tuple[str, ...]
     defaults: Mapping[str, Any]
     param_space_callable: str | None = None

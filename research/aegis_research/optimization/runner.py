@@ -47,12 +47,13 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_SOURCE_FORBIDDEN_KEYS,
     OptimizationSource,
 )
+from research.aegis_research.portfolio_policy import convert_to_allocations
 from research.aegis_research.portfolios import simulate_portfolio
 from research.aegis_research.reports import portfolio_metrics
 
 METRIC_INDEX_NAME = "metric_name"
 NON_PARAM_LEVEL_NAMES = OPTIMIZATION_PARAM_RESERVED_NAMES
-PIPELINE_SIGNAL_FORBIDDEN_KEYS = OPTIMIZATION_SOURCE_FORBIDDEN_KEYS - {"entries", "exits"}
+PIPELINE_OUTPUT_FORBIDDEN_KEYS = OPTIMIZATION_SOURCE_FORBIDDEN_KEYS
 
 OPTIMIZATION_RUN_SCHEMA_VERSION = "optimization_run.v1"
 RANKING_DIRECTION_TO_SELECTION = {"desc": "max", "asc": "min"}
@@ -256,18 +257,21 @@ def _build_cv_callable(
             f"portfolio metric catalog: {sorted(PORTFOLIO_METRIC_VALUE_KEYS)}"
         )
 
+    declared_shape = source.output_name
+    target_exposure_cap = portfolio.target_exposure_cap
+
     if has_open_prices:
 
         def cv_callable(close_slice, open_slice, **params):
             return _evaluate_cv_slice(
                 close_slice=close_slice,
-                open_slice=open_slice,
                 pipeline=pipeline,
                 portfolio=portfolio,
-                signal=signal,
                 report=report,
                 market_index=market_index,
                 params=params,
+                declared_shape=declared_shape,
+                target_exposure_cap=target_exposure_cap,
             )
 
         return cv_callable, ["close_slice", "open_slice"]
@@ -275,13 +279,13 @@ def _build_cv_callable(
     def cv_callable_no_open(close_slice, **params):
         return _evaluate_cv_slice(
             close_slice=close_slice,
-            open_slice=None,
             pipeline=pipeline,
             portfolio=portfolio,
-            signal=signal,
             report=report,
             market_index=market_index,
             params=params,
+            declared_shape=declared_shape,
+            target_exposure_cap=target_exposure_cap,
         )
 
     return cv_callable_no_open, ["close_slice"]
@@ -290,52 +294,68 @@ def _build_cv_callable(
 def _evaluate_cv_slice(
     *,
     close_slice: pd.DataFrame,
-    open_slice: pd.DataFrame | None,
     pipeline: Any,
     portfolio: PortfolioConfig,
-    signal: SignalConfig,
     report: ReportConfig,
     market_index: pd.Index,
     params: Mapping[str, Any],
+    declared_shape: str,
+    target_exposure_cap: float,
 ) -> Any:
     pipeline_output = pipeline(close_slice, **params)
     if pipeline_output is vbt.NoResult:
         return vbt.NoResult
-    entries, exits = _coerce_pipeline_signals(pipeline_output)
+    raw_output = _coerce_pipeline_output(pipeline_output, declared_shape)
+    allocations = convert_to_allocations(
+        raw_output,
+        declared_shape,
+        close_columns=close_slice.columns,
+        target_exposure_cap=target_exposure_cap,
+        direction=portfolio.direction,
+    )
     result = simulate_portfolio(
         close_slice,
-        entries,
-        exits,
+        allocations,
         portfolio,
-        signal,
-        open_prices=open_slice,
         market_index=market_index,
     )
     return _central_metric_series(result.portfolio, report)
 
 
-def _coerce_pipeline_signals(value: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if isinstance(value, tuple) and len(value) == 2:
-        entries, exits = value
-    elif isinstance(value, Mapping) and "entries" in value and "exits" in value:
-        forbidden = sorted(set(value) & PIPELINE_SIGNAL_FORBIDDEN_KEYS)
+def _coerce_pipeline_output(value: Any, declared_shape: str) -> pd.DataFrame:
+    if isinstance(value, pd.DataFrame):
+        frame = value
+    elif isinstance(value, Mapping):
+        forbidden = sorted(set(value) & PIPELINE_OUTPUT_FORBIDDEN_KEYS)
         if forbidden:
             raise OptimizationRunnerError(
-                "optimization pipeline signal mappings must not return authoritative metrics, "
+                "optimization pipeline output mappings must not return authoritative metrics, "
                 f"portfolio fields, or candidate-axis fields: {forbidden}"
             )
-        entries = value["entries"]
-        exits = value["exits"]
+        emitted = {key for key in value if isinstance(value[key], pd.DataFrame)}
+        if declared_shape not in value:
+            raise OptimizationRunnerError(
+                f"component declared {declared_shape!r} but pipeline did not emit {declared_shape!r}; "
+                f"emitted shapes: {sorted(emitted)}"
+            )
+        other_shapes = sorted(emitted - {declared_shape})
+        if other_shapes:
+            raise OptimizationRunnerError(
+                f"optimization pipeline emitted {other_shapes} alongside declared shape "
+                f"{declared_shape!r}; pipeline must emit exactly the declared shape"
+            )
+        frame = value[declared_shape]
     else:
         raise OptimizationRunnerError(
-            "optimization pipeline must return either an (entries, exits) tuple "
-            "or a mapping with 'entries' and 'exits' frames"
+            f"optimization pipeline must return a pandas DataFrame for declared shape "
+            f"{declared_shape!r} or a mapping containing it; got {type(value).__name__}"
         )
-    if not isinstance(entries, pd.DataFrame) or not isinstance(exits, pd.DataFrame):
+    if not isinstance(frame, pd.DataFrame):
         raise OptimizationRunnerError(
-            "optimization pipeline must return entries and exits as pandas DataFrames"
+            f"optimization pipeline must return declared shape {declared_shape!r} "
+            "as a pandas DataFrame"
         )
-    return entries, exits
+    return frame
 
 
 def _central_metric_series(portfolio: Any, report: ReportConfig) -> pd.Series:

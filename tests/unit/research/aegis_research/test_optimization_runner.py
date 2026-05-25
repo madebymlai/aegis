@@ -33,22 +33,27 @@ from research.aegis_research.optimization.source import OptimizationSource
 def _close_open_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     index = pd.date_range("2024-01-01", periods=40, freq="D")
     rng = np.random.default_rng(42)
-    levels = 100 + np.cumsum(rng.normal(0.0, 1.0, size=len(index)))
-    close = pd.DataFrame({"SYN": levels}, index=index)
+    levels_a = 100 + np.cumsum(rng.normal(0.0, 1.0, size=len(index)))
+    levels_b = 100 + np.cumsum(rng.normal(0.0, 1.0, size=len(index)))
+    close = pd.DataFrame({"AAA": levels_a, "BBB": levels_b}, index=index)
     open_prices = close.shift(1).bfill() + 0.1
     return close, open_prices
 
 
-def _ma_pipeline(close: pd.DataFrame, fast_window: int, slow_window: int):
+def _ma_pipeline(close: pd.DataFrame, fast_window: int, slow_window: int) -> pd.DataFrame:
     fast = close.rolling(fast_window, min_periods=1).mean()
     slow = close.rolling(slow_window, min_periods=1).mean()
-    return fast > slow, fast < slow
+    selected = (fast > slow).astype(object)
+    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)
+    active.loc[:] = selected
+    return active
 
 
 def _build_source(*, fast: list[int], slow: list[int]) -> OptimizationSource:
     return OptimizationSource(
         pipeline=_ma_pipeline,
         params={"fast_window": vbt.Param(fast), "slow_window": vbt.Param(slow)},
+        output_name="active",
         evidence={"source": "test"},
         diagnostics={},
         metadata={},
@@ -342,12 +347,13 @@ def test_runner_rejects_ranking_metric_outside_central_catalog() -> None:
 def test_runner_rejects_reserved_param_names_in_manual_source(param_name: str) -> None:
     close, open_prices = _close_open_frames()
 
-    def pipeline(close: pd.DataFrame, **_params: object):
-        return close > 0, close < 0
+    def pipeline(close: pd.DataFrame, **_params: object) -> pd.DataFrame:
+        return close.notna().astype(object)
 
     source = OptimizationSource(
         pipeline=pipeline,
         params={param_name: vbt.Param([1])},
+        output_name="active",
         evidence={},
         diagnostics={},
         metadata={},
@@ -374,6 +380,7 @@ def test_runner_tied_param_levels_emit_paired_rows_only() -> None:
             "fast_window": vbt.Param([2, 5, 10], level=0),
             "slow_window": vbt.Param([20, 50, 100], level=0),
         },
+        output_name="active",
         evidence={"source": "test"},
         diagnostics={},
         metadata={},
@@ -410,6 +417,7 @@ def test_runner_conditional_params_filter_invalid_combinations() -> None:
             "fast_window": vbt.Param([2, 5, 10], condition="fast_window < slow_window"),
             "slow_window": vbt.Param([3, 8]),
         },
+        output_name="active",
         evidence={"source": "test"},
         diagnostics={},
         metadata={},
@@ -504,21 +512,22 @@ def test_serialize_optimization_run_emits_jsonable_selection_and_selection_grid(
     assert payload["held_out_grid"] is None
 
 
-def test_runner_rejects_invalid_pipeline_signal_shape() -> None:
+def test_runner_rejects_invalid_pipeline_output_shape() -> None:
     close, open_prices = _close_open_frames()
 
     def bad_pipeline(close, fast_window):
-        return "not a tuple"
+        return "not a dataframe"
 
     source = OptimizationSource(
         pipeline=bad_pipeline,
         params={"fast_window": vbt.Param([2, 5])},
+        output_name="active",
         evidence={},
         diagnostics={},
         metadata={},
     )
 
-    with pytest.raises(OptimizationRunnerError, match=r"entries.*exits"):
+    with pytest.raises(OptimizationRunnerError, match=r"declared shape 'active'"):
         execute_optimization(
             close=close,
             open_prices=open_prices,
@@ -532,19 +541,19 @@ def test_runner_rejects_invalid_pipeline_signal_shape() -> None:
 
 
 @pytest.mark.parametrize("forbidden_key", ["metrics", "portfolio", "metric_source"])
-def test_runner_rejects_authoritative_fields_in_pipeline_signal_mapping(forbidden_key: str) -> None:
+def test_runner_rejects_authoritative_fields_in_pipeline_output_mapping(forbidden_key: str) -> None:
     close, open_prices = _close_open_frames()
 
     def smuggling_pipeline(close, fast_window):
         return {
-            "entries": close > 0,
-            "exits": close < 0,
+            "active": close.notna().astype(object),
             forbidden_key: {},
         }
 
     source = OptimizationSource(
         pipeline=smuggling_pipeline,
         params={"fast_window": vbt.Param([2, 5])},
+        output_name="active",
         evidence={},
         diagnostics={},
         metadata={},

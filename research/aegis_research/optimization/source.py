@@ -8,7 +8,7 @@ metrics from the returned (entries, exits) signals.
 Limitations carried by this contract:
 
 - Portfolio-side params (``sl_stop``, ``tp_stop``, ``fees``, ``slippage``,
-  ``init_cash``, ``entry_budget``, ``direction``) cannot currently be wrapped
+  ``init_cash``, ``target_exposure_cap``, ``direction``) cannot currently be wrapped
   in ``vbt.Param``. ``simulate_portfolio`` receives a static
   ``PortfolioConfig`` per run, so any portfolio-axis sweep would not flow
   through the Aegis-owned portfolio policy boundary.
@@ -30,6 +30,8 @@ from typing import Any
 
 from vectorbtpro import vbt
 
+from research.aegis_research.portfolio_policy.policy import STRATEGY_ALLOCATION_OUTPUTS
+
 OPTIMIZATION_SOURCE_CONTRACT = "aegis.optimization_source.v1"
 OPTIMIZATION_SOURCE_KIND = "optimization_source"
 
@@ -38,6 +40,7 @@ OPTIMIZATION_SOURCE_ALLOWED_KEYS = {
     "kind",
     "pipeline",
     "params",
+    "output_name",
     "diagnostics",
     "metadata",
 }
@@ -66,6 +69,7 @@ class OptimizationSourceError(ValueError):
 class OptimizationSource:
     pipeline: Callable[..., Any]
     params: dict[str, vbt.Param]
+    output_name: str
     evidence: dict[str, Any]
     diagnostics: dict[str, Any]
     metadata: dict[str, Any]
@@ -103,11 +107,18 @@ def validate_optimization_source(
         raise OptimizationSourceError("optimization source must include callable pipeline")
 
     params = _source_params(result.get("params"))
+    output_name = result.get("output_name")
+    if not isinstance(output_name, str) or output_name not in STRATEGY_ALLOCATION_OUTPUTS:
+        raise OptimizationSourceError(
+            f"optimization source output_name must be one of {sorted(STRATEGY_ALLOCATION_OUTPUTS)}; "
+            f"got {output_name!r}"
+        )
     diagnostics = _optional_mapping(result.get("diagnostics", {}), "diagnostics")
     metadata = _optional_mapping(result.get("metadata", {}), "metadata")
     return OptimizationSource(
         pipeline=pipeline,
         params=params,
+        output_name=output_name,
         evidence=dict(source_evidence),
         diagnostics=diagnostics,
         metadata=metadata,

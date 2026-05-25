@@ -23,11 +23,10 @@ COMPONENT_PERCENT_CELL_MARKER = "# %%"
 COMPONENT_PERCENT_CELL_RE = re.compile(r"^# %%.*$", re.MULTILINE)
 COMPONENT_MAIN_CELL_RE = re.compile(r"^# %%\s+main\b", re.MULTILINE)
 COMPONENT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-STRATEGY_SIGNAL_OUTPUTS = {"entries", "exits"}
+STRATEGY_ALLOCATION_OUTPUTS = {"active", "scores", "ranks", "target_weights"}
 STRATEGY_FORBIDDEN_KEYS = {
     "costs",
     "direction",
-    "entry_budget",
     "execution_timing",
     "fees",
     "portfolio",
@@ -35,6 +34,7 @@ STRATEGY_FORBIDDEN_KEYS = {
     "size",
     "sizing",
     "slippage",
+    "target_exposure_cap",
 }
 
 
@@ -187,15 +187,16 @@ def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifes
 def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
     input_names = _required_input_names(payload, path)
     param_names = _optional_string_tuple(payload, "param_names", path)
-    signal_outputs = _required_string_tuple(payload, "signal_outputs", path)
+    output_name = _required_string(payload, "output_name", path)
     consumes_outputs = _optional_string_tuple(payload, "consumes_outputs", path)
     defaults = _optional_mapping(payload, "defaults", path)
     _validate_param_defaults(defaults, param_names, path)
     param_space_callable = _optional_string(payload, "param_space_callable", path)
-    if unsupported := sorted(set(signal_outputs) - STRATEGY_SIGNAL_OUTPUTS):
-        raise ComponentRegistryError(f"{path}: unsupported strategy outputs: {unsupported}")
-    if set(signal_outputs) != STRATEGY_SIGNAL_OUTPUTS:
-        raise ComponentRegistryError(f"{path}: strategy components must emit entries and exits")
+    if output_name not in STRATEGY_ALLOCATION_OUTPUTS:
+        raise ComponentRegistryError(
+            f"{path}: unsupported allocation output {output_name!r}; "
+            f"registered shapes are {STRATEGY_ALLOCATION_OUTPUTS}"
+        )
     owns_portfolio = payload.get("owns_portfolio", False)
     if owns_portfolio is not False:
         raise ComponentRegistryError(f"{path}: strategy components must not own portfolio behavior")
@@ -209,7 +210,7 @@ def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
         payload=payload,
         input_names=input_names,
         param_names=param_names,
-        signal_outputs=signal_outputs,
+        output_name=output_name,
         consumes_outputs=consumes_outputs,
         defaults=defaults,
         param_space_callable=param_space_callable,

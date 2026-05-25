@@ -34,7 +34,7 @@ def build_resolved_run_config(
             "rows": 120,
             "arrays": ["OHLCV"],
         },
-        "portfolio": {"entry_budget": 1.0},
+        "portfolio": {"target_exposure_cap": 1.0},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return", "direction": "desc"},

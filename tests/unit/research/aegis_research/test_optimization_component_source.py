@@ -34,14 +34,17 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
     indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
     strategy_key = component_param_key("strategies", "demo.strategy", "strategy", "threshold")
     assert set(source.params) == {indicator_key, strategy_key}
+    assert source.output_name == "active"
     assert source.evidence["produced_outputs"] == ["trend"]
     assert source.evidence["consumed_outputs"] == ["trend"]
 
-    output = source.pipeline(data.feature("Close"), **{indicator_key: 2, strategy_key: 0.95})
+    close = data.feature("Close")
+    output = source.pipeline(close, **{indicator_key: 2, strategy_key: 0.95})
 
-    assert set(output) >= {"entries", "exits"}
-    assert output["entries"].shape == data.feature("Close").shape
-    assert output["exits"].shape == data.feature("Close").shape
+    assert isinstance(output, pd.DataFrame)
+    assert output.shape == close.shape
+    assert output.index.equals(close.index)
+    assert list(output.columns) == list(close.columns)
 
 
 def test_component_source_fixed_params_override_param_space_axes(tmp_path: Path) -> None:
@@ -201,11 +204,13 @@ def _write_strategy(path: Path) -> None:
         "# %% component overview\n"
         "# Parameterized strategy fixture.\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
         "from vectorbtpro import vbt\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['threshold'], "
-        "'signal_outputs': ['entries', 'exits'], 'consumes_outputs': ['trend'], "
+        "'output_name': 'active', 'consumes_outputs': ['trend'], "
         "'defaults': {'threshold': 1.0}, 'param_space_callable': 'param_space'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "# %% parameter space\n"
@@ -213,12 +218,13 @@ def _write_strategy(path: Path) -> None:
         "    return {'threshold': vbt.Param([0.95, 1.0])}\n"
         "# %% main compute\n"
         "def run(inputs, threshold):\n"
-        "    '''Return thresholded trend signals.'''\n"
+        "    '''Return active allocation derived from thresholded trend signals.'''\n"
         "    close = inputs.data.feature('Close')\n"
         "    trend = inputs.indicators['trend']\n"
-        "    entries = trend.ge(close * float(threshold))\n"
-        "    exits = trend.lt(close * float(threshold))\n"
-        "    return {'entries': entries, 'exits': exits}\n"
+        "    selected = trend.ge(close * float(threshold)).fillna(False)\n"
+        "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
+        "    active.loc[:] = selected.astype(object)\n"
+        "    return active\n"
     )
 
 
@@ -228,11 +234,13 @@ def _write_hidden_strategy(path: Path) -> None:
         "# %% component overview\n"
         "# Hidden parameter strategy fixture.\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
         "from vectorbtpro import vbt\n"
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.hidden_strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['threshold'], "
-        "'signal_outputs': ['entries', 'exits'], 'defaults': {'threshold': 1.0}, "
+        "'output_name': 'active', 'defaults': {'threshold': 1.0}, "
         "'param_space_callable': 'param_space'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "# %% parameter space\n"
@@ -240,11 +248,12 @@ def _write_hidden_strategy(path: Path) -> None:
         "    return {'threshold': vbt.Param([0.95, 1.0], hide=True)}\n"
         "# %% main compute\n"
         "def run(inputs, threshold):\n"
-        "    '''Return thresholded hidden-param fixture signals.'''\n"
+        "    '''Return active allocation for the hidden-param fixture.'''\n"
         "    close = inputs.data.feature('Close')\n"
-        "    entries = close.gt(close.shift(1)).fillna(False)\n"
-        "    exits = close.lt(close.shift(1)).fillna(False)\n"
-        "    return {'entries': entries, 'exits': exits}\n"
+        "    selected = close.gt(close.shift(1)).fillna(False)\n"
+        "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
+        "    active.loc[:] = selected.astype(object)\n"
+        "    return active\n"
     )
 
 

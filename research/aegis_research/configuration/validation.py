@@ -41,6 +41,10 @@ from research.aegis_research.market_data.sources import LOCAL_DATA_SOURCES, remo
 from research.aegis_research.metrics import FrozenMetricRegistry
 from research.aegis_research.run_splits import validate_run_split_config
 
+PORTFOLIO_REMOVED_FIELDS: dict[str, str] = {
+    "entry_budget": "renamed to portfolio.target_exposure_cap",
+}
+
 
 def _validate_raw_run_config(
     raw: dict[str, Any],
@@ -62,7 +66,9 @@ def _validate_raw_run_config(
     portfolio = _section(
         raw,
         "portfolio",
-        set(PortfolioConfig.__dataclass_fields__) | {"size", "size_type"},
+        set(PortfolioConfig.__dataclass_fields__)
+        | {"size", "size_type"}
+        | set(PORTFOLIO_REMOVED_FIELDS),
         issues,
     )
     report = _section(raw, "report", set(ReportConfig.__dataclass_fields__), issues)
@@ -839,15 +845,20 @@ def _validate_portfolio(portfolio: dict[str, Any], issues: list[ConfigValidation
     _optional_number("portfolio.init_cash", portfolio, issues, positive=True)
     _optional_number("portfolio.fees", portfolio, issues, minimum=0)
     _optional_number("portfolio.slippage", portfolio, issues, minimum=0)
-    if "entry_budget" not in portfolio:
-        issues.append(ConfigValidationIssue("portfolio.entry_budget", "is required"))
+    for removed, message in PORTFOLIO_REMOVED_FIELDS.items():
+        if removed in portfolio:
+            issues.append(ConfigValidationIssue(f"portfolio.{removed}", message))
+    if "target_exposure_cap" not in portfolio:
+        issues.append(ConfigValidationIssue("portfolio.target_exposure_cap", "is required"))
     else:
-        _optional_number("portfolio.entry_budget", portfolio, issues, positive=True, maximum=1)
+        _optional_number(
+            "portfolio.target_exposure_cap", portfolio, issues, positive=True, maximum=1
+        )
     if "size" in portfolio:
         issues.append(
             ConfigValidationIssue(
                 "portfolio.size",
-                "was removed; use portfolio.entry_budget for v1 signal entry sizing",
+                "was removed; use portfolio.target_exposure_cap for v1 signal entry sizing",
             )
         )
     if "size_type" in portfolio and not isinstance(portfolio["size_type"], str):
@@ -857,7 +868,7 @@ def _validate_portfolio(portfolio: dict[str, Any], issues: list[ConfigValidation
             issues.append(
                 ConfigValidationIssue(
                     "portfolio.size_type",
-                    "target allocation sizing is deferred; baseline signal simulation uses portfolio.entry_budget",
+                    "target allocation sizing is deferred; baseline signal simulation uses portfolio.target_exposure_cap",
                 )
             )
         else:

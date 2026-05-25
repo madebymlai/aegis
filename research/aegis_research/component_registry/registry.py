@@ -112,7 +112,7 @@ def _definition_public_snapshot(definition: ComponentDefinition) -> dict[str, An
         payload["outputs"] = list(manifest.output_names)
         payload["bar_aligned"] = manifest.bar_aligned
     else:
-        payload["signal_outputs"] = list(manifest.signal_outputs)
+        payload["output_name"] = manifest.output_name
         payload["consumes_outputs"] = list(manifest.consumes_outputs)
         payload["owns_portfolio"] = manifest.owns_portfolio
     return payload

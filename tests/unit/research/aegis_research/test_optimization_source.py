@@ -26,6 +26,7 @@ def test_optimization_source_contract_accepts_vbt_params_and_pipeline() -> None:
                 "entry_threshold": vbt.Param([40.0, 45.0], level=0),
                 "exit_threshold": vbt.Param([60.0, 55.0], level=0),
             },
+            "output_name": "active",
             "diagnostics": {"fixture": True},
         },
         source_evidence={"source": "component", "id": "native_rsi"},
@@ -52,6 +53,7 @@ def test_optimization_source_contract_accepts_vbt_condition_params() -> None:
                 "fast_window": vbt.Param([5, 10], condition="fast_window < slow_window"),
                 "slow_window": vbt.Param([20, 50]),
             },
+            "output_name": "active",
         },
         source_evidence={"source": "component", "id": "native_ma"},
     )

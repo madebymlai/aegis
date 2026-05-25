@@ -58,6 +58,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
     source = OptimizationSource(
         pipeline=always_skip,
         params={"fast_window": vbt.Param([2, 5])},
+        output_name="active",
         evidence={"source": "always_skip"},
         diagnostics={},
         metadata={},
@@ -115,6 +116,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
     source = OptimizationSource(
         pipeline=exploding_pipeline,
         params={"fast_window": vbt.Param([2, 5])},
+        output_name="active",
         evidence={"source": "exploding"},
         diagnostics={},
         metadata={},

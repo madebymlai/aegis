@@ -208,6 +208,7 @@ def build_component_optimization_source(
     return OptimizationSource(
         pipeline=pipeline,
         params=params,
+        output_name=strategy.definition.manifest.output_name,
         evidence=evidence,
         diagnostics={
             "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,

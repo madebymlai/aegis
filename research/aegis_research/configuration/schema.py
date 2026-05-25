@@ -167,7 +167,7 @@ class PortfolioConfig:
     init_cash: float = 10_000.0
     fees: float = 0.001
     slippage: float = 0.0005
-    entry_budget: float = 1.0
+    target_exposure_cap: float = 1.0
     direction: str = "longonly"
 
 
