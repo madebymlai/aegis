@@ -155,6 +155,57 @@ def test_preflight_conditioned_grid_uses_vbt_executable_combinations() -> None:
     assert diagnostics["sampled_count_source"] == "vbt.combine_params"
 
 
+def test_preflight_computes_batch_budget_and_mono_chunk_len() -> None:
+    diagnostics = build_preflight(
+        params={"fast_window": vbt.Param([5, 10])},
+        optimization=_optimization(),
+        split_result=_split_result(split_count=1, selection_rows=100, held_out_rows=50),
+        symbol_count=2,
+        has_open_prices=True,
+    )
+    # materialized_frame_count = 4 + 1(open) = 5
+    # max_set_rows = max(100, 50) = 100
+    # bytes_per_candidate = 2 symbols × 100 bars × 8 dtype × 5 frames = 8000
+    assert diagnostics["max_set_rows"] == 100
+    assert diagnostics["batch_bytes_per_candidate"] == 8000
+    # default ceiling 2GB → floor(2_000_000_000 / 8000) = 250_000, capped to 2 candidates
+    assert diagnostics["computed_mono_chunk_len"] == 2
+    assert diagnostics["limits"]["max_batch_expansion_bytes"] == 2_000_000_000
+
+
+def test_preflight_fails_closed_when_single_candidate_exceeds_batch_budget() -> None:
+    # 2 symbols × 500 bars × 8 dtype × 5 frames = 40_000 bytes per candidate
+    # ceiling 30_000 → even mono_chunk_len=1 doesn't fit → fail closed
+    with pytest.raises(PreflightError, match="max_batch_expansion_bytes") as error:
+        build_preflight(
+            params={"window": vbt.Param([5, 10, 20])},
+            optimization=_optimization(max_batch_expansion_bytes=30_000),
+            split_result=_split_result(split_count=1, selection_rows=500, held_out_rows=200),
+            symbol_count=2,
+            has_open_prices=True,
+        )
+    diag = error.value.diagnostics
+    assert diag["computed_mono_chunk_len"] == 0
+    assert diag["batch_bytes_per_candidate"] == 40_000
+    assert diag["max_set_rows"] == 500
+    assert diag["symbol_count"] == 2
+    assert diag["materialized_frame_count"] == 5
+
+
+def test_preflight_proceeds_at_mono_chunk_len_one_boundary() -> None:
+    # 2 symbols × 500 bars × 8 dtype × 5 frames = 40_000 bytes per candidate
+    # ceiling exactly 40_000 → mono_chunk_len=1 fits → proceed
+    diagnostics = build_preflight(
+        params={"window": vbt.Param([5, 10, 20])},
+        optimization=_optimization(max_batch_expansion_bytes=40_000),
+        split_result=_split_result(split_count=1, selection_rows=500, held_out_rows=200),
+        symbol_count=2,
+        has_open_prices=True,
+    )
+    assert diagnostics["computed_mono_chunk_len"] == 1
+    assert diagnostics["batch_bytes_per_candidate"] == 40_000
+
+
 def test_preflight_return_grid_off_excludes_grid_rows_but_counts_public_payloads() -> None:
     diagnostics = build_preflight(
         params={"window": vbt.Param([5, 10, 20])},
@@ -180,6 +231,7 @@ def _optimization(
     return_grid: str = "first",
     max_estimated_output_cells: int = 1_000_000,
     max_public_artifact_bytes: int = 1_000_000,
+    max_batch_expansion_bytes: int = 2_000_000_000,
     execute: dict[str, object] | None = None,
 ) -> OptimizationConfig:
     return OptimizationConfig(
@@ -190,6 +242,7 @@ def _optimization(
             max_splits=100,
             max_estimated_output_cells=max_estimated_output_cells,
             max_public_artifact_bytes=max_public_artifact_bytes,
+            max_batch_expansion_bytes=max_batch_expansion_bytes,
         ),
         random_subset=random_subset,
         seed=seed,

@@ -39,12 +39,16 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
     assert source.evidence["consumed_outputs"] == ["trend"]
 
     close = data.feature("Close")
-    output = source.pipeline(close, **{indicator_key: 2, strategy_key: 0.95})
+    n_candidates = 1
+    output = source.pipeline(
+        close, n_candidates, **{indicator_key: [2], strategy_key: [0.95]}
+    )
 
     assert isinstance(output, pd.DataFrame)
-    assert output.shape == close.shape
+    assert output.shape == (len(close), n_candidates * len(close.columns))
     assert output.index.equals(close.index)
-    assert list(output.columns) == list(close.columns)
+    assert isinstance(output.columns, pd.MultiIndex)
+    assert output.columns.names[-1] == "symbol"
 
 
 def test_component_source_fixed_params_override_param_space_axes(tmp_path: Path) -> None:
@@ -180,12 +184,13 @@ def _write_indicator(path: Path, *, component_id: str) -> None:
         "# %% component overview\n"
         "# Parameterized indicator fixture.\n"
         "# %% define component metadata\n"
+        "import numpy as np\n"
         "from vectorbtpro import vbt\n"
         "COMPONENT_MANIFEST = {"
         f"'family': 'indicators', 'id': {component_id!r}, 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['window'], "
         "'output_names': ['trend'], 'defaults': {'window': 2}, "
-        "'param_space_callable': 'param_space'}\n"
+        "'param_space_callable': 'param_space', 'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "# %% parameter space\n"
         "def param_space():\n"
@@ -195,6 +200,17 @@ def _write_indicator(path: Path, *, component_id: str) -> None:
         "    '''Return a rolling trend frame.'''\n"
         "    close = data.feature('Close')\n"
         "    return close.rolling(int(window), min_periods=1).mean()\n"
+        "# %% wide compute\n"
+        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        "    '''Return wide indicator output.'''\n"
+        "    close = data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    windows = param_lists['window']\n"
+        "    result = np.zeros((T, n_candidates * S))\n"
+        "    for i, w in enumerate(windows):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        result[:, cols] = close.rolling(int(w), min_periods=1).mean().values\n"
+        "    return result\n"
     )
 
 
@@ -211,7 +227,8 @@ def _write_strategy(path: Path) -> None:
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['threshold'], "
         "'output_name': 'active', 'consumes_outputs': ['trend'], "
-        "'defaults': {'threshold': 1.0}, 'param_space_callable': 'param_space'}\n"
+        "'defaults': {'threshold': 1.0}, 'param_space_callable': 'param_space', "
+        "'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "# %% parameter space\n"
         "def param_space():\n"
@@ -225,6 +242,22 @@ def _write_strategy(path: Path) -> None:
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
+        "# %% wide compute\n"
+        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "    '''Return wide strategy output.'''\n"
+        "    close = inputs.data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    thresholds = param_lists['threshold']\n"
+        "    trend_arr = inputs.indicators['trend']\n"
+        "    close_arr = close.values\n"
+        "    alloc = np.full((T, n_candidates * S), np.nan)\n"
+        "    for i, thr in enumerate(thresholds):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        trend_slice = trend_arr[:, cols]\n"
+        "        selected = trend_slice >= (close_arr * float(thr))\n"
+        "        n_sel = selected.sum(axis=1, keepdims=True).clip(min=1)\n"
+        "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
+        "    return alloc\n"
     )
 
 
@@ -241,7 +274,7 @@ def _write_hidden_strategy(path: Path) -> None:
         "'family': 'strategies', 'id': 'demo.hidden_strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['threshold'], "
         "'output_name': 'active', 'defaults': {'threshold': 1.0}, "
-        "'param_space_callable': 'param_space'}\n"
+        "'param_space_callable': 'param_space', 'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "# %% parameter space\n"
         "def param_space():\n"
@@ -254,10 +287,137 @@ def _write_hidden_strategy(path: Path) -> None:
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
+        "# %% wide compute\n"
+        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "    '''Return wide strategy output for the hidden-param fixture.'''\n"
+        "    close = inputs.data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    close_arr = close.values\n"
+        "    alloc = np.full((T, n_candidates * S), np.nan)\n"
+        "    for i in range(n_candidates):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        prev = np.roll(close_arr, 1, axis=0)\n"
+        "        prev[0] = np.nan\n"
+        "        selected = close_arr > prev\n"
+        "        n_sel = selected.sum(axis=1, keepdims=True).clip(min=1)\n"
+        "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
+        "    return alloc\n"
     )
+
+
+def test_component_source_wide_pipeline_returns_multiindex_frame(tmp_path: Path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_wide_indicator(root / "indicators" / "trend.py")
+    _write_wide_strategy(root / "strategies" / "strategy.py")
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    config = _config()
+    data = _data_bundle()
+
+    source = build_component_optimization_source(config, component_registry=registry, data=data)
+    close = data.feature("Close")
+    n_candidates = 2
+    n_symbols = len(close.columns)
+
+    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
+    strategy_key = component_param_key("strategies", "demo.strategy", "strategy", "threshold")
+    result = source.pipeline(
+        close,
+        n_candidates,
+        **{indicator_key: [2, 3], strategy_key: [0.95, 1.0]},
+    )
+
+    assert isinstance(result, pd.DataFrame)
+    assert result.shape == (len(close), n_candidates * n_symbols)
+    assert isinstance(result.columns, pd.MultiIndex)
+    assert result.columns.names[-1] == "symbol"
+    assert result.index.equals(close.index)
 
 
 def _data_bundle() -> MarketDataBundle:
     index = pd.date_range("2026-01-01", periods=6, freq="1D")
     close = pd.DataFrame({"SYN": [10.0, 11.0, 10.5, 12.0, 11.5, 13.0]}, index=index)
     return MarketDataBundle(features={"Close": close}, loaded_features=("Close",))
+
+
+def _write_wide_indicator(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Parameterized indicator fixture with wide callable.\n"
+        "# %% define component metadata\n"
+        "import numpy as np\n"
+        "from vectorbtpro import vbt\n"
+        "COMPONENT_MANIFEST = {"
+        "'family': 'indicators', 'id': 'demo.trend', 'version': '1.0.0', "
+        "'input_names': ['Close'], 'param_names': ['window'], "
+        "'output_names': ['trend'], 'defaults': {'window': 2}, "
+        "'param_space_callable': 'param_space', 'wide_callable': 'run_wide'}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "# %% parameter space\n"
+        "def param_space():\n"
+        "    return {'window': vbt.Param([2, 3])}\n"
+        "# %% main compute\n"
+        "def run(data, window):\n"
+        "    '''Return a rolling trend frame.'''\n"
+        "    close = data.feature('Close')\n"
+        "    return close.rolling(int(window), min_periods=1).mean()\n"
+        "# %% wide compute\n"
+        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        "    '''Return wide indicator output.'''\n"
+        "    close = data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    windows = param_lists['window']\n"
+        "    result = np.zeros((T, n_candidates * S))\n"
+        "    for i, w in enumerate(windows):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        result[:, cols] = close.rolling(int(w), min_periods=1).mean().values\n"
+        "    return result\n"
+    )
+
+
+def _write_wide_strategy(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Parameterized strategy fixture with wide callable.\n"
+        "# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
+        "from vectorbtpro import vbt\n"
+        "COMPONENT_MANIFEST = {"
+        "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
+        "'input_names': ['Close'], 'param_names': ['threshold'], "
+        "'output_name': 'active', 'consumes_outputs': ['trend'], "
+        "'defaults': {'threshold': 1.0}, 'param_space_callable': 'param_space', "
+        "'wide_callable': 'run_wide'}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "# %% parameter space\n"
+        "def param_space():\n"
+        "    return {'threshold': vbt.Param([0.95, 1.0])}\n"
+        "# %% main compute\n"
+        "def run(inputs, threshold):\n"
+        "    '''Return active allocation derived from thresholded trend signals.'''\n"
+        "    close = inputs.data.feature('Close')\n"
+        "    trend = inputs.indicators['trend']\n"
+        "    selected = trend.ge(close * float(threshold)).fillna(False)\n"
+        "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
+        "    active.loc[:] = selected.astype(object)\n"
+        "    return active\n"
+        "# %% wide compute\n"
+        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "    '''Return wide strategy output.'''\n"
+        "    import numpy as np, pandas as pd\n"
+        "    close = inputs.data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    thresholds = param_lists['threshold']\n"
+        "    trend_arr = inputs.indicators['trend']\n"
+        "    close_arr = close.values\n"
+        "    alloc = np.full((T, n_candidates * S), np.nan)\n"
+        "    for i, thr in enumerate(thresholds):\n"
+        "        cols = slice(i * S, (i + 1) * S)\n"
+        "        trend_slice = trend_arr[:, cols]\n"
+        "        selected = trend_slice >= (close_arr * float(thr))\n"
+        "        n_sel = selected.sum(axis=1, keepdims=True).clip(min=1)\n"
+        "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
+        "    return alloc\n"
+    )

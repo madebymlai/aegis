@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
@@ -43,12 +44,22 @@ class ComponentStrategyInputs:
 
 
 @dataclass(frozen=True)
+class WideComponentStrategyInputs:
+    data: MarketDataBundle
+    indicators: Mapping[str, np.ndarray]
+    n_candidates: int
+    n_symbols: int
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class _ComponentRuntime:
     family: ComponentFamily
     slot: str
     ref: RunSourceRefConfig | RunIndicatorSourceConfig
     definition: ComponentDefinition
     callable: Any
+    wide_callable: Any
     fixed_params: dict[str, Any]
     param_space: dict[str, vbt.Param]
     param_keys: dict[str, str]
@@ -180,29 +191,40 @@ def build_component_optimization_source(
 
     input_names = _input_names(strategy, indicators)
 
-    def pipeline(close_slice: pd.DataFrame, **raw_params: Any) -> Mapping[str, Any]:
+    def pipeline(
+        close_slice: pd.DataFrame, n_candidates: int, **param_lists: Any
+    ) -> pd.DataFrame:
         data_slice = _slice_data(data, close_slice, input_names)
-        indicator_outputs: dict[str, pd.DataFrame] = {}
+        n_symbols = len(close_slice.columns)
+        indicator_outputs: dict[str, np.ndarray] = {}
         for runtime in indicators:
-            output = runtime.callable(data_slice, **_params_for_runtime(runtime, raw_params))
-            for output_name, frame in _coerce_indicator_outputs(
-                output,
-                runtime.definition,
-                close_slice,
-            ).items():
+            wide_params = _wide_params_for_runtime(runtime, param_lists)
+            output = runtime.wide_callable(data_slice, n_candidates=n_candidates, **wide_params)
+            output_arr = np.asarray(output)
+            for output_name in runtime.definition.manifest.output_names:
                 if output_name in indicator_outputs:
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
-                indicator_outputs[output_name] = frame
-        strategy_inputs = ComponentStrategyInputs(
+                indicator_outputs[output_name] = output_arr
+        strategy_wide_inputs = WideComponentStrategyInputs(
             data=data_slice,
             indicators=indicator_outputs,
+            n_candidates=n_candidates,
+            n_symbols=n_symbols,
             metadata={
                 "strategy_id": strategy.definition.id,
                 "indicator_ids": [runtime.definition.id for runtime in indicators],
                 "component_optimization_source": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
             },
         )
-        return strategy.callable(strategy_inputs, **_params_for_runtime(strategy, raw_params))
+        strategy_wide_params = _wide_params_for_runtime(strategy, param_lists)
+        alloc_arr = np.asarray(
+            strategy.wide_callable(
+                strategy_wide_inputs, n_candidates=n_candidates, **strategy_wide_params
+            )
+        )
+        return _build_wide_frame(
+            alloc_arr, close_slice, n_candidates, param_lists, params
+        )
 
     evidence = _source_evidence(strategy, indicators, params)
     return OptimizationSource(
@@ -234,7 +256,8 @@ def _build_runtime(
     param_space_callable_name = (
         None if _is_locked(ref) else getattr(definition.manifest, "param_space_callable", None)
     )
-    attribute_names = [definition.callable_name]
+    wide_callable_name = definition.manifest.wide_callable
+    attribute_names = [definition.callable_name, wide_callable_name]
     if param_space_callable_name is not None:
         attribute_names.append(param_space_callable_name)
     attributes = definition.load_attributes(attribute_names)
@@ -263,6 +286,7 @@ def _build_runtime(
         ref=ref,
         definition=definition,
         callable=attributes[definition.callable_name],
+        wide_callable=attributes[wide_callable_name],
         fixed_params=fixed_params,
         param_space=dict(param_space),
         param_keys=param_keys,
@@ -365,6 +389,41 @@ def _params_for_runtime(
     for param_name, param_key in runtime.param_keys.items():
         params[param_name] = raw_params[param_key]
     return params
+
+
+def _wide_params_for_runtime(
+    runtime: _ComponentRuntime, param_lists: Mapping[str, Any]
+) -> dict[str, list[Any]]:
+    n_candidates = len(next(iter(param_lists.values()))) if param_lists else 0
+    params: dict[str, list[Any]] = {}
+    for param_name, param_key in runtime.param_keys.items():
+        params[param_name] = param_lists[param_key]
+    for param_name, fixed_value in runtime.fixed_params.items():
+        params[param_name] = [fixed_value] * n_candidates
+    return params
+
+
+def _build_wide_frame(
+    alloc_arr: np.ndarray,
+    close_slice: pd.DataFrame,
+    n_candidates: int,
+    param_lists: Mapping[str, Any],
+    param_defs: Mapping[str, Any],
+) -> pd.DataFrame:
+    symbols = close_slice.columns
+    n_symbols = len(symbols)
+    param_keys = [k for k in param_defs if k != FIXED_CANDIDATE_PARAM]
+    if not param_keys:
+        param_keys = [FIXED_CANDIDATE_PARAM]
+    col_tuples = []
+    for i in range(n_candidates):
+        for sym in symbols:
+            col_tuples.append(
+                tuple(param_lists[k][i] for k in param_keys) + (sym,)
+            )
+    col_names = param_keys + ["symbol"]
+    col_mi = pd.MultiIndex.from_tuples(col_tuples, names=col_names)
+    return pd.DataFrame(alloc_arr, index=close_slice.index, columns=col_mi)
 
 
 def _input_names(

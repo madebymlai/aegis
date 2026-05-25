@@ -692,7 +692,7 @@ def _write_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'output_name': 'active', "
-        "'consumes_outputs': ['returns']}\n"
+        "'consumes_outputs': ['returns'], 'wide_callable': 'run_wide'}\n"
         "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"

@@ -15,7 +15,7 @@ Speed up Aegis optimization in one integrated three-phase plan: Phase A replaces
 
 This plan keeps A, B, and C in one roadmap, but it ships A+B first, validates them with tests and a fresh profile, commits that checkpoint, and only then authorizes Phase C. There is no scalar fallback in the optimization runner at any phase: the runner runs the single forward path or fails closed at the contract boundary.
 
-The portfolio substrate is owned by issue #35 (`docs/brainstorms/2026-05-18-portfolio-simulation-contract-requirements.md` named PFO as the correct allocation substrate; #35 activates that v1-deferred path). This plan presumes #35 has landed or is landing concurrently: the batched path is built directly on the PFO substrate, not on a legacy `from_signals(valuepercent)` shape.
+The portfolio substrate is owned by issue #35 (landed in PR #37). The batched path is built directly on the PFO substrate.
 
 ---
 
@@ -382,7 +382,7 @@ The core shape is: compute less in the ranking hot path, batch only where identi
 ## Dependencies / Assumptions
 
 - `docs/profiling/2026-05-22-aerd-run-cprofile.md` remains the baseline performance artifact for this plan.
-- Issue #35 (PFO substrate) has landed or is landing concurrently with Phase B. Phase A is substrate-agnostic and can ship independently; Phase B/U2 presumes the PFO substrate.
+- Issue #35 (PFO substrate) landed in PR #37. Phase B/U2 builds on that substrate directly.
 - The current VBT PRO behavior for direct portfolio getters, `vbt.PFO.from_filled_allocations(...)`, `vbt.Portfolio.from_optimizer(..., pf_method="from_orders")`, `group_by=vbt.ExceptLevel("symbol")`, and `cash_sharing=True` remains the relevant execution model.
 - Existing portfolio-policy requirements remain authoritative for timing, fees, slippage, and diagnostics.
 - Exact helper names may shift during implementation, but the phase boundaries and contracts should not.

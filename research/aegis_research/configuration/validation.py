@@ -139,6 +139,7 @@ def _validate_run_split(
     _optional_int(f"{path}.max_splits", split, issues, positive=True)
     _optional_int(f"{path}.max_estimated_output_cells", split, issues, positive=True)
     _optional_int(f"{path}.max_public_artifact_bytes", split, issues, positive=True)
+    _optional_int(f"{path}.max_batch_expansion_bytes", split, issues, positive=True)
 
     params = split.get("params", {})
     if not isinstance(params, dict):

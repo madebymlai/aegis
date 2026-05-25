@@ -466,6 +466,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "param_names": ["window"],
             "output_names": ["value"],
             "defaults": {"window": 2},
+            "wide_callable": "run_wide",
         }
     if family == "strategies":
         return {
@@ -473,6 +474,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "input_names": ["Close"],
             "output_name": "active",
             "owns_portfolio": False,
+            "wide_callable": "run_wide",
         }
     raise AssertionError(family)
 

@@ -8,7 +8,6 @@ import pandas as pd
 
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.evidence import canonical_params_key
-from research.aegis_research.optimization.runner import METRIC_INDEX_NAME
 
 OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION = "optimization_leaderboard.v1"
 WEIGHT_BASIS = "held_out_row_count"
@@ -16,7 +15,7 @@ WEIGHT_BASIS = "held_out_row_count"
 
 def build_optimization_leaderboard(
     *,
-    selection: pd.Series,
+    selection: pd.DataFrame,
     candidate_rows: Sequence[Mapping[str, Any]],
     split_held_out_row_counts: Mapping[Any, int],
     ranking_metric: str,
@@ -29,17 +28,16 @@ def build_optimization_leaderboard(
     held_out = selection.xs("held_out", level="set")
     if not isinstance(held_out.index, pd.MultiIndex):
         raise TypeError(
-            "selection index must be a MultiIndex with split, params, and metric levels"
+            "selection index must be a MultiIndex with split and param levels"
         )
     level_names = list(held_out.index.names)
-    if "split" not in level_names or METRIC_INDEX_NAME not in level_names:
+    if "split" not in level_names:
         raise ValueError(
-            f"selection index must include 'split' and {METRIC_INDEX_NAME!r} levels; got {level_names}"
+            f"selection index must include 'split' level; got {level_names}"
         )
-    param_levels = [name for name in level_names if name not in {"split", METRIC_INDEX_NAME}]
-    pivoted = held_out.unstack(level=METRIC_INDEX_NAME)
-    metric_columns = [name for name in pivoted.columns if name in PORTFOLIO_METRIC_VALUE_KEYS]
-    pivoted = pivoted[metric_columns]
+    param_levels = [name for name in level_names if name != "split"]
+    metric_columns = [name for name in held_out.columns if name in PORTFOLIO_METRIC_VALUE_KEYS]
+    pivoted = held_out[metric_columns]
 
     aggregate: dict[str, dict[str, Any]] = {}
     attempted_splits: set[Any] = set()
@@ -83,7 +81,7 @@ def build_optimization_leaderboard(
         ranking_value: float | None = None
         for metric_name in metric_columns:
             value = row[metric_name]
-            if isinstance(value, float) and math.isnan(value):
+            if value is None or (isinstance(value, float) and math.isnan(value)):
                 continue
             bucket["metric_sums"][metric_name] += float(value) * weight
             bucket["metric_weights"][metric_name] += weight

@@ -41,19 +41,16 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     SignalConfig,
 )
+from research.aegis_research.metrics.accessors import central_metrics_from_grouped_accessors
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
-    OPTIMIZATION_SOURCE_FORBIDDEN_KEYS,
     OptimizationSource,
 )
-from research.aegis_research.portfolio_policy import convert_to_allocations
-from research.aegis_research.portfolios import simulate_portfolio
-from research.aegis_research.reports import portfolio_metrics
+from research.aegis_research.portfolios import simulate_portfolio_batch
 
 METRIC_INDEX_NAME = "metric_name"
 NON_PARAM_LEVEL_NAMES = OPTIMIZATION_PARAM_RESERVED_NAMES
-PIPELINE_OUTPUT_FORBIDDEN_KEYS = OPTIMIZATION_SOURCE_FORBIDDEN_KEYS
 
 OPTIMIZATION_RUN_SCHEMA_VERSION = "optimization_run.v1"
 RANKING_DIRECTION_TO_SELECTION = {"desc": "max", "asc": "min"}
@@ -68,9 +65,9 @@ class OptimizationRunnerError(ValueError):
 
 @dataclass(frozen=True)
 class OptimizationRun:
-    selection: pd.Series
-    selection_grid: pd.Series | None
-    held_out_grid: pd.Series | None
+    selection: pd.DataFrame
+    selection_grid: pd.DataFrame | None
+    held_out_grid: pd.DataFrame | None
     sampled_index: pd.Index
     evaluated_index: pd.Index
     sampled_rows_source: str
@@ -90,6 +87,7 @@ def execute_optimization(
     signal: SignalConfig,
     report: ReportConfig,
     ranking: RankingConfig,
+    mono_chunk_len: int,
 ) -> OptimizationRun:
     if ranking.direction not in RANKING_DIRECTION_TO_SELECTION:
         raise OptimizationRunnerError(
@@ -106,7 +104,7 @@ def execute_optimization(
         market_index=close.index,
         has_open_prices=open_prices is not None,
     )
-    parameterized_kwargs = _build_parameterized_kwargs(optimization)
+    parameterized_kwargs = _build_parameterized_kwargs(optimization, mono_chunk_len=mono_chunk_len)
     return_grid_mode = optimization.evidence.return_grid
     return_grid_kw: str | None = return_grid_mode if return_grid_mode != "off" else None
     selection_fn = _build_selection_function(
@@ -119,7 +117,7 @@ def execute_optimization(
         splitter_kwargs=dict(optimization.split.params),
         takeable_args=takeable_args,
         parameterized_kwargs=parameterized_kwargs,
-        merge_func="concat",
+        merge_func="row_stack",
         selection=vbt.RepFunc(selection_fn),
         return_grid=return_grid_kw,
     )
@@ -134,18 +132,18 @@ def execute_optimization(
             "they remain visible in evidence"
         ) from error
     if return_grid_kw is None:
-        selection_series = output
-        selection_grid: pd.Series | None = None
-        held_out_grid: pd.Series | None = None
+        selection_df = output
+        selection_grid: pd.DataFrame | None = None
+        held_out_grid: pd.DataFrame | None = None
     else:
-        raw_grid, selection_series = output
+        raw_grid, selection_df = output
         canon_grid = _canonicalize_role_index(raw_grid)
         selection_grid = canon_grid.xs("selection", level="set", drop_level=False)
         if return_grid_mode == "all":
             held_out_grid = canon_grid.xs("held_out", level="set", drop_level=False)
         else:
             held_out_grid = None
-    canonical_selection = _canonicalize_role_index(selection_series)
+    canonical_selection = _canonicalize_role_index(selection_df)
     winner_param_index = _extract_param_index(canonical_selection.index)
     if selection_grid is not None:
         sampled_index = _extract_param_index(selection_grid.index)
@@ -259,127 +257,69 @@ def _build_cv_callable(
 
     declared_shape = source.output_name
     target_exposure_cap = portfolio.target_exposure_cap
+    param_names = sorted(source.params)
+
+    def _evaluate_batch(close_slice: pd.DataFrame, **params: Any) -> Any:
+        combo_lists = {name: (vals if isinstance(vals, list) else [vals]) for name, vals in params.items()}
+        n_combos = len(next(iter(combo_lists.values())))
+        all_keys = [
+            tuple(combo_lists[name][i] for name in param_names)
+            for i in range(n_combos)
+        ]
+        wide_allocations = pipeline(close_slice, n_combos, **combo_lists)
+        if wide_allocations is vbt.NoResult:
+            return vbt.NoResult
+        n_symbols = len(close_slice.columns)
+        n_valid = len(wide_allocations.columns) // n_symbols
+        if n_valid == n_combos:
+            result = simulate_portfolio_batch(
+                close_slice, wide_allocations, portfolio,
+                market_index=market_index, compute_diagnostics=False,
+            )
+            return central_metrics_from_grouped_accessors(
+                result.portfolio, report, all_keys, param_names,
+            )
+        valid_keys = _extract_valid_keys(wide_allocations.columns, param_names)
+        result = simulate_portfolio_batch(
+            close_slice, wide_allocations, portfolio,
+            market_index=market_index, compute_diagnostics=False,
+        )
+        valid_metrics = central_metrics_from_grouped_accessors(
+            result.portfolio, report, valid_keys, param_names,
+        )
+        full_index = pd.MultiIndex.from_tuples(all_keys, names=param_names)
+        full_df = pd.DataFrame(np.nan, index=full_index, columns=valid_metrics.columns)
+        valid_index = pd.MultiIndex.from_tuples(valid_keys, names=param_names)
+        full_df.loc[valid_index] = valid_metrics.values
+        return full_df
 
     if has_open_prices:
 
         def cv_callable(close_slice, open_slice, **params):
-            return _evaluate_cv_slice(
-                close_slice=close_slice,
-                pipeline=pipeline,
-                portfolio=portfolio,
-                report=report,
-                market_index=market_index,
-                params=params,
-                declared_shape=declared_shape,
-                target_exposure_cap=target_exposure_cap,
-            )
+            return _evaluate_batch(close_slice, **params)
 
         return cv_callable, ["close_slice", "open_slice"]
 
     def cv_callable_no_open(close_slice, **params):
-        return _evaluate_cv_slice(
-            close_slice=close_slice,
-            pipeline=pipeline,
-            portfolio=portfolio,
-            report=report,
-            market_index=market_index,
-            params=params,
-            declared_shape=declared_shape,
-            target_exposure_cap=target_exposure_cap,
-        )
+        return _evaluate_batch(close_slice, **params)
 
     return cv_callable_no_open, ["close_slice"]
 
 
-def _evaluate_cv_slice(
-    *,
-    close_slice: pd.DataFrame,
-    pipeline: Any,
-    portfolio: PortfolioConfig,
-    report: ReportConfig,
-    market_index: pd.Index,
-    params: Mapping[str, Any],
-    declared_shape: str,
-    target_exposure_cap: float,
-) -> Any:
-    pipeline_output = pipeline(close_slice, **params)
-    if pipeline_output is vbt.NoResult:
-        return vbt.NoResult
-    raw_output = _coerce_pipeline_output(pipeline_output, declared_shape)
-    allocations = convert_to_allocations(
-        raw_output,
-        declared_shape,
-        close_columns=close_slice.columns,
-        target_exposure_cap=target_exposure_cap,
-        direction=portfolio.direction,
-    )
-    result = simulate_portfolio(
-        close_slice,
-        allocations,
-        portfolio,
-        market_index=market_index,
-    )
-    return _central_metric_series(result.portfolio, report)
-
-
-def _coerce_pipeline_output(value: Any, declared_shape: str) -> pd.DataFrame:
-    if isinstance(value, pd.DataFrame):
-        frame = value
-    elif isinstance(value, Mapping):
-        forbidden = sorted(set(value) & PIPELINE_OUTPUT_FORBIDDEN_KEYS)
-        if forbidden:
-            raise OptimizationRunnerError(
-                "optimization pipeline output mappings must not return authoritative metrics, "
-                f"portfolio fields, or candidate-axis fields: {forbidden}"
-            )
-        emitted = {key for key in value if isinstance(value[key], pd.DataFrame)}
-        if declared_shape not in value:
-            raise OptimizationRunnerError(
-                f"component declared {declared_shape!r} but pipeline did not emit {declared_shape!r}; "
-                f"emitted shapes: {sorted(emitted)}"
-            )
-        other_shapes = sorted(emitted - {declared_shape})
-        if other_shapes:
-            raise OptimizationRunnerError(
-                f"optimization pipeline emitted {other_shapes} alongside declared shape "
-                f"{declared_shape!r}; pipeline must emit exactly the declared shape"
-            )
-        frame = value[declared_shape]
-    else:
-        raise OptimizationRunnerError(
-            f"optimization pipeline must return a pandas DataFrame for declared shape "
-            f"{declared_shape!r} or a mapping containing it; got {type(value).__name__}"
-        )
-    if not isinstance(frame, pd.DataFrame):
-        raise OptimizationRunnerError(
-            f"optimization pipeline must return declared shape {declared_shape!r} "
-            "as a pandas DataFrame"
-        )
-    return frame
-
-
-def _central_metric_series(portfolio: Any, report: ReportConfig) -> pd.Series:
-    metrics = portfolio_metrics(portfolio, report)
-    missing = [name for name in PORTFOLIO_METRIC_VALUE_KEYS if name not in metrics]
-    if missing:
-        raise OptimizationRunnerError(
-            f"central portfolio metrics missing keys {sorted(missing)}; "
-            f"got {sorted(set(metrics) & set(PORTFOLIO_METRIC_VALUE_KEYS))}"
-        )
-    series = pd.Series(
-        {name: metrics[name] for name in PORTFOLIO_METRIC_VALUE_KEYS},
-        name="value",
-    )
-    series.index.name = METRIC_INDEX_NAME
-    return series
+def _extract_valid_keys(
+    columns: pd.MultiIndex, param_names: list[str]
+) -> list[tuple]:
+    seen: list[tuple] = []
+    for col_tuple in columns:
+        key = col_tuple[:-1]
+        if not seen or seen[-1] != key:
+            seen.append(key)
+    return seen
 
 
 def _build_selection_function(*, ranking_metric: str, direction: str):
-    def selection(grid_results: pd.Series) -> Any:
-        per_param = grid_results.xs(ranking_metric, level=METRIC_INDEX_NAME)
-        if not isinstance(per_param, pd.Series):
-            per_param = pd.Series(per_param)
-        per_param = per_param.astype(float)
+    def selection(grid_results: pd.DataFrame) -> Any:
+        per_param = grid_results[ranking_metric].astype(float)
         finite = per_param[np.isfinite(per_param.to_numpy())]
         if finite.empty:
             raise OptimizationRunnerError(
@@ -393,8 +333,12 @@ def _build_selection_function(*, ranking_metric: str, direction: str):
     return selection
 
 
-def _build_parameterized_kwargs(optimization: OptimizationConfig) -> dict[str, Any]:
-    parameterized_kwargs: dict[str, Any] = {"merge_func": "concat"}
+def _build_parameterized_kwargs(
+    optimization: OptimizationConfig,
+    *,
+    mono_chunk_len: int,
+) -> dict[str, Any]:
+    parameterized_kwargs: dict[str, Any] = {"merge_func": "row_stack", "mono_chunk_len": mono_chunk_len}
     if optimization.search == "random":
         if optimization.random_subset is None:
             raise OptimizationRunnerError(
@@ -412,19 +356,19 @@ def _build_parameterized_kwargs(optimization: OptimizationConfig) -> dict[str, A
     return parameterized_kwargs
 
 
-def _canonicalize_role_index(series: pd.Series) -> pd.Series:
-    if not isinstance(series.index, pd.MultiIndex):
-        return series
-    if "set" not in series.index.names:
-        return series
-    set_position = series.index.names.index("set")
-    level_arrays = [series.index.get_level_values(i) for i in range(series.index.nlevels)]
+def _canonicalize_role_index(frame: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(frame.index, pd.MultiIndex):
+        return frame
+    if "set" not in frame.index.names:
+        return frame
+    set_position = frame.index.names.index("set")
+    level_arrays = [frame.index.get_level_values(i) for i in range(frame.index.nlevels)]
     level_arrays[set_position] = pd.Index(
         [_role_for_set_label(value) for value in level_arrays[set_position]],
         name="set",
     )
-    canonical = series.copy()
-    canonical.index = pd.MultiIndex.from_arrays(level_arrays, names=series.index.names)
+    canonical = frame.copy()
+    canonical.index = pd.MultiIndex.from_arrays(level_arrays, names=frame.index.names)
     return canonical
 
 
@@ -449,12 +393,12 @@ def serialize_optimization_run(run: OptimizationRun) -> dict[str, Any]:
         "ranking_direction": run.ranking_direction,
         "return_grid_mode": run.return_grid_mode,
         "parameterized_kwargs": _scalar_mapping(run.parameterized_kwargs),
-        "selection": _serialize_param_series(run.selection),
+        "selection": _serialize_param_dataframe(run.selection),
         "selection_grid": (
-            _serialize_param_series(run.selection_grid) if run.selection_grid is not None else None
+            _serialize_param_dataframe(run.selection_grid) if run.selection_grid is not None else None
         ),
         "held_out_grid": (
-            _serialize_param_series(run.held_out_grid) if run.held_out_grid is not None else None
+            _serialize_param_dataframe(run.held_out_grid) if run.held_out_grid is not None else None
         ),
         "sampled_rows": sampled_rows_payload,
     }
@@ -470,23 +414,23 @@ def _serialize_param_index(index: pd.Index) -> dict[str, Any]:
     return {"index_names": names, "rows": rows}
 
 
-def _serialize_param_series(series: pd.Series) -> dict[str, Any]:
+def _serialize_param_dataframe(frame: pd.DataFrame) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
-    names = list(series.index.names)
-    if isinstance(series.index, pd.MultiIndex):
-        tuples = list(series.index)
+    names = list(frame.index.names)
+    if isinstance(frame.index, pd.MultiIndex):
+        tuples = list(frame.index)
     else:
-        tuples = [(value,) for value in series.index]
-    for value, key in zip(series.to_numpy(), tuples, strict=True):
+        tuples = [(value,) for value in frame.index]
+    for key, (_, row) in zip(tuples, frame.iterrows(), strict=True):
         rows.append(
             {
                 "coordinates": {
                     name: _scalar(component) for name, component in zip(names, key, strict=True)
                 },
-                "value": _scalar(value),
+                "metrics": {col: _scalar(row[col]) for col in frame.columns},
             }
         )
-    return {"index_names": names, "rows": rows}
+    return {"index_names": names, "columns": list(frame.columns), "rows": rows}
 
 
 def _scalar_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
