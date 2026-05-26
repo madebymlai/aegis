@@ -62,6 +62,10 @@ from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
     build_run_data_evidence_payload,
 )
+from research.aegis_research.optimization.run_artifacts import (
+    build_strategy_artifact_payload,
+    write_strategy_artifact,
+)
 from research.aegis_research.optimization.runner import (
     execute_optimization,
     serialize_optimization_run,
@@ -71,12 +75,10 @@ from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
 from research.aegis_research.provenance.experiment_artifacts import ExperimentArtifactWriter
-from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
 from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.run_splits import build_run_splits_result
 
-OPTIMIZATION_ARTIFACT_SCHEMA_VERSION = "optimization_artifact.v1"
 COMPONENT_LOCK_SCHEMA_VERSION = "component_lock.v1"
 COMPONENT_LOCK_PROVENANCE_SCHEMA_VERSION = "component_lock_provenance.v1"
 
@@ -303,32 +305,29 @@ def _run_optimization_strategy_sweep(
     optimization_evidence["locks"] = lock_records
     recorder.manifest.evidence["optimization"] = optimization_evidence
 
-    artifact_payload = {
-        "schema_version": OPTIMIZATION_ARTIFACT_SCHEMA_VERSION,
-        "strategy": strategy_evidence,
-        "data": build_run_data_evidence_payload(data_result, array_contract),
-        "ranking": {
+    artifact_payload = build_strategy_artifact_payload(
+        strategy_evidence=strategy_evidence,
+        data_result=data_result,
+        array_contract=array_contract,
+        ranking={
             "metric": config.ranking.metric,
             "direction": config.ranking.direction,
             "secondary_metrics": list(config.ranking.secondary_metrics),
         },
-        "portfolio": to_builtin(asdict(config.portfolio)),
-        "optimization": to_builtin(asdict(config.optimization)),
-        "split": split_result.metadata,
-        "preflight": optimization_evidence["preflight"],
-        "execution": run_payload,
-        "candidates": [to_builtin(record) for record in candidate_rows],
-        "leaderboard": leaderboard,
-        "resolved_locks": resolved_locks,
-        "locks": lock_records,
-        "candidate_store": {
-            "schema_version": "candidate_store_ref.v1",
-            "path": candidate_store_namespace["path"],
-            "provenance": candidate_store_provenance,
-        },
-        "metric_registry_fingerprint": metric_registry_fingerprint,
-    }
-    _write_strategy_artifact(recorder, artifact_payload)
+        portfolio=to_builtin(asdict(config.portfolio)),
+        optimization=to_builtin(asdict(config.optimization)),
+        split_metadata=split_result.metadata,
+        preflight=optimization_evidence["preflight"],
+        execution=run_payload,
+        candidates=[to_builtin(record) for record in candidate_rows],
+        leaderboard=leaderboard,
+        resolved_locks=resolved_locks,
+        lock_records=lock_records,
+        candidate_store_path=candidate_store_namespace["path"],
+        candidate_store_provenance=candidate_store_provenance,
+        metric_registry_fingerprint=metric_registry_fingerprint,
+    )
+    write_strategy_artifact(recorder, artifact_payload)
     recorder.mark_run_completed()
     try:
         with CandidateStore(candidate_store_path) as candidate_store:
@@ -571,47 +570,3 @@ def _run_refs(recorder) -> dict[str, Any]:
         "started_at": recorder.manifest.started_at,
         "finished_at": recorder.manifest.finished_at,
     }
-
-
-def _write_strategy_artifact(recorder, payload: dict[str, Any]) -> None:
-    _plan_strategy_artifact_if_needed(recorder)
-    artifact_path = Path("strategy_run.json")
-    recorder.artifacts.begin_artifact_write("strategy.run")
-    full_path = recorder.run_dir / artifact_path
-    atomic_write_json(full_path, payload)
-    recorder.artifacts.complete_artifact(
-        "strategy.run",
-        content_hash=hash_file(full_path),
-        size=full_path.stat().st_size,
-        shape=_strategy_artifact_shape(payload),
-    )
-
-
-def _plan_strategy_artifact_if_needed(recorder: Any) -> None:
-    if _strategy_artifact_record(recorder) is not None:
-        return
-    recorder.artifacts.plan_artifact(
-        artifact_id="strategy.run",
-        role="optimization_evidence",
-        artifact_type="json",
-        producer_stage="strategy_run",
-        path="strategy_run.json",
-        schema_version=OPTIMIZATION_ARTIFACT_SCHEMA_VERSION,
-    )
-
-
-def _strategy_artifact_record(recorder: Any) -> dict[str, Any] | None:
-    for artifact in recorder.manifest.artifacts:
-        if artifact["id"] == "strategy.run":
-            return artifact
-    return None
-
-
-def _strategy_artifact_shape(payload: dict[str, Any]) -> dict[str, int]:
-    shape = {
-        "leaderboard_rows": len(payload["leaderboard"]["rows"]),
-        "candidate_count": len(payload.get("candidates", [])),
-    }
-    if "split" in payload:
-        shape["split_count"] = int(payload["split"].get("n_splits", 0))
-    return shape

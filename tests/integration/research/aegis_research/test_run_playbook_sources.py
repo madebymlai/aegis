@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from research.aegis_research import cli, strategy_runs
+from research.aegis_research import cli
+from research.aegis_research.optimization import run_artifacts
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.candidate_store import CandidateStore, CandidateStoreError
 from research.aegis_research.optimization.component_source import (
@@ -129,7 +130,7 @@ def test_component_optimization_artifact_write_failure_leaves_candidates_pending
     def fail_write(*_args: object, **_kwargs: object) -> None:
         raise OSError("strategy artifact write failed")
 
-    monkeypatch.setattr(strategy_runs, "_write_strategy_artifact", fail_write)
+    monkeypatch.setattr(run_artifacts, "write_strategy_artifact", fail_write)
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "artifact-failure"]) == 10
 
