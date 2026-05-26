@@ -1,8 +1,7 @@
 """Run data contract.
 
 Builds the data array contract, data evidence payload, and candidate
-data identity for orchestrated optimization runs. Extracted from
-strategy_runs.py so the orchestrator stays focused on execution flow.
+data identity for orchestrated optimization runs.
 """
 
 from __future__ import annotations

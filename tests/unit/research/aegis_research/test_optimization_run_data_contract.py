@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock
 
 from research.aegis_research.data_arrays import DataArrayContract
 from research.aegis_research.optimization.run_data_contract import (
@@ -36,7 +35,7 @@ def test_build_run_data_array_contract_configures_arrays(tmp_path: pytest.TempPa
 
     configured = set(contract.configured_arrays)
     required = set(contract.required_arrays)
-    assert configured.issuperset(required) or not (required - configured)
+    assert configured.issuperset(required)
 
 
 def test_build_run_required_arrays_collects_strategy_and_indicator_inputs(
@@ -104,15 +103,3 @@ def test_build_candidate_data_identity_captures_source_and_contract(
     assert identity["shape"] == (120, 1)
     assert "array_contract" in identity
     assert "configured_arrays" in identity["array_contract"]
-
-
-def test_build_run_required_arrays_without_indicators(tmp_path: pytest.TempPathFactory) -> None:
-    """Required arrays with no indicators should still include strategy inputs."""
-    # We test with the fixture config which has one indicator - 
-    # verifying the contract doesn't crash and produces a valid tuple.
-    resolved = build_resolved_run_config(tmp_path)
-
-    arrays = build_run_required_arrays(resolved.config, resolved.component_registry)
-
-    assert len(arrays) >= 1
-    assert "Close" in arrays
