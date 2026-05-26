@@ -110,7 +110,6 @@ def run_strategy_sweep(
         supersedes_run_id=supersedes_run_id,
     )
     recorder.manifest.evidence = {
-        "evidence_type": "optimization",
         "component_registry_fingerprint": component_registry.fingerprint,
         "data_arrays": array_contract.metadata(),
     }
@@ -304,7 +303,6 @@ def _run_optimization_strategy_sweep(
 
     artifact_payload = {
         "schema_version": OPTIMIZATION_ARTIFACT_SCHEMA_VERSION,
-        "evidence_type": "optimization",
         "strategy": strategy_evidence,
         "data": _strategy_data_evidence_payload(data_result, array_contract),
         "ranking": {
@@ -337,7 +335,6 @@ def _run_optimization_strategy_sweep(
         raise CandidateStoreError(f"candidate_store_activation_failed: {error}") from error
     return {
         **_run_refs(recorder),
-        "evidence_type": "optimization",
         "strategy_artifact_id": "strategy.run",
         "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
         "candidate_store_path": str(candidate_store_path),
