@@ -764,7 +764,8 @@ def test_checkpoint_ab_combined_pfo_path_produces_deterministic_results() -> Non
     run_b = build_run()
 
     assert run_a.selection.equals(run_b.selection)
-    assert run_a.selection_grid is not None and run_b.selection_grid is not None
+    assert run_a.selection_grid is not None
+    assert run_b.selection_grid is not None
     assert run_a.selection_grid.equals(run_b.selection_grid)
     assert list(run_a.sampled_index) == list(run_b.sampled_index)
 

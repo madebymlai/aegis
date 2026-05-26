@@ -45,8 +45,7 @@ from research.aegis_research.configuration.schema import (
     RunSplitConfig,
     SignalConfig,
 )
-from research.aegis_research.metrics.accessors import central_metrics_from_grouped_accessors
-from research.aegis_research.optimization.runner import execute_optimization
+from research.aegis_research.optimization.runner import OptimizationRun, execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
 
 DEFAULT_BARS = 500
@@ -69,17 +68,14 @@ class PhaseTiming:
 class TimingSpans:
     phases: list[PhaseTiming] = field(default_factory=list)
     _start_stack: list[float] = field(default_factory=list)
-    _phase_stack: list[str] = field(default_factory=list)
 
     @contextlib.contextmanager
     def phase(self, name: str, **metadata: Any):
         self._start_stack.append(time.perf_counter())
-        self._phase_stack.append(name)
         try:
             yield
         finally:
             elapsed = time.perf_counter() - self._start_stack.pop()
-            self._phase_stack.pop()
             self.phases.append(
                 PhaseTiming(name=name, elapsed_seconds=elapsed, metadata=dict(metadata))
             )
@@ -136,8 +132,8 @@ def build_synthetic_source(
         thresh = param_lists["threshold"]
         symbols = close_slice.columns
         n_symbols = len(symbols)
-        T = len(close_slice)
-        alloc_arr = np.full((T, n_candidates * n_symbols), np.nan)
+        n_bars_in = len(close_slice)
+        alloc_arr = np.full((n_bars_in, n_candidates * n_symbols), np.nan)
         for i in range(n_candidates):
             ma = close_slice.rolling(int(w[i]), min_periods=1).mean()
             price_ratio = close_slice.div(ma)
@@ -202,7 +198,7 @@ def run_pfo_profile(
     source_seed: int = 7,
     fees: float = 0.001,
     slippage: float = 0.0005,
-) -> tuple[dict[str, Any], Any]:
+) -> tuple[dict[str, Any], OptimizationRun]:
     spans = TimingSpans()
 
     with spans.phase("data_generation"):
@@ -244,9 +240,8 @@ def run_pfo_profile(
         n_winners = len(selection.xs("selection", level="set"))
         sampled_count = len(run.sampled_index)
 
-    spans.phases[-1].metadata.update(
-        n_winners=n_winners, sampled_count=sampled_count,
-    )
+    evidence_phase = spans.phases[-1]
+    evidence_phase.metadata.update(n_winners=n_winners, sampled_count=sampled_count)
 
     summary = spans.summary()
     summary["config"] = {
