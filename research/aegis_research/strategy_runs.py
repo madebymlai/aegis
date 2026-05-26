@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
-import json
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -10,8 +8,6 @@ from typing import Any
 import pandas as pd
 
 from research.aegis_research.component_registry import (
-    COMPONENT_FAMILIES,
-    ComponentFamily,
     ComponentSelection,
     FrozenComponentRegistry,
 )
@@ -40,11 +36,7 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStoreError,
 )
 from research.aegis_research.optimization.component_source import (
-    ComponentSourceError,
     build_component_optimization_source,
-    component_param_slices,
-    component_params_from_slices,
-    component_ref_key,
 )
 from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
 from research.aegis_research.optimization.leaderboard import build_optimization_leaderboard
@@ -52,10 +44,9 @@ from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
 )
-from research.aegis_research.optimization.lock import (
-    ComponentLockRef,
-    ResolvedLock,
-    resolve_component_lock,
+from research.aegis_research.optimization.lock_resolution import (
+    build_component_lock_records,
+    resolve_component_locks,
 )
 from research.aegis_research.optimization.run_data_contract import (
     build_candidate_data_identity,
@@ -78,10 +69,6 @@ from research.aegis_research.provenance.experiment_artifacts import ExperimentAr
 from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.run_splits import build_run_splits_result
-
-COMPONENT_LOCK_SCHEMA_VERSION = "component_lock.v1"
-COMPONENT_LOCK_PROVENANCE_SCHEMA_VERSION = "component_lock_provenance.v1"
-
 
 def run_strategy_sweep(
     resolved_config: ResolvedRunConfig,
@@ -179,7 +166,7 @@ def _run_optimization_strategy_sweep(
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     candidate_store_path = _candidate_store_path(config)
-    resolved_component_params, resolved_locks = _resolve_component_locks(
+    resolved_component_params, resolved_locks = resolve_component_locks(
         config,
         candidate_store_path=candidate_store_path,
     )
@@ -277,7 +264,7 @@ def _run_optimization_strategy_sweep(
         config=config,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
-    lock_records = _component_lock_records(
+    lock_records = build_component_lock_records(
         run_id=recorder.manifest.run_id,
         leaderboard=leaderboard,
         optimization_source=optimization_source.evidence,
@@ -349,180 +336,6 @@ def _run_optimization_strategy_sweep(
         },
         "leaderboard": leaderboard,
     }
-
-
-def _resolve_component_locks(
-    config: Any,
-    *,
-    candidate_store_path: Path,
-) -> tuple[dict[tuple[str, str, str], dict[str, Any]], list[dict[str, Any]]]:
-    refs = list(_component_lock_refs(config))
-    if not refs:
-        return {}, []
-    resolved_params: dict[tuple[str, str, str], dict[str, Any]] = {}
-    resolved_records: list[dict[str, Any]] = []
-    with CandidateStore(candidate_store_path) as candidate_store:
-        for key, ref in refs:
-            resolved = resolve_component_lock(ref, store=candidate_store)
-            if key in resolved_params:
-                raise OptimizationSourceError(f"duplicate lock resolution for component {key}")
-            resolved_params[key] = dict(resolved.params)
-            resolved_records.append(_resolved_lock_record(resolved))
-    return resolved_params, resolved_records
-
-
-def _component_lock_refs(
-    config: Any,
-) -> Iterator[tuple[tuple[str, str, str], ComponentLockRef]]:
-    if config.strategy.lock_id is not None or config.strategy.candidate_id is not None:
-        key = component_ref_key("strategies", config.strategy.id, "strategy")
-        yield (
-            key,
-            ComponentLockRef(
-                component_family="strategies",
-                component_id=config.strategy.id,
-                component_slot="strategy",
-                lock_id=config.strategy.lock_id,
-                candidate_id=config.strategy.candidate_id,
-                run_id=config.strategy.run_id,
-            ),
-        )
-    for ref in config.indicators:
-        if ref.lock_id is None and ref.candidate_id is None:
-            continue
-        key = component_ref_key("indicators", ref.id, ref.id)
-        yield (
-            key,
-            ComponentLockRef(
-                component_family="indicators",
-                component_id=ref.id,
-                component_slot=ref.id,
-                lock_id=ref.lock_id,
-                candidate_id=ref.candidate_id,
-                run_id=ref.run_id,
-            ),
-        )
-
-
-def _resolved_lock_record(resolved: ResolvedLock) -> dict[str, Any]:
-    return {
-        "schema_version": "resolved_component_lock.v1",
-        "reference_kind": resolved.reference_kind,
-        "component_family": resolved.component_family,
-        "component_id": resolved.component_id,
-        "component_slot": resolved.component_slot,
-        "candidate_key": resolved.candidate_key,
-        "run_id": resolved.run_id,
-        "params": to_builtin(resolved.params),
-        "provenance": to_builtin(resolved.provenance),
-    }
-
-
-def _component_lock_records(
-    *,
-    run_id: str,
-    leaderboard: Mapping[str, Any],
-    optimization_source: Mapping[str, Any],
-) -> list[dict[str, Any]]:
-    rows = list(leaderboard.get("rows", ()))
-    if not rows:
-        return []
-    top_row = rows[0]
-    candidate_key = str(top_row["candidate_key"])
-    candidate_params = dict(top_row.get("params", {}))
-    component_slices = component_param_slices(candidate_params)
-    records: list[dict[str, Any]] = []
-    for runtime in _lock_runtime_records(optimization_source):
-        component_family = _component_family(runtime["family"])
-        component_id = str(runtime["id"])
-        component_slot = str(runtime["slot"])
-        try:
-            params = component_params_from_slices(
-                component_family=component_family,
-                component_id=component_id,
-                component_slot=component_slot,
-                component_slices=component_slices,
-                runtime=runtime,
-                candidate_key=candidate_key,
-            )
-        except ComponentSourceError as error:
-            raise OptimizationSourceError(str(error)) from error
-        token = _component_lock_token(
-            run_id=run_id,
-            rank=1,
-            component_family=component_family,
-            component_id=component_id,
-            component_slot=component_slot,
-            candidate_key=candidate_key,
-        )
-        provenance = {
-            "schema_version": COMPONENT_LOCK_PROVENANCE_SCHEMA_VERSION,
-            "run_id": run_id,
-            "rank": 1,
-            "candidate_key": candidate_key,
-            "component_family": component_family,
-            "component_id": component_id,
-            "component_slot": component_slot,
-            "source": optimization_source,
-            "leaderboard_row": top_row,
-        }
-        records.append(
-            {
-                "schema_version": COMPONENT_LOCK_SCHEMA_VERSION,
-                "token": token,
-                "reference_kind": "lock_id",
-                "run_id": run_id,
-                "rank": 1,
-                "component_family": component_family,
-                "component_id": component_id,
-                "component_slot": component_slot,
-                "candidate_key": candidate_key,
-                "params": to_builtin(params),
-                "provenance": to_builtin(provenance),
-            }
-        )
-    return records
-
-
-def _lock_runtime_records(optimization_source: Mapping[str, Any]) -> list[dict[str, Any]]:
-    runtimes: list[dict[str, Any]] = []
-    strategy = optimization_source.get("strategy")
-    if isinstance(strategy, Mapping):
-        runtimes.append(dict(strategy))
-    for runtime in optimization_source.get("indicators", ()):
-        if isinstance(runtime, Mapping):
-            runtimes.append(dict(runtime))
-    return runtimes
-
-
-def _component_family(value: Any) -> ComponentFamily:
-    if value not in COMPONENT_FAMILIES:
-        raise OptimizationSourceError(f"unknown component family in optimization source: {value!r}")
-    return value
-
-
-def _component_lock_token(
-    *,
-    run_id: str,
-    rank: int,
-    component_family: str,
-    component_id: str,
-    component_slot: str,
-    candidate_key: str,
-) -> str:
-    payload = {
-        "schema_version": COMPONENT_LOCK_SCHEMA_VERSION,
-        "run_id": run_id,
-        "rank": rank,
-        "component_family": component_family,
-        "component_id": component_id,
-        "component_slot": component_slot,
-        "candidate_key": candidate_key,
-    }
-    digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    ).hexdigest()[:32]
-    return f"lock_{digest}"
 
 
 def _candidate_store_path(config: Any) -> Path:

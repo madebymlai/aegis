@@ -12,7 +12,7 @@ from research.aegis_research.optimization.leaderboard import (
     OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION,
     WEIGHT_BASIS,
 )
-from research.aegis_research.optimization.lock import (
+from research.aegis_research.optimization.lock_resolution import (
     ComponentLockRef,
     LockResolutionError,
     resolve_component_lock,
