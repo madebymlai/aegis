@@ -292,11 +292,11 @@ class CandidateStore:
     def lock_by_token(self, token: str) -> dict[str, Any]:
         row = self._connection.execute(
             """
-            SELECT p.*
-            FROM candidate_locks p
-            JOIN candidates c ON c.run_id = p.run_id AND c.candidate_key = p.candidate_key
-            WHERE p.token = ?
-                AND p.publication_state = ?
+            SELECT l.*
+            FROM candidate_locks l
+            JOIN candidates c ON c.run_id = l.run_id AND c.candidate_key = l.candidate_key
+            WHERE l.token = ?
+                AND l.publication_state = ?
                 AND c.publication_state = ?
             """,
             (token, PUBLICATION_ACTIVE, PUBLICATION_ACTIVE),
