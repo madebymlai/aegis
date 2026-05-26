@@ -1,6 +1,6 @@
 """Run artifacts.
 
-Builds, validates, and persists the strategy run artifact payload
+Builds and persists the strategy run artifact payload
 for orchestrated optimization runs.
 """
 

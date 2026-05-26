@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
-
-import pytest
 
 from research.aegis_research.optimization.run_artifacts import (
     OPTIMIZATION_ARTIFACT_SCHEMA_VERSION,
@@ -20,7 +19,7 @@ def test_optimization_artifact_schema_version_is_stable() -> None:
 
 
 def test_build_strategy_artifact_payload_structure(
-    tmp_path: pytest.TempPathFactory,
+    tmp_path: Path,
 ) -> None:
     """The artifact payload includes all required top-level keys."""
     resolved = build_resolved_run_config(tmp_path)
@@ -63,7 +62,7 @@ def test_build_strategy_artifact_payload_structure(
 
 
 def test_build_strategy_artifact_payload_includes_candidates_and_locks(
-    tmp_path: pytest.TempPathFactory,
+    tmp_path: Path,
 ) -> None:
     """Candidates and locks are included as lists in the payload."""
     resolved = build_resolved_run_config(tmp_path)
