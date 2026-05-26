@@ -4,7 +4,7 @@ type: feat
 status: active
 date: 2026-05-22
 origin: docs/brainstorms/2026-05-22-vbt-native-optimization-performance-upgrade-requirements.md
-deepened: 2026-05-22
+deepened: 2026-05-26
 ---
 
 # feat: VBT-Native Optimization Performance Upgrade
@@ -411,14 +411,22 @@ The core shape is: compute less in the ranking hot path, batch only where identi
 - Remove the scalar per-candidate path (`simulate_portfolio`) from the optimization runner.
 - Add the fail-closed batch budget gate with `mono_chunk_len` as the only tuning knob.
 
-### A+B Checkpoint
+### A+B Checkpoint ✅ COMPLETE (2026-05-26, aegis-rd-kzx.4)
 
-- Run the behavior tests.
-- Record the fresh wall-clock and profile evidence **on the PFO substrate** (not against the legacy cProfile baseline).
-- Stop if the original hotspots did not materially move.
-- If the post-A+B profile points to a bottleneck other than component allocation generation, record the actual residual bottleneck and pause Phase C as written; route the next work to a unit scoped to whatever the profile names (allocations-frame construction, PFO column handling, partial-parameterization wrapper, etc.).
+**Decision: GO → Phase C authorized.**
 
-### Phase C (conditional on A+B profile pointing to component generation)
+- Behavior tests pass for all U1-U3 deliverables.
+- Fresh wall-clock profile recorded on the PFO substrate via
+  `research.aegis_research.optimization.profile_timing`.
+- Pre-A+B hotspots (`portfolio_metrics` at 70%, `simulate_portfolio` at 20%)
+  are removed from the ranking hot path.
+- Residual bottleneck confirmed: component allocation generation — matches
+  Phase C scope (U5: universal mono-chunk capability contract).
+- Profile evidence and full decision rationale in
+  `docs/profiling/2026-05-26-a+b-checkpoint-pfo-profile.md`.
+- Stop-rule check: all six conditions met; no pause required.
+
+### Phase C (AUTHORIZED — residual bottleneck confirmed as component generation)
 
 - Add the universal mono-chunk allocation-native capability contract enforced at component registration.
 - Convert in-tree components that loop over candidates internally to produce wide multi-candidate allocation-native output (date × (candidate × symbol) of their declared shape).

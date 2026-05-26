@@ -734,3 +734,224 @@ def test_batched_path_no_scalar_simulate_portfolio_import() -> None:
 
     assert not hasattr(runner_mod, "simulate_portfolio")
     assert not hasattr(runner_mod, "_evaluate_cv_slice")
+
+
+# ---------------------------------------------------------------------------
+# A+B Checkpoint (U4) tests — validate combined Phase A + Phase B properties
+# ---------------------------------------------------------------------------
+
+
+def test_checkpoint_ab_combined_pfo_path_produces_deterministic_results() -> None:
+    """The full A+B pipeline on the PFO substrate must produce deterministic
+    selection grids and leaderboard-ready metrics under the same seed."""
+    close, open_prices = _close_open_frames()
+
+    def build_run():
+        source = _build_source(fast=[2, 5, 8], slow=[10, 20, 30])
+        return execute_optimization(
+            close=close,
+            open_prices=open_prices,
+            source=source,
+            optimization=_optimization_config(return_grid="first", search="grid"),
+            portfolio=PortfolioConfig(fees=0.001, slippage=0.0005),
+            signal=SignalConfig(),
+            report=ReportConfig(),
+            ranking=RankingConfig(metric="total_return", direction="desc"),
+            mono_chunk_len=10000,
+        )
+
+    run_a = build_run()
+    run_b = build_run()
+
+    assert run_a.selection.equals(run_b.selection)
+    assert run_a.selection_grid is not None and run_b.selection_grid is not None
+    assert run_a.selection_grid.equals(run_b.selection_grid)
+    assert list(run_a.sampled_index) == list(run_b.sampled_index)
+
+
+def test_checkpoint_ab_ranking_hot_path_uses_accessors_not_report_metrics() -> None:
+    """The optimization runner hot path must call
+    central_metrics_from_grouped_accessors (Phase A) and must never import
+    portfolio_metrics or pf.stats() inside the evaluate callable."""
+    import research.aegis_research.optimization.runner as runner_mod
+    import inspect
+
+    source_text = inspect.getsource(runner_mod._build_cv_callable)
+
+    assert "central_metrics_from_grouped_accessors" in source_text
+    assert "portfolio_metrics" not in source_text
+    assert "pf.stats()" not in source_text
+    assert ".stats()" not in source_text
+    assert "simulate_portfolio(" not in source_text
+
+
+def test_checkpoint_ab_selection_preserves_leaderboard_metrics_for_all_keys() -> None:
+    """The selection (winner) DataFrame produced by the combined A+B path
+    must carry every canonical central metric key so leaderboard
+    construction has a complete evidence row per winner."""
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(return_grid="first"),
+        portfolio=PortfolioConfig(fees=0.001, slippage=0.0005),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=10000,
+    )
+
+    selection = run.selection.xs("selection", level="set")
+    assert set(selection.columns) == set(PORTFOLIO_METRIC_VALUE_KEYS)
+    for metric_name in PORTFOLIO_METRIC_VALUE_KEYS:
+        values = selection[metric_name]
+        assert not values.isna().all(), (
+            f"{metric_name}: all NaN for selection winners — "
+            "leaderboard evidence would be empty"
+        )
+
+
+def test_checkpoint_ab_grid_and_selection_share_candidate_namespace() -> None:
+    """The selection (train) grid and the selection result must share the
+    same candidate param axis so downstream evidence can correlate grid
+    scores with winner identity."""
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(return_grid="all"),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=10000,
+    )
+
+    assert run.selection_grid is not None
+    assert run.held_out_grid is not None
+    grid_param_names = [
+        n for n in run.selection_grid.index.names
+        if n not in ("split", "set")
+    ]
+    sel_param_names = [
+        n for n in run.selection.index.names
+        if n not in ("split", "set")
+    ]
+    assert grid_param_names == sel_param_names
+
+
+def test_checkpoint_ab_mono_chunk_len_applied_as_lower_bound() -> None:
+    """mono_chunk_len=1 must still produce valid results — the PFO
+    substrate path must not silently fail at the minimum chunk boundary."""
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=1,
+    )
+
+    assert run.parameterized_kwargs["mono_chunk_len"] == 1
+    assert len(run.selection) > 0
+    assert not run.selection["total_return"].isna().all()
+
+
+def test_checkpoint_ab_runner_only_imports_batched_portfolio_function() -> None:
+    """The optimization runner must only import simulate_portfolio_batch
+    (the PFO-backed batched function, Phase B). It must not import the
+    scalar simulate_portfolio or any legacy signal-based portfolio
+    functions. The checkpoint gates on the absence of the scalar path."""
+    import research.aegis_research.optimization.runner as runner_mod
+    import inspect
+
+    source_text = inspect.getsource(runner_mod)
+
+    assert "simulate_portfolio_batch" in source_text
+    assert "from signals" not in source_text.lower()
+    assert "from_signals" not in source_text
+    assert "from_orders" not in source_text, (
+        "runner must not reach into VBT portfolio factories; "
+        "portfolios.py owns the PFO substrate"
+    )
+
+
+def test_checkpoint_ab_fees_and_slippage_affect_metrics_through_pfo() -> None:
+    """Fees and slippage configured in PortfolioConfig must flow through
+    the PFO substrate and produce different central metrics compared to
+    a zero-fee run, confirming the cost model is active."""
+    close, open_prices = _close_open_frames()
+    source = _build_source(fast=[2, 5], slow=[10, 20])
+
+    run_free = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(),
+        portfolio=PortfolioConfig(fees=0, slippage=0),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=10000,
+    )
+    run_cost = execute_optimization(
+        close=close,
+        open_prices=open_prices,
+        source=source,
+        optimization=_optimization_config(),
+        portfolio=PortfolioConfig(fees=0.01, slippage=0.01),
+        signal=SignalConfig(),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", direction="desc"),
+        mono_chunk_len=10000,
+    )
+
+    free_returns = (
+        run_free.selection.xs("selection", level="set")["total_return"]
+    )
+    cost_returns = (
+        run_cost.selection.xs("selection", level="set")["total_return"]
+    )
+    assert (cost_returns < free_returns).all(), (
+        "fees+slippage must reduce total_return across all splits"
+    )
+    free_fees = (
+        run_free.selection.xs("selection", level="set")["total_fees_paid"]
+    )
+    cost_fees = (
+        run_cost.selection.xs("selection", level="set")["total_fees_paid"]
+    )
+    assert (cost_fees > free_fees).all(), (
+        "higher fee config must increase total_fees_paid"
+    )
+
+
+def test_checkpoint_ab_timing_module_is_importable_and_yields_pfo_schema() -> None:
+    """The PFO-substrate timing module defined for the A+B checkpoint
+    profile must be importable and its summary must carry the PFO profile
+    schema version."""
+    from research.aegis_research.optimization.profile_timing import (
+        PFO_PROFILE_SCHEMA_VERSION,
+        TimingSpans,
+    )
+
+    spans = TimingSpans()
+    with spans.phase("test"):
+        pass
+
+    summary = spans.summary()
+    assert summary["schema_version"] == PFO_PROFILE_SCHEMA_VERSION
+    assert summary["total_seconds"] >= 0
+    assert summary["phase_seconds"]["test"] >= 0
