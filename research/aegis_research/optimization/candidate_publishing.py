@@ -61,7 +61,7 @@ def build_candidate_store_provenance(
 
 
 def publish_candidates(
-    candidate_store_path: str | Path,
+    store_path: str | Path,
     *,
     run_id: str,
     candidate_rows: Sequence[Mapping[str, Any]],
@@ -70,7 +70,7 @@ def publish_candidates(
     lock_records: Sequence[Mapping[str, Any]],
     publication_state: str = PUBLICATION_PENDING,
 ) -> None:
-    with CandidateStore(candidate_store_path) as candidate_store:
+    with CandidateStore(store_path) as candidate_store:
         candidate_store.insert_completed_run(
             run_id=run_id,
             candidate_rows=candidate_rows,
@@ -93,11 +93,11 @@ def publish_candidates(
 
 
 def activate_candidate_run(
-    candidate_store_path: str | Path,
+    store_path: str | Path,
     run_id: str,
 ) -> None:
     try:
-        with CandidateStore(candidate_store_path) as candidate_store:
+        with CandidateStore(store_path) as candidate_store:
             candidate_store.activate_run(run_id)
     except CandidateStoreError as error:
         raise CandidateStoreError(f"candidate_store_activation_failed: {error}") from error
