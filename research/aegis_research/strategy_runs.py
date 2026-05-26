@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from research.aegis_research.component_registry import (
-    ComponentSelection,
     FrozenComponentRegistry,
 )
 from research.aegis_research.config import (
@@ -30,10 +28,12 @@ from research.aegis_research.data_arrays import (
     DataArrayContract,
     with_data_array_contract_metadata,
 )
-from research.aegis_research.optimization.candidate_store import (
-    PUBLICATION_PENDING,
-    CandidateStore,
-    CandidateStoreError,
+from research.aegis_research.optimization.candidate_publishing import (
+    activate_candidate_run,
+    build_candidate_store_provenance,
+    candidate_store_namespace,
+    candidate_store_path,
+    publish_candidates,
 )
 from research.aegis_research.optimization.component_source import (
     build_component_optimization_source,
@@ -165,10 +165,10 @@ def _run_optimization_strategy_sweep(
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
-    candidate_store_path = _candidate_store_path(config)
+    store_path = candidate_store_path(config)
     resolved_component_params, resolved_locks = resolve_component_locks(
         config,
-        candidate_store_path=candidate_store_path,
+        candidate_store_path=store_path,
     )
     optimization_source = build_component_optimization_source(
         config,
@@ -233,13 +233,13 @@ def _run_optimization_strategy_sweep(
     run_payload = serialize_optimization_run(optimization_run)
     optimization_evidence["execution"] = run_payload
 
-    candidate_store_namespace = _candidate_store_namespace()
+    store_namespace = candidate_store_namespace()
     candidate_rows = candidate_rows_from_param_index(
         optimization_run.evaluated_index,
         source_identity=optimization_source.evidence,
         data_identity=build_candidate_data_identity(data_result, array_contract),
         portfolio_policy=to_builtin(asdict(config.portfolio)),
-        store_namespace=candidate_store_namespace,
+        store_namespace=store_namespace,
         coordinate_levels=("split", "set", "symbol"),
     )
     optimization_evidence["candidate_count"] = len(candidate_rows)
@@ -256,7 +256,7 @@ def _run_optimization_strategy_sweep(
         ranking_direction=optimization_run.ranking_direction,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
-    candidate_store_provenance = _candidate_store_provenance(
+    candidate_store_provenance = build_candidate_store_provenance(
         recorder,
         optimization_source=optimization_source.evidence,
         data_result=data_result,
@@ -269,26 +269,14 @@ def _run_optimization_strategy_sweep(
         leaderboard=leaderboard,
         optimization_source=optimization_source.evidence,
     )
-    with CandidateStore(candidate_store_path) as candidate_store:
-        candidate_store.insert_completed_run(
-            run_id=recorder.manifest.run_id,
-            candidate_rows=candidate_rows,
-            leaderboard=leaderboard,
-            provenance=candidate_store_provenance,
-            publication_state=PUBLICATION_PENDING,
-        )
-        for lock_record in lock_records:
-            candidate_store.insert_lock(
-                token=lock_record["token"],
-                run_id=lock_record["run_id"],
-                component_family=lock_record["component_family"],
-                component_id=lock_record["component_id"],
-                component_slot=lock_record["component_slot"],
-                candidate_key=lock_record["candidate_key"],
-                params=lock_record["params"],
-                provenance=lock_record["provenance"],
-                publication_state=PUBLICATION_PENDING,
-            )
+    publish_candidates(
+        store_path,
+        run_id=recorder.manifest.run_id,
+        candidate_rows=candidate_rows,
+        leaderboard=leaderboard,
+        provenance=candidate_store_provenance,
+        lock_records=lock_records,
+    )
     optimization_evidence["locks"] = lock_records
     recorder.manifest.evidence["optimization"] = optimization_evidence
 
@@ -310,22 +298,18 @@ def _run_optimization_strategy_sweep(
         leaderboard=leaderboard,
         resolved_locks=resolved_locks,
         lock_records=lock_records,
-        candidate_store_path=candidate_store_namespace["path"],
+        candidate_store_path=store_namespace["path"],
         candidate_store_provenance=candidate_store_provenance,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
     write_strategy_artifact(recorder, artifact_payload)
     recorder.mark_run_completed()
-    try:
-        with CandidateStore(candidate_store_path) as candidate_store:
-            candidate_store.activate_run(recorder.manifest.run_id)
-    except CandidateStoreError as error:
-        raise CandidateStoreError(f"candidate_store_activation_failed: {error}") from error
+    activate_candidate_run(store_path, recorder.manifest.run_id)
     return {
         **_run_refs(recorder),
         "strategy_artifact_id": "strategy.run",
         "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
-        "candidate_store_path": str(candidate_store_path),
+        "candidate_store_path": str(store_path),
         "locks": lock_records,
         "optimization": {
             "ranking_metric": optimization_run.ranking_metric,
@@ -335,42 +319,6 @@ def _run_optimization_strategy_sweep(
             "candidate_count": len(candidate_rows),
         },
         "leaderboard": leaderboard,
-    }
-
-
-def _candidate_store_path(config: Any) -> Path:
-    return Path(config.output_dir) / ".candidate_store" / "candidates.sqlite3"
-
-
-def _candidate_store_namespace() -> dict[str, str]:
-    return {
-        "kind": "local_sqlite",
-        "path": ".candidate_store/candidates.sqlite3",
-    }
-
-
-def _candidate_store_provenance(
-    recorder: Any,
-    *,
-    optimization_source: dict[str, Any],
-    data_result: Any,
-    array_contract: DataArrayContract,
-    config: Any,
-    metric_registry_fingerprint: str | None,
-) -> dict[str, Any]:
-    return {
-        "schema_version": "candidate_store_provenance.v1",
-        "run_id": recorder.manifest.run_id,
-        "strategy_artifact_id": "strategy.run",
-        "source": optimization_source,
-        "data": build_candidate_data_identity(data_result, array_contract),
-        "portfolio": to_builtin(asdict(config.portfolio)),
-        "ranking": {
-            "metric": config.ranking.metric,
-            "direction": config.ranking.direction,
-            "secondary_metrics": list(config.ranking.secondary_metrics),
-        },
-        "metric_registry_fingerprint": metric_registry_fingerprint,
     }
 
 
