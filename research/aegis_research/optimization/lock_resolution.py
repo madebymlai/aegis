@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from research.aegis_research.component_registry import (
@@ -68,7 +69,7 @@ def resolve_component_lock(
 def resolve_component_locks(
     config: Any,
     *,
-    candidate_store_path: Any,
+    candidate_store_path: str | Path,
 ) -> tuple[dict[tuple[str, str, str], dict[str, Any]], list[dict[str, Any]]]:
     refs = list(_component_lock_refs(config))
     if not refs:
@@ -248,7 +249,7 @@ def _candidate_component_runtime(
         raise LockResolutionError(
             f"candidate key {ref.candidate_id!r} has no component source provenance"
         )
-    runtimes = [source.get("strategy"), *source.get("indicators", [])]
+    runtimes = [source.get("strategy"), *source.get("indicators", ())]
     for runtime in runtimes:
         if not isinstance(runtime, dict):
             continue
@@ -312,14 +313,8 @@ def _resolved_lock_record(resolved: ResolvedLock) -> dict[str, Any]:
 
 
 def _lock_runtime_records(optimization_source: Mapping[str, Any]) -> list[dict[str, Any]]:
-    runtimes: list[dict[str, Any]] = []
-    strategy = optimization_source.get("strategy")
-    if isinstance(strategy, Mapping):
-        runtimes.append(dict(strategy))
-    for runtime in optimization_source.get("indicators", ()):
-        if isinstance(runtime, Mapping):
-            runtimes.append(dict(runtime))
-    return runtimes
+    candidates = [optimization_source.get("strategy"), *optimization_source.get("indicators", ())]
+    return [dict(r) for r in candidates if isinstance(r, Mapping)]
 
 
 def _component_family(value: Any) -> ComponentFamily:
