@@ -81,7 +81,6 @@ def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_componen
     assert artifact_path.exists()
     artifact = json.loads(artifact_path.read_text())
 
-    assert artifact["evidence_type"] == "optimization"
     assert artifact["leaderboard"]["rows"]
     assert artifact["candidates"]
     assert len(artifact["candidates"]) > 0

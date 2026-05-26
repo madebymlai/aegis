@@ -126,7 +126,6 @@ def _handle_strategy_run(
 def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[str, Any]:
     leaderboard = result.get("leaderboard", {})
     return {
-        "evidence_type": result.get("evidence_type"),
         "selection": selection,
         "run": {
             "id": result.get("run_id"),
@@ -154,7 +153,6 @@ def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[s
 def _human_run_lines(result: dict[str, Any]) -> tuple[str, ...]:
     return (
         f"Run: {safe_path(result.get('run_dir'))}",
-        f"Evidence: {result.get('evidence_type')}",
         f"Status: {result.get('status')}",
     )
 

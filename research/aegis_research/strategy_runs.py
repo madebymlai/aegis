@@ -32,9 +32,6 @@ from research.aegis_research.data import (
 )
 from research.aegis_research.data_arrays import (
     DataArrayContract,
-    build_data_array_contract,
-    data_array_evidence_payload,
-    merge_data_arrays,
     with_data_array_contract_metadata,
 )
 from research.aegis_research.optimization.candidate_store import (
@@ -59,6 +56,11 @@ from research.aegis_research.optimization.lock import (
     ComponentLockRef,
     ResolvedLock,
     resolve_component_lock,
+)
+from research.aegis_research.optimization.run_data_contract import (
+    build_candidate_data_identity,
+    build_run_data_array_contract,
+    build_run_data_evidence_payload,
 )
 from research.aegis_research.optimization.runner import (
     execute_optimization,
@@ -99,7 +101,7 @@ def run_strategy_sweep(
                 )
             ]
         )
-    array_contract = _strategy_data_array_contract(config, component_registry)
+    array_contract = build_run_data_array_contract(config, component_registry)
 
     recorder = RunStore(config.output_dir).start_run(
         run_label=config.name,
@@ -110,7 +112,6 @@ def run_strategy_sweep(
         supersedes_run_id=supersedes_run_id,
     )
     recorder.manifest.evidence = {
-        "evidence_type": "optimization",
         "component_registry_fingerprint": component_registry.fingerprint,
         "data_arrays": array_contract.metadata(),
     }
@@ -196,7 +197,7 @@ def _run_optimization_strategy_sweep(
         "param_names": list(optimization_source.params),
         "optimization": to_builtin(asdict(config.optimization)),
         "split": split_result.metadata,
-        "data": _strategy_data_evidence_payload(data_result, array_contract),
+        "data": build_run_data_evidence_payload(data_result, array_contract),
         "metric_registry_fingerprint": metric_registry_fingerprint,
         "open_prices_available": open_prices is not None,
         "resolved_locks": resolved_locks,
@@ -247,7 +248,7 @@ def _run_optimization_strategy_sweep(
     candidate_rows = candidate_rows_from_param_index(
         optimization_run.evaluated_index,
         source_identity=optimization_source.evidence,
-        data_identity=_candidate_data_identity(data_result, array_contract),
+        data_identity=build_candidate_data_identity(data_result, array_contract),
         portfolio_policy=to_builtin(asdict(config.portfolio)),
         store_namespace=candidate_store_namespace,
         coordinate_levels=("split", "set", "symbol"),
@@ -304,9 +305,8 @@ def _run_optimization_strategy_sweep(
 
     artifact_payload = {
         "schema_version": OPTIMIZATION_ARTIFACT_SCHEMA_VERSION,
-        "evidence_type": "optimization",
         "strategy": strategy_evidence,
-        "data": _strategy_data_evidence_payload(data_result, array_contract),
+        "data": build_run_data_evidence_payload(data_result, array_contract),
         "ranking": {
             "metric": config.ranking.metric,
             "direction": config.ranking.direction,
@@ -337,7 +337,6 @@ def _run_optimization_strategy_sweep(
         raise CandidateStoreError(f"candidate_store_activation_failed: {error}") from error
     return {
         **_run_refs(recorder),
-        "evidence_type": "optimization",
         "strategy_artifact_id": "strategy.run",
         "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
         "candidate_store_path": str(candidate_store_path),
@@ -350,60 +349,6 @@ def _run_optimization_strategy_sweep(
             "candidate_count": len(candidate_rows),
         },
         "leaderboard": leaderboard,
-    }
-
-
-def _strategy_data_array_contract(
-    config: Any,
-    component_registry: FrozenComponentRegistry,
-) -> DataArrayContract:
-    return build_data_array_contract(
-        configured_arrays=config.data.effective_arrays,
-        component_required_arrays=_strategy_required_arrays(config, component_registry),
-        pipeline_required_arrays=("Close", "Open"),
-    )
-
-
-def _strategy_required_arrays(
-    config: Any,
-    component_registry: FrozenComponentRegistry,
-) -> tuple[str, ...]:
-    required = [
-        component_registry.get(ComponentSelection("strategies", config.strategy.id)).input_names
-    ]
-    for ref in config.indicators:
-        required.append(
-            component_registry.get(ComponentSelection("indicators", ref.id)).input_names
-        )
-    return merge_data_arrays(*required)
-
-
-def _strategy_data_evidence_payload(
-    data_result: Any,
-    array_contract: DataArrayContract,
-) -> dict[str, Any]:
-    return data_array_evidence_payload(data_result, array_contract) | {
-        "strategy_consumed_runner_data": True,
-        "strategy_data_binding": "runner_data_bundle",
-    }
-
-
-def _candidate_data_identity(data_result: Any, array_contract: DataArrayContract) -> dict[str, Any]:
-    metadata = data_result.metadata
-    return {
-        "schema_version": "candidate_data_identity.v1",
-        "source": metadata.get("source"),
-        "requested_symbols": metadata.get("requested_symbols"),
-        "symbols": metadata.get("symbols"),
-        "timeframe": metadata.get("timeframe"),
-        "effective_arrays": metadata.get("effective_arrays"),
-        "loaded_arrays": metadata.get("loaded_arrays"),
-        "shape": metadata.get("shape"),
-        "index_start": metadata.get("index_start"),
-        "index_end": metadata.get("index_end"),
-        "index_evidence": metadata.get("index_evidence"),
-        "source_metadata": metadata.get("source_metadata"),
-        "array_contract": array_contract.metadata(),
     }
 
 
@@ -606,7 +551,7 @@ def _candidate_store_provenance(
         "run_id": recorder.manifest.run_id,
         "strategy_artifact_id": "strategy.run",
         "source": optimization_source,
-        "data": _candidate_data_identity(data_result, array_contract),
+        "data": build_candidate_data_identity(data_result, array_contract),
         "portfolio": to_builtin(asdict(config.portfolio)),
         "ranking": {
             "metric": config.ranking.metric,

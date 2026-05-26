@@ -93,9 +93,7 @@ def test_component_optimization_uses_component_native_candidate_grid(
         == "runs/component-boundary/strategy_run.json"
     )
     assert payload["candidate_store"]["path"] == "runs/.candidate_store/candidates.sqlite3"
-    assert artifact["evidence_type"] == "optimization"
     assert artifact["schema_version"] == "optimization_artifact.v1"
-    assert manifest["evidence"]["evidence_type"] == "optimization"
     assert artifact_record["role"] == "optimization_evidence"
     assert artifact_record["schema_version"] == "optimization_artifact.v1"
     assert artifact["strategy"]["family"] == "strategies"

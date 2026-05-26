@@ -158,7 +158,6 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     artifact = json.loads((tmp_path / "runs" / "component-opt" / "strategy_run.json").read_text())
 
     assert payload["status"] == "success"
-    assert artifact["evidence_type"] == "optimization"
     assert artifact["strategy"]["family"] == "strategies"
     assert artifact["strategy"]["id"] == "demo.cross"
     assert artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
