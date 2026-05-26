@@ -113,10 +113,10 @@ def test_component_optimization_uses_component_native_candidate_grid(
         top[0]["leaderboard_row"]["candidate_key"]
         == artifact["leaderboard"]["rows"][0]["candidate_key"]
     )
-    assert artifact["promotions"][0]["component_family"] == "strategies"
-    assert artifact["promotions"][0]["component_id"] == "demo.ma_opt"
-    assert artifact["promotions"][0]["token"].startswith("lock_")
-    assert payload["promotions"][0]["token"] == artifact["promotions"][0]["token"]
+    assert artifact["locks"][0]["component_family"] == "strategies"
+    assert artifact["locks"][0]["component_id"] == "demo.ma_opt"
+    assert artifact["locks"][0]["token"].startswith("lock_")
+    assert payload["locks"][0]["token"] == artifact["locks"][0]["token"]
 
 
 def test_component_optimization_artifact_write_failure_leaves_candidates_pending(
@@ -145,7 +145,7 @@ def test_component_optimization_artifact_write_failure_leaves_candidates_pending
         assert store.top_candidates_by_run("artifact-failure", limit=1) == []
 
 
-def test_component_optimization_completion_failure_leaves_promotion_pending(
+def test_component_optimization_completion_failure_leaves_lock_pending(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -173,9 +173,9 @@ def test_component_optimization_completion_failure_leaves_promotion_pending(
     assert manifest["run"]["status"] == RunStatus.FAILED
     with (
         CandidateStore(store_path) as store,
-        pytest.raises(CandidateStoreError, match="unknown promotion token"),
+        pytest.raises(CandidateStoreError, match="unknown lock token"),
     ):
-        store.params_by_promotion_token(artifact["promotions"][0]["token"])
+        store.params_by_lock_token(artifact["locks"][0]["token"])
 
 
 def test_component_optimization_activation_failure_fails_closed(
@@ -205,9 +205,9 @@ def test_component_optimization_activation_failure_fails_closed(
     assert manifest["run"]["status"] == RunStatus.FAILED
     with (
         CandidateStore(store_path) as store,
-        pytest.raises(CandidateStoreError, match="unknown promotion token"),
+        pytest.raises(CandidateStoreError, match="unknown lock token"),
     ):
-        store.params_by_promotion_token(artifact["promotions"][0]["token"])
+        store.params_by_lock_token(artifact["locks"][0]["token"])
 
 
 def test_component_optimization_resolves_lock_id_as_fixed_params(
@@ -223,7 +223,7 @@ def test_component_optimization_resolves_lock_id_as_fixed_params(
     source_artifact = json.loads(
         (tmp_path / "runs" / "source-run" / "strategy_run.json").read_text()
     )
-    lock_id = source_artifact["promotions"][0]["token"]
+    lock_id = source_artifact["locks"][0]["token"]
 
     locked_config_path = _write_run_config(
         tmp_path,
@@ -238,8 +238,8 @@ def test_component_optimization_resolves_lock_id_as_fixed_params(
     )
 
     assert locked_artifact["strategy"]["param_mode"] == "locked"
-    assert locked_artifact["strategy"]["fixed_params"] == source_artifact["promotions"][0]["params"]
-    assert locked_artifact["resolved_promotions"][0]["reference_kind"] == "lock_id"
+    assert locked_artifact["strategy"]["fixed_params"] == source_artifact["locks"][0]["params"]
+    assert locked_artifact["resolved_locks"][0]["reference_kind"] == "lock_id"
     assert locked_artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
     assert len(locked_artifact["candidates"]) == 1
 
@@ -283,8 +283,8 @@ def test_component_optimization_resolves_candidate_id_pin_as_fixed_params(
 
     assert pinned_artifact["strategy"]["param_mode"] == "locked"
     assert pinned_artifact["strategy"]["fixed_params"] == expected_params
-    assert pinned_artifact["resolved_promotions"][0]["reference_kind"] == "candidate_id"
-    assert pinned_artifact["resolved_promotions"][0]["candidate_key"] == pinned_row["candidate_key"]
+    assert pinned_artifact["resolved_locks"][0]["reference_kind"] == "candidate_id"
+    assert pinned_artifact["resolved_locks"][0]["candidate_key"] == pinned_row["candidate_key"]
 
 
 def test_component_optimization_runtime_error_records_failure_diagnostics(

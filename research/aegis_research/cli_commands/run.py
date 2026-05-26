@@ -143,7 +143,7 @@ def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[s
         "candidate_store": {
             "path": safe_path(result.get("candidate_store_path")),
         },
-        "promotions": result.get("promotions", []),
+        "locks": result.get("locks", []),
         "leaderboard": {
             "summary": leaderboard.get("summary"),
             "top_rows": leaderboard.get("rows", [])[:10],

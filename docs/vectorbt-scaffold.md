@@ -209,7 +209,7 @@ Components live under `research/components/{indicators,strategies}/`. Discovery 
 
 Playbooks are no longer a forward authoring path. See `docs/playbooks.md` for the removal boundary.
 
-Leaderboards rank complete composed strategy candidates, not raw indicators. Component promotion uses persisted candidate rows plus explicit `lock_id` or `candidate_id` plus source `run_id` refs; manual copying of playbook params is no longer the forward workflow.
+Leaderboards rank complete composed strategy candidates, not raw indicators. Component locks use persisted candidate rows plus explicit `lock_id` or `candidate_id` plus source `run_id` refs; manual copying of playbook params is no longer the forward workflow.
 
 ## VectorBT PRO Notes
 

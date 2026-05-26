@@ -15,12 +15,12 @@ from research.aegis_research.optimization.component_source import (
 )
 
 
-class PromotionResolutionError(ValueError):
+class LockResolutionError(ValueError):
     pass
 
 
 @dataclass(frozen=True)
-class ComponentPromotionRef:
+class ComponentLockRef:
     component_family: ComponentFamily
     component_id: str
     component_slot: str
@@ -30,7 +30,7 @@ class ComponentPromotionRef:
 
 
 @dataclass(frozen=True)
-class ResolvedPromotion:
+class ResolvedLock:
     reference_kind: str
     component_family: ComponentFamily
     component_id: str
@@ -41,30 +41,30 @@ class ResolvedPromotion:
     provenance: dict[str, Any]
 
 
-def resolve_component_promotion(
-    ref: ComponentPromotionRef,
+def resolve_component_lock(
+    ref: ComponentLockRef,
     *,
     store: CandidateStore,
-) -> ResolvedPromotion:
+) -> ResolvedLock:
     _validate_reference(ref)
     if ref.lock_id is not None:
         return _resolve_lock(ref, store=store)
     return _resolve_candidate(ref, store=store)
 
 
-def _validate_reference(ref: ComponentPromotionRef) -> None:
+def _validate_reference(ref: ComponentLockRef) -> None:
     if bool(ref.lock_id) == bool(ref.candidate_id):
-        raise PromotionResolutionError("exactly one of lock_id or candidate_id is required")
+        raise LockResolutionError("exactly one of lock_id or candidate_id is required")
 
 
-def _resolve_lock(ref: ComponentPromotionRef, *, store: CandidateStore) -> ResolvedPromotion:
+def _resolve_lock(ref: ComponentLockRef, *, store: CandidateStore) -> ResolvedLock:
     assert ref.lock_id is not None
     try:
-        row = store.promotion_by_token(ref.lock_id)
+        row = store.lock_by_token(ref.lock_id)
     except CandidateStoreError as error:
-        raise PromotionResolutionError(str(error)) from error
+        raise LockResolutionError(str(error)) from error
     _assert_component_match(ref, row)
-    return ResolvedPromotion(
+    return ResolvedLock(
         reference_kind="lock_id",
         component_family=ref.component_family,
         component_id=ref.component_id,
@@ -76,12 +76,12 @@ def _resolve_lock(ref: ComponentPromotionRef, *, store: CandidateStore) -> Resol
     )
 
 
-def _resolve_candidate(ref: ComponentPromotionRef, *, store: CandidateStore) -> ResolvedPromotion:
+def _resolve_candidate(ref: ComponentLockRef, *, store: CandidateStore) -> ResolvedLock:
     assert ref.candidate_id is not None
     try:
         row = store.candidate_by_key(ref.candidate_id, run_id=ref.run_id)
     except CandidateStoreError as error:
-        raise PromotionResolutionError(str(error)) from error
+        raise LockResolutionError(str(error)) from error
     provenance = dict(row["provenance"])
     provenance.setdefault("component_family", ref.component_family)
     provenance.setdefault("component_id", ref.component_id)
@@ -91,7 +91,7 @@ def _resolve_candidate(ref: ComponentPromotionRef, *, store: CandidateStore) -> 
         candidate_params=row["params"],
         provenance=provenance,
     )
-    return ResolvedPromotion(
+    return ResolvedLock(
         reference_kind="candidate_id",
         component_family=ref.component_family,
         component_id=ref.component_id,
@@ -103,7 +103,7 @@ def _resolve_candidate(ref: ComponentPromotionRef, *, store: CandidateStore) -> 
     )
 
 
-def _assert_component_match(ref: ComponentPromotionRef, row: dict[str, Any]) -> None:
+def _assert_component_match(ref: ComponentLockRef, row: dict[str, Any]) -> None:
     mismatches = [
         name
         for name in ("component_family", "component_id", "component_slot")
@@ -111,13 +111,13 @@ def _assert_component_match(ref: ComponentPromotionRef, row: dict[str, Any]) -> 
     ]
     if mismatches:
         fields = ", ".join(mismatches)
-        raise PromotionResolutionError(
-            f"promotion token {row['token']!r} does not belong to requested component ({fields})"
+        raise LockResolutionError(
+            f"lock token {row['token']!r} does not belong to requested component ({fields})"
         )
 
 
 def _component_params_from_candidate(
-    ref: ComponentPromotionRef,
+    ref: ComponentLockRef,
     *,
     candidate_params: dict[str, Any],
     provenance: dict[str, Any],
@@ -134,16 +134,16 @@ def _component_params_from_candidate(
             candidate_key=str(ref.candidate_id),
         )
     except ComponentSourceError as error:
-        raise PromotionResolutionError(str(error)) from error
+        raise LockResolutionError(str(error)) from error
 
 
 def _candidate_component_runtime(
-    ref: ComponentPromotionRef,
+    ref: ComponentLockRef,
     provenance: dict[str, Any],
 ) -> dict[str, Any]:
     source = provenance.get("source")
     if not isinstance(source, dict):
-        raise PromotionResolutionError(
+        raise LockResolutionError(
             f"candidate key {ref.candidate_id!r} has no component source provenance"
         )
     runtimes = [source.get("strategy"), *source.get("indicators", [])]
@@ -156,7 +156,7 @@ def _candidate_component_runtime(
             and runtime.get("slot") == ref.component_slot
         ):
             return runtime
-    raise PromotionResolutionError(
+    raise LockResolutionError(
         f"candidate key {ref.candidate_id!r} does not include component "
         f"{ref.component_family}/{ref.component_id} slot {ref.component_slot!r}"
     )

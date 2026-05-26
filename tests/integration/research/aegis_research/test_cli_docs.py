@@ -86,7 +86,7 @@ def test_docs_examples_remove_train_notebooks() -> None:
     assert not Path("docs/examples/scaffold_experiment_walkthrough.ipynb").exists()
 
 
-def test_docs_describe_composed_strategy_candidates_and_manual_promotion() -> None:
+def test_docs_describe_composed_strategy_candidates_and_manual_lock() -> None:
     docs = "\n".join(
         [
             Path("README.md").read_text(),
@@ -97,7 +97,7 @@ def test_docs_describe_composed_strategy_candidates_and_manual_promotion() -> No
     )
 
     assert "complete composed strategy candidates" in docs
-    assert "Component promotion uses persisted candidate rows" in docs
+    assert "Component locks use persisted candidate rows" in docs
     assert "candidate_grid.batch_size" not in docs
     assert "unknown to the forward schema" in docs
     assert "lock_id" in docs

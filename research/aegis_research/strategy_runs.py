@@ -55,10 +55,10 @@ from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
 )
-from research.aegis_research.optimization.promotion import (
-    ComponentPromotionRef,
-    ResolvedPromotion,
-    resolve_component_promotion,
+from research.aegis_research.optimization.lock import (
+    ComponentLockRef,
+    ResolvedLock,
+    resolve_component_lock,
 )
 from research.aegis_research.optimization.runner import (
     execute_optimization,
@@ -75,8 +75,8 @@ from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.run_splits import build_run_splits_result
 
 OPTIMIZATION_ARTIFACT_SCHEMA_VERSION = "optimization_artifact.v1"
-COMPONENT_PROMOTION_SCHEMA_VERSION = "component_promotion.v1"
-COMPONENT_PROMOTION_PROVENANCE_SCHEMA_VERSION = "component_promotion_provenance.v1"
+COMPONENT_LOCK_SCHEMA_VERSION = "component_lock.v1"
+COMPONENT_LOCK_PROVENANCE_SCHEMA_VERSION = "component_lock_provenance.v1"
 
 
 def run_strategy_sweep(
@@ -176,7 +176,7 @@ def _run_optimization_strategy_sweep(
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     candidate_store_path = _candidate_store_path(config)
-    resolved_component_params, resolved_promotions = _resolve_component_promotions(
+    resolved_component_params, resolved_locks = _resolve_component_locks(
         config,
         candidate_store_path=candidate_store_path,
     )
@@ -199,7 +199,7 @@ def _run_optimization_strategy_sweep(
         "data": _strategy_data_evidence_payload(data_result, array_contract),
         "metric_registry_fingerprint": metric_registry_fingerprint,
         "open_prices_available": open_prices is not None,
-        "resolved_promotions": resolved_promotions,
+        "resolved_locks": resolved_locks,
     }
     try:
         optimization_evidence["preflight"] = build_preflight(
@@ -274,7 +274,7 @@ def _run_optimization_strategy_sweep(
         config=config,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
-    promotion_records = _component_promotion_records(
+    lock_records = _component_lock_records(
         run_id=recorder.manifest.run_id,
         leaderboard=leaderboard,
         optimization_source=optimization_source.evidence,
@@ -287,19 +287,19 @@ def _run_optimization_strategy_sweep(
             provenance=candidate_store_provenance,
             publication_state=PUBLICATION_PENDING,
         )
-        for promotion in promotion_records:
-            candidate_store.insert_promotion(
-                token=promotion["token"],
-                run_id=promotion["run_id"],
-                component_family=promotion["component_family"],
-                component_id=promotion["component_id"],
-                component_slot=promotion["component_slot"],
-                candidate_key=promotion["candidate_key"],
-                params=promotion["params"],
-                provenance=promotion["provenance"],
+        for lock_record in lock_records:
+            candidate_store.insert_lock(
+                token=lock_record["token"],
+                run_id=lock_record["run_id"],
+                component_family=lock_record["component_family"],
+                component_id=lock_record["component_id"],
+                component_slot=lock_record["component_slot"],
+                candidate_key=lock_record["candidate_key"],
+                params=lock_record["params"],
+                provenance=lock_record["provenance"],
                 publication_state=PUBLICATION_PENDING,
             )
-    optimization_evidence["promotions"] = promotion_records
+    optimization_evidence["locks"] = lock_records
     recorder.manifest.evidence["optimization"] = optimization_evidence
 
     artifact_payload = {
@@ -319,8 +319,8 @@ def _run_optimization_strategy_sweep(
         "execution": run_payload,
         "candidates": [to_builtin(record) for record in candidate_rows],
         "leaderboard": leaderboard,
-        "resolved_promotions": resolved_promotions,
-        "promotions": promotion_records,
+        "resolved_locks": resolved_locks,
+        "locks": lock_records,
         "candidate_store": {
             "schema_version": "candidate_store_ref.v1",
             "path": candidate_store_namespace["path"],
@@ -341,7 +341,7 @@ def _run_optimization_strategy_sweep(
         "strategy_artifact_id": "strategy.run",
         "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
         "candidate_store_path": str(candidate_store_path),
-        "promotions": promotion_records,
+        "locks": lock_records,
         "optimization": {
             "ranking_metric": optimization_run.ranking_metric,
             "ranking_direction": optimization_run.ranking_direction,
@@ -407,34 +407,34 @@ def _candidate_data_identity(data_result: Any, array_contract: DataArrayContract
     }
 
 
-def _resolve_component_promotions(
+def _resolve_component_locks(
     config: Any,
     *,
     candidate_store_path: Path,
 ) -> tuple[dict[tuple[str, str, str], dict[str, Any]], list[dict[str, Any]]]:
-    refs = list(_component_promotion_refs(config))
+    refs = list(_component_lock_refs(config))
     if not refs:
         return {}, []
     resolved_params: dict[tuple[str, str, str], dict[str, Any]] = {}
     resolved_records: list[dict[str, Any]] = []
     with CandidateStore(candidate_store_path) as candidate_store:
         for key, ref in refs:
-            resolved = resolve_component_promotion(ref, store=candidate_store)
+            resolved = resolve_component_lock(ref, store=candidate_store)
             if key in resolved_params:
-                raise OptimizationSourceError(f"duplicate promotion resolution for component {key}")
+                raise OptimizationSourceError(f"duplicate lock resolution for component {key}")
             resolved_params[key] = dict(resolved.params)
-            resolved_records.append(_resolved_promotion_record(resolved))
+            resolved_records.append(_resolved_lock_record(resolved))
     return resolved_params, resolved_records
 
 
-def _component_promotion_refs(
+def _component_lock_refs(
     config: Any,
-) -> Iterator[tuple[tuple[str, str, str], ComponentPromotionRef]]:
+) -> Iterator[tuple[tuple[str, str, str], ComponentLockRef]]:
     if config.strategy.lock_id is not None or config.strategy.candidate_id is not None:
         key = component_ref_key("strategies", config.strategy.id, "strategy")
         yield (
             key,
-            ComponentPromotionRef(
+            ComponentLockRef(
                 component_family="strategies",
                 component_id=config.strategy.id,
                 component_slot="strategy",
@@ -449,7 +449,7 @@ def _component_promotion_refs(
         key = component_ref_key("indicators", ref.id, ref.id)
         yield (
             key,
-            ComponentPromotionRef(
+            ComponentLockRef(
                 component_family="indicators",
                 component_id=ref.id,
                 component_slot=ref.id,
@@ -460,9 +460,9 @@ def _component_promotion_refs(
         )
 
 
-def _resolved_promotion_record(resolved: ResolvedPromotion) -> dict[str, Any]:
+def _resolved_lock_record(resolved: ResolvedLock) -> dict[str, Any]:
     return {
-        "schema_version": "resolved_component_promotion.v1",
+        "schema_version": "resolved_component_lock.v1",
         "reference_kind": resolved.reference_kind,
         "component_family": resolved.component_family,
         "component_id": resolved.component_id,
@@ -474,7 +474,7 @@ def _resolved_promotion_record(resolved: ResolvedPromotion) -> dict[str, Any]:
     }
 
 
-def _component_promotion_records(
+def _component_lock_records(
     *,
     run_id: str,
     leaderboard: Mapping[str, Any],
@@ -488,7 +488,7 @@ def _component_promotion_records(
     candidate_params = dict(top_row.get("params", {}))
     component_slices = component_param_slices(candidate_params)
     records: list[dict[str, Any]] = []
-    for runtime in _promotion_runtime_records(optimization_source):
+    for runtime in _lock_runtime_records(optimization_source):
         component_family = _component_family(runtime["family"])
         component_id = str(runtime["id"])
         component_slot = str(runtime["slot"])
@@ -503,7 +503,7 @@ def _component_promotion_records(
             )
         except ComponentSourceError as error:
             raise OptimizationSourceError(str(error)) from error
-        token = _component_promotion_token(
+        token = _component_lock_token(
             run_id=run_id,
             rank=1,
             component_family=component_family,
@@ -512,7 +512,7 @@ def _component_promotion_records(
             candidate_key=candidate_key,
         )
         provenance = {
-            "schema_version": COMPONENT_PROMOTION_PROVENANCE_SCHEMA_VERSION,
+            "schema_version": COMPONENT_LOCK_PROVENANCE_SCHEMA_VERSION,
             "run_id": run_id,
             "rank": 1,
             "candidate_key": candidate_key,
@@ -524,7 +524,7 @@ def _component_promotion_records(
         }
         records.append(
             {
-                "schema_version": COMPONENT_PROMOTION_SCHEMA_VERSION,
+                "schema_version": COMPONENT_LOCK_SCHEMA_VERSION,
                 "token": token,
                 "reference_kind": "lock_id",
                 "run_id": run_id,
@@ -540,7 +540,7 @@ def _component_promotion_records(
     return records
 
 
-def _promotion_runtime_records(optimization_source: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _lock_runtime_records(optimization_source: Mapping[str, Any]) -> list[dict[str, Any]]:
     runtimes: list[dict[str, Any]] = []
     strategy = optimization_source.get("strategy")
     if isinstance(strategy, Mapping):
@@ -557,7 +557,7 @@ def _component_family(value: Any) -> ComponentFamily:
     return value
 
 
-def _component_promotion_token(
+def _component_lock_token(
     *,
     run_id: str,
     rank: int,
@@ -567,7 +567,7 @@ def _component_promotion_token(
     candidate_key: str,
 ) -> str:
     payload = {
-        "schema_version": COMPONENT_PROMOTION_SCHEMA_VERSION,
+        "schema_version": COMPONENT_LOCK_SCHEMA_VERSION,
         "run_id": run_id,
         "rank": rank,
         "component_family": component_family,
