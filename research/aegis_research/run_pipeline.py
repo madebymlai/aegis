@@ -14,6 +14,7 @@ from research.aegis_research.config import (
     ConfigValidationError,
     ConfigValidationIssue,
     ResolvedRunConfig,
+    RunConfig,
     SignalConfig,
     known_config_secret_values,
     redact_text,
@@ -21,6 +22,7 @@ from research.aegis_research.config import (
 )
 from research.aegis_research.data import (
     MarketDataBundle,
+    MarketDataResult,
     load_market_data_result,
     market_data_bundle,
 )
@@ -66,7 +68,7 @@ from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
 from research.aegis_research.provenance.experiment_artifacts import ExperimentArtifactWriter
-from research.aegis_research.provenance.recorder import RerunMode
+from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.run_splits import build_run_splits_result
 
@@ -155,11 +157,11 @@ def _failure_diagnostic(error: Exception, *, known_secrets: tuple[str, ...]) -> 
 
 
 def _run_optimization_strategy_sweep(
-    config: Any,
+    config: RunConfig,
     *,
     component_registry: FrozenComponentRegistry,
-    recorder: Any,
-    data_result: Any,
+    recorder: RunRecorder,
+    data_result: MarketDataResult,
     data: MarketDataBundle,
     open_prices: pd.DataFrame,
     array_contract: DataArrayContract,
@@ -179,16 +181,18 @@ def _run_optimization_strategy_sweep(
     strategy_evidence = optimization_source.evidence["strategy"]
     close = data.feature("Close")
     split_result = build_run_splits_result(close.index, config.optimization.split)
+    optimization_builtin = to_builtin(asdict(config.optimization))
+    portfolio_builtin = to_builtin(asdict(config.portfolio))
     optimization_evidence = {
         "schema_version": "optimization_route.v1",
         "contract": OPTIMIZATION_SOURCE_CONTRACT,
         "source": optimization_source.evidence,
         "param_names": list(optimization_source.params),
-        "optimization": to_builtin(asdict(config.optimization)),
+        "optimization": optimization_builtin,
         "split": split_result.metadata,
         "data": build_run_data_evidence_payload(data_result, array_contract),
         "metric_registry_fingerprint": metric_registry_fingerprint,
-        "open_prices_available": open_prices is not None,
+        "open_prices_available": True,
         "resolved_locks": resolved_locks,
     }
     try:
@@ -197,7 +201,7 @@ def _run_optimization_strategy_sweep(
             optimization=config.optimization,
             split_result=split_result,
             symbol_count=len(close.columns),
-            has_open_prices=open_prices is not None,
+            has_open_prices=True,
         )
     except PreflightError as error:
         optimization_evidence["preflight"] = error.diagnostics
@@ -238,7 +242,7 @@ def _run_optimization_strategy_sweep(
         optimization_run.evaluated_index,
         source_identity=optimization_source.evidence,
         data_identity=build_candidate_data_identity(data_result, array_contract),
-        portfolio_policy=to_builtin(asdict(config.portfolio)),
+        portfolio_policy=portfolio_builtin,
         store_namespace=store_namespace,
         coordinate_levels=("split", "set", "symbol"),
     )
@@ -246,7 +250,7 @@ def _run_optimization_strategy_sweep(
     optimization_evidence["sampled_row_count"] = len(run_payload["sampled_rows"]["rows"])
     optimization_evidence["sampled_rows_source"] = optimization_run.sampled_rows_source
     split_held_out_row_counts = {
-        index: len(split.held_out_index) for index, split in enumerate(split_result.splits)
+        i: len(split.held_out_index) for i, split in enumerate(split_result.splits)
     }
     leaderboard = build_optimization_leaderboard(
         selection=optimization_run.selection,
@@ -289,8 +293,8 @@ def _run_optimization_strategy_sweep(
             "direction": config.ranking.direction,
             "secondary_metrics": list(config.ranking.secondary_metrics),
         },
-        portfolio=to_builtin(asdict(config.portfolio)),
-        optimization=to_builtin(asdict(config.optimization)),
+        portfolio=portfolio_builtin,
+        optimization=optimization_builtin,
         split_metadata=split_result.metadata,
         preflight=optimization_evidence["preflight"],
         execution=run_payload,
@@ -322,7 +326,7 @@ def _run_optimization_strategy_sweep(
     }
 
 
-def _run_refs(recorder) -> dict[str, Any]:
+def _run_refs(recorder: RunRecorder) -> dict[str, Any]:
     return {
         "run_id": recorder.manifest.run_id,
         "run_dir": str(recorder.run_dir),
