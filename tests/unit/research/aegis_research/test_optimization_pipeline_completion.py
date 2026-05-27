@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.optimization.pipeline_completion import run_pipeline_completion
+from research.aegis_research.optimization.pipeline.completion import run_pipeline_completion
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -82,7 +82,7 @@ def test_pipeline_completion_returns_expected_keys(
     store_path.parent.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(
-        "research.aegis_research.optimization.pipeline_completion.activate_candidate_run",
+        "research.aegis_research.optimization.pipeline.completion.activate_candidate_run",
         lambda store_path, run_id: None,
     )
 

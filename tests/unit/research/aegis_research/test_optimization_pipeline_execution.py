@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from research.aegis_research.optimization.pipeline_execution import run_pipeline_execution
+from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
 from research.aegis_research.optimization.source import OptimizationSourceError
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
@@ -89,7 +89,7 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
         raise PreflightError("preflight failed", diagnostics={"error": True})
 
     monkeypatch.setattr(
-        "research.aegis_research.optimization.pipeline_execution.build_preflight",
+        "research.aegis_research.optimization.pipeline.execution.build_preflight",
         _fail_preflight,
     )
 

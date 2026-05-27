@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.optimization.pipeline_publishing import run_pipeline_publishing
+from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -67,7 +67,7 @@ def test_pipeline_publishing_returns_expected_keys(
     store_path.parent.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(
-        "research.aegis_research.optimization.pipeline_publishing.publish_candidates",
+        "research.aegis_research.optimization.pipeline.publishing.publish_candidates",
         lambda **kwargs: None,
     )
 
@@ -159,7 +159,7 @@ def test_pipeline_publishing_updates_optimization_evidence_counts(
     store_path.parent.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(
-        "research.aegis_research.optimization.pipeline_publishing.publish_candidates",
+        "research.aegis_research.optimization.pipeline.publishing.publish_candidates",
         lambda **kwargs: None,
     )
 

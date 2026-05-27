@@ -27,10 +27,10 @@ from research.aegis_research.data_arrays import (
     DataArrayContract,
     with_data_array_contract_metadata,
 )
-from research.aegis_research.optimization.pipeline_setup import run_pipeline_setup
-from research.aegis_research.optimization.pipeline_execution import run_pipeline_execution
-from research.aegis_research.optimization.pipeline_publishing import run_pipeline_publishing
-from research.aegis_research.optimization.pipeline_completion import (
+from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
+from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
+from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
+from research.aegis_research.optimization.pipeline.completion import (
     build_run_refs,
     run_pipeline_completion,
 )

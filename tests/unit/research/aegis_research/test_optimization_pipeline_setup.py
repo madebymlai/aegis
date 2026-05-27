@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
-from research.aegis_research.optimization.pipeline_setup import run_pipeline_setup
+from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
 )
