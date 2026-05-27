@@ -12,10 +12,10 @@ from research.aegis_research.optimization.leaderboard import (
     OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION,
     WEIGHT_BASIS,
 )
-from research.aegis_research.optimization.promotion import (
-    ComponentPromotionRef,
-    PromotionResolutionError,
-    resolve_component_promotion,
+from research.aegis_research.optimization.lock_resolution import (
+    ComponentLockRef,
+    LockResolutionError,
+    resolve_component_lock,
 )
 
 
@@ -23,7 +23,7 @@ def test_resolves_lock_id_for_matching_component(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
         params = _strategy_params(candidate)
-        store.insert_promotion(
+        store.insert_lock(
             token="lock_run-a_strategy_demo_ma_cross_rank1",
             run_id="run-a",
             component_family="strategies",
@@ -34,8 +34,8 @@ def test_resolves_lock_id_for_matching_component(tmp_path: Path) -> None:
             provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
         )
 
-        resolved = resolve_component_promotion(
-            ComponentPromotionRef(
+        resolved = resolve_component_lock(
+            ComponentLockRef(
                 component_family="strategies",
                 component_id="demo.ma_cross",
                 component_slot="strategy:demo.ma_cross",
@@ -54,7 +54,7 @@ def test_rejects_lock_id_for_wrong_component(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
         params = _strategy_params(candidate)
-        store.insert_promotion(
+        store.insert_lock(
             token="lock_run-a_strategy_demo_ma_cross_rank1",
             run_id="run-a",
             component_family="strategies",
@@ -65,9 +65,9 @@ def test_rejects_lock_id_for_wrong_component(tmp_path: Path) -> None:
             provenance={"run_id": "run-a"},
         )
 
-        with pytest.raises(PromotionResolutionError, match="does not belong"):
-            resolve_component_promotion(
-                ComponentPromotionRef(
+        with pytest.raises(LockResolutionError, match="does not belong"):
+            resolve_component_lock(
+                ComponentLockRef(
                     component_family="strategies",
                     component_id="demo.other",
                     component_slot="strategy:demo.other",
@@ -81,8 +81,8 @@ def test_resolves_direct_candidate_id_pin(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
 
-        resolved = resolve_component_promotion(
-            ComponentPromotionRef(
+        resolved = resolve_component_lock(
+            ComponentLockRef(
                 component_family="strategies",
                 component_id="demo.ma_cross",
                 component_slot="strategy:demo.ma_cross",
@@ -102,9 +102,9 @@ def test_rejects_direct_candidate_id_for_wrong_component(tmp_path: Path) -> None
     with _store_with_candidate(tmp_path) as store:
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
 
-        with pytest.raises(PromotionResolutionError, match="does not include component"):
-            resolve_component_promotion(
-                ComponentPromotionRef(
+        with pytest.raises(LockResolutionError, match="does not include component"):
+            resolve_component_lock(
+                ComponentLockRef(
                     component_family="strategies",
                     component_id="demo.other",
                     component_slot="strategy:demo.other",
@@ -117,10 +117,10 @@ def test_rejects_direct_candidate_id_for_wrong_component(tmp_path: Path) -> None
 
 def test_rejects_ambiguous_reference_fields(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store, pytest.raises(
-        PromotionResolutionError, match="exactly one"
+        LockResolutionError, match="exactly one"
     ):
-        resolve_component_promotion(
-            ComponentPromotionRef(
+        resolve_component_lock(
+            ComponentLockRef(
                 component_family="strategies",
                 component_id="demo.ma_cross",
                 component_slot="strategy:demo.ma_cross",
@@ -133,9 +133,9 @@ def test_rejects_ambiguous_reference_fields(tmp_path: Path) -> None:
 
 def test_rejects_missing_lock_or_candidate(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
-        with pytest.raises(PromotionResolutionError, match="unknown promotion token"):
-            resolve_component_promotion(
-                ComponentPromotionRef(
+        with pytest.raises(LockResolutionError, match="unknown lock token"):
+            resolve_component_lock(
+                ComponentLockRef(
                     component_family="strategies",
                     component_id="demo.ma_cross",
                     component_slot="strategy:demo.ma_cross",
@@ -143,9 +143,9 @@ def test_rejects_missing_lock_or_candidate(tmp_path: Path) -> None:
                 ),
                 store=store,
             )
-        with pytest.raises(PromotionResolutionError, match="unknown candidate key"):
-            resolve_component_promotion(
-                ComponentPromotionRef(
+        with pytest.raises(LockResolutionError, match="unknown candidate key"):
+            resolve_component_lock(
+                ComponentLockRef(
                     component_family="strategies",
                     component_id="demo.ma_cross",
                     component_slot="strategy:demo.ma_cross",

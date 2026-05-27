@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from research.aegis_research import cli, strategy_runs
+from research.aegis_research import cli
+from research.aegis_research.optimization import run_artifacts
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.candidate_store import CandidateStore, CandidateStoreError
 from research.aegis_research.optimization.component_source import (
@@ -93,9 +94,7 @@ def test_component_optimization_uses_component_native_candidate_grid(
         == "runs/component-boundary/strategy_run.json"
     )
     assert payload["candidate_store"]["path"] == "runs/.candidate_store/candidates.sqlite3"
-    assert artifact["evidence_type"] == "optimization"
     assert artifact["schema_version"] == "optimization_artifact.v1"
-    assert manifest["evidence"]["evidence_type"] == "optimization"
     assert artifact_record["role"] == "optimization_evidence"
     assert artifact_record["schema_version"] == "optimization_artifact.v1"
     assert artifact["strategy"]["family"] == "strategies"
@@ -113,10 +112,10 @@ def test_component_optimization_uses_component_native_candidate_grid(
         top[0]["leaderboard_row"]["candidate_key"]
         == artifact["leaderboard"]["rows"][0]["candidate_key"]
     )
-    assert artifact["promotions"][0]["component_family"] == "strategies"
-    assert artifact["promotions"][0]["component_id"] == "demo.ma_opt"
-    assert artifact["promotions"][0]["token"].startswith("lock_")
-    assert payload["promotions"][0]["token"] == artifact["promotions"][0]["token"]
+    assert artifact["locks"][0]["component_family"] == "strategies"
+    assert artifact["locks"][0]["component_id"] == "demo.ma_opt"
+    assert artifact["locks"][0]["token"].startswith("lock_")
+    assert payload["locks"][0]["token"] == artifact["locks"][0]["token"]
 
 
 def test_component_optimization_artifact_write_failure_leaves_candidates_pending(
@@ -131,7 +130,7 @@ def test_component_optimization_artifact_write_failure_leaves_candidates_pending
     def fail_write(*_args: object, **_kwargs: object) -> None:
         raise OSError("strategy artifact write failed")
 
-    monkeypatch.setattr(strategy_runs, "_write_strategy_artifact", fail_write)
+    monkeypatch.setattr(run_artifacts, "write_strategy_artifact", fail_write)
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "artifact-failure"]) == 10
 
@@ -145,7 +144,7 @@ def test_component_optimization_artifact_write_failure_leaves_candidates_pending
         assert store.top_candidates_by_run("artifact-failure", limit=1) == []
 
 
-def test_component_optimization_completion_failure_leaves_promotion_pending(
+def test_component_optimization_completion_failure_leaves_lock_pending(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -173,9 +172,9 @@ def test_component_optimization_completion_failure_leaves_promotion_pending(
     assert manifest["run"]["status"] == RunStatus.FAILED
     with (
         CandidateStore(store_path) as store,
-        pytest.raises(CandidateStoreError, match="unknown promotion token"),
+        pytest.raises(CandidateStoreError, match="unknown lock token"),
     ):
-        store.params_by_promotion_token(artifact["promotions"][0]["token"])
+        store.params_by_lock_token(artifact["locks"][0]["token"])
 
 
 def test_component_optimization_activation_failure_fails_closed(
@@ -205,9 +204,9 @@ def test_component_optimization_activation_failure_fails_closed(
     assert manifest["run"]["status"] == RunStatus.FAILED
     with (
         CandidateStore(store_path) as store,
-        pytest.raises(CandidateStoreError, match="unknown promotion token"),
+        pytest.raises(CandidateStoreError, match="unknown lock token"),
     ):
-        store.params_by_promotion_token(artifact["promotions"][0]["token"])
+        store.params_by_lock_token(artifact["locks"][0]["token"])
 
 
 def test_component_optimization_resolves_lock_id_as_fixed_params(
@@ -223,7 +222,7 @@ def test_component_optimization_resolves_lock_id_as_fixed_params(
     source_artifact = json.loads(
         (tmp_path / "runs" / "source-run" / "strategy_run.json").read_text()
     )
-    lock_id = source_artifact["promotions"][0]["token"]
+    lock_id = source_artifact["locks"][0]["token"]
 
     locked_config_path = _write_run_config(
         tmp_path,
@@ -238,8 +237,8 @@ def test_component_optimization_resolves_lock_id_as_fixed_params(
     )
 
     assert locked_artifact["strategy"]["param_mode"] == "locked"
-    assert locked_artifact["strategy"]["fixed_params"] == source_artifact["promotions"][0]["params"]
-    assert locked_artifact["resolved_promotions"][0]["reference_kind"] == "lock_id"
+    assert locked_artifact["strategy"]["fixed_params"] == source_artifact["locks"][0]["params"]
+    assert locked_artifact["resolved_locks"][0]["reference_kind"] == "lock_id"
     assert locked_artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
     assert len(locked_artifact["candidates"]) == 1
 
@@ -283,8 +282,8 @@ def test_component_optimization_resolves_candidate_id_pin_as_fixed_params(
 
     assert pinned_artifact["strategy"]["param_mode"] == "locked"
     assert pinned_artifact["strategy"]["fixed_params"] == expected_params
-    assert pinned_artifact["resolved_promotions"][0]["reference_kind"] == "candidate_id"
-    assert pinned_artifact["resolved_promotions"][0]["candidate_key"] == pinned_row["candidate_key"]
+    assert pinned_artifact["resolved_locks"][0]["reference_kind"] == "candidate_id"
+    assert pinned_artifact["resolved_locks"][0]["candidate_key"] == pinned_row["candidate_key"]
 
 
 def test_component_optimization_runtime_error_records_failure_diagnostics(

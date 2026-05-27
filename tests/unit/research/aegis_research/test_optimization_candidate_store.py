@@ -102,7 +102,7 @@ def test_candidate_store_pending_run_is_not_queryable_until_activation(tmp_path:
             provenance={"run_id": "run-a"},
             publication_state=PUBLICATION_PENDING,
         )
-        store.insert_promotion(
+        store.insert_lock(
             token="lock_pending",
             run_id="run-a",
             component_family="strategies",
@@ -118,16 +118,16 @@ def test_candidate_store_pending_run_is_not_queryable_until_activation(tmp_path:
         assert store.top_candidates_by_metric("total_return", direction="desc", limit=1) == []
         with pytest.raises(CandidateStoreError, match="unknown candidate key"):
             store.params_by_candidate_key(candidate["candidate_key"], run_id="run-a")
-        with pytest.raises(CandidateStoreError, match="unknown promotion token"):
-            store.params_by_promotion_token("lock_pending")
+        with pytest.raises(CandidateStoreError, match="unknown lock token"):
+            store.params_by_lock_token("lock_pending")
 
         store.activate_run("run-a")
 
         assert store.top_candidates_by_run("run-a", limit=1)
-        assert store.params_by_promotion_token("lock_pending") == candidate["params"]
+        assert store.params_by_lock_token("lock_pending") == candidate["params"]
 
 
-def test_candidate_store_active_promotion_requires_active_candidate(tmp_path: Path) -> None:
+def test_candidate_store_active_lock_requires_active_candidate(tmp_path: Path) -> None:
     store_path = tmp_path / "candidates.sqlite3"
     candidates = _candidate_rows()
     candidate = candidates[0]
@@ -140,8 +140,8 @@ def test_candidate_store_active_promotion_requires_active_candidate(tmp_path: Pa
             provenance={"run_id": "run-a"},
             publication_state=PUBLICATION_PENDING,
         )
-        store.insert_promotion(
-            token="lock_active_promotion_pending_candidate",
+        store.insert_lock(
+            token="lock_active_lock_pending_candidate",
             run_id="run-a",
             component_family="strategies",
             component_id="demo.ma_cross",
@@ -151,18 +151,18 @@ def test_candidate_store_active_promotion_requires_active_candidate(tmp_path: Pa
             provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
         )
 
-        with pytest.raises(CandidateStoreError, match="unknown promotion token"):
-            store.params_by_promotion_token("lock_active_promotion_pending_candidate")
+        with pytest.raises(CandidateStoreError, match="unknown lock token"):
+            store.params_by_lock_token("lock_active_lock_pending_candidate")
 
         store.activate_run("run-a")
 
         assert (
-            store.params_by_promotion_token("lock_active_promotion_pending_candidate")
+            store.params_by_lock_token("lock_active_lock_pending_candidate")
             == candidate["params"]
         )
 
 
-def test_candidate_store_resolves_promotion_token_params(tmp_path: Path) -> None:
+def test_candidate_store_resolves_lock_token_params(tmp_path: Path) -> None:
     candidates = _candidate_rows()
     candidate = candidates[0]
 
@@ -173,7 +173,7 @@ def test_candidate_store_resolves_promotion_token_params(tmp_path: Path) -> None
             leaderboard=_leaderboard(candidates, values=[0.10, 0.30, 0.20]),
             provenance={"run_id": "run-a"},
         )
-        store.insert_promotion(
+        store.insert_lock(
             token="lock_run-a_strategy_demo_ma_cross_rank1",
             run_id="run-a",
             component_family="strategies",
@@ -184,7 +184,7 @@ def test_candidate_store_resolves_promotion_token_params(tmp_path: Path) -> None
             provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
         )
 
-        params = store.params_by_promotion_token("lock_run-a_strategy_demo_ma_cross_rank1")
+        params = store.params_by_lock_token("lock_run-a_strategy_demo_ma_cross_rank1")
 
     assert params == candidate["params"]
 
@@ -228,7 +228,7 @@ def test_candidate_store_rejects_conflicting_duplicate_candidate_payload(tmp_pat
             )
 
 
-def test_candidate_store_reinserting_same_promotion_token_is_idempotent(tmp_path: Path) -> None:
+def test_candidate_store_reinserting_same_lock_token_is_idempotent(tmp_path: Path) -> None:
     candidates = _candidate_rows()
     candidate = candidates[0]
 
@@ -240,7 +240,7 @@ def test_candidate_store_reinserting_same_promotion_token_is_idempotent(tmp_path
             provenance={"run_id": "run-a"},
         )
         for _ in range(2):
-            store.insert_promotion(
+            store.insert_lock(
                 token="lock_duplicate",
                 run_id="run-a",
                 component_family="strategies",
@@ -251,10 +251,10 @@ def test_candidate_store_reinserting_same_promotion_token_is_idempotent(tmp_path
                 provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
             )
 
-        assert store.params_by_promotion_token("lock_duplicate") == candidate["params"]
+        assert store.params_by_lock_token("lock_duplicate") == candidate["params"]
 
 
-def test_candidate_store_rejects_conflicting_duplicate_promotion_payload(tmp_path: Path) -> None:
+def test_candidate_store_rejects_conflicting_duplicate_lock_payload(tmp_path: Path) -> None:
     candidates = _candidate_rows()
     candidate = candidates[0]
 
@@ -265,7 +265,7 @@ def test_candidate_store_rejects_conflicting_duplicate_promotion_payload(tmp_pat
             leaderboard=_leaderboard(candidates, values=[0.10, 0.30, 0.20]),
             provenance={"run_id": "run-a"},
         )
-        store.insert_promotion(
+        store.insert_lock(
             token="lock_conflict",
             run_id="run-a",
             component_family="strategies",
@@ -277,7 +277,7 @@ def test_candidate_store_rejects_conflicting_duplicate_promotion_payload(tmp_pat
         )
 
         with pytest.raises(CandidateStoreError, match="different payload"):
-            store.insert_promotion(
+            store.insert_lock(
                 token="lock_conflict",
                 run_id="run-a",
                 component_family="strategies",

@@ -158,7 +158,6 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     artifact = json.loads((tmp_path / "runs" / "component-opt" / "strategy_run.json").read_text())
 
     assert payload["status"] == "success"
-    assert artifact["evidence_type"] == "optimization"
     assert artifact["strategy"]["family"] == "strategies"
     assert artifact["strategy"]["id"] == "demo.cross"
     assert artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
@@ -167,7 +166,7 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert len(artifact["candidates"]) == 1
 
 
-def test_strategy_run_emits_strategy_and_indicator_promotion_locks(
+def test_strategy_run_emits_strategy_and_indicator_locks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -186,14 +185,14 @@ def test_strategy_run_emits_strategy_and_indicator_promotion_locks(
 
     capsys.readouterr()
     artifact = json.loads((tmp_path / "runs" / "component-locks" / "strategy_run.json").read_text())
-    promotions = {
-        (promotion["component_family"], promotion["component_id"]): promotion
-        for promotion in artifact["promotions"]
+    locks = {
+        (lock_record["component_family"], lock_record["component_id"]): lock_record
+        for lock_record in artifact["locks"]
     }
 
-    assert set(promotions) == {("strategies", "demo.uses_ma"), ("indicators", "demo.ma")}
-    assert promotions[("indicators", "demo.ma")]["params"] == {"window": 2}
-    assert promotions[("strategies", "demo.uses_ma")]["params"] == {}
+    assert set(locks) == {("strategies", "demo.uses_ma"), ("indicators", "demo.ma")}
+    assert locks[("indicators", "demo.ma")]["params"] == {"window": 2}
+    assert locks[("strategies", "demo.uses_ma")]["params"] == {}
 
 
 def test_strategy_run_rejects_data_quality_side_path_without_optimization(

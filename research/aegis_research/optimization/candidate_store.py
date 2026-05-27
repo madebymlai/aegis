@@ -7,7 +7,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PUBLICATION_PENDING = "pending"
 PUBLICATION_ACTIVE = "active"
 PUBLICATION_STATES = frozenset({PUBLICATION_PENDING, PUBLICATION_ACTIVE})
@@ -130,7 +130,7 @@ class CandidateStore:
                 [(*value, publication_state) for value in ranking_values],
             )
 
-    def insert_promotion(
+    def insert_lock(
         self,
         *,
         token: str,
@@ -156,19 +156,19 @@ class CandidateStore:
         }
         with self._connection:
             existing = self._connection.execute(
-                "SELECT * FROM candidate_promotions WHERE token = ?",
+                "SELECT * FROM candidate_locks WHERE token = ?",
                 (token,),
             ).fetchone()
             if existing is not None:
                 for field, value in row_payload.items():
                     if existing[field] != value:
                         raise CandidateStoreError(
-                            f"promotion token {token} already exists with different payload"
+                            f"lock token {token} already exists with different payload"
                         )
                 return
             self._connection.execute(
                 """
-                INSERT INTO candidate_promotions (
+                INSERT INTO candidate_locks (
                     token,
                     run_id,
                     component_family,
@@ -210,7 +210,7 @@ class CandidateStore:
                 (PUBLICATION_ACTIVE, run_id),
             )
             self._connection.execute(
-                "UPDATE candidate_promotions SET publication_state = ? WHERE run_id = ?",
+                "UPDATE candidate_locks SET publication_state = ? WHERE run_id = ?",
                 (PUBLICATION_ACTIVE, run_id),
             )
 
@@ -286,23 +286,23 @@ class CandidateStore:
         row = self._candidate_lookup(candidate_key, run_id=run_id)
         return _json_loads(row["provenance_json"])
 
-    def params_by_promotion_token(self, token: str) -> dict[str, Any]:
-        return self.promotion_by_token(token)["params"]
+    def params_by_lock_token(self, token: str) -> dict[str, Any]:
+        return self.lock_by_token(token)["params"]
 
-    def promotion_by_token(self, token: str) -> dict[str, Any]:
+    def lock_by_token(self, token: str) -> dict[str, Any]:
         row = self._connection.execute(
             """
-            SELECT p.*
-            FROM candidate_promotions p
-            JOIN candidates c ON c.run_id = p.run_id AND c.candidate_key = p.candidate_key
-            WHERE p.token = ?
-                AND p.publication_state = ?
+            SELECT l.*
+            FROM candidate_locks l
+            JOIN candidates c ON c.run_id = l.run_id AND c.candidate_key = l.candidate_key
+            WHERE l.token = ?
+                AND l.publication_state = ?
                 AND c.publication_state = ?
             """,
             (token, PUBLICATION_ACTIVE, PUBLICATION_ACTIVE),
         ).fetchone()
         if row is None:
-            raise CandidateStoreError(f"unknown promotion token: {token}")
+            raise CandidateStoreError(f"unknown lock token: {token}")
         return {
             "token": row["token"],
             "run_id": row["run_id"],
@@ -374,7 +374,7 @@ class CandidateStore:
             CREATE INDEX IF NOT EXISTS idx_candidate_rankings_metric
                 ON candidate_rankings(ranking_metric, ranking_direction, metric_sort_value);
 
-            CREATE TABLE IF NOT EXISTS candidate_promotions (
+            CREATE TABLE IF NOT EXISTS candidate_locks (
                 token TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
                 component_family TEXT NOT NULL,
@@ -386,8 +386,8 @@ class CandidateStore:
                 publication_state TEXT NOT NULL,
                 FOREIGN KEY (run_id, candidate_key) REFERENCES candidates(run_id, candidate_key)
             );
-            CREATE INDEX IF NOT EXISTS idx_candidate_promotions_candidate
-                ON candidate_promotions(run_id, candidate_key);
+            CREATE INDEX IF NOT EXISTS idx_candidate_locks_candidate
+                ON candidate_locks(run_id, candidate_key);
             """
         )
 

@@ -44,7 +44,7 @@ def test_preflight_reports_grid_shape_and_execution_policy() -> None:
     assert diagnostics["selection_result_rows"] == 24
     assert diagnostics["candidate_row_count"] == 4
     assert diagnostics["leaderboard_row_count"] == 4
-    assert diagnostics["promotion_row_count"] == 1
+    assert diagnostics["lock_row_count"] == 1
     assert diagnostics["execute"] == {"chunk_len": "auto", "mono_chunk_len": 50}
 
 

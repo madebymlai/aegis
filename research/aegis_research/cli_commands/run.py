@@ -28,7 +28,7 @@ from research.aegis_research.config import (
     with_run_config_selection,
 )
 from research.aegis_research.provenance.recorder import RerunMode
-from research.aegis_research.strategy_runs import run_strategy_sweep
+from research.aegis_research.run_pipeline import run_strategy_sweep
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -126,7 +126,6 @@ def _handle_strategy_run(
 def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[str, Any]:
     leaderboard = result.get("leaderboard", {})
     return {
-        "evidence_type": result.get("evidence_type"),
         "selection": selection,
         "run": {
             "id": result.get("run_id"),
@@ -143,7 +142,7 @@ def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[s
         "candidate_store": {
             "path": safe_path(result.get("candidate_store_path")),
         },
-        "promotions": result.get("promotions", []),
+        "locks": result.get("locks", []),
         "leaderboard": {
             "summary": leaderboard.get("summary"),
             "top_rows": leaderboard.get("rows", [])[:10],
@@ -154,7 +153,6 @@ def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[s
 def _human_run_lines(result: dict[str, Any]) -> tuple[str, ...]:
     return (
         f"Run: {safe_path(result.get('run_dir'))}",
-        f"Evidence: {result.get('evidence_type')}",
         f"Status: {result.get('status')}",
     )
 

@@ -89,14 +89,14 @@ def build_preflight(
     sampled_row_count = sampled_combinations
     candidate_row_count = sampled_combinations
     leaderboard_row_count = sampled_combinations
-    promotion_row_count = 1 if sampled_combinations else 0
+    lock_row_count = 1 if sampled_combinations else 0
     estimated_public_rows = (
         selection_result_rows
         + retained_grid_rows
         + sampled_row_count
         + candidate_row_count
         + leaderboard_row_count
-        + promotion_row_count
+        + lock_row_count
     )
     estimated_public_artifact_bytes = estimated_public_rows * PREFLIGHT_PUBLIC_BYTES_PER_ROW
     max_set_rows = max(
@@ -148,7 +148,7 @@ def build_preflight(
         "sampled_row_count": sampled_row_count,
         "candidate_row_count": candidate_row_count,
         "leaderboard_row_count": leaderboard_row_count,
-        "promotion_row_count": promotion_row_count,
+        "lock_row_count": lock_row_count,
         "estimated_public_rows": estimated_public_rows,
         "estimated_public_artifact_bytes": estimated_public_artifact_bytes,
         "max_set_rows": max_set_rows,
