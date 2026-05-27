@@ -39,8 +39,6 @@ def test_pipeline_publishing_returns_expected_keys(
         splits = [_FakeSplit(), _FakeSplit()]
         metadata = {"n_splits": 2}
 
-    persisted = []
-
     class _FakeRecorder:
         class manifest:
             run_id = "test-run-id"

@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import pandas as pd
+
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
 )
@@ -11,20 +13,27 @@ from research.aegis_research.config import (
     ConfigValidationError,
     ConfigValidationIssue,
     ResolvedRunConfig,
+    RunConfig,
     known_config_secret_values,
     redact_text,
 )
 from research.aegis_research.data import (
+    MarketDataBundle,
+    MarketDataResult,
     load_market_data_result,
     market_data_bundle,
 )
 from research.aegis_research.data_arrays import (
+    DataArrayContract,
     with_data_array_contract_metadata,
 )
 from research.aegis_research.optimization.pipeline_setup import run_pipeline_setup
 from research.aegis_research.optimization.pipeline_execution import run_pipeline_execution
 from research.aegis_research.optimization.pipeline_publishing import run_pipeline_publishing
-from research.aegis_research.optimization.pipeline_completion import run_pipeline_completion
+from research.aegis_research.optimization.pipeline_completion import (
+    build_run_refs,
+    run_pipeline_completion,
+)
 from research.aegis_research.optimization.candidate_publishing import (
     candidate_store_namespace,
 )
@@ -74,7 +83,7 @@ def run_strategy_sweep(
 
     try:
         if on_run_started is not None:
-            on_run_started(_run_refs(recorder))
+            on_run_started(build_run_refs(recorder))
         array_contract.assert_configured()
         data_result = load_market_data_result(
             config.data,
@@ -120,14 +129,14 @@ def _failure_diagnostic(error: Exception, *, known_secrets: tuple[str, ...]) -> 
 
 
 def _run_optimization_strategy_sweep(
-    config: Any,
+    config: RunConfig,
     *,
     component_registry: FrozenComponentRegistry,
-    recorder: Any,
-    data_result: Any,
-    data: Any,
-    open_prices: Any,
-    array_contract: Any,
+    recorder: RunRecorder,
+    data_result: MarketDataResult,
+    data: MarketDataBundle,
+    open_prices: pd.DataFrame,
+    array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     # Stage 1: Setup — resolve locks, build optimization source and evidence baseline
@@ -192,13 +201,3 @@ def _run_optimization_strategy_sweep(
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
 
-
-def _run_refs(recorder: RunRecorder) -> dict[str, Any]:
-    return {
-        "run_id": recorder.manifest.run_id,
-        "run_dir": str(recorder.run_dir),
-        "manifest_path": str(recorder.manifest_path),
-        "status": recorder.manifest.status,
-        "started_at": recorder.manifest.started_at,
-        "finished_at": recorder.manifest.finished_at,
-    }

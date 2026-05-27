@@ -83,7 +83,7 @@ def run_pipeline_completion(
     recorder.mark_run_completed()
     activate_candidate_run(store_path, recorder.manifest.run_id)
     return {
-        **_run_refs(recorder),
+        **build_run_refs(recorder),
         "strategy_artifact_id": "strategy.run",
         "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
         "candidate_store_path": str(store_path),
@@ -99,7 +99,7 @@ def run_pipeline_completion(
     }
 
 
-def _run_refs(recorder: RunRecorder) -> dict[str, Any]:
+def build_run_refs(recorder: RunRecorder) -> dict[str, Any]:
     return {
         "run_id": recorder.manifest.run_id,
         "run_dir": str(recorder.run_dir),

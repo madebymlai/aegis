@@ -10,7 +10,6 @@ from research.aegis_research.optimization.pipeline_setup import run_pipeline_set
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
 )
-from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
