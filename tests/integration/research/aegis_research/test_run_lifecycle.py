@@ -8,7 +8,7 @@ import pytest
 from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus, hash_file
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
-from research.aegis_research.strategy_runs import run_strategy_sweep
+from research.aegis_research.run_pipeline import run_strategy_sweep
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
 
 
@@ -136,7 +136,7 @@ def test_strategy_run_initializes_manifest_before_data_loading(
         assert manifest_path.exists()
         raise RuntimeError("data stage failed")
 
-    monkeypatch.setattr("research.aegis_research.strategy_runs.load_market_data_result", fail_after_manifest)
+    monkeypatch.setattr("research.aegis_research.run_pipeline.load_market_data_result", fail_after_manifest)
 
     with pytest.raises(RuntimeError, match="data stage failed"):
         run_strategy_sweep(
@@ -198,7 +198,7 @@ def test_failed_run_diagnostic_redacts_config_secret_values(
     def fail_with_secret(_config, **_kwargs):
         raise RuntimeError("provider returned super-secret-token")
 
-    monkeypatch.setattr("research.aegis_research.strategy_runs.load_market_data_result", fail_with_secret)
+    monkeypatch.setattr("research.aegis_research.run_pipeline.load_market_data_result", fail_with_secret)
 
     with pytest.raises(RuntimeError, match="provider returned"):
         run_strategy_sweep(

@@ -28,7 +28,7 @@ from research.aegis_research.config import (
     with_run_config_selection,
 )
 from research.aegis_research.provenance.recorder import RerunMode
-from research.aegis_research.strategy_runs import run_strategy_sweep
+from research.aegis_research.run_pipeline import run_strategy_sweep
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
