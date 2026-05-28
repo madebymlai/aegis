@@ -121,6 +121,10 @@ def execute_optimization(
     result = select_representative_candidates(
         selection_grid, metric=ranking.metric, min_weight=ranking.min_weight
     )
+    # Distinguish *misconfigured* (lookback > full history) from merely *degenerate*:
+    # the ranking layer only sees NaN scores, so the runner — which knows which keys
+    # were full-history-invalid — surfaces that subset count.
+    result = dataclasses.replace(result, excluded_invalid=len(invalid_candidate_keys))
 
     param_names = [name for name in selection_grid.index.names if name != SPLIT_LEVEL]
     return _attach_held_out(
@@ -383,6 +387,7 @@ def _attach_held_out(
         median=_with_held_out(result.median, held_out_grid, param_names),
         worst=_with_held_out(result.worst, held_out_grid, param_names),
         excluded_degenerate=result.excluded_degenerate,
+        excluded_invalid=result.excluded_invalid,
     )
 
 

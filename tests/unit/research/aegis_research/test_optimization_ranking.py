@@ -271,7 +271,13 @@ def test_evaluated_candidate_has_no_legacy_winner_or_direction_fields() -> None:
 def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
     field_names = [f.name for f in dataclasses.fields(OptimizationResult)]
 
-    assert field_names == ["best", "median", "worst", "excluded_degenerate"]
+    assert field_names == [
+        "best",
+        "median",
+        "worst",
+        "excluded_degenerate",
+        "excluded_invalid",
+    ]
 
 
 def test_signature_has_no_direction_parameter() -> None:

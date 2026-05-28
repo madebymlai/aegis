@@ -43,12 +43,21 @@ class OptimizationResult:
     because they had no finite ranking score (non-trading / all-NaN across
     splits). best/median/worst are always drawn from the *trading* population;
     this field tells consumers how much of the sampled grid was dead.
+
+    ``excluded_invalid`` is the subset of ``excluded_degenerate`` that was dropped
+    because an indicator output was entirely non-finite over the *full series*
+    (lookback exceeds the entire available history) — i.e. *misconfigured* rather
+    than merely *poor / non-trading*. It lets consumers tell those apart;
+    ``excluded_invalid <= excluded_degenerate`` always holds. The runner sets it
+    (the ranking layer only sees scores, not indicator history), so it defaults
+    to 0 here.
     """
 
     best: EvaluatedCandidate
     median: EvaluatedCandidate
     worst: EvaluatedCandidate
     excluded_degenerate: int = 0
+    excluded_invalid: int = 0
 
 
 def select_representative_candidates(
