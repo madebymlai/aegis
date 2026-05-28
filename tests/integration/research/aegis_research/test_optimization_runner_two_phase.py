@@ -148,3 +148,34 @@ def test_runner_single_candidate_fills_all_three_slots() -> None:
     # Held-out validation still runs for the deduplicated single candidate.
     split_labels = _expected_split_labels()
     assert set(result.best.held_out_metrics) == set(split_labels)
+
+
+def test_phase1_sweeps_in_parallel_with_pathos_and_phase3_runs_sequentially(monkeypatch) -> None:
+    """Phase 1 distributes mono-chunks across processes via pathos; Phase 3 (the
+    three held-out candidates) sweeps a single mono-chunk sequentially in-process."""
+    from research.aegis_research.optimization import runner
+
+    captured: list[dict] = []
+    real_parameterized = runner.vbt.parameterized
+
+    def spy(func, **kwargs):
+        captured.append(dict(kwargs))
+        # Drop the pathos engine so the assertion stays single-process and fast;
+        # the mono calling convention the runner relies on is left untouched.
+        stripped = {key: value for key, value in kwargs.items() if key != "execute_kwargs"}
+        return real_parameterized(func, **stripped)
+
+    monkeypatch.setattr(runner.vbt, "parameterized", spy)
+
+    _run([0.2, 0.5, 1.0])
+
+    assert len(captured) == 2, "expected one Phase 1 sweep then one Phase 3 sweep"
+    phase1, phase3 = captured
+
+    # Phase 1: full grid distributed across cores under pathos.
+    assert phase1["mono_n_chunks"] == "auto"
+    assert phase1["execute_kwargs"] == {"engine": "pathos"}
+
+    # Phase 3: one sequential mono-chunk, no parallel engine.
+    assert phase3["mono_n_chunks"] == 1
+    assert "execute_kwargs" not in phase3

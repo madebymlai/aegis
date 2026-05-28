@@ -30,8 +30,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
 )
 from research.aegis_research.metrics.accessors import (
-    METRIC_INDEX_NAME,
-    central_metrics_from_accessors,
+    central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.ranking import (
@@ -83,6 +82,7 @@ def execute_optimization(
         params=dict(source.params),
         set_=SELECTION_SET,
         random=_random_options(optimization),
+        parallel=True,
     )
     result = select_representative_candidates(
         selection_grid, metric=ranking.metric, min_weight=ranking.min_weight
@@ -115,8 +115,18 @@ def _build_candidate_metrics(
     pipeline = source.pipeline
 
     def candidate_metrics(close_slice: pd.DataFrame, **params: Any) -> Any:
-        combo_lists = {name: [value] for name, value in params.items()}
-        wide_allocations = pipeline(close_slice, 1, **combo_lists)
+        # Both phases run under mono-chunking, so every parameter arrives as a list
+        # of the chunk's per-combo values (a single-element list for a one-combo
+        # chunk). The wide pipeline simulates the whole chunk at once and the
+        # grouped accessor returns one metric row per combo, owning the parameter
+        # MultiIndex that vbt row-stacks across chunks and splits.
+        param_names = list(params)
+        combo_lists = {name: _combo_values(value) for name, value in params.items()}
+        n_combos = len(combo_lists[param_names[0]]) if param_names else 0
+        candidate_keys = [
+            tuple(combo_lists[name][i] for name in param_names) for i in range(n_combos)
+        ]
+        wide_allocations = pipeline(close_slice, n_combos, **combo_lists)
         if wide_allocations is vbt.NoResult:
             return vbt.NoResult
         n_symbols = len(close_slice.columns)
@@ -129,9 +139,22 @@ def _build_candidate_metrics(
             market_index=close_slice.index,
             compute_diagnostics=False,
         )
-        return central_metrics_from_accessors(result.portfolio, report)
+        return central_metrics_from_grouped_accessors(
+            result.portfolio, report, candidate_keys, param_names
+        )
 
     return candidate_metrics
+
+
+def _combo_values(value: Any) -> list[Any]:
+    """Normalize a mono-chunk parameter into its list of per-combo values.
+
+    Under mono-chunking vbt passes each parameter as the chunk's list of values;
+    a single-combo chunk (or a ``skip_single_comb`` shortcut) arrives as a scalar.
+    """
+    if pd.api.types.is_list_like(value):
+        return list(value)
+    return [value]
 
 
 def _sweep(
@@ -142,8 +165,22 @@ def _sweep(
     params: Mapping[str, Any],
     set_: str,
     random: Mapping[str, Any],
+    parallel: bool,
 ) -> pd.DataFrame:
-    parameterized = vbt.parameterized(candidate_metrics, merge_func="row_stack", **dict(random))
+    options = dict(random)
+    if parallel:
+        # Phase 1 distributes the full parameter grid across processes:
+        # ``mono_n_chunks="auto"`` builds one super-chunk per core that
+        # ``engine="pathos"`` runs in parallel (pathos uses dill, so the pipeline
+        # closure serializes cleanly), while within each chunk the wide pipeline
+        # vectorizes its candidates through numpy.
+        options["mono_n_chunks"] = "auto"
+        options["execute_kwargs"] = {"engine": "pathos"}
+    else:
+        # Phase 3 (3 candidates x S splits) is too small to amortize per-process
+        # serialization, so its single mono-chunk sweeps sequentially in-process.
+        options["mono_n_chunks"] = 1
+    parameterized = vbt.parameterized(candidate_metrics, merge_func="row_stack", **options)
     try:
         stacked = splitter.apply(
             parameterized,
@@ -163,12 +200,15 @@ def _sweep(
 
 
 def _tidy_grid(stacked: Any) -> pd.DataFrame:
-    if not isinstance(stacked, pd.Series) or not isinstance(stacked.index, pd.MultiIndex):
+    # Mono-chunking row-stacks the per-combo metric rows into a DataFrame indexed
+    # by ``[split, <params>]`` with one column per metric — already the tidy grid
+    # ``select_representative_candidates`` consumes.
+    if not isinstance(stacked, pd.DataFrame) or not isinstance(stacked.index, pd.MultiIndex):
         raise OptimizationRunnerError(
-            "optimization sweep must row-stack into a Series indexed by split, "
-            f"parameters, and metric; got {type(stacked).__name__}"
+            "optimization sweep must row-stack into a DataFrame indexed by split and "
+            f"parameters with one column per metric; got {type(stacked).__name__}"
         )
-    tidy = stacked.unstack(level=METRIC_INDEX_NAME)
+    tidy = stacked.copy()
     tidy.columns.name = None
     return tidy
 
@@ -199,6 +239,7 @@ def _attach_held_out(
         params=held_out_params,
         set_=HELD_OUT_SET,
         random={},
+        parallel=False,
     )
     return OptimizationResult(
         best=_with_held_out(result.best, held_out_grid, param_names),

@@ -8,9 +8,11 @@ import pytest
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration.schema import ReportConfig
-from research.aegis_research.metrics.accessors import central_metrics_from_accessors
+from research.aegis_research.metrics.accessors import (
+    METRIC_INDEX_NAME,
+    central_metrics_from_accessors,
+)
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.optimization.runner import METRIC_INDEX_NAME
 
 
 def _build_portfolio() -> Any:
