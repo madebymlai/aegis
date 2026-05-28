@@ -1,8 +1,8 @@
 """Candidate publishing.
 
-Persists candidates, leaderboard rows, and component locks
-into the local candidate store, then activates the run
-once the strategy artifact has been written.
+Persists the three representative candidates, their ranking, and component
+locks into the local candidate store, then activates the run once the strategy
+artifact has been written.
 """
 
 from __future__ import annotations
@@ -53,8 +53,7 @@ def build_candidate_store_provenance(
         "portfolio": to_builtin(asdict(config.portfolio)),
         "ranking": {
             "metric": config.ranking.metric,
-            "direction": config.ranking.direction,
-            "secondary_metrics": list(config.ranking.secondary_metrics),
+            "min_weight": config.ranking.min_weight,
         },
         "metric_registry_fingerprint": metric_registry_fingerprint,
     }
@@ -65,7 +64,7 @@ def publish_candidates(
     *,
     run_id: str,
     candidate_rows: Sequence[Mapping[str, Any]],
-    leaderboard: Mapping[str, Any],
+    ranking_metric: str,
     provenance: Mapping[str, Any],
     lock_records: Sequence[Mapping[str, Any]],
     publication_state: str = PUBLICATION_PENDING,
@@ -74,7 +73,7 @@ def publish_candidates(
         candidate_store.insert_completed_run(
             run_id=run_id,
             candidate_rows=candidate_rows,
-            leaderboard=leaderboard,
+            ranking_metric=ranking_metric,
             provenance=provenance,
             publication_state=publication_state,
         )

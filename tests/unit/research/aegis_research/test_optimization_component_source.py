@@ -162,7 +162,7 @@ def _config(
         indicators=indicators
         if indicators is not None
         else [RunIndicatorSourceConfig(id="demo.trend")],
-        ranking=RankingConfig(metric="total_return", direction="desc"),
+        ranking=RankingConfig(metric="total_return"),
     )
 
 

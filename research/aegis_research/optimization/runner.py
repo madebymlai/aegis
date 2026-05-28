@@ -1,35 +1,24 @@
-"""Optimization runner.
+"""Optimization runner: two-phase ``Splitter.apply`` + ``vbt.parameterized``.
 
-Wraps an :class:`OptimizationSource` pipeline in ``vbt.cv_split`` for native
-parameter optimization and emits the canonical evidence shape (selection
-winners, optional grid, post-execution sampled rows, parameterized kwargs).
+Phase 1 sweeps the full parameter grid on every split's *selection* set,
+producing a tidy grid (one row per candidate per split, one column per metric).
+Phase 2 ranks candidates globally and returns three representative candidates
+(best / median / worst). Phase 3 re-runs those three on every split's
+*held-out* set and attaches the held-out metrics.
 
-VBT execution-policy layering
------------------------------
-
-``optimization.execute`` in the run config flows into ``parameterized_kwargs``
-of ``vbt.cv_split`` -- the **inner** per-(split, set) parameter execution
-layer. It controls how the param grid is executed within a single
-(split, set), e.g. ``mono_chunk_meta``, ``n_chunks``, ``chunk_len``,
-``show_progress``, and ``jitted``. Aegis reserves keys that own search,
-evidence, ranking, and merge semantics (see
-``OPTIMIZATION_EXECUTE_RESERVED_KEYS`` in ``configuration/validation.py``).
-
-The **outer** split-execution layer (cv_split's ``execute_kwargs``) is **not**
-exposed by this runner. VBT requires that "train and test sets within each
-split must execute in the same thread/process due to the way grid results are
-stored and accessed using grid_results_map." Defaulting outer execution to
-sequential keeps that invariant safe; any future opt-in for parallel split
-execution must preserve set co-residency per split.
+A single ``Splitter`` instance is constructed from the run config and reused for
+both phases so selection and held-out share identical split boundaries. The
+splitter is built with explicit ``set_labels=["selection", "held_out"]`` so that
+``set_=`` resolves by role rather than VBT's generic positional labels.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import math
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
@@ -39,158 +28,223 @@ from research.aegis_research.configuration.schema import (
     PortfolioConfig,
     RankingConfig,
     ReportConfig,
-    SignalConfig,
 )
-from research.aegis_research.metrics.accessors import central_metrics_from_grouped_accessors
+from research.aegis_research.metrics.accessors import (
+    METRIC_INDEX_NAME,
+    central_metrics_from_accessors,
+)
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
+from research.aegis_research.optimization.ranking import (
+    SPLIT_LEVEL,
+    EvaluatedCandidate,
+    OptimizationResult,
+    select_representative_candidates,
+)
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
 from research.aegis_research.portfolios import simulate_portfolio_batch
 
-METRIC_INDEX_NAME = "metric_name"
-NON_PARAM_LEVEL_NAMES = OPTIMIZATION_PARAM_RESERVED_NAMES
-
-OPTIMIZATION_RUN_SCHEMA_VERSION = "optimization_run.v1"
-RANKING_DIRECTION_TO_SELECTION = {"desc": "max", "asc": "min"}
-
-SAMPLED_ROWS_SOURCE_RESULT_GRID = "result_grid"
-SAMPLED_ROWS_SOURCE_PRECOMPUTED = "combine_params_precomputed"
+SELECTION_SET = "selection"
+HELD_OUT_SET = "held_out"
+SET_LABELS = [SELECTION_SET, HELD_OUT_SET]
 
 
 class OptimizationRunnerError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
-class OptimizationRun:
-    selection: pd.DataFrame
-    selection_grid: pd.DataFrame | None
-    held_out_grid: pd.DataFrame | None
-    sampled_index: pd.Index
-    evaluated_index: pd.Index
-    sampled_rows_source: str
-    return_grid_mode: str
-    ranking_metric: str
-    ranking_direction: str
-    parameterized_kwargs: dict[str, Any]
-
-
 def execute_optimization(
     *,
     close: pd.DataFrame,
-    open_prices: pd.DataFrame | None,
     source: OptimizationSource,
     optimization: OptimizationConfig,
     portfolio: PortfolioConfig,
-    signal: SignalConfig,
     report: ReportConfig,
     ranking: RankingConfig,
-    mono_chunk_len: int,
-) -> OptimizationRun:
-    if ranking.direction not in RANKING_DIRECTION_TO_SELECTION:
-        raise OptimizationRunnerError(
-            f"optimization ranking direction must be one of "
-            f"{sorted(RANKING_DIRECTION_TO_SELECTION)}; got {ranking.direction!r}"
-        )
+) -> OptimizationResult:
     _validate_source_param_names(source.params)
-    cv_callable, takeable_args = _build_cv_callable(
-        source=source,
-        portfolio=portfolio,
-        signal=signal,
-        report=report,
-        ranking_metric=ranking.metric,
-        market_index=close.index,
-        has_open_prices=open_prices is not None,
+    if ranking.metric not in PORTFOLIO_METRIC_VALUE_KEYS:
+        raise OptimizationRunnerError(
+            f"optimization ranking metric {ranking.metric!r} is not in the central "
+            f"portfolio metric catalog: {sorted(PORTFOLIO_METRIC_VALUE_KEYS)}"
+        )
+
+    splitter = _build_splitter(close.index, optimization)
+    candidate_metrics = _build_candidate_metrics(
+        source=source, portfolio=portfolio, report=report
     )
-    parameterized_kwargs = _build_parameterized_kwargs(optimization, mono_chunk_len=mono_chunk_len)
-    return_grid_mode = optimization.evidence.return_grid
-    return_grid_kw: str | None = return_grid_mode if return_grid_mode != "off" else None
-    selection_fn = _build_selection_function(
-        ranking_metric=ranking.metric,
-        direction=ranking.direction,
+
+    selection_grid = _sweep(
+        splitter=splitter,
+        candidate_metrics=candidate_metrics,
+        close=close,
+        params=dict(source.params),
+        set_=SELECTION_SET,
+        random=_random_options(optimization),
     )
-    decorated = vbt.cv_split(
-        cv_callable,
-        splitter=optimization.split.method,
-        splitter_kwargs=dict(optimization.split.params),
-        takeable_args=takeable_args,
-        parameterized_kwargs=parameterized_kwargs,
-        merge_func="row_stack",
-        selection=vbt.RepFunc(selection_fn),
-        return_grid=return_grid_kw,
+    result = select_representative_candidates(
+        selection_grid, metric=ranking.metric, min_weight=ranking.min_weight
     )
-    call_args: tuple[Any, ...] = (close, open_prices) if open_prices is not None else (close,)
+
+    param_names = [name for name in selection_grid.index.names if name != SPLIT_LEVEL]
+    return _attach_held_out(
+        result,
+        splitter=splitter,
+        candidate_metrics=candidate_metrics,
+        close=close,
+        param_names=param_names,
+    )
+
+
+def _build_splitter(index: pd.Index, optimization: OptimizationConfig) -> vbt.Splitter:
+    method = optimization.split.method
+    factory = getattr(vbt.Splitter, method, None)
+    if not callable(factory):
+        raise OptimizationRunnerError(f"unknown VBT splitter method: {method!r}")
+    return factory(index, set_labels=SET_LABELS, **dict(optimization.split.params))
+
+
+def _build_candidate_metrics(
+    *,
+    source: OptimizationSource,
+    portfolio: PortfolioConfig,
+    report: ReportConfig,
+) -> Any:
+    pipeline = source.pipeline
+
+    def candidate_metrics(close_slice: pd.DataFrame, **params: Any) -> Any:
+        combo_lists = {name: [value] for name, value in params.items()}
+        wide_allocations = pipeline(close_slice, 1, **combo_lists)
+        if wide_allocations is vbt.NoResult:
+            return vbt.NoResult
+        n_symbols = len(close_slice.columns)
+        if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
+            return vbt.NoResult
+        result = simulate_portfolio_batch(
+            close_slice,
+            wide_allocations,
+            portfolio,
+            market_index=close_slice.index,
+            compute_diagnostics=False,
+        )
+        return central_metrics_from_accessors(result.portfolio, report)
+
+    return candidate_metrics
+
+
+def _sweep(
+    *,
+    splitter: vbt.Splitter,
+    candidate_metrics: Any,
+    close: pd.DataFrame,
+    params: Mapping[str, Any],
+    set_: str,
+    random: Mapping[str, Any],
+) -> pd.DataFrame:
+    parameterized = vbt.parameterized(candidate_metrics, merge_func="row_stack", **dict(random))
     try:
-        output = decorated(*call_args, **dict(source.params))
+        stacked = splitter.apply(
+            parameterized,
+            vbt.Takeable(close),
+            set_=set_,
+            merge_func="row_stack",
+            **dict(params),
+        )
     except NoResultsException as error:
         raise OptimizationRunnerError(
             "optimization pipeline produced no usable results across the requested "
             "parameter grid; every sampled combination returned vbt.NoResult or was "
-            "filtered out — return NaN metrics from invalid combinations instead so "
+            "filtered out — return finite metrics from invalid combinations instead so "
             "they remain visible in evidence"
         ) from error
-    if return_grid_kw is None:
-        selection_df = output
-        selection_grid: pd.DataFrame | None = None
-        held_out_grid: pd.DataFrame | None = None
-    else:
-        raw_grid, selection_df = output
-        canon_grid = _canonicalize_role_index(raw_grid)
-        selection_grid = canon_grid.xs("selection", level="set", drop_level=False)
-        if return_grid_mode == "all":
-            held_out_grid = canon_grid.xs("held_out", level="set", drop_level=False)
-        else:
-            held_out_grid = None
-    canonical_selection = _canonicalize_role_index(selection_df)
-    winner_param_index = _extract_param_index(canonical_selection.index)
-    if selection_grid is not None:
-        sampled_index = _extract_param_index(selection_grid.index)
-        _verify_evaluated_subset(
-            evaluated=winner_param_index,
-            sampled=sampled_index,
-            label="selection winners",
+    return _tidy_grid(stacked)
+
+
+def _tidy_grid(stacked: Any) -> pd.DataFrame:
+    if not isinstance(stacked, pd.Series) or not isinstance(stacked.index, pd.MultiIndex):
+        raise OptimizationRunnerError(
+            "optimization sweep must row-stack into a Series indexed by split, "
+            f"parameters, and metric; got {type(stacked).__name__}"
         )
-        evaluated_index = sampled_index
-        sampled_rows_source = SAMPLED_ROWS_SOURCE_RESULT_GRID
-    else:
-        sampled_index = _build_sampled_index(source.params, optimization)
-        _verify_evaluated_subset(
-            evaluated=winner_param_index,
-            sampled=sampled_index,
-            label="selection winners",
-        )
-        evaluated_index = sampled_index
-        sampled_rows_source = SAMPLED_ROWS_SOURCE_PRECOMPUTED
-    return OptimizationRun(
-        selection=canonical_selection,
-        selection_grid=selection_grid,
-        held_out_grid=held_out_grid,
-        sampled_index=sampled_index,
-        evaluated_index=evaluated_index,
-        sampled_rows_source=sampled_rows_source,
-        return_grid_mode=return_grid_mode,
-        ranking_metric=ranking.metric,
-        ranking_direction=ranking.direction,
-        parameterized_kwargs=parameterized_kwargs,
+    tidy = stacked.unstack(level=METRIC_INDEX_NAME)
+    tidy.columns.name = None
+    return tidy
+
+
+def _attach_held_out(
+    result: OptimizationResult,
+    *,
+    splitter: vbt.Splitter,
+    candidate_metrics: Any,
+    close: pd.DataFrame,
+    param_names: list[str],
+) -> OptimizationResult:
+    candidates = [result.best, result.median, result.worst]
+    unique_params: list[dict[str, Any]] = []
+    for candidate in candidates:
+        params = dict(candidate.params)
+        if params not in unique_params:
+            unique_params.append(params)
+
+    held_out_params = {
+        name: vbt.Param([params[name] for params in unique_params], level=0)
+        for name in param_names
+    }
+    held_out_grid = _sweep(
+        splitter=splitter,
+        candidate_metrics=candidate_metrics,
+        close=close,
+        params=held_out_params,
+        set_=HELD_OUT_SET,
+        random={},
+    )
+    return OptimizationResult(
+        best=_with_held_out(result.best, held_out_grid, param_names),
+        median=_with_held_out(result.median, held_out_grid, param_names),
+        worst=_with_held_out(result.worst, held_out_grid, param_names),
     )
 
 
-def _extract_param_index(index: pd.Index) -> pd.Index:
-    if not isinstance(index, pd.MultiIndex):
+def _with_held_out(
+    candidate: EvaluatedCandidate,
+    held_out_grid: pd.DataFrame,
+    param_names: list[str],
+) -> EvaluatedCandidate:
+    held_out = _candidate_split_metrics(held_out_grid, candidate.params, param_names)
+    return dataclasses.replace(candidate, held_out_metrics=held_out)
+
+
+def _candidate_split_metrics(
+    grid: pd.DataFrame,
+    params: Mapping[str, Any],
+    param_names: list[str],
+) -> dict[Any, dict[str, float | None]]:
+    selector = pd.Series(True, index=grid.index)
+    for name in param_names:
+        selector &= grid.index.get_level_values(name) == params[name]
+    rows = grid[selector.to_numpy()]
+    metrics: dict[Any, dict[str, float | None]] = {}
+    split_labels = rows.index.get_level_values(SPLIT_LEVEL)
+    for split_label, (_, row) in zip(split_labels, rows.iterrows(), strict=True):
+        metrics[split_label] = {col: _optional_float(row[col]) for col in grid.columns}
+    return metrics
+
+
+def _random_options(optimization: OptimizationConfig) -> dict[str, Any]:
+    if optimization.search != "random":
+        return {}
+    if optimization.random_subset is None:
         raise OptimizationRunnerError(
-            "cannot extract VBT param coordinates from a non-MultiIndex result"
+            "optimization.random_subset is required when optimization.search is 'random'"
         )
-    param_levels = [name for name in index.names if name not in NON_PARAM_LEVEL_NAMES]
-    if not param_levels:
+    if optimization.seed is None:
         raise OptimizationRunnerError(
-            f"VBT result index carries no param levels; got {list(index.names)}"
+            "optimization.seed is required when optimization.search is 'random' so the "
+            "sampled selection grid is deterministic"
         )
-    projection = index.droplevel([name for name in index.names if name not in param_levels])
-    if isinstance(projection, pd.MultiIndex):
-        return projection.unique()
-    return pd.Index(projection.unique(), name=param_levels[0])
+    return {"random_subset": optimization.random_subset, "seed": optimization.seed}
 
 
 def _validate_source_param_names(params: Mapping[str, vbt.Param]) -> None:
@@ -202,245 +256,8 @@ def _validate_source_param_names(params: Mapping[str, vbt.Param]) -> None:
         )
 
 
-def _verify_evaluated_subset(
-    *,
-    evaluated: pd.Index,
-    sampled: pd.Index,
-    label: str,
-) -> None:
-    evaluated_set = set(
-        evaluated.to_list() if isinstance(evaluated, pd.MultiIndex) else evaluated.tolist()
-    )
-    sampled_set = set(sampled.to_list() if isinstance(sampled, pd.MultiIndex) else sampled.tolist())
-    missing = evaluated_set - sampled_set
-    if missing:
-        examples = sorted(repr(item) for item in list(missing)[:5])
-        raise OptimizationRunnerError(
-            f"optimization candidate evidence drift: {label} contains parameter rows "
-            f"not present in the pre-computed sampled set; execution evaluated "
-            f"combinations that combine_params did not enumerate. Examples: {examples}. "
-            "This indicates a divergence between the pre-execution sampling path "
-            "(used for preflight + evidence) and the actual execution sampling. "
-            "Fix the runner's sampled_index derivation."
-        )
-
-
-def _build_sampled_index(
-    params: Mapping[str, vbt.Param],
-    optimization: OptimizationConfig,
-) -> pd.Index:
-    combine_kwargs: dict[str, Any] = {"build_index": True}
-    if optimization.search == "random":
-        combine_kwargs["random_subset"] = optimization.random_subset
-        combine_kwargs["seed"] = optimization.seed
-        combine_kwargs["random_sort"] = True
-    _, index = vbt.combine_params(dict(params), **combine_kwargs)
-    return index
-
-
-def _build_cv_callable(
-    *,
-    source: OptimizationSource,
-    portfolio: PortfolioConfig,
-    signal: SignalConfig,
-    report: ReportConfig,
-    ranking_metric: str,
-    market_index: pd.Index,
-    has_open_prices: bool,
-) -> tuple[Any, list[str]]:
-    pipeline = source.pipeline
-    if ranking_metric not in PORTFOLIO_METRIC_VALUE_KEYS:
-        raise OptimizationRunnerError(
-            f"optimization ranking metric {ranking_metric!r} is not in the central "
-            f"portfolio metric catalog: {sorted(PORTFOLIO_METRIC_VALUE_KEYS)}"
-        )
-
-    declared_shape = source.output_name
-    target_exposure_cap = portfolio.target_exposure_cap
-    param_names = sorted(source.params)
-
-    def _evaluate_batch(close_slice: pd.DataFrame, **params: Any) -> Any:
-        combo_lists = {name: (vals if isinstance(vals, list) else [vals]) for name, vals in params.items()}
-        n_combos = len(next(iter(combo_lists.values())))
-        all_keys = [
-            tuple(combo_lists[name][i] for name in param_names)
-            for i in range(n_combos)
-        ]
-        wide_allocations = pipeline(close_slice, n_combos, **combo_lists)
-        if wide_allocations is vbt.NoResult:
-            return vbt.NoResult
-        n_symbols = len(close_slice.columns)
-        n_valid = len(wide_allocations.columns) // n_symbols
-        if n_valid == n_combos:
-            result = simulate_portfolio_batch(
-                close_slice, wide_allocations, portfolio,
-                market_index=market_index, compute_diagnostics=False,
-            )
-            return central_metrics_from_grouped_accessors(
-                result.portfolio, report, all_keys, param_names,
-            )
-        valid_keys = _extract_valid_keys(wide_allocations.columns, param_names)
-        result = simulate_portfolio_batch(
-            close_slice, wide_allocations, portfolio,
-            market_index=market_index, compute_diagnostics=False,
-        )
-        valid_metrics = central_metrics_from_grouped_accessors(
-            result.portfolio, report, valid_keys, param_names,
-        )
-        full_index = pd.MultiIndex.from_tuples(all_keys, names=param_names)
-        full_df = pd.DataFrame(np.nan, index=full_index, columns=valid_metrics.columns)
-        valid_index = pd.MultiIndex.from_tuples(valid_keys, names=param_names)
-        full_df.loc[valid_index] = valid_metrics.values
-        return full_df
-
-    if has_open_prices:
-
-        def cv_callable(close_slice, open_slice, **params):
-            return _evaluate_batch(close_slice, **params)
-
-        return cv_callable, ["close_slice", "open_slice"]
-
-    def cv_callable_no_open(close_slice, **params):
-        return _evaluate_batch(close_slice, **params)
-
-    return cv_callable_no_open, ["close_slice"]
-
-
-def _extract_valid_keys(
-    columns: pd.MultiIndex, param_names: list[str]
-) -> list[tuple]:
-    seen: list[tuple] = []
-    for col_tuple in columns:
-        key = col_tuple[:-1]
-        if not seen or seen[-1] != key:
-            seen.append(key)
-    return seen
-
-
-def _build_selection_function(*, ranking_metric: str, direction: str):
-    def selection(grid_results: pd.DataFrame) -> Any:
-        per_param = grid_results[ranking_metric].astype(float)
-        finite = per_param[np.isfinite(per_param.to_numpy())]
-        if finite.empty:
-            raise OptimizationRunnerError(
-                f"optimization selection cannot rank by {ranking_metric!r}: every "
-                "sampled parameter row returned a non-finite value (NaN/inf). Inspect "
-                "pipeline diagnostics for the failing combinations"
-            )
-        label = finite.idxmax() if direction == "desc" else finite.idxmin()
-        return vbt.LabelSel([label])
-
-    return selection
-
-
-def _build_parameterized_kwargs(
-    optimization: OptimizationConfig,
-    *,
-    mono_chunk_len: int,
-) -> dict[str, Any]:
-    parameterized_kwargs: dict[str, Any] = {"merge_func": "row_stack", "mono_chunk_len": mono_chunk_len}
-    if optimization.search == "random":
-        if optimization.random_subset is None:
-            raise OptimizationRunnerError(
-                "optimization.random_subset is required when optimization.search is 'random'"
-            )
-        if optimization.seed is None:
-            raise OptimizationRunnerError(
-                "optimization.seed is required when optimization.search is 'random' so "
-                "precomputed sampled evidence matches VBT execution"
-            )
-        parameterized_kwargs["random_subset"] = optimization.random_subset
-    if optimization.seed is not None:
-        parameterized_kwargs["seed"] = optimization.seed
-    parameterized_kwargs.update(dict(optimization.execute))
-    return parameterized_kwargs
-
-
-def _canonicalize_role_index(frame: pd.DataFrame) -> pd.DataFrame:
-    if not isinstance(frame.index, pd.MultiIndex):
-        return frame
-    if "set" not in frame.index.names:
-        return frame
-    set_position = frame.index.names.index("set")
-    level_arrays = [frame.index.get_level_values(i) for i in range(frame.index.nlevels)]
-    level_arrays[set_position] = pd.Index(
-        [_role_for_set_label(value) for value in level_arrays[set_position]],
-        name="set",
-    )
-    canonical = frame.copy()
-    canonical.index = pd.MultiIndex.from_arrays(level_arrays, names=frame.index.names)
-    return canonical
-
-
-def _role_for_set_label(label: Any) -> str:
-    text = str(label)
-    if text in {"set_0", "train", "selection"}:
-        return "selection"
-    if text in {"set_1", "test", "held_out"}:
-        return "held_out"
-    raise OptimizationRunnerError(
-        f"optimization received unexpected VBT set label {label!r}; "
-        "expected positional pair (set_0/set_1, train/test, or selection/held_out)"
-    )
-
-
-def serialize_optimization_run(run: OptimizationRun) -> dict[str, Any]:
-    sampled_rows_payload = _serialize_param_index(run.evaluated_index)
-    sampled_rows_payload["source"] = run.sampled_rows_source
-    return {
-        "schema_version": OPTIMIZATION_RUN_SCHEMA_VERSION,
-        "ranking_metric": run.ranking_metric,
-        "ranking_direction": run.ranking_direction,
-        "return_grid_mode": run.return_grid_mode,
-        "parameterized_kwargs": _scalar_mapping(run.parameterized_kwargs),
-        "selection": _serialize_param_dataframe(run.selection),
-        "selection_grid": (
-            _serialize_param_dataframe(run.selection_grid) if run.selection_grid is not None else None
-        ),
-        "held_out_grid": (
-            _serialize_param_dataframe(run.held_out_grid) if run.held_out_grid is not None else None
-        ),
-        "sampled_rows": sampled_rows_payload,
-    }
-
-
-def _serialize_param_index(index: pd.Index) -> dict[str, Any]:
-    names = list(index.names)
-    tuples = list(index) if isinstance(index, pd.MultiIndex) else [(value,) for value in index]
-    rows = [
-        {name: _scalar(component) for name, component in zip(names, key, strict=True)}
-        for key in tuples
-    ]
-    return {"index_names": names, "rows": rows}
-
-
-def _serialize_param_dataframe(frame: pd.DataFrame) -> dict[str, Any]:
-    rows: list[dict[str, Any]] = []
-    names = list(frame.index.names)
-    if isinstance(frame.index, pd.MultiIndex):
-        tuples = list(frame.index)
-    else:
-        tuples = [(value,) for value in frame.index]
-    for key, (_, row) in zip(tuples, frame.iterrows(), strict=True):
-        rows.append(
-            {
-                "coordinates": {
-                    name: _scalar(component) for name, component in zip(names, key, strict=True)
-                },
-                "metrics": {col: _scalar(row[col]) for col in frame.columns},
-            }
-        )
-    return {"index_names": names, "columns": list(frame.columns), "rows": rows}
-
-
-def _scalar_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: _scalar(item) for key, item in value.items()}
-
-
-def _scalar(value: Any) -> Any:
-    if hasattr(value, "item"):
-        try:
-            return value.item()
-        except (TypeError, ValueError):
-            return value
-    return value
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    number = float(value)
+    return None if math.isnan(number) else number

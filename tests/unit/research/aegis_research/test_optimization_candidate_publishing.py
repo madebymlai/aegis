@@ -39,7 +39,7 @@ def test_publish_candidates_raises_on_empty_candidate_rows(tmp_path: Path) -> No
             store_path,
             run_id="run-a",
             candidate_rows=[],
-            leaderboard={"rows": []},
+            ranking_metric="total_return",
             provenance={"run_id": "run-a"},
             lock_records=[],
         )

@@ -13,30 +13,28 @@ def test_optimization_artifact_schema_version_is_stable() -> None:
     assert OPTIMIZATION_ARTIFACT_SCHEMA_VERSION == "optimization_artifact.v1"
 
 
-def test_strategy_artifact_shape_counts_rows_and_splits() -> None:
-    """Shape reflects leaderboard rows, candidate count, and split count."""
+def test_strategy_artifact_shape_counts_candidates_and_splits() -> None:
+    """Shape reflects candidate count and split count."""
     payload: dict[str, Any] = {
-        "leaderboard": {"rows": [{"rank": 1}, {"rank": 2}, {"rank": 3}]},
-        "candidates": [{"a": 1}, {"a": 2}],
+        "candidates": [{"role": "best"}, {"role": "median"}, {"role": "worst"}],
         "split": {"n_splits": 4},
     }
 
     shape = strategy_artifact_shape(payload)
 
-    assert shape["leaderboard_rows"] == 3
-    assert shape["candidate_count"] == 2
+    assert shape["candidate_count"] == 3
     assert shape["split_count"] == 4
+    assert "leaderboard_rows" not in shape
 
 
 def test_strategy_artifact_shape_missing_split() -> None:
     """Shape omits split_count when split key is absent."""
     payload: dict[str, Any] = {
-        "leaderboard": {"rows": []},
+        "candidates": [],
     }
 
     shape = strategy_artifact_shape(payload)
 
-    assert shape["leaderboard_rows"] == 0
     assert shape["candidate_count"] == 0
     assert "split_count" not in shape
 

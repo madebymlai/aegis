@@ -9,8 +9,6 @@ from research.aegis_research.metrics import (
     MetricRegistryError,
     make_default_metric_registry,
 )
-from research.aegis_research.metrics.custom import register_custom_metrics
-from research.aegis_research.metrics.custom.baseline_delta import baseline_delta_value
 from research.aegis_research.metrics.stats import register_vbt_stats_metrics
 
 
@@ -77,11 +75,8 @@ def test_default_metric_registry_contains_supported_stats_and_custom_metrics() -
         "win_rate",
         "total_fees_paid",
         "sharpe_ratio",
-        "baseline_delta",
     }.issubset(registry.ids())
     assert registry.get("total_return").target == "portfolio"
-    assert registry.get("baseline_delta").primary_eligible is False
-    assert registry.get("baseline_delta").secondary_eligible is True
 
 
 def test_vbt_stats_registration_uses_current_metric_titles() -> None:
@@ -101,7 +96,6 @@ def test_vbt_stats_registration_uses_current_metric_titles() -> None:
 
     frozen = registry.freeze()
     assert frozen.get("total_return").title == "Return From Test"
-    assert frozen.get("max_dd").direction_hint == "asc"
 
 
 def test_vbt_stats_registration_fails_when_supported_metric_is_missing() -> None:
@@ -116,21 +110,6 @@ def test_vbt_stats_registration_fails_when_supported_metric_is_missing() -> None
         )
 
 
-def test_custom_metric_collision_with_vbt_metric_fails() -> None:
-    registry = MetricRegistry()
-    registry.register(_definition("baseline_delta", title="Colliding Baseline Delta"))
-
-    with pytest.raises(MetricRegistryError, match="duplicate metric id"):
-        register_custom_metrics(registry)
-
-
-def test_baseline_delta_metric_calculation_uses_selected_primary_metric() -> None:
-    record = {"baseline_metrics": {"total_return": 0.4}}
-
-    assert baseline_delta_value(record, "total_return", 0.7) == pytest.approx(0.3)
-    assert baseline_delta_value(record, "sharpe_ratio", 0.7) is None
-
-
 def _definition(metric_id: str, *, title: str = "Total Return") -> MetricDefinition:
     return MetricDefinition(
         id=metric_id,
@@ -138,9 +117,6 @@ def _definition(metric_id: str, *, title: str = "Total Return") -> MetricDefinit
         source_type=SOURCE_TYPE_VBT_STATS,
         unit="ratio",
         value_semantics="larger_is_better",
-        primary_eligible=True,
-        secondary_eligible=True,
-        direction_hint="desc",
         provider="vectorbtpro",
         target="portfolio",
         vbt_metric=metric_id,

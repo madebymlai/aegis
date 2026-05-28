@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from research.aegis_research.metrics.contracts import (
-    DIRECTION_ASC,
-    DIRECTION_DESC,
     SOURCE_TYPE_ADAPTER,
     SOURCE_TYPE_CUSTOM,
     SOURCE_TYPE_VBT_STATS,
@@ -27,8 +25,6 @@ def make_default_metric_registry() -> FrozenMetricRegistry:
     return registry.freeze()
 
 __all__ = [
-    "DIRECTION_ASC",
-    "DIRECTION_DESC",
     "SOURCE_TYPE_ADAPTER",
     "SOURCE_TYPE_CUSTOM",
     "SOURCE_TYPE_VBT_STATS",

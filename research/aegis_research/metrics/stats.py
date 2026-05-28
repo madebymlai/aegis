@@ -4,8 +4,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from research.aegis_research.metrics.contracts import (
-    DIRECTION_ASC,
-    DIRECTION_DESC,
     SOURCE_TYPE_VBT_STATS,
     MetricDefinition,
     MetricRegistryError,
@@ -19,7 +17,6 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
     "total_return": {
         "unit": "percent",
         "value_semantics": "percentage_return",
-        "direction_hint": DIRECTION_DESC,
         "source_method": "stats",
         "required_report_output": True,
         "required_gate_input": False,
@@ -27,7 +24,6 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
     "max_dd": {
         "unit": "percent_loss_magnitude",
         "value_semantics": "drawdown_loss_magnitude_percent",
-        "direction_hint": DIRECTION_ASC,
         "source_method": "stats",
         "required_report_output": True,
         "required_gate_input": True,
@@ -35,7 +31,6 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
     "total_trades": {
         "unit": "count",
         "value_semantics": "trade_count",
-        "direction_hint": DIRECTION_DESC,
         "source_method": "stats",
         "required_report_output": True,
         "required_gate_input": True,
@@ -43,7 +38,6 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
     "win_rate": {
         "unit": "percent",
         "value_semantics": "winning_trade_rate_percent",
-        "direction_hint": DIRECTION_DESC,
         "source_method": "stats",
         "required_report_output": True,
         "required_gate_input": False,
@@ -51,7 +45,6 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
     "total_fees_paid": {
         "unit": "cash",
         "value_semantics": "fee_cost_cash",
-        "direction_hint": DIRECTION_ASC,
         "source_method": "stats",
         "required_report_output": True,
         "required_gate_input": False,
@@ -59,7 +52,6 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
     "sharpe_ratio": {
         "unit": "ratio",
         "value_semantics": "risk_adjusted_return_ratio",
-        "direction_hint": DIRECTION_DESC,
         "source_method": "get_sharpe_ratio",
         "required_report_output": True,
         "required_gate_input": True,
@@ -121,9 +113,6 @@ def _portfolio_metric_definition(
         source_type=SOURCE_TYPE_VBT_STATS,
         unit=str(overlay["unit"]),
         value_semantics=str(overlay["value_semantics"]),
-        primary_eligible=True,
-        secondary_eligible=True,
-        direction_hint=str(overlay["direction_hint"]),
         required_inputs=tuple(overlay.get("required_inputs", ())),
         provider=VBT_STATS_PROVIDER,
         target=VBT_PORTFOLIO_TARGET,

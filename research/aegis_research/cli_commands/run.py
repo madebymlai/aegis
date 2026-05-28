@@ -124,7 +124,6 @@ def _handle_strategy_run(
 
 
 def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[str, Any]:
-    leaderboard = result.get("leaderboard", {})
     return {
         "selection": selection,
         "run": {
@@ -143,10 +142,8 @@ def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[s
             "path": safe_path(result.get("candidate_store_path")),
         },
         "locks": result.get("locks", []),
-        "leaderboard": {
-            "summary": leaderboard.get("summary"),
-            "top_rows": leaderboard.get("rows", [])[:10],
-        },
+        "optimization": result.get("optimization", {}),
+        "candidates": result.get("candidates", []),
     }
 
 

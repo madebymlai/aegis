@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-import pandas as pd
-
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
 )
@@ -93,14 +91,12 @@ def run_strategy_sweep(
         ExperimentArtifactWriter(recorder).write_data_metadata_artifact(data_result)
         data_result.assert_usable()
         data_bundle = market_data_bundle(data_result)
-        open_prices = data_bundle.feature("Open")
         return _run_optimization_strategy_sweep(
             config,
             component_registry=component_registry,
             recorder=recorder,
             data_result=data_result,
             data=data_bundle,
-            open_prices=open_prices,
             array_contract=array_contract,
             metric_registry_fingerprint=(
                 resolved_config.metric_registry.fingerprint
@@ -135,7 +131,6 @@ def _run_optimization_strategy_sweep(
     recorder: RunRecorder,
     data_result: MarketDataResult,
     data: MarketDataBundle,
-    open_prices: pd.DataFrame,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
@@ -149,27 +144,24 @@ def _run_optimization_strategy_sweep(
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
 
-    # Stage 2: Execution — preflight gate, optimization run, serialization
+    # Stage 2: Execution — preflight gate, two-phase optimization sweep
     execution = run_pipeline_execution(
         config=config,
         optimization_source=setup["optimization_source"],
         close=setup["close"],
-        open_prices=open_prices,
         split_result=setup["split_result"],
         optimization_evidence=setup["optimization_evidence"],
         recorder=recorder,
     )
 
-    # Stage 3: Publishing — candidates, leaderboard, publish to candidate store
+    # Stage 3: Publishing — three representative candidates, locks, candidate store
     publishing = run_pipeline_publishing(
         config=config,
         recorder=recorder,
         data_result=data_result,
         array_contract=array_contract,
         optimization_source=setup["optimization_source"],
-        optimization_run=execution["optimization_run"],
-        run_payload=execution["run_payload"],
-        split_result=setup["split_result"],
+        optimization_result=execution["optimization_result"],
         portfolio_builtin=setup["portfolio_builtin"],
         optimization_evidence=execution["optimization_evidence"],
         store_path=setup["store_path"],
@@ -189,15 +181,12 @@ def _run_optimization_strategy_sweep(
         portfolio_builtin=setup["portfolio_builtin"],
         split_result=setup["split_result"],
         optimization_evidence=publishing["optimization_evidence"],
-        run_payload=execution["run_payload"],
         candidate_rows=publishing["candidate_rows"],
-        leaderboard=publishing["leaderboard"],
         resolved_locks=setup["resolved_locks"],
         lock_records=publishing["lock_records"],
         candidate_store_provenance=publishing["candidate_store_provenance"],
         store_path=setup["store_path"],
         store_namespace=store_namespace,
-        optimization_run=execution["optimization_run"],
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
 

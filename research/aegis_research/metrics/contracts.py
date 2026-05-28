@@ -9,10 +9,6 @@ SOURCE_TYPE_CUSTOM = "custom"
 SOURCE_TYPE_ADAPTER = "adapter"
 METRIC_SOURCE_TYPES = (SOURCE_TYPE_VBT_STATS, SOURCE_TYPE_CUSTOM, SOURCE_TYPE_ADAPTER)
 
-DIRECTION_ASC = "asc"
-DIRECTION_DESC = "desc"
-METRIC_DIRECTIONS = (DIRECTION_ASC, DIRECTION_DESC)
-
 
 class MetricRegistryError(ValueError):
     pass
@@ -25,9 +21,6 @@ class MetricDefinition:
     source_type: str
     unit: str
     value_semantics: str
-    primary_eligible: bool
-    secondary_eligible: bool
-    direction_hint: str | None = None
     required_inputs: Sequence[str] = ()
     provider: str = "aegis"
     target: str | None = None
@@ -48,9 +41,6 @@ class MetricDefinition:
             "source_type": self.source_type,
             "unit": self.unit,
             "value_semantics": self.value_semantics,
-            "primary_eligible": self.primary_eligible,
-            "secondary_eligible": self.secondary_eligible,
-            "direction_hint": self.direction_hint,
             "required_inputs": list(self.required_inputs),
             "provider": self.provider,
             "target": self.target,

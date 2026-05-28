@@ -56,7 +56,6 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
             config=config,
             optimization_source=_FakeSource(),
             close=pd.DataFrame({0: [1.0, 2.0]}),
-            open_prices=pd.DataFrame({0: [1.0, 2.0]}),
             split_result=_FakeSplitResult(),
             optimization_evidence={"schema_version": "optimization_route.v1"},
             recorder=_FakeRecorder(),

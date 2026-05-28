@@ -6,7 +6,6 @@ from research.aegis_research.configuration.schema import (
     DataConfig,
     DataQualityConfig,
     OptimizationConfig,
-    OptimizationEvidenceConfig,
     PortfolioConfig,
     RankingConfig,
     ReportConfig,
@@ -60,8 +59,7 @@ def _build_run_indicator_sources(raw: list[dict[str, Any]]) -> list[RunIndicator
 def _build_ranking(raw: dict[str, Any]) -> RankingConfig:
     return RankingConfig(
         metric=raw["metric"],
-        direction=raw["direction"],
-        secondary_metrics=list(raw.get("secondary_metrics", [])),
+        min_weight=raw.get("min_weight", RankingConfig.min_weight),
     )
 
 
@@ -90,12 +88,7 @@ def _build_optimization(raw: dict[str, Any] | None) -> OptimizationConfig | None
         random_subset=raw.get("random_subset"),
         seed=raw.get("seed"),
         execute=dict(raw.get("execute", {})),
-        evidence=_build_optimization_evidence(raw.get("evidence", {})),
     )
-
-
-def _build_optimization_evidence(raw: dict[str, Any]) -> OptimizationEvidenceConfig:
-    return OptimizationEvidenceConfig(return_grid=raw.get("return_grid", "first"))
 
 
 def _build_data_config(raw: dict[str, Any]) -> DataConfig:
