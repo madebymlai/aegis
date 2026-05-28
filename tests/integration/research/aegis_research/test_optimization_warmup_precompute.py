@@ -1,11 +1,11 @@
-"""Warmup-preserving optimization (aegis-rd-94v.1, selection-phase walking skeleton).
+"""Warmup-preserving optimization (aegis-rd-94v.1/.2 precomputed-store reuse).
 
 Encodes the cw2 bug at the precompute/simulate seam: an indicator whose lookback
 window meets-or-exceeds the per-split selection slice is all-NaN when computed on
 the bare slice (no prior history), so the strategy holds cash every bar and the
 candidate takes zero trades. The fix computes indicators once over the full series
-and slices those warmup-complete outputs per window, so the candidate trades on
-every selection split for which the full series supplies >= lookback history.
+and slices those warmup-complete outputs per selection and held-out window, so the
+candidate trades on every split for which the full series supplies >= lookback history.
 
 In-tree synthetic fixtures only (no live data, no network).
 """
@@ -126,12 +126,20 @@ def _representative(result, params: dict):
     raise AssertionError(f"no representative with params {params}")
 
 
-def _selection_starts() -> dict[int, int]:
+def _window_starts(set_: str) -> dict[int, int]:
     splitter = vbt.Splitter.from_rolling(
         _uptrend_close().index, length=8, split=0.5, set_labels=["selection", "held_out"]
     )
-    starts = splitter.apply(lambda range_: range_.start, vbt.Rep("range_"), set_="selection")
+    starts = splitter.apply(lambda range_: range_.start, vbt.Rep("range_"), set_=set_)
     return {label: int(start) for label, start in starts.items()}
+
+
+def _selection_starts() -> dict[int, int]:
+    return _window_starts("selection")
+
+
+def _held_out_starts() -> dict[int, int]:
+    return _window_starts("held_out")
 
 
 def test_bare_slice_indicator_is_all_nan_when_lookback_meets_slice_length() -> None:
@@ -169,6 +177,21 @@ def test_runner_full_series_precompute_lets_warmup_candidate_trade() -> None:
         else:
             # Window sits inside the series-initial warmup: correctly holds cash.
             assert total_return == 0.0 or total_return is None
+
+
+def test_runner_reuses_full_series_precompute_for_held_out_warmup() -> None:
+    """Held-out uses the same store instead of recomputing indicators on bare slices."""
+    result = _run([WARMUP_WINDOW])
+    candidate = result.best
+
+    starts = _held_out_starts()
+    assert starts and min(starts.values()) >= WARMUP_WINDOW
+
+    for split_label, start in starts.items():
+        total_return = candidate.held_out_metrics[split_label]["total_return"]
+        assert total_return is not None and total_return > 0.0, (
+            f"held-out split {split_label} (start {start}) should use precomputed warmup"
+        )
 
 
 def test_seeded_up_front_sampling_is_deterministic() -> None:

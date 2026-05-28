@@ -8,8 +8,9 @@ running only stage 2 (``simulate``), slicing the precomputed store to each windo
 via the splitter's ``range_`` template — producing a tidy grid (one row per
 candidate per split, one column per metric). Phase 2 ranks candidates globally and
 returns three representative candidates (best / median / worst). Phase 3 re-runs
-those three on every split's *held-out* set and attaches the held-out metrics; it
-still recomputes indicators per held-out slice (reuse of the store is a follow-up).
+those three on every split's *held-out* set and attaches the held-out metrics,
+again slicing the full-series indicator store instead of recomputing indicators on
+bare held-out slices.
 
 A single ``Splitter`` instance is constructed from the run config and reused for
 both phases so selection and held-out share identical split boundaries. The
@@ -113,6 +114,7 @@ def execute_optimization(
         portfolio=portfolio,
         report=report,
         close=close,
+        store=store,
         param_names=param_names,
     )
 
@@ -158,18 +160,20 @@ def _build_held_out_metrics(
     source: OptimizationSource,
     portfolio: PortfolioConfig,
     report: ReportConfig,
+    close: pd.DataFrame,
+    store: Any,
 ) -> Any:
-    """Held-out callback: still computes indicators per slice (no warmup buffer).
+    """Held-out callback: slice the full-series store, then simulate."""
 
-    Reusing the full-series store for the held-out window is a follow-up slice;
-    here the fused per-slice pipeline keeps today's behaviour.
-    """
-
-    def held_out_metrics(close_slice: pd.DataFrame, **params: Any) -> Any:
+    def held_out_metrics(range_: slice, **params: Any) -> Any:
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
-        wide_allocations = source.pipeline(close_slice, n_combos, **combo_lists)
+        close_window = close.iloc[range_]
+        indicator_window = store.window(range_, candidate_keys(combo_lists))
+        wide_allocations = source.simulate(
+            close_window, indicator_window, n_combos, **combo_lists
+        )
         return _metrics_from_allocations(
-            close_slice, wide_allocations, portfolio, report, metric_keys, param_names
+            close_window, wide_allocations, portfolio, report, metric_keys, param_names
         )
 
     return held_out_metrics
@@ -288,6 +292,7 @@ def _attach_held_out(
     portfolio: PortfolioConfig,
     report: ReportConfig,
     close: pd.DataFrame,
+    store: Any,
     param_names: list[str],
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
@@ -302,12 +307,12 @@ def _attach_held_out(
         for name in param_names
     }
     held_out_metrics = _build_held_out_metrics(
-        source=source, portfolio=portfolio, report=report
+        source=source, portfolio=portfolio, report=report, close=close, store=store
     )
     held_out_grid = _sweep(
         splitter=splitter,
         candidate_metrics=held_out_metrics,
-        apply_input=vbt.Takeable(close),
+        apply_input=vbt.Rep("range_"),
         params=held_out_params,
         set_=HELD_OUT_SET,
         parallel=False,

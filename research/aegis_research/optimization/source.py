@@ -15,7 +15,8 @@ Signal-side parameter optimization only. A source exposes two stages plus a
 The fused per-slice view both stages compose into is available via the
 ``pipeline`` method (precompute-on-slice then simulate-on-slice); the runner's
 selection sweep instead precomputes once over the full series and slices per
-window so no candidate loses warmup to a short slice.
+window so no candidate loses warmup to a short slice. The held-out sweep uses the
+same full-series store for the representative candidates.
 
 Limitations carried by this contract:
 
@@ -95,9 +96,10 @@ class OptimizationSource:
     def pipeline(self, close: Any, n_candidates: int, **param_lists: Any) -> Any:
         """Fused per-slice view: precompute on ``close`` then simulate that window.
 
-        Used where indicators are computed on the same window they are simulated
-        on (the held-out phase, fused-pipeline tests). The selection sweep does
-        not use this; it precomputes once over the full series and slices.
+        Used where callers explicitly need indicators computed on the same window
+        they are simulated on (for example, fused-pipeline tests). The runner does
+        not use this for split sweeps; it precomputes once over the full series and
+        slices.
         """
         store = self.precompute(close, n_candidates, **param_lists)
         indicator_window = store.window(slice(None), candidate_keys(param_lists))
