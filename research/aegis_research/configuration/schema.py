@@ -150,7 +150,6 @@ class RunSplitConfig:
     max_splits: int = 100
     max_estimated_output_cells: int = 25_000_000
     max_public_artifact_bytes: int = 10_000_000
-    max_batch_expansion_bytes: int = 2_000_000_000
 
 
 @dataclass(frozen=True)
