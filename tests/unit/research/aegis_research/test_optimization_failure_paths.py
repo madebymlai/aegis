@@ -12,6 +12,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     RunSplitConfig,
 )
+from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.runner import (
     OptimizationRunnerError,
     execute_optimization,
@@ -39,11 +40,12 @@ def _optimization_config() -> OptimizationConfig:
 def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
     close = _close_frame()
 
-    def always_skip(close_slice, n_candidates, **param_lists):
+    def always_skip(close_window, indicator_window, n_candidates, **param_lists):
         return vbt.NoResult
 
     source = OptimizationSource(
-        pipeline=always_skip,
+        precompute=empty_precompute,
+        simulate=always_skip,
         params={"fast_window": vbt.Param([2, 5])},
         output_name="active",
         evidence={"source": "always_skip"},
@@ -65,11 +67,12 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
 def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
     close = _close_frame()
 
-    def exploding_pipeline(close_slice, n_candidates, **param_lists):
+    def exploding_pipeline(close_window, indicator_window, n_candidates, **param_lists):
         raise RuntimeError("pipeline blew up while running")
 
     source = OptimizationSource(
-        pipeline=exploding_pipeline,
+        precompute=empty_precompute,
+        simulate=exploding_pipeline,
         params={"fast_window": vbt.Param([2, 5])},
         output_name="active",
         evidence={"source": "exploding"},

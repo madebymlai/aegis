@@ -19,6 +19,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     RunSplitConfig,
 )
+from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -36,9 +37,11 @@ def _uptrend_close() -> pd.DataFrame:
     return pd.DataFrame({"SYN": levels}, index=index)
 
 
-def _exposure_pipeline(close: pd.DataFrame, n_combos: int, **param_lists):
+def _exposure_simulate(close: pd.DataFrame, indicator_window, n_combos: int, **param_lists):
     """Each candidate buys ``alpha`` exposure of SYN on the first bar and holds.
 
+    This is a strategy-only source (no indicators), so it ignores the windowed
+    indicator outputs and computes allocations directly from the price window.
     Returns wide filled allocations with candidate-major MultiIndex columns
     ``[alpha, symbol]`` — higher alpha means higher exposure, so in an uptrend
     total_return is strictly monotonic in alpha.
@@ -58,7 +61,8 @@ def _exposure_pipeline(close: pd.DataFrame, n_combos: int, **param_lists):
 
 def _source(alphas: list[float]) -> OptimizationSource:
     return OptimizationSource(
-        pipeline=_exposure_pipeline,
+        precompute=empty_precompute,
+        simulate=_exposure_simulate,
         params={"alpha": vbt.Param(alphas)},
         output_name="target_weights",
         evidence={"source": "synthetic_exposure"},

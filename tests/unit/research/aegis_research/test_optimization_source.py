@@ -11,15 +11,21 @@ from research.aegis_research.optimization.source import (
 )
 
 
-def test_optimization_source_contract_accepts_vbt_params_and_pipeline() -> None:
-    def pipeline(data, rsi_window, ma_window, entry_threshold, exit_threshold):
-        return data, rsi_window, ma_window, entry_threshold, exit_threshold
+def _precompute(close, n_candidates, **param_lists):
+    return close
 
+
+def _simulate(close_window, indicator_window, n_candidates, **param_lists):
+    return close_window
+
+
+def test_optimization_source_contract_accepts_vbt_params_and_two_stages() -> None:
     source = validate_optimization_source(
         {
             "contract": OPTIMIZATION_SOURCE_CONTRACT,
             "kind": OPTIMIZATION_SOURCE_KIND,
-            "pipeline": pipeline,
+            "precompute": _precompute,
+            "simulate": _simulate,
             "params": {
                 "rsi_window": vbt.Param([7, 14]),
                 "ma_window": vbt.Param([50, 100]),
@@ -32,7 +38,8 @@ def test_optimization_source_contract_accepts_vbt_params_and_pipeline() -> None:
         source_evidence={"source": "component", "id": "native_rsi"},
     )
 
-    assert source.pipeline is pipeline
+    assert source.precompute is _precompute
+    assert source.simulate is _simulate
     assert source.params["rsi_window"].value == [7, 14]
     assert source.params["entry_threshold"].level == 0
     assert source.params["exit_threshold"].level == 0
@@ -41,14 +48,12 @@ def test_optimization_source_contract_accepts_vbt_params_and_pipeline() -> None:
 
 
 def test_optimization_source_contract_accepts_vbt_condition_params() -> None:
-    def pipeline(data, fast_window, slow_window):
-        return data, fast_window, slow_window
-
     source = validate_optimization_source(
         {
             "contract": OPTIMIZATION_SOURCE_CONTRACT,
             "kind": OPTIMIZATION_SOURCE_KIND,
-            "pipeline": pipeline,
+            "precompute": _precompute,
+            "simulate": _simulate,
             "params": {
                 "fast_window": vbt.Param([5, 10], condition="fast_window < slow_window"),
                 "slow_window": vbt.Param([20, 50]),
@@ -61,17 +66,29 @@ def test_optimization_source_contract_accepts_vbt_condition_params() -> None:
     assert source.params["fast_window"].condition == "fast_window < slow_window"
 
 
+def test_optimization_source_contract_requires_both_stages() -> None:
+    with pytest.raises(OptimizationSourceError, match="simulate"):
+        validate_optimization_source(
+            {
+                "contract": OPTIMIZATION_SOURCE_CONTRACT,
+                "kind": OPTIMIZATION_SOURCE_KIND,
+                "precompute": _precompute,
+                "params": {"window": vbt.Param([2, 3])},
+                "output_name": "active",
+            },
+            source_evidence={"source": "component", "id": "missing_simulate"},
+        )
+
+
 @pytest.mark.parametrize("forbidden_key", ["metrics", "metric_source", "portfolio", "candidate_axis"])
 def test_optimization_source_contract_rejects_authoritative_metrics_or_candidate_axes(
     forbidden_key: str,
 ) -> None:
-    def pipeline(data, window):
-        return data, window
-
     result = {
         "contract": OPTIMIZATION_SOURCE_CONTRACT,
         "kind": OPTIMIZATION_SOURCE_KIND,
-        "pipeline": pipeline,
+        "precompute": _precompute,
+        "simulate": _simulate,
         "params": {"window": vbt.Param([2, 3])},
         forbidden_key: {},
     }
@@ -98,15 +115,13 @@ def test_optimization_source_contract_rejects_legacy_playbook_sweep_shape() -> N
 
 
 def test_optimization_source_rejects_hidden_vbt_params() -> None:
-    def pipeline(data, fast_window, slow_window):
-        return data, fast_window, slow_window
-
     with pytest.raises(OptimizationSourceError, match="hide=True"):
         validate_optimization_source(
             {
                 "contract": OPTIMIZATION_SOURCE_CONTRACT,
                 "kind": OPTIMIZATION_SOURCE_KIND,
-                "pipeline": pipeline,
+                "precompute": _precompute,
+                "simulate": _simulate,
                 "params": {
                     "fast_window": vbt.Param([2, 5]),
                     "slow_window": vbt.Param([10, 20], hide=True),
@@ -120,15 +135,13 @@ def test_optimization_source_rejects_hidden_vbt_params() -> None:
 def test_optimization_source_rejects_reserved_result_coordinate_param_names(
     param_name: str,
 ) -> None:
-    def pipeline(data, **params):
-        return data, params
-
     with pytest.raises(OptimizationSourceError, match="reserved"):
         validate_optimization_source(
             {
                 "contract": OPTIMIZATION_SOURCE_CONTRACT,
                 "kind": OPTIMIZATION_SOURCE_KIND,
-                "pipeline": pipeline,
+                "precompute": _precompute,
+                "simulate": _simulate,
                 "params": {param_name: vbt.Param([1, 2])},
             },
             source_evidence={"source": "test"},

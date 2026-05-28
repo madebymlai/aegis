@@ -22,6 +22,10 @@ from research.aegis_research.config import (
     to_builtin,
 )
 from research.aegis_research.data import MarketDataBundle
+from research.aegis_research.optimization.precompute import (
+    WideIndicatorPrecompute,
+    build_candidate_index,
+)
 from research.aegis_research.optimization.source import OptimizationSource
 
 COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION = "component_optimization_source.v1"
@@ -191,23 +195,42 @@ def build_component_optimization_source(
 
     input_names = _input_names(strategy, indicators)
 
-    def pipeline(
-        close_slice: pd.DataFrame, n_candidates: int, **param_lists: Any
-    ) -> pd.DataFrame:
-        data_slice = _slice_data(data, close_slice, input_names)
-        n_symbols = len(close_slice.columns)
-        indicator_outputs: dict[str, np.ndarray] = {}
+    def precompute(
+        close: pd.DataFrame, n_candidates: int, **param_lists: Any
+    ) -> WideIndicatorPrecompute:
+        # Run each indicator's wide callable once over ``close`` (the full series in
+        # the selection phase) and return a candidate-major store sliceable by split
+        # range. Over the full series, warmup is always complete.
+        data_full = _slice_data(data, close, input_names)
+        n_symbols = len(close.columns)
+        outputs: dict[str, np.ndarray] = {}
         for runtime in indicators:
             wide_params = _wide_params_for_runtime(runtime, param_lists)
-            output = runtime.wide_callable(data_slice, n_candidates=n_candidates, **wide_params)
+            output = runtime.wide_callable(data_full, n_candidates=n_candidates, **wide_params)
             output_arr = np.asarray(output)
             for output_name in runtime.definition.manifest.output_names:
-                if output_name in indicator_outputs:
+                if output_name in outputs:
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
-                indicator_outputs[output_name] = output_arr
+                outputs[output_name] = output_arr
+        return WideIndicatorPrecompute(
+            outputs=outputs,
+            candidate_index=build_candidate_index(param_lists),
+            n_symbols=n_symbols,
+        )
+
+    def simulate(
+        close_window: pd.DataFrame,
+        indicator_window: Mapping[str, np.ndarray],
+        n_candidates: int,
+        **param_lists: Any,
+    ) -> pd.DataFrame:
+        # Run the strategy allocation for one window given indicator outputs already
+        # sliced to that window; the central-metrics step prices the allocations.
+        data_slice = _slice_data(data, close_window, input_names)
+        n_symbols = len(close_window.columns)
         strategy_wide_inputs = WideComponentStrategyInputs(
             data=data_slice,
-            indicators=indicator_outputs,
+            indicators=indicator_window,
             n_candidates=n_candidates,
             n_symbols=n_symbols,
             metadata={
@@ -223,12 +246,13 @@ def build_component_optimization_source(
             )
         )
         return _build_wide_frame(
-            alloc_arr, close_slice, n_candidates, param_lists, params
+            alloc_arr, close_window, n_candidates, param_lists, params
         )
 
     evidence = _source_evidence(strategy, indicators, params)
     return OptimizationSource(
-        pipeline=pipeline,
+        precompute=precompute,
+        simulate=simulate,
         params=params,
         output_name=strategy.definition.manifest.output_name,
         evidence=evidence,

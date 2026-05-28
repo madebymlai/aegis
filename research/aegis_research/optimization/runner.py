@@ -1,10 +1,15 @@
 """Optimization runner: two-phase ``Splitter.apply`` + ``vbt.parameterized``.
 
-Phase 1 sweeps the full parameter grid on every split's *selection* set,
-producing a tidy grid (one row per candidate per split, one column per metric).
-Phase 2 ranks candidates globally and returns three representative candidates
-(best / median / worst). Phase 3 re-runs those three on every split's
-*held-out* set and attaches the held-out metrics.
+The selection phase runs in two stages so indicator warmup is always complete.
+The candidate set is materialised once up front (seeded ``combine_params``); each
+indicator's wide callable runs once over the **full** series into a candidate-major
+store (stage 1, ``precompute``); then Phase 1 sweeps every split's *selection* set
+running only stage 2 (``simulate``), slicing the precomputed store to each window
+via the splitter's ``range_`` template — producing a tidy grid (one row per
+candidate per split, one column per metric). Phase 2 ranks candidates globally and
+returns three representative candidates (best / median / worst). Phase 3 re-runs
+those three on every split's *held-out* set and attaches the held-out metrics; it
+still recomputes indicators per held-out slice (reuse of the store is a follow-up).
 
 A single ``Splitter`` instance is constructed from the run config and reused for
 both phases so selection and held-out share identical split boundaries. The
@@ -33,6 +38,7 @@ from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
+from research.aegis_research.optimization.precompute import candidate_keys
 from research.aegis_research.optimization.ranking import (
     SPLIT_LEVEL,
     EvaluatedCandidate,
@@ -71,17 +77,28 @@ def execute_optimization(
         )
 
     splitter = _build_splitter(close.index, optimization)
-    candidate_metrics = _build_candidate_metrics(
-        source=source, portfolio=portfolio, report=report
-    )
 
+    # Stage 0: materialise the sampled candidate set once, deterministically, and
+    # feed the same set to BOTH the precompute and the selection sweep.
+    sampled_lists = _materialize_candidates(source.params, optimization)
+    n_candidates = len(next(iter(sampled_lists.values()))) if sampled_lists else 0
+    sampled_params = {
+        name: vbt.Param(values, level=0) for name, values in sampled_lists.items()
+    }
+
+    # Stage 1: run each indicator's wide callable once over the full series.
+    store = source.precompute(close, n_candidates, **sampled_lists)
+
+    # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.
+    selection_metrics = _build_selection_metrics(
+        source=source, portfolio=portfolio, report=report, close=close, store=store
+    )
     selection_grid = _sweep(
         splitter=splitter,
-        candidate_metrics=candidate_metrics,
-        close=close,
-        params=dict(source.params),
+        candidate_metrics=selection_metrics,
+        apply_input=vbt.Rep("range_"),
+        params=sampled_params,
         set_=SELECTION_SET,
-        random=_random_options(optimization),
         parallel=True,
     )
     result = select_representative_candidates(
@@ -92,7 +109,9 @@ def execute_optimization(
     return _attach_held_out(
         result,
         splitter=splitter,
-        candidate_metrics=candidate_metrics,
+        source=source,
+        portfolio=portfolio,
+        report=report,
         close=close,
         param_names=param_names,
     )
@@ -106,44 +125,93 @@ def _build_splitter(index: pd.Index, optimization: OptimizationConfig) -> vbt.Sp
     return factory(index, set_labels=SET_LABELS, **dict(optimization.split.params))
 
 
-def _build_candidate_metrics(
+def _build_selection_metrics(
+    *,
+    source: OptimizationSource,
+    portfolio: PortfolioConfig,
+    report: ReportConfig,
+    close: pd.DataFrame,
+    store: Any,
+) -> Any:
+    """Stage-2 callback: slice the full-series store to the window, then simulate.
+
+    ``close`` and ``store`` are closure-captured (passed through ``apply``
+    unchanged); only the per-(split,set) ``range_`` template arrives positionally.
+    """
+
+    def selection_metrics(range_: slice, **params: Any) -> Any:
+        param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
+        close_window = close.iloc[range_]
+        indicator_window = store.window(range_, candidate_keys(combo_lists))
+        wide_allocations = source.simulate(
+            close_window, indicator_window, n_combos, **combo_lists
+        )
+        return _metrics_from_allocations(
+            close_window, wide_allocations, portfolio, report, metric_keys, param_names
+        )
+
+    return selection_metrics
+
+
+def _build_held_out_metrics(
     *,
     source: OptimizationSource,
     portfolio: PortfolioConfig,
     report: ReportConfig,
 ) -> Any:
-    pipeline = source.pipeline
+    """Held-out callback: still computes indicators per slice (no warmup buffer).
 
-    def candidate_metrics(close_slice: pd.DataFrame, **params: Any) -> Any:
-        # Both phases run under mono-chunking, so every parameter arrives as a list
-        # of the chunk's per-combo values (a single-element list for a one-combo
-        # chunk). The wide pipeline simulates the whole chunk at once and the
-        # grouped accessor returns one metric row per combo, owning the parameter
-        # MultiIndex that vbt row-stacks across chunks and splits.
-        param_names = list(params)
-        combo_lists = {name: _combo_values(value) for name, value in params.items()}
-        n_combos = len(combo_lists[param_names[0]]) if param_names else 0
-        candidate_keys = [
-            tuple(combo_lists[name][i] for name in param_names) for i in range(n_combos)
-        ]
-        wide_allocations = pipeline(close_slice, n_combos, **combo_lists)
-        if wide_allocations is vbt.NoResult:
-            return vbt.NoResult
-        n_symbols = len(close_slice.columns)
-        if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
-            return vbt.NoResult
-        result = simulate_portfolio_batch(
-            close_slice,
-            wide_allocations,
-            portfolio,
-            market_index=close_slice.index,
-            compute_diagnostics=False,
-        )
-        return central_metrics_from_grouped_accessors(
-            result.portfolio, report, candidate_keys, param_names
+    Reusing the full-series store for the held-out window is a follow-up slice;
+    here the fused per-slice pipeline keeps today's behaviour.
+    """
+
+    def held_out_metrics(close_slice: pd.DataFrame, **params: Any) -> Any:
+        param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
+        wide_allocations = source.pipeline(close_slice, n_combos, **combo_lists)
+        return _metrics_from_allocations(
+            close_slice, wide_allocations, portfolio, report, metric_keys, param_names
         )
 
-    return candidate_metrics
+    return held_out_metrics
+
+
+def _extract_combos(params: Mapping[str, Any]) -> tuple[list[str], dict[str, list[Any]], int, list[tuple]]:
+    # Under mono-chunking every parameter arrives as a list of the chunk's per-combo
+    # values (a single-element list for a one-combo chunk). The grouped accessor
+    # returns one metric row per combo, owning the parameter MultiIndex that vbt
+    # row-stacks across chunks and splits.
+    param_names = list(params)
+    combo_lists = {name: _combo_values(value) for name, value in params.items()}
+    n_combos = len(combo_lists[param_names[0]]) if param_names else 0
+    metric_keys = [
+        tuple(combo_lists[name][i] for name in param_names) for i in range(n_combos)
+    ]
+    return param_names, combo_lists, n_combos, metric_keys
+
+
+def _metrics_from_allocations(
+    close_window: pd.DataFrame,
+    wide_allocations: Any,
+    portfolio: PortfolioConfig,
+    report: ReportConfig,
+    metric_keys: list[tuple],
+    param_names: list[str],
+) -> Any:
+    if wide_allocations is vbt.NoResult:
+        return vbt.NoResult
+    n_symbols = len(close_window.columns)
+    if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
+        return vbt.NoResult
+    result = simulate_portfolio_batch(
+        close_window,
+        wide_allocations,
+        portfolio,
+        market_index=close_window.index,
+        compute_diagnostics=False,
+    )
+    return central_metrics_from_grouped_accessors(
+        result.portfolio, report, metric_keys, param_names
+    )
 
 
 def _combo_values(value: Any) -> list[Any]:
@@ -161,19 +229,18 @@ def _sweep(
     *,
     splitter: vbt.Splitter,
     candidate_metrics: Any,
-    close: pd.DataFrame,
+    apply_input: Any,
     params: Mapping[str, Any],
     set_: str,
-    random: Mapping[str, Any],
     parallel: bool,
 ) -> pd.DataFrame:
-    options = dict(random)
+    options: dict[str, Any] = {}
     if parallel:
-        # Phase 1 distributes the full parameter grid across processes:
+        # Phase 1 distributes the materialised parameter grid across processes:
         # ``mono_n_chunks="auto"`` builds one super-chunk per core that
-        # ``engine="pathos"`` runs in parallel (pathos uses dill, so the pipeline
-        # closure serializes cleanly), while within each chunk the wide pipeline
-        # vectorizes its candidates through numpy.
+        # ``engine="pathos"`` runs in parallel (pathos uses dill, so the simulate
+        # closure and precomputed store serialize cleanly), while within each chunk
+        # the wide strategy vectorizes its candidates through numpy.
         options["mono_n_chunks"] = "auto"
         options["execute_kwargs"] = {"engine": "pathos"}
     else:
@@ -184,7 +251,7 @@ def _sweep(
     try:
         stacked = splitter.apply(
             parameterized,
-            vbt.Takeable(close),
+            apply_input,
             set_=set_,
             merge_func="row_stack",
             **dict(params),
@@ -217,7 +284,9 @@ def _attach_held_out(
     result: OptimizationResult,
     *,
     splitter: vbt.Splitter,
-    candidate_metrics: Any,
+    source: OptimizationSource,
+    portfolio: PortfolioConfig,
+    report: ReportConfig,
     close: pd.DataFrame,
     param_names: list[str],
 ) -> OptimizationResult:
@@ -232,13 +301,15 @@ def _attach_held_out(
         name: vbt.Param([params[name] for params in unique_params], level=0)
         for name in param_names
     }
+    held_out_metrics = _build_held_out_metrics(
+        source=source, portfolio=portfolio, report=report
+    )
     held_out_grid = _sweep(
         splitter=splitter,
-        candidate_metrics=candidate_metrics,
-        close=close,
+        candidate_metrics=held_out_metrics,
+        apply_input=vbt.Takeable(close),
         params=held_out_params,
         set_=HELD_OUT_SET,
-        random={},
         parallel=False,
     )
     return OptimizationResult(
@@ -274,19 +345,29 @@ def _candidate_split_metrics(
     return metrics
 
 
-def _random_options(optimization: OptimizationConfig) -> dict[str, Any]:
-    if optimization.search != "random":
-        return {}
-    if optimization.random_subset is None:
-        raise OptimizationRunnerError(
-            "optimization.random_subset is required when optimization.search is 'random'"
-        )
-    if optimization.seed is None:
-        raise OptimizationRunnerError(
-            "optimization.seed is required when optimization.search is 'random' so the "
-            "sampled selection grid is deterministic"
-        )
-    return {"random_subset": optimization.random_subset, "seed": optimization.seed}
+def _materialize_candidates(
+    params: Mapping[str, vbt.Param], optimization: OptimizationConfig
+) -> dict[str, list[Any]]:
+    """Build the sampled candidate set once, up front, via the framework sampler.
+
+    ``combine_params`` is the same machinery ``vbt.parameterized`` uses internally;
+    materialising it here lets the precompute and the selection sweep share one
+    candidate set by construction. The result maps each param name to its list of
+    per-combo values (aligned across params). For a fixed seed it is deterministic.
+    """
+    options: dict[str, Any] = {}
+    if optimization.search == "random":
+        if optimization.random_subset is None:
+            raise OptimizationRunnerError(
+                "optimization.random_subset is required when optimization.search is 'random'"
+            )
+        if optimization.seed is None:
+            raise OptimizationRunnerError(
+                "optimization.seed is required when optimization.search is 'random' so the "
+                "sampled selection grid is deterministic"
+            )
+        options = {"random_subset": optimization.random_subset, "seed": optimization.seed}
+    return vbt.combine_params(dict(params), build_index=False, **options)
 
 
 def _validate_source_param_names(params: Mapping[str, vbt.Param]) -> None:
