@@ -6,7 +6,9 @@ Signal-side parameter optimization only. A source exposes two stages plus a
 - ``precompute(close, n_candidates, **param_lists) -> WideIndicatorPrecompute``
   runs each indicator's wide callable once over the given series, returning a
   candidate-major store sliceable by split range. Run over the **full** series,
-  it makes indicator warmup always complete.
+  it makes indicator warmup always complete. Outputs must satisfy the
+  ``validate_precompute_no_lookahead`` prefix-equivalence contract: truncating the
+  input immediately after a row must not change that row's output values.
 - ``simulate(close_window, indicator_window, n_candidates, **param_lists)``
   runs the strategy allocation for one window given the precomputed indicator
   outputs already sliced to that window (the central-metrics step then computes

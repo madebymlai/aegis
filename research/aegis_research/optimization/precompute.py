@@ -12,15 +12,20 @@ Because the simulate stage reads only the values inside a window while the
 indicator was computed over the whole series, this design is leak-free **only
 while every indicator is strictly causal** (the value at bar ``t`` depends only
 on bars ``<= t``). A non-causal transform (centered window, ``shift(-k)``,
-full-series z-score) would inject future bars into the window. The permanent
-no-future-leak invariant that enforces this is a sibling slice
-(``aegis-rd-94v.4``); this module documents the precondition it assumes.
+full-series z-score) would inject future bars into the window.
+
+``validate_precompute_no_lookahead`` encodes the contract as a prefix-equivalence
+invariant: for each checked row, slicing a full-series store must match
+recomputing the same precompute stage on data truncated immediately after that
+row and then slicing that prefix store. That permits warmup history before the
+row while rejecting dependence on any future row.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from operator import index as operator_index
 
 import numpy as np
 
@@ -43,6 +48,89 @@ def candidate_keys(param_lists: Mapping[str, Sequence]) -> list[CandidateKey]:
 def build_candidate_index(param_lists: Mapping[str, Sequence]) -> dict[CandidateKey, int]:
     """Map each candidate's canonical key to its column-block position."""
     return {key: position for position, key in enumerate(candidate_keys(param_lists))}
+
+
+class PrecomputeCausalityError(AssertionError):
+    """Raised when a precompute stage's full-series outputs depend on future rows."""
+
+
+def validate_precompute_no_lookahead(
+    precompute: Callable[..., WideIndicatorPrecompute],
+    close,
+    *,
+    ranges: Sequence[slice],
+    n_candidates: int,
+    **param_lists: Sequence,
+) -> None:
+    """Validate the prefix-equivalence no-look-ahead contract for ``precompute``.
+
+    The full-series precompute store is safe to slice into split windows only if
+    each row is unchanged when the source series is truncated immediately after
+    that row. This check allows causal warmup history before the row and detects
+    outputs that use future rows (for example ``shift(-1)``, centered windows, or
+    full-series normalization).
+    """
+    full_store = precompute(close, n_candidates, **param_lists)
+    keys = candidate_keys(param_lists)
+
+    for range_ in ranges:
+        start, stop = _prefix_comparison_bounds(range_, len(close))
+        for row in range(start, stop):
+            row_range = slice(row, row + 1)
+            prefix_close = close.iloc[: row + 1]
+            prefix_store = precompute(prefix_close, n_candidates, **param_lists)
+            _assert_windows_equal(
+                full_store.window(row_range, keys),
+                prefix_store.window(row_range, keys),
+                range_=row_range,
+            )
+
+
+def _prefix_comparison_bounds(range_: slice, full_len: int) -> tuple[int, int]:
+    if range_.step not in (None, 1):
+        raise ValueError("precompute no-look-ahead validation supports only contiguous slices")
+    start = 0 if range_.start is None else _non_negative_slice_bound(range_.start, "start")
+    stop = full_len if range_.stop is None else _non_negative_slice_bound(range_.stop, "stop")
+    if stop < start:
+        raise ValueError("precompute no-look-ahead validation requires stop >= start")
+    if stop > full_len:
+        raise ValueError("precompute no-look-ahead validation range exceeds close length")
+    return start, stop
+
+
+def _non_negative_slice_bound(value, name: str) -> int:
+    bound = operator_index(value)
+    if bound < 0:
+        raise ValueError(
+            f"precompute no-look-ahead validation requires non-negative {name} bounds"
+        )
+    return bound
+
+
+def _assert_windows_equal(
+    full_window: Mapping[str, np.ndarray],
+    prefix_window: Mapping[str, np.ndarray],
+    *,
+    range_: slice,
+) -> None:
+    if set(full_window) != set(prefix_window):
+        raise PrecomputeCausalityError(
+            "precompute outputs differ between full-series and prefix-only recompute "
+            f"for range {range_}: full={sorted(full_window)}, prefix={sorted(prefix_window)}"
+        )
+    for output_name in sorted(full_window):
+        full_arr = np.asarray(full_window[output_name])
+        prefix_arr = np.asarray(prefix_window[output_name])
+        if full_arr.shape != prefix_arr.shape:
+            raise PrecomputeCausalityError(
+                f"precompute output {output_name!r} shape differs for range {range_}: "
+                f"full={full_arr.shape}, prefix={prefix_arr.shape}"
+            )
+        if not np.array_equal(full_arr, prefix_arr, equal_nan=True):
+            raise PrecomputeCausalityError(
+                f"precompute output {output_name!r} for range {range_} depends on future rows; "
+                "full-series values differ from prefix-only recompute"
+            )
 
 
 @dataclass(frozen=True)
