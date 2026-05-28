@@ -171,6 +171,16 @@ def test_runner_full_series_precompute_lets_warmup_candidate_trade() -> None:
             assert total_return == 0.0 or total_return is None
 
 
+def test_runner_excludes_candidate_whose_lookback_exceeds_full_history() -> None:
+    """A candidate with no finite full-series indicator values is invalid, not worst."""
+    result = _run([2, N_ROWS + 1])
+
+    assert result.excluded_degenerate == 1
+    for candidate in (result.best, result.median, result.worst):
+        assert candidate.params == {"window": 2}
+        assert candidate.score > 0.0
+
+
 def test_seeded_up_front_sampling_is_deterministic() -> None:
     """One materialised candidate set, seeded -> identical grid for a fixed seed."""
     windows = [2, 3, 4, 5, 6, 7, 8]

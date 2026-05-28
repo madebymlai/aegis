@@ -1,15 +1,17 @@
 """Optimization runner: two-phase ``Splitter.apply`` + ``vbt.parameterized``.
 
-The selection phase runs in two stages so indicator warmup is always complete.
-The candidate set is materialised once up front (seeded ``combine_params``); each
-indicator's wide callable runs once over the **full** series into a candidate-major
-store (stage 1, ``precompute``); then Phase 1 sweeps every split's *selection* set
-running only stage 2 (``simulate``), slicing the precomputed store to each window
-via the splitter's ``range_`` template — producing a tidy grid (one row per
-candidate per split, one column per metric). Phase 2 ranks candidates globally and
-returns three representative candidates (best / median / worst). Phase 3 re-runs
-those three on every split's *held-out* set and attaches the held-out metrics; it
-still recomputes indicators per held-out slice (reuse of the store is a follow-up).
+The selection phase runs in two stages so indicator warmup can use the full
+available history. The candidate set is materialised once up front (seeded
+``combine_params``); each indicator's wide callable runs once over the **full**
+series into a candidate-major store (stage 1, ``precompute``); candidates with an
+entirely non-finite full-history block for any indicator output are marked invalid;
+then Phase 1 sweeps every split's *selection* set running only stage 2
+(``simulate``), slicing the precomputed store to each window via the splitter's
+``range_`` template — producing a tidy grid (one row per candidate per split, one
+column per metric). Phase 2 ranks candidates globally and returns three
+representative candidates (best / median / worst). Phase 3 re-runs those three on
+every split's *held-out* set and attaches the held-out metrics; it still
+recomputes indicators per held-out slice (reuse of the store is a follow-up).
 
 A single ``Splitter`` instance is constructed from the run config and reused for
 both phases so selection and held-out share identical split boundaries. The
@@ -21,9 +23,10 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
@@ -38,7 +41,7 @@ from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.optimization.precompute import candidate_keys
+from research.aegis_research.optimization.precompute import CandidateKey, candidate_keys
 from research.aegis_research.optimization.ranking import (
     SPLIT_LEVEL,
     EvaluatedCandidate,
@@ -87,11 +90,20 @@ def execute_optimization(
     }
 
     # Stage 1: run each indicator's wide callable once over the full series.
+    sampled_candidate_keys = candidate_keys(sampled_lists)
     store = source.precompute(close, n_candidates, **sampled_lists)
+    invalid_candidate_keys = _invalid_full_history_candidate_keys(
+        store, sampled_candidate_keys
+    )
 
     # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.
     selection_metrics = _build_selection_metrics(
-        source=source, portfolio=portfolio, report=report, close=close, store=store
+        source=source,
+        portfolio=portfolio,
+        report=report,
+        close=close,
+        store=store,
+        invalid_candidate_keys=invalid_candidate_keys,
     )
     selection_grid = _sweep(
         splitter=splitter,
@@ -132,6 +144,7 @@ def _build_selection_metrics(
     report: ReportConfig,
     close: pd.DataFrame,
     store: Any,
+    invalid_candidate_keys: set[CandidateKey],
 ) -> Any:
     """Stage-2 callback: slice the full-series store to the window, then simulate.
 
@@ -141,14 +154,20 @@ def _build_selection_metrics(
 
     def selection_metrics(range_: slice, **params: Any) -> Any:
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
+        keys = candidate_keys(combo_lists)
+        invalid_positions = _invalid_candidate_positions(keys, invalid_candidate_keys)
+        if len(invalid_positions) == n_combos:
+            return _nan_metric_frame(metric_keys, param_names)
+
         close_window = close.iloc[range_]
-        indicator_window = store.window(range_, candidate_keys(combo_lists))
+        indicator_window = store.window(range_, keys)
         wide_allocations = source.simulate(
             close_window, indicator_window, n_combos, **combo_lists
         )
-        return _metrics_from_allocations(
+        metrics = _metrics_from_allocations(
             close_window, wide_allocations, portfolio, report, metric_keys, param_names
         )
+        return _mask_invalid_metrics(metrics, invalid_positions)
 
     return selection_metrics
 
@@ -175,7 +194,9 @@ def _build_held_out_metrics(
     return held_out_metrics
 
 
-def _extract_combos(params: Mapping[str, Any]) -> tuple[list[str], dict[str, list[Any]], int, list[tuple]]:
+def _extract_combos(
+    params: Mapping[str, Any],
+) -> tuple[list[str], dict[str, list[Any]], int, list[tuple]]:
     # Under mono-chunking every parameter arrives as a list of the chunk's per-combo
     # values (a single-element list for a one-combo chunk). The grouped accessor
     # returns one metric row per combo, owning the parameter MultiIndex that vbt
@@ -212,6 +233,61 @@ def _metrics_from_allocations(
     return central_metrics_from_grouped_accessors(
         result.portfolio, report, metric_keys, param_names
     )
+
+
+def _nan_metric_frame(metric_keys: list[tuple], param_names: list[str]) -> pd.DataFrame:
+    index = pd.MultiIndex.from_tuples(metric_keys, names=param_names)
+    return pd.DataFrame(np.nan, index=index, columns=list(PORTFOLIO_METRIC_VALUE_KEYS))
+
+
+def _mask_invalid_metrics(metrics: Any, invalid_positions: list[int]) -> Any:
+    if not invalid_positions or metrics is vbt.NoResult:
+        return metrics
+    masked = metrics.copy()
+    masked.iloc[invalid_positions, :] = np.nan
+    return masked
+
+
+def _invalid_candidate_positions(
+    keys: Sequence[CandidateKey], invalid_keys: set[CandidateKey]
+) -> list[int]:
+    return [position for position, key in enumerate(keys) if key in invalid_keys]
+
+
+def _invalid_full_history_candidate_keys(
+    store: Any, keys: Sequence[CandidateKey]
+) -> set[CandidateKey]:
+    outputs = getattr(store, "outputs", {})
+    if not outputs:
+        return set()
+    n_symbols = int(getattr(store, "n_symbols", 0))
+    if n_symbols < 1:
+        return set()
+
+    candidate_index = getattr(store, "candidate_index", {})
+    invalid: set[CandidateKey] = set()
+    for key in keys:
+        position = candidate_index[key]
+        if any(
+            _candidate_output_is_non_finite(output, position, n_symbols)
+            for output in outputs.values()
+        ):
+            invalid.add(key)
+    return invalid
+
+
+def _candidate_output_is_non_finite(output: Any, position: int, n_symbols: int) -> bool:
+    start = position * n_symbols
+    stop = start + n_symbols
+    block = np.asarray(output)[:, start:stop]
+    return block.size == 0 or not _has_finite_value(block)
+
+
+def _has_finite_value(values: Any) -> bool:
+    try:
+        return bool(np.isfinite(values).any())
+    except TypeError:
+        return bool(pd.notna(values).any())
 
 
 def _combo_values(value: Any) -> list[Any]:
