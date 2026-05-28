@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,7 +72,7 @@ class _ComponentRuntime:
 
 
 @dataclass(frozen=True)
-class _DeduplicatedRuntimeParams:
+class _RuntimeParamDeduplication:
     param_lists: dict[str, list[Any]]
     candidate_index: dict[CandidateKey, int]
     n_candidates: int
@@ -213,10 +213,14 @@ def build_component_optimization_source(
         data_full = _slice_data(data, close, input_names)
         n_symbols = len(close.columns)
         outputs: dict[str, np.ndarray] = {}
-        output_candidate_index: dict[str, dict[CandidateKey, int]] = {}
+        full_candidate_keys = candidate_keys(param_lists)
+        candidate_index_by_output: dict[str, dict[CandidateKey, int]] = {}
         for runtime in indicators:
             deduped = _deduplicate_runtime_params(
-                runtime, param_lists, n_candidates=n_candidates
+                runtime,
+                param_lists,
+                full_candidate_keys=full_candidate_keys,
+                n_candidates=n_candidates,
             )
             output = runtime.wide_callable(
                 data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
@@ -226,12 +230,12 @@ def build_component_optimization_source(
                 if output_name in outputs:
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
                 outputs[output_name] = output_arr
-                output_candidate_index[output_name] = deduped.candidate_index
+                candidate_index_by_output[output_name] = deduped.candidate_index
         return WideIndicatorPrecompute(
             outputs=outputs,
             candidate_index=build_candidate_index(param_lists),
             n_symbols=n_symbols,
-            output_candidate_index=output_candidate_index,
+            output_candidate_index=candidate_index_by_output,
         )
 
     def simulate(
@@ -255,7 +259,9 @@ def build_component_optimization_source(
                 "component_optimization_source": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
             },
         )
-        strategy_wide_params = _wide_params_for_runtime(strategy, param_lists)
+        strategy_wide_params = _wide_params_for_runtime(
+            strategy, param_lists, n_candidates=n_candidates
+        )
         alloc_arr = np.asarray(
             strategy.wide_callable(
                 strategy_wide_inputs, n_candidates=n_candidates, **strategy_wide_params
@@ -422,62 +428,47 @@ def _validate_component_param_sources(
         )
 
 
-def _params_for_runtime(
-    runtime: _ComponentRuntime, raw_params: Mapping[str, Any]
-) -> dict[str, Any]:
-    params = dict(runtime.fixed_params)
-    for param_name, param_key in runtime.param_keys.items():
-        params[param_name] = raw_params[param_key]
-    return params
-
-
 def _wide_params_for_runtime(
     runtime: _ComponentRuntime,
-    param_lists: Mapping[str, Any],
+    param_lists: Mapping[str, Sequence[Any]],
     *,
-    n_candidates: int | None = None,
-) -> dict[str, list[Any]]:
-    if n_candidates is not None:
-        resolved_n_candidates = n_candidates
-    elif param_lists:
-        resolved_n_candidates = len(next(iter(param_lists.values())))
-    else:
-        resolved_n_candidates = 0
-    params: dict[str, list[Any]] = {}
+    n_candidates: int,
+) -> dict[str, Sequence[Any]]:
+    params: dict[str, Sequence[Any]] = {}
     for param_name, param_key in runtime.param_keys.items():
         params[param_name] = param_lists[param_key]
     for param_name, fixed_value in runtime.fixed_params.items():
-        params[param_name] = [fixed_value] * resolved_n_candidates
+        params[param_name] = [fixed_value] * n_candidates
     return params
 
 
 def _deduplicate_runtime_params(
     runtime: _ComponentRuntime,
-    param_lists: Mapping[str, Any],
+    param_lists: Mapping[str, Sequence[Any]],
     *,
+    full_candidate_keys: Sequence[CandidateKey],
     n_candidates: int,
-) -> _DeduplicatedRuntimeParams:
-    full_keys = candidate_keys(param_lists)
-    runtime_params = _wide_params_for_runtime(
+) -> _RuntimeParamDeduplication:
+    runtime_param_lists = _wide_params_for_runtime(
         runtime, param_lists, n_candidates=n_candidates
     )
-    runtime_param_names = sorted(runtime_params)
+    runtime_param_names = sorted(runtime_param_lists)
     unique_positions: dict[tuple[Any, ...], int] = {}
-    unique_params: dict[str, list[Any]] = {name: [] for name in runtime_param_names}
+    unique_param_lists: dict[str, list[Any]] = {name: [] for name in runtime_param_names}
     candidate_index: dict[CandidateKey, int] = {}
 
-    for candidate_idx, full_key in enumerate(full_keys):
-        runtime_key = tuple(runtime_params[name][candidate_idx] for name in runtime_param_names)
-        position = unique_positions.get(runtime_key)
-        if position is None:
-            position = len(unique_positions)
-            unique_positions[runtime_key] = position
+    for candidate_idx, full_key in enumerate(full_candidate_keys):
+        runtime_key = tuple(
+            runtime_param_lists[name][candidate_idx] for name in runtime_param_names
+        )
+        if runtime_key not in unique_positions:
+            unique_positions[runtime_key] = len(unique_positions)
             for name in runtime_param_names:
-                unique_params[name].append(runtime_params[name][candidate_idx])
-        candidate_index[full_key] = position
+                unique_param_lists[name].append(runtime_param_lists[name][candidate_idx])
+        candidate_index[full_key] = unique_positions[runtime_key]
 
-    return _DeduplicatedRuntimeParams(
-        param_lists=unique_params,
+    return _RuntimeParamDeduplication(
+        param_lists=unique_param_lists,
         candidate_index=candidate_index,
         n_candidates=len(unique_positions),
     )

@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import numpy as np
 
 CandidateKey = tuple
+CandidateIndex = Mapping[CandidateKey, int]
 
 
 def candidate_keys(param_lists: Mapping[str, Sequence]) -> list[CandidateKey]:
@@ -56,9 +57,9 @@ class WideIndicatorPrecompute:
     """
 
     outputs: Mapping[str, np.ndarray]
-    candidate_index: Mapping[CandidateKey, int]
+    candidate_index: CandidateIndex
     n_symbols: int
-    output_candidate_index: Mapping[str, Mapping[CandidateKey, int]] | None = None
+    output_candidate_index: Mapping[str, CandidateIndex] | None = None
 
     def window(
         self, range_: slice, keys: Sequence[CandidateKey]
@@ -66,8 +67,8 @@ class WideIndicatorPrecompute:
         """Rows in ``range_`` by the candidate-major columns for ``keys``, in order."""
         windowed: dict[str, np.ndarray] = {}
         for name, array in self.outputs.items():
-            index = self._candidate_index_for_output(name)
-            positions = [index[key] for key in keys]
+            candidate_index = self._candidate_index_for_output(name)
+            positions = [candidate_index[key] for key in keys]
             blocks = [
                 array[range_, position * self.n_symbols : (position + 1) * self.n_symbols]
                 for position in positions
@@ -75,7 +76,7 @@ class WideIndicatorPrecompute:
             windowed[name] = np.concatenate(blocks, axis=1) if blocks else array[range_, :0]
         return windowed
 
-    def _candidate_index_for_output(self, name: str) -> Mapping[CandidateKey, int]:
+    def _candidate_index_for_output(self, name: str) -> CandidateIndex:
         if self.output_candidate_index is None:
             return self.candidate_index
         return self.output_candidate_index.get(name, self.candidate_index)
