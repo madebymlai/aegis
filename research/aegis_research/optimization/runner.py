@@ -245,6 +245,7 @@ def _attach_held_out(
         best=_with_held_out(result.best, held_out_grid, param_names),
         median=_with_held_out(result.median, held_out_grid, param_names),
         worst=_with_held_out(result.worst, held_out_grid, param_names),
+        excluded_degenerate=result.excluded_degenerate,
     )
 
 

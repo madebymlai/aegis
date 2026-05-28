@@ -37,11 +37,18 @@ class EvaluatedCandidate:
 
 @dataclass(frozen=True)
 class OptimizationResult:
-    """Exactly three representative candidates selected by global ranking."""
+    """Exactly three representative candidates selected by global ranking.
+
+    ``excluded_degenerate`` counts the candidates dropped before slot selection
+    because they had no finite ranking score (non-trading / all-NaN across
+    splits). best/median/worst are always drawn from the *trading* population;
+    this field tells consumers how much of the sampled grid was dead.
+    """
 
     best: EvaluatedCandidate
     median: EvaluatedCandidate
     worst: EvaluatedCandidate
+    excluded_degenerate: int = 0
 
 
 def select_representative_candidates(
@@ -61,10 +68,15 @@ def select_representative_candidates(
 
         score = (1 - min_weight) * mean(values) + min_weight * min(values)
 
-    Ranking is always descending. ``best`` is rank 1, ``median`` is rank
-    ``ceil(N/2)``, and ``worst`` is rank N — all real candidates. Ties keep
-    candidate (parameter-sorted) order. A split whose metric is NaN/None is
-    skipped; a candidate with no valid values scores NaN and ranks last.
+    Degenerate candidates — those with no finite score (non-trading / NaN
+    across every split) — are excluded *before* slot selection so they can
+    never occupy a representative role; their count is reported as
+    ``OptimizationResult.excluded_degenerate``. best/median/worst are then
+    ranked among the remaining ``N`` trading candidates: ``best`` is rank 1,
+    ``median`` is rank ``ceil(N/2)``, and ``worst`` is rank N — all real,
+    trading candidates. Ranking is always descending; ties keep candidate
+    (parameter-sorted) order. A split whose metric is NaN/None is skipped.
+    Raises ``ValueError`` when every candidate is degenerate.
     """
     if metric not in grid.columns:
         raise KeyError(f"ranking metric {metric!r} not present in grid columns")
@@ -107,11 +119,18 @@ def select_representative_candidates(
         )
 
     ranked = sorted(candidates, key=_rank_key)
-    n = len(ranked)
+    trading = [candidate for candidate in ranked if not isnan(candidate.score)]
+    if not trading:
+        raise ValueError(
+            f"no candidate produced a finite ranking score on {metric!r}; "
+            f"all {len(ranked)} candidates were degenerate (non-trading / NaN-scored)"
+        )
+    n = len(trading)
     return OptimizationResult(
-        best=ranked[0],
-        median=ranked[ceil(n / 2) - 1],
-        worst=ranked[n - 1],
+        best=trading[0],
+        median=trading[ceil(n / 2) - 1],
+        worst=trading[n - 1],
+        excluded_degenerate=len(ranked) - n,
     )
 
 

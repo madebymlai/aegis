@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
-import math
 from pathlib import Path
 
 import pandas as pd
@@ -121,7 +120,9 @@ def test_nan_split_is_skipped_in_score_and_aggregate() -> None:
     assert result.best.selection_metrics["s1"]["sharpe"] is None
 
 
-def test_all_nan_candidate_scores_nan_and_ranks_last() -> None:
+def test_single_trading_candidate_fills_all_roles_and_excludes_dead() -> None:
+    # One trading + one dead: the dead combo is excluded, so the lone trading
+    # candidate fills all three roles (never the NaN-scored one).
     grid = _grid(
         {
             "good": {"s0": 0.2, "s1": 0.2},
@@ -131,9 +132,84 @@ def test_all_nan_candidate_scores_nan_and_ranks_last() -> None:
 
     result = select_representative_candidates(grid, metric="sharpe")
 
+    assert result.best is result.median is result.worst
     assert result.best.params == {"param": "good"}
-    assert result.worst.params == {"param": "blank"}
-    assert math.isnan(result.worst.score)
+    assert result.excluded_degenerate == 1
+
+
+def test_median_and_worst_skip_degenerate_candidates() -> None:
+    # 3 trading candidates + 2 dead (all-NaN). best/median/worst must all be
+    # drawn from the trading set; a dead combo must never occupy worst.
+    grid = _grid(
+        {
+            "good_hi": {"s0": 1.0, "s1": 1.0},  # score 1.0
+            "good_mid": {"s0": 0.5, "s1": 0.5},  # score 0.5
+            "good_lo": {"s0": 0.1, "s1": 0.1},  # score 0.1
+            "dead1": {"s0": float("nan"), "s1": float("nan")},
+            "dead2": {"s0": float("nan"), "s1": float("nan")},
+        }
+    )
+
+    result = select_representative_candidates(grid, metric="sharpe")
+
+    assert result.best.params == {"param": "good_hi"}
+    assert result.median.params == {"param": "good_mid"}
+    assert result.worst.params == {"param": "good_lo"}
+
+
+def test_excluded_degenerate_count_is_reported() -> None:
+    # Consumers must be able to tell the grid carried dead combos.
+    grid = _grid(
+        {
+            "good_hi": {"s0": 1.0, "s1": 1.0},
+            "good_lo": {"s0": 0.1, "s1": 0.1},
+            "dead1": {"s0": float("nan"), "s1": float("nan")},
+            "dead2": {"s0": float("nan"), "s1": float("nan")},
+        }
+    )
+
+    result = select_representative_candidates(grid, metric="sharpe")
+
+    assert result.excluded_degenerate == 2
+
+
+def test_no_degenerate_candidates_reports_zero_excluded() -> None:
+    grid = _grid({"hi": {"s0": 1.0, "s1": 1.0}, "lo": {"s0": 0.1, "s1": 0.1}})
+
+    result = select_representative_candidates(grid, metric="sharpe")
+
+    assert result.excluded_degenerate == 0
+
+
+def test_all_degenerate_grid_raises_clear_error() -> None:
+    # Every candidate is dead: there is no trading population to represent.
+    grid = _grid(
+        {
+            "dead1": {"s0": float("nan"), "s1": float("nan")},
+            "dead2": {"s0": float("nan"), "s1": float("nan")},
+        }
+    )
+
+    with pytest.raises(ValueError, match="finite ranking score"):
+        select_representative_candidates(grid, metric="sharpe")
+
+
+def test_two_trading_candidates_with_dead_combos_pick_median_from_trading() -> None:
+    grid = _grid(
+        {
+            "x": {"s0": 1.0, "s1": 1.0},
+            "y": {"s0": 0.0, "s1": 0.0},
+            "dead": {"s0": float("nan"), "s1": float("nan")},
+        }
+    )
+
+    result = select_representative_candidates(grid, metric="sharpe")
+
+    # 2 trading -> median is rank ceil(2/2)=1 (the best of the trading set).
+    assert result.median is result.best
+    assert result.best.params == {"param": "x"}
+    assert result.worst.params == {"param": "y"}
+    assert result.excluded_degenerate == 1
 
 
 def test_tied_scores_keep_parameter_sorted_order() -> None:
@@ -192,10 +268,10 @@ def test_evaluated_candidate_has_no_legacy_winner_or_direction_fields() -> None:
         assert forbidden not in field_names
 
 
-def test_optimization_result_has_exactly_best_median_worst_slots() -> None:
+def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
     field_names = [f.name for f in dataclasses.fields(OptimizationResult)]
 
-    assert field_names == ["best", "median", "worst"]
+    assert field_names == ["best", "median", "worst", "excluded_degenerate"]
 
 
 def test_signature_has_no_direction_parameter() -> None:

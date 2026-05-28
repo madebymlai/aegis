@@ -150,6 +150,34 @@ def test_runner_single_candidate_fills_all_three_slots() -> None:
     assert set(result.best.held_out_metrics) == set(split_labels)
 
 
+def test_runner_preserves_excluded_degenerate_through_held_out(monkeypatch) -> None:
+    """The held-out phase rebuilds the OptimizationResult; the degenerate-exclusion
+    count from the selection ranking must survive that round-trip.
+
+    The synthetic pipeline can't produce NaN-scored (degenerate) candidates — a
+    zero-allocation candidate still scores a finite 0.0 — so we inject a known
+    exclusion count at the ranking boundary and assert the runner threads it
+    through ``_attach_held_out`` unchanged.
+    """
+    import dataclasses
+
+    from research.aegis_research.optimization import runner
+
+    real_select = runner.select_representative_candidates
+
+    def select_with_injected_exclusions(grid, **kwargs):
+        result = real_select(grid, **kwargs)
+        return dataclasses.replace(result, excluded_degenerate=7)
+
+    monkeypatch.setattr(runner, "select_representative_candidates", select_with_injected_exclusions)
+
+    result = _run([0.2, 0.5, 1.0])
+
+    assert result.excluded_degenerate == 7
+    # Held-out validation still populated, proving the round-trip really ran.
+    assert set(result.best.held_out_metrics) == set(_expected_split_labels())
+
+
 def test_phase1_sweeps_in_parallel_with_pathos_and_phase3_runs_sequentially(monkeypatch) -> None:
     """Phase 1 distributes mono-chunks across processes via pathos; Phase 3 (the
     three held-out candidates) sweeps a single mono-chunk sequentially in-process."""
