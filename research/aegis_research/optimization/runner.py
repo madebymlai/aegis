@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pandas as pd
@@ -39,7 +39,10 @@ from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.optimization.precompute import candidate_keys
+from research.aegis_research.optimization.precompute import (
+    WideIndicatorPrecompute,
+    candidate_keys,
+)
 from research.aegis_research.optimization.ranking import (
     SPLIT_LEVEL,
     EvaluatedCandidate,
@@ -91,7 +94,7 @@ def execute_optimization(
     store = source.precompute(close, n_candidates, **sampled_lists)
 
     # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.
-    selection_metrics = _build_selection_metrics(
+    selection_metrics = _build_precomputed_window_metrics(
         source=source, portfolio=portfolio, report=report, close=close, store=store
     )
     selection_grid = _sweep(
@@ -127,21 +130,22 @@ def _build_splitter(index: pd.Index, optimization: OptimizationConfig) -> vbt.Sp
     return factory(index, set_labels=SET_LABELS, **dict(optimization.split.params))
 
 
-def _build_selection_metrics(
+def _build_precomputed_window_metrics(
     *,
     source: OptimizationSource,
     portfolio: PortfolioConfig,
     report: ReportConfig,
     close: pd.DataFrame,
-    store: Any,
-) -> Any:
-    """Stage-2 callback: slice the full-series store to the window, then simulate.
+    store: WideIndicatorPrecompute,
+) -> Callable[..., Any]:
+    """Build a split callback that slices the full-series store before simulation.
 
     ``close`` and ``store`` are closure-captured (passed through ``apply``
     unchanged); only the per-(split,set) ``range_`` template arrives positionally.
+    Selection and held-out sweeps use the same callback shape so they cannot drift.
     """
 
-    def selection_metrics(range_: slice, **params: Any) -> Any:
+    def window_metrics(range_: slice, **params: Any) -> Any:
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
         close_window = close.iloc[range_]
         indicator_window = store.window(range_, candidate_keys(combo_lists))
@@ -152,31 +156,7 @@ def _build_selection_metrics(
             close_window, wide_allocations, portfolio, report, metric_keys, param_names
         )
 
-    return selection_metrics
-
-
-def _build_held_out_metrics(
-    *,
-    source: OptimizationSource,
-    portfolio: PortfolioConfig,
-    report: ReportConfig,
-    close: pd.DataFrame,
-    store: Any,
-) -> Any:
-    """Held-out callback: slice the full-series store, then simulate."""
-
-    def held_out_metrics(range_: slice, **params: Any) -> Any:
-        param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
-        close_window = close.iloc[range_]
-        indicator_window = store.window(range_, candidate_keys(combo_lists))
-        wide_allocations = source.simulate(
-            close_window, indicator_window, n_combos, **combo_lists
-        )
-        return _metrics_from_allocations(
-            close_window, wide_allocations, portfolio, report, metric_keys, param_names
-        )
-
-    return held_out_metrics
+    return window_metrics
 
 
 def _extract_combos(params: Mapping[str, Any]) -> tuple[list[str], dict[str, list[Any]], int, list[tuple]]:
@@ -292,7 +272,7 @@ def _attach_held_out(
     portfolio: PortfolioConfig,
     report: ReportConfig,
     close: pd.DataFrame,
-    store: Any,
+    store: WideIndicatorPrecompute,
     param_names: list[str],
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
@@ -306,7 +286,7 @@ def _attach_held_out(
         name: vbt.Param([params[name] for params in unique_params], level=0)
         for name in param_names
     }
-    held_out_metrics = _build_held_out_metrics(
+    held_out_metrics = _build_precomputed_window_metrics(
         source=source, portfolio=portfolio, report=report, close=close, store=store
     )
     held_out_grid = _sweep(
