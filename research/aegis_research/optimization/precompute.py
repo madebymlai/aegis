@@ -72,17 +72,17 @@ def validate_precompute_no_lookahead(
     """
     full_store = precompute(close, n_candidates, **param_lists)
     keys = candidate_keys(param_lists)
+    close_length = len(close)
 
     for range_ in ranges:
-        start, stop = _prefix_comparison_bounds(range_, len(close))
+        start, stop = _prefix_comparison_bounds(range_, close_length)
         for row in range(start, stop):
-            row_range = slice(row, row + 1)
-            prefix_close = close.iloc[: row + 1]
-            prefix_store = precompute(prefix_close, n_candidates, **param_lists)
+            comparison_range = slice(row, row + 1)
+            prefix_store = precompute(close.iloc[: row + 1], n_candidates, **param_lists)
             _assert_windows_equal(
-                full_store.window(row_range, keys),
-                prefix_store.window(row_range, keys),
-                range_=row_range,
+                full_store.window(comparison_range, keys),
+                prefix_store.window(comparison_range, keys),
+                range_=comparison_range,
             )
 
 
@@ -113,12 +113,15 @@ def _assert_windows_equal(
     *,
     range_: slice,
 ) -> None:
-    if set(full_window) != set(prefix_window):
+    full_output_names = set(full_window)
+    prefix_output_names = set(prefix_window)
+    if full_output_names != prefix_output_names:
         raise PrecomputeCausalityError(
             "precompute outputs differ between full-series and prefix-only recompute "
-            f"for range {range_}: full={sorted(full_window)}, prefix={sorted(prefix_window)}"
+            f"for range {range_}: full={sorted(full_output_names)}, "
+            f"prefix={sorted(prefix_output_names)}"
         )
-    for output_name in sorted(full_window):
+    for output_name in sorted(full_output_names):
         full_arr = np.asarray(full_window[output_name])
         prefix_arr = np.asarray(prefix_window[output_name])
         if full_arr.shape != prefix_arr.shape:
