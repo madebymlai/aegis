@@ -83,25 +83,11 @@ def build_preflight(
     )
     estimated_output_cells = max(estimated_result_cells, estimated_portfolio_broadcast_cells)
     selection_result_rows = len(split_result.splits) * set_count * metric_count
-    retained_selection_grid_rows = 0
-    if optimization.evidence.return_grid in {"first", "all"}:
-        retained_selection_grid_rows = (
-            sampled_combinations * len(split_result.splits) * metric_count
-        )
-    retained_grid_rows = retained_selection_grid_rows
-    if optimization.evidence.return_grid == "all":
-        retained_grid_rows *= set_count
     sampled_row_count = sampled_combinations
     candidate_row_count = sampled_combinations
-    leaderboard_row_count = sampled_combinations
     lock_row_count = 1 if sampled_combinations else 0
     estimated_public_rows = (
-        selection_result_rows
-        + retained_grid_rows
-        + sampled_row_count
-        + candidate_row_count
-        + leaderboard_row_count
-        + lock_row_count
+        selection_result_rows + sampled_row_count + candidate_row_count + lock_row_count
     )
     estimated_public_artifact_bytes = estimated_public_rows * PREFLIGHT_PUBLIC_BYTES_PER_ROW
     max_set_rows = max(
@@ -122,7 +108,6 @@ def build_preflight(
         "schema_version": PREFLIGHT_SCHEMA_VERSION,
         "search": optimization.search,
         "search_mode": search_mode,
-        "return_grid": optimization.evidence.return_grid,
         "param_shapes": [_param_shape_payload(shape) for shape in param_shapes],
         "theoretical_combinations": theoretical_combinations,
         "conditioned_combinations": param_sampled_combinations
@@ -149,11 +134,8 @@ def build_preflight(
         "estimated_portfolio_broadcast_cells": estimated_portfolio_broadcast_cells,
         "estimated_output_cells": estimated_output_cells,
         "selection_result_rows": selection_result_rows,
-        "retained_selection_grid_rows": retained_selection_grid_rows,
-        "retained_grid_rows": retained_grid_rows,
         "sampled_row_count": sampled_row_count,
         "candidate_row_count": candidate_row_count,
-        "leaderboard_row_count": leaderboard_row_count,
         "lock_row_count": lock_row_count,
         "estimated_public_rows": estimated_public_rows,
         "estimated_public_artifact_bytes": estimated_public_artifact_bytes,

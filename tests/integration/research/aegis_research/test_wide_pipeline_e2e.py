@@ -9,7 +9,6 @@ import yaml
 
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
-from research.aegis_research.optimization.component_source import component_param_key
 
 COMPONENTS_ROOT = Path(__file__).resolve().parents[4] / "research" / "components"
 
@@ -58,7 +57,7 @@ def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_componen
                 "lookback": 63, "smooth_window": 5,
             }},
         ],
-        "ranking": {"metric": "total_return", "direction": "desc"},
+        "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
             "split": {
@@ -81,13 +80,12 @@ def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_componen
     assert artifact_path.exists()
     artifact = json.loads(artifact_path.read_text())
 
-    assert artifact["leaderboard"]["rows"]
+    assert [candidate["role"] for candidate in artifact["candidates"]] == ["best", "median", "worst"]
     assert artifact["candidates"]
     assert len(artifact["candidates"]) > 0
 
     first_candidate = artifact["candidates"][0]
     param_keys = set(first_candidate["params"])
-    expected_param_families = {"indicators", "strategies"}
     for key in param_keys:
         parts = key.split("__")
         assert parts[0] == "component"

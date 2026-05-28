@@ -102,6 +102,8 @@ def _candidate_summary(row: Mapping[str, Any]) -> dict[str, Any]:
         "params": row["params"],
         "score": row["score"],
         "metrics": row["metrics"],
+        "selection_metrics": row["selection_metrics"],
+        "held_out_metrics": row["held_out_metrics"],
     }
 
 
