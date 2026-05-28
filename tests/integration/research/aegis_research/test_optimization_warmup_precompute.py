@@ -184,9 +184,20 @@ def test_runner_excludes_candidate_whose_lookback_exceeds_full_history() -> None
     result = _run([2, N_ROWS + 1])
 
     assert result.excluded_degenerate == 1
+    # Distinguishability (story 7): the dropped candidate is reported as *invalid*
+    # (lookback > full history), a subset of the generic degenerate count.
+    assert result.excluded_invalid == 1
+    assert result.excluded_invalid <= result.excluded_degenerate
     for candidate in (result.best, result.median, result.worst):
         assert candidate.params == {"window": 2}
         assert candidate.score > 0.0
+
+
+def test_runner_reports_zero_excluded_invalid_when_all_candidates_are_valid() -> None:
+    """No lookback>history candidate -> excluded_invalid is 0 (distinct from degenerate)."""
+    result = _run([2, 3])
+
+    assert result.excluded_invalid == 0
 
 
 def test_runner_reuses_full_series_precompute_for_held_out_warmup() -> None:
