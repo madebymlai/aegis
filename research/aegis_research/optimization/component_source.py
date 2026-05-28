@@ -200,7 +200,8 @@ def build_component_optimization_source(
     ) -> WideIndicatorPrecompute:
         # Run each indicator's wide callable once over ``close`` (the full series in
         # the selection phase) and return a candidate-major store sliceable by split
-        # range. Over the full series, warmup is always complete.
+        # range. Candidates whose warmup still exceeds the full series are marked
+        # invalid by the runner before ranking.
         data_full = _slice_data(data, close, input_names)
         n_symbols = len(close.columns)
         outputs: dict[str, np.ndarray] = {}
