@@ -23,8 +23,10 @@ from research.aegis_research.config import (
 )
 from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.precompute import (
+    CandidateKey,
     WideIndicatorPrecompute,
     build_candidate_index,
+    candidate_keys,
 )
 from research.aegis_research.optimization.source import OptimizationSource
 
@@ -67,6 +69,13 @@ class _ComponentRuntime:
     fixed_params: dict[str, Any]
     param_space: dict[str, vbt.Param]
     param_keys: dict[str, str]
+
+
+@dataclass(frozen=True)
+class _DeduplicatedRuntimeParams:
+    param_lists: dict[str, list[Any]]
+    candidate_index: dict[CandidateKey, int]
+    n_candidates: int
 
 
 def component_ref_key(
@@ -204,18 +213,25 @@ def build_component_optimization_source(
         data_full = _slice_data(data, close, input_names)
         n_symbols = len(close.columns)
         outputs: dict[str, np.ndarray] = {}
+        output_candidate_index: dict[str, dict[CandidateKey, int]] = {}
         for runtime in indicators:
-            wide_params = _wide_params_for_runtime(runtime, param_lists)
-            output = runtime.wide_callable(data_full, n_candidates=n_candidates, **wide_params)
+            deduped = _deduplicate_runtime_params(
+                runtime, param_lists, n_candidates=n_candidates
+            )
+            output = runtime.wide_callable(
+                data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
+            )
             output_arr = np.asarray(output)
             for output_name in runtime.definition.manifest.output_names:
                 if output_name in outputs:
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
                 outputs[output_name] = output_arr
+                output_candidate_index[output_name] = deduped.candidate_index
         return WideIndicatorPrecompute(
             outputs=outputs,
             candidate_index=build_candidate_index(param_lists),
             n_symbols=n_symbols,
+            output_candidate_index=output_candidate_index,
         )
 
     def simulate(
@@ -416,15 +432,55 @@ def _params_for_runtime(
 
 
 def _wide_params_for_runtime(
-    runtime: _ComponentRuntime, param_lists: Mapping[str, Any]
+    runtime: _ComponentRuntime,
+    param_lists: Mapping[str, Any],
+    *,
+    n_candidates: int | None = None,
 ) -> dict[str, list[Any]]:
-    n_candidates = len(next(iter(param_lists.values()))) if param_lists else 0
+    if n_candidates is not None:
+        resolved_n_candidates = n_candidates
+    elif param_lists:
+        resolved_n_candidates = len(next(iter(param_lists.values())))
+    else:
+        resolved_n_candidates = 0
     params: dict[str, list[Any]] = {}
     for param_name, param_key in runtime.param_keys.items():
         params[param_name] = param_lists[param_key]
     for param_name, fixed_value in runtime.fixed_params.items():
-        params[param_name] = [fixed_value] * n_candidates
+        params[param_name] = [fixed_value] * resolved_n_candidates
     return params
+
+
+def _deduplicate_runtime_params(
+    runtime: _ComponentRuntime,
+    param_lists: Mapping[str, Any],
+    *,
+    n_candidates: int,
+) -> _DeduplicatedRuntimeParams:
+    full_keys = candidate_keys(param_lists)
+    runtime_params = _wide_params_for_runtime(
+        runtime, param_lists, n_candidates=n_candidates
+    )
+    runtime_param_names = sorted(runtime_params)
+    unique_positions: dict[tuple[Any, ...], int] = {}
+    unique_params: dict[str, list[Any]] = {name: [] for name in runtime_param_names}
+    candidate_index: dict[CandidateKey, int] = {}
+
+    for candidate_idx, full_key in enumerate(full_keys):
+        runtime_key = tuple(runtime_params[name][candidate_idx] for name in runtime_param_names)
+        position = unique_positions.get(runtime_key)
+        if position is None:
+            position = len(unique_positions)
+            unique_positions[runtime_key] = position
+            for name in runtime_param_names:
+                unique_params[name].append(runtime_params[name][candidate_idx])
+        candidate_index[full_key] = position
+
+    return _DeduplicatedRuntimeParams(
+        param_lists=unique_params,
+        candidate_index=candidate_index,
+        n_candidates=len(unique_positions),
+    )
 
 
 def _build_wide_frame(

@@ -47,25 +47,38 @@ def build_candidate_index(param_lists: Mapping[str, Sequence]) -> dict[Candidate
 
 @dataclass(frozen=True)
 class WideIndicatorPrecompute:
-    """Full-series indicator outputs addressable by candidate and sliceable by range."""
+    """Full-series indicator outputs addressable by candidate and sliceable by range.
+
+    ``candidate_index`` is the default full-candidate block map. Individual outputs
+    may provide ``output_candidate_index`` when their indicator was computed only
+    for unique indicator-parameter tuples; ``window`` then expands those deduped
+    blocks back to the requested full-candidate order.
+    """
 
     outputs: Mapping[str, np.ndarray]
     candidate_index: Mapping[CandidateKey, int]
     n_symbols: int
+    output_candidate_index: Mapping[str, Mapping[CandidateKey, int]] | None = None
 
     def window(
         self, range_: slice, keys: Sequence[CandidateKey]
     ) -> dict[str, np.ndarray]:
         """Rows in ``range_`` by the candidate-major columns for ``keys``, in order."""
-        positions = [self.candidate_index[key] for key in keys]
         windowed: dict[str, np.ndarray] = {}
         for name, array in self.outputs.items():
+            index = self._candidate_index_for_output(name)
+            positions = [index[key] for key in keys]
             blocks = [
                 array[range_, position * self.n_symbols : (position + 1) * self.n_symbols]
                 for position in positions
             ]
             windowed[name] = np.concatenate(blocks, axis=1) if blocks else array[range_, :0]
         return windowed
+
+    def _candidate_index_for_output(self, name: str) -> Mapping[CandidateKey, int]:
+        if self.output_candidate_index is None:
+            return self.candidate_index
+        return self.output_candidate_index.get(name, self.candidate_index)
 
 
 def empty_precompute(

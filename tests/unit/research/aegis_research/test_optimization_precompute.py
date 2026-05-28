@@ -45,6 +45,26 @@ def test_window_selects_rows_and_gathers_candidate_columns_in_requested_order() 
     np.testing.assert_array_equal(window["sig"][:, 2:4], arr[2:5, 0:2])
 
 
+def test_window_can_use_output_specific_deduped_candidate_index() -> None:
+    n_rows, n_symbols = 4, 1
+    arr = _candidate_major_array(n_rows, n_candidates=2, n_symbols=n_symbols)
+    store = WideIndicatorPrecompute(
+        outputs={"sig": arr},
+        candidate_index={("A", 1): 0, ("A", 2): 1, ("B", 1): 2, ("B", 2): 3},
+        n_symbols=n_symbols,
+        output_candidate_index={
+            "sig": {("A", 1): 0, ("A", 2): 0, ("B", 1): 1, ("B", 2): 1}
+        },
+    )
+
+    window = store.window(slice(1, 3), [("A", 2), ("B", 1), ("A", 1)])
+
+    assert window["sig"].shape == (2, 3 * n_symbols)
+    np.testing.assert_array_equal(window["sig"][:, 0:1], arr[1:3, 0:1])
+    np.testing.assert_array_equal(window["sig"][:, 1:2], arr[1:3, 1:2])
+    np.testing.assert_array_equal(window["sig"][:, 2:3], arr[1:3, 0:1])
+
+
 def test_build_candidate_index_is_order_independent_in_param_name() -> None:
     # Two candidates over two params; index keys are canonical (sorted param name).
     param_lists = {"window": [5, 50], "smooth": [3, 7]}
