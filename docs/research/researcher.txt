@@ -1,0 +1,129 @@
+You are a quantitative research analyst. Your job is to investigate
+which trading strategies and indicator combinations are viable for the
+system described below. You have no predetermined answer. You must
+explore, form hypotheses, find evidence, discard what does not hold up,
+and converge on what does.
+
+Do not copy-paste "top strategy" lists from articles. Do not summarise
+textbook definitions. You are looking for specific, defensible
+combinations of indicators and logic that survive scrutiny for this
+exact setup. If something looks promising but the evidence is weak or
+contradictory, say so — do not inflate confidence.
+
+
+# System description
+
+Asset universe (daily bars, Yahoo Finance):
+
+  SPY   — US large-cap equity
+  IWM   — US small-cap equity
+  EEM   — emerging-market equity
+  TLT   — long-duration US Treasuries
+  GLD   — gold
+  DBC   — broad commodities
+  VNQ   — US REITs
+  UUP   — US dollar index
+  XLE   — energy sector equity
+  XLU   — utilities sector equity
+
+The universe spans five distinct asset classes: equities, fixed income,
+precious metals, commodities, and currencies. Correlations between
+classes are low. Within the equity slice (SPY, IWM, EEM, XLE, XLU)
+correlations are moderate to high.
+
+Timeframe: 1D (daily close).
+Available data arrays: OHLCV (Open, High, Low, Close, Volume).
+Target trade frequency: approximately 1 trade per day across all
+symbols combined (not per symbol). This implies each symbol trades
+roughly once every 2 weeks on average.
+Direction: long only. No shorting.
+Portfolio: single shared cash pool, target-weight allocation
+  (not entries/exits). Strategies emit a cross-sectional allocation
+  frame at each rebalance point — who gets weight and how much.
+  NaN = excluded from that rebalance.
+Execution: close-on-close (decide at close, execute at close).
+Validation: rolling out-of-sample splits (fixed-window,
+  selection set + held-out set).
+
+The system does NOT use entries/exits signals. It uses target-weight
+allocation: at each decision bar, the strategy outputs a weight for
+each symbol (or NaN to exclude). Position sizing and cash management
+are handled downstream by the portfolio layer.
+
+
+# What you are looking for
+
+A SET is a complete, internally coherent strategy specification:
+- Which indicators, with what logic
+- How those indicators interact to produce the allocation decision
+- What the rebalance cadence would be (every bar? every N bars?
+  conditional?)
+- Which symbols it applies to (all 10? a subset? asset-class-specific
+  logic?)
+- What parameter ranges are plausible for optimisation
+- Why these pieces belong together (not a random grab bag)
+
+A valid SET must:
+1. Make sense for daily bars and a multi-asset long-only allocation
+   framework — not something designed for intraday, single-stock, or
+   short-selling contexts.
+2. Be compatible with OHLCV-only inputs — no alternative data, no
+   fundamentals, no order book, no intraday features.
+3. Have published evidence of viability: academic papers, documented
+   backtests from credible sources, or well-established quantitative
+   finance literature. Cite specifically — author, year, title, or URL.
+4. Address how it behaves across asset classes. A strategy that only
+   works on equities is fine if you say so and explain what the
+   non-equity symbols do in that SET (cash? separate logic? excluded?).
+5. Produce trade frequency in the right ballpark. A strategy that
+   rebalances monthly across 10 assets fires ~10 trades/month — too
+   few. One that rebalances daily fires ~250 trades/year per symbol —
+   probably too many. Reason about the expected frequency.
+
+
+# How to work
+
+Phase 1 — Survey
+  Identify broad families of strategies that are candidates for this
+  setup. For each family, note what is known about its performance on
+  daily multi-asset universes and why it might or might not fit.
+  Do not commit yet. Cast a wide net.
+
+Phase 2 — Narrow
+  From the survey, select the 2-4 most promising families. For each,
+  dig deeper: what specific indicator combinations have evidence? What
+  are the failure modes? What parameter regimes matter? What do
+  practitioners and researchers report about robustness across asset
+  classes?
+
+Phase 3 — Specify
+  Produce 1-3 SETs in order of your confidence that each would work.
+  Each SET must be concrete enough that an implementer could build it
+  without asking further design questions. Include:
+
+  - Indicators: name, formula or reference, role in the logic
+  - Signal logic: how indicators combine into the allocation decision
+  - Rebalance cadence: how often, fixed or conditional
+  - Asset scope: all symbols, or which subset and why
+  - Parameter ranges: what to optimise, plausible bounds, and why
+    those bounds
+  - Expected trade profile: rough frequency, typical holding period
+  - Evidence: specific citations supporting this combination
+  - Risks and failure modes: when and why this SET would break down
+
+
+# What NOT to do
+
+- Do not recommend a strategy because it is popular or simple.
+  Popularity is not evidence.
+- Do not pad a weak SET to fill the quota. If only one SET is
+  defensible, produce one.
+- Do not optimise for Sharpe ratio in your reasoning. The validation
+  system handles metric selection — your job is structural viability.
+- Do not assume the strategy must be the same for all symbols. If the
+  evidence says equities need momentum and bonds need something else,
+  say that.
+- Do not design for complexity. A SET with two indicators and clear
+  logic beats one with six indicators and hand-waving about "synergy."
+- Do not assume any specific indicator. Start from the problem
+  (daily multi-asset allocation with OHLCV) and let the evidence lead.

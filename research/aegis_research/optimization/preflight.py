@@ -64,6 +64,11 @@ def build_preflight(
             optimization,
             param_sampled_combinations,
         )
+    search_mode = _search_mode(
+        optimization,
+        sampled_combinations=sampled_combinations,
+        executable_combinations=param_sampled_combinations,
+    )
     selection_rows = sum(len(split.selection_index) for split in split_result.splits)
     held_out_rows = sum(len(split.held_out_index) for split in split_result.splits)
     total_window_rows = selection_rows + held_out_rows
@@ -116,6 +121,7 @@ def build_preflight(
     diagnostics = {
         "schema_version": PREFLIGHT_SCHEMA_VERSION,
         "search": optimization.search,
+        "search_mode": search_mode,
         "return_grid": optimization.evidence.return_grid,
         "param_shapes": [_param_shape_payload(shape) for shape in param_shapes],
         "theoretical_combinations": theoretical_combinations,
@@ -243,6 +249,26 @@ def _sampled_combination_count(
             raise ValueError("optimization.random_subset is required for random search")
         return min(param_sampled_combinations, optimization.random_subset)
     return param_sampled_combinations
+
+
+def _search_mode(
+    optimization: OptimizationConfig,
+    *,
+    sampled_combinations: int,
+    executable_combinations: int,
+) -> str:
+    """Classify the effective search for evidence; observational, no behavior change.
+
+    ``"exhaustive"`` for non-random search; otherwise ``"random"`` when the random
+    subset actually reduces the executable grid, or ``"exhaustive_auto"`` when the
+    subset is at least the total executable combinations (the ``min()`` runs every
+    combo, e.g. after param locking shrinks the grid).
+    """
+    if optimization.search != "random":
+        return "exhaustive"
+    if sampled_combinations < executable_combinations:
+        return "random"
+    return "exhaustive_auto"
 
 
 def _safe_vbt_count(

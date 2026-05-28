@@ -223,6 +223,63 @@ def test_preflight_return_grid_off_excludes_grid_rows_but_counts_public_payloads
     assert diagnostics["estimated_public_rows"] == 34
 
 
+def test_search_mode_is_exhaustive_for_non_random_search() -> None:
+    diagnostics = build_preflight(
+        params={"window": vbt.Param([5, 10, 20])},
+        optimization=_optimization(),
+        split_result=_split_result(split_count=1, selection_rows=3, held_out_rows=2),
+        symbol_count=1,
+        has_open_prices=False,
+    )
+
+    assert diagnostics["search_mode"] == "exhaustive"
+
+
+def test_search_mode_is_random_when_subset_reduces_the_grid() -> None:
+    diagnostics = build_preflight(
+        params={
+            "fast_window": vbt.Param(range(1_000)),
+            "slow_window": vbt.Param(range(1_000)),
+        },
+        optimization=_optimization(search="random", random_subset=10),
+        split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+        symbol_count=1,
+        has_open_prices=False,
+    )
+
+    assert diagnostics["sampled_combinations"] == 10
+    assert diagnostics["search_mode"] == "random"
+
+
+def test_search_mode_is_exhaustive_auto_when_subset_matches_total_combos() -> None:
+    diagnostics = build_preflight(
+        params={"fast_window": vbt.Param([2, 5]), "slow_window": vbt.Param([10, 20])},
+        optimization=_optimization(search="random", random_subset=4, seed=42),
+        split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+        symbol_count=1,
+        has_open_prices=False,
+    )
+
+    # 4 executable combos == random_subset -> the min() runs every combo.
+    assert diagnostics["sampled_combinations"] == 4
+    assert diagnostics["search_mode"] == "exhaustive_auto"
+
+
+def test_search_mode_exhaustive_auto_surfaced_when_subset_exceeds_combos() -> None:
+    # Param locking reduces the grid below random_subset; the run fails closed,
+    # but the evidence still classifies it as exhaustive_auto.
+    with pytest.raises(PreflightError, match="random_subset") as error:
+        build_preflight(
+            params={"fast_window": vbt.Param([2, 5]), "slow_window": vbt.Param([10, 20])},
+            optimization=_optimization(search="random", random_subset=100, seed=42),
+            split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+            symbol_count=1,
+            has_open_prices=False,
+        )
+
+    assert error.value.diagnostics["search_mode"] == "exhaustive_auto"
+
+
 def _optimization(
     *,
     search: str = "grid",
