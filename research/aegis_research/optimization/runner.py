@@ -10,8 +10,9 @@ then Phase 1 sweeps every split's *selection* set running only stage 2
 ``range_`` template — producing a tidy grid (one row per candidate per split, one
 column per metric). Phase 2 ranks candidates globally and returns three
 representative candidates (best / median / worst). Phase 3 re-runs those three on
-every split's *held-out* set and attaches the held-out metrics; it still
-recomputes indicators per held-out slice (reuse of the store is a follow-up).
+every split's *held-out* set and attaches the held-out metrics, again slicing the
+full-series indicator store instead of recomputing indicators on bare held-out
+slices.
 
 A single ``Splitter`` instance is constructed from the run config and reused for
 both phases so selection and held-out share identical split boundaries. The
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -41,7 +42,11 @@ from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.optimization.precompute import CandidateKey, candidate_keys
+from research.aegis_research.optimization.precompute import (
+    CandidateKey,
+    WideIndicatorPrecompute,
+    candidate_keys,
+)
 from research.aegis_research.optimization.ranking import (
     SPLIT_LEVEL,
     EvaluatedCandidate,
@@ -97,7 +102,7 @@ def execute_optimization(
     )
 
     # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.
-    selection_metrics = _build_selection_metrics(
+    selection_metrics = _build_precomputed_window_metrics(
         source=source,
         portfolio=portfolio,
         report=report,
@@ -125,6 +130,7 @@ def execute_optimization(
         portfolio=portfolio,
         report=report,
         close=close,
+        store=store,
         param_names=param_names,
     )
 
@@ -137,25 +143,27 @@ def _build_splitter(index: pd.Index, optimization: OptimizationConfig) -> vbt.Sp
     return factory(index, set_labels=SET_LABELS, **dict(optimization.split.params))
 
 
-def _build_selection_metrics(
+def _build_precomputed_window_metrics(
     *,
     source: OptimizationSource,
     portfolio: PortfolioConfig,
     report: ReportConfig,
     close: pd.DataFrame,
-    store: Any,
-    invalid_candidate_keys: set[CandidateKey],
-) -> Any:
-    """Stage-2 callback: slice the full-series store to the window, then simulate.
+    store: WideIndicatorPrecompute,
+    invalid_candidate_keys: set[CandidateKey] | None = None,
+) -> Callable[..., Any]:
+    """Build a split callback that slices the full-series store before simulation.
 
     ``close`` and ``store`` are closure-captured (passed through ``apply``
     unchanged); only the per-(split,set) ``range_`` template arrives positionally.
+    Selection and held-out sweeps use the same callback shape so they cannot drift.
     """
+    invalid_keys = invalid_candidate_keys or set()
 
-    def selection_metrics(range_: slice, **params: Any) -> Any:
+    def window_metrics(range_: slice, **params: Any) -> Any:
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
         keys = candidate_keys(combo_lists)
-        invalid_positions = _invalid_candidate_positions(keys, invalid_candidate_keys)
+        invalid_positions = _invalid_candidate_positions(keys, invalid_keys)
         if len(invalid_positions) == n_combos:
             return _nan_metric_frame(metric_keys, param_names)
 
@@ -169,29 +177,7 @@ def _build_selection_metrics(
         )
         return _mask_invalid_metrics(metrics, invalid_positions)
 
-    return selection_metrics
-
-
-def _build_held_out_metrics(
-    *,
-    source: OptimizationSource,
-    portfolio: PortfolioConfig,
-    report: ReportConfig,
-) -> Any:
-    """Held-out callback: still computes indicators per slice (no warmup buffer).
-
-    Reusing the full-series store for the held-out window is a follow-up slice;
-    here the fused per-slice pipeline keeps today's behaviour.
-    """
-
-    def held_out_metrics(close_slice: pd.DataFrame, **params: Any) -> Any:
-        param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
-        wide_allocations = source.pipeline(close_slice, n_combos, **combo_lists)
-        return _metrics_from_allocations(
-            close_slice, wide_allocations, portfolio, report, metric_keys, param_names
-        )
-
-    return held_out_metrics
+    return window_metrics
 
 
 def _extract_combos(
@@ -255,25 +241,28 @@ def _invalid_candidate_positions(
 
 
 def _invalid_full_history_candidate_keys(
-    store: Any, keys: Sequence[CandidateKey]
+    store: WideIndicatorPrecompute, keys: Sequence[CandidateKey]
 ) -> set[CandidateKey]:
-    outputs = getattr(store, "outputs", {})
-    if not outputs:
-        return set()
-    n_symbols = int(getattr(store, "n_symbols", 0))
-    if n_symbols < 1:
+    outputs = store.outputs
+    if not outputs or store.n_symbols < 1:
         return set()
 
-    candidate_index = getattr(store, "candidate_index", {})
     invalid: set[CandidateKey] = set()
     for key in keys:
-        position = candidate_index[key]
-        if any(
-            _candidate_output_is_non_finite(output, position, n_symbols)
-            for output in outputs.values()
-        ):
-            invalid.add(key)
+        for output_name, output in outputs.items():
+            position = _candidate_index_for_output(store, output_name)[key]
+            if _candidate_output_is_non_finite(output, position, store.n_symbols):
+                invalid.add(key)
+                break
     return invalid
+
+
+def _candidate_index_for_output(
+    store: WideIndicatorPrecompute, output_name: str
+) -> Mapping[CandidateKey, int]:
+    if store.output_candidate_index is None:
+        return store.candidate_index
+    return store.output_candidate_index.get(output_name, store.candidate_index)
 
 
 def _candidate_output_is_non_finite(output: Any, position: int, n_symbols: int) -> bool:
@@ -364,6 +353,7 @@ def _attach_held_out(
     portfolio: PortfolioConfig,
     report: ReportConfig,
     close: pd.DataFrame,
+    store: WideIndicatorPrecompute,
     param_names: list[str],
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
@@ -377,13 +367,13 @@ def _attach_held_out(
         name: vbt.Param([params[name] for params in unique_params], level=0)
         for name in param_names
     }
-    held_out_metrics = _build_held_out_metrics(
-        source=source, portfolio=portfolio, report=report
+    held_out_metrics = _build_precomputed_window_metrics(
+        source=source, portfolio=portfolio, report=report, close=close, store=store
     )
     held_out_grid = _sweep(
         splitter=splitter,
         candidate_metrics=held_out_metrics,
-        apply_input=vbt.Takeable(close),
+        apply_input=vbt.Rep("range_"),
         params=held_out_params,
         set_=HELD_OUT_SET,
         parallel=False,
