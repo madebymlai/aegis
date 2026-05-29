@@ -29,6 +29,23 @@ def _grid(
     return pd.DataFrame(rows, index=index)
 
 
+def _grid_with_trades(
+    spec: dict[str, dict[str, tuple[float, float]]], *, metric: str = "sharpe"
+) -> pd.DataFrame:
+    """Tidy (param, split) grid carrying a ``metric`` and a ``total_trades`` column.
+
+    ``spec`` maps candidate -> split -> (metric_value, trade_count).
+    """
+    tuples: list[tuple[str, str]] = []
+    rows: list[dict[str, float]] = []
+    for param, by_split in spec.items():
+        for split, (value, trades) in by_split.items():
+            tuples.append((param, split))
+            rows.append({metric: value, "total_trades": trades})
+    index = pd.MultiIndex.from_tuples(tuples, names=["param", "split"])
+    return pd.DataFrame(rows, index=index)
+
+
 def test_worked_example_min_aware_penalty_ranks_steady_candidate_first() -> None:
     # Equal means (0.6) but A has a catastrophic split. Min-aware MUST rank B above A.
     grid = _grid(
@@ -212,6 +229,84 @@ def test_two_trading_candidates_with_dead_combos_pick_median_from_trading() -> N
     assert result.excluded_degenerate == 1
 
 
+def test_min_trades_floor_excludes_thin_high_sharpe_winner() -> None:
+    # The thin candidate has the best score but won on 2-3 lucky trades/split; the
+    # min-trades floor must drop it so the well-traded candidate wins instead.
+    grid = _grid_with_trades(
+        {
+            "lucky": {"s0": (2.0, 2.0), "s1": (2.0, 3.0)},  # top score, far too few trades
+            "real": {"s0": (0.6, 40.0), "s1": (0.6, 38.0)},  # lower score, plenty of trades
+        }
+    )
+
+    result = select_representative_candidates(grid, metric="sharpe", min_trades=10)
+
+    assert result.best.params == {"param": "real"}
+    assert result.best.params != {"param": "lucky"}
+    assert result.excluded_degenerate == 1  # the thin candidate counts as degenerate
+
+
+def test_min_trades_floor_is_per_split_minimum() -> None:
+    # A candidate that trades enough on one split but is thin on another fails the
+    # floor: it must clear min_trades on the *thinnest* split it scored.
+    grid = _grid_with_trades(
+        {
+            "uneven": {"s0": (3.0, 50.0), "s1": (3.0, 4.0)},  # min 4 trades -> excluded
+            "steady": {"s0": (0.5, 25.0), "s1": (0.5, 30.0)},  # min 25 -> kept
+        }
+    )
+
+    result = select_representative_candidates(grid, metric="sharpe", min_trades=10)
+
+    assert result.best.params == {"param": "steady"}
+    assert result.excluded_degenerate == 1
+
+
+def test_min_trades_zero_is_disabled_and_needs_no_trades_column() -> None:
+    # Default (min_trades=0): floor off, behaviour identical, no trades column needed.
+    grid = _grid({"thin": {"s0": 2.0, "s1": 2.0}, "fat": {"s0": 0.5, "s1": 0.5}})
+
+    result = select_representative_candidates(grid, metric="sharpe")
+
+    assert result.best.params == {"param": "thin"}
+    assert result.excluded_degenerate == 0
+
+
+def test_min_trades_floor_requires_trades_column() -> None:
+    grid = _grid({"a": {"s0": 1.0, "s1": 1.0}})
+
+    with pytest.raises(KeyError, match="total_trades"):
+        select_representative_candidates(grid, metric="sharpe", min_trades=10)
+
+
+def test_all_candidates_under_traded_raises() -> None:
+    grid = _grid_with_trades(
+        {
+            "a": {"s0": (2.0, 2.0), "s1": (2.0, 3.0)},
+            "b": {"s0": (1.5, 1.0), "s1": (1.5, 4.0)},
+        }
+    )
+
+    with pytest.raises(ValueError, match="min_trades=10"):
+        select_representative_candidates(grid, metric="sharpe", min_trades=10)
+
+
+def test_min_trades_floor_combines_with_nan_score_exclusion() -> None:
+    # Both exclusion classes (NaN-score and under-traded) fold into excluded_degenerate.
+    grid = _grid_with_trades(
+        {
+            "real": {"s0": (0.6, 40.0), "s1": (0.6, 40.0)},
+            "thin": {"s0": (2.0, 2.0), "s1": (2.0, 2.0)},  # under-traded
+            "dead": {"s0": (float("nan"), 0.0), "s1": (float("nan"), 0.0)},  # NaN score
+        }
+    )
+
+    result = select_representative_candidates(grid, metric="sharpe", min_trades=10)
+
+    assert result.best.params == {"param": "real"}
+    assert result.excluded_degenerate == 2
+
+
 def test_tied_scores_keep_parameter_sorted_order() -> None:
     grid = _grid({"b": {"s0": 0.5, "s1": 0.5}, "a": {"s0": 0.5, "s1": 0.5}})
 
@@ -283,8 +378,10 @@ def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
 def test_signature_has_no_direction_parameter() -> None:
     params = inspect.signature(select_representative_candidates).parameters
 
-    assert list(params) == ["grid", "metric", "min_weight"]
+    assert list(params) == ["grid", "metric", "min_weight", "min_trades", "trades_metric"]
     assert params["min_weight"].default == 0.3
+    assert params["min_trades"].default == 0
+    assert params["trades_metric"].default == "total_trades"
     assert "direction" not in params
 
 

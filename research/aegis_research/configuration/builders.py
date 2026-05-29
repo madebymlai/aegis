@@ -60,6 +60,7 @@ def _build_ranking(raw: dict[str, Any]) -> RankingConfig:
     return RankingConfig(
         metric=raw["metric"],
         min_weight=raw.get("min_weight", RankingConfig.min_weight),
+        min_trades=raw.get("min_trades", RankingConfig.min_trades),
     )
 
 

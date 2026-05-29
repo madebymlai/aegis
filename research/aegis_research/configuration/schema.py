@@ -200,6 +200,7 @@ class RunIndicatorSourceConfig:
 class RankingConfig:
     metric: str
     min_weight: float = 0.3
+    min_trades: int = 0
 
 
 @dataclass(frozen=True)

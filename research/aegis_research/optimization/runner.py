@@ -121,7 +121,10 @@ def execute_optimization(
         parallel=True,
     )
     result = select_representative_candidates(
-        selection_grid, metric=ranking.metric, min_weight=ranking.min_weight
+        selection_grid,
+        metric=ranking.metric,
+        min_weight=ranking.min_weight,
+        min_trades=ranking.min_trades,
     )
     # Distinguish *misconfigured* (lookback > full history) from merely *degenerate*:
     # the ranking layer only sees NaN scores, so the runner — which knows which keys

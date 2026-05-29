@@ -517,7 +517,7 @@ def _validate_ranking(
     _validate_known_keys(
         path,
         value,
-        {"metric", "min_weight"},
+        {"metric", "min_weight", "min_trades"},
         issues,
     )
     metric = value.get("metric")
@@ -540,6 +540,14 @@ def _validate_ranking(
             issues.append(
                 ConfigValidationIssue(
                     f"{path}.min_weight", "must be a number between 0.0 and 1.0"
+                )
+            )
+    if "min_trades" in value:
+        min_trades = value["min_trades"]
+        if isinstance(min_trades, bool) or not isinstance(min_trades, int) or min_trades < 0:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}.min_trades", "must be a non-negative integer"
                 )
             )
 
