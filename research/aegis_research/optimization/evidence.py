@@ -17,10 +17,15 @@ from research.aegis_research.optimization.ranking import (
 
 CANDIDATE_ROW_SCHEMA_VERSION = "candidate_row.v2"
 CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v2"
-CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v1"
-OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v1"
+CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v2"
+OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v2"
 CANDIDATE_ROLES = ("best", "median", "worst")
 DEFAULT_COORDINATE_LEVELS = frozenset({"split", "set", "symbol"})
+
+# Selection->held-out gap (ranking-metric units) above which the best candidate is
+# flagged for selection-set optimism. Calibrated for Sharpe-scale ranking metrics
+# (the production default) and mirrors the leak_audit W1 overfit signal.
+HELD_OUT_GAP_WARNING_THRESHOLD = 0.5
 
 
 def candidate_rows_from_param_index(
@@ -122,6 +127,7 @@ def candidate_rows_from_result(
                 "selection_metrics": _canonical_split_metrics(candidate.selection_metrics),
                 "held_out_metrics": _canonical_split_metrics(candidate.held_out_metrics),
                 "metrics": _canonical_metric_map(candidate.metrics),
+                "held_out_metrics_mean": _aggregate_split_metrics(candidate.held_out_metrics),
                 "identity": identity,
             }
         )
@@ -145,7 +151,86 @@ def _candidate_evidence(candidate: EvaluatedCandidate) -> dict[str, Any]:
         "selection_metrics": _canonical_split_metrics(candidate.selection_metrics),
         "held_out_metrics": _canonical_split_metrics(candidate.held_out_metrics),
         "metrics": _canonical_metric_map(candidate.metrics),
+        "held_out_metrics_mean": _aggregate_split_metrics(candidate.held_out_metrics),
     }
+
+
+def _aggregate_split_metrics(
+    metrics: Mapping[Any, Mapping[str, float | None]],
+) -> dict[str, float | None]:
+    """Mean of each metric across splits, skipping missing/NaN values.
+
+    The held-out analogue of ``EvaluatedCandidate.metrics`` (the in-sample mean)
+    and the aggregation ``leak_audit`` W1 applies to both sets, so the
+    selection->held-out gap is computed apples-to-apples. Validated against vbt
+    ``sharpe_ratio`` semantics: each split's metric is a self-contained annualized
+    scalar (``mean/std * sqrt(ann_factor)``), so a cross-split mean is sound.
+    """
+    columns: dict[str, list[float]] = {}
+    seen: set[str] = set()
+    for values in metrics.values():
+        for metric, value in values.items():
+            key = str(metric)
+            seen.add(key)
+            number = _optional_float(value)
+            if number is not None:
+                columns.setdefault(key, []).append(number)
+    return {
+        metric: (sum(columns[metric]) / len(columns[metric]) if metric in columns else None)
+        for metric in sorted(seen)
+    }
+
+
+def candidate_held_out_headline(
+    candidate: Mapping[str, Any],
+    *,
+    metric: str,
+) -> dict[str, Any]:
+    """Held-out-first view of ``metric`` for a serialized candidate row.
+
+    ``held_out`` is the unbiased out-of-sample aggregate — the number a reader
+    should treat as the run's result; ``selection`` is the optimistic in-sample
+    aggregate the candidate was *ranked* on; ``gap = selection - held_out``
+    quantifies selection-set optimism (mirrors ``leak_audit`` W1). Reads the
+    aggregates already serialized on the row (``metrics``, ``held_out_metrics_mean``).
+    """
+    selection = _optional_float((candidate.get("metrics") or {}).get(metric))
+    held_out = _optional_float((candidate.get("held_out_metrics_mean") or {}).get(metric))
+    gap = None if selection is None or held_out is None else selection - held_out
+    return {
+        "metric": metric,
+        "held_out": held_out,
+        "selection": selection,
+        "gap": gap,
+    }
+
+
+def held_out_warning(
+    headline: Mapping[str, Any],
+    *,
+    threshold: float = HELD_OUT_GAP_WARNING_THRESHOLD,
+) -> str | None:
+    """One-line selection-optimism warning for the best candidate, or ``None``.
+
+    Mirrors ``leak_audit`` W1: warns when the headline held-out ranking metric is
+    non-positive (the strategy does not work out-of-sample) or the
+    selection->held-out gap is at least ``threshold``.
+    """
+    metric = headline.get("metric")
+    held_out = headline.get("held_out")
+    selection = headline.get("selection")
+    gap = headline.get("gap")
+    if held_out is None:
+        return None
+    if held_out > 0.0 and not (gap is not None and gap >= threshold):
+        return None
+    selection_text = "n/a" if selection is None else f"{selection:+.3f}"
+    gap_text = "n/a" if gap is None else f"{gap:+.3f}"
+    return (
+        f"best candidate held-out {metric} {held_out:+.3f} "
+        f"(in-sample {selection_text}, gap {gap_text}): selection-set optimism — "
+        "treat the in-sample value as a ranking signal, not a result"
+    )
 
 
 def _candidate_identity(

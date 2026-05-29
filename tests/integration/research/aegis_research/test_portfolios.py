@@ -204,7 +204,7 @@ def test_diagnostics_v3_payload_contains_required_blocks_and_no_legacy_fields() 
     assert diagnostics["vbt_settings"]["cash_sharing"] is True
     assert diagnostics["vbt_settings"]["call_seq"] == "auto"
     assert diagnostics["vbt_settings"]["one_order_per_bar"] is True
-    assert diagnostics["contract"]["execution_timing"] == "close"
+    assert diagnostics["contract"]["execution_timing"] == "same_close"
     assert diagnostics["contract"]["terminal_liquidation"] is True
     assert diagnostics["contract"]["target_exposure_cap"] == 1.0
     assert diagnostics["contract"]["direction_scope"] == "long_only_v1"

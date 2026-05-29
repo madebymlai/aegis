@@ -28,8 +28,11 @@ VBT_NOT_APPLICABLE_SETTINGS: dict[str, str] = {
     "upon_short_conflict": "not_applicable_long_only_v1",
     "upon_dir_conflict": "not_applicable_long_only_v1",
     "upon_opposite_entry": "not_applicable_long_only_v1",
-    "price": "default_close_no_kwarg_passed",
 }
+# Next-open execution: a target decided from bar t's close fills at bar t+1's open.
+# VBT's ``price="nextopen"`` sets ``from_ago=1`` (shift one bar) and fills at the open,
+# which is the canonical VBT way to avoid same-bar look-ahead without manual shifting.
+VBT_NEXT_OPEN_PRICE = "nextopen"
 
 ORDER_REJECTION_STATUSES: tuple[str, ...] = (
     "NoCash",
@@ -45,14 +48,33 @@ class PortfolioSimulationResult:
     diagnostics: dict[str, Any]
 
 
-def simulate_portfolio(
-    close: pd.DataFrame,
+def _execution_settings(open_: pd.DataFrame | None) -> tuple[dict[str, Any], str]:
+    """Resolve VBT fill-timing kwargs.
+
+    With ``open_`` provided, fill at the next bar's open (``price="nextopen"`` ->
+    ``from_ago=1``) so a target decided from bar t's close cannot fill on bar t —
+    eliminating same-bar look-ahead. Without it, fall back to close fills.
+    """
+    if open_ is None:
+        return {}, "same_close"
+    return {"price": VBT_NEXT_OPEN_PRICE, "open": open_}, "next_open"
+
+
+def _build_portfolio(
+    price_frame: pd.DataFrame,
     allocations: pd.DataFrame,
     config: PortfolioConfig,
     *,
-    market_index: pd.Index | None = None,
-) -> PortfolioSimulationResult:
-    _validate_allocations_frame(close, allocations)
+    open_frame: pd.DataFrame | None,
+    market_index: pd.Index | None,
+    group_by: Any,
+) -> tuple[vbt.Portfolio, Any, dict[str, Any], str]:
+    """Mask allocations, build the PFO, and run ``from_optimizer``.
+
+    Shared core for the single-group and per-candidate simulations: identical
+    masking, allocation-filling, and execution settings; only ``group_by`` (and
+    whether the frames are candidate-expanded) differs between the two callers.
+    """
     masked, non_exec_diag = apply_executable_mask_and_terminal_liquidation(
         allocations,
         market_index=market_index,
@@ -63,18 +85,40 @@ def simulate_portfolio(
         nonzero_only=False,
         unique_only=False,
     )
+    exec_kwargs, execution_timing = _execution_settings(open_frame)
     pf = vbt.Portfolio.from_optimizer(
-        close,
+        price_frame,
         pfo,
         pf_method=VBT_PF_METHOD,
         size_type=VBT_RESOLVED_SIZE_TYPE,
         direction=config.direction,
         cash_sharing=True,
         call_seq="auto",
-        group_by=True,
+        group_by=group_by,
         fees=config.fees,
         slippage=config.slippage,
         init_cash=config.init_cash,
+        **exec_kwargs,
+    )
+    return pf, pfo, non_exec_diag, execution_timing
+
+
+def simulate_portfolio(
+    close: pd.DataFrame,
+    allocations: pd.DataFrame,
+    config: PortfolioConfig,
+    *,
+    open_: pd.DataFrame | None = None,
+    market_index: pd.Index | None = None,
+) -> PortfolioSimulationResult:
+    _validate_allocations_frame(close, allocations)
+    pf, pfo, non_exec_diag, execution_timing = _build_portfolio(
+        close,
+        allocations,
+        config,
+        open_frame=open_,
+        market_index=market_index,
+        group_by=True,
     )
     diagnostics = _portfolio_diagnostics(
         pf=pf,
@@ -84,6 +128,7 @@ def simulate_portfolio(
         non_executable=non_exec_diag,
         group_by_label=VBT_SHARED_GROUP_BY,
         candidate_ids=None,
+        execution_timing=execution_timing,
     )
     return PortfolioSimulationResult(portfolio=pf, diagnostics=diagnostics)
 
@@ -93,6 +138,7 @@ def simulate_portfolio_batch(
     allocations: pd.DataFrame,
     config: PortfolioConfig,
     *,
+    open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     compute_diagnostics: bool = True,
 ) -> PortfolioSimulationResult:
@@ -103,28 +149,20 @@ def simulate_portfolio_batch(
         feature_name="Close",
     )
     _validate_allocations_frame(expanded_close, allocations)
-    masked, non_exec_diag = apply_executable_mask_and_terminal_liquidation(
-        allocations,
-        market_index=market_index,
+    expanded_open = (
+        None
+        if open_ is None
+        else expand_market_frame_to_candidate_columns(
+            open_, allocations.columns, feature_name="Open"
+        )
     )
-    pfo = vbt.PFO.from_filled_allocations(
-        masked,
-        valid_only=True,
-        nonzero_only=False,
-        unique_only=False,
-    )
-    pf = vbt.Portfolio.from_optimizer(
+    pf, pfo, non_exec_diag, execution_timing = _build_portfolio(
         expanded_close,
-        pfo,
-        pf_method=VBT_PF_METHOD,
-        size_type=VBT_RESOLVED_SIZE_TYPE,
-        direction=config.direction,
-        cash_sharing=True,
-        call_seq="auto",
+        allocations,
+        config,
+        open_frame=expanded_open,
+        market_index=market_index,
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
-        fees=config.fees,
-        slippage=config.slippage,
-        init_cash=config.init_cash,
     )
     if not compute_diagnostics:
         return PortfolioSimulationResult(portfolio=pf, diagnostics={})
@@ -137,6 +175,7 @@ def simulate_portfolio_batch(
         non_executable=non_exec_diag,
         group_by_label=VBT_CANDIDATE_GROUP_BY,
         candidate_ids=candidate_ids,
+        execution_timing=execution_timing,
     )
     diagnostics["shape"] |= {
         "candidate_count": len(candidate_ids),
@@ -214,7 +253,11 @@ def _portfolio_diagnostics(
     non_executable: dict[str, Any],
     group_by_label: str,
     candidate_ids: list[Any] | None,
+    execution_timing: str = "same_close",
 ) -> dict[str, Any]:
+    price_setting = (
+        VBT_NEXT_OPEN_PRICE if execution_timing == "next_open" else "default_close_no_kwarg_passed"
+    )
     return {
         "schema_version": PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION,
         "vbt_settings": {
@@ -230,12 +273,13 @@ def _portfolio_diagnostics(
             "fees": config.fees,
             "slippage": config.slippage,
             "one_order_per_bar": True,
+            "price": price_setting,
         },
         "contract": {
             "direction_scope": "long_only_v1",
             "target_exposure_cap": config.target_exposure_cap,
-            "execution_timing": "close",
-            "terminal_liquidation": True,
+            "execution_timing": execution_timing,
+            "terminal_liquidation": execution_timing == "same_close",
             "not_applicable_vbt_settings": dict(VBT_NOT_APPLICABLE_SETTINGS),
         },
         "grouping": {

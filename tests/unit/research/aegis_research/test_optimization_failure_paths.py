@@ -56,6 +56,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
     with pytest.raises(OptimizationRunnerError, match="no usable results"):
         execute_optimization(
             close=close,
+            open_=close,
             source=source,
             optimization=_optimization_config(),
             portfolio=PortfolioConfig(fees=0, slippage=0),
@@ -83,6 +84,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
     with pytest.raises(RuntimeError, match="pipeline blew up"):
         execute_optimization(
             close=close,
+            open_=close,
             source=source,
             optimization=_optimization_config(),
             portfolio=PortfolioConfig(fees=0, slippage=0),

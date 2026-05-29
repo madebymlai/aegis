@@ -7,9 +7,12 @@ import pytest
 from vectorbtpro import vbt
 
 from research.aegis_research.optimization.evidence import (
+    HELD_OUT_GAP_WARNING_THRESHOLD,
+    candidate_held_out_headline,
     candidate_rows_from_param_index,
     candidate_rows_from_result,
     canonical_params_key,
+    held_out_warning,
     result_evidence,
 )
 from research.aegis_research.optimization.ranking import (
@@ -254,6 +257,9 @@ def test_candidate_rows_from_result_emits_three_role_tagged_rows() -> None:
     }
     assert best["held_out_metrics"]["0"]["total_return"] == pytest.approx(0.88)
     assert best["metrics"] == pytest.approx({"total_return": 0.95})
+    # held-out aggregate is as prominent as the in-sample aggregate (`metrics`),
+    # and uses the same mean-across-splits aggregation (here (0.88 + 0.89) / 2).
+    assert best["held_out_metrics_mean"] == pytest.approx({"total_return": 0.885})
     assert best["store_namespace"] == {"kind": "local_sqlite", "name": "default"}
 
 
@@ -329,10 +335,85 @@ def test_result_evidence_serializes_three_candidates() -> None:
     evidence = result_evidence(result)
 
     assert set(evidence) == {"schema_version", "best", "median", "worst"}
-    assert evidence["schema_version"] == "optimization_result.v1"
+    assert evidence["schema_version"] == "optimization_result.v2"
     assert evidence["best"]["params"] == {"rsi_window": 14}
     assert evidence["best"]["score"] == 0.9
+    assert evidence["best"]["held_out_metrics_mean"] == pytest.approx({"total_return": 0.885})
     assert evidence["worst"]["selection_metrics"] == {
         "0": {"total_return": 0.1},
         "1": {"total_return": 0.2},
     }
+
+
+def test_candidate_held_out_headline_leads_with_held_out_and_gap() -> None:
+    rows = candidate_rows_from_result(
+        OptimizationResult(
+            best=_evaluated({"rsi_window": 14}, 0.9),
+            median=_evaluated({"rsi_window": 20}, 0.5),
+            worst=_evaluated({"rsi_window": 5}, 0.1),
+        ),
+        source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
+    )
+
+    headline = candidate_held_out_headline(rows[0], metric="total_return")
+
+    assert headline["metric"] == "total_return"
+    # held-out is the unbiased headline; selection is the in-sample (optimistic) value.
+    assert headline["held_out"] == pytest.approx(0.885)
+    assert headline["selection"] == pytest.approx(0.95)
+    assert headline["gap"] == pytest.approx(0.95 - 0.885)
+
+
+def test_candidate_held_out_headline_missing_metric_is_none() -> None:
+    rows = candidate_rows_from_result(
+        OptimizationResult(
+            best=_evaluated({"rsi_window": 14}, 0.9),
+            median=_evaluated({"rsi_window": 20}, 0.5),
+            worst=_evaluated({"rsi_window": 5}, 0.1),
+        ),
+        source_identity={"source_hash": "abc"},
+        data_identity=DATA_IDENTITY,
+    )
+
+    headline = candidate_held_out_headline(rows[0], metric="sharpe_ratio")
+
+    assert headline == {
+        "metric": "sharpe_ratio",
+        "held_out": None,
+        "selection": None,
+        "gap": None,
+    }
+
+
+def test_held_out_warning_fires_when_best_collapses_out_of_sample() -> None:
+    warning = held_out_warning(
+        {"metric": "sharpe_ratio", "held_out": -0.05, "selection": 1.97, "gap": 2.02}
+    )
+
+    assert warning is not None
+    assert "sharpe_ratio" in warning
+    assert "selection-set optimism" in warning
+
+
+def test_held_out_warning_fires_when_gap_exceeds_threshold_despite_positive_held_out() -> None:
+    headline = {
+        "metric": "sharpe_ratio",
+        "held_out": 0.2,
+        "selection": 0.2 + HELD_OUT_GAP_WARNING_THRESHOLD,
+        "gap": HELD_OUT_GAP_WARNING_THRESHOLD,
+    }
+
+    assert held_out_warning(headline) is not None
+
+
+def test_held_out_warning_silent_when_held_out_holds_up() -> None:
+    headline = {"metric": "sharpe_ratio", "held_out": 1.5, "selection": 1.6, "gap": 0.1}
+
+    assert held_out_warning(headline) is None
+
+
+def test_held_out_warning_silent_without_held_out_data() -> None:
+    headline = {"metric": "sharpe_ratio", "held_out": None, "selection": 1.6, "gap": None}
+
+    assert held_out_warning(headline) is None

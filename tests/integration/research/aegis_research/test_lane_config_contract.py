@@ -297,6 +297,43 @@ def test_run_ranking_rejects_out_of_range_min_weight(
     assert "ranking.min_weight" in str(error.value)
 
 
+def test_run_ranking_defaults_min_trades_to_zero(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+
+    resolved = resolve_run_config(raw, component_registry=registry)
+
+    assert resolved.config.ranking.min_trades == 0
+
+
+def test_run_ranking_accepts_explicit_min_trades(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+    raw["ranking"] = {"metric": "sharpe_ratio", "min_trades": 20}
+
+    resolved = resolve_run_config(raw, component_registry=registry)
+
+    assert resolved.config.ranking.min_trades == 20
+
+
+@pytest.mark.parametrize("bad_min_trades", [-1, 2.5, "10", True])
+def test_run_ranking_rejects_invalid_min_trades(
+    tmp_path: Path,
+    bad_min_trades: object,
+) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+    raw["ranking"] = {
+        "metric": "sharpe_ratio",
+        "min_trades": bad_min_trades,
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=registry)
+
+    assert "ranking.min_trades" in str(error.value)
+
+
 def test_run_accepts_dynamic_vbt_splitter_config(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     raw = _run_config_with_split(

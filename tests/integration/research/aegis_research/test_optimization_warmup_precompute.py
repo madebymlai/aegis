@@ -111,6 +111,7 @@ def _optimization(
 def _run(windows: list[int], *, optimization: OptimizationConfig | None = None):
     return execute_optimization(
         close=_uptrend_close(),
+        open_=_uptrend_close(),
         source=_source(windows),
         optimization=optimization or _optimization(),
         portfolio=PortfolioConfig(fees=0.0, slippage=0.0),

@@ -149,6 +149,7 @@ def _run_optimization_strategy_sweep(
         config=config,
         optimization_source=setup["optimization_source"],
         close=setup["close"],
+        open_=setup["open_"],
         split_result=setup["split_result"],
         optimization_evidence=setup["optimization_evidence"],
         recorder=recorder,

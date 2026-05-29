@@ -16,6 +16,11 @@ import pandas as pd
 
 SPLIT_LEVEL = "split"
 
+# Grid column carrying the per-split closed-trade count (``pf.exit_trades.count()``
+# via the central metric catalog). The min-trades floor reads it; the runner always
+# emits it as one of the Selection-set metric columns.
+TRADES_METRIC = "total_trades"
+
 
 @dataclass(frozen=True)
 class EvaluatedCandidate:
@@ -40,9 +45,12 @@ class OptimizationResult:
     """Exactly three representative candidates selected by global ranking.
 
     ``excluded_degenerate`` counts the candidates dropped before slot selection
-    because they had no finite ranking score (non-trading / all-NaN across
-    splits). best/median/worst are always drawn from the *trading* population;
-    this field tells consumers how much of the sampled grid was dead.
+    because they were not trustworthy enough to represent the grid: either they
+    had no finite ranking score (non-trading / all-NaN across splits) or they
+    failed the minimum-trades floor (too few closed trades per split to be more
+    than in-sample luck). best/median/worst are always drawn from the surviving
+    population; this field tells consumers how much of the sampled grid was dead
+    or under-traded.
 
     ``excluded_invalid`` is the subset of ``excluded_degenerate`` that was dropped
     because an indicator output was entirely non-finite over the *full series*
@@ -65,6 +73,8 @@ def select_representative_candidates(
     *,
     metric: str,
     min_weight: float = 0.3,
+    min_trades: int = 0,
+    trades_metric: str = TRADES_METRIC,
 ) -> OptimizationResult:
     """Rank fixed-param candidates globally and return best/median/worst.
 
@@ -77,18 +87,30 @@ def select_representative_candidates(
 
         score = (1 - min_weight) * mean(values) + min_weight * min(values)
 
-    Degenerate candidates — those with no finite score (non-trading / NaN
-    across every split) — are excluded *before* slot selection so they can
-    never occupy a representative role; their count is reported as
-    ``OptimizationResult.excluded_degenerate``. best/median/worst are then
-    ranked among the remaining ``N`` trading candidates: ``best`` is rank 1,
-    ``median`` is rank ``ceil(N/2)``, and ``worst`` is rank N — all real,
-    trading candidates. Ranking is always descending; ties keep candidate
-    (parameter-sorted) order. A split whose metric is NaN/None is skipped.
-    Raises ``ValueError`` when every candidate is degenerate.
+    Two classes of candidate are excluded *before* slot selection so they can
+    never occupy a representative role, and both are counted in
+    ``OptimizationResult.excluded_degenerate``:
+
+    * **Non-trading** — no finite score (NaN across every split).
+    * **Under-traded** — when ``min_trades > 0``, a candidate whose closed-trade
+      count (``trades_metric`` column) falls below ``min_trades`` on any split it
+      traded. This stops a candidate from winning on a handful of lucky in-sample
+      trades (a Sharpe over 2-5 trades is mostly noise). The floor is per-split:
+      the candidate must clear ``min_trades`` on the *thinnest* split it scored.
+
+    best/median/worst are then ranked among the remaining ``N`` survivors:
+    ``best`` is rank 1, ``median`` is rank ``ceil(N/2)``, and ``worst`` is rank N
+    — all real, sufficiently-traded candidates. Ranking is always descending;
+    ties keep candidate (parameter-sorted) order. A split whose metric is
+    NaN/None is skipped. Raises ``ValueError`` when no candidate survives.
     """
     if metric not in grid.columns:
         raise KeyError(f"ranking metric {metric!r} not present in grid columns")
+    if min_trades > 0 and trades_metric not in grid.columns:
+        raise KeyError(
+            f"min_trades floor requires the {trades_metric!r} column in the grid; "
+            f"got columns {list(grid.columns)}"
+        )
     if not isinstance(grid.index, pd.MultiIndex):
         raise TypeError("grid index must be a MultiIndex with a 'split' level and param levels")
     if SPLIT_LEVEL not in grid.index.names:
@@ -128,11 +150,17 @@ def select_representative_candidates(
         )
 
     ranked = sorted(candidates, key=_rank_key)
-    trading = [candidate for candidate in ranked if not isnan(candidate.score)]
+    trading = [
+        candidate
+        for candidate in ranked
+        if not isnan(candidate.score)
+        and _meets_trade_floor(candidate, trades_metric, min_trades)
+    ]
     if not trading:
         raise ValueError(
-            f"no candidate produced a finite ranking score on {metric!r}; "
-            f"all {len(ranked)} candidates were degenerate (non-trading / NaN-scored)"
+            f"no candidate produced a finite ranking score on {metric!r} that cleared "
+            f"the min_trades={min_trades} closed-trade floor; all {len(ranked)} candidates "
+            f"were degenerate (non-trading / NaN-scored / under-traded)"
         )
     n = len(trading)
     return OptimizationResult(
@@ -141,6 +169,27 @@ def select_representative_candidates(
         worst=trading[n - 1],
         excluded_degenerate=len(ranked) - n,
     )
+
+
+def _meets_trade_floor(
+    candidate: EvaluatedCandidate, trades_metric: str, min_trades: int
+) -> bool:
+    """Whether a candidate cleared the per-split closed-trade floor.
+
+    The floor is disabled when ``min_trades <= 0``. Otherwise the candidate must
+    have closed at least ``min_trades`` trades on the *thinnest* split it actually
+    scored: splits where the candidate did not trade (``trades_metric`` is None)
+    are skipped, mirroring how the min-aware score skips NaN-metric splits. A
+    candidate with no recorded trade count anywhere fails the floor.
+    """
+    if min_trades <= 0:
+        return True
+    counts = [
+        split_metrics.get(trades_metric)
+        for split_metrics in candidate.selection_metrics.values()
+    ]
+    traded = [count for count in counts if count is not None]
+    return bool(traded) and min(traded) >= min_trades
 
 
 def _rank_key(candidate: EvaluatedCandidate) -> tuple[int, float]:

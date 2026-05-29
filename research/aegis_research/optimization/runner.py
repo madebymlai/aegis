@@ -71,6 +71,7 @@ class OptimizationRunnerError(ValueError):
 def execute_optimization(
     *,
     close: pd.DataFrame,
+    open_: pd.DataFrame,
     source: OptimizationSource,
     optimization: OptimizationConfig,
     portfolio: PortfolioConfig,
@@ -107,6 +108,7 @@ def execute_optimization(
         portfolio=portfolio,
         report=report,
         close=close,
+        open_=open_,
         store=store,
         invalid_candidate_keys=invalid_candidate_keys,
     )
@@ -119,7 +121,10 @@ def execute_optimization(
         parallel=True,
     )
     result = select_representative_candidates(
-        selection_grid, metric=ranking.metric, min_weight=ranking.min_weight
+        selection_grid,
+        metric=ranking.metric,
+        min_weight=ranking.min_weight,
+        min_trades=ranking.min_trades,
     )
     # Distinguish *misconfigured* (lookback > full history) from merely *degenerate*:
     # the ranking layer only sees NaN scores, so the runner — which knows which keys
@@ -134,6 +139,7 @@ def execute_optimization(
         portfolio=portfolio,
         report=report,
         close=close,
+        open_=open_,
         store=store,
         param_names=param_names,
     )
@@ -153,14 +159,17 @@ def _build_precomputed_window_metrics(
     portfolio: PortfolioConfig,
     report: ReportConfig,
     close: pd.DataFrame,
+    open_: pd.DataFrame,
     store: WideIndicatorPrecompute,
     invalid_candidate_keys: set[CandidateKey] | None = None,
 ) -> Callable[..., Any]:
     """Build a split callback that slices the full-series store before simulation.
 
-    ``close`` and ``store`` are closure-captured (passed through ``apply``
-    unchanged); only the per-(split,set) ``range_`` template arrives positionally.
-    Selection and held-out sweeps use the same callback shape so they cannot drift.
+    ``close``, ``open_`` and ``store`` are closure-captured (passed through
+    ``apply`` unchanged); only the per-(split,set) ``range_`` template arrives
+    positionally. ``open_`` is sliced to the same window so next-open execution
+    fills each window's targets at that window's open prices. Selection and
+    held-out sweeps use the same callback shape so they cannot drift.
     """
     invalid_keys = invalid_candidate_keys or set()
 
@@ -172,12 +181,13 @@ def _build_precomputed_window_metrics(
             return _nan_metric_frame(metric_keys, param_names)
 
         close_window = close.iloc[range_]
+        open_window = open_.iloc[range_]
         indicator_window = store.window(range_, keys)
         wide_allocations = source.simulate(
             close_window, indicator_window, n_combos, **combo_lists
         )
         metrics = _metrics_from_allocations(
-            close_window, wide_allocations, portfolio, report, metric_keys, param_names
+            close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names
         )
         return _mask_invalid_metrics(metrics, invalid_positions)
 
@@ -202,6 +212,7 @@ def _extract_combos(
 
 def _metrics_from_allocations(
     close_window: pd.DataFrame,
+    open_window: pd.DataFrame,
     wide_allocations: Any,
     portfolio: PortfolioConfig,
     report: ReportConfig,
@@ -217,6 +228,7 @@ def _metrics_from_allocations(
         close_window,
         wide_allocations,
         portfolio,
+        open_=open_window,
         market_index=close_window.index,
         compute_diagnostics=False,
     )
@@ -357,6 +369,7 @@ def _attach_held_out(
     portfolio: PortfolioConfig,
     report: ReportConfig,
     close: pd.DataFrame,
+    open_: pd.DataFrame,
     store: WideIndicatorPrecompute,
     param_names: list[str],
 ) -> OptimizationResult:
@@ -372,7 +385,7 @@ def _attach_held_out(
         for name in param_names
     }
     held_out_metrics = _build_precomputed_window_metrics(
-        source=source, portfolio=portfolio, report=report, close=close, store=store
+        source=source, portfolio=portfolio, report=report, close=close, open_=open_, store=store
     )
     held_out_grid = _sweep(
         splitter=splitter,

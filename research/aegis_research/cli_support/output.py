@@ -124,6 +124,48 @@ def run_success_payload(
     }
 
 
+def held_out_summary_lines(
+    optimization: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, Any]],
+) -> tuple[str, ...]:
+    """Held-out-first candidate table for human run output.
+
+    Leads with the held-out (out-of-sample) value of the ranking metric — the
+    number to treat as the run's result — with the in-sample (selection-optimistic)
+    value and the selection->held-out gap as secondary columns, plus a one-line
+    warning when the best candidate collapses out-of-sample.
+    """
+    if not candidates:
+        return ()
+    metric = optimization.get("ranking_metric") or "ranking metric"
+    lines = [
+        f"Ranking metric: {metric} — held-out (out-of-sample) is the headline; "
+        "in-sample is selection-optimistic",
+        f"  {'role':<8}{'held-out':>12}{'in-sample':>12}{'gap':>12}",
+    ]
+    for candidate in candidates:
+        headline = candidate.get("held_out_headline") or {}
+        lines.append(
+            f"  {candidate.get('role', '')!s:<8}"
+            f"{_metric_cell(headline.get('held_out')):>12}"
+            f"{_metric_cell(headline.get('selection')):>12}"
+            f"{_metric_cell(headline.get('gap')):>12}"
+        )
+    warning = optimization.get("held_out_warning")
+    if warning:
+        lines.append(f"WARNING: {warning}")
+    return tuple(lines)
+
+
+def _metric_cell(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        return f"{float(value):+.3f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
 def report_summary(report: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not report:
         return None

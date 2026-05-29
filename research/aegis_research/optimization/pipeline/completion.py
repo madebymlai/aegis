@@ -23,6 +23,10 @@ from research.aegis_research.data_arrays import (
 from research.aegis_research.optimization.candidate_publishing import (
     activate_candidate_run,
 )
+from research.aegis_research.optimization.evidence import (
+    candidate_held_out_headline,
+    held_out_warning,
+)
 from research.aegis_research.optimization.run_artifacts import (
     build_strategy_artifact_payload,
     write_strategy_artifact,
@@ -78,6 +82,8 @@ def run_pipeline_completion(
     write_strategy_artifact(recorder, artifact_payload)
     recorder.mark_run_completed()
     activate_candidate_run(store_path, recorder.manifest.run_id)
+    ranking_metric = config.ranking.metric
+    best_row = next(row for row in candidate_rows if row["role"] == "best")
     return {
         **build_run_refs(recorder),
         "strategy_artifact_id": "strategy.run",
@@ -85,16 +91,21 @@ def run_pipeline_completion(
         "candidate_store_path": str(store_path),
         "locks": lock_records,
         "optimization": {
-            "ranking_metric": config.ranking.metric,
+            "ranking_metric": ranking_metric,
             "min_weight": config.ranking.min_weight,
             "split_count": split_result.metadata["n_splits"],
             "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
+            "held_out_warning": held_out_warning(
+                candidate_held_out_headline(best_row, metric=ranking_metric)
+            ),
         },
-        "candidates": [_candidate_summary(row) for row in candidate_rows],
+        "candidates": [
+            _candidate_summary(row, ranking_metric=ranking_metric) for row in candidate_rows
+        ],
     }
 
 
-def _candidate_summary(row: Mapping[str, Any]) -> dict[str, Any]:
+def _candidate_summary(row: Mapping[str, Any], *, ranking_metric: str) -> dict[str, Any]:
     return {
         "role": row["role"],
         "rank": row["rank"],
@@ -104,6 +115,8 @@ def _candidate_summary(row: Mapping[str, Any]) -> dict[str, Any]:
         "metrics": row["metrics"],
         "selection_metrics": row["selection_metrics"],
         "held_out_metrics": row["held_out_metrics"],
+        "held_out_metrics_mean": row["held_out_metrics_mean"],
+        "held_out_headline": candidate_held_out_headline(row, metric=ranking_metric),
     }
 
 
