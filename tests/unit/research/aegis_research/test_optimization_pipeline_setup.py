@@ -57,6 +57,7 @@ def test_pipeline_setup_returns_expected_keys(
         "optimization_source",
         "strategy_evidence",
         "close",
+        "open_",
         "split_result",
         "optimization_builtin",
         "portfolio_builtin",

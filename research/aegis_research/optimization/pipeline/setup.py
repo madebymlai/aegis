@@ -70,6 +70,7 @@ def run_pipeline_setup(
     )
     strategy_evidence = optimization_source.evidence["strategy"]
     close = data.feature("Close")
+    open_ = data.feature("Open")
     split_result = build_run_splits_result(close.index, config.optimization.split)
     optimization_builtin = to_builtin(asdict(config.optimization))
     portfolio_builtin = to_builtin(asdict(config.portfolio))
@@ -92,6 +93,7 @@ def run_pipeline_setup(
         "optimization_source": optimization_source,
         "strategy_evidence": strategy_evidence,
         "close": close,
+        "open_": open_,
         "split_result": split_result,
         "optimization_builtin": optimization_builtin,
         "portfolio_builtin": portfolio_builtin,

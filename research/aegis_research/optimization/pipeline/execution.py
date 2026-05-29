@@ -30,6 +30,7 @@ def run_pipeline_execution(
     config: RunConfig,
     optimization_source: Any,
     close: pd.DataFrame,
+    open_: pd.DataFrame,
     split_result: Any,
     optimization_evidence: dict[str, Any],
     recorder: RunRecorder,
@@ -60,6 +61,7 @@ def run_pipeline_execution(
     try:
         optimization_result = execute_optimization(
             close=close,
+            open_=open_,
             source=optimization_source,
             optimization=config.optimization,
             portfolio=config.portfolio,
