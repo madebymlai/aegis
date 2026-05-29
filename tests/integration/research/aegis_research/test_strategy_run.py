@@ -168,19 +168,25 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
         "median",
         "worst",
     ]
-    assert payload["candidates"] == [
-        {
-            "role": candidate["role"],
-            "rank": candidate["rank"],
-            "candidate_key": candidate["candidate_key"],
-            "params": candidate["params"],
-            "score": candidate["score"],
-            "metrics": candidate["metrics"],
-            "selection_metrics": candidate["selection_metrics"],
-            "held_out_metrics": candidate["held_out_metrics"],
-        }
-        for candidate in artifact["candidates"]
-    ]
+    ranking_metric = artifact["ranking"]["metric"]
+    assert "held_out_warning" in payload["optimization"]
+    for summary, candidate in zip(payload["candidates"], artifact["candidates"], strict=True):
+        assert summary["role"] == candidate["role"]
+        assert summary["rank"] == candidate["rank"]
+        assert summary["candidate_key"] == candidate["candidate_key"]
+        assert summary["params"] == candidate["params"]
+        assert summary["score"] == candidate["score"]
+        assert summary["metrics"] == candidate["metrics"]
+        assert summary["selection_metrics"] == candidate["selection_metrics"]
+        assert summary["held_out_metrics"] == candidate["held_out_metrics"]
+        # held-out aggregate is serialized in the artifact, as prominent as `metrics`.
+        assert summary["held_out_metrics_mean"] == candidate["held_out_metrics_mean"]
+        headline = summary["held_out_headline"]
+        assert headline["metric"] == ranking_metric
+        assert headline["held_out"] == candidate["held_out_metrics_mean"].get(ranking_metric)
+        assert headline["selection"] == candidate["metrics"].get(ranking_metric)
+        if headline["held_out"] is not None and headline["selection"] is not None:
+            assert headline["gap"] == pytest.approx(headline["selection"] - headline["held_out"])
     assert len(artifact["candidates"]) == 3
     assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 

@@ -262,6 +262,50 @@ def test_output_helper_normalizes_nonstandard_json_numbers(
     assert json.loads(capsys.readouterr().out)["value"] is None
 
 
+def test_held_out_summary_leads_with_held_out_and_gap_for_each_role() -> None:
+    from research.aegis_research.cli_support.output import held_out_summary_lines
+
+    def _summary(role: str, held_out: float, selection: float) -> dict[str, object]:
+        return {
+            "role": role,
+            "held_out_headline": {
+                "metric": "sharpe_ratio",
+                "held_out": held_out,
+                "selection": selection,
+                "gap": selection - held_out,
+            },
+        }
+
+    optimization = {
+        "ranking_metric": "sharpe_ratio",
+        "held_out_warning": "best candidate held-out sharpe_ratio +0.020 ...",
+    }
+    candidates = [
+        _summary("best", 0.02, 1.97),
+        _summary("median", -0.10, 1.20),
+        _summary("worst", -0.30, 0.50),
+    ]
+
+    lines = held_out_summary_lines(optimization, candidates)
+
+    text = "\n".join(lines)
+    # Held-out is the headline column and precedes the in-sample column.
+    header = next(line for line in lines if "held-out" in line and "in-sample" in line)
+    assert header.index("held-out") < header.index("in-sample")
+    assert "sharpe_ratio" in lines[0]
+    # best/median/worst each surface held-out, in-sample, and the gap.
+    assert "best" in text and "+0.020" in text and "+1.970" in text and "+1.950" in text
+    assert "median" in text and "-0.100" in text
+    assert "worst" in text and "-0.300" in text
+    assert any(line.startswith("WARNING:") for line in lines)
+
+
+def test_held_out_summary_is_empty_without_candidates() -> None:
+    from research.aegis_research.cli_support.output import held_out_summary_lines
+
+    assert held_out_summary_lines({"ranking_metric": "sharpe_ratio"}, []) == ()
+
+
 def test_safe_path_hides_relative_paths_that_escape_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

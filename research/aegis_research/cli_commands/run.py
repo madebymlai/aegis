@@ -12,6 +12,7 @@ from research.aegis_research.cli_support.errors import (
 )
 from research.aegis_research.cli_support.output import (
     CommandResult,
+    held_out_summary_lines,
     safe_path,
     write_success,
 )
@@ -151,6 +152,7 @@ def _human_run_lines(result: dict[str, Any]) -> tuple[str, ...]:
     return (
         f"Run: {safe_path(result.get('run_dir'))}",
         f"Status: {result.get('status')}",
+        *held_out_summary_lines(result.get("optimization", {}), result.get("candidates", [])),
     )
 
 
