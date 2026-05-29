@@ -31,7 +31,6 @@ def build_strategy_artifact_payload(
     preflight: Mapping[str, Any],
     execution: Mapping[str, Any],
     candidates: list[Mapping[str, Any]],
-    leaderboard: Mapping[str, Any],
     resolved_locks: list[Mapping[str, Any]],
     lock_records: list[Mapping[str, Any]],
     candidate_store_path: str,
@@ -49,7 +48,6 @@ def build_strategy_artifact_payload(
         "preflight": dict(preflight),
         "execution": dict(execution),
         "candidates": [dict(record) for record in candidates],
-        "leaderboard": dict(leaderboard),
         "resolved_locks": list(resolved_locks),
         "locks": list(lock_records),
         "candidate_store": {
@@ -97,7 +95,6 @@ def find_strategy_artifact_record(recorder: Any) -> dict[str, Any] | None:
 
 def strategy_artifact_shape(payload: dict[str, Any]) -> dict[str, int]:
     shape: dict[str, int] = {
-        "leaderboard_rows": len(payload["leaderboard"]["rows"]),
         "candidate_count": len(payload.get("candidates", [])),
     }
     if "split" in payload:

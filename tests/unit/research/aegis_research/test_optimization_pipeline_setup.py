@@ -27,7 +27,7 @@ def test_pipeline_setup_returns_expected_keys(
         def feature(self, name: str) -> Any:
             import pandas as pd
 
-            return pd.DataFrame({0: [1.0, 2.0, 3.0]})
+            return pd.DataFrame({0: [float(i) for i in range(120)]})
 
     class _FakeDataResult:
         class quality:
@@ -77,7 +77,7 @@ def test_pipeline_setup_evidence_baseline_shape(
         def feature(self, name: str) -> Any:
             import pandas as pd
 
-            return pd.DataFrame({0: [1.0, 2.0, 3.0]})
+            return pd.DataFrame({0: [float(i) for i in range(120)]})
 
     class _FakeDataResult:
         class quality:
@@ -121,7 +121,7 @@ def test_pipeline_setup_store_path_matches_candidate_store(
         def feature(self, name: str) -> Any:
             import pandas as pd
 
-            return pd.DataFrame({0: [1.0, 2.0, 3.0]})
+            return pd.DataFrame({0: [float(i) for i in range(120)]})
 
     class _FakeDataResult:
         class quality:

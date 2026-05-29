@@ -35,7 +35,7 @@ def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
         name="typed_strategy_demo",
         strategy=RunSourceRefConfig(id="demo.strategy"),
         indicators=[RunIndicatorSourceConfig(id="demo.indicator")],
-        ranking=RankingConfig(metric="sharpe_ratio", direction="desc"),
+        ranking=RankingConfig(metric="sharpe_ratio"),
         portfolio=PortfolioConfig(target_exposure_cap=1.0),
         optimization=OptimizationConfig(
             search="grid",
@@ -222,44 +222,79 @@ def test_run_output_dir_rejects_symlink_escape(
     assert "symlink" in str(error.value)
 
 
-@pytest.mark.parametrize(
-    ("ranking", "expected"),
-    [
-        ({"metric": "not_a_metric", "direction": "desc"}, "ranking.metric"),
-        ({"metric": "total_return", "direction": "sideways"}, "ranking.direction"),
-        ({"metric": "total_return"}, "ranking.direction"),
-    ],
-)
-def test_run_ranking_metric_and_direction_validation(
-    tmp_path: Path,
-    ranking: dict[str, str],
-    expected: str,
-) -> None:
+def test_run_ranking_rejects_unknown_metric(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     raw = _run_config()
-    raw["ranking"] = ranking
+    raw["ranking"] = {"metric": "not_a_metric"}
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
-    assert expected in str(error.value)
+    assert "ranking.metric" in str(error.value)
 
 
-def test_run_ranking_accepts_vbt_metric_ids_and_secondary_metrics(tmp_path: Path) -> None:
+@pytest.mark.parametrize("removed_field", ["direction", "secondary_metrics"])
+def test_run_ranking_rejects_removed_fields_as_unknown(
+    tmp_path: Path,
+    removed_field: str,
+) -> None:
     registry = _component_registry(tmp_path)
     raw = _run_config()
-    raw["ranking"] = {
-        "metric": "total_return",
-        "direction": "desc",
-        "secondary_metrics": ["sharpe_ratio", "max_dd"],
-    }
+    raw["ranking"] = {"metric": "total_return", removed_field: "desc"}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=registry)
+
+    assert f"ranking.{removed_field}" in str(error.value)
+
+
+def test_run_ranking_accepts_vbt_metric_id(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+    raw["ranking"] = {"metric": "total_return"}
 
     resolved = resolve_run_config(raw, component_registry=registry)
 
     assert resolved.config.ranking.metric == "total_return"
-    assert resolved.config.ranking.secondary_metrics == ["sharpe_ratio", "max_dd"]
     assert resolved.metric_registry is not None
     assert len(resolved.manifest()["metric_registry_fingerprint"]) == 64
+
+
+def test_run_ranking_defaults_min_weight_to_canonical_value(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+
+    resolved = resolve_run_config(raw, component_registry=registry)
+
+    assert resolved.config.ranking.min_weight == 0.3
+
+
+def test_run_ranking_accepts_explicit_min_weight(tmp_path: Path) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+    raw["ranking"] = {"metric": "sharpe_ratio", "min_weight": 0.5}
+
+    resolved = resolve_run_config(raw, component_registry=registry)
+
+    assert resolved.config.ranking.min_weight == 0.5
+
+
+@pytest.mark.parametrize("bad_min_weight", [-0.1, 1.5, "0.3", True])
+def test_run_ranking_rejects_out_of_range_min_weight(
+    tmp_path: Path,
+    bad_min_weight: object,
+) -> None:
+    registry = _component_registry(tmp_path)
+    raw = _run_config()
+    raw["ranking"] = {
+        "metric": "sharpe_ratio",
+        "min_weight": bad_min_weight,
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=registry)
+
+    assert "ranking.min_weight" in str(error.value)
 
 
 def test_run_accepts_dynamic_vbt_splitter_config(tmp_path: Path) -> None:
@@ -351,62 +386,6 @@ def test_run_rejects_internal_splitter_param(tmp_path: Path) -> None:
     assert "managed internally" in str(error.value)
 
 
-@pytest.mark.parametrize(
-    ("secondary_metrics", "expected"),
-    [
-        ("sharpe_ratio", "ranking.secondary_metrics"),
-        (["sharpe_ratio", "sharpe_ratio"], "duplicate secondary metric"),
-        (["total_return"], "must not repeat primary metric"),
-        (["not_a_metric"], "ranking.secondary_metrics[0]"),
-        ([{"id": "sharpe_ratio"}], "must be a non-empty metric id string"),
-    ],
-)
-def test_run_ranking_rejects_invalid_secondary_metrics(
-    tmp_path: Path,
-    secondary_metrics: object,
-    expected: str,
-) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config()
-    raw["ranking"] = {
-        "metric": "total_return",
-        "direction": "desc",
-        "secondary_metrics": secondary_metrics,
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert expected in str(error.value)
-
-
-def test_run_ranking_rejects_removed_rank_by_mode(tmp_path: Path) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config()
-    raw["ranking"] = {
-        "metric": "total_return",
-        "direction": "desc",
-        "rank_by": "baseline_delta",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "ranking.rank_by" in str(error.value)
-    assert "secondary_metrics" in str(error.value)
-
-
-def test_run_ranking_rejects_secondary_only_metric_as_primary(tmp_path: Path) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config()
-    raw["ranking"] = {"metric": "baseline_delta", "direction": "desc"}
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "primary-eligible" in str(error.value)
-
-
 def _run_config() -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
@@ -415,7 +394,7 @@ def _run_config() -> dict[str, object]:
         "portfolio": {"target_exposure_cap": 1.0},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.indicator"}],
-        "ranking": {"metric": "sharpe_ratio", "direction": "desc"},
+        "ranking": {"metric": "sharpe_ratio"},
         "optimization": {
             "search": "grid",
             "split": {

@@ -2,20 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import component_param_key
-from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
-from research.aegis_research.optimization.leaderboard import (
-    OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION,
-    WEIGHT_BASIS,
-)
+from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.lock_resolution import (
     ComponentLockRef,
     LockResolutionError,
     resolve_component_lock,
+)
+from research.aegis_research.optimization.ranking import (
+    EvaluatedCandidate,
+    OptimizationResult,
 )
 
 
@@ -162,21 +161,30 @@ def _store_with_candidate(tmp_path: Path) -> CandidateStore:
     store.insert_completed_run(
         run_id="run-a",
         candidate_rows=candidates,
-        leaderboard=_leaderboard(candidates),
+        ranking_metric="total_return",
         provenance={"run_id": "run-a", "source": _source_evidence()},
     )
     return store
 
 
+def _candidate(params: dict[str, object], score: float) -> EvaluatedCandidate:
+    return EvaluatedCandidate(
+        params=params,
+        score=score,
+        selection_metrics={0: {"total_return": score}},
+        metrics={"total_return": score},
+        held_out_metrics={0: {"total_return": score}},
+    )
+
+
 def _candidate_rows() -> list[dict[str, object]]:
     fast_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window")
     slow_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window")
-    index = pd.MultiIndex.from_tuples(
-        [(2, 10), (5, 10)],
-        names=[fast_key, slow_key],
-    )
-    return candidate_rows_from_param_index(
-        index,
+    winner = _candidate({fast_key: 2, slow_key: 10}, 0.30)
+    runner_up = _candidate({fast_key: 5, slow_key: 10}, 0.10)
+    result = OptimizationResult(best=winner, median=runner_up, worst=runner_up)
+    return candidate_rows_from_result(
+        result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
         portfolio_policy={"target_exposure_cap": 1.0},
@@ -212,37 +220,4 @@ def _source_evidence() -> dict[str, object]:
             },
         },
         "indicators": [],
-    }
-
-
-def _leaderboard(candidates: list[dict[str, object]]) -> dict[str, object]:
-    rows = []
-    for candidate, value in zip(candidates, [0.30, 0.10], strict=True):
-        rows.append(
-            {
-                "candidate_key": candidate["candidate_key"],
-                "params": candidate["params"],
-                "ranking_metric": "total_return",
-                "ranking_direction": "desc",
-                "ranking_metric_value": value,
-                "metrics": {"total_return": value},
-                "selected_split_count": 1,
-                "eligible_split_count": 1,
-                "split_refs": [0],
-                "weight_basis": WEIGHT_BASIS,
-                "held_out_row_count": 10,
-                "oos_metric_values": [value],
-                "oos_metric_min": value,
-                "oos_metric_max": value,
-            }
-        )
-    return {
-        "schema_version": OPTIMIZATION_LEADERBOARD_SCHEMA_VERSION,
-        "ranking_metric": "total_return",
-        "ranking_direction": "desc",
-        "metric_registry_fingerprint": "fp-test",
-        "weight_basis": WEIGHT_BASIS,
-        "summary": {"attempted_splits": 1, "selected_splits": len(rows)},
-        "rows": rows,
-        "failure_samples": [],
     }

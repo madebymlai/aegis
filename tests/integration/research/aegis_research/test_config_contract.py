@@ -344,7 +344,6 @@ def test_run_accepts_grid_optimization_with_nested_split(tmp_path: Path) -> None
     assert resolved.config.optimization.random_subset is None
     assert resolved.config.optimization.seed is None
     assert resolved.config.optimization.execute == {}
-    assert resolved.config.optimization.evidence.return_grid == "first"
     assert resolved.config.optimization.split.method == "from_rolling"
     assert "set_labels" not in resolved.config.optimization.split.params
 
@@ -356,7 +355,6 @@ def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
         random_subset=5,
         seed=42,
         execute={"engine": "threadpool", "chunk_len": "auto"},
-        evidence={"return_grid": "all"},
     )
 
     resolved = resolve_run_config(
@@ -369,7 +367,6 @@ def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
     assert resolved.config.optimization.random_subset == 5
     assert resolved.config.optimization.seed == 42
     assert resolved.config.optimization.execute == {"engine": "threadpool", "chunk_len": "auto"}
-    assert resolved.config.optimization.evidence.return_grid == "all"
 
 
 def test_run_accepts_component_lock_and_candidate_refs(tmp_path: Path) -> None:
@@ -657,7 +654,7 @@ def _run_config() -> dict[str, object]:
         "portfolio": {"target_exposure_cap": 1.0},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
-        "ranking": {"metric": "total_return", "direction": "desc"},
+        "ranking": {"metric": "total_return"},
         "optimization": _optimization_block(search="grid"),
     }
 

@@ -10,12 +10,15 @@ from vectorbtpro import vbt
 
 from research.aegis_research.configuration.schema import OptimizationConfig
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
+from research.aegis_research.optimization.evidence import CANDIDATE_ROLES
 from research.aegis_research.run_splits import RunSplitsResult
 
 PREFLIGHT_SCHEMA_VERSION = "optimization_preflight.v1"
 PREFLIGHT_PUBLIC_BYTES_PER_ROW = 1024
 PREFLIGHT_MAX_EXACT_COMBINE_PARAMS = 100_000
-PREFLIGHT_DTYPE_BYTES = 8
+# The runner always returns three representative candidates (best/median/worst),
+# which Phase 3 re-runs on every split's held-out set.
+HELD_OUT_CANDIDATE_COUNT = len(CANDIDATE_ROLES)
 
 
 class PreflightError(ValueError):
@@ -64,59 +67,46 @@ def build_preflight(
             optimization,
             param_sampled_combinations,
         )
+    search_mode = _search_mode(
+        optimization,
+        sampled_combinations=sampled_combinations,
+        executable_combinations=param_sampled_combinations,
+    )
     selection_rows = sum(len(split.selection_index) for split in split_result.splits)
     held_out_rows = sum(len(split.held_out_index) for split in split_result.splits)
     total_window_rows = selection_rows + held_out_rows
+    split_count = len(split_result.splits)
     set_count = 2
     metric_count = len(PORTFOLIO_METRIC_VALUE_KEYS)
     materialized_frame_count = 4 + int(has_open_prices)
-    estimated_result_cells = (
-        sampled_combinations * len(split_result.splits) * set_count * metric_count
+    held_out_candidates = min(HELD_OUT_CANDIDATE_COUNT, sampled_combinations)
+
+    # Phase 1 sweeps the full parameter grid on every split's selection set;
+    # Phase 3 re-runs only the representative candidates on every held-out set.
+    selection_result_cells = sampled_combinations * split_count * metric_count
+    held_out_result_cells = held_out_candidates * split_count * metric_count
+    estimated_result_cells = selection_result_cells + held_out_result_cells
+
+    selection_broadcast_cells = (
+        sampled_combinations * selection_rows * symbol_count * materialized_frame_count
     )
-    estimated_portfolio_broadcast_cells = (
-        sampled_combinations * total_window_rows * symbol_count * materialized_frame_count
+    held_out_broadcast_cells = (
+        held_out_candidates * held_out_rows * symbol_count * materialized_frame_count
     )
+    estimated_portfolio_broadcast_cells = selection_broadcast_cells + held_out_broadcast_cells
     estimated_output_cells = max(estimated_result_cells, estimated_portfolio_broadcast_cells)
-    selection_result_rows = len(split_result.splits) * set_count * metric_count
-    retained_selection_grid_rows = 0
-    if optimization.evidence.return_grid in {"first", "all"}:
-        retained_selection_grid_rows = (
-            sampled_combinations * len(split_result.splits) * metric_count
-        )
-    retained_grid_rows = retained_selection_grid_rows
-    if optimization.evidence.return_grid == "all":
-        retained_grid_rows *= set_count
-    sampled_row_count = sampled_combinations
-    candidate_row_count = sampled_combinations
-    leaderboard_row_count = sampled_combinations
+
+    # The public artifact carries the three role-tagged candidates, each with
+    # per-split selection and held-out metrics, plus one component lock record.
+    candidate_row_count = HELD_OUT_CANDIDATE_COUNT if sampled_combinations else 0
+    candidate_metric_rows = candidate_row_count * split_count * set_count
     lock_row_count = 1 if sampled_combinations else 0
-    estimated_public_rows = (
-        selection_result_rows
-        + retained_grid_rows
-        + sampled_row_count
-        + candidate_row_count
-        + leaderboard_row_count
-        + lock_row_count
-    )
+    estimated_public_rows = candidate_row_count + candidate_metric_rows + lock_row_count
     estimated_public_artifact_bytes = estimated_public_rows * PREFLIGHT_PUBLIC_BYTES_PER_ROW
-    max_set_rows = max(
-        max(len(split.selection_index), len(split.held_out_index))
-        for split in split_result.splits
-    )
-    batch_bytes_per_candidate = (
-        symbol_count * max_set_rows * PREFLIGHT_DTYPE_BYTES * materialized_frame_count
-    )
-    if batch_bytes_per_candidate > 0:
-        computed_mono_chunk_len = min(
-            optimization.split.max_batch_expansion_bytes // batch_bytes_per_candidate,
-            sampled_combinations,
-        )
-    else:
-        computed_mono_chunk_len = sampled_combinations
     diagnostics = {
         "schema_version": PREFLIGHT_SCHEMA_VERSION,
         "search": optimization.search,
-        "return_grid": optimization.evidence.return_grid,
+        "search_mode": search_mode,
         "param_shapes": [_param_shape_payload(shape) for shape in param_shapes],
         "theoretical_combinations": theoretical_combinations,
         "conditioned_combinations": param_sampled_combinations
@@ -130,7 +120,7 @@ def build_preflight(
         "sampled_count_error": sampled_error,
         "random_subset": optimization.random_subset,
         "seed": optimization.seed,
-        "split_count": len(split_result.splits),
+        "split_count": split_count,
         "set_count": set_count,
         "metric_count": metric_count,
         "selection_rows": selection_rows,
@@ -139,25 +129,21 @@ def build_preflight(
         "symbol_count": symbol_count,
         "has_open_prices": has_open_prices,
         "materialized_frame_count": materialized_frame_count,
+        "held_out_candidates": held_out_candidates,
+        "selection_result_cells": selection_result_cells,
+        "held_out_result_cells": held_out_result_cells,
         "estimated_result_cells": estimated_result_cells,
+        "selection_broadcast_cells": selection_broadcast_cells,
+        "held_out_broadcast_cells": held_out_broadcast_cells,
         "estimated_portfolio_broadcast_cells": estimated_portfolio_broadcast_cells,
         "estimated_output_cells": estimated_output_cells,
-        "selection_result_rows": selection_result_rows,
-        "retained_selection_grid_rows": retained_selection_grid_rows,
-        "retained_grid_rows": retained_grid_rows,
-        "sampled_row_count": sampled_row_count,
         "candidate_row_count": candidate_row_count,
-        "leaderboard_row_count": leaderboard_row_count,
         "lock_row_count": lock_row_count,
         "estimated_public_rows": estimated_public_rows,
         "estimated_public_artifact_bytes": estimated_public_artifact_bytes,
-        "max_set_rows": max_set_rows,
-        "batch_bytes_per_candidate": batch_bytes_per_candidate,
-        "computed_mono_chunk_len": computed_mono_chunk_len,
         "limits": {
             "max_estimated_output_cells": optimization.split.max_estimated_output_cells,
             "max_public_artifact_bytes": optimization.split.max_public_artifact_bytes,
-            "max_batch_expansion_bytes": optimization.split.max_batch_expansion_bytes,
         },
         "execute": dict(optimization.execute),
     }
@@ -245,6 +231,26 @@ def _sampled_combination_count(
     return param_sampled_combinations
 
 
+def _search_mode(
+    optimization: OptimizationConfig,
+    *,
+    sampled_combinations: int,
+    executable_combinations: int,
+) -> str:
+    """Classify the effective search for evidence; observational, no behavior change.
+
+    ``"exhaustive"`` for non-random search; otherwise ``"random"`` when the random
+    subset actually reduces the executable grid, or ``"exhaustive_auto"`` when the
+    subset is at least the total executable combinations (the ``min()`` runs every
+    combo, e.g. after param locking shrinks the grid).
+    """
+    if optimization.search != "random":
+        return "exhaustive"
+    if sampled_combinations < executable_combinations:
+        return "random"
+    return "exhaustive_auto"
+
+
 def _safe_vbt_count(
     params: Mapping[str, vbt.Param],
     *,
@@ -300,18 +306,6 @@ def _raise_if_over_budget(
     diagnostics: Mapping[str, Any],
     optimization: OptimizationConfig,
 ) -> None:
-    if diagnostics["computed_mono_chunk_len"] < 1:
-        raise PreflightError(
-            f"batch expansion per candidate "
-            f"({diagnostics['batch_bytes_per_candidate']} bytes: "
-            f"{diagnostics['symbol_count']} symbols × "
-            f"{diagnostics['max_set_rows']} bars × "
-            f"{PREFLIGHT_DTYPE_BYTES} dtype × "
-            f"{diagnostics['materialized_frame_count']} frames) "
-            f"exceeds optimization.split.max_batch_expansion_bytes "
-            f"({optimization.split.max_batch_expansion_bytes})",
-            diagnostics=diagnostics,
-        )
     if diagnostics["estimated_output_cells"] > optimization.split.max_estimated_output_cells:
         raise PreflightError(
             "optimization estimated output cells exceed optimization.split.max_estimated_output_cells",

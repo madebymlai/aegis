@@ -7,13 +7,13 @@ import pytest
 import yaml
 
 from research.aegis_research import cli
-from research.aegis_research.optimization import run_artifacts
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.candidate_store import CandidateStore, CandidateStoreError
 from research.aegis_research.optimization.component_source import (
     FIXED_CANDIDATE_PARAM,
     component_param_key,
 )
+from research.aegis_research.optimization.pipeline import completion
 from research.aegis_research.provenance.manifest import RunStatus
 
 
@@ -99,19 +99,24 @@ def test_component_optimization_uses_component_native_candidate_grid(
     assert artifact_record["schema_version"] == "optimization_artifact.v1"
     assert artifact["strategy"]["family"] == "strategies"
     assert artifact["strategy"]["id"] == "demo.ma_opt"
-    assert artifact["leaderboard"]["rows"]
-    assert artifact["execution"]["sampled_rows"]["index_names"] == [fast_key, slow_key]
-    assert len(artifact["execution"]["sampled_rows"]["rows"]) == 4
+    assert [candidate["role"] for candidate in artifact["candidates"]] == [
+        "best",
+        "median",
+        "worst",
+    ]
+    assert [shape["name"] for shape in artifact["preflight"]["param_shapes"]] == [
+        fast_key,
+        slow_key,
+    ]
+    assert artifact["preflight"]["sampled_combinations"] == 4
     assert artifact["candidates"]
     assert set(artifact["candidates"][0]["params"]) == {fast_key, slow_key}
     assert artifact["candidate_store"]["path"] == ".candidate_store/candidates.sqlite3"
     assert store_path.exists()
     with CandidateStore(store_path) as store:
         top = store.top_candidates_by_run("component-boundary", limit=1)
-    assert (
-        top[0]["leaderboard_row"]["candidate_key"]
-        == artifact["leaderboard"]["rows"][0]["candidate_key"]
-    )
+    assert top[0]["role"] == "best"
+    assert top[0]["candidate"]["candidate_key"] == artifact["candidates"][0]["candidate_key"]
     assert artifact["locks"][0]["component_family"] == "strategies"
     assert artifact["locks"][0]["component_id"] == "demo.ma_opt"
     assert artifact["locks"][0]["token"].startswith("lock_")
@@ -130,7 +135,7 @@ def test_component_optimization_artifact_write_failure_leaves_candidates_pending
     def fail_write(*_args: object, **_kwargs: object) -> None:
         raise OSError("strategy artifact write failed")
 
-    monkeypatch.setattr(run_artifacts, "write_strategy_artifact", fail_write)
+    monkeypatch.setattr(completion, "write_strategy_artifact", fail_write)
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", "artifact-failure"]) == 10
 
@@ -239,8 +244,11 @@ def test_component_optimization_resolves_lock_id_as_fixed_params(
     assert locked_artifact["strategy"]["param_mode"] == "locked"
     assert locked_artifact["strategy"]["fixed_params"] == source_artifact["locks"][0]["params"]
     assert locked_artifact["resolved_locks"][0]["reference_kind"] == "lock_id"
-    assert locked_artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
-    assert len(locked_artifact["candidates"]) == 1
+    assert [shape["name"] for shape in locked_artifact["preflight"]["param_shapes"]] == [
+        FIXED_CANDIDATE_PARAM
+    ]
+    assert len(locked_artifact["candidates"]) == 3
+    assert len({candidate["candidate_key"] for candidate in locked_artifact["candidates"]}) == 1
 
 
 def test_component_optimization_resolves_candidate_id_pin_as_fixed_params(
@@ -256,7 +264,7 @@ def test_component_optimization_resolves_candidate_id_pin_as_fixed_params(
     source_artifact = json.loads(
         (tmp_path / "runs" / "candidate-source" / "strategy_run.json").read_text()
     )
-    pinned_row = source_artifact["leaderboard"]["rows"][1]
+    pinned_row = source_artifact["candidates"][1]
     fast_key = component_param_key("strategies", "demo.ma_opt", "strategy", "fast_window")
     slow_key = component_param_key("strategies", "demo.ma_opt", "strategy", "slow_window")
     expected_params = {
@@ -392,7 +400,7 @@ def _run_config_payload(
         "portfolio": {"target_exposure_cap": 1.0},
         "strategy": strategy,
         "indicators": indicators,
-        "ranking": {"metric": "total_return", "direction": "desc"},
+        "ranking": {"metric": "total_return"},
         **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
         **({"optimization": optimization} if optimization is not None else {}),
     }

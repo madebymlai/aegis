@@ -55,7 +55,7 @@ def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
 
     payload = manifest.to_dict()
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["run"]["id"] == "run-1"
     assert payload["run"]["run_dir"] == "run-1"
     assert str(tmp_path) not in json.dumps(payload)

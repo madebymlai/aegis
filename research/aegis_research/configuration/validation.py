@@ -20,17 +20,14 @@ from research.aegis_research.configuration.schema import (
     EXPERIMENT_NAME_RE,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     MISSING_POLICIES,
-    OPTIMIZATION_RETURN_GRID_POLICIES,
     OPTIMIZATION_SEARCH_POLICIES,
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
-    RANKING_DIRECTIONS,
     RUN_EXECUTABLE_DENIED_KEYS,
     ConfigValidationIssue,
     DataConfig,
     DataQualityConfig,
     OptimizationConfig,
-    OptimizationEvidenceConfig,
     PortfolioConfig,
     ReportConfig,
     RunSplitConfig,
@@ -139,7 +136,6 @@ def _validate_run_split(
     _optional_int(f"{path}.max_splits", split, issues, positive=True)
     _optional_int(f"{path}.max_estimated_output_cells", split, issues, positive=True)
     _optional_int(f"{path}.max_public_artifact_bytes", split, issues, positive=True)
-    _optional_int(f"{path}.max_batch_expansion_bytes", split, issues, positive=True)
 
     params = split.get("params", {})
     if not isinstance(params, dict):
@@ -189,7 +185,6 @@ def _validate_optimization(raw: dict[str, Any], issues: list[ConfigValidationIss
     _validate_optimization_random_policy(optimization, issues, search=search)
     _optional_int("optimization.seed", optimization, issues, minimum=0, allow_none=True)
     _validate_optimization_execute(optimization.get("execute", {}), issues)
-    _validate_optimization_evidence(optimization.get("evidence", {}), issues)
 
 
 def _validate_optimization_split(
@@ -257,8 +252,6 @@ OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
         "merge_func",
         "raise_no_results",
         "filter_results",
-        "selection",
-        "return_grid",
     }
 )
 
@@ -277,29 +270,10 @@ def _validate_optimization_execute(value: Any, issues: list[ConfigValidationIssu
             ConfigValidationIssue(
                 path,
                 f"reserved keys {reserved} are owned by optimization.search / "
-                "optimization.evidence / Aegis ranking policy and must not appear "
+                "Aegis ranking policy and must not appear "
                 "under optimization.execute",
             )
         )
-
-
-def _validate_optimization_evidence(value: Any, issues: list[ConfigValidationIssue]) -> None:
-    path = "optimization.evidence"
-    if not isinstance(value, dict):
-        issues.append(ConfigValidationIssue(path, "must be a mapping"))
-        return
-    _validate_known_keys(path, value, set(OptimizationEvidenceConfig.__dataclass_fields__), issues)
-    _validate_json_like(path, value, issues)
-    _validate_no_inline_secrets(path, value, issues)
-    if "return_grid" in value:
-        return_grid = value["return_grid"]
-        if not isinstance(return_grid, str) or return_grid not in OPTIMIZATION_RETURN_GRID_POLICIES:
-            issues.append(
-                ConfigValidationIssue(
-                    f"{path}.return_grid",
-                    f"must be one of {sorted(OPTIMIZATION_RETURN_GRID_POLICIES)}",
-                )
-            )
 
 
 def _validate_removed_training_fields(
@@ -541,7 +515,10 @@ def _validate_ranking(
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
     _validate_known_keys(
-        path, value, {"metric", "direction", "secondary_metrics", "rank_by"}, issues
+        path,
+        value,
+        {"metric", "min_weight"},
+        issues,
     )
     metric = value.get("metric")
     if not isinstance(metric, str) or not metric:
@@ -552,62 +529,19 @@ def _validate_ranking(
             metric,
             issues,
             registry=registry,
-            require_primary=True,
         )
-    direction = value.get("direction")
-    if not isinstance(direction, str) or direction not in RANKING_DIRECTIONS:
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.direction", f"must be one of {sorted(RANKING_DIRECTIONS)}"
+    if "min_weight" in value:
+        min_weight = value["min_weight"]
+        if (
+            isinstance(min_weight, bool)
+            or not isinstance(min_weight, (int, float))
+            or not 0.0 <= float(min_weight) <= 1.0
+        ):
+            issues.append(
+                ConfigValidationIssue(
+                    f"{path}.min_weight", "must be a number between 0.0 and 1.0"
+                )
             )
-        )
-    if "rank_by" in value:
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.rank_by",
-                "was removed; include 'baseline_delta' in secondary_metrics for baseline comparison",
-            )
-        )
-    _validate_secondary_metrics(
-        path,
-        value.get("secondary_metrics", []),
-        issues,
-        primary_metric=metric if isinstance(metric, str) else None,
-        registry=registry,
-    )
-
-
-def _validate_secondary_metrics(
-    path: str,
-    value: Any,
-    issues: list[ConfigValidationIssue],
-    *,
-    primary_metric: str | None,
-    registry: FrozenMetricRegistry,
-) -> None:
-    if not isinstance(value, list):
-        issues.append(ConfigValidationIssue(f"{path}.secondary_metrics", "must be a list"))
-        return
-    seen: set[str] = set()
-    for index, metric_id in enumerate(value):
-        item_path = f"{path}.secondary_metrics[{index}]"
-        if not isinstance(metric_id, str) or not metric_id:
-            issues.append(ConfigValidationIssue(item_path, "must be a non-empty metric id string"))
-            continue
-        if metric_id == primary_metric:
-            issues.append(ConfigValidationIssue(item_path, "must not repeat primary metric"))
-            continue
-        if metric_id in seen:
-            issues.append(ConfigValidationIssue(item_path, "duplicate secondary metric"))
-            continue
-        seen.add(metric_id)
-        _validate_metric_selection(
-            item_path,
-            metric_id,
-            issues,
-            registry=registry,
-            require_primary=False,
-        )
 
 
 def _validate_metric_selection(
@@ -616,18 +550,9 @@ def _validate_metric_selection(
     issues: list[ConfigValidationIssue],
     *,
     registry: FrozenMetricRegistry,
-    require_primary: bool,
 ) -> None:
     if metric_id not in registry:
         issues.append(ConfigValidationIssue(path, f"must be one of {sorted(registry.ids())}"))
-        return
-    definition = registry.get(metric_id)
-    if require_primary and not definition.primary_eligible:
-        issues.append(ConfigValidationIssue(path, f"metric {metric_id!r} is not primary-eligible"))
-    if not require_primary and not definition.secondary_eligible:
-        issues.append(
-            ConfigValidationIssue(path, f"metric {metric_id!r} is not secondary-eligible")
-        )
 
 
 def _validate_no_run_executable_keys(

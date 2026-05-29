@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +22,12 @@ from research.aegis_research.config import (
     to_builtin,
 )
 from research.aegis_research.data import MarketDataBundle
+from research.aegis_research.optimization.precompute import (
+    CandidateKey,
+    WideIndicatorPrecompute,
+    build_candidate_index,
+    candidate_keys,
+)
 from research.aegis_research.optimization.source import OptimizationSource
 
 COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION = "component_optimization_source.v1"
@@ -63,6 +69,13 @@ class _ComponentRuntime:
     fixed_params: dict[str, Any]
     param_space: dict[str, vbt.Param]
     param_keys: dict[str, str]
+
+
+@dataclass(frozen=True)
+class _RuntimeParamDeduplication:
+    param_lists: dict[str, list[Any]]
+    candidate_index: dict[CandidateKey, int]
+    n_candidates: int
 
 
 def component_ref_key(
@@ -191,23 +204,54 @@ def build_component_optimization_source(
 
     input_names = _input_names(strategy, indicators)
 
-    def pipeline(
-        close_slice: pd.DataFrame, n_candidates: int, **param_lists: Any
-    ) -> pd.DataFrame:
-        data_slice = _slice_data(data, close_slice, input_names)
-        n_symbols = len(close_slice.columns)
-        indicator_outputs: dict[str, np.ndarray] = {}
+    def precompute(
+        close: pd.DataFrame, n_candidates: int, **param_lists: Any
+    ) -> WideIndicatorPrecompute:
+        # Run each indicator's wide callable once over ``close`` (the full series in
+        # the selection phase) and return a candidate-major store sliceable by split
+        # range. Candidates whose warmup still exceeds the full series are marked
+        # invalid by the runner before ranking.
+        data_full = _slice_data(data, close, input_names)
+        n_symbols = len(close.columns)
+        outputs: dict[str, np.ndarray] = {}
+        full_candidate_keys = candidate_keys(param_lists)
+        candidate_index_by_output: dict[str, dict[CandidateKey, int]] = {}
         for runtime in indicators:
-            wide_params = _wide_params_for_runtime(runtime, param_lists)
-            output = runtime.wide_callable(data_slice, n_candidates=n_candidates, **wide_params)
+            deduped = _deduplicate_runtime_params(
+                runtime,
+                param_lists,
+                full_candidate_keys=full_candidate_keys,
+                n_candidates=n_candidates,
+            )
+            output = runtime.wide_callable(
+                data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
+            )
             output_arr = np.asarray(output)
             for output_name in runtime.definition.manifest.output_names:
-                if output_name in indicator_outputs:
+                if output_name in outputs:
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
-                indicator_outputs[output_name] = output_arr
+                outputs[output_name] = output_arr
+                candidate_index_by_output[output_name] = deduped.candidate_index
+        return WideIndicatorPrecompute(
+            outputs=outputs,
+            candidate_index=build_candidate_index(param_lists),
+            n_symbols=n_symbols,
+            output_candidate_index=candidate_index_by_output,
+        )
+
+    def simulate(
+        close_window: pd.DataFrame,
+        indicator_window: Mapping[str, np.ndarray],
+        n_candidates: int,
+        **param_lists: Any,
+    ) -> pd.DataFrame:
+        # Run the strategy allocation for one window given indicator outputs already
+        # sliced to that window; the central-metrics step prices the allocations.
+        data_slice = _slice_data(data, close_window, input_names)
+        n_symbols = len(close_window.columns)
         strategy_wide_inputs = WideComponentStrategyInputs(
             data=data_slice,
-            indicators=indicator_outputs,
+            indicators=indicator_window,
             n_candidates=n_candidates,
             n_symbols=n_symbols,
             metadata={
@@ -216,19 +260,22 @@ def build_component_optimization_source(
                 "component_optimization_source": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
             },
         )
-        strategy_wide_params = _wide_params_for_runtime(strategy, param_lists)
+        strategy_wide_params = _wide_params_for_runtime(
+            strategy, param_lists, n_candidates=n_candidates
+        )
         alloc_arr = np.asarray(
             strategy.wide_callable(
                 strategy_wide_inputs, n_candidates=n_candidates, **strategy_wide_params
             )
         )
         return _build_wide_frame(
-            alloc_arr, close_slice, n_candidates, param_lists, params
+            alloc_arr, close_window, n_candidates, param_lists, params
         )
 
     evidence = _source_evidence(strategy, indicators, params)
     return OptimizationSource(
-        pipeline=pipeline,
+        precompute=precompute,
+        simulate=simulate,
         params=params,
         output_name=strategy.definition.manifest.output_name,
         evidence=evidence,
@@ -382,25 +429,50 @@ def _validate_component_param_sources(
         )
 
 
-def _params_for_runtime(
-    runtime: _ComponentRuntime, raw_params: Mapping[str, Any]
-) -> dict[str, Any]:
-    params = dict(runtime.fixed_params)
-    for param_name, param_key in runtime.param_keys.items():
-        params[param_name] = raw_params[param_key]
-    return params
-
-
 def _wide_params_for_runtime(
-    runtime: _ComponentRuntime, param_lists: Mapping[str, Any]
-) -> dict[str, list[Any]]:
-    n_candidates = len(next(iter(param_lists.values()))) if param_lists else 0
-    params: dict[str, list[Any]] = {}
+    runtime: _ComponentRuntime,
+    param_lists: Mapping[str, Sequence[Any]],
+    *,
+    n_candidates: int,
+) -> dict[str, Sequence[Any]]:
+    params: dict[str, Sequence[Any]] = {}
     for param_name, param_key in runtime.param_keys.items():
         params[param_name] = param_lists[param_key]
     for param_name, fixed_value in runtime.fixed_params.items():
         params[param_name] = [fixed_value] * n_candidates
     return params
+
+
+def _deduplicate_runtime_params(
+    runtime: _ComponentRuntime,
+    param_lists: Mapping[str, Sequence[Any]],
+    *,
+    full_candidate_keys: Sequence[CandidateKey],
+    n_candidates: int,
+) -> _RuntimeParamDeduplication:
+    runtime_param_lists = _wide_params_for_runtime(
+        runtime, param_lists, n_candidates=n_candidates
+    )
+    runtime_param_names = sorted(runtime_param_lists)
+    unique_positions: dict[tuple[Any, ...], int] = {}
+    unique_param_lists: dict[str, list[Any]] = {name: [] for name in runtime_param_names}
+    candidate_index: dict[CandidateKey, int] = {}
+
+    for candidate_idx, full_key in enumerate(full_candidate_keys):
+        runtime_key = tuple(
+            runtime_param_lists[name][candidate_idx] for name in runtime_param_names
+        )
+        if runtime_key not in unique_positions:
+            unique_positions[runtime_key] = len(unique_positions)
+            for name in runtime_param_names:
+                unique_param_lists[name].append(runtime_param_lists[name][candidate_idx])
+        candidate_index[full_key] = unique_positions[runtime_key]
+
+    return _RuntimeParamDeduplication(
+        param_lists=unique_param_lists,
+        candidate_index=candidate_index,
+        n_candidates=len(unique_positions),
+    )
 
 
 def _build_wide_frame(

@@ -41,21 +41,19 @@ def run_pipeline_completion(
     portfolio_builtin: Mapping[str, Any],
     split_result: Any,
     optimization_evidence: Mapping[str, Any],
-    run_payload: Mapping[str, Any],
     candidate_rows: list[Mapping[str, Any]],
-    leaderboard: Mapping[str, Any],
     resolved_locks: list[Mapping[str, Any]],
     lock_records: list[Mapping[str, Any]],
     candidate_store_provenance: Mapping[str, Any],
     store_path: Path,
     store_namespace: Mapping[str, str],
-    optimization_run: Any,
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     """Write the strategy artifact, complete the run, and activate candidates.
 
     Returns the final run result dict with run refs, artifact metadata,
-    candidate store path, lock records, optimization summary, and leaderboard.
+    candidate store path, lock records, optimization summary, and the three
+    representative candidates.
     """
     artifact_payload = build_strategy_artifact_payload(
         strategy_evidence=strategy_evidence,
@@ -63,16 +61,14 @@ def run_pipeline_completion(
         array_contract=array_contract,
         ranking={
             "metric": config.ranking.metric,
-            "direction": config.ranking.direction,
-            "secondary_metrics": list(config.ranking.secondary_metrics),
+            "min_weight": config.ranking.min_weight,
         },
         portfolio=portfolio_builtin,
         optimization=optimization_builtin,
         split_metadata=split_result.metadata,
         preflight=optimization_evidence["preflight"],
-        execution=run_payload,
+        execution=dict(optimization_evidence.get("execution", {})),
         candidates=[to_builtin(record) for record in candidate_rows],
-        leaderboard=leaderboard,
         resolved_locks=resolved_locks,
         lock_records=lock_records,
         candidate_store_path=store_namespace["path"],
@@ -89,13 +85,25 @@ def run_pipeline_completion(
         "candidate_store_path": str(store_path),
         "locks": lock_records,
         "optimization": {
-            "ranking_metric": optimization_run.ranking_metric,
-            "ranking_direction": optimization_run.ranking_direction,
+            "ranking_metric": config.ranking.metric,
+            "min_weight": config.ranking.min_weight,
             "split_count": split_result.metadata["n_splits"],
-            "selection_row_count": len(optimization_run.selection),
-            "candidate_count": len(candidate_rows),
+            "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
         },
-        "leaderboard": leaderboard,
+        "candidates": [_candidate_summary(row) for row in candidate_rows],
+    }
+
+
+def _candidate_summary(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "role": row["role"],
+        "rank": row["rank"],
+        "candidate_key": row["candidate_key"],
+        "params": row["params"],
+        "score": row["score"],
+        "metrics": row["metrics"],
+        "selection_metrics": row["selection_metrics"],
+        "held_out_metrics": row["held_out_metrics"],
     }
 
 

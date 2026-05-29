@@ -1,9 +1,25 @@
 """Optimization source contract.
 
-Signal-side parameter optimization only. A source exposes a
-``pipeline`` callable plus a ``params`` mapping of ``vbt.Param`` axes; VBT
-sweeps that grid via ``vbt.cv_split`` and Aegis computes central portfolio
-metrics from the returned (entries, exits) signals.
+Signal-side parameter optimization only. A source exposes two stages plus a
+``params`` mapping of ``vbt.Param`` axes:
+
+- ``precompute(close, n_candidates, **param_lists) -> WideIndicatorPrecompute``
+  runs each indicator's wide callable once over the given series, returning a
+  candidate-major store sliceable by split range. Run over the **full** series,
+  it preserves all available warmup history; candidates whose lookback still
+  exceeds that history are invalidated before ranking. Outputs must satisfy the
+  ``validate_precompute_no_lookahead`` prefix-equivalence contract: truncating the
+  input immediately after a row must not change that row's output values.
+- ``simulate(close_window, indicator_window, n_candidates, **param_lists)``
+  runs the strategy allocation for one window given the precomputed indicator
+  outputs already sliced to that window (the central-metrics step then computes
+  portfolio metrics from the returned allocations).
+
+The fused per-slice view both stages compose into is available via the
+``pipeline`` method (precompute-on-slice then simulate-on-slice); the runner's
+selection sweep instead precomputes once over the full series and slices per
+window so no candidate loses warmup to a short slice. The held-out sweep uses the
+same full-series store for the representative candidates.
 
 Limitations carried by this contract:
 
@@ -30,6 +46,10 @@ from typing import Any
 
 from vectorbtpro import vbt
 
+from research.aegis_research.optimization.precompute import (
+    WideIndicatorPrecompute,
+    candidate_keys,
+)
 from research.aegis_research.portfolio_policy.policy import STRATEGY_ALLOCATION_OUTPUTS
 
 OPTIMIZATION_SOURCE_CONTRACT = "aegis.optimization_source.v1"
@@ -38,7 +58,8 @@ OPTIMIZATION_SOURCE_KIND = "optimization_source"
 OPTIMIZATION_SOURCE_ALLOWED_KEYS = {
     "contract",
     "kind",
-    "pipeline",
+    "precompute",
+    "simulate",
     "params",
     "output_name",
     "diagnostics",
@@ -67,12 +88,25 @@ class OptimizationSourceError(ValueError):
 
 @dataclass(frozen=True)
 class OptimizationSource:
-    pipeline: Callable[..., Any]
+    precompute: Callable[..., WideIndicatorPrecompute]
+    simulate: Callable[..., Any]
     params: dict[str, vbt.Param]
     output_name: str
     evidence: dict[str, Any]
     diagnostics: dict[str, Any]
     metadata: dict[str, Any]
+
+    def pipeline(self, close: Any, n_candidates: int, **param_lists: Any) -> Any:
+        """Fused per-slice view: precompute on ``close`` then simulate that window.
+
+        Used where callers explicitly need indicators computed on the same window
+        they are simulated on (for example, fused-pipeline tests). The runner does
+        not use this for split sweeps; it precomputes once over the full series and
+        slices.
+        """
+        store = self.precompute(close, n_candidates, **param_lists)
+        indicator_window = store.window(slice(None), candidate_keys(param_lists))
+        return self.simulate(close, indicator_window, n_candidates, **param_lists)
 
 
 def validate_optimization_source(
@@ -102,9 +136,12 @@ def validate_optimization_source(
             f"optimization source kind must be {OPTIMIZATION_SOURCE_KIND!r}"
         )
 
-    pipeline = result.get("pipeline")
-    if not callable(pipeline):
-        raise OptimizationSourceError("optimization source must include callable pipeline")
+    precompute = result.get("precompute")
+    if not callable(precompute):
+        raise OptimizationSourceError("optimization source must include callable precompute")
+    simulate = result.get("simulate")
+    if not callable(simulate):
+        raise OptimizationSourceError("optimization source must include callable simulate")
 
     params = _source_params(result.get("params"))
     output_name = result.get("output_name")
@@ -116,7 +153,8 @@ def validate_optimization_source(
     diagnostics = _optional_mapping(result.get("diagnostics", {}), "diagnostics")
     metadata = _optional_mapping(result.get("metadata", {}), "metadata")
     return OptimizationSource(
-        pipeline=pipeline,
+        precompute=precompute,
+        simulate=simulate,
         params=params,
         output_name=output_name,
         evidence=dict(source_evidence),

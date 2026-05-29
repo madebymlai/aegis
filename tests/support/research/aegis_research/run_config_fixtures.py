@@ -37,7 +37,7 @@ def build_resolved_run_config(
         "portfolio": {"target_exposure_cap": 1.0},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
-        "ranking": {"metric": "total_return", "direction": "desc"},
+        "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
             "split": {

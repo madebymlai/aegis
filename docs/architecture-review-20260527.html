@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — aegis-rd</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #e2e8f0; }
+      .depth-bar { transition: height 0.3s; }
+      .stage-band { border-left-width: 4px; }
+      .module-box {
+        border: 2px solid #334155;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        text-align: center;
+        background: white;
+      }
+      .module-box.deep-box {
+        border-width: 3px;
+        border-color: #0f172a;
+        background: linear-gradient(135deg, #0f172a, #1e293b);
+        color: #e2e8f0;
+      }
+      .module-box.shallow-box {
+        border-style: dashed;
+        border-color: #94a3b8;
+        background: #f8fafc;
+        color: #64748b;
+      }
+      .module-box.internal {
+        opacity: 0.45;
+        border-style: dotted;
+        font-size: 10px;
+      }
+      .arrow-label {
+        font-size: 9px;
+        fill: #64748b;
+        text-anchor: middle;
+      }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <!-- Header -->
+      <header class="space-y-4">
+        <h1 class="text-3xl font-serif font-bold text-slate-800">Architecture Review</h1>
+        <div class="flex items-center gap-4 text-sm text-slate-500">
+          <span class="font-mono">aegis-rd</span>
+          <span>&middot;</span>
+          <span>2026-05-27</span>
+        </div>
+        <div class="flex flex-wrap gap-4 text-xs uppercase tracking-wider text-slate-400 mt-2">
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block w-4 h-4 border-2 border-slate-700 rounded" style="background: linear-gradient(135deg, #0f172a, #1e293b)"></span>
+            Deep module
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block w-4 h-4 border-2 border-dashed border-slate-400 rounded bg-slate-50"></span>
+            Shallow module
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block w-4 h-0 border-t-2 border-dashed border-slate-400" style="width:16px"></span>
+            Seam
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block w-4 h-0 border-t-2 border-red-500" style="width:16px"></span>
+            Leakage
+          </span>
+        </div>
+      </header>
+
+      <!-- ================================================================ -->
+      <!-- CANDIDATE 1 -->
+      <!-- ================================================================ -->
+      <section id="candidates" class="space-y-10">
+
+        <article class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="px-6 pt-6 pb-4 space-y-3">
+            <div class="flex items-center gap-3 flex-wrap">
+              <h2 class="text-xl font-serif font-bold">Deepen the Run orchestration into stage modules</h2>
+              <span class="inline-block px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider rounded-full bg-emerald-100 text-emerald-800">Strong</span>
+              <span class="inline-block px-2.5 py-0.5 text-xs uppercase tracking-wider rounded-full bg-slate-100 text-slate-600">in-process</span>
+            </div>
+
+            <div class="font-mono text-sm text-slate-500 space-y-0.5">
+              <div>research/aegis_research/strategy_runs.py <span class="text-slate-400">(673 lines, 23 functions, 7 responsibilities)</span></div>
+            </div>
+          </div>
+
+          <!-- Before / After -->
+          <div class="grid grid-cols-2 gap-0 border-t border-slate-100">
+
+            <!-- BEFORE -->
+            <div class="p-5 border-r border-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-400 mb-3 font-bold">Before</div>
+
+              <!-- Call-graph collapse: nested boxes showing all functions inside one flat file -->
+              <div class="relative" style="min-height: 320px">
+                <!-- Outer box: strategy_runs.py -->
+                <div class="border-2 border-dashed border-slate-400 rounded-lg p-3 bg-slate-50/50" style="min-height: 300px">
+                  <div class="text-xs uppercase tracking-wider text-slate-500 mb-2 font-semibold">strategy_runs.py &mdash; 673 lines</div>
+
+                  <!-- Entry point -->
+                  <div class="module-box mb-2" style="border-color: #0f172a; border-width: 2px; background: #f0fdf4">
+                    run_strategy_sweep()
+                  </div>
+
+                  <!-- The monster function -->
+                  <div class="module-box mb-2" style="border-color: #dc2626; background: #fef2f2; min-height: 40px;">
+                    _run_optimization_strategy_sweep() &mdash; 186 lines
+                  </div>
+
+                  <!-- All the mixed helpers -->
+                  <div class="grid grid-cols-2 gap-1.5">
+                    <div class="module-box shallow-box text-xs py-1">data contracts</div>
+                    <div class="module-box shallow-box text-xs py-1">data evidence</div>
+                    <div class="module-box shallow-box text-xs py-1">promotion resolve</div>
+                    <div class="module-box shallow-box text-xs py-1">promotion refs</div>
+                    <div class="module-box shallow-box text-xs py-1">promotion records</div>
+                    <div class="module-box shallow-box text-xs py-1">promotion tokens</div>
+                    <div class="module-box shallow-box text-xs py-1">candidate store path</div>
+                    <div class="module-box shallow-box text-xs py-1">candidate namespace</div>
+                    <div class="module-box shallow-box text-xs py-1">candidate provenance</div>
+                    <div class="module-box shallow-box text-xs py-1">candidate identity</div>
+                    <div class="module-box shallow-box text-xs py-1">artifact write</div>
+                    <div class="module-box shallow-box text-xs py-1">artifact shape</div>
+                    <div class="module-box shallow-box text-xs py-1">run refs</div>
+                    <div class="module-box shallow-box text-xs py-1">failure diagnostic</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- AFTER -->
+            <div class="p-5">
+              <div class="text-xs uppercase tracking-wider text-slate-400 mb-3 font-bold">After</div>
+
+              <div class="relative" style="min-height: 320px">
+                <!-- Thin orchestrator -->
+                <div class="module-box deep-box mb-3 py-2 text-sm" style="border-width: 3px;">
+                  <div class="font-bold">run_strategy_sweep()</div>
+                  <div class="text-xs opacity-70 mt-0.5">~150 lines &mdash; sequences stages, owns lifecycle</div>
+                </div>
+
+                <!-- Seam line -->
+                <div class="border-t-2 border-dashed border-slate-300 my-2 relative">
+                  <span class="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-stone-50 px-2 text-xs text-slate-400 uppercase tracking-wider">seam</span>
+                </div>
+
+                <!-- Stage modules -->
+                <div class="grid grid-cols-2 gap-2 mt-4">
+                  <div class="module-box deep-box py-2">
+                    <div class="font-bold text-xs">promotion</div>
+                    <div class="text-xs opacity-60 mt-0.5">resolve + record Locks</div>
+                  </div>
+                  <div class="module-box deep-box py-2">
+                    <div class="font-bold text-xs">candidate_publishing</div>
+                    <div class="text-xs opacity-60 mt-0.5">store + provenance + identity</div>
+                  </div>
+                  <div class="module-box deep-box py-2">
+                    <div class="font-bold text-xs">run_artifacts</div>
+                    <div class="text-xs opacity-60 mt-0.5">plan + write + hash artifacts</div>
+                  </div>
+                  <div class="module-box deep-box py-2">
+                    <div class="font-bold text-xs">run_data_contract</div>
+                    <div class="text-xs opacity-60 mt-0.5">arrays + evidence + identity</div>
+                  </div>
+                </div>
+
+                <!-- Internal functions fade -->
+                <div class="mt-3 text-center text-xs text-slate-400 italic">
+                  14 private helpers absorbed into 4 focused modules
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Problem / Solution / Wins -->
+          <div class="px-6 py-4 bg-slate-50/50 border-t border-slate-100 space-y-3">
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Problem</span>
+              <p class="text-sm mt-0.5"><code>_run_optimization_strategy_sweep</code> is 186 lines that mix 7 responsibilities &mdash; the module is shallow because its single entry point hides nothing: every caller and every test must understand promotion resolution, Candidate Store wiring, artifact serialisation, and data contract building to reason about a Run.</p>
+            </div>
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Solution</span>
+              <p class="text-sm mt-0.5">Extract four stage modules &mdash; <strong>promotion</strong>, <strong>candidate_publishing</strong>, <strong>run_artifacts</strong>, <strong>run_data_contract</strong> &mdash; each with a focused interface. The orchestrator shrinks to ~150 lines that sequence stages and own Run lifecycle.</p>
+            </div>
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Wins</span>
+              <ul class="text-sm mt-1 space-y-0.5 list-disc list-inside text-slate-700">
+                <li><strong>Locality:</strong> promotion bugs concentrate in one module</li>
+                <li><strong>Leverage:</strong> one interface per stage, N callers</li>
+                <li><strong>Interface shrinks:</strong> orchestrator delegates, doesn't compute</li>
+                <li><strong>Tests hit focused interfaces</strong> instead of mocking 10+ imports</li>
+                <li><strong>Deletion test passes:</strong> each stage cluster earns its keep</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- ================================================================ -->
+        <!-- CANDIDATE 2 -->
+        <!-- ================================================================ -->
+
+        <article class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="px-6 pt-6 pb-4 space-y-3">
+            <div class="flex items-center gap-3 flex-wrap">
+              <h2 class="text-xl font-serif font-bold">Deepen Run Config validation into domain-specific validators</h2>
+              <span class="inline-block px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider rounded-full bg-emerald-100 text-emerald-800">Strong</span>
+              <span class="inline-block px-2.5 py-0.5 text-xs uppercase tracking-wider rounded-full bg-slate-100 text-slate-600">in-process</span>
+            </div>
+
+            <div class="font-mono text-sm text-slate-500 space-y-0.5">
+              <div>research/aegis_research/configuration/validation.py <span class="text-slate-400">(1284 lines, 40+ functions, 6 validation domains)</span></div>
+            </div>
+          </div>
+
+          <!-- Before / After -->
+          <div class="grid grid-cols-2 gap-0 border-t border-slate-100">
+
+            <!-- BEFORE: cross-section showing flat bands -->
+            <div class="p-5 border-r border-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-400 mb-3 font-bold">Before</div>
+
+              <div class="space-y-0 rounded-lg overflow-hidden border border-slate-200" style="min-height: 310px">
+                <div class="text-xs uppercase tracking-wider text-slate-500 p-2 bg-slate-100 font-semibold border-b border-slate-200">
+                  validation.py &mdash; 1284 lines, one module
+                </div>
+
+                <!-- All flat in one file -->
+                <div class="stage-band border-blue-400 bg-blue-50 px-3 py-2 text-xs">
+                  <span class="font-semibold">_validate_raw_run_config</span> &rarr; entry point
+                </div>
+                <div class="stage-band border-amber-400 bg-amber-50 px-3 py-1.5 text-xs">
+                  Component validation (8 functions, ~270 lines)
+                </div>
+                <div class="stage-band border-emerald-400 bg-emerald-50 px-3 py-1.5 text-xs">
+                  Data validation (7 functions, ~200 lines)
+                </div>
+                <div class="stage-band border-violet-400 bg-violet-50 px-3 py-1.5 text-xs">
+                  Optimization validation (5 functions, ~150 lines)
+                </div>
+                <div class="stage-band border-rose-400 bg-rose-50 px-3 py-1.5 text-xs">
+                  Portfolio &amp; Report validation (3 functions, ~80 lines)
+                </div>
+                <div class="stage-band border-cyan-400 bg-cyan-50 px-3 py-1.5 text-xs">
+                  Metric validation (4 functions, ~100 lines)
+                </div>
+                <div class="stage-band border-slate-400 bg-slate-50 px-3 py-2 text-xs">
+                  <span class="font-semibold text-slate-500">Base type validators</span> &mdash; 20+ helpers (~250 lines)
+                  <div class="text-slate-400 mt-0.5">_require_str, _optional_int, _optional_enum, _optional_bool, _json_safe &hellip;</div>
+                </div>
+              </div>
+
+              <div class="mt-2 text-xs text-red-500 text-center italic">
+                Imports from 6 modules &mdash; every domain leaks into one file
+              </div>
+            </div>
+
+            <!-- AFTER -->
+            <div class="p-5">
+              <div class="text-xs uppercase tracking-wider text-slate-400 mb-3 font-bold">After</div>
+
+              <div class="space-y-2" style="min-height: 310px">
+                <!-- Coordinator -->
+                <div class="module-box deep-box py-2 text-sm">
+                  <div class="font-bold">validation/__init__.py</div>
+                  <div class="text-xs opacity-70 mt-0.5">~80 lines &mdash; dispatches to domain validators</div>
+                </div>
+
+                <!-- Seam -->
+                <div class="border-t-2 border-dashed border-slate-300 my-1 relative">
+                  <span class="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-stone-50 px-2 text-xs text-slate-400 uppercase tracking-wider">seam</span>
+                </div>
+
+                <!-- Domain modules -->
+                <div class="space-y-1.5">
+                  <div class="stage-band border-amber-500 rounded px-3 py-1.5 text-xs bg-white border">
+                    <span class="font-bold">validation/components.py</span> &mdash; Component &amp; Indicator refs, output contracts
+                  </div>
+                  <div class="stage-band border-emerald-500 rounded px-3 py-1.5 text-xs bg-white border">
+                    <span class="font-bold">validation/data.py</span> &mdash; data source, arrays, quality policy
+                  </div>
+                  <div class="stage-band border-violet-500 rounded px-3 py-1.5 text-xs bg-white border">
+                    <span class="font-bold">validation/optimization.py</span> &mdash; split, random policy, execute, evidence
+                  </div>
+                  <div class="stage-band border-cyan-500 rounded px-3 py-1.5 text-xs bg-white border">
+                    <span class="font-bold">validation/metrics.py</span> &mdash; ranking, secondary Metrics, eligibility
+                  </div>
+                  <div class="stage-band border-rose-500 rounded px-3 py-1.5 text-xs bg-white border">
+                    <span class="font-bold">validation/portfolio.py</span> &mdash; portfolio &amp; report thresholds
+                  </div>
+                </div>
+
+                <!-- Shared -->
+                <div class="border-t border-slate-200 pt-1.5 mt-2">
+                  <div class="module-box py-1.5 text-xs" style="border-color: #64748b; background: #f1f5f9">
+                    <span class="font-bold">validation/base.py</span> &mdash; shared type validators
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Problem / Solution / Wins -->
+          <div class="px-6 py-4 bg-slate-50/50 border-t border-slate-100 space-y-3">
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Problem</span>
+              <p class="text-sm mt-0.5">1284 lines validating 6 unrelated domains in one file. The module is shallow: its single entry point (<code>_validate_raw_run_config</code>) hides nothing &mdash; every maintainer must scan 40+ functions to find the one that validates their domain. Imports leak from 6 modules (Component registry, Metric registry, market data sources, run splits, secrets, schema).</p>
+            </div>
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Solution</span>
+              <p class="text-sm mt-0.5">Split into a <code>validation/</code> package with domain-specific validators, each importing only what it validates. A thin coordinator dispatches.</p>
+            </div>
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Wins</span>
+              <ul class="text-sm mt-1 space-y-0.5 list-disc list-inside text-slate-700">
+                <li><strong>Locality:</strong> Component validation changes stay in one file</li>
+                <li><strong>Leverage:</strong> each validator's interface is its validate function</li>
+                <li><strong>Import leakage stops:</strong> each module imports only its domain</li>
+                <li><strong>Tests isolate:</strong> test Component validation without loading Metric registry</li>
+                <li><strong>Navigation:</strong> find the right validator by domain name, not by scrolling</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- ================================================================ -->
+        <!-- CANDIDATE 3 -->
+        <!-- ================================================================ -->
+
+        <article class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="px-6 pt-6 pb-4 space-y-3">
+            <div class="flex items-center gap-3 flex-wrap">
+              <h2 class="text-xl font-serif font-bold">Deepen reports into Metric computation + Evidence assembly</h2>
+              <span class="inline-block px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider rounded-full bg-amber-100 text-amber-800">Worth exploring</span>
+              <span class="inline-block px-2.5 py-0.5 text-xs uppercase tracking-wider rounded-full bg-slate-100 text-slate-600">in-process</span>
+            </div>
+
+            <div class="font-mono text-sm text-slate-500 space-y-0.5">
+              <div>research/aegis_research/reports.py <span class="text-slate-400">(553 lines, 26 functions)</span></div>
+            </div>
+          </div>
+
+          <!-- Before / After -->
+          <div class="grid grid-cols-2 gap-0 border-t border-slate-100">
+
+            <!-- BEFORE: mass diagram -->
+            <div class="p-5 border-r border-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-400 mb-3 font-bold">Before</div>
+
+              <div class="flex gap-6 items-end justify-center" style="min-height: 280px">
+                <!-- Interface rect -->
+                <div class="flex flex-col items-center">
+                  <div class="text-xs text-slate-400 mb-1 uppercase tracking-wider">Interface</div>
+                  <div class="w-20 bg-slate-200 rounded-t border border-slate-300 flex items-center justify-center text-xs text-slate-500 font-mono" style="height: 60px">
+                    2 funcs
+                  </div>
+                </div>
+                <!-- Implementation rect -->
+                <div class="flex flex-col items-center">
+                  <div class="text-xs text-slate-400 mb-1 uppercase tracking-wider">Impl</div>
+                  <div class="w-20 rounded-t border border-slate-300 flex flex-col items-center justify-end text-xs font-mono pb-1" style="height: 240px; background: linear-gradient(to top, #fef2f2, #fecaca, #fee2e2, #fef2f2)">
+                    <div class="text-red-400 text-center leading-tight">
+                      <div>metric</div>
+                      <div>extract</div>
+                      <div>&mdash;</div>
+                      <div>evidence</div>
+                      <div>format</div>
+                      <div>&mdash;</div>
+                      <div>warning</div>
+                      <div>capture</div>
+                      <div>&mdash;</div>
+                      <div>per-symbol</div>
+                      <div>breakdown</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-center text-xs text-slate-400 mt-2">
+                Shallow: two entry points hide 24 mixed helpers
+              </div>
+            </div>
+
+            <!-- AFTER: two deep modules -->
+            <div class="p-5">
+              <div class="text-xs uppercase tracking-wider text-slate-400 mb-3 font-bold">After</div>
+
+              <div class="flex gap-4 items-end justify-center" style="min-height: 280px">
+                <!-- Module 1: metric computation -->
+                <div class="flex flex-col items-center">
+                  <div class="text-xs text-slate-400 mb-1 uppercase tracking-wider text-center leading-tight">Metric<br>Computation</div>
+                  <div class="relative">
+                    <!-- Interface (small) -->
+                    <div class="w-24 bg-emerald-100 border-2 border-emerald-700 rounded-t flex items-center justify-center text-xs font-mono font-bold" style="height: 35px">
+                      interface
+                    </div>
+                    <!-- Implementation (large) -->
+                    <div class="w-24 rounded-b border-2 border-t-0 border-emerald-700 flex items-center justify-center text-xs font-mono" style="height: 140px; background: linear-gradient(135deg, #0f172a, #1e293b); color: #a7f3d0;">
+                      <div class="text-center leading-tight">
+                        extract<br>aggregate<br>per-symbol<br>warnings
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Module 2: evidence assembly -->
+                <div class="flex flex-col items-center">
+                  <div class="text-xs text-slate-400 mb-1 uppercase tracking-wider text-center leading-tight">Evidence<br>Assembly</div>
+                  <div class="relative">
+                    <!-- Interface (small) -->
+                    <div class="w-24 bg-emerald-100 border-2 border-emerald-700 rounded-t flex items-center justify-center text-xs font-mono font-bold" style="height: 35px">
+                      interface
+                    </div>
+                    <!-- Implementation (large) -->
+                    <div class="w-24 rounded-b border-2 border-t-0 border-emerald-700 flex items-center justify-center text-xs font-mono" style="height: 100px; background: linear-gradient(135deg, #0f172a, #1e293b); color: #a7f3d0;">
+                      <div class="text-center leading-tight">
+                        diagnostics<br>formatting<br>assumptions
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="text-center text-xs text-slate-400 mt-2">
+                Two deep modules &mdash; small interfaces, large implementations
+              </div>
+            </div>
+          </div>
+
+          <!-- Problem / Solution / Wins -->
+          <div class="px-6 py-4 bg-slate-50/50 border-t border-slate-100 space-y-3">
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Problem</span>
+              <p class="text-sm mt-0.5">553 lines with two public entry points hiding 24 helpers that mix Metric extraction (calling VBT stats), per-Candidate aggregation, per-symbol breakdowns, warning capture, diagnostic formatting, and Evidence assembly. The module is shallow &mdash; callers don't know which helpers are "compute" vs "format."</p>
+            </div>
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Solution</span>
+              <p class="text-sm mt-0.5">Split into <strong>metric_computation</strong> (extract raw values, aggregate per Candidate, capture warnings) and <strong>metric_evidence</strong> (format diagnostics, build Evidence payload, serialize assumptions). Each gets a focused interface.</p>
+            </div>
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Wins</span>
+              <ul class="text-sm mt-1 space-y-0.5 list-disc list-inside text-slate-700">
+                <li><strong>Locality:</strong> Metric computation bugs stay in one module</li>
+                <li><strong>Leverage:</strong> Evidence assembly reusable by other report shapes</li>
+                <li><strong>Tests isolate:</strong> test computation without mocking Evidence formatting</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- ================================================================ -->
+        <!-- CANDIDATE 4 -->
+        <!-- ================================================================ -->
+
+        <article class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="px-6 pt-6 pb-4 space-y-3">
+            <div class="flex items-center gap-3 flex-wrap">
+              <h2 class="text-xl font-serif font-bold">Extract Component parameter namespace codec from pipeline builder</h2>
+              <span class="inline-block px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider rounded-full bg-amber-100 text-amber-800">Worth exploring</span>
+              <span class="inline-block px-2.5 py-0.5 text-xs uppercase tracking-wider rounded-full bg-slate-100 text-slate-600">in-process</span>
+            </div>
+
+            <div class="font-mono text-sm text-slate-500 space-y-0.5">
+              <div>research/aegis_research/optimization/component_source.py <span class="text-slate-400">(564 lines, 25+ functions)</span></div>
+            </div>
+          </div>
+
+          <!-- Before / After -->
+          <div class="grid grid-cols-2 gap-0 border-t border-slate-100">
+
+            <!-- BEFORE: mermaid call graph -->
+            <div class="p-5 border-r border-slate-100">
+              <div class="text-xs uppercase tracking-wider text-slate-400 mb-3 font-bold">Before</div>
+              <div class="rounded-lg border border-slate-200 bg-white p-3" style="min-height: 280px">
+                <pre class="mermaid">
+flowchart TB
+  B["build_component_<br>optimization_source"]
+  B --> R["_build_runtime"]
+  B --> P["_params_for_runtime"]
+  B --> W["_wide_params_for_runtime"]
+  B --> V["_validate_component_<br>param_sources"]
+  B --> O["_assert_output_<br>contract"]
+  B --> E["_source_evidence"]
+  B --> I["_input_names"]
+
+  B --> CRK["component_ref_key"]
+  B --> CPK["component_param_key"]
+  B --> CPS["component_param_slices"]
+  B --> CPF["component_params_<br>from_slices"]
+  B --> PCK["parse_component_<br>param_key"]
+  B --> EN["_encode_namespace"]
+  B --> DN["_decode_namespace"]
+
+  style CRK fill:#fef2f2,stroke:#dc2626
+  style CPK fill:#fef2f2,stroke:#dc2626
+  style CPS fill:#fef2f2,stroke:#dc2626
+  style CPF fill:#fef2f2,stroke:#dc2626
+  style PCK fill:#fef2f2,stroke:#dc2626
+  style EN fill:#fef2f2,stroke:#dc2626
+  style DN fill:#fef2f2,stroke:#dc2626
+                </pre>
+              </div>
+              <div class="text-center text-xs text-red-500 mt-2 italic">
+                Namespace codec (red) and pipeline builder tangled in one module
+              </div>
+            </div>
+
+            <!-- AFTER -->
+            <div class="p-5">
+              <div class="text-xs uppercase tracking-wider text-slate-400 mb-3 font-bold">After</div>
+              <div class="rounded-lg border border-slate-200 bg-white p-3" style="min-height: 280px">
+                <pre class="mermaid">
+flowchart TB
+  subgraph NS ["component_params (namespace codec)"]
+    direction TB
+    CRK["component_ref_key"]
+    CPK["component_param_key"]
+    CPS["component_param_slices"]
+    CPF["component_params_<br>from_slices"]
+    PCK["parse_component_<br>param_key"]
+    EN["_encode"]
+    DN["_decode"]
+  end
+
+  subgraph CS ["component_source (pipeline builder)"]
+    direction TB
+    B["build_component_<br>optimization_source"]
+    R["_build_runtime"]
+    P["_params_for_runtime"]
+    V["_validate"]
+    O["_assert_output"]
+    E["_source_evidence"]
+  end
+
+  CS -- "uses interface" --> NS
+
+  style NS fill:#0f172a,stroke:#0f172a,color:#e2e8f0
+  style CS fill:#0f172a,stroke:#0f172a,color:#e2e8f0
+  style CRK fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style CPK fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style CPS fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style CPF fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style PCK fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style EN fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style DN fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style B fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style R fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style P fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style V fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style O fill:#1e293b,stroke:#334155,color:#a7f3d0
+  style E fill:#1e293b,stroke:#334155,color:#a7f3d0
+                </pre>
+              </div>
+              <div class="text-center text-xs text-slate-400 mt-2">
+                Two real adapters justify the seam: promotion.py also uses the codec
+              </div>
+            </div>
+          </div>
+
+          <!-- Problem / Solution / Wins -->
+          <div class="px-6 py-4 bg-slate-50/50 border-t border-slate-100 space-y-3">
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Problem</span>
+              <p class="text-sm mt-0.5">564 lines mixing two distinct responsibilities: parameter namespace encoding/decoding (used by both <code>component_source.py</code> and <code>promotion.py</code>) and pipeline assembly/validation. The namespace codec is a real seam &mdash; two adapters already use it &mdash; but it's buried inside the pipeline builder's implementation.</p>
+            </div>
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Solution</span>
+              <p class="text-sm mt-0.5">Extract the namespace codec (ref keys, param keys, slices, encode/decode) into <code>optimization/component_params.py</code>. The pipeline builder imports the codec's interface; <code>promotion.py</code> already does the same &mdash; formalizing the seam that already exists.</p>
+            </div>
+            <div>
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Wins</span>
+              <ul class="text-sm mt-1 space-y-0.5 list-disc list-inside text-slate-700">
+                <li><strong>Two adapters justify the seam:</strong> component_source and promotion both use the codec</li>
+                <li><strong>Locality:</strong> namespace encoding bugs concentrate in one module</li>
+                <li><strong>Leverage:</strong> codec interface is small; implementation handles hex encoding, parsing, slicing</li>
+                <li><strong>Tests isolate:</strong> test namespace round-tripping without building pipelines</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+      </section>
+
+      <!-- ================================================================ -->
+      <!-- TOP RECOMMENDATION -->
+      <!-- ================================================================ -->
+
+      <section id="top-recommendation" class="bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-xl border border-emerald-200 p-6 space-y-3">
+        <div class="flex items-center gap-3">
+          <span class="inline-block px-3 py-1 text-xs font-bold uppercase tracking-wider rounded-full bg-emerald-600 text-white">Top recommendation</span>
+        </div>
+        <h3 class="text-xl font-serif font-bold text-emerald-900">
+          <a href="#candidates" class="hover:underline">Deepen the Run orchestration into stage modules</a>
+        </h3>
+        <p class="text-sm text-emerald-800">
+          <code>strategy_runs.py</code> is where every Run flows through, and it's where the flatness hurts most. Seven responsibilities in 673 lines means every change to promotion logic, Candidate Store wiring, or artifact serialization forces the maintainer to hold the entire file in their head. Extracting four stage modules with focused interfaces gives the highest leverage: tests get smaller, bugs get local, and the orchestrator becomes readable as a sequence of named steps. Tackle this first &mdash; the other candidates become clearer once the Run pipeline has explicit stages.
+        </p>
+      </section>
+
+    </main>
+  </body>
+</html>

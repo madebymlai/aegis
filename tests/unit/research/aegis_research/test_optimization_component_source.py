@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -22,6 +23,7 @@ from research.aegis_research.optimization.component_source import (
     component_ref_key,
     parse_component_param_key,
 )
+from research.aegis_research.optimization.precompute import candidate_keys
 
 
 def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path: Path) -> None:
@@ -162,7 +164,7 @@ def _config(
         indicators=indicators
         if indicators is not None
         else [RunIndicatorSourceConfig(id="demo.trend")],
-        ranking=RankingConfig(metric="total_return", direction="desc"),
+        ranking=RankingConfig(metric="total_return"),
     )
 
 
@@ -331,6 +333,44 @@ def test_component_source_wide_pipeline_returns_multiindex_frame(tmp_path: Path)
     assert isinstance(result.columns, pd.MultiIndex)
     assert result.columns.names[-1] == "symbol"
     assert result.index.equals(close.index)
+
+
+def test_component_precompute_deduplicates_indicator_params_with_window_parity(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research" / "components"
+    _write_wide_indicator(root / "indicators" / "trend.py")
+    _write_wide_strategy(root / "strategies" / "strategy.py")
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    data = _data_bundle()
+    source = build_component_optimization_source(_config(), component_registry=registry, data=data)
+    close = data.feature("Close")
+
+    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
+    strategy_key = component_param_key("strategies", "demo.strategy", "strategy", "threshold")
+    param_lists = {
+        indicator_key: [2, 2, 3, 3],
+        strategy_key: [0.95, 1.0, 0.95, 1.0],
+    }
+
+    store = source.precompute(close, 4, **param_lists)
+
+    # Four full candidates collapse to two unique indicator parameter tuples.
+    n_symbols = len(close.columns)
+    assert store.outputs["trend"].shape == (len(close), 2 * n_symbols)
+
+    # The store still expands the deduped indicator blocks back to candidate-major
+    # order when a simulation window asks for all four full candidate keys.
+    indicator_window = store.window(slice(None), candidate_keys(param_lists))
+    roll2 = close.rolling(2, min_periods=1).mean().to_numpy()
+    roll3 = close.rolling(3, min_periods=1).mean().to_numpy()
+    expected = np.concatenate([roll2, roll2, roll3, roll3], axis=1)
+    np.testing.assert_array_equal(indicator_window["trend"], expected)
+
+    result = source.simulate(close, indicator_window, 4, **param_lists)
+
+    assert result.shape == (len(close), 4 * n_symbols)
+    assert isinstance(result.columns, pd.MultiIndex)
 
 
 def _data_bundle() -> MarketDataBundle:

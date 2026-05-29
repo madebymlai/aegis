@@ -89,15 +89,13 @@ def resolve_component_locks(
 def build_component_lock_records(
     *,
     run_id: str,
-    leaderboard: Mapping[str, Any],
+    best_candidate: Mapping[str, Any] | None,
     optimization_source: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    rows = list(leaderboard.get("rows", ()))
-    if not rows:
+    if not best_candidate:
         return []
-    top_row = rows[0]
-    candidate_key = str(top_row["candidate_key"])
-    candidate_params = dict(top_row.get("params", {}))
+    candidate_key = str(best_candidate["candidate_key"])
+    candidate_params = dict(best_candidate.get("params", {}))
     component_slices = component_param_slices(candidate_params)
     records: list[dict[str, Any]] = []
     for runtime in _lock_runtime_records(optimization_source):
@@ -132,7 +130,7 @@ def build_component_lock_records(
             "component_id": component_id,
             "component_slot": component_slot,
             "source": optimization_source,
-            "leaderboard_row": top_row,
+            "candidate": dict(best_candidate),
         }
         records.append(
             {

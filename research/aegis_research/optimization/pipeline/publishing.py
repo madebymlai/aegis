@@ -1,12 +1,11 @@
 """Pipeline publishing stage.
 
-Evaluates candidates from the optimization run, builds the leaderboard,
-and publishes results to the candidate store.
+Turns the three representative candidates into role-tagged candidate rows,
+resolves the winning component lock, and publishes them to the candidate store.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +23,7 @@ from research.aegis_research.optimization.candidate_publishing import (
     candidate_store_namespace,
     publish_candidates,
 )
-from research.aegis_research.optimization.evidence import candidate_rows_from_param_index
-from research.aegis_research.optimization.leaderboard import build_optimization_leaderboard
+from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.lock_resolution import (
     build_component_lock_records,
 )
@@ -42,43 +40,29 @@ def run_pipeline_publishing(
     data_result: MarketDataResult,
     array_contract: DataArrayContract,
     optimization_source: Any,
-    optimization_run: Any,
-    run_payload: Mapping[str, Any],
-    split_result: Any,
-    portfolio_builtin: Mapping[str, Any],
+    optimization_result: Any,
+    portfolio_builtin: dict[str, Any],
     optimization_evidence: dict[str, Any],
     store_path: Path,
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
-    """Build candidate rows, leaderboard, locks, and publish to the candidate store.
+    """Build the three candidate rows, locks, and publish to the candidate store.
 
     Returns a dict with keys:
-        candidate_rows, leaderboard, lock_records,
-        candidate_store_provenance, optimization_evidence.
+        candidate_rows, lock_records, candidate_store_provenance,
+        optimization_evidence.
     """
     store_namespace = candidate_store_namespace()
-    candidate_rows = candidate_rows_from_param_index(
-        optimization_run.evaluated_index,
+    candidate_rows = candidate_rows_from_result(
+        optimization_result,
         source_identity=optimization_source.evidence,
         data_identity=build_candidate_data_identity(data_result, array_contract),
         portfolio_policy=portfolio_builtin,
         store_namespace=store_namespace,
-        coordinate_levels=("split", "set", "symbol"),
     )
-    optimization_evidence["candidate_count"] = len(candidate_rows)
-    optimization_evidence["sampled_row_count"] = len(run_payload["sampled_rows"]["rows"])
-    optimization_evidence["sampled_rows_source"] = optimization_run.sampled_rows_source
-    split_held_out_row_counts = {
-        i: len(split.held_out_index) for i, split in enumerate(split_result.splits)
-    }
-    leaderboard = build_optimization_leaderboard(
-        selection=optimization_run.selection,
-        candidate_rows=candidate_rows,
-        split_held_out_row_counts=split_held_out_row_counts,
-        ranking_metric=optimization_run.ranking_metric,
-        ranking_direction=optimization_run.ranking_direction,
-        metric_registry_fingerprint=metric_registry_fingerprint,
-    )
+    best_candidate = next(row for row in candidate_rows if row["role"] == "best")
+    optimization_evidence["candidates"] = candidate_rows
+    optimization_evidence["candidate_count"] = len({row["candidate_key"] for row in candidate_rows})
     candidate_store_provenance = build_candidate_store_provenance(
         recorder,
         optimization_source=optimization_source.evidence,
@@ -89,14 +73,14 @@ def run_pipeline_publishing(
     )
     lock_records = build_component_lock_records(
         run_id=recorder.manifest.run_id,
-        leaderboard=leaderboard,
+        best_candidate=best_candidate,
         optimization_source=optimization_source.evidence,
     )
     publish_candidates(
         store_path,
         run_id=recorder.manifest.run_id,
         candidate_rows=candidate_rows,
-        leaderboard=leaderboard,
+        ranking_metric=config.ranking.metric,
         provenance=candidate_store_provenance,
         lock_records=lock_records,
     )
@@ -105,7 +89,6 @@ def run_pipeline_publishing(
 
     return {
         "candidate_rows": candidate_rows,
-        "leaderboard": leaderboard,
         "lock_records": lock_records,
         "candidate_store_provenance": candidate_store_provenance,
         "optimization_evidence": optimization_evidence,

@@ -31,9 +31,7 @@ FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
     "is required; fixed/non-optimized strategy runs are removed from the forward "
     "run contract; use optimization.search and optimization.split"
 )
-RANKING_DIRECTIONS = {"asc", "desc"}
 OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
-OPTIMIZATION_RETURN_GRID_POLICIES = {"off", "first", "all"}
 RUN_EXECUTABLE_DENIED_KEYS = {
     "artifact_path",
     "callable",
@@ -152,7 +150,6 @@ class RunSplitConfig:
     max_splits: int = 100
     max_estimated_output_cells: int = 25_000_000
     max_public_artifact_bytes: int = 10_000_000
-    max_batch_expansion_bytes: int = 2_000_000_000
 
 
 @dataclass(frozen=True)
@@ -202,13 +199,7 @@ class RunIndicatorSourceConfig:
 @dataclass(frozen=True)
 class RankingConfig:
     metric: str
-    direction: str
-    secondary_metrics: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class OptimizationEvidenceConfig:
-    return_grid: str = "first"
+    min_weight: float = 0.3
 
 
 @dataclass(frozen=True)
@@ -218,7 +209,6 @@ class OptimizationConfig:
     random_subset: int | None = None
     seed: int | None = None
     execute: dict[str, Any] = field(default_factory=dict)
-    evidence: OptimizationEvidenceConfig = field(default_factory=OptimizationEvidenceConfig)
 
 
 @dataclass(frozen=True)

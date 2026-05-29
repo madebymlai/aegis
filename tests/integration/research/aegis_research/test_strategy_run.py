@@ -160,10 +160,29 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert payload["status"] == "success"
     assert artifact["strategy"]["family"] == "strategies"
     assert artifact["strategy"]["id"] == "demo.cross"
-    assert artifact["execution"]["sampled_rows"]["index_names"] == [FIXED_CANDIDATE_PARAM]
-    assert artifact["leaderboard"]["rows"]
-    assert payload["leaderboard"]["top_rows"] == artifact["leaderboard"]["rows"][:10]
-    assert len(artifact["candidates"]) == 1
+    assert [shape["name"] for shape in artifact["preflight"]["param_shapes"]] == [
+        FIXED_CANDIDATE_PARAM
+    ]
+    assert [candidate["role"] for candidate in artifact["candidates"]] == [
+        "best",
+        "median",
+        "worst",
+    ]
+    assert payload["candidates"] == [
+        {
+            "role": candidate["role"],
+            "rank": candidate["rank"],
+            "candidate_key": candidate["candidate_key"],
+            "params": candidate["params"],
+            "score": candidate["score"],
+            "metrics": candidate["metrics"],
+            "selection_metrics": candidate["selection_metrics"],
+            "held_out_metrics": candidate["held_out_metrics"],
+        }
+        for candidate in artifact["candidates"]
+    ]
+    assert len(artifact["candidates"]) == 3
+    assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 
 
 def test_strategy_run_emits_strategy_and_indicator_locks(
@@ -208,7 +227,7 @@ def test_strategy_run_rejects_data_quality_side_path_without_optimization(
     _assert_missing_optimization_config_error(capsys, tmp_path, "bad-data")
 
 
-def test_strategy_run_rejects_partial_leaderboard_side_path_without_optimization(
+def test_strategy_run_rejects_fixed_strategy_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -217,8 +236,8 @@ def test_strategy_run_rejects_partial_leaderboard_side_path_without_optimization
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "partial-run"]) == 6
-    _assert_missing_optimization_config_error(capsys, tmp_path, "partial-run")
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "fixed-run"]) == 6
+    _assert_missing_optimization_config_error(capsys, tmp_path, "fixed-run")
 
 
 def test_strategy_run_redacts_known_config_secrets_on_validation_failure(
@@ -408,7 +427,7 @@ def _write_run_config(
                 "portfolio": {"target_exposure_cap": 1.0},
                 "strategy": {"id": strategy_id},
                 "indicators": indicators or [],
-                "ranking": {"metric": "total_return", "direction": "desc"},
+                "ranking": {"metric": "total_return"},
                 **({"split": split} if split is not None else {}),
                 **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
                 **({"optimization": optimization} if optimization is not None else {}),

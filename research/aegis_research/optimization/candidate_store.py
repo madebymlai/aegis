@@ -7,7 +7,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 PUBLICATION_PENDING = "pending"
 PUBLICATION_ACTIVE = "active"
 PUBLICATION_STATES = frozenset({PUBLICATION_PENDING, PUBLICATION_ACTIVE})
@@ -43,16 +43,13 @@ class CandidateStore:
         *,
         run_id: str,
         candidate_rows: Sequence[Mapping[str, Any]],
-        leaderboard: Mapping[str, Any],
+        ranking_metric: str,
         provenance: Mapping[str, Any],
         publication_state: str = PUBLICATION_ACTIVE,
     ) -> None:
         _validate_publication_state(publication_state)
         if not candidate_rows:
             raise CandidateStoreError("completed optimization run has no candidate rows to persist")
-        rank_scope = _rank_scope(leaderboard)
-        ranking_metric = str(leaderboard["ranking_metric"])
-        ranking_direction = str(leaderboard["ranking_direction"])
         candidate_values = [
             _candidate_insert_values(
                 run_id=run_id,
@@ -62,21 +59,20 @@ class CandidateStore:
             )
             for row in candidate_rows
         ]
-        candidate_payloads = [(value[1], value[6]) for value in candidate_values]
+        candidate_payloads = [(value[1], value[4]) for value in candidate_values]
         ranking_values = [
             (
                 run_id,
-                rank_scope,
+                str(row["role"]),
+                int(row["rank"]),
                 str(row["candidate_key"]),
-                rank,
                 ranking_metric,
-                ranking_direction,
-                _float_or_none(row.get("ranking_metric_value")),
-                _metric_sort_value(row.get("ranking_metric_value"), ranking_direction),
+                _float_or_none(row.get("metrics", {}).get(ranking_metric)),
+                _float_or_none(row.get("score")),
                 _json_dumps(row.get("metrics", {})),
-                _json_dumps(row),
+                publication_state,
             )
-            for rank, row in enumerate(leaderboard.get("rows", ()), start=1)
+            for row in candidate_rows
         ]
         with self._connection:
             self._connection.executemany(
@@ -84,14 +80,12 @@ class CandidateStore:
                 INSERT OR IGNORE INTO candidates (
                     run_id,
                     candidate_key,
-                    row_index,
                     params_json,
                     identity_json,
-                    store_namespace_json,
                     candidate_row_json,
                     provenance_json,
                     publication_state
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 candidate_values,
             )
@@ -108,26 +102,24 @@ class CandidateStore:
                 ((publication_state, run_id, str(row["candidate_key"])) for row in candidate_rows),
             )
             self._connection.execute(
-                "DELETE FROM candidate_rankings WHERE run_id = ? AND rank_scope = ?",
-                (run_id, rank_scope),
+                "DELETE FROM candidate_rankings WHERE run_id = ?",
+                (run_id,),
             )
             self._connection.executemany(
                 """
                 INSERT INTO candidate_rankings (
                     run_id,
-                    rank_scope,
-                    candidate_key,
+                    role,
                     rank,
+                    candidate_key,
                     ranking_metric,
-                    ranking_direction,
                     ranking_metric_value,
-                    metric_sort_value,
+                    score,
                     metrics_json,
-                    leaderboard_row_json,
                     publication_state
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                [(*value, publication_state) for value in ranking_values],
+                ranking_values,
             )
 
     def insert_lock(
@@ -217,7 +209,8 @@ class CandidateStore:
     def top_candidates_by_run(self, run_id: str, *, limit: int = 5) -> list[dict[str, Any]]:
         rows = self._connection.execute(
             """
-            SELECT r.rank, r.leaderboard_row_json, c.candidate_row_json, c.provenance_json
+            SELECT r.rank, r.role, r.ranking_metric, r.ranking_metric_value, r.score,
+                   r.metrics_json, c.candidate_row_json, c.provenance_json
             FROM candidate_rankings r
             JOIN candidates c ON c.run_id = r.run_id AND c.candidate_key = r.candidate_key
             WHERE r.run_id = ?
@@ -227,29 +220,6 @@ class CandidateStore:
             LIMIT ?
             """,
             (run_id, PUBLICATION_ACTIVE, PUBLICATION_ACTIVE, limit),
-        ).fetchall()
-        return [_ranked_result(row) for row in rows]
-
-    def top_candidates_by_metric(
-        self,
-        metric: str,
-        *,
-        direction: str,
-        limit: int = 5,
-    ) -> list[dict[str, Any]]:
-        rows = self._connection.execute(
-            """
-            SELECT r.rank, r.leaderboard_row_json, c.candidate_row_json, c.provenance_json
-            FROM candidate_rankings r
-            JOIN candidates c ON c.run_id = r.run_id AND c.candidate_key = r.candidate_key
-            WHERE r.ranking_metric = ?
-                AND r.ranking_direction = ?
-                AND r.publication_state = ?
-                AND c.publication_state = ?
-            ORDER BY r.metric_sort_value ASC, r.run_id ASC, r.candidate_key ASC
-            LIMIT ?
-            """,
-            (metric, direction, PUBLICATION_ACTIVE, PUBLICATION_ACTIVE, limit),
         ).fetchall()
         return [_ranked_result(row) for row in rows]
 
@@ -342,10 +312,8 @@ class CandidateStore:
             CREATE TABLE IF NOT EXISTS candidates (
                 run_id TEXT NOT NULL,
                 candidate_key TEXT NOT NULL,
-                row_index INTEGER NOT NULL,
                 params_json TEXT NOT NULL,
                 identity_json TEXT NOT NULL,
-                store_namespace_json TEXT NOT NULL,
                 candidate_row_json TEXT NOT NULL,
                 provenance_json TEXT NOT NULL,
                 publication_state TEXT NOT NULL,
@@ -355,24 +323,20 @@ class CandidateStore:
 
             CREATE TABLE IF NOT EXISTS candidate_rankings (
                 run_id TEXT NOT NULL,
-                rank_scope TEXT NOT NULL,
-                candidate_key TEXT NOT NULL,
+                role TEXT NOT NULL,
                 rank INTEGER NOT NULL,
+                candidate_key TEXT NOT NULL,
                 ranking_metric TEXT NOT NULL,
-                ranking_direction TEXT NOT NULL,
                 ranking_metric_value REAL,
-                metric_sort_value REAL NOT NULL,
+                score REAL,
                 metrics_json TEXT NOT NULL,
-                leaderboard_row_json TEXT NOT NULL,
                 publication_state TEXT NOT NULL,
-                PRIMARY KEY (run_id, rank_scope, candidate_key),
-                UNIQUE (run_id, rank_scope, rank),
+                PRIMARY KEY (run_id, role),
+                UNIQUE (run_id, rank),
                 FOREIGN KEY (run_id, candidate_key) REFERENCES candidates(run_id, candidate_key)
             );
             CREATE INDEX IF NOT EXISTS idx_candidate_rankings_run
                 ON candidate_rankings(run_id, rank);
-            CREATE INDEX IF NOT EXISTS idx_candidate_rankings_metric
-                ON candidate_rankings(ranking_metric, ranking_direction, metric_sort_value);
 
             CREATE TABLE IF NOT EXISTS candidate_locks (
                 token TEXT PRIMARY KEY,
@@ -474,18 +438,6 @@ def _ensure_private_location(path: Path) -> None:
             )
 
 
-def _rank_scope(leaderboard: Mapping[str, Any]) -> str:
-    return _json_dumps(
-        {
-            "schema_version": leaderboard.get("schema_version"),
-            "ranking_metric": leaderboard.get("ranking_metric"),
-            "ranking_direction": leaderboard.get("ranking_direction"),
-            "metric_registry_fingerprint": leaderboard.get("metric_registry_fingerprint"),
-            "weight_basis": leaderboard.get("weight_basis"),
-        }
-    )
-
-
 def _candidate_insert_values(
     *,
     run_id: str,
@@ -496,14 +448,22 @@ def _candidate_insert_values(
     return (
         run_id,
         str(row["candidate_key"]),
-        int(row["row_index"]),
         _json_dumps(row["params"]),
         _json_dumps(row["identity"]),
-        _json_dumps(row.get("store_namespace", {})),
-        _json_dumps(row),
+        _json_dumps(_stable_candidate_payload(row)),
         _json_dumps(provenance),
         publication_state,
     )
+
+
+def _stable_candidate_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Candidate evidence stripped of run-specific ranking attributes.
+
+    ``role`` and ``rank`` vary by slot while ``candidate_key`` is identity-stable,
+    so a candidate that fills several roles must persist an identical payload to
+    pass the duplicate-payload guard.
+    """
+    return {key: value for key, value in row.items() if key not in ("role", "rank")}
 
 
 def _validate_publication_state(value: str) -> None:
@@ -521,17 +481,14 @@ def _chunks(values: Sequence[str], size: int) -> Iterator[tuple[str, ...]]:
 def _ranked_result(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "rank": row["rank"],
-        "leaderboard_row": _json_loads(row["leaderboard_row_json"]),
+        "role": row["role"],
+        "ranking_metric": row["ranking_metric"],
+        "ranking_metric_value": row["ranking_metric_value"],
+        "score": row["score"],
+        "metrics": _json_loads(row["metrics_json"]),
         "candidate": _json_loads(row["candidate_row_json"]),
         "provenance": _json_loads(row["provenance_json"]),
     }
-
-
-def _metric_sort_value(value: Any, direction: str) -> float:
-    parsed = _float_or_none(value)
-    if parsed is None:
-        return float("inf")
-    return -parsed if direction == "desc" else parsed
 
 
 def _float_or_none(value: Any) -> float | None:

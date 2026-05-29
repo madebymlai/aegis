@@ -1,7 +1,7 @@
 """Pipeline execution stage.
 
-Runs the preflight gate, executes the optimization, and serializes
-the optimization run result for downstream stages.
+Runs the preflight gate, executes the two-phase optimization, and records the
+three-candidate result evidence for downstream stages.
 """
 
 from __future__ import annotations
@@ -12,16 +12,13 @@ import pandas as pd
 
 from research.aegis_research.config import (
     RunConfig,
-    SignalConfig,
 )
+from research.aegis_research.optimization.evidence import result_evidence
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
 )
-from research.aegis_research.optimization.runner import (
-    execute_optimization,
-    serialize_optimization_run,
-)
+from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
@@ -33,15 +30,14 @@ def run_pipeline_execution(
     config: RunConfig,
     optimization_source: Any,
     close: pd.DataFrame,
-    open_prices: pd.DataFrame,
     split_result: Any,
     optimization_evidence: dict[str, Any],
     recorder: RunRecorder,
 ) -> dict[str, Any]:
-    """Execute the preflight gate and optimization sweep.
+    """Execute the preflight gate and two-phase optimization sweep.
 
     Returns a dict with keys:
-        optimization_run, run_payload, optimization_evidence.
+        optimization_result, optimization_evidence.
     """
     try:
         optimization_evidence["preflight"] = build_preflight(
@@ -62,16 +58,13 @@ def run_pipeline_execution(
         raise OptimizationSourceError(str(error)) from error
 
     try:
-        optimization_run = execute_optimization(
+        optimization_result = execute_optimization(
             close=close,
-            open_prices=open_prices,
             source=optimization_source,
             optimization=config.optimization,
             portfolio=config.portfolio,
-            signal=SignalConfig(),
             report=config.report,
             ranking=config.ranking,
-            mono_chunk_len=optimization_evidence["preflight"]["computed_mono_chunk_len"],
         )
     except Exception as error:
         optimization_evidence["execution_failure"] = {
@@ -82,11 +75,9 @@ def run_pipeline_execution(
         recorder.persist()
         raise
 
-    run_payload = serialize_optimization_run(optimization_run)
-    optimization_evidence["execution"] = run_payload
+    optimization_evidence["execution"] = result_evidence(optimization_result)
 
     return {
-        "optimization_run": optimization_run,
-        "run_payload": run_payload,
+        "optimization_result": optimization_result,
         "optimization_evidence": optimization_evidence,
     }
