@@ -182,9 +182,10 @@ def test_atomic_write_json_uses_shared_canonical_json_bytes(tmp_path: Path) -> N
     payload = {"b": 2, "a": 1}
 
     atomic_write_json(target, payload)
+    written_bytes = target.read_bytes()
 
-    assert target.read_bytes() == canonical_json_bytes(payload)
-    assert target.read_bytes() == b'{"a":1,"b":2}'
+    assert written_bytes == canonical_json_bytes(payload)
+    assert written_bytes == b'{"a":1,"b":2}'
 
 
 def test_canonical_hash_uses_shared_canonical_json_bytes() -> None:

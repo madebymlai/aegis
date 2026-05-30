@@ -180,7 +180,8 @@ def apply_seed_policy(seed: int) -> dict[str, Any]:
 
 
 def canonical_hash(value: Any) -> str:
-    return hashlib.sha256(canonical_json_bytes(to_builtin(value))).hexdigest()
+    json_safe_value = to_builtin(value)
+    return hashlib.sha256(canonical_json_bytes(json_safe_value)).hexdigest()
 
 
 def _safe_json_value(value: Any) -> Any:

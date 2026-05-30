@@ -227,7 +227,7 @@ def validate_manifest(payload: dict[str, Any], *, run_dir: str | Path | None = N
 def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    data = canonical_json_bytes(_to_builtin(payload))
+    json_bytes = canonical_json_bytes(_to_builtin(payload))
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -239,7 +239,7 @@ def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
         ) as handle:
             temp_path = Path(handle.name)
             temp_path.chmod(0o600)
-            handle.write(data)
+            handle.write(json_bytes)
             handle.flush()
             os.fsync(handle.fileno())
         temp_path.replace(target)
