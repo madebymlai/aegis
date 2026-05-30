@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.canonical_json import canonical_json_bytes as _canonical_json_bytes
 from research.aegis_research.component_registry import (
     COMPONENT_FAMILIES,
     ComponentFamily,
@@ -14,7 +15,6 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
 )
-from research.aegis_research.canonical_json import canonical_json_bytes as _canonical_json_bytes
 from research.aegis_research.optimization.canonical import mint_canonical_token
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,

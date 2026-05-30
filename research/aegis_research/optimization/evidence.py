@@ -291,8 +291,7 @@ def _canonical_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def canonical_params_key(params: Mapping[str, Any]) -> str:
-    canonical = {str(key): canonical_value(params[key]) for key in sorted(params)}
-    return _canonical_json_bytes(canonical).decode()
+    return _canonical_json_bytes(_canonical_mapping(params)).decode()
 
 
 def canonical_value(value: Any) -> Any:
