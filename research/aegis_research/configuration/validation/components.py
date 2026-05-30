@@ -1,9 +1,10 @@
 """Component and Indicator reference validation.
 
 Validates ``strategy`` and ``indicators`` refs against the frozen Component registry:
-component ids must resolve, lock_id/candidate_id/run_id form a coherent locked-ref
-contract, params must be manifest-declared (or sourced from defaults/locks), and the
-strategy's consumed outputs must be produced by the configured indicators.
+component ids must resolve, ``params:`` must be values-only and manifest-declared (or
+sourced from defaults), and the strategy's consumed outputs must be produced by the
+configured indicators. Whole-Candidate reproduction lives on the top-level ``lock:`` —
+there is no per-Component lock/candidate reference surface (ADR-0006).
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from research.aegis_research.configuration.schema import (
 )
 from research.aegis_research.configuration.secrets import _validate_no_inline_secrets
 from research.aegis_research.configuration.validation.base import (
-    _optional_str,
     _require_str,
     _validate_json_like,
     _validate_known_keys,
@@ -87,7 +87,7 @@ def _validate_component_ref(
     if not isinstance(value, dict):
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return None
-    allowed = {"id", "lock_id", "candidate_id", "run_id", "params"}
+    allowed = {"id", "params"}
     _validate_known_keys(path, value, allowed, issues)
     _validate_no_run_executable_keys(path, value, issues)
     if not _require_str(f"{path}.id", value, issues):
@@ -104,40 +104,6 @@ def _validate_component_ref(
             )
         )
         return None
-    _optional_str(f"{path}.lock_id", value, issues, allow_none=True)
-    _optional_str(f"{path}.candidate_id", value, issues, allow_none=True)
-    _optional_str(f"{path}.run_id", value, issues, allow_none=True)
-    if value.get("lock_id") is not None and value.get("candidate_id") is not None:
-        issues.append(
-            ConfigValidationIssue(
-                path,
-                "lock_id and candidate_id are mutually exclusive",
-            )
-        )
-    if value.get("candidate_id") is not None and value.get("run_id") is None:
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.run_id",
-                "is required when candidate_id is set",
-            )
-        )
-    if value.get("run_id") is not None and value.get("candidate_id") is None:
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.run_id",
-                "is only valid when candidate_id is set",
-            )
-        )
-    if (
-        value.get("lock_id") is not None or value.get("candidate_id") is not None
-    ) and "params" in value:
-        issues.append(
-            ConfigValidationIssue(
-                f"{path}.params",
-                "must not be set when lock_id or candidate_id is set; locked refs load "
-                "params from the candidate store",
-            )
-        )
 
     try:
         definition = component_registry.get(ComponentSelection(family, component_id))
@@ -194,8 +160,6 @@ def _validate_component_param_sources(
     param_names = tuple(getattr(definition.manifest, "param_names", ()))
     if not param_names:
         return
-    if value.get("lock_id") is not None or value.get("candidate_id") is not None:
-        return
     if getattr(definition.manifest, "param_space_callable", None):
         return
     provided = set(params or {})
@@ -205,8 +169,8 @@ def _validate_component_param_sources(
         issues.append(
             ConfigValidationIssue(
                 path,
-                "must provide params, component defaults, lock_id, candidate_id, or "
-                f"param_space_callable for params {missing}",
+                "must provide params, component defaults, or param_space_callable "
+                f"for params {missing}",
             )
         )
 

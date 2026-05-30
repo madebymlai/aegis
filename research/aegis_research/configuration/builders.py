@@ -5,6 +5,7 @@ from typing import Any
 from research.aegis_research.configuration.schema import (
     DataConfig,
     DataQualityConfig,
+    Lock,
     OptimizationConfig,
     PortfolioConfig,
     RankingConfig,
@@ -27,16 +28,20 @@ def _build_run_config(raw: dict[str, Any]) -> RunConfig:
         indicators=_build_run_indicator_sources(raw["indicators"]),
         ranking=_build_ranking(raw["ranking"]),
         optimization=_build_optimization(raw.get("optimization")),
+        lock=_build_lock(raw.get("lock")),
         output_dir=raw.get("output_dir", "runs"),
     )
+
+
+def _build_lock(raw: dict[str, Any] | None) -> Lock | None:
+    if raw is None:
+        return None
+    return Lock(run_id=raw["run_id"], candidate_id=raw["candidate_id"])
 
 
 def _build_run_source_ref(raw: dict[str, Any]) -> RunSourceRefConfig:
     return RunSourceRefConfig(
         id=raw["id"],
-        lock_id=raw.get("lock_id"),
-        candidate_id=raw.get("candidate_id"),
-        run_id=raw.get("run_id"),
         params=dict(raw.get("params", {})),
     )
 
@@ -47,9 +52,6 @@ def _build_run_indicator_sources(raw: list[dict[str, Any]]) -> list[RunIndicator
         refs.append(
             RunIndicatorSourceConfig(
                 id=item["id"],
-                lock_id=item.get("lock_id"),
-                candidate_id=item.get("candidate_id"),
-                run_id=item.get("run_id"),
                 params=dict(item.get("params", {})),
             )
         )

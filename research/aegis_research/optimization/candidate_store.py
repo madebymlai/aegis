@@ -9,7 +9,7 @@ from typing import Any
 
 from research.aegis_research.optimization.canonical import canonical_json_bytes
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 PUBLICATION_PENDING = "pending"
 PUBLICATION_ACTIVE = "active"
 PUBLICATION_STATES = frozenset({PUBLICATION_PENDING, PUBLICATION_ACTIVE})
@@ -124,69 +124,6 @@ class CandidateStore:
                 ranking_values,
             )
 
-    def insert_lock(
-        self,
-        *,
-        token: str,
-        run_id: str,
-        component_family: str,
-        component_id: str,
-        component_slot: str,
-        candidate_key: str,
-        params: Mapping[str, Any],
-        provenance: Mapping[str, Any],
-        publication_state: str = PUBLICATION_ACTIVE,
-    ) -> None:
-        _validate_publication_state(publication_state)
-        row_payload = {
-            "run_id": run_id,
-            "component_family": component_family,
-            "component_id": component_id,
-            "component_slot": component_slot,
-            "candidate_key": candidate_key,
-            "params_json": _json_dumps(params),
-            "provenance_json": _json_dumps(provenance),
-            "publication_state": publication_state,
-        }
-        with self._connection:
-            existing = self._connection.execute(
-                "SELECT * FROM candidate_locks WHERE token = ?",
-                (token,),
-            ).fetchone()
-            if existing is not None:
-                for field, value in row_payload.items():
-                    if existing[field] != value:
-                        raise CandidateStoreError(
-                            f"lock token {token} already exists with different payload"
-                        )
-                return
-            self._connection.execute(
-                """
-                INSERT INTO candidate_locks (
-                    token,
-                    run_id,
-                    component_family,
-                    component_id,
-                    component_slot,
-                    candidate_key,
-                    params_json,
-                    provenance_json,
-                    publication_state
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    token,
-                    row_payload["run_id"],
-                    row_payload["component_family"],
-                    row_payload["component_id"],
-                    row_payload["component_slot"],
-                    row_payload["candidate_key"],
-                    row_payload["params_json"],
-                    row_payload["provenance_json"],
-                    row_payload["publication_state"],
-                ),
-            )
-
     def activate_run(self, run_id: str) -> None:
         with self._connection:
             candidate_count = self._connection.execute(
@@ -201,10 +138,6 @@ class CandidateStore:
             )
             self._connection.execute(
                 "UPDATE candidate_rankings SET publication_state = ? WHERE run_id = ?",
-                (PUBLICATION_ACTIVE, run_id),
-            )
-            self._connection.execute(
-                "UPDATE candidate_locks SET publication_state = ? WHERE run_id = ?",
                 (PUBLICATION_ACTIVE, run_id),
             )
 
@@ -257,34 +190,6 @@ class CandidateStore:
     ) -> dict[str, Any]:
         row = self._candidate_lookup(candidate_key, run_id=run_id)
         return _json_loads(row["provenance_json"])
-
-    def params_by_lock_token(self, token: str) -> dict[str, Any]:
-        return self.lock_by_token(token)["params"]
-
-    def lock_by_token(self, token: str) -> dict[str, Any]:
-        row = self._connection.execute(
-            """
-            SELECT l.*
-            FROM candidate_locks l
-            JOIN candidates c ON c.run_id = l.run_id AND c.candidate_key = l.candidate_key
-            WHERE l.token = ?
-                AND l.publication_state = ?
-                AND c.publication_state = ?
-            """,
-            (token, PUBLICATION_ACTIVE, PUBLICATION_ACTIVE),
-        ).fetchone()
-        if row is None:
-            raise CandidateStoreError(f"unknown lock token: {token}")
-        return {
-            "token": row["token"],
-            "run_id": row["run_id"],
-            "component_family": row["component_family"],
-            "component_id": row["component_id"],
-            "component_slot": row["component_slot"],
-            "candidate_key": row["candidate_key"],
-            "params": _json_loads(row["params_json"]),
-            "provenance": _json_loads(row["provenance_json"]),
-        }
 
     def _ensure_schema(self) -> None:
         self._connection.executescript(
@@ -339,21 +244,6 @@ class CandidateStore:
             );
             CREATE INDEX IF NOT EXISTS idx_candidate_rankings_run
                 ON candidate_rankings(run_id, rank);
-
-            CREATE TABLE IF NOT EXISTS candidate_locks (
-                token TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                component_family TEXT NOT NULL,
-                component_id TEXT NOT NULL,
-                component_slot TEXT NOT NULL,
-                candidate_key TEXT NOT NULL,
-                params_json TEXT NOT NULL,
-                provenance_json TEXT NOT NULL,
-                publication_state TEXT NOT NULL,
-                FOREIGN KEY (run_id, candidate_key) REFERENCES candidates(run_id, candidate_key)
-            );
-            CREATE INDEX IF NOT EXISTS idx_candidate_locks_candidate
-                ON candidate_locks(run_id, candidate_key);
             """
         )
 

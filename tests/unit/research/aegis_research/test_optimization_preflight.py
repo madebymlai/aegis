@@ -49,10 +49,10 @@ def test_preflight_reports_two_phase_shape_and_execution_policy() -> None:
     assert diagnostics["held_out_broadcast_cells"] == 120
     assert diagnostics["estimated_portfolio_broadcast_cells"] == 360
     assert diagnostics["estimated_output_cells"] == 360
-    # Public artifact: 3 role rows + 3 candidates x 2 splits x 2 sets + 1 lock.
+    # Public artifact: 3 role rows + 3 candidates x 2 splits x 2 sets.
     assert diagnostics["candidate_row_count"] == 3
-    assert diagnostics["lock_row_count"] == 1
-    assert diagnostics["estimated_public_rows"] == 16
+    assert "lock_row_count" not in diagnostics
+    assert diagnostics["estimated_public_rows"] == 15
     assert diagnostics["execute"] == {"chunk_len": "auto"}
     assert "max_batch_expansion_bytes" not in diagnostics["limits"]
 
@@ -70,7 +70,7 @@ def test_preflight_public_rows_reflect_three_candidate_publish() -> None:
 
     assert diagnostics["sampled_combinations"] == 500
     assert diagnostics["candidate_row_count"] == 3
-    assert diagnostics["estimated_public_rows"] == 3 + 3 * 2 * 2 + 1
+    assert diagnostics["estimated_public_rows"] == 3 + 3 * 2 * 2
 
 
 def test_preflight_held_out_phase_scales_with_three_candidates_not_the_grid() -> None:
@@ -183,7 +183,7 @@ def test_preflight_rejects_random_sample_above_evidence_budget() -> None:
     assert "max_public_artifact_bytes" in str(error.value)
     assert error.value.diagnostics["theoretical_combinations"] == 1_000_000
     assert error.value.diagnostics["sampled_combinations"] == 100
-    assert error.value.diagnostics["estimated_public_rows"] == 16
+    assert error.value.diagnostics["estimated_public_rows"] == 15
 
 
 def test_preflight_conditioned_grid_uses_vbt_executable_combinations() -> None:

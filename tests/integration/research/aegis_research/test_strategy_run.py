@@ -198,11 +198,14 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 
 
-def test_strategy_run_emits_strategy_and_indicator_locks(
+def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    # ADR-0006 (aegis-rd-396.4): publishing no longer mints per-Component lock records;
+    # the LOCKS Evidence section and the artifact "locks" key are retired. Inline
+    # values-only params: still freeze a single Component while the rest optimize.
     monkeypatch.chdir(tmp_path)
     _write_indicator_component(tmp_path / "research/components/indicators/ma.py")
     _write_indicator_strategy_component(tmp_path / "research/components/strategies/uses_ma.py")
@@ -217,14 +220,16 @@ def test_strategy_run_emits_strategy_and_indicator_locks(
 
     capsys.readouterr()
     artifact = json.loads((tmp_path / "runs" / "component-locks" / "strategy_run.json").read_text())
-    locks = {
-        (lock_record["component_family"], lock_record["component_id"]): lock_record
-        for lock_record in artifact["locks"]
-    }
+    manifest = json.loads((tmp_path / "runs" / "component-locks" / "manifest.json").read_text())
+    source = manifest["evidence"]["optimization"]["source"]
 
-    assert set(locks) == {("strategies", "demo.uses_ma"), ("indicators", "demo.ma")}
-    assert locks[("indicators", "demo.ma")]["params"] == {"window": 2}
-    assert locks[("strategies", "demo.uses_ma")]["params"] == {}
+    assert "locks" not in artifact
+    assert "resolved_locks" not in artifact
+    assert "locks" not in manifest["evidence"]["optimization"]
+
+    indicator = next(ind for ind in source["indicators"] if ind["id"] == "demo.ma")
+    assert indicator["fixed_params"] == {"window": 2}
+    assert indicator["param_mode"] == "fixed"
 
 
 def test_strategy_run_rejects_data_quality_side_path_without_optimization(

@@ -73,11 +73,14 @@ def test_component_source_fixed_params_override_param_space_axes(tmp_path: Path)
 
 
 def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Path) -> None:
+    # ADR-0006: a top-level Lock drives force_locked, fixing every Component's params from
+    # the reproduced Candidate. There is no per-Component lock reference any more.
     registry = _registry(tmp_path)
     config = _config(
-        indicators=[RunIndicatorSourceConfig(id="demo.trend", lock_id="lock_trend_best")],
+        indicators=[RunIndicatorSourceConfig(id="demo.trend")],
     )
     resolved = {
+        component_ref_key("strategies", "demo.strategy", "strategy"): {"threshold": 0.95},
         component_ref_key("indicators", "demo.trend", "demo.trend"): {"window": 3},
     }
 
@@ -86,6 +89,7 @@ def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Pat
         component_registry=registry,
         data=_data_bundle(),
         resolved_component_params=resolved,
+        force_locked=True,
     )
 
     indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
@@ -93,17 +97,18 @@ def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Pat
     assert indicator_key not in source.params
     assert source.evidence["indicators"][0]["param_mode"] == "locked"
     assert source.evidence["indicators"][0]["fixed_params"] == {"window": 3}
+    assert source.evidence["strategy"]["param_mode"] == "locked"
 
 
 def test_component_source_rejects_unresolved_lock_refs(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     config = _config(
-        indicators=[RunIndicatorSourceConfig(id="demo.trend", lock_id="lock_trend_best")],
+        indicators=[RunIndicatorSourceConfig(id="demo.trend")],
     )
 
     with pytest.raises(ComponentSourceError, match="requires resolved"):
         build_component_optimization_source(
-            config, component_registry=registry, data=_data_bundle()
+            config, component_registry=registry, data=_data_bundle(), force_locked=True
         )
 
 

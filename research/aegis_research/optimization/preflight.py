@@ -97,11 +97,10 @@ def build_preflight(
     estimated_output_cells = max(estimated_result_cells, estimated_portfolio_broadcast_cells)
 
     # The public artifact carries the three role-tagged candidates, each with
-    # per-split selection and held-out metrics, plus one component lock record.
+    # per-split selection and held-out metrics.
     candidate_row_count = HELD_OUT_CANDIDATE_COUNT if sampled_combinations else 0
     candidate_metric_rows = candidate_row_count * split_count * set_count
-    lock_row_count = 1 if sampled_combinations else 0
-    estimated_public_rows = candidate_row_count + candidate_metric_rows + lock_row_count
+    estimated_public_rows = candidate_row_count + candidate_metric_rows
     estimated_public_artifact_bytes = estimated_public_rows * PREFLIGHT_PUBLIC_BYTES_PER_ROW
     diagnostics = {
         "schema_version": PREFLIGHT_SCHEMA_VERSION,
@@ -138,7 +137,6 @@ def build_preflight(
         "estimated_portfolio_broadcast_cells": estimated_portfolio_broadcast_cells,
         "estimated_output_cells": estimated_output_cells,
         "candidate_row_count": candidate_row_count,
-        "lock_row_count": lock_row_count,
         "estimated_public_rows": estimated_public_rows,
         "estimated_public_artifact_bytes": estimated_public_artifact_bytes,
         "limits": {

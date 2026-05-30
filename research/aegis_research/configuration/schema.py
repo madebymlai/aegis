@@ -181,18 +181,12 @@ class ReportConfig:
 @dataclass(frozen=True)
 class RunSourceRefConfig:
     id: str
-    lock_id: str | None = None
-    candidate_id: str | None = None
-    run_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class RunIndicatorSourceConfig:
     id: str
-    lock_id: str | None = None
-    candidate_id: str | None = None
-    run_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
 
@@ -213,6 +207,20 @@ class OptimizationConfig:
 
 
 @dataclass(frozen=True)
+class Lock:
+    """A top-level Run Config reference that reproduces one prior Candidate.
+
+    ``run_id`` + ``candidate_id`` together *are* the ``candidates`` primary key
+    ``(run_id, candidate_key)`` — so a Lock needs no separate storage. A locked
+    Run takes every Component's parameters from that Candidate rather than
+    searching for new ones.
+    """
+
+    run_id: str
+    candidate_id: str
+
+
+@dataclass(frozen=True)
 class RunConfig:
     name: str
     strategy: RunSourceRefConfig
@@ -223,6 +231,7 @@ class RunConfig:
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
     optimization: OptimizationConfig | None = None
+    lock: Lock | None = None
     output_dir: str = "runs"
 
 

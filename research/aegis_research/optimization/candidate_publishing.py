@@ -1,8 +1,7 @@
 """Candidate publishing.
 
-Persists the three representative candidates, their ranking, and component
-locks into the local candidate store, then activates the run once the strategy
-artifact has been written.
+Persists the three representative candidates and their ranking into the local
+candidate store, then activates the run once the strategy artifact has been written.
 """
 
 from __future__ import annotations
@@ -65,7 +64,6 @@ def publish_candidates(
     candidate_rows: Sequence[Mapping[str, Any]],
     ranking_metric: str,
     provenance: Mapping[str, Any],
-    lock_records: Sequence[Mapping[str, Any]],
     publication_state: str = PUBLICATION_PENDING,
 ) -> None:
     with CandidateStore(store_path) as candidate_store:
@@ -76,18 +74,6 @@ def publish_candidates(
             provenance=provenance,
             publication_state=publication_state,
         )
-        for lock_record in lock_records:
-            candidate_store.insert_lock(
-                token=lock_record["token"],
-                run_id=lock_record["run_id"],
-                component_family=lock_record["component_family"],
-                component_id=lock_record["component_id"],
-                component_slot=lock_record["component_slot"],
-                candidate_key=lock_record["candidate_key"],
-                params=lock_record["params"],
-                provenance=lock_record["provenance"],
-                publication_state=publication_state,
-            )
 
 
 def activate_candidate_run(

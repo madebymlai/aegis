@@ -169,7 +169,7 @@ def _run_optimization_strategy_sweep(
         run_evidence=run_evidence,
     )
 
-    # Stage 3: Publishing — three representative candidates, locks, candidate store
+    # Stage 3: Publishing — three representative candidates, candidate store
     publishing = run_pipeline_publishing(
         config=config,
         recorder=recorder,
@@ -197,8 +197,6 @@ def _run_optimization_strategy_sweep(
         split_result=setup["split_result"],
         run_evidence=run_evidence,
         candidate_rows=publishing["candidate_rows"],
-        resolved_locks=setup["resolved_locks"],
-        lock_records=publishing["lock_records"],
         candidate_store_provenance=publishing["candidate_store_provenance"],
         store_path=setup["store_path"],
         store_namespace=store_namespace,

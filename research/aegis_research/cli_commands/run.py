@@ -142,7 +142,6 @@ def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[s
         "candidate_store": {
             "path": safe_path(result.get("candidate_store_path")),
         },
-        "locks": result.get("locks", []),
         "optimization": result.get("optimization", {}),
         "candidates": result.get("candidates", []),
     }

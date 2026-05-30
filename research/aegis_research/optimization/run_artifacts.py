@@ -31,8 +31,6 @@ def build_strategy_artifact_payload(
     preflight: Mapping[str, Any],
     execution: Mapping[str, Any],
     candidates: list[Mapping[str, Any]],
-    resolved_locks: list[Mapping[str, Any]],
-    lock_records: list[Mapping[str, Any]],
     candidate_store_path: str,
     candidate_store_provenance: Mapping[str, Any],
     metric_registry_fingerprint: str | None,
@@ -48,8 +46,6 @@ def build_strategy_artifact_payload(
         "preflight": dict(preflight),
         "execution": dict(execution),
         "candidates": [dict(record) for record in candidates],
-        "resolved_locks": list(resolved_locks),
-        "locks": list(lock_records),
         "candidate_store": {
             "schema_version": "candidate_store_ref.v1",
             "path": candidate_store_path,
