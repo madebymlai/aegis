@@ -34,6 +34,9 @@ from research.aegis_research.optimization.evidence_ledger import (
     OPTIMIZATION_ROUTE_SCHEMA_VERSION,
     RunEvidence,
 )
+from research.aegis_research.optimization.lock_param_override import (
+    overridden_component_params,
+)
 from research.aegis_research.optimization.lock_resolution import (
     resolve_component_locks,
 )
@@ -139,6 +142,10 @@ def _lock_evidence(config: RunConfig, lock_run: ResolvedLockRun) -> dict[str, An
         "candidate_id": config.lock.candidate_id,
         "resolved_candidate_key": lock_run.candidate_key,
         "provenance": lock_run.provenance,
+        # Lock-wins (ADR-0006): the locked Candidate's params take effect; any per-Component
+        # params: the author declared are overridden and recorded here — fail-loud, never a
+        # silent drop — so the Manifest faithfully reports what ran.
+        "overridden_params": overridden_component_params(config),
     }
 
 

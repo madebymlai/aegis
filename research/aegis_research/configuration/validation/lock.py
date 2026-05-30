@@ -2,9 +2,13 @@
 
 A top-level ``lock: {run_id, candidate_id}`` reproduces one prior Candidate — its two
 fields together are the ``candidates`` primary key ``(run_id, candidate_key)``. This
-validator enforces the block shape and the interim rule that a config carrying both a
-top-level ``lock:`` and any per-Component ``params:`` is rejected (relaxed in the
-follow-up slice).
+validator enforces the block shape only.
+
+A config may carry both a top-level ``lock:`` and per-Component ``params:`` (lock-wins,
+per ADR-0006): the locked Candidate's params take effect and the overridden ``params:``
+values are recorded in the Run's Evidence — never silently dropped, never rejected. The
+``params:`` values-only contract (manifest-declared names, secret-free, no run-executable
+keys) is still enforced by the component-ref validator, independent of any ``lock:``.
 """
 
 from __future__ import annotations
@@ -30,23 +34,3 @@ def _validate_lock(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> 
     _validate_known_keys("lock", value, _LOCK_ALLOWED_KEYS, issues)
     _require_str("lock.run_id", value, issues)
     _require_str("lock.candidate_id", value, issues)
-    _validate_no_component_params(raw, issues)
-
-
-def _validate_no_component_params(
-    raw: dict[str, Any],
-    issues: list[ConfigValidationIssue],
-) -> None:
-    refs = [("strategy", raw.get("strategy"))]
-    indicators = raw.get("indicators")
-    if isinstance(indicators, list):
-        refs.extend((f"indicators[{index}]", item) for index, item in enumerate(indicators))
-    for path, ref in refs:
-        if isinstance(ref, dict) and "params" in ref:
-            issues.append(
-                ConfigValidationIssue(
-                    f"{path}.params",
-                    "must not be set when a top-level lock: is present; the lock reproduces "
-                    "a whole Candidate (interim: lock and params: are mutually exclusive)",
-                )
-            )

@@ -27,6 +27,9 @@ from research.aegis_research.optimization.ranking import (
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
 )
+from tests.support.research.aegis_research.component_fixtures import (
+    write_indicator_component,
+)
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -233,3 +236,148 @@ def test_unlocked_setup_has_no_lock_evidence(
     )
 
     assert run_evidence.optimization()["lock"] is None
+
+
+def _write_parameterized_strategy(path: Path) -> None:
+    """A strategy whose manifest declares a single ``threshold`` param (override target)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Parameterized strategy fixture for lock-overlay tests.\n"
+        "# Source: synthetic Close data supplied by the test fixture.\n"
+        "\n# %% define component metadata\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
+        "from vectorbtpro import vbt\n"
+        "COMPONENT_MANIFEST = {"
+        "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
+        "'input_names': ['Close'], 'param_names': ['threshold'], "
+        "'output_name': 'active', 'owns_portfolio': False, "
+        "'defaults': {'threshold': 1.0}, 'param_space_callable': 'param_space', "
+        "'wide_callable': 'run_wide'}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% param space\n"
+        "def param_space():\n"
+        '    """Return the searchable threshold param space."""\n'
+        "    return {'threshold': vbt.Param([1.0, 2.0])}\n"
+        "\n# %% main compute\n"
+        "def run(inputs, *, threshold=1.0):\n"
+        '    """Emit a deterministic active allocation frame for fixture runs."""\n'
+        "    close = inputs.data.feature('Close')\n"
+        "    return close.gt(close.shift(1)).fillna(False).astype(object)\n"
+        "\n# %% wide compute\n"
+        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        '    """Return wide strategy output."""\n'
+        "    close = inputs.data.feature('Close')\n"
+        "    T, S = close.shape\n"
+        "    return np.full((T, n_candidates * S), np.nan)\n"
+    )
+
+
+def _parameterized_source_evidence() -> dict[str, Any]:
+    """Provenance whose strategy runtime pins ``threshold`` as a fixed candidate param."""
+    evidence = _source_evidence()
+    evidence["strategy"]["fixed_params"] = {"threshold": 1.0}
+    return evidence
+
+
+def _seed_parameterized_candidate(config: Any) -> str:
+    store_path = candidate_store_path(config)
+    candidate = EvaluatedCandidate(
+        params={},
+        score=0.25,
+        selection_metrics={0: {"total_return": 0.25}},
+        metrics={"total_return": 0.25},
+        held_out_metrics={0: {"total_return": 0.25}},
+    )
+    rows = candidate_rows_from_result(
+        OptimizationResult(best=candidate, median=candidate, worst=candidate),
+        source_identity=_parameterized_source_evidence(),
+        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        portfolio_policy={"target_exposure_cap": 1.0},
+        store_namespace={"kind": "local_sqlite", "name": "default"},
+    )
+    candidate_key = rows[0]["candidate_key"]
+    with CandidateStore(store_path) as store:
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=rows,
+            ranking_metric="total_return",
+            provenance={"run_id": "run-a", "source": _parameterized_source_evidence()},
+        )
+    return candidate_key
+
+
+def _resolved_locked_overlay_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A locked config whose strategy also declares an (overridden) ``threshold`` param."""
+    from research.aegis_research.component_registry import discover_component_registry
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "research" / "components"
+    write_indicator_component(root / "indicators" / "returns.py")
+    _write_parameterized_strategy(root / "strategies" / "strategy.py")
+    component_registry = discover_component_registry(root=root, repo_root=tmp_path)
+
+    base = build_resolved_run_config(tmp_path)
+    candidate_key = _seed_parameterized_candidate(base.config)
+    raw = _locked_raw_config(candidate_key)
+    raw["strategy"] = {"id": "demo.strategy", "params": {"threshold": 2.0}}
+    return resolve_run_config(raw, component_registry=component_registry)
+
+
+def test_locked_setup_records_overridden_params_in_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Lock-wins (ADR-0006): the locked Candidate pins threshold=1.0; the config's
+    # strategy params: {threshold: 2.0} is overridden and recorded fail-loud in Evidence.
+    resolved = _resolved_locked_overlay_config(tmp_path, monkeypatch)
+    config = resolved.config
+    array_contract = build_run_data_array_contract(config, resolved.component_registry)
+
+    run_evidence = _run_evidence()
+    run_pipeline_setup(
+        config=config,
+        component_registry=resolved.component_registry,
+        data=_FakeData(),
+        data_result=_FakeDataResult(),
+        array_contract=array_contract,
+        metric_registry_fingerprint=None,
+        run_evidence=run_evidence,
+    )
+
+    lock_evidence = run_evidence.optimization()["lock"]
+    assert lock_evidence["overridden_params"] == [
+        {
+            "family": "strategies",
+            "component_id": "demo.strategy",
+            "slot": "strategy",
+            "param_names": ["threshold"],
+            "ignored_values": {"threshold": 2.0},
+        }
+    ]
+    # The lock still wins: the config declared the value, but it is recorded as ignored.
+    assert resolved.config.strategy.params == {"threshold": 2.0}
+    assert run_evidence.optimization()["lock"]["mode"] == "reproduction"
+
+
+def test_locked_setup_records_empty_overrides_when_no_params(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A locked config without any per-Component params: records an empty override list,
+    # not a missing key — Evidence always answers "what params: were overridden?".
+    resolved = _resolved_locked_config(tmp_path, monkeypatch)
+    config = resolved.config
+    array_contract = build_run_data_array_contract(config, resolved.component_registry)
+
+    run_evidence = _run_evidence()
+    run_pipeline_setup(
+        config=config,
+        component_registry=resolved.component_registry,
+        data=_FakeData(),
+        data_result=_FakeDataResult(),
+        array_contract=array_contract,
+        metric_registry_fingerprint=None,
+        run_evidence=run_evidence,
+    )
+
+    assert run_evidence.optimization()["lock"]["overridden_params"] == []
