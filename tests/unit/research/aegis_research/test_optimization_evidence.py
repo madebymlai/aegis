@@ -359,12 +359,26 @@ def test_result_evidence_serializes_three_candidates() -> None:
         best=_evaluated({"rsi_window": 14}, 0.9),
         median=_evaluated({"rsi_window": 20}, 0.5),
         worst=_evaluated({"rsi_window": 5}, 0.1),
+        total_candidates=12,
+        excluded_degenerate=4,
+        excluded_invalid=1,
     )
 
     evidence = result_evidence(result)
 
-    assert set(evidence) == {"schema_version", "best", "median", "worst"}
-    assert evidence["schema_version"] == "optimization_result.v2"
+    assert set(evidence) == {
+        "schema_version",
+        "best",
+        "median",
+        "worst",
+        "total",
+        "excluded_invalid",
+        "excluded_degenerate",
+    }
+    assert evidence["schema_version"] == "optimization_result.v3"
+    assert evidence["total"] == 12
+    assert evidence["excluded_invalid"] == 1
+    assert evidence["excluded_degenerate"] == 4
     assert evidence["best"]["params"] == {"rsi_window": 14}
     assert evidence["best"]["score"] == 0.9
     assert evidence["best"]["held_out_metrics_mean"] == pytest.approx({"total_return": 0.885})

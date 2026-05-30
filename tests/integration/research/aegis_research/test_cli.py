@@ -306,6 +306,67 @@ def test_held_out_summary_is_empty_without_candidates() -> None:
     assert held_out_summary_lines({"ranking_metric": "sharpe_ratio"}, []) == ()
 
 
+def _researched_optimization(
+    *, total: int, excluded_invalid: int, excluded_degenerate: int
+) -> dict[str, object]:
+    return {
+        "ranking_metric": "sharpe_ratio",
+        "total": total,
+        "excluded_invalid": excluded_invalid,
+        "excluded_degenerate": excluded_degenerate,
+    }
+
+
+def _researched_candidate() -> dict[str, object]:
+    return {
+        "role": "best",
+        "held_out_headline": {
+            "metric": "sharpe_ratio",
+            "held_out": 0.02,
+            "selection": 1.97,
+            "gap": 1.95,
+        },
+    }
+
+
+def test_held_out_summary_renders_full_researched_ratio_when_nothing_excluded() -> None:
+    from research.aegis_research.cli_support.output import held_out_summary_lines
+
+    lines = held_out_summary_lines(
+        _researched_optimization(total=323, excluded_invalid=0, excluded_degenerate=0),
+        [_researched_candidate()],
+    )
+
+    assert "researched candidates: 323/323" in lines
+    assert not any("misconfigured" in line for line in lines)
+
+
+def test_held_out_summary_subtracts_only_degenerate_from_total() -> None:
+    from research.aegis_research.cli_support.output import held_out_summary_lines
+
+    # researched = total - excluded_degenerate, computed from the exact total
+    # (111 = 323 - 212), never a preflight estimate; invalid is a strict subset
+    # of degenerate so it does not subtract twice.
+    lines = held_out_summary_lines(
+        _researched_optimization(total=323, excluded_invalid=0, excluded_degenerate=212),
+        [_researched_candidate()],
+    )
+
+    assert "researched candidates: 111/323" in lines
+    assert not any("misconfigured" in line for line in lines)
+
+
+def test_held_out_summary_appends_misconfigured_clause_when_invalid_present() -> None:
+    from research.aegis_research.cli_support.output import held_out_summary_lines
+
+    lines = held_out_summary_lines(
+        _researched_optimization(total=323, excluded_invalid=2, excluded_degenerate=212),
+        [_researched_candidate()],
+    )
+
+    assert "researched candidates: 111/323 (2 misconfigured)" in lines
+
+
 def test_safe_path_hides_relative_paths_that_escape_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

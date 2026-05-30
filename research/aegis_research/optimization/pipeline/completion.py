@@ -65,6 +65,7 @@ def run_pipeline_completion(
     """
     try:
         optimization_evidence = run_evidence.optimization()
+        execution = dict(optimization_evidence.get("execution", {}))
         artifact_payload = build_strategy_artifact_payload(
             strategy_evidence=strategy_evidence,
             data_result=data_result,
@@ -77,7 +78,7 @@ def run_pipeline_completion(
             optimization=optimization_builtin,
             split_metadata=split_result.metadata,
             preflight=optimization_evidence["preflight"],
-            execution=dict(optimization_evidence.get("execution", {})),
+            execution=execution,
             candidates=[to_builtin(record) for record in candidate_rows],
             resolved_locks=resolved_locks,
             lock_records=lock_records,
@@ -95,6 +96,7 @@ def run_pipeline_completion(
             candidate_rows=candidate_rows,
             lock_records=lock_records,
             store_path=store_path,
+            execution=execution,
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.COMPLETION, error)
@@ -109,6 +111,7 @@ def _completion_result(
     candidate_rows: list[Mapping[str, Any]],
     lock_records: list[Mapping[str, Any]],
     store_path: Path,
+    execution: Mapping[str, Any],
 ) -> dict[str, Any]:
     ranking_metric = config.ranking.metric
     best_row = next(row for row in candidate_rows if row["role"] == "best")
@@ -123,6 +126,9 @@ def _completion_result(
             "min_weight": config.ranking.min_weight,
             "split_count": split_result.metadata["n_splits"],
             "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
+            "total": execution.get("total", 0),
+            "excluded_invalid": execution.get("excluded_invalid", 0),
+            "excluded_degenerate": execution.get("excluded_degenerate", 0),
             "held_out_warning": held_out_warning(
                 candidate_held_out_headline(best_row, metric=ranking_metric)
             ),
