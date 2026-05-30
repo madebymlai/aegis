@@ -6,12 +6,13 @@ from dataclasses import fields, is_dataclass
 from typing import Any
 
 _CANONICAL_JSON_SEPARATORS = (",", ":")
+_RESOLVED_RUN_CONFIG_TYPE_NAME = "ResolvedRunConfig"
 
 __all__ = ["canonical_json_bytes", "to_builtin"]
 
 
 def canonical_json_bytes(value: Any) -> bytes:
-    """Serialize a value to stable UTF-8 JSON bytes."""
+    """Convert a value to builtins and serialize it to stable UTF-8 JSON bytes."""
     return json.dumps(
         to_builtin(value),
         sort_keys=True,
@@ -21,7 +22,7 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 
 def to_builtin(value: Any) -> Any:
-    """Convert project dataclasses and scalar wrappers into JSON-ready builtins."""
+    """Recursively convert project dataclasses and scalar wrappers to JSON-ready builtins."""
     if _is_resolved_run_config(value):
         return to_builtin(value.config)
     if _is_dataclass_instance(value):
@@ -36,7 +37,7 @@ def to_builtin(value: Any) -> Any:
 
 
 def _is_resolved_run_config(value: Any) -> bool:
-    return value.__class__.__name__ == "ResolvedRunConfig" and hasattr(value, "config")
+    return value.__class__.__name__ == _RESOLVED_RUN_CONFIG_TYPE_NAME and hasattr(value, "config")
 
 
 def _is_dataclass_instance(value: Any) -> bool:
