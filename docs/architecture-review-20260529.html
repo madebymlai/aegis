@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture review — aegis-rd</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { htmlLabels: true } });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 5 4; }
+      .leak { stroke: #dc2626; }
+      .deepbox { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .schem { font-size: .65rem; letter-spacing: .08em; text-transform: uppercase; }
+      .mermaid { display:flex; justify-content:center; }
+      .arr { stroke:#94a3b8; stroke-width:2; marker-end:url(#ah); }
+      .arr-leak { stroke:#dc2626; stroke-width:2; marker-end:url(#ahr); stroke-dasharray:5 4; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans antialiased">
+    <svg width="0" height="0" class="absolute">
+      <defs>
+        <marker id="ah" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8"/></marker>
+        <marker id="ahr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#dc2626"/></marker>
+      </defs>
+    </svg>
+
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-14">
+      <!-- ===== HEADER ===== -->
+      <header class="space-y-6">
+        <div class="flex items-baseline justify-between flex-wrap gap-2">
+          <h1 class="text-4xl font-serif tracking-tight">Architecture review — <span class="mono text-3xl">aegis-rd</span></h1>
+          <span class="text-sm text-slate-500">2026-05-29</span>
+        </div>
+        <p class="text-slate-600 max-w-3xl">Deepening opportunities: refactors that turn <strong>shallow</strong> modules into <strong>deep</strong> ones — more behaviour behind a smaller interface, so change and bugs concentrate in one place. Vocabulary is exact; domain nouns come from <span class="mono text-sm">CONTEXT.md</span>.</p>
+
+        <div class="flex flex-wrap gap-5 text-xs text-slate-600 border-t border-b border-slate-200 py-3">
+          <span class="flex items-center gap-2"><span class="inline-block w-6 h-4 border-2 border-slate-400 bg-white"></span> module</span>
+          <span class="flex items-center gap-2"><svg width="28" height="6"><line x1="0" y1="3" x2="28" y2="3" stroke="#475569" stroke-width="2" stroke-dasharray="5 4"/></svg> seam</span>
+          <span class="flex items-center gap-2"><svg width="28" height="6"><line x1="0" y1="3" x2="28" y2="3" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4"/></svg> leakage</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-6 h-4 deepbox rounded-sm"></span> deep module</span>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-lg p-4 text-sm text-slate-600">
+          <p class="font-semibold text-slate-700 mb-1">Already actioned — not re-suggested here</p>
+          <ul class="space-y-1">
+            <li>• <strong>Run orchestration → stage modules</strong> (ADR-0001) — landed.</li>
+            <li>• <strong>Run Config validation → domain-specific validators</strong> (commit <span class="mono text-xs">aegis-rd-6p2</span>) — landed.</li>
+          </ul>
+          <p class="mt-2 text-slate-500">The six candidates below are fresh friction found by walking the codebase after those two refactors settled.</p>
+        </div>
+      </header>
+
+      <!-- ===== CANDIDATES ===== -->
+      <section id="candidates" class="space-y-16">
+
+        <!-- ============================================================= -->
+        <!-- CANDIDATE 1 -->
+        <!-- ============================================================= -->
+        <article id="c1" class="space-y-5">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="text-2xl font-serif">1 · Give the Run a typed Evidence ledger</h2>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600 mono">in-process</span>
+          </div>
+
+          <p class="text-sm text-slate-500 mono">research/aegis_research/optimization/pipeline/{setup,execution,publishing,completion}.py · run_pipeline.py</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <!-- BEFORE -->
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">Before — shallow stages, one shared mutable dict</p>
+              <div class="space-y-2 relative">
+                <div class="border border-slate-300 rounded px-3 py-2 text-sm">setup → returns 10-key dict</div>
+                <div class="border border-slate-300 rounded px-3 py-2 text-sm">execution → mutates <span class="mono text-xs">optimization_evidence</span></div>
+                <div class="border border-slate-300 rounded px-3 py-2 text-sm">publishing → mutates same dict</div>
+                <div class="border border-slate-300 rounded px-3 py-2 text-sm">completion → reads same dict</div>
+                <div class="mt-3 border-2 border-red-400 border-dashed rounded px-3 py-2 text-xs text-red-700 bg-red-50">
+                  <span class="mono">optimization_evidence: dict[str, Any]</span><br/>
+                  untyped · no schema · threaded + mutated across 4 stages · ordering implicit · <span class="mono">recorder.persist()</span> hidden inside stage calls
+                </div>
+              </div>
+            </div>
+            <!-- AFTER -->
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">After — stages stay split, ledger owns the shape</p>
+              <div class="deepbox rounded p-3 text-white space-y-2">
+                <p class="schem text-slate-300">RunEvidence ledger (deep)</p>
+                <p class="text-xs text-slate-300">one interface: <span class="mono">record(section, payload)</span> · <span class="mono">fail(stage, err)</span> · <span class="mono">snapshot()</span></p>
+                <div class="grid grid-cols-2 gap-1 mt-1 opacity-70">
+                  <div class="border border-slate-600 rounded px-2 py-1 text-[11px]">setup</div>
+                  <div class="border border-slate-600 rounded px-2 py-1 text-[11px]">execution</div>
+                  <div class="border border-slate-600 rounded px-2 py-1 text-[11px]">publishing</div>
+                  <div class="border border-slate-600 rounded px-2 py-1 text-[11px]">completion</div>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-1">stages append typed sections through the ledger; persist-on-failure lives in one place</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+            <p><span class="font-semibold">Problem.</span> ADR-0001 split the orchestrator into four stages, but they glue together by mutating one untyped <span class="mono text-xs">optimization_evidence</span> dict — its shape lives nowhere, its ordering is implicit, and <span class="mono text-xs">recorder.persist()</span> fires hidden inside stage calls.</p>
+            <p><span class="font-semibold">Solution.</span> Introduce the Evidence ledger ADR-0001 deferred: a deep module owning the dict shape, section keys, ordering, and persist-on-failure. Stages keep their seams but append typed sections instead of mutating a raw dict.</p>
+          </div>
+
+          <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1 text-sm text-slate-700 list-disc pl-5">
+            <li>locality: Evidence shape lives in one module</li>
+            <li>interface shrinks: stages stop returning 10-key dicts</li>
+            <li>persist-on-failure stops scattering across stages</li>
+            <li>leverage: section keys typed, not stringly-keyed</li>
+          </ul>
+
+          <div class="bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
+            <strong>Complements ADR-0001 — does not reopen it.</strong> The ADR explicitly deferred the "evidence accumulator" as premature: <em>"this can be revisited later without changing module boundaries."</em> This candidate is that revisit. Stage boundaries stay exactly where the ADR put them.
+          </div>
+        </article>
+
+        <!-- ============================================================= -->
+        <!-- CANDIDATE 2 -->
+        <!-- ============================================================= -->
+        <article id="c2" class="space-y-5">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="text-2xl font-serif">2 · Split market-data loading into source adapters + quality/metadata seams</h2>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600 mono">local-substitutable</span>
+          </div>
+
+          <p class="text-sm text-slate-500 mono">research/aegis_research/market_data/loading.py (1075 lines) · sources.py · contracts.py</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">Before — one 1075-line module, four jobs entangled</p>
+              <pre class="mermaid">
+flowchart TB
+  L["loading.py<br/>1075 lines · 9 public · 44 private"]
+  L --- S["synthetic / CSV / remote dispatch"]
+  L --- Q["quality evaluation"]
+  L --- M["metadata + secret scrubbing"]
+  L --- D["diagnostics"]
+  S -. "panels dict" .-> Q
+  Q -. "panels dict" .-> M
+  M -. "panels dict" .-> D
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class S,Q,M,D leak
+              </pre>
+              <p class="text-[11px] text-red-700 mt-1"><span class="mono">panels: dict[str,DataFrame]</span> and <span class="mono">native_data: Any</span> leak across every internal function.</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">After — one source seam, two deep modules</p>
+              <pre class="mermaid">
+flowchart TB
+  R["load_market_data_result"]
+  R --> SEAM{{"MarketDataSource<br/>(seam)"}}
+  SEAM --> A1["Synthetic adapter"]
+  SEAM --> A2["CSV adapter"]
+  SEAM --> A3["Remote VBT adapter"]
+  R --> QV["DataQuality (deep)"]
+  R --> MD["DataMetadata (deep)"]
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a;
+  class QV,MD deep
+              </pre>
+              <p class="text-[11px] text-slate-500 mt-1">Three concrete adapters already exist behind <span class="mono">_default_source_loaders()</span> — the seam is real, not hypothetical.</p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+            <p><span class="font-semibold">Problem.</span> <span class="mono text-xs">loading.py</span> mixes source dispatch, quality evaluation, metadata scrubbing, and diagnostics; the four share an internal <span class="mono text-xs">panels</span> dict that leaks across private functions, so no concern is testable in isolation.</p>
+            <p><span class="font-semibold">Solution.</span> Lift the existing synthetic/CSV/remote loaders to adapters behind one <span class="mono text-xs">MarketDataSource</span> interface; move quality evaluation and metadata scrubbing into their own deep modules with explicit inputs.</p>
+          </div>
+
+          <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1 text-sm text-slate-700 list-disc pl-5">
+            <li>two adapters justify the seam — here there are three</li>
+            <li>quality + metadata become test surfaces</li>
+            <li><span class="mono text-xs">panels</span> stops leaking across functions</li>
+            <li>locality: a new source = one adapter, nothing else</li>
+          </ul>
+        </article>
+
+        <!-- ============================================================= -->
+        <!-- CANDIDATE 3 -->
+        <!-- ============================================================= -->
+        <article id="c3" class="space-y-5">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="text-2xl font-serif">3 · One canonical serialization + hashing module</h2>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600 mono">in-process</span>
+          </div>
+
+          <p class="text-sm text-slate-500 mono">provenance/manifest.py · configuration/secrets.py · optimization/{candidate_store,lock_resolution,evidence}.py</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">Before — six sites, two rules, one inconsistency</p>
+              <div class="space-y-1.5 text-xs mono">
+                <div class="flex justify-between border border-slate-300 rounded px-2 py-1"><span>manifest._to_builtin</span><span class="text-slate-400">numpy/dict/list</span></div>
+                <div class="flex justify-between border border-slate-300 rounded px-2 py-1"><span>secrets.to_builtin</span><span class="text-slate-400">the other one</span></div>
+                <div class="flex justify-between border border-red-300 bg-red-50 rounded px-2 py-1"><span>manifest.canonical_json_bytes</span><span class="text-red-600">no allow_nan</span></div>
+                <div class="flex justify-between border border-slate-300 rounded px-2 py-1"><span>candidate_store._json_dumps</span><span class="text-slate-400">allow_nan=False</span></div>
+                <div class="flex justify-between border border-slate-300 rounded px-2 py-1"><span>lock_resolution lock_id</span><span class="text-slate-400">sha256[:32]</span></div>
+                <div class="flex justify-between border border-slate-300 rounded px-2 py-1"><span>evidence candidate_id</span><span class="text-slate-400">sha256[:32]</span></div>
+              </div>
+              <p class="text-[11px] text-red-700 mt-2">Two <span class="mono">to_builtin</span> impls; four inline <span class="mono">json.dumps</span>; the Manifest path omits the <span class="mono">allow_nan=False</span> every hash path enforces.</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4 flex flex-col">
+              <p class="schem text-slate-400 mb-3">After — one deep module, tiny interface</p>
+              <div class="deepbox rounded p-3 text-white mb-3">
+                <p class="schem text-slate-300">canonical (deep)</p>
+                <p class="text-xs text-slate-300 mono mt-1">to_builtin() · canonical_json_bytes() · stable_id(prefix, payload)</p>
+              </div>
+              <div class="grid grid-cols-2 gap-1 text-[11px] mono text-slate-500">
+                <div class="border border-slate-300 rounded px-2 py-1 text-center">manifest</div>
+                <div class="border border-slate-300 rounded px-2 py-1 text-center">candidate_store</div>
+                <div class="border border-slate-300 rounded px-2 py-1 text-center">lock_resolution</div>
+                <div class="border border-slate-300 rounded px-2 py-1 text-center">evidence</div>
+              </div>
+              <p class="text-[11px] text-slate-500 mt-2 text-center">every caller crosses one seam; the canonicalization rule has one home</p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+            <p><span class="font-semibold">Problem.</span> The rule for turning values into reproducible hashed bytes is duplicated six ways with diverging flags — and a <strong>Run</strong>'s product is reproducible, hashed <strong>Evidence</strong>. The serialization rule is load-bearing but lives nowhere.</p>
+            <p><span class="font-semibold">Solution.</span> One module owns <span class="mono text-xs">to_builtin</span>, <span class="mono text-xs">canonical_json_bytes</span>, and stable-ID hashing (the duplicated <span class="mono text-xs">sha256[:32]</span> for <span class="mono text-xs">lock_</span>/<span class="mono text-xs">cand_</span>). Everyone calls it.</p>
+          </div>
+
+          <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1 text-sm text-slate-700 list-disc pl-5">
+            <li>locality: one canonicalization rule, one place</li>
+            <li>fixes the <span class="mono text-xs">allow_nan</span> inconsistency at the source</li>
+            <li>protects the reproducible-Evidence promise</li>
+            <li>delete two <span class="mono text-xs">to_builtin</span> + four inline dumps</li>
+          </ul>
+        </article>
+
+        <!-- ============================================================= -->
+        <!-- CANDIDATE 4 -->
+        <!-- ============================================================= -->
+        <article id="c4" class="space-y-5">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="text-2xl font-serif">4 · Collapse the two Metric-computation surfaces into one</h2>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600 mono">in-process</span>
+          </div>
+
+          <p class="text-sm text-slate-500 mono">reports.py (552) · metrics/accessors.py · metrics/{adapters,custom}</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">Before — same 6 Metrics, two computations</p>
+              <div class="relative">
+                <div class="border border-slate-300 rounded px-3 py-2 text-sm mb-2">ranking path → <span class="mono text-xs">accessors.py</span><br/><span class="text-[11px] text-slate-500">pf.get_total_return(), pf.get_max_drawdown()…</span></div>
+                <div class="border border-slate-300 rounded px-3 py-2 text-sm">report path → <span class="mono text-xs">reports.py</span><br/><span class="text-[11px] text-slate-500">pf.stats(metrics=…), pf.get_sharpe_ratio()</span></div>
+                <div class="mt-2 text-center text-xs text-red-600">⚡ ranked value <span class="mono">≠</span> reported value (may diverge)</div>
+                <div class="mt-2 border border-red-300 bg-red-50 rounded px-2 py-1 text-[11px] text-red-700">
+                  <span class="mono">portfolio_metrics</span> and <span class="mono">portfolio_metrics_by_candidate_group</span> ~90% duplicated
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">After — one Metric module feeds both</p>
+              <div class="deepbox rounded p-3 text-white mb-3 text-center">
+                <p class="schem text-slate-300">Metric computation (deep)</p>
+                <p class="text-[11px] text-slate-300 mono mt-1">registered Metric → value(portfolio)</p>
+              </div>
+              <div class="flex gap-2">
+                <div class="flex-1 border border-slate-300 rounded px-2 py-2 text-xs text-center">ranking<br/><span class="text-[11px] text-slate-500">numeric frame</span></div>
+                <div class="flex-1 border border-slate-300 rounded px-2 py-2 text-xs text-center">reports<br/><span class="text-[11px] text-slate-500">Evidence + render</span></div>
+              </div>
+              <p class="text-[11px] text-slate-500 mt-2 text-center">one definition; ranked value <em>is</em> reported value</p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+            <p><span class="font-semibold">Problem.</span> The same six registered <strong>Metrics</strong> are computed two ways — accessors for ranking, <span class="mono text-xs">pf.stats()</span> for reports — so the number a <strong>Candidate</strong> is ranked on can drift from the number reported for it (e.g. <span class="mono text-xs">max_dd</span>, <span class="mono text-xs">total_return</span> scaling).</p>
+            <p><span class="font-semibold">Solution.</span> A single deep Metric module computes each registered Metric from a portfolio; the ranking path and the report path both consume it. Rendering and Evidence packing stay in reports; computation leaves it.</p>
+          </div>
+
+          <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1 text-sm text-slate-700 list-disc pl-5">
+            <li>ranked value and reported value agree by construction</li>
+            <li>kill the ~90% duplication in reports.py</li>
+            <li>delete unused <span class="mono text-xs">MetricTargetAdapter</span> + empty <span class="mono text-xs">custom/</span> hook</li>
+            <li>reports keeps only Evidence assembly + render</li>
+          </ul>
+
+          <div class="bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
+            <strong>Sharpens the prior review.</strong> 2026-05-27 proposed "deepen reports into Metric computation + Evidence assembly." That didn't land — and walking it now shows the deeper issue isn't <em>inside</em> reports: it's that a <em>second</em> computation already lives in <span class="mono text-xs">accessors.py</span>. The two must converge, not just split.
+          </div>
+        </article>
+
+        <!-- ============================================================= -->
+        <!-- CANDIDATE 5 -->
+        <!-- ============================================================= -->
+        <article id="c5" class="space-y-5">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="text-2xl font-serif">5 · Give the CandidateStore a typed row interface</h2>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600 mono">ports &amp; adapters</span>
+          </div>
+
+          <p class="text-sm text-slate-500 mono">optimization/candidate_store.py (506) · evidence.py (row builder) · lock_resolution.py (lock builder)</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">Before — SQL columns leak across the seam</p>
+              <div class="relative h-[230px]">
+                <div class="absolute left-0 top-2 w-40 border border-slate-300 rounded px-2 py-2 text-xs">
+                  caller (evidence.py)<br/><span class="text-[11px] text-slate-500">hand-builds dicts</span>
+                </div>
+                <div class="absolute right-0 top-2 w-40 border border-slate-300 rounded px-2 py-2 text-xs">
+                  CandidateStore<br/><span class="text-[11px] text-slate-500">SQLite tables</span>
+                </div>
+                <svg class="absolute inset-0 w-full h-full" viewBox="0 0 380 230" preserveAspectRatio="none">
+                  <line x1="190" y1="0" x2="190" y2="230" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+                  <line class="arr-leak" x1="160" y1="80" x2="300" y2="80"/>
+                  <line class="arr-leak" x1="160" y1="110" x2="300" y2="110"/>
+                  <line class="arr-leak" x1="160" y1="140" x2="300" y2="140"/>
+                </svg>
+                <div class="absolute left-1/2 -translate-x-1/2 top-[150px] text-[11px] mono text-red-700 text-center w-56">
+                  row["candidate_key"], ["params"],<br/>["identity"], ["role"], ["rank"],<br/>["metrics"], ["score"]
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">After — typed row at the seam</p>
+              <div class="relative h-[230px]">
+                <div class="absolute left-0 top-2 w-40 border border-slate-300 rounded px-2 py-2 text-xs">
+                  caller<br/><span class="text-[11px] text-slate-500">builds CandidateRow</span>
+                </div>
+                <div class="absolute right-0 top-2 w-40 deepbox text-white rounded px-2 py-2 text-xs">
+                  CandidateStore<br/><span class="text-[11px] text-slate-300">owns dict↔column map</span>
+                </div>
+                <svg class="absolute inset-0 w-full h-full" viewBox="0 0 380 230" preserveAspectRatio="none">
+                  <line x1="190" y1="0" x2="190" y2="230" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+                  <line class="arr" x1="150" y1="110" x2="300" y2="110"/>
+                </svg>
+                <div class="absolute left-1/2 -translate-x-1/2 top-[122px] text-xs mono text-slate-600 text-center">
+                  CandidateRow · LockRecord
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+            <p><span class="font-semibold">Problem.</span> <span class="mono text-xs">insert_completed_run(candidate_rows: Sequence[Mapping[str,Any]])</span> forces callers to hand-build dicts shaped like SQL columns. The table schema leaks across the seam; a new column ripples through the builder and the store. Primitive obsession — a Candidate row is not a bare dict.</p>
+            <p><span class="font-semibold">Solution.</span> A typed <span class="mono text-xs">CandidateRow</span> / <span class="mono text-xs">LockRecord</span> at the seam; the store owns the dict↔column mapping internally. Callers construct a domain type, not a SQL-shaped dict.</p>
+          </div>
+
+          <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1 text-sm text-slate-700 list-disc pl-5">
+            <li>schema stops leaking across the seam</li>
+            <li>locality: column changes stay in the store</li>
+            <li>builder + store share one type, not a key convention</li>
+            <li>the seam becomes a test surface</li>
+          </ul>
+        </article>
+
+        <!-- ============================================================= -->
+        <!-- CANDIDATE 6 -->
+        <!-- ============================================================= -->
+        <article id="c6" class="space-y-5">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="text-2xl font-serif">6 · Concentrate Candidate validity in one module</h2>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600 mono">in-process</span>
+          </div>
+
+          <p class="text-sm text-slate-500 mono">optimization/runner.py · precompute.py · ranking.py</p>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">Before — validity scattered; one path forgets it</p>
+              <pre class="mermaid">
+flowchart TB
+  R["runner: invalid_candidate_keys<br/>(runner.py:101)"]
+  R -->|"line 113"| SEL["selection window metrics<br/>masked ✓"]
+  R -. "line 387: arg omitted" .-> HO["held-out window metrics<br/>NOT masked"]
+  RK["ranking: excluded_degenerate"]
+  R --- RK
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  class HO leak
+              </pre>
+              <p class="text-[11px] text-red-700 mt-1">The selection sweep threads <span class="mono">invalid_candidate_keys</span>; the held-out sweep (<span class="mono">_attach_held_out</span>) does not.</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="schem text-slate-400 mb-3">After — both sweeps consume one validity module</p>
+              <pre class="mermaid">
+flowchart TB
+  V["CandidateValidity (deep)<br/>knows invalid + degenerate"]
+  V --> SEL2["selection sweep"]
+  V --> HO2["held-out sweep"]
+  V --> RK2["ranking exclusions"]
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a;
+  class V deep
+              </pre>
+              <p class="text-[11px] text-slate-500 mt-1">One module decides validity; no sweep can silently skip the mask.</p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+            <p><span class="font-semibold">Problem.</span> Whether a <strong>Candidate</strong> is full-history-invalid is decided in <span class="mono text-xs">runner.py</span>, masked in the precompute window callback, and re-counted as "degenerate" in <span class="mono text-xs">ranking.py</span> — no locality. The asymmetry shows: the selection sweep masks invalid candidates (line 113), the held-out sweep does not (line 387).</p>
+            <p><span class="font-semibold">Solution.</span> A <span class="mono text-xs">CandidateValidity</span> module owns invalidity + masking; both the selection and held-out sweeps consume the same interface, so neither can skip it.</p>
+          </div>
+
+          <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1 text-sm text-slate-700 list-disc pl-5">
+            <li>locality: validity decided in one place</li>
+            <li>closes the held-out masking asymmetry</li>
+            <li>"invalid" vs "degenerate" stop conflating</li>
+            <li>the masking rule becomes a test surface</li>
+          </ul>
+
+          <div class="bg-slate-100 border border-slate-200 rounded p-3 text-sm text-slate-700">
+            <strong>Note.</strong> Whether the held-out asymmetry is user-visible depends on whether an invalid Candidate can become a representative (best/median/worst) — it is masked to NaN on selection, so usually it cannot. The point here is the <em>locality</em> gap that let the two sweeps drift, not a confirmed live defect.
+          </div>
+        </article>
+
+      </section>
+
+      <!-- ===== TOP RECOMMENDATION ===== -->
+      <section id="top-recommendation" class="space-y-4">
+        <h2 class="text-2xl font-serif">Top recommendation</h2>
+        <div class="deepbox text-white rounded-xl p-6 space-y-3">
+          <div class="flex items-center gap-3">
+            <span class="text-lg font-semibold">3 · One canonical serialization + hashing module</span>
+            <a href="#c3" class="text-xs underline text-slate-300">jump ↑</a>
+          </div>
+          <p class="text-slate-300 text-sm max-w-3xl">
+            Smallest blast radius, highest leverage, and it guards the system's core promise: a <strong>Run</strong> produces reproducible, hashed <strong>Evidence</strong>. The canonicalization rule is duplicated six ways today with a real inconsistency — the Manifest path omits the <span class="mono">allow_nan=False</span> that every hash path enforces. Collapsing it into one deep module behind a tiny interface fixes that at the source and gives every other candidate (Evidence ledger, CandidateStore rows) a single seam to write through. Do this first; it de-risks the rest.
+          </p>
+        </div>
+        <p class="text-sm text-slate-500">Then: <a href="#c1" class="underline">1 · Evidence ledger</a> (central, fulfills ADR-0001's deferral) and <a href="#c2" class="underline">2 · market-data adapters</a> (largest single module, three adapters already waiting).</p>
+      </section>
+    </main>
+  </body>
+</html>
