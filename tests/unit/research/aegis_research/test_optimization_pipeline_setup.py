@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
@@ -14,6 +14,26 @@ from research.aegis_research.optimization.run_data_contract import (
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
+
+
+class _FakeData:
+    def feature(self, name: str) -> Any:
+        import pandas as pd
+
+        return pd.DataFrame({0: [float(i) for i in range(120)]})
+
+
+class _FakeDataResult:
+    class quality:
+        state = "ok"
+
+    metadata: ClassVar[dict[str, Any]] = {
+        "source": "synthetic",
+        "symbols": ["SYN"],
+        "loaded_arrays": ["Close", "Open"],
+        "effective_arrays": ["OHLCV"],
+        "shape": {"rows": 120},
+    }
 
 
 def _run_evidence() -> RunEvidence:
@@ -33,24 +53,6 @@ def test_pipeline_setup_returns_expected_keys(
     resolved = build_resolved_run_config(tmp_path)
     config = resolved.config
     array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
-    class _FakeData:
-        def feature(self, name: str) -> Any:
-            import pandas as pd
-
-            return pd.DataFrame({0: [float(i) for i in range(120)]})
-
-    class _FakeDataResult:
-        class quality:
-            state = "ok"
-
-        metadata = {
-            "source": "synthetic",
-            "symbols": ["SYN"],
-            "loaded_arrays": ["Close", "Open"],
-            "effective_arrays": ["OHLCV"],
-            "shape": {"rows": 120},
-        }
 
     result = run_pipeline_setup(
         config=config,
@@ -85,24 +87,6 @@ def test_pipeline_setup_evidence_baseline_shape(
     config = resolved.config
     array_contract = build_run_data_array_contract(config, resolved.component_registry)
 
-    class _FakeData:
-        def feature(self, name: str) -> Any:
-            import pandas as pd
-
-            return pd.DataFrame({0: [float(i) for i in range(120)]})
-
-    class _FakeDataResult:
-        class quality:
-            state = "ok"
-
-        metadata = {
-            "source": "synthetic",
-            "symbols": ["SYN"],
-            "loaded_arrays": ["Close", "Open"],
-            "effective_arrays": ["OHLCV"],
-            "shape": {"rows": 120},
-        }
-
     run_evidence = _run_evidence()
     run_pipeline_setup(
         config=config,
@@ -130,24 +114,6 @@ def test_pipeline_setup_store_path_matches_candidate_store(
     resolved = build_resolved_run_config(tmp_path)
     config = resolved.config
     array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
-    class _FakeData:
-        def feature(self, name: str) -> Any:
-            import pandas as pd
-
-            return pd.DataFrame({0: [float(i) for i in range(120)]})
-
-    class _FakeDataResult:
-        class quality:
-            state = "ok"
-
-        metadata = {
-            "source": "synthetic",
-            "symbols": ["SYN"],
-            "loaded_arrays": ["Close", "Open"],
-            "effective_arrays": ["OHLCV"],
-            "shape": {"rows": 120},
-        }
 
     result = run_pipeline_setup(
         config=config,

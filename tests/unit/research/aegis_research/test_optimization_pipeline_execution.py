@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -24,12 +24,12 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
     config = resolved.config
 
     class _FakeSource:
-        params = {}
-        evidence = {"strategy": {}}
+        params: ClassVar[dict[str, Any]] = {}
+        evidence: ClassVar[dict[str, Any]] = {"strategy": {}}
 
     class _FakeSplitResult:
-        metadata = {"n_splits": 2}
-        splits = []
+        metadata: ClassVar[dict[str, int]] = {"n_splits": 2}
+        splits: ClassVar[list[Any]] = []
 
     persisted = []
     manifest_evidence: dict[str, Any] = {}

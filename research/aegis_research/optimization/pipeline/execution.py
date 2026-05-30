@@ -44,16 +44,14 @@ def run_pipeline_execution(
         optimization_result.
     """
     try:
-        run_evidence.record(
-            EvidenceSection.PREFLIGHT,
-            build_preflight(
-                params=optimization_source.params,
-                optimization=config.optimization,
-                split_result=split_result,
-                symbol_count=len(close.columns),
-                has_open_prices=True,
-            ),
+        preflight = build_preflight(
+            params=optimization_source.params,
+            optimization=config.optimization,
+            split_result=split_result,
+            symbol_count=len(close.columns),
+            has_open_prices=True,
         )
+        run_evidence.record(EvidenceSection.PREFLIGHT, preflight)
     except PreflightError as error:
         run_evidence.record(EvidenceSection.PREFLIGHT, error.diagnostics)
         run_evidence.fail(EvidenceFailureStage.PREFLIGHT, error)

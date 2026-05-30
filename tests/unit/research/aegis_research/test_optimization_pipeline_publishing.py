@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import component_param_key
@@ -24,7 +24,7 @@ class _FakeArrayContract:
 
 
 class _FakeDataResult:
-    metadata = {
+    metadata: ClassVar[dict[str, Any]] = {
         "source": "synthetic",
         "symbols": ["SYN"],
         "timeframe": "1D",
@@ -54,7 +54,7 @@ _SLOW_KEY = component_param_key(_FAMILY, _COMPONENT_ID, _SLOT, "slow_window")
 
 
 class _FakeSource:
-    evidence = {
+    evidence: ClassVar[dict[str, Any]] = {
         "schema_version": "component_optimization_source.v1",
         "source": "component",
         "strategy": {

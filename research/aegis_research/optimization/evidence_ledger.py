@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from research.aegis_research.canonical_json import to_builtin
@@ -11,20 +11,21 @@ _FAILURE_MESSAGE_LIMIT = 1000
 _SUPPORTED_OPTIMIZATION_SCHEMA_VERSIONS = {None, OPTIMIZATION_ROUTE_SCHEMA_VERSION}
 
 __all__ = [
+    "OPTIMIZATION_ROUTE_SCHEMA_VERSION",
     "EvidenceFailureStage",
     "EvidenceSection",
     "RunEvidence",
 ]
 
 
-class EvidenceSection(str, Enum):
+class EvidenceSection(StrEnum):
     PREFLIGHT = "preflight"
     EXECUTION = "execution"
     CANDIDATES = "candidates"
     LOCKS = "locks"
 
 
-class EvidenceFailureStage(str, Enum):
+class EvidenceFailureStage(StrEnum):
     SETUP = "setup"
     PREFLIGHT = "preflight"
     EXECUTION = "execution"
@@ -62,6 +63,7 @@ class RunEvidence:
         self._optimization = optimization_payload
 
     def initialize_optimization(self, payload: Mapping[str, Any]) -> None:
+        """Replace the optimization evidence baseline while keeping manifest identity."""
         optimization_payload = _normalize_optimization_payload(payload)
         self._optimization.clear()
         self._optimization.update(optimization_payload)
@@ -75,6 +77,7 @@ class RunEvidence:
             self._optimization["candidate_count"] = _candidate_count(builtin_payload)
 
     def optimization(self) -> dict[str, Any]:
+        """Return a detached builtin copy of the optimization evidence."""
         return to_builtin(self._optimization)
 
     def fail(self, stage: EvidenceFailureStage, err: BaseException) -> None:

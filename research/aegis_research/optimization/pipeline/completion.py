@@ -88,30 +88,49 @@ def run_pipeline_completion(
         write_strategy_artifact(recorder, artifact_payload)
         recorder.mark_run_completed()
         activate_candidate_run(store_path, recorder.manifest.run_id)
-        ranking_metric = config.ranking.metric
-        best_row = next(row for row in candidate_rows if row["role"] == "best")
-        return {
-            **build_run_refs(recorder),
-            "strategy_artifact_id": "strategy.run",
-            "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
-            "candidate_store_path": str(store_path),
-            "locks": lock_records,
-            "optimization": {
-                "ranking_metric": ranking_metric,
-                "min_weight": config.ranking.min_weight,
-                "split_count": split_result.metadata["n_splits"],
-                "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
-                "held_out_warning": held_out_warning(
-                    candidate_held_out_headline(best_row, metric=ranking_metric)
-                ),
-            },
-            "candidates": [
-                _candidate_summary(row, ranking_metric=ranking_metric) for row in candidate_rows
-            ],
-        }
+        return _completion_result(
+            config=config,
+            recorder=recorder,
+            split_result=split_result,
+            candidate_rows=candidate_rows,
+            lock_records=lock_records,
+            store_path=store_path,
+        )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.COMPLETION, error)
         raise
+
+
+def _completion_result(
+    *,
+    config: RunConfig,
+    recorder: RunRecorder,
+    split_result: Any,
+    candidate_rows: list[Mapping[str, Any]],
+    lock_records: list[Mapping[str, Any]],
+    store_path: Path,
+) -> dict[str, Any]:
+    ranking_metric = config.ranking.metric
+    best_row = next(row for row in candidate_rows if row["role"] == "best")
+    return {
+        **build_run_refs(recorder),
+        "strategy_artifact_id": "strategy.run",
+        "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
+        "candidate_store_path": str(store_path),
+        "locks": lock_records,
+        "optimization": {
+            "ranking_metric": ranking_metric,
+            "min_weight": config.ranking.min_weight,
+            "split_count": split_result.metadata["n_splits"],
+            "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
+            "held_out_warning": held_out_warning(
+                candidate_held_out_headline(best_row, metric=ranking_metric)
+            ),
+        },
+        "candidates": [
+            _candidate_summary(row, ranking_metric=ranking_metric) for row in candidate_rows
+        ],
+    }
 
 
 def _candidate_summary(row: Mapping[str, Any], *, ranking_metric: str) -> dict[str, Any]:
