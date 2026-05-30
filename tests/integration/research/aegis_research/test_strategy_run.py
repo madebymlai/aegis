@@ -170,6 +170,13 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     ]
     ranking_metric = artifact["ranking"]["metric"]
     assert "held_out_warning" in payload["optimization"]
+    # Completion threads the *exact* exclusion accounting from the execution
+    # Evidence (never a preflight estimate) into the optimization summary, so the
+    # terminal can render the researched/total ratio.
+    execution = artifact["execution"]
+    assert payload["optimization"]["total"] == execution["total"]
+    assert payload["optimization"]["excluded_invalid"] == execution["excluded_invalid"]
+    assert payload["optimization"]["excluded_degenerate"] == execution["excluded_degenerate"]
     for summary, candidate in zip(payload["candidates"], artifact["candidates"], strict=True):
         assert summary["role"] == candidate["role"]
         assert summary["rank"] == candidate["rank"]

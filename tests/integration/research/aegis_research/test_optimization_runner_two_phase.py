@@ -19,7 +19,11 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     RunSplitConfig,
 )
-from research.aegis_research.optimization.precompute import empty_precompute
+from research.aegis_research.optimization.precompute import (
+    WideIndicatorPrecompute,
+    build_candidate_index,
+    empty_precompute,
+)
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -181,6 +185,131 @@ def test_runner_preserves_excluded_degenerate_through_held_out(monkeypatch) -> N
     assert result.excluded_degenerate == 7
     # Held-out validation still populated, proving the round-trip really ran.
     assert set(result.best.held_out_metrics) == set(_expected_split_labels())
+
+
+def test_runner_preserves_total_candidates_through_held_out(monkeypatch) -> None:
+    """The exact ranked-set size must survive the held-out round-trip too.
+
+    ``_attach_held_out`` rebuilds the frozen OptimizationResult; the exact
+    Candidate total (size of the ranked set) the ranking layer computed must be
+    carried forward, exactly as the degenerate-exclusion count is.
+    """
+    import dataclasses
+
+    from research.aegis_research.optimization import runner
+
+    real_select = runner.select_representative_candidates
+
+    def select_with_injected_total(grid, **kwargs):
+        result = real_select(grid, **kwargs)
+        return dataclasses.replace(result, total_candidates=11)
+
+    monkeypatch.setattr(runner, "select_representative_candidates", select_with_injected_total)
+
+    result = _run([0.2, 0.5, 1.0])
+
+    assert result.total_candidates == 11
+    # Held-out validation still populated, proving the round-trip really ran.
+    assert set(result.best.held_out_metrics) == set(_expected_split_labels())
+
+
+def _warmup_precompute(
+    close: pd.DataFrame, n_candidates: int, **param_lists
+) -> WideIndicatorPrecompute:
+    """Causal momentum (close[t]/close[t-window]-1); a window >= history is all-NaN."""
+    windows = param_lists["window"]
+    prices = close.to_numpy()
+    n_rows, n_symbols = prices.shape
+    outputs = np.full((n_rows, n_candidates * n_symbols), np.nan)
+    for candidate, window in enumerate(windows):
+        block = np.full((n_rows, n_symbols), np.nan)
+        if window < n_rows:
+            block[window:] = prices[window:] / prices[:-window] - 1.0
+        outputs[:, candidate * n_symbols : (candidate + 1) * n_symbols] = block
+    return WideIndicatorPrecompute(
+        outputs={"mom": outputs},
+        candidate_index=build_candidate_index(param_lists),
+        n_symbols=n_symbols,
+    )
+
+
+def _gated_simulate(
+    close_window: pd.DataFrame, indicator_window, n_candidates: int, **param_lists
+) -> pd.DataFrame:
+    """Buy equal-weight on the first warmup-complete bar; else hold cash (no trade)."""
+    momentum = indicator_window["mom"]
+    n_symbols = len(close_window.columns)
+    windows = param_lists["window"]
+    allocations = np.full((len(close_window), n_candidates * n_symbols), np.nan)
+    for candidate in range(n_candidates):
+        block = momentum[:, candidate * n_symbols : (candidate + 1) * n_symbols]
+        warmup_complete = ~np.isnan(block).any(axis=1)
+        if warmup_complete.any():
+            first = int(np.argmax(warmup_complete))
+            allocations[first, candidate * n_symbols : (candidate + 1) * n_symbols] = (
+                1.0 / n_symbols
+            )
+    symbols = list(close_window.columns)
+    columns = pd.MultiIndex.from_tuples(
+        [(windows[c], sym) for c in range(n_candidates) for sym in symbols],
+        names=["window", "symbol"],
+    )
+    return pd.DataFrame(allocations, index=close_window.index, columns=columns)
+
+
+def _warmup_source(windows: list[int]) -> OptimizationSource:
+    return OptimizationSource(
+        precompute=_warmup_precompute,
+        simulate=_gated_simulate,
+        params={"window": vbt.Param(windows)},
+        output_name="target_weights",
+        evidence={"source": "synthetic_warmup"},
+        diagnostics={},
+        metadata={},
+    )
+
+
+def _run_warmup(windows: list[int]) -> OptimizationResult:
+    return execute_optimization(
+        close=_uptrend_close(),
+        open_=_uptrend_close(),
+        source=_warmup_source(windows),
+        optimization=_optimization(),
+        portfolio=PortfolioConfig(fees=0.0, slippage=0.0),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", min_weight=0.3),
+    )
+
+
+def test_held_out_and_selection_builds_receive_the_same_invalid_candidate_set(
+    monkeypatch,
+) -> None:
+    """Both sweeps must mask the same Invalid Candidates so they cannot drift.
+
+    A genuine Invalid Candidate (lookback exceeding full history) makes the
+    Selection build's Invalid-Candidate set non-empty. The held-out build must
+    receive that *same* set; on the pre-change code it receives nothing (the
+    builder's optional default), so the captured sets differ.
+    """
+    from research.aegis_research.optimization import runner
+
+    real_build = runner._build_precomputed_window_metrics
+    captured: list[object] = []
+
+    def spy(**kwargs):
+        captured.append(kwargs.get("invalid_candidate_keys"))
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(runner, "_build_precomputed_window_metrics", spy)
+
+    _run_warmup([2, N_ROWS + 1])  # window N_ROWS+1 has no finite full-history block
+
+    assert len(captured) == 2, "expected one selection build then one held-out build"
+    selection_keys, held_out_keys = captured
+    assert selection_keys, "selection build should mask a non-empty Invalid-Candidate set"
+    assert held_out_keys == selection_keys, (
+        "held-out build must receive the SAME Invalid-Candidate set as selection"
+    )
 
 
 def test_phase1_sweeps_in_parallel_with_pathos_and_phase3_runs_sequentially(monkeypatch) -> None:

@@ -18,7 +18,7 @@ from research.aegis_research.optimization.ranking import (
 CANDIDATE_ROW_SCHEMA_VERSION = "candidate_row.v2"
 CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v2"
 CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v2"
-OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v2"
+OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v3"
 CANDIDATE_ROLES = ("best", "median", "worst")
 DEFAULT_COORDINATE_LEVELS = frozenset({"split", "set", "symbol"})
 
@@ -135,12 +135,23 @@ def candidate_rows_from_result(
 
 
 def result_evidence(result: OptimizationResult) -> dict[str, Any]:
-    """Serialize an OptimizationResult into a JSON-safe three-candidate payload."""
+    """Serialize an OptimizationResult into a JSON-safe three-candidate payload.
+
+    Alongside the three representative candidates, the payload carries the Run's
+    exclusion accounting as flat sibling fields: ``total`` is the *exact* number
+    of Candidates that entered ranking (never a preflight estimate),
+    ``excluded_invalid`` the misconfigured subset, and ``excluded_degenerate``
+    the non-representable count, with ``excluded_invalid <= excluded_degenerate
+    <= total``.
+    """
     return {
         "schema_version": OPTIMIZATION_RESULT_SCHEMA_VERSION,
         "best": _candidate_evidence(result.best),
         "median": _candidate_evidence(result.median),
         "worst": _candidate_evidence(result.worst),
+        "total": result.total_candidates,
+        "excluded_invalid": result.excluded_invalid,
+        "excluded_degenerate": result.excluded_degenerate,
     }
 
 

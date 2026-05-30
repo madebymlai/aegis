@@ -198,6 +198,26 @@ def test_no_degenerate_candidates_reports_zero_excluded() -> None:
     assert result.excluded_degenerate == 0
 
 
+def test_total_candidates_is_exact_ranked_set_size() -> None:
+    # total_candidates is the EXACT count of candidates that entered ranking
+    # (the ranked-set size), never a preflight sampling estimate. Four distinct
+    # parameter combinations enter ranking, two of which are degenerate.
+    grid = _grid(
+        {
+            "good_hi": {"s0": 1.0, "s1": 1.0},
+            "good_lo": {"s0": 0.1, "s1": 0.1},
+            "dead1": {"s0": float("nan"), "s1": float("nan")},
+            "dead2": {"s0": float("nan"), "s1": float("nan")},
+        }
+    )
+
+    result = select_representative_candidates(grid, metric="sharpe")
+
+    assert result.total_candidates == 4
+    # Nesting invariant: invalid is a subset of degenerate, degenerate of total.
+    assert result.excluded_invalid <= result.excluded_degenerate <= result.total_candidates
+
+
 def test_all_degenerate_grid_raises_clear_error() -> None:
     # Every candidate is dead: there is no trading population to represent.
     grid = _grid(
@@ -372,6 +392,7 @@ def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
         "worst",
         "excluded_degenerate",
         "excluded_invalid",
+        "total_candidates",
     ]
 
 
