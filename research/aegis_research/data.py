@@ -3,6 +3,11 @@ from __future__ import annotations
 import pandas as pd
 from vectorbtpro import vbt
 
+from research.aegis_research.market_data.adapters.remote import (
+    SAFE_FETCH_KWARG_KEYS,
+    SAFE_RETURNED_KWARG_KEYS,
+    _pull_remote,
+)
 from research.aegis_research.market_data.contracts import (
     LOGICAL_FEATURES,
     OHLCV_FEATURES,
@@ -10,8 +15,6 @@ from research.aegis_research.market_data.contracts import (
     QUALITY_HEALTHY,
     QUALITY_PROVIDER_FAILED,
     QUALITY_REJECTED,
-    SAFE_FETCH_KWARG_KEYS,
-    SAFE_RETURNED_KWARG_KEYS,
     DataDiagnostics,
     DataFeatureDiagnostics,
     MarketDataAdapter,
@@ -24,7 +27,6 @@ from research.aegis_research.market_data.contracts import (
     market_data_bundle,
 )
 from research.aegis_research.market_data.loading import (
-    _pull_remote,
     load_market_data,
     load_market_data_result,
     required_experiment_ohlcv_features,

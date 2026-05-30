@@ -46,7 +46,6 @@ class _FrozenData:
 
 def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
     config = DataConfig(source="frozen", symbols=["SYN"], arrays=["Close"])
-    native_data = _FrozenData()
     observation = _frozen_observation()
     diagnostics = (
         DataDiagnostics(
@@ -71,12 +70,15 @@ def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
 
     metadata = data_metadata.describe(
         config,
-        native_data=native_data,
+        native_class="_FrozenData",
         observation=observation,
         diagnostics=diagnostics,
         quality=quality,
         source_metadata={"frozen": True},
         evidence={"source": "test_evidence", "raw_rows": 3},
+        provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
+        omitted_metadata_fields=[],
+        update_supported=False,
         required_features=("Close",),
     )
 
@@ -165,7 +167,7 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
 
     expected = data_metadata.describe(
         config,
-        native_data=None,
+        native_class=None,
         observation=MarketDataObservation_empty(),
         diagnostics=diagnostics,
         quality=quality,
@@ -176,6 +178,9 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
             ),
         },
         evidence={"source": "provider_failed"},
+        provider_metadata={},
+        omitted_metadata_fields=[],
+        update_supported=False,
         required_features=("Close", "OpenInterest"),
     )
 
@@ -226,17 +231,20 @@ def test_failed_shape_equals_success_shape_minus_data() -> None:
     assert failure.native_data is None
 
 
-def test_describe_tolerates_native_data_is_none() -> None:
+def test_describe_tolerates_empty_provider_internals() -> None:
     config = DataConfig(source="future", symbols=["SYN"], arrays=["Close"])
 
     metadata = data_metadata.describe(
         config,
-        native_data=None,
+        native_class=None,
         observation=MarketDataObservation_empty(),
         diagnostics=(),
         quality=MarketDataQuality(state="provider_failed"),
         source_metadata={},
         evidence={"source": "provider_failed"},
+        provider_metadata={},
+        omitted_metadata_fields=[],
+        update_supported=False,
         required_features=("Close",),
     )
 
@@ -267,6 +275,7 @@ def test_loaded_metadata_round_trips_through_the_public_loader() -> None:
                 native_data=native_data,
                 source_metadata={"frozen": True},
                 evidence={"source": "test_evidence", "raw_rows": 3},
+                provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
             )
         },
     )

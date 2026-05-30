@@ -7,7 +7,6 @@ import pandas as pd
 
 from research.aegis_research.configuration.schema import DataConfig
 from research.aegis_research.configuration.secrets import to_builtin
-from research.aegis_research.market_data import safety as _safety
 from research.aegis_research.market_data.contracts import (
     OHLCV_FEATURES,
     DataDiagnostics,
@@ -26,31 +25,35 @@ class MarketDataObservation:
 def describe(
     config: DataConfig,
     *,
-    native_data: Any,
+    native_class: str | None,
     observation: MarketDataObservation,
     diagnostics: tuple[DataDiagnostics, ...],
     quality: MarketDataQuality,
     source_metadata: dict[str, Any],
     evidence: dict[str, Any],
+    provider_metadata: dict[str, Any],
+    omitted_metadata_fields: list[dict[str, str]],
+    update_supported: bool,
     required_features: tuple[str, ...],
 ) -> dict[str, Any]:
     """Assemble the schema-versioned ``market_data.v2`` public metadata dict.
 
-    The single authority for the metadata wire contract. Tolerates
-    ``native_data is None`` (the provider-failure path), in which case the
-    provider/native classes and provider metadata collapse to their empty
-    shapes while the dict keeps the same keys as the success shape.
+    The single authority for the metadata wire contract. The provider internals
+    (``provider_metadata``, ``omitted_metadata_fields``, ``update_supported``,
+    ``native_class``) are scrubbed and supplied by the source adapter; describe
+    never reaches into the native object. Tolerates the provider-failure path,
+    where those inputs collapse to their empty shapes while the dict keeps the
+    same keys as the success shape.
     """
     index = observation.index
     features = list(observation.features)
     symbols = list(observation.symbols)
     panels = observation.panels
-    provider_metadata, omitted = _provider_metadata(native_data, source=config.source)
     metadata: dict[str, Any] = {
         "schema_version": "market_data.v2",
         "source": config.source,
-        "provider_class": _native_class_name(native_data),
-        "native_class": _native_class_name(native_data),
+        "provider_class": native_class,
+        "native_class": native_class,
         "requested_symbols": list(config.symbols),
         "symbols": symbols,
         "features": features,
@@ -81,32 +84,11 @@ def describe(
         "source_metadata": source_metadata,
         "index_evidence": evidence,
         "provider_metadata": provider_metadata,
-        "omitted_metadata_fields": omitted,
-        "update_supported": _supports_update(native_data),
+        "omitted_metadata_fields": omitted_metadata_fields,
+        "update_supported": update_supported,
         "cache_policy": "disabled_in_schema_v2",
     }
     return to_builtin(metadata)
-
-
-def _native_class_name(native_data: Any) -> str | None:
-    if native_data is None:
-        return None
-    return type(native_data).__name__
-
-
-def _supports_update(native_data: Any) -> bool:
-    if native_data is None:
-        return False
-    return _safety.supports_update(native_data)
-
-
-def _provider_metadata(
-    native_data: Any, *, source: str
-) -> tuple[dict[str, Any], list[dict[str, str]]]:
-    if native_data is None:
-        return {}, []
-    projected = _safety.safe_native_data_metadata(native_data, source=source)
-    return projected["metadata"], projected["omitted"]
 
 
 def _diagnostics_metadata(diagnostics: tuple[DataDiagnostics, ...]) -> list[dict[str, Any]]:
