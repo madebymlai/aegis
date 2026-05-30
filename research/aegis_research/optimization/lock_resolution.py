@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +14,10 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
 )
-from research.aegis_research.optimization.canonical_json import canonical_json_bytes
+from research.aegis_research.optimization.canonical import (
+    canonical_json_bytes,
+    mint_canonical_token,
+)
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
     component_param_slices,
@@ -330,16 +332,16 @@ def component_lock_token_bytes(
     candidate_key: str,
 ) -> bytes:
     """Canonical JSON bytes used as stable hash material for component locks."""
-    payload = {
-        "schema_version": COMPONENT_LOCK_SCHEMA_VERSION,
-        "run_id": run_id,
-        "rank": rank,
-        "component_family": component_family,
-        "component_id": component_id,
-        "component_slot": component_slot,
-        "candidate_key": candidate_key,
-    }
-    return canonical_json_bytes(payload)
+    return canonical_json_bytes(
+        _component_lock_identity(
+            run_id=run_id,
+            rank=rank,
+            component_family=component_family,
+            component_id=component_id,
+            component_slot=component_slot,
+            candidate_key=candidate_key,
+        )
+    )
 
 
 def _build_component_lock_token(
@@ -351,14 +353,34 @@ def _build_component_lock_token(
     component_slot: str,
     candidate_key: str,
 ) -> str:
-    digest = hashlib.sha256(
-        component_lock_token_bytes(
+    return mint_canonical_token(
+        "lock",
+        _component_lock_identity(
             run_id=run_id,
             rank=rank,
             component_family=component_family,
             component_id=component_id,
             component_slot=component_slot,
             candidate_key=candidate_key,
-        )
-    ).hexdigest()[:32]
-    return f"lock_{digest}"
+        ),
+    )
+
+
+def _component_lock_identity(
+    *,
+    run_id: str,
+    rank: int,
+    component_family: str,
+    component_id: str,
+    component_slot: str,
+    candidate_key: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": COMPONENT_LOCK_SCHEMA_VERSION,
+        "run_id": run_id,
+        "rank": rank,
+        "component_family": component_family,
+        "component_id": component_id,
+        "component_slot": component_slot,
+        "candidate_key": candidate_key,
+    }

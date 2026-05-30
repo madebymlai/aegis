@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from enum import Enum
@@ -9,7 +8,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from research.aegis_research.optimization.canonical_json import canonical_json_bytes
+from research.aegis_research.optimization.canonical import (
+    canonical_json_bytes,
+    mint_canonical_token,
+)
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -335,4 +337,4 @@ def canonical_value(value: Any) -> Any:
 
 
 def _candidate_key(identity: Mapping[str, Any]) -> str:
-    return "cand_" + hashlib.sha256(canonical_json_bytes(identity)).hexdigest()[:32]
+    return mint_canonical_token("cand", identity)
