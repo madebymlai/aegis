@@ -369,77 +369,27 @@ def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
     assert resolved.config.optimization.execute == {"engine": "threadpool", "chunk_len": "auto"}
 
 
-def test_run_accepts_component_lock_and_candidate_refs(tmp_path: Path) -> None:
+def test_run_rejects_per_component_lock_reference_fields(tmp_path: Path) -> None:
+    # ADR-0006 (aegis-rd-396.4): per-Component lock_id/candidate_id/run_id are gone;
+    # whole-Candidate reproduction lives on the top-level lock:. These are now unknown
+    # fields on a component ref.
     raw = _run_config()
     raw["strategy"] = {"id": "demo.strategy", "lock_id": "lock_strategy_best"}
     raw["indicators"] = [
         {"id": "demo.returns", "candidate_id": "cand_indicator_row", "run_id": "source-run"}
     ]
 
-    resolved = resolve_run_config(
-        raw,
-        component_registry=_component_registry(tmp_path),
-    )
-
-    assert resolved.config.strategy.lock_id == "lock_strategy_best"
-    assert resolved.config.strategy.candidate_id is None
-    assert resolved.config.indicators[0].candidate_id == "cand_indicator_row"
-    assert resolved.config.indicators[0].run_id == "source-run"
-
-
-def test_run_rejects_params_on_locked_component_refs(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["strategy"] = {"id": "demo.strategy", "lock_id": "lock_strategy_best", "params": {}}
-    raw["indicators"] = [
-        {
-            "id": "demo.returns",
-            "candidate_id": "cand_indicator_row",
-            "run_id": "source-run",
-            "params": {"window": 5},
-        }
-    ]
-
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
             raw,
             component_registry=_component_registry(tmp_path),
         )
 
-    assert "strategy.params" in str(error.value)
-    assert "indicators[0].params" in str(error.value)
-    assert "must not be set when lock_id or candidate_id is set" in str(error.value)
-
-
-def test_run_rejects_component_lock_and_candidate_together(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["strategy"] = {
-        "id": "demo.strategy",
-        "lock_id": "lock_strategy_best",
-        "candidate_id": "cand_strategy_row",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
-
-    assert "strategy" in str(error.value)
-    assert "mutually exclusive" in str(error.value)
-
-
-def test_run_rejects_candidate_ref_without_source_run_id(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["strategy"] = {"id": "demo.strategy", "candidate_id": "cand_strategy_row"}
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
-
-    assert "strategy.run_id" in str(error.value)
-    assert "required when candidate_id is set" in str(error.value)
+    message = str(error.value)
+    assert "strategy.lock_id" in message
+    assert "indicators[0].candidate_id" in message
+    assert "indicators[0].run_id" in message
+    assert "unknown field" in message
 
 
 def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) -> None:

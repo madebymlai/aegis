@@ -44,7 +44,9 @@ def test_component_ref_rejects_unknown_id(registry) -> None:
     ]
 
 
-def test_component_ref_rejects_lock_and_candidate_together(registry) -> None:
+def test_component_ref_rejects_per_component_lock_reference_fields(registry) -> None:
+    # ADR-0006 teardown: per-Component lock_id/candidate_id/run_id are gone; the only
+    # reference surface is the top-level lock:. These are now unknown fields.
     issues: list[ConfigValidationIssue] = []
     _validate_component_ref(
         "strategy",
@@ -53,9 +55,10 @@ def test_component_ref_rejects_lock_and_candidate_together(registry) -> None:
         issues,
         component_registry=registry,
     )
-    assert ("strategy", "lock_id and candidate_id are mutually exclusive") in [
-        (i.path, i.message) for i in issues
-    ]
+    flagged = {(i.path, i.message) for i in issues}
+    assert ("strategy.lock_id", "unknown field") in flagged
+    assert ("strategy.candidate_id", "unknown field") in flagged
+    assert ("strategy.run_id", "unknown field") in flagged
 
 
 def test_indicator_refs_flag_duplicate_component_id(registry) -> None:

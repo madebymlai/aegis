@@ -305,7 +305,7 @@ def _build_runtime(
     force_locked: bool = False,
 ) -> _ComponentRuntime:
     definition = component_registry.get(ComponentSelection(family, ref.id))
-    locked = _is_locked(ref) or force_locked
+    locked = force_locked
     param_space_callable_name = (
         None if locked else getattr(definition.manifest, "param_space_callable", None)
     )
@@ -358,7 +358,7 @@ def _fixed_params_for_ref(
     param_space: Mapping[str, vbt.Param],
     force_locked: bool = False,
 ) -> dict[str, Any]:
-    if _is_locked(ref) or force_locked:
+    if force_locked:
         key = component_ref_key(family, definition.id, slot)
         try:
             fixed = dict(resolved_component_params[key])
@@ -380,10 +380,6 @@ def _fixed_params_for_ref(
             f"component {family}/{definition.id} fixed params are not declared: {unknown}"
         )
     return fixed
-
-
-def _is_locked(ref: RunSourceRefConfig | RunIndicatorSourceConfig) -> bool:
-    return ref.lock_id is not None or ref.candidate_id is not None
 
 
 def _load_param_space(
@@ -628,8 +624,6 @@ def _runtime_evidence(runtime: _ComponentRuntime) -> dict[str, Any]:
         "id": runtime.definition.id,
         "version": runtime.definition.manifest.version,
         **runtime.definition.identity.public(),
-        "lock_id": runtime.ref.lock_id,
-        "candidate_id": runtime.ref.candidate_id,
         "fixed_params": to_builtin(runtime.fixed_params),
         "param_keys": dict(runtime.param_keys),
         "param_mode": _param_mode(runtime),

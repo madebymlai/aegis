@@ -181,18 +181,12 @@ class ReportConfig:
 @dataclass(frozen=True)
 class RunSourceRefConfig:
     id: str
-    lock_id: str | None = None
-    candidate_id: str | None = None
-    run_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class RunIndicatorSourceConfig:
     id: str
-    lock_id: str | None = None
-    candidate_id: str | None = None
-    run_id: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
 

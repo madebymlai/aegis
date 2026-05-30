@@ -84,12 +84,14 @@ def test_sample_lock_config_loads_and_validates(config_name: str, registry) -> N
 def test_sample_lock_config_has_no_per_component_lock_reference(
     config_name: str, registry
 ) -> None:
+    # ADR-0006 (aegis-rd-396.4): the per-Component lock reference surface is gone from
+    # the schema entirely — so the migrated configs cannot carry one.
     config = load_run_config(_config_path(config_name), component_registry=registry).config
     refs = (config.strategy, *config.indicators)
     for ref in refs:
         for field in _LOCK_REF_FIELDS:
-            assert getattr(ref, field) is None, (
-                f"{config_name}: {ref.id} still carries per-Component {field}"
+            assert not hasattr(ref, field), (
+                f"{config_name}: {ref.id} still exposes per-Component {field}"
             )
 
 

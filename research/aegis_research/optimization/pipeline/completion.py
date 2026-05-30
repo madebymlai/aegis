@@ -50,8 +50,6 @@ def run_pipeline_completion(
     split_result: Any,
     run_evidence: RunEvidence,
     candidate_rows: list[Mapping[str, Any]],
-    resolved_locks: list[Mapping[str, Any]],
-    lock_records: list[Mapping[str, Any]],
     candidate_store_provenance: Mapping[str, Any],
     store_path: Path,
     store_namespace: Mapping[str, str],
@@ -60,8 +58,8 @@ def run_pipeline_completion(
     """Write the strategy artifact, complete the run, and activate candidates.
 
     Returns the final run result dict with run refs, artifact metadata,
-    candidate store path, lock records, optimization summary, and the three
-    representative candidates.
+    candidate store path, optimization summary, and the three representative
+    candidates.
     """
     try:
         optimization_evidence = run_evidence.optimization()
@@ -79,8 +77,6 @@ def run_pipeline_completion(
             preflight=optimization_evidence["preflight"],
             execution=dict(optimization_evidence.get("execution", {})),
             candidates=[to_builtin(record) for record in candidate_rows],
-            resolved_locks=resolved_locks,
-            lock_records=lock_records,
             candidate_store_path=store_namespace["path"],
             candidate_store_provenance=candidate_store_provenance,
             metric_registry_fingerprint=metric_registry_fingerprint,
@@ -93,7 +89,6 @@ def run_pipeline_completion(
             recorder=recorder,
             split_result=split_result,
             candidate_rows=candidate_rows,
-            lock_records=lock_records,
             store_path=store_path,
         )
     except Exception as error:
@@ -107,7 +102,6 @@ def _completion_result(
     recorder: RunRecorder,
     split_result: Any,
     candidate_rows: list[Mapping[str, Any]],
-    lock_records: list[Mapping[str, Any]],
     store_path: Path,
 ) -> dict[str, Any]:
     ranking_metric = config.ranking.metric
@@ -117,7 +111,6 @@ def _completion_result(
         "strategy_artifact_id": "strategy.run",
         "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
         "candidate_store_path": str(store_path),
-        "locks": lock_records,
         "optimization": {
             "ranking_metric": ranking_metric,
             "min_weight": config.ranking.min_weight,

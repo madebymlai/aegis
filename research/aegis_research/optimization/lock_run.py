@@ -6,8 +6,8 @@ primary key ``(run_id, candidate_key)``. This deep module is the single seam bet
 loads the Candidate by its primary key and fans the Candidate's parameters across every
 Component the Candidate was produced from, using the existing component-param slicing.
 
-It is independent of the legacy per-Component lock machinery (``lock_resolution``), which
-this slice leaves untouched and coexisting.
+It is the only Lock-resolution path: the legacy per-Component lock machinery is gone
+(ADR-0006, Forward-First — no compat shim).
 """
 
 from __future__ import annotations

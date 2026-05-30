@@ -67,7 +67,6 @@ def test_pipeline_setup_returns_expected_keys(
     expected_keys = {
         "store_path",
         "resolved_component_params",
-        "resolved_locks",
         "locked",
         "optimization_source",
         "strategy_evidence",
@@ -105,7 +104,7 @@ def test_pipeline_setup_evidence_baseline_shape(
     assert "source" in evidence
     assert "param_names" in evidence
     assert evidence["open_prices_available"] is True
-    assert "resolved_locks" in evidence
+    assert "resolved_locks" not in evidence
 
 
 def test_pipeline_setup_store_path_matches_candidate_store(

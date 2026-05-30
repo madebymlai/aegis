@@ -22,7 +22,6 @@ class EvidenceSection(StrEnum):
     PREFLIGHT = "preflight"
     EXECUTION = "execution"
     CANDIDATES = "candidates"
-    LOCKS = "locks"
 
 
 class EvidenceFailureStage(StrEnum):

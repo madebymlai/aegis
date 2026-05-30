@@ -1,6 +1,6 @@
 """Pipeline setup stage.
 
-Resolves component locks, builds the optimization source and
+Resolves the optional top-level Lock, builds the optimization source and
 evidence baseline for the strategy sweep.
 """
 
@@ -37,9 +37,6 @@ from research.aegis_research.optimization.evidence_ledger import (
 from research.aegis_research.optimization.lock_param_override import (
     overridden_component_params,
 )
-from research.aegis_research.optimization.lock_resolution import (
-    resolve_component_locks,
-)
 from research.aegis_research.optimization.lock_run import (
     ResolvedLockRun,
     resolve_lock_run,
@@ -63,10 +60,10 @@ def run_pipeline_setup(
     metric_registry_fingerprint: str | None,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
-    """Resolve locks, build the optimization source, and construct the evidence baseline.
+    """Resolve the Lock, build the optimization source, and construct the evidence baseline.
 
     Returns a dict with keys:
-        store_path, resolved_component_params, resolved_locks,
+        store_path, resolved_component_params, locked,
         optimization_source, strategy_evidence, close, split_result,
         optimization_builtin, portfolio_builtin.
     """
@@ -74,17 +71,12 @@ def run_pipeline_setup(
     lock_run = _resolve_lock_run(config, store_path=store_path)
     if lock_run is not None:
         # A locked Run reproduces one prior Candidate: every Component takes its
-        # params from that Candidate and nothing is optimized. The old per-Component
-        # lock path is bypassed (a locked config carries no per-Component refs).
+        # params from that Candidate and nothing is optimized.
         resolved_component_params = dict(lock_run.component_params)
-        resolved_locks: list[dict[str, Any]] = []
         force_locked = True
         lock_evidence = _lock_evidence(config, lock_run)
     else:
-        resolved_component_params, resolved_locks = resolve_component_locks(
-            config,
-            candidate_store_path=store_path,
-        )
+        resolved_component_params = {}
         force_locked = False
         lock_evidence = None
     optimization_source = build_component_optimization_source(
@@ -108,14 +100,12 @@ def run_pipeline_setup(
             data_result=data_result,
             array_contract=array_contract,
             metric_registry_fingerprint=metric_registry_fingerprint,
-            resolved_locks=resolved_locks,
             lock_evidence=lock_evidence,
         )
     )
     return {
         "store_path": store_path,
         "resolved_component_params": resolved_component_params,
-        "resolved_locks": resolved_locks,
         "locked": lock_run is not None,
         "optimization_source": optimization_source,
         "strategy_evidence": strategy_evidence,
@@ -157,7 +147,6 @@ def _optimization_evidence_baseline(
     data_result: MarketDataResult,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
-    resolved_locks: list[Mapping[str, Any]],
     lock_evidence: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     return {
@@ -170,6 +159,5 @@ def _optimization_evidence_baseline(
         "data": build_run_data_evidence_payload(data_result, array_contract),
         "metric_registry_fingerprint": metric_registry_fingerprint,
         "open_prices_available": True,
-        "resolved_locks": resolved_locks,
         "lock": lock_evidence,
     }
