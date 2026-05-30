@@ -21,7 +21,7 @@ from research.aegis_research.optimization.component_source import (
     component_params_from_slices,
     component_ref_key,
 )
-from research.aegis_research.optimization.evidence import canonical_json_bytes
+from research.aegis_research.optimization.canonical_json import canonical_json_bytes
 from research.aegis_research.optimization.source import OptimizationSourceError
 
 COMPONENT_LOCK_SCHEMA_VERSION = "component_lock.v1"

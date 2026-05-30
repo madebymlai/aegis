@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from enum import Enum
@@ -10,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from research.aegis_research.optimization.canonical_json import canonical_json_bytes
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -293,11 +293,6 @@ def _canonical_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
 def canonical_params_key(params: Mapping[str, Any]) -> str:
     canonical = {str(key): canonical_value(params[key]) for key in sorted(params)}
     return canonical_json_bytes(canonical).decode()
-
-
-def canonical_json_bytes(value: Any) -> bytes:
-    """Canonical JSON bytes used as stable hash material for durable identities."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
 def canonical_value(value: Any) -> Any:
