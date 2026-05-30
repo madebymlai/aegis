@@ -11,13 +11,49 @@ from research.aegis_research.config import (
     DataQualityConfig,
     SignalConfig,
 )
+from research.aegis_research.market_data import loading as data_loading
 from research.aegis_research.data import (
+    DataDiagnostics,
+    DataFeatureDiagnostics,
     MarketDataAdapterResult,
     RemoteDataPullError,
     assert_public_metadata_safe,
     load_market_data_result,
     required_experiment_ohlcv_features,
 )
+
+
+def test_quality_verdict_is_derived_from_typed_diagnostics_without_panels() -> None:
+    quality = data_loading._quality_from_diagnostics(
+        DataConfig(source="diagnostic", symbols=["SYN"], arrays=["Close"]),
+        (
+            DataDiagnostics(
+                symbol="SYN",
+                configured=True,
+                features={
+                    "Close": DataFeatureDiagnostics(
+                        available=True,
+                        rows=3,
+                        missing=1,
+                        numeric=False,
+                    )
+                },
+                index_evidence={
+                    "raw_index_has_duplicates": True,
+                    "raw_index_monotonic_increasing": False,
+                },
+            ),
+        ),
+        required_features=("Close",),
+    )
+
+    assert quality.state == "rejected"
+    assert quality.reasons == (
+        "raw data index contains duplicate timestamps",
+        "raw data index is not monotonic increasing",
+        "required feature 'Close' contains missing values",
+        "required feature 'Close' has non-numeric symbols ['SYN']",
+    )
 
 
 def test_duplicate_csv_index_is_rejected_before_vectorbt_normalizes(tmp_path: Path) -> None:
