@@ -177,20 +177,28 @@ def test_manifest_rejects_unsafe_artifact_paths(tmp_path: Path, path: str) -> No
         )
 
 
-def test_atomic_write_json_uses_shared_canonical_json_bytes(tmp_path: Path) -> None:
+def test_atomic_write_json_keeps_manifest_pretty_but_hashes_compact_bytes(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "manifest.json"
     payload = {"b": 2, "a": 1}
 
     atomic_write_json(target, payload)
     written_bytes = target.read_bytes()
 
-    assert written_bytes == canonical_json_bytes(payload)
-    assert written_bytes == b'{"a":1,"b":2}'
-
-
-def test_canonical_hash_uses_shared_canonical_json_bytes() -> None:
-    assert canonical_hash({"b": 2, "a": 1}) == (
+    assert written_bytes == canonical_json_bytes(payload, indent=2)
+    assert written_bytes == b'{\n  "a": 1,\n  "b": 2\n}'
+    assert canonical_hash(payload) == (
         "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    )
+
+
+def test_canonical_hash_serializes_non_finite_values_as_null() -> None:
+    payload = {"value": float("nan")}
+
+    assert canonical_json_bytes(payload) == b'{"value":null}'
+    assert canonical_hash(payload) == (
+        "1c197daef20de3f47eec5e2f735ec6669869d3180cc29f35be4788511e0af0f8"
     )
 
 

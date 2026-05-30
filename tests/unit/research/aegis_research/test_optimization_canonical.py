@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from research.aegis_research.optimization.canonical import (
-    canonical_json_bytes,
-    mint_canonical_token,
-)
+from research.aegis_research.canonical_json import canonical_json_bytes
+from research.aegis_research.optimization.canonical import mint_canonical_token
 
 
 def test_mint_canonical_token_uses_stable_json_digest() -> None:
