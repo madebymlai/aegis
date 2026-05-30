@@ -14,10 +14,8 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
 )
-from research.aegis_research.optimization.canonical import (
-    canonical_json_bytes,
-    mint_canonical_token,
-)
+from research.aegis_research.canonical_json import canonical_json_bytes as _canonical_json_bytes
+from research.aegis_research.optimization.canonical import mint_canonical_token
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
     component_param_slices,
@@ -340,7 +338,7 @@ def component_lock_token_bytes(
         component_slot=component_slot,
         candidate_key=candidate_key,
     )
-    return canonical_json_bytes(identity)
+    return _canonical_json_bytes(identity)
 
 
 def _build_component_lock_token(

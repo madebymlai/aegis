@@ -8,10 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from research.aegis_research.optimization.canonical import (
-    canonical_json_bytes,
-    mint_canonical_token,
-)
+from research.aegis_research.canonical_json import canonical_json_bytes as _canonical_json_bytes
+from research.aegis_research.optimization.canonical import mint_canonical_token
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -294,7 +292,7 @@ def _canonical_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def canonical_params_key(params: Mapping[str, Any]) -> str:
     canonical = {str(key): canonical_value(params[key]) for key in sorted(params)}
-    return canonical_json_bytes(canonical).decode()
+    return _canonical_json_bytes(canonical).decode()
 
 
 def canonical_value(value: Any) -> Any:
