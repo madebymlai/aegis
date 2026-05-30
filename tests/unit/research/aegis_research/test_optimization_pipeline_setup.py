@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
+from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
@@ -13,6 +14,16 @@ from research.aegis_research.optimization.run_data_contract import (
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
+
+
+def _run_evidence() -> RunEvidence:
+    return RunEvidence(
+        {},
+        component_registry_fingerprint="registry-fp",
+        data_arrays={},
+        optimization={},
+        persist=lambda: None,
+    )
 
 
 def test_pipeline_setup_returns_expected_keys(
@@ -48,6 +59,7 @@ def test_pipeline_setup_returns_expected_keys(
         data_result=_FakeDataResult(),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
+        run_evidence=_run_evidence(),
     )
 
     expected_keys = {
@@ -61,7 +73,6 @@ def test_pipeline_setup_returns_expected_keys(
         "split_result",
         "optimization_builtin",
         "portfolio_builtin",
-        "optimization_evidence",
     }
     assert set(result.keys()) == expected_keys
 
@@ -69,7 +80,7 @@ def test_pipeline_setup_returns_expected_keys(
 def test_pipeline_setup_evidence_baseline_shape(
     tmp_path: Path,
 ) -> None:
-    """optimization_evidence includes schema, contract, source, and param_names."""
+    """run evidence includes schema, contract, source, and param_names."""
     resolved = build_resolved_run_config(tmp_path)
     config = resolved.config
     array_contract = build_run_data_array_contract(config, resolved.component_registry)
@@ -92,16 +103,18 @@ def test_pipeline_setup_evidence_baseline_shape(
             "shape": {"rows": 120},
         }
 
-    result = run_pipeline_setup(
+    run_evidence = _run_evidence()
+    run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
         data_result=_FakeDataResult(),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
+        run_evidence=run_evidence,
     )
 
-    evidence = result["optimization_evidence"]
+    evidence = run_evidence.optimization()
     assert evidence["schema_version"] == "optimization_route.v1"
     assert "contract" in evidence
     assert "source" in evidence
@@ -143,6 +156,7 @@ def test_pipeline_setup_store_path_matches_candidate_store(
         data_result=_FakeDataResult(),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
+        run_evidence=_run_evidence(),
     )
 
     assert result["store_path"] == candidate_store_path(config)

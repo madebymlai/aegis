@@ -28,6 +28,7 @@ from research.aegis_research.optimization.candidate_publishing import (
 from research.aegis_research.optimization.component_source import (
     build_component_optimization_source,
 )
+from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.lock_resolution import (
     resolve_component_locks,
 )
@@ -48,13 +49,14 @@ def run_pipeline_setup(
     data_result: MarketDataResult,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
+    run_evidence: RunEvidence,
 ) -> dict[str, Any]:
     """Resolve locks, build the optimization source, and construct the evidence baseline.
 
     Returns a dict with keys:
         store_path, resolved_component_params, resolved_locks,
         optimization_source, strategy_evidence, close, split_result,
-        optimization_builtin, portfolio_builtin, optimization_evidence.
+        optimization_builtin, portfolio_builtin.
     """
     store_path = candidate_store_path(config)
     resolved_component_params, resolved_locks = resolve_component_locks(
@@ -73,18 +75,20 @@ def run_pipeline_setup(
     split_result = build_run_splits_result(close.index, config.optimization.split)
     optimization_builtin = to_builtin(config.optimization)
     portfolio_builtin = to_builtin(config.portfolio)
-    optimization_evidence: dict[str, Any] = {
-        "schema_version": "optimization_route.v1",
-        "contract": OPTIMIZATION_SOURCE_CONTRACT,
-        "source": optimization_source.evidence,
-        "param_names": list(optimization_source.params),
-        "optimization": optimization_builtin,
-        "split": split_result.metadata,
-        "data": build_run_data_evidence_payload(data_result, array_contract),
-        "metric_registry_fingerprint": metric_registry_fingerprint,
-        "open_prices_available": True,
-        "resolved_locks": resolved_locks,
-    }
+    run_evidence.initialize_optimization(
+        {
+            "schema_version": "optimization_route.v1",
+            "contract": OPTIMIZATION_SOURCE_CONTRACT,
+            "source": optimization_source.evidence,
+            "param_names": list(optimization_source.params),
+            "optimization": optimization_builtin,
+            "split": split_result.metadata,
+            "data": build_run_data_evidence_payload(data_result, array_contract),
+            "metric_registry_fingerprint": metric_registry_fingerprint,
+            "open_prices_available": True,
+            "resolved_locks": resolved_locks,
+        }
+    )
     return {
         "store_path": store_path,
         "resolved_component_params": resolved_component_params,
@@ -96,5 +100,4 @@ def run_pipeline_setup(
         "split_result": split_result,
         "optimization_builtin": optimization_builtin,
         "portfolio_builtin": portfolio_builtin,
-        "optimization_evidence": optimization_evidence,
     }

@@ -27,6 +27,10 @@ from research.aegis_research.optimization.evidence import (
     candidate_held_out_headline,
     held_out_warning,
 )
+from research.aegis_research.optimization.evidence_ledger import (
+    EvidenceFailureStage,
+    RunEvidence,
+)
 from research.aegis_research.optimization.run_artifacts import (
     build_strategy_artifact_payload,
     write_strategy_artifact,
@@ -44,7 +48,7 @@ def run_pipeline_completion(
     optimization_builtin: Mapping[str, Any],
     portfolio_builtin: Mapping[str, Any],
     split_result: Any,
-    optimization_evidence: Mapping[str, Any],
+    run_evidence: RunEvidence,
     candidate_rows: list[Mapping[str, Any]],
     resolved_locks: list[Mapping[str, Any]],
     lock_records: list[Mapping[str, Any]],
@@ -59,50 +63,55 @@ def run_pipeline_completion(
     candidate store path, lock records, optimization summary, and the three
     representative candidates.
     """
-    artifact_payload = build_strategy_artifact_payload(
-        strategy_evidence=strategy_evidence,
-        data_result=data_result,
-        array_contract=array_contract,
-        ranking={
-            "metric": config.ranking.metric,
-            "min_weight": config.ranking.min_weight,
-        },
-        portfolio=portfolio_builtin,
-        optimization=optimization_builtin,
-        split_metadata=split_result.metadata,
-        preflight=optimization_evidence["preflight"],
-        execution=dict(optimization_evidence.get("execution", {})),
-        candidates=[to_builtin(record) for record in candidate_rows],
-        resolved_locks=resolved_locks,
-        lock_records=lock_records,
-        candidate_store_path=store_namespace["path"],
-        candidate_store_provenance=candidate_store_provenance,
-        metric_registry_fingerprint=metric_registry_fingerprint,
-    )
-    write_strategy_artifact(recorder, artifact_payload)
-    recorder.mark_run_completed()
-    activate_candidate_run(store_path, recorder.manifest.run_id)
-    ranking_metric = config.ranking.metric
-    best_row = next(row for row in candidate_rows if row["role"] == "best")
-    return {
-        **build_run_refs(recorder),
-        "strategy_artifact_id": "strategy.run",
-        "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
-        "candidate_store_path": str(store_path),
-        "locks": lock_records,
-        "optimization": {
-            "ranking_metric": ranking_metric,
-            "min_weight": config.ranking.min_weight,
-            "split_count": split_result.metadata["n_splits"],
-            "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
-            "held_out_warning": held_out_warning(
-                candidate_held_out_headline(best_row, metric=ranking_metric)
-            ),
-        },
-        "candidates": [
-            _candidate_summary(row, ranking_metric=ranking_metric) for row in candidate_rows
-        ],
-    }
+    try:
+        optimization_evidence = run_evidence.optimization()
+        artifact_payload = build_strategy_artifact_payload(
+            strategy_evidence=strategy_evidence,
+            data_result=data_result,
+            array_contract=array_contract,
+            ranking={
+                "metric": config.ranking.metric,
+                "min_weight": config.ranking.min_weight,
+            },
+            portfolio=portfolio_builtin,
+            optimization=optimization_builtin,
+            split_metadata=split_result.metadata,
+            preflight=optimization_evidence["preflight"],
+            execution=dict(optimization_evidence.get("execution", {})),
+            candidates=[to_builtin(record) for record in candidate_rows],
+            resolved_locks=resolved_locks,
+            lock_records=lock_records,
+            candidate_store_path=store_namespace["path"],
+            candidate_store_provenance=candidate_store_provenance,
+            metric_registry_fingerprint=metric_registry_fingerprint,
+        )
+        write_strategy_artifact(recorder, artifact_payload)
+        recorder.mark_run_completed()
+        activate_candidate_run(store_path, recorder.manifest.run_id)
+        ranking_metric = config.ranking.metric
+        best_row = next(row for row in candidate_rows if row["role"] == "best")
+        return {
+            **build_run_refs(recorder),
+            "strategy_artifact_id": "strategy.run",
+            "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
+            "candidate_store_path": str(store_path),
+            "locks": lock_records,
+            "optimization": {
+                "ranking_metric": ranking_metric,
+                "min_weight": config.ranking.min_weight,
+                "split_count": split_result.metadata["n_splits"],
+                "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
+                "held_out_warning": held_out_warning(
+                    candidate_held_out_headline(best_row, metric=ranking_metric)
+                ),
+            },
+            "candidates": [
+                _candidate_summary(row, ranking_metric=ranking_metric) for row in candidate_rows
+            ],
+        }
+    except Exception as error:
+        run_evidence.fail(EvidenceFailureStage.COMPLETION, error)
+        raise
 
 
 def _candidate_summary(row: Mapping[str, Any], *, ranking_metric: str) -> dict[str, Any]:

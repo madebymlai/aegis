@@ -61,6 +61,11 @@ class RunEvidence:
         self._manifest_evidence.update(manifest_payload)
         self._optimization = optimization_payload
 
+    def initialize_optimization(self, payload: Mapping[str, Any]) -> None:
+        optimization_payload = _normalize_optimization_payload(payload)
+        self._optimization.clear()
+        self._optimization.update(optimization_payload)
+
     def record(self, section: EvidenceSection, payload: Any) -> None:
         if not isinstance(section, EvidenceSection):
             raise TypeError("section must be an EvidenceSection")
@@ -68,6 +73,9 @@ class RunEvidence:
         self._optimization[section.value] = builtin_payload
         if section is EvidenceSection.CANDIDATES:
             self._optimization["candidate_count"] = _candidate_count(builtin_payload)
+
+    def optimization(self) -> dict[str, Any]:
+        return to_builtin(self._optimization)
 
     def fail(self, stage: EvidenceFailureStage, err: BaseException) -> None:
         if not isinstance(stage, EvidenceFailureStage):

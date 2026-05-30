@@ -7,6 +7,7 @@ from typing import Any
 
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import component_param_key
+from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -86,11 +87,21 @@ def _result() -> OptimizationResult:
     )
 
 
+def _run_evidence(recorder: _FakeRecorder) -> RunEvidence:
+    return RunEvidence(
+        recorder.manifest.evidence,
+        component_registry_fingerprint="registry-fp",
+        data_arrays={},
+        optimization={"schema_version": "optimization_route.v1"},
+        persist=lambda: None,
+    )
+
+
 def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) -> None:
     config = build_resolved_run_config(tmp_path).config
     recorder = _FakeRecorder("run-pub")
     store_path = tmp_path / "candidates.sqlite3"
-    optimization_evidence: dict[str, Any] = {"schema_version": "optimization_route.v1"}
+    run_evidence = _run_evidence(recorder)
 
     out = run_pipeline_publishing(
         config=config,
@@ -100,7 +111,7 @@ def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) ->
         optimization_source=_FakeSource(),
         optimization_result=_result(),
         portfolio_builtin={"fees": 0.001},
-        optimization_evidence=optimization_evidence,
+        run_evidence=run_evidence,
         store_path=store_path,
         metric_registry_fingerprint="fp-test",
     )
@@ -110,7 +121,6 @@ def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) ->
     assert [row["rank"] for row in candidate_rows] == [1, 2, 3]
 
     manifest_optimization = recorder.manifest.evidence["optimization"]
-    assert manifest_optimization is optimization_evidence
     assert [row["role"] for row in manifest_optimization["candidates"]] == [
         "best",
         "median",
@@ -123,6 +133,7 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
     config = build_resolved_run_config(tmp_path).config
     recorder = _FakeRecorder("run-pub")
     store_path = tmp_path / "candidates.sqlite3"
+    run_evidence = _run_evidence(recorder)
 
     run_pipeline_publishing(
         config=config,
@@ -132,7 +143,7 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
         optimization_source=_FakeSource(),
         optimization_result=_result(),
         portfolio_builtin={"fees": 0.001},
-        optimization_evidence={},
+        run_evidence=run_evidence,
         store_path=store_path,
         metric_registry_fingerprint=None,
     )
