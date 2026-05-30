@@ -11,6 +11,7 @@ from research.aegis_research.optimization.evidence import (
     candidate_held_out_headline,
     candidate_rows_from_param_index,
     candidate_rows_from_result,
+    canonical_json_bytes,
     canonical_params_key,
     held_out_warning,
     result_evidence,
@@ -161,6 +162,34 @@ def test_candidate_key_includes_hidden_source_and_portfolio_identity() -> None:
     assert base["candidate_key"] != different_hidden["candidate_key"]
     assert base["candidate_key"] != different_source["candidate_key"]
     assert base["candidate_key"] != different_portfolio["candidate_key"]
+
+
+def test_candidate_identity_golden_bytes_pin() -> None:
+    index = pd.MultiIndex.from_tuples([(14, 100, 40.0)], names=["rsi_window", "ma_window", "entry"])
+
+    row = candidate_rows_from_param_index(
+        index,
+        source_identity={"source": "component", "id": "demo.rsi", "source_hash": "abc123"},
+        data_identity={
+            "source": "synthetic",
+            "symbols": ["SYN", "ALT"],
+            "timeframe": "1D",
+            "index_start": "2026-01-01",
+            "index_end": "2026-01-31",
+        },
+        hidden_params={"execution": "next_open"},
+        portfolio_policy={"fees": 0.001, "target_exposure_cap": 1.0},
+    )[0]
+
+    assert canonical_json_bytes(row["identity"]) == (
+        b'{"data_identity":{"index_end":"2026-01-31","index_start":"2026-01-01",'
+        b'"source":"synthetic","symbols":["SYN","ALT"],"timeframe":"1D"},'
+        b'"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
+        b'"ma_window":100,"rsi_window":14},"portfolio_policy":{"fees":0.001,'
+        b'"target_exposure_cap":1.0},"schema_version":"candidate_identity.v2",'
+        b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
+    )
+    assert row["candidate_key"] == "cand_a4d2faf9f2e93b1edb4a5f1016381c3f"
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:

@@ -292,7 +292,12 @@ def _canonical_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def canonical_params_key(params: Mapping[str, Any]) -> str:
     canonical = {str(key): canonical_value(params[key]) for key in sorted(params)}
-    return json.dumps(canonical, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return canonical_json_bytes(canonical).decode()
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    """Canonical JSON bytes used as stable hash material for durable identities."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
 def canonical_value(value: Any) -> Any:
@@ -335,5 +340,4 @@ def canonical_value(value: Any) -> Any:
 
 
 def _candidate_key(identity: Mapping[str, Any]) -> str:
-    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    return "cand_" + hashlib.sha256(payload.encode()).hexdigest()[:32]
+    return "cand_" + hashlib.sha256(canonical_json_bytes(identity)).hexdigest()[:32]

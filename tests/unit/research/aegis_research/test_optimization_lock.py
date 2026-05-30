@@ -10,12 +10,39 @@ from research.aegis_research.optimization.evidence import candidate_rows_from_re
 from research.aegis_research.optimization.lock_resolution import (
     ComponentLockRef,
     LockResolutionError,
+    build_component_lock_records,
+    component_lock_token_bytes,
     resolve_component_lock,
 )
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+
+
+def test_component_lock_identity_golden_bytes_pin() -> None:
+    candidate = _candidate_rows()[0]
+
+    record = build_component_lock_records(
+        run_id="run-a",
+        best_candidate=candidate,
+        optimization_source=_source_evidence(),
+    )[0]
+
+    assert component_lock_token_bytes(
+        run_id="run-a",
+        rank=1,
+        component_family="strategies",
+        component_id="demo.ma_cross",
+        component_slot="strategy:demo.ma_cross",
+        candidate_key=candidate["candidate_key"],
+    ) == (
+        b'{"candidate_key":"cand_7e175c0267fe6bcd22c8551907f72766",'
+        b'"component_family":"strategies","component_id":"demo.ma_cross",'
+        b'"component_slot":"strategy:demo.ma_cross","rank":1,"run_id":"run-a",'
+        b'"schema_version":"component_lock.v1"}'
+    )
+    assert record["token"] == "lock_0c4dfb0a67e5cd25d7ccb857816875ae"
 
 
 def test_resolves_lock_id_for_matching_component(tmp_path: Path) -> None:
