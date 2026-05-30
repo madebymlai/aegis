@@ -65,18 +65,20 @@ def safe_native_data_metadata(native_object: Any, *, source: str) -> dict[str, A
     omitted: list[dict[str, str]] = []
     metadata: dict[str, Any] = {}
     for name in _SAFE_NATIVE_METADATA_FIELDS:
-        if hasattr(native_object, name):
-            _project_safe_field(metadata, omitted, name, getattr(native_object, name))
+        if (value := _get_optional_attr(native_object, name)) is not _MISSING:
+            _project_safe_field(metadata, omitted, name, value)
     for name, allowed_keys in _SAFE_PROVIDER_METADATA_MAPPINGS:
-        if hasattr(native_object, name):
-            projected = _project_provider_mapping(
-                getattr(native_object, name),
-                allowed_keys=allowed_keys,
-                omitted=omitted,
-                path=name,
-            )
-            if projected:
-                metadata[name] = projected
+        value = _get_optional_attr(native_object, name)
+        if value is _MISSING:
+            continue
+        projected = _project_provider_mapping(
+            value,
+            allowed_keys=allowed_keys,
+            omitted=omitted,
+            path=name,
+        )
+        if projected:
+            metadata[name] = projected
     metadata["source"] = source
     metadata["class"] = f"{type(native_object).__module__}.{type(native_object).__qualname__}"
     return {"metadata": metadata, "omitted": omitted}
@@ -85,7 +87,7 @@ def safe_native_data_metadata(native_object: Any, *, source: str) -> dict[str, A
 def supports_update(native_data: Any) -> bool:
     if getattr(native_data, "feature_oriented", False):
         return _overrides_vectorbt_update_method(native_data, "update_feature")
-    if hasattr(native_data, "symbol_oriented") or hasattr(native_data, "symbols"):
+    if _declares_symbol_orientation(native_data):
         return _overrides_vectorbt_update_method(native_data, "update_symbol")
     return _overrides_vectorbt_update_method(native_data, "update")
 
@@ -131,7 +133,19 @@ class _Omitted:
     pass
 
 
+class _Missing:
+    pass
+
+
 _OMITTED = _Omitted()
+_MISSING = _Missing()
+
+
+def _get_optional_attr(native_object: Any, name: str) -> Any:
+    try:
+        return getattr(native_object, name)
+    except AttributeError:
+        return _MISSING
 
 
 def _safe_public_value(value: Any, *, omitted: list[dict[str, str]], path: str) -> Any:
@@ -178,6 +192,19 @@ def _contains_secret_material(value: str, *, known_secrets: tuple[str, ...] = ()
 
 def _is_secret_or_denied_key(key: str) -> bool:
     return bool(SECRET_KEY_RE.search(key)) or key.lower() in DENIED_PASSTHROUGH_KEYS
+
+
+def _declares_symbol_orientation(native_data: Any) -> bool:
+    if any(
+        "symbol_oriented" in vars(cls) or "symbols" in vars(cls)
+        for cls in type(native_data).mro()
+    ):
+        return True
+    try:
+        values = vars(native_data)
+    except TypeError:
+        return False
+    return "symbol_oriented" in values or "symbols" in values
 
 
 def _overrides_vectorbt_update_method(native_data: Any, method_name: str) -> bool:

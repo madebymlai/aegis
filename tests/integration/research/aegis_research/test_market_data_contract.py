@@ -14,6 +14,7 @@ from research.aegis_research.data import (
     OHLCV_FEATURES,
     QUALITY_HEALTHY,
     REMOTE_DATA_CLASSES,
+    DataDiagnostics,
     MarketDataAdapterResult,
     MarketDataBundle,
     RemoteDataPullError,
@@ -31,10 +32,25 @@ def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
 
     assert result.native_data.feature_oriented
     assert result.quality.state == "healthy"
-    assert {row["symbol"] for row in result.diagnostics} == {"AAA", "BBB"}
+    assert {row.symbol for row in result.diagnostics} == {"AAA", "BBB"}
     assert result.metadata["quality"]["state"] == "healthy"
     assert close_from_ohlcv(result).shape == (10, 2)
     assert bundle.feature("Close").equals(result.feature("Close"))
+
+
+def test_result_exposes_typed_diagnostics_and_observes_native_metadata_once() -> None:
+    native_data = _CountingMetadataData()
+
+    result = load_market_data_result(
+        DataConfig(source="counting", symbols=["SYN"], arrays=["Close"]),
+        adapters={"counting": lambda _config: MarketDataAdapterResult(native_data=native_data)},
+    )
+
+    assert isinstance(result.diagnostics[0], DataDiagnostics)
+    assert result.metadata["diagnostics"] == [
+        diagnostic.to_metadata() for diagnostic in result.diagnostics
+    ]
+    assert native_data.read_counts == {"index": 1, "features": 1, "symbols": 1}
 
 
 def test_market_data_bundle_can_resolve_named_features() -> None:
@@ -345,6 +361,32 @@ def test_future_provider_adapter_uses_same_result_contract() -> None:
 
 def test_required_features_default_to_close() -> None:
     assert required_ohlcv_features() == ("Close",)
+
+
+class _CountingMetadataData:
+    def __init__(self) -> None:
+        self.read_counts = {"index": 0, "features": 0, "symbols": 0}
+        self._index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
+
+    @property
+    def index(self) -> pd.DatetimeIndex:
+        self.read_counts["index"] += 1
+        return self._index
+
+    @property
+    def features(self) -> list[str]:
+        self.read_counts["features"] += 1
+        return ["Close"]
+
+    @property
+    def symbols(self) -> list[str]:
+        self.read_counts["symbols"] += 1
+        return ["SYN"]
+
+    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
+        if feature not in {None, "Close"}:
+            raise ValueError(feature)
+        return pd.DataFrame({"SYN": [1.0, 2.0, 3.0]}, index=self._index)
 
 
 class _DemoRemoteData:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from warnings import warn
@@ -28,6 +29,8 @@ from research.aegis_research.market_data.contracts import (
     QUALITY_HEALTHY,
     QUALITY_PROVIDER_FAILED,
     QUALITY_REJECTED,
+    DataDiagnostics,
+    DataFeatureDiagnostics,
     MarketDataAdapter,
     MarketDataAdapterResult,
     MarketDataQuality,
@@ -57,6 +60,17 @@ __all__ = [
 ]
 
 
+@dataclass(frozen=True)
+class MarketDataObservation:
+    index: pd.Index
+    features: tuple[str, ...]
+    symbols: tuple[str, ...]
+    panels: dict[str, pd.DataFrame]
+
+
+_MISSING = object()
+
+
 def load_market_data(config: DataConfig) -> Any:
     result = load_market_data_result(config)
     result.assert_usable()
@@ -81,18 +95,17 @@ def load_market_data_result(
         adapter_result = source_loaders[source](config)
     except RemoteDataPullError as error:
         return _provider_failed_result(config, error, required_features=required)
-    panels = _panels.available_feature_panels(adapter_result.native_data, requested)
+    observation = _observe_market_data(config, adapter_result.native_data, requested)
     diagnostics, quality = _evaluate_quality(
         config,
-        adapter_result.native_data,
-        panels,
+        observation,
         required_features=required,
         evidence=adapter_result.evidence,
     )
     metadata = _data_metadata(
         config,
         adapter_result.native_data,
-        panels,
+        observation,
         diagnostics=diagnostics,
         quality=quality,
         source_metadata=adapter_result.source_metadata,
@@ -122,13 +135,13 @@ def _provider_failed_result(
         allowed_degradations=tuple(config.quality.allowed_degradations),
     )
     diagnostics = tuple(
-        {
-            "symbol": symbol,
-            "configured": True,
-            "features": {},
-            "index_evidence": {"source": "provider_failed"},
-            "provider_status": QUALITY_PROVIDER_FAILED,
-        }
+        DataDiagnostics(
+            symbol=symbol,
+            configured=True,
+            features={},
+            index_evidence={"source": "provider_failed"},
+            provider_status=QUALITY_PROVIDER_FAILED,
+        )
         for symbol in config.symbols
     )
     metadata: dict[str, Any] = {
@@ -157,7 +170,7 @@ def _provider_failed_result(
         "skip_on_error": config.skip_on_error,
         "silence_warnings": config.silence_warnings,
         "quality": quality.to_metadata(),
-        "diagnostics": list(diagnostics),
+        "diagnostics": _diagnostics_metadata(diagnostics),
         "source_metadata": {
             "provider_error_type": type(error).__name__,
             "provider_error_summary": reason,
@@ -544,19 +557,19 @@ def _update_common_remote_metadata(
 
 def _evaluate_quality(
     config: DataConfig,
-    native_data: Any,
-    panels: dict[str, pd.DataFrame],
+    observation: MarketDataObservation,
     *,
     required_features: tuple[str, ...],
     evidence: dict[str, Any],
-) -> tuple[list[dict[str, Any]], MarketDataQuality]:
-    diagnostics = _symbol_diagnostics(config, native_data, panels, evidence=evidence)
+) -> tuple[tuple[DataDiagnostics, ...], MarketDataQuality]:
+    panels = observation.panels
+    diagnostics = _symbol_diagnostics(config, observation, evidence=evidence)
     reasons: list[str] = []
     warnings: list[str] = []
     degradations: set[str] = set()
     allowed = set(config.quality.allowed_degradations)
 
-    observed_symbols = set(_native_symbols(native_data, fallback=config.symbols))
+    observed_symbols = set(observation.symbols)
     skipped_symbols = [symbol for symbol in config.symbols if symbol not in observed_symbols]
     allowed_skipped_symbols = (
         set(skipped_symbols) if (config.skip_on_error and "skipped_symbols" in allowed) else set()
@@ -656,69 +669,69 @@ def _record_quality_issue(
 
 def _symbol_diagnostics(
     config: DataConfig,
-    native_data: Any,
-    panels: dict[str, pd.DataFrame],
+    observation: MarketDataObservation,
     *,
     evidence: dict[str, Any],
-) -> list[dict[str, Any]]:
-    symbols = _native_symbols(native_data, fallback=config.symbols)
-    diagnostics = []
-    for symbol in symbols:
+) -> tuple[DataDiagnostics, ...]:
+    diagnostics: list[DataDiagnostics] = []
+    panels = observation.panels
+    for symbol in observation.symbols:
         feature_diagnostics = {}
         for feature in config.effective_arrays:
             panel = panels.get(feature)
             if panel is None or symbol not in panel.columns:
-                feature_diagnostics[feature] = {"available": False}
+                feature_diagnostics[feature] = DataFeatureDiagnostics(available=False)
                 continue
             series = panel[symbol]
             missing_count = int(series.isna().sum())
             row_count = len(series)
-            feature_diagnostics[feature] = {
-                "available": True,
-                "rows": row_count,
-                "missing": missing_count,
-                "coverage": (row_count - missing_count) / row_count if row_count else 0,
-                "numeric": bool(pd.api.types.is_numeric_dtype(series)),
-                "first_timestamp": str(series.index[0]) if row_count else None,
-                "last_timestamp": str(series.index[-1]) if row_count else None,
-            }
+            feature_diagnostics[feature] = DataFeatureDiagnostics(
+                available=True,
+                rows=row_count,
+                missing=missing_count,
+                coverage=(row_count - missing_count) / row_count if row_count else 0,
+                numeric=bool(pd.api.types.is_numeric_dtype(series)),
+                first_timestamp=str(series.index[0]) if row_count else None,
+                last_timestamp=str(series.index[-1]) if row_count else None,
+            )
         diagnostics.append(
-            {
-                "symbol": str(symbol),
-                "configured": symbol in config.symbols,
-                "features": feature_diagnostics,
-                "index_evidence": evidence,
-                "provider_status": "loaded",
-            }
+            DataDiagnostics(
+                symbol=str(symbol),
+                configured=symbol in config.symbols,
+                features=feature_diagnostics,
+                index_evidence=evidence,
+                provider_status="loaded",
+            )
         )
     for symbol in config.symbols:
-        if symbol not in symbols:
+        if symbol not in observation.symbols:
             diagnostics.append(
-                {
-                    "symbol": symbol,
-                    "configured": True,
-                    "features": {},
-                    "index_evidence": evidence,
-                    "provider_status": "skipped",
-                }
+                DataDiagnostics(
+                    symbol=symbol,
+                    configured=True,
+                    features={},
+                    index_evidence=evidence,
+                    provider_status="skipped",
+                )
             )
-    return diagnostics
+    return tuple(diagnostics)
 
 
 def _data_metadata(
     config: DataConfig,
     native_data: Any,
-    panels: dict[str, pd.DataFrame],
+    observation: MarketDataObservation,
     *,
-    diagnostics: list[dict[str, Any]],
+    diagnostics: tuple[DataDiagnostics, ...],
     quality: MarketDataQuality,
     source_metadata: dict[str, Any],
     evidence: dict[str, Any],
     required_features: tuple[str, ...],
 ) -> dict[str, Any]:
-    index = _native_index(native_data)
-    features = _native_features(native_data)
-    symbols = _native_symbols(native_data, fallback=config.symbols)
+    index = observation.index
+    features = list(observation.features)
+    symbols = list(observation.symbols)
+    panels = observation.panels
     provider_metadata = _safety.safe_native_data_metadata(native_data, source=config.source)
     metadata: dict[str, Any] = {
         "schema_version": "market_data.v2",
@@ -751,7 +764,7 @@ def _data_metadata(
         "skip_on_error": config.skip_on_error,
         "silence_warnings": config.silence_warnings,
         "quality": quality.to_metadata(),
-        "diagnostics": diagnostics,
+        "diagnostics": _diagnostics_metadata(diagnostics),
         "source_metadata": source_metadata,
         "index_evidence": evidence,
         "provider_metadata": provider_metadata["metadata"],
@@ -762,12 +775,113 @@ def _data_metadata(
     return to_builtin(metadata)
 
 
+def _observe_market_data(
+    config: DataConfig,
+    native_data: Any,
+    requested_features: tuple[str, ...],
+) -> MarketDataObservation:
+    index = _optional_attr(native_data, "index")
+    features = _optional_attr(native_data, "features")
+    symbols = _optional_attr(native_data, "symbols")
+    values = None
+    if index is _MISSING or features is _MISSING or symbols is _MISSING:
+        values = _native_values(native_data)
+    return MarketDataObservation(
+        index=_observed_index(index, values),
+        features=tuple(_observed_features(features, values)),
+        symbols=tuple(_observed_symbols(symbols, values, fallback=config.symbols)),
+        panels=_observed_feature_panels(native_data, requested_features, values=values),
+    )
+
+
+def _optional_attr(native_data: Any, name: str) -> Any:
+    try:
+        return getattr(native_data, name)
+    except AttributeError:
+        return _MISSING
+
+
+def _native_values(native_data: Any) -> Any:
+    if isinstance(native_data, pd.DataFrame | pd.Series):
+        return native_data
+    getter = getattr(native_data, "get", None)
+    if callable(getter):
+        return getter()
+    return None
+
+
+def _observed_index(index: Any, values: Any) -> pd.Index:
+    if index is not _MISSING:
+        return index
+    if isinstance(values, (pd.Series, pd.DataFrame)):
+        return values.index
+    return pd.Index([])
+
+
+def _observed_features(features: Any, values: Any) -> list[str]:
+    if features is not _MISSING and features is not None:
+        return list(map(str, features))
+    if isinstance(values, pd.DataFrame):
+        return _frame_features(values)
+    return []
+
+
+def _observed_symbols(symbols: Any, values: Any, *, fallback: list[str]) -> list[str]:
+    if symbols is not _MISSING and symbols is not None:
+        return list(map(str, symbols))
+    if isinstance(values, pd.DataFrame) and isinstance(values.columns, pd.MultiIndex):
+        level = "symbol" if "symbol" in values.columns.names else 0
+        return sorted(set(map(str, values.columns.get_level_values(level))))
+    return list(fallback)
+
+
+def _observed_feature_panels(
+    native_data: Any,
+    requested_features: tuple[str, ...],
+    *,
+    values: Any,
+) -> dict[str, pd.DataFrame]:
+    if isinstance(values, pd.DataFrame):
+        return _frame_feature_panels(values, requested_features)
+    if isinstance(values, pd.Series):
+        return _series_feature_panels(values, requested_features)
+    return _panels.available_feature_panels(native_data, requested_features)
+
+
+def _frame_feature_panels(
+    values: pd.DataFrame,
+    requested_features: tuple[str, ...],
+) -> dict[str, pd.DataFrame]:
+    panels = {}
+    for feature in requested_features:
+        try:
+            panels[feature] = _panels.feature_from_frame(values, feature)
+        except (KeyError, ValueError, TypeError):
+            continue
+    return panels
+
+
+def _series_feature_panels(
+    values: pd.Series,
+    requested_features: tuple[str, ...],
+) -> dict[str, pd.DataFrame]:
+    if str(values.name) not in requested_features:
+        return {}
+    return {str(values.name): _panels.as_panel(values, role=str(values.name))}
+
+
+def _diagnostics_metadata(diagnostics: tuple[DataDiagnostics, ...]) -> list[dict[str, Any]]:
+    return [diagnostic.to_metadata() for diagnostic in diagnostics]
+
+
 def _native_index(native_data: Any) -> pd.Index:
-    if hasattr(native_data, "index"):
+    try:
         return native_data.index
+    except AttributeError:
+        pass
     if isinstance(native_data, pd.DataFrame):
         return native_data.index
-    if hasattr(native_data, "get"):
+    if callable(getattr(native_data, "get", None)):
         values = native_data.get()
         if isinstance(values, (pd.Series, pd.DataFrame)):
             return values.index
@@ -775,11 +889,15 @@ def _native_index(native_data: Any) -> pd.Index:
 
 
 def _native_features(native_data: Any) -> list[str]:
-    if hasattr(native_data, "features"):
-        return list(map(str, native_data.features))
+    try:
+        features = native_data.features
+    except AttributeError:
+        features = None
+    if features is not None:
+        return list(map(str, features))
     if isinstance(native_data, pd.DataFrame):
         return _frame_features(native_data)
-    if hasattr(native_data, "get"):
+    if callable(getattr(native_data, "get", None)):
         values = native_data.get()
         if isinstance(values, pd.DataFrame):
             return _frame_features(values)
@@ -796,8 +914,12 @@ def _frame_features(frame: pd.DataFrame) -> list[str]:
 
 
 def _native_symbols(native_data: Any, *, fallback: list[str]) -> list[str]:
-    if hasattr(native_data, "symbols"):
-        return list(map(str, native_data.symbols))
+    try:
+        symbols = native_data.symbols
+    except AttributeError:
+        symbols = None
+    if symbols is not None:
+        return list(map(str, symbols))
     if isinstance(native_data, pd.DataFrame) and isinstance(native_data.columns, pd.MultiIndex):
         level = "symbol" if "symbol" in native_data.columns.names else 0
         return sorted(set(map(str, native_data.columns.get_level_values(level))))

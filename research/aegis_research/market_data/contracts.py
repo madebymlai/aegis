@@ -78,10 +78,59 @@ class MarketDataAdapterResult:
 
 
 @dataclass(frozen=True)
+class DataFeatureDiagnostics:
+    available: bool
+    rows: int = 0
+    missing: int = 0
+    coverage: float = 0.0
+    numeric: bool | None = None
+    first_timestamp: str | None = None
+    last_timestamp: str | None = None
+
+    def to_metadata(self) -> dict[str, Any]:
+        if not self.available:
+            return {"available": False}
+        return to_builtin(
+            {
+                "available": True,
+                "rows": self.rows,
+                "missing": self.missing,
+                "coverage": self.coverage,
+                "numeric": self.numeric,
+                "first_timestamp": self.first_timestamp,
+                "last_timestamp": self.last_timestamp,
+            }
+        )
+
+
+@dataclass(frozen=True)
+class DataDiagnostics:
+    symbol: str
+    configured: bool
+    features: dict[str, DataFeatureDiagnostics] = field(default_factory=dict)
+    index_evidence: dict[str, Any] = field(default_factory=dict)
+    provider_status: str = "loaded"
+
+    def to_metadata(self) -> dict[str, Any]:
+        return to_builtin(
+            {
+                "symbol": self.symbol,
+                "configured": self.configured,
+                "features": {
+                    feature: diagnostics.to_metadata()
+                    for feature, diagnostics in self.features.items()
+                },
+                "index_evidence": self.index_evidence,
+                "provider_status": self.provider_status,
+            }
+        )
+
+
+@dataclass(frozen=True)
 class MarketDataResult:
     native_data: Any
     metadata: dict[str, Any]
-    diagnostics: tuple[dict[str, Any], ...]
+    diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
     known_secrets: tuple[str, ...] = ()
 
