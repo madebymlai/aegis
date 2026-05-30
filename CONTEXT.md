@@ -24,6 +24,14 @@ _Avoid_: model, algorithm, alpha
 A scored parameter combination produced by an optimization **Run**. Each Candidate carries its fixed parameters, per-split metrics on both **Selection** and **Held-out** sets, and provenance. Every Run produces exactly three representative Candidates: best, median, and worst, selected by a min-aware ranking score across **Splits**.
 _Avoid_: trial, result, entry
 
+**Invalid Candidate**:
+A **Candidate** whose configuration is unworkable: an **Indicator** output is entirely non-finite over the full series because its lookback exceeds all available history. Decided before scoring; misconfigured rather than merely poor. Every Invalid Candidate is also **Degenerate**.
+_Avoid_: broken candidate, bad candidate, error
+
+**Degenerate Candidate**:
+A **Candidate** that cannot represent the grid: it either earned no finite ranking score (non-trading) or traded too few times to be trusted (under-traded). Decided from results, after scoring. **Invalid Candidates** are the misconfigured subset.
+_Avoid_: failed candidate, junk candidate, outlier
+
 **Split**:
 A partition of the data index into exactly two sets: a **Selection** set and a **Held-out** set. The Selection set is used for parameter scoring and global ranking during optimization; the Held-out set is used for unbiased validation of the selected **Candidates**.
 _Avoid_: fold, in-sample/out-of-sample, train/test
