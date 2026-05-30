@@ -1,34 +1,14 @@
+"""Panel mechanics: shaping native source data into per-feature panels.
+
+Lower-level building blocks used by :mod:`features` (the caller-facing
+accessors) and the observe pass. Holds no caller-facing surface itself.
+"""
+
 from __future__ import annotations
 
 from typing import Any
 
 import pandas as pd
-
-from research.aegis_research.market_data.contracts import MarketDataResult
-
-
-def close_from_ohlcv(data: Any) -> pd.DataFrame:
-    return feature_from_ohlcv(data, "Close")
-
-
-def high_from_ohlcv(data: Any) -> pd.DataFrame:
-    return feature_from_ohlcv(data, "High")
-
-
-def low_from_ohlcv(data: Any) -> pd.DataFrame:
-    return feature_from_ohlcv(data, "Low")
-
-
-def feature_from_ohlcv(data: Any, feature: str) -> pd.DataFrame:
-    if isinstance(data, MarketDataResult):
-        data.assert_usable()
-        loaded = tuple(data.metadata.get("loaded_arrays", ()))
-        if loaded and feature not in loaded:
-            raise ValueError(f"market data feature {feature!r} was not loaded for this run")
-        return canonical_feature_panel(data.native_data, feature)
-    if hasattr(data, "get") and not isinstance(data, pd.DataFrame):
-        return feature_panel(data, feature, role=feature)
-    return feature_from_frame(data, feature)
 
 
 def available_feature_panels(

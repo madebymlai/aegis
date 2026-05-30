@@ -12,10 +12,6 @@ from research.aegis_research.configuration.schema import (
 )
 from research.aegis_research.configuration.secrets import to_builtin
 from research.aegis_research.configuration.validation import _is_absolute_or_user_path
-from research.aegis_research.market_data.contracts import (
-    SAFE_FETCH_KWARG_KEYS,
-    SAFE_RETURNED_KWARG_KEYS,
-)
 
 _SAFE_NATIVE_METADATA_FIELDS = (
     "last_index",
@@ -25,10 +21,6 @@ _SAFE_NATIVE_METADATA_FIELDS = (
     "tz_localize",
     "tz_convert",
     "freq",
-)
-_SAFE_PROVIDER_METADATA_MAPPINGS = (
-    ("fetch_kwargs", SAFE_FETCH_KWARG_KEYS),
-    ("returned_kwargs", SAFE_RETURNED_KWARG_KEYS),
 )
 
 
@@ -61,13 +53,26 @@ def assert_public_metadata_safe(
     raise ValueError(f"public data metadata contains unsupported value at {path}")
 
 
-def safe_native_data_metadata(native_object: Any, *, source: str) -> dict[str, Any]:
+def safe_native_data_metadata(
+    native_object: Any,
+    *,
+    source: str,
+    provider_mappings: tuple[tuple[str, set[str]], ...] = (),
+) -> dict[str, Any]:
+    """Project a native data object into safe, public-shareable provider metadata.
+
+    Always projects the allowlisted safe native fields plus ``source``/``class``.
+    ``provider_mappings`` adds allowlist projections of secret-bearing provider
+    mappings (``fetch_kwargs``/``returned_kwargs``); the remote adapter is the
+    only caller that supplies them, keeping the credential-touching projection
+    local to the one source that produces credentials.
+    """
     omitted: list[dict[str, str]] = []
     metadata: dict[str, Any] = {}
     for name in _SAFE_NATIVE_METADATA_FIELDS:
         if (value := _get_optional_attr(native_object, name)) is not _MISSING:
             _project_safe_field(metadata, omitted, name, value)
-    for name, allowed_keys in _SAFE_PROVIDER_METADATA_MAPPINGS:
+    for name, allowed_keys in provider_mappings:
         value = _get_optional_attr(native_object, name)
         if value is _MISSING:
             continue

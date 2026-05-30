@@ -21,20 +21,6 @@ QUALITY_HEALTHY = "healthy"
 QUALITY_DEGRADED_ALLOWED = "degraded_allowed"
 QUALITY_REJECTED = "rejected"
 QUALITY_PROVIDER_FAILED = "provider_failed"
-SAFE_FETCH_KWARG_KEYS = {
-    "delay",
-    "end",
-    "exchange",
-    "find_earliest_date",
-    "klines_type",
-    "limit",
-    "period",
-    "retries",
-    "start",
-    "timeframe",
-    "tz",
-}
-SAFE_RETURNED_KWARG_KEYS = {"freq", "tz", "tz_convert", "tz_localize"}
 
 
 class RemoteDataPullError(ValueError):
@@ -75,6 +61,8 @@ class MarketDataAdapterResult:
     known_secrets: tuple[str, ...] = ()
     source_metadata: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] = field(default_factory=dict)
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+    omitted_metadata_fields: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -135,7 +123,7 @@ class MarketDataResult:
     known_secrets: tuple[str, ...] = ()
 
     def feature(self, feature: str) -> pd.DataFrame:
-        from research.aegis_research.market_data.panels import feature_from_ohlcv
+        from research.aegis_research.market_data.features import feature_from_ohlcv
 
         return feature_from_ohlcv(self, feature)
 
