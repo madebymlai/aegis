@@ -86,3 +86,27 @@ def test_run_evidence_rejects_untyped_section_keys() -> None:
 
     with pytest.raises(TypeError, match="EvidenceSection"):
         ledger.record("preflight", {})  # type: ignore[arg-type]
+
+
+def test_run_evidence_rejects_unsupported_optimization_schema_version() -> None:
+    with pytest.raises(ValueError, match="unsupported optimization evidence schema_version"):
+        RunEvidence(
+            {},
+            component_registry_fingerprint="registry-fp",
+            data_arrays={},
+            optimization={"schema_version": "optimization_route.v0"},
+            persist=lambda: None,
+        )
+
+
+def test_run_evidence_rejects_candidate_rows_without_candidate_key() -> None:
+    ledger = RunEvidence(
+        {},
+        component_registry_fingerprint="registry-fp",
+        data_arrays={},
+        optimization={},
+        persist=lambda: None,
+    )
+
+    with pytest.raises(ValueError, match="non-empty candidate_key"):
+        ledger.record(EvidenceSection.CANDIDATES, [{"role": "best", "candidate_key": ""}])

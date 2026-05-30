@@ -8,6 +8,7 @@ from research.aegis_research.canonical_json import to_builtin
 
 OPTIMIZATION_ROUTE_SCHEMA_VERSION = "optimization_route.v1"
 _FAILURE_MESSAGE_LIMIT = 1000
+_SUPPORTED_OPTIMIZATION_SCHEMA_VERSIONS = {None, OPTIMIZATION_ROUTE_SCHEMA_VERSION}
 
 __all__ = [
     "EvidenceFailureStage",
@@ -35,8 +36,8 @@ class RunEvidence:
     """Typed writer for the run manifest evidence payload.
 
     The ledger writes directly into the manifest's live ``evidence`` mapping so
-    recorder persists always serialize the same canonical store. ``snapshot`` is
-    a read-only convenience for callers that need a detached builtin view.
+    recorder persistence serializes the same canonical store. ``snapshot`` gives
+    callers a detached builtin view.
     """
 
     def __init__(
@@ -50,15 +51,14 @@ class RunEvidence:
     ) -> None:
         self._manifest_evidence = manifest_evidence
         self._persist = persist
-        optimization_payload = _optimization_payload(optimization)
+        optimization_payload = _normalize_optimization_payload(optimization)
+        manifest_payload = {
+            "component_registry_fingerprint": component_registry_fingerprint,
+            "data_arrays": to_builtin(data_arrays),
+            "optimization": optimization_payload,
+        }
         self._manifest_evidence.clear()
-        self._manifest_evidence.update(
-            {
-                "component_registry_fingerprint": component_registry_fingerprint,
-                "data_arrays": to_builtin(data_arrays),
-                "optimization": optimization_payload,
-            }
-        )
+        self._manifest_evidence.update(manifest_payload)
         self._optimization = optimization_payload
 
     def record(self, section: EvidenceSection, payload: Any) -> None:
@@ -82,26 +82,26 @@ class RunEvidence:
         return to_builtin(self._manifest_evidence)
 
 
-def _optimization_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_optimization_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     optimization = to_builtin(payload)
     if not isinstance(optimization, dict):
         raise TypeError("optimization evidence must be a mapping")
     schema_version = optimization.get("schema_version")
-    if schema_version not in {None, OPTIMIZATION_ROUTE_SCHEMA_VERSION}:
+    if schema_version not in _SUPPORTED_OPTIMIZATION_SCHEMA_VERSIONS:
         raise ValueError("unsupported optimization evidence schema_version")
     optimization["schema_version"] = OPTIMIZATION_ROUTE_SCHEMA_VERSION
     return optimization
 
 
 def _candidate_count(payload: Any) -> int:
-    if not isinstance(payload, Sequence) or isinstance(payload, str | bytes | bytearray):
+    if isinstance(payload, str | bytes | bytearray) or not isinstance(payload, Sequence):
         raise TypeError("candidates evidence must be a sequence of mappings")
-    candidate_keys: set[str] = set()
+    unique_candidate_keys: set[str] = set()
     for row in payload:
         if not isinstance(row, Mapping):
             raise TypeError("candidate evidence rows must be mappings")
         candidate_key = row.get("candidate_key")
         if not isinstance(candidate_key, str) or not candidate_key:
             raise ValueError("candidate evidence rows require a non-empty candidate_key")
-        candidate_keys.add(candidate_key)
-    return len(candidate_keys)
+        unique_candidate_keys.add(candidate_key)
+    return len(unique_candidate_keys)
