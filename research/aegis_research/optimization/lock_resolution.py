@@ -332,16 +332,15 @@ def component_lock_token_bytes(
     candidate_key: str,
 ) -> bytes:
     """Canonical JSON bytes used as stable hash material for component locks."""
-    return canonical_json_bytes(
-        _component_lock_identity(
-            run_id=run_id,
-            rank=rank,
-            component_family=component_family,
-            component_id=component_id,
-            component_slot=component_slot,
-            candidate_key=candidate_key,
-        )
+    identity = _component_lock_identity(
+        run_id=run_id,
+        rank=rank,
+        component_family=component_family,
+        component_id=component_id,
+        component_slot=component_slot,
+        candidate_key=candidate_key,
     )
+    return canonical_json_bytes(identity)
 
 
 def _build_component_lock_token(
@@ -353,17 +352,15 @@ def _build_component_lock_token(
     component_slot: str,
     candidate_key: str,
 ) -> str:
-    return mint_canonical_token(
-        "lock",
-        _component_lock_identity(
-            run_id=run_id,
-            rank=rank,
-            component_family=component_family,
-            component_id=component_id,
-            component_slot=component_slot,
-            candidate_key=candidate_key,
-        ),
+    identity = _component_lock_identity(
+        run_id=run_id,
+        rank=rank,
+        component_family=component_family,
+        component_id=component_id,
+        component_slot=component_slot,
+        candidate_key=candidate_key,
     )
+    return mint_canonical_token("lock", identity)
 
 
 def _component_lock_identity(

@@ -6,7 +6,7 @@ from research.aegis_research.optimization.canonical import (
 )
 
 
-def test_canonical_leaf_mints_prefixed_tokens_from_stable_bytes() -> None:
+def test_mint_canonical_token_uses_stable_json_digest() -> None:
     payload = {
         "schema_version": "component_lock.v1",
         "run_id": "run-a",
