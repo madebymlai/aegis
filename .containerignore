@@ -1,0 +1,8 @@
+# Build context for the sandcastle image is the repo root (the build is run with
+# `--containerfile .sandcastle/Containerfile` so COPY can reach the root manifests).
+# The Containerfile only needs pyproject.toml + uv.lock, so exclude everything
+# else — notably runs/ (~11G), .venv, .venv-sandcastle, node_modules, and .git —
+# to keep the context small and the build fast.
+*
+!pyproject.toml
+!uv.lock

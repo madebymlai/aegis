@@ -142,6 +142,7 @@ def execute_optimization(
         open_=open_,
         store=store,
         param_names=param_names,
+        invalid_candidate_keys=invalid_candidate_keys,
     )
 
 
@@ -161,7 +162,7 @@ def _build_precomputed_window_metrics(
     close: pd.DataFrame,
     open_: pd.DataFrame,
     store: WideIndicatorPrecompute,
-    invalid_candidate_keys: set[CandidateKey] | None = None,
+    invalid_candidate_keys: set[CandidateKey],
 ) -> Callable[..., Any]:
     """Build a split callback that slices the full-series store before simulation.
 
@@ -169,14 +170,14 @@ def _build_precomputed_window_metrics(
     ``apply`` unchanged); only the per-(split,set) ``range_`` template arrives
     positionally. ``open_`` is sliced to the same window so next-open execution
     fills each window's targets at that window's open prices. Selection and
-    held-out sweeps use the same callback shape so they cannot drift.
+    held-out sweeps use the same callback shape — and are handed the same
+    ``invalid_candidate_keys`` (a required argument) — so they cannot drift.
     """
-    invalid_keys = invalid_candidate_keys or set()
 
     def window_metrics(range_: slice, **params: Any) -> Any:
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
         keys = candidate_keys(combo_lists)
-        invalid_positions = _invalid_candidate_positions(keys, invalid_keys)
+        invalid_positions = _invalid_candidate_positions(keys, invalid_candidate_keys)
         if len(invalid_positions) == n_combos:
             return _nan_metric_frame(metric_keys, param_names)
 
@@ -189,6 +190,11 @@ def _build_precomputed_window_metrics(
         metrics = _metrics_from_allocations(
             close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names
         )
+        # Masking is EXPLICIT here rather than relying on store-level NaN propagation:
+        # an all-NaN indicator block can still simulate to a finite 0.0 (the strategy
+        # holds cash and takes zero trades, not NaN), so an unmasked Invalid Candidate
+        # would surface a real 0.0 metric and pollute the global ranking instead of
+        # being excluded. We overwrite its metric rows with NaN at the source.
         return _mask_invalid_metrics(metrics, invalid_positions)
 
     return window_metrics
@@ -372,6 +378,7 @@ def _attach_held_out(
     open_: pd.DataFrame,
     store: WideIndicatorPrecompute,
     param_names: list[str],
+    invalid_candidate_keys: set[CandidateKey],
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
     unique_params: list[dict[str, Any]] = []
@@ -385,7 +392,13 @@ def _attach_held_out(
         for name in param_names
     }
     held_out_metrics = _build_precomputed_window_metrics(
-        source=source, portfolio=portfolio, report=report, close=close, open_=open_, store=store
+        source=source,
+        portfolio=portfolio,
+        report=report,
+        close=close,
+        open_=open_,
+        store=store,
+        invalid_candidate_keys=invalid_candidate_keys,
     )
     held_out_grid = _sweep(
         splitter=splitter,
@@ -401,6 +414,7 @@ def _attach_held_out(
         worst=_with_held_out(result.worst, held_out_grid, param_names),
         excluded_degenerate=result.excluded_degenerate,
         excluded_invalid=result.excluded_invalid,
+        total_candidates=result.total_candidates,
     )
 
 

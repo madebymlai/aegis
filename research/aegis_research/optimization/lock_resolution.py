@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.canonical_json import canonical_json_bytes as _canonical_json_bytes
 from research.aegis_research.component_registry import (
     COMPONENT_FAMILIES,
     ComponentFamily,
@@ -16,6 +15,7 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
 )
+from research.aegis_research.optimization.canonical import mint_canonical_token
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
     component_param_slices,
@@ -23,7 +23,6 @@ from research.aegis_research.optimization.component_source import (
     component_ref_key,
 )
 from research.aegis_research.optimization.source import OptimizationSourceError
-
 
 COMPONENT_LOCK_SCHEMA_VERSION = "component_lock.v1"
 COMPONENT_LOCK_PROVENANCE_SCHEMA_VERSION = "component_lock_provenance.v1"
@@ -321,6 +320,27 @@ def _component_family(value: Any) -> ComponentFamily:
     return value
 
 
+def component_lock_token_bytes(
+    *,
+    run_id: str,
+    rank: int,
+    component_family: str,
+    component_id: str,
+    component_slot: str,
+    candidate_key: str,
+) -> bytes:
+    """Canonical JSON bytes used as stable hash material for component locks."""
+    identity = _component_lock_identity(
+        run_id=run_id,
+        rank=rank,
+        component_family=component_family,
+        component_id=component_id,
+        component_slot=component_slot,
+        candidate_key=candidate_key,
+    )
+    return _canonical_json_bytes(identity)
+
+
 def _build_component_lock_token(
     *,
     run_id: str,
@@ -330,7 +350,27 @@ def _build_component_lock_token(
     component_slot: str,
     candidate_key: str,
 ) -> str:
-    payload = {
+    identity = _component_lock_identity(
+        run_id=run_id,
+        rank=rank,
+        component_family=component_family,
+        component_id=component_id,
+        component_slot=component_slot,
+        candidate_key=candidate_key,
+    )
+    return mint_canonical_token("lock", identity)
+
+
+def _component_lock_identity(
+    *,
+    run_id: str,
+    rank: int,
+    component_family: str,
+    component_id: str,
+    component_slot: str,
+    candidate_key: str,
+) -> dict[str, Any]:
+    return {
         "schema_version": COMPONENT_LOCK_SCHEMA_VERSION,
         "run_id": run_id,
         "rank": rank,
@@ -339,7 +379,3 @@ def _build_component_lock_token(
         "component_slot": component_slot,
         "candidate_key": candidate_key,
     }
-    digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    ).hexdigest()[:32]
-    return f"lock_{digest}"

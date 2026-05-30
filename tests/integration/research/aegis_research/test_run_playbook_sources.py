@@ -13,7 +13,7 @@ from research.aegis_research.optimization.component_source import (
     FIXED_CANDIDATE_PARAM,
     component_param_key,
 )
-from research.aegis_research.optimization.pipeline import completion
+from research.aegis_research.optimization.pipeline import completion, publishing
 from research.aegis_research.provenance.manifest import RunStatus
 
 
@@ -121,6 +121,41 @@ def test_component_optimization_uses_component_native_candidate_grid(
     assert artifact["locks"][0]["component_id"] == "demo.ma_opt"
     assert artifact["locks"][0]["token"].startswith("lock_")
     assert payload["locks"][0]["token"] == artifact["locks"][0]["token"]
+
+
+def test_component_optimization_candidate_publish_failure_preserves_run_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
+    config_path = _write_run_config(tmp_path)
+
+    def fail_publish(*_args: object, **_kwargs: object) -> None:
+        raise OSError("candidate store write failed")
+
+    monkeypatch.setattr(publishing, "publish_candidates", fail_publish)
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "publish-failure"]) == 10
+
+    payload = _last_json_line(capsys.readouterr().err)
+    manifest = json.loads((tmp_path / "runs" / "publish-failure" / "manifest.json").read_text())
+    optimization_evidence = manifest["evidence"]["optimization"]
+
+    assert payload["error"]["category"] == "execution_failure"
+    assert manifest["run"]["status"] == RunStatus.FAILED
+    assert [row["role"] for row in optimization_evidence["candidates"]] == [
+        "best",
+        "median",
+        "worst",
+    ]
+    assert optimization_evidence["candidate_count"] == 3
+    assert optimization_evidence["locks"][0]["component_id"] == "demo.ma_opt"
+    assert optimization_evidence["publishing_failure"] == {
+        "error_type": "OSError",
+        "message": "candidate store write failed",
+    }
 
 
 def test_component_optimization_artifact_write_failure_leaves_candidates_pending(

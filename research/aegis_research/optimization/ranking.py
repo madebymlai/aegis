@@ -59,6 +59,13 @@ class OptimizationResult:
     ``excluded_invalid <= excluded_degenerate`` always holds. The runner sets it
     (the ranking layer only sees scores, not indicator history), so it defaults
     to 0 here.
+
+    ``total_candidates`` is the *exact* number of Candidates that entered ranking
+    (the size of the ranked set), never a preflight pre-sampling estimate. By the
+    time ranking runs the sample is materialised, so the count is exact by
+    construction. It lets consumers report the researched/total terminal ratio;
+    the nesting invariant ``excluded_invalid <= excluded_degenerate <=
+    total_candidates`` always holds.
     """
 
     best: EvaluatedCandidate
@@ -66,6 +73,7 @@ class OptimizationResult:
     worst: EvaluatedCandidate
     excluded_degenerate: int = 0
     excluded_invalid: int = 0
+    total_candidates: int = 0
 
 
 def select_representative_candidates(
@@ -168,6 +176,7 @@ def select_representative_candidates(
         median=trading[ceil(n / 2) - 1],
         worst=trading[n - 1],
         excluded_degenerate=len(ranked) - n,
+        total_candidates=len(ranked),
     )
 
 

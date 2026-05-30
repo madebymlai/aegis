@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
+from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.optimization.evidence import (
     HELD_OUT_GAP_WARNING_THRESHOLD,
     candidate_held_out_headline,
@@ -161,6 +162,34 @@ def test_candidate_key_includes_hidden_source_and_portfolio_identity() -> None:
     assert base["candidate_key"] != different_hidden["candidate_key"]
     assert base["candidate_key"] != different_source["candidate_key"]
     assert base["candidate_key"] != different_portfolio["candidate_key"]
+
+
+def test_candidate_identity_golden_bytes_pin() -> None:
+    index = pd.MultiIndex.from_tuples([(14, 100, 40.0)], names=["rsi_window", "ma_window", "entry"])
+
+    row = candidate_rows_from_param_index(
+        index,
+        source_identity={"source": "component", "id": "demo.rsi", "source_hash": "abc123"},
+        data_identity={
+            "source": "synthetic",
+            "symbols": ["SYN", "ALT"],
+            "timeframe": "1D",
+            "index_start": "2026-01-01",
+            "index_end": "2026-01-31",
+        },
+        hidden_params={"execution": "next_open"},
+        portfolio_policy={"fees": 0.001, "target_exposure_cap": 1.0},
+    )[0]
+
+    assert canonical_json_bytes(row["identity"]) == (
+        b'{"data_identity":{"index_end":"2026-01-31","index_start":"2026-01-01",'
+        b'"source":"synthetic","symbols":["SYN","ALT"],"timeframe":"1D"},'
+        b'"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
+        b'"ma_window":100,"rsi_window":14},"portfolio_policy":{"fees":0.001,'
+        b'"target_exposure_cap":1.0},"schema_version":"candidate_identity.v2",'
+        b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
+    )
+    assert row["candidate_key"] == "cand_a4d2faf9f2e93b1edb4a5f1016381c3f"
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:
@@ -330,12 +359,26 @@ def test_result_evidence_serializes_three_candidates() -> None:
         best=_evaluated({"rsi_window": 14}, 0.9),
         median=_evaluated({"rsi_window": 20}, 0.5),
         worst=_evaluated({"rsi_window": 5}, 0.1),
+        total_candidates=12,
+        excluded_degenerate=4,
+        excluded_invalid=1,
     )
 
     evidence = result_evidence(result)
 
-    assert set(evidence) == {"schema_version", "best", "median", "worst"}
-    assert evidence["schema_version"] == "optimization_result.v2"
+    assert set(evidence) == {
+        "schema_version",
+        "best",
+        "median",
+        "worst",
+        "total",
+        "excluded_invalid",
+        "excluded_degenerate",
+    }
+    assert evidence["schema_version"] == "optimization_result.v3"
+    assert evidence["total"] == 12
+    assert evidence["excluded_invalid"] == 1
+    assert evidence["excluded_degenerate"] == 4
     assert evidence["best"]["params"] == {"rsi_window": 14}
     assert evidence["best"]["score"] == 0.9
     assert evidence["best"]["held_out_metrics_mean"] == pytest.approx({"total_return": 0.885})

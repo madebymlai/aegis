@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import pandas as pd
 
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration.schema import OHLCV_ARRAYS, DataConfig
-from research.aegis_research.configuration.secrets import to_builtin
 
 OHLCV_FEATURES = OHLCV_ARRAYS
 LOGICAL_FEATURES = {
@@ -21,20 +21,6 @@ QUALITY_HEALTHY = "healthy"
 QUALITY_DEGRADED_ALLOWED = "degraded_allowed"
 QUALITY_REJECTED = "rejected"
 QUALITY_PROVIDER_FAILED = "provider_failed"
-SAFE_FETCH_KWARG_KEYS = {
-    "delay",
-    "end",
-    "exchange",
-    "find_earliest_date",
-    "klines_type",
-    "limit",
-    "period",
-    "retries",
-    "start",
-    "timeframe",
-    "tz",
-}
-SAFE_RETURNED_KWARG_KEYS = {"freq", "tz", "tz_convert", "tz_localize"}
 
 
 class RemoteDataPullError(ValueError):
@@ -66,7 +52,7 @@ class MarketDataQuality:
         return self.state in {QUALITY_HEALTHY, QUALITY_DEGRADED_ALLOWED}
 
     def to_metadata(self) -> dict[str, Any]:
-        return to_builtin(asdict(self))
+        return to_builtin(self)
 
 
 @dataclass(frozen=True)
@@ -75,18 +61,69 @@ class MarketDataAdapterResult:
     known_secrets: tuple[str, ...] = ()
     source_metadata: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] = field(default_factory=dict)
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+    omitted_metadata_fields: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class DataFeatureDiagnostics:
+    available: bool
+    rows: int = 0
+    missing: int = 0
+    coverage: float = 0.0
+    numeric: bool | None = None
+    first_timestamp: str | None = None
+    last_timestamp: str | None = None
+
+    def to_metadata(self) -> dict[str, Any]:
+        if not self.available:
+            return {"available": False}
+        return to_builtin(
+            {
+                "available": True,
+                "rows": self.rows,
+                "missing": self.missing,
+                "coverage": self.coverage,
+                "numeric": self.numeric,
+                "first_timestamp": self.first_timestamp,
+                "last_timestamp": self.last_timestamp,
+            }
+        )
+
+
+@dataclass(frozen=True)
+class DataDiagnostics:
+    symbol: str
+    configured: bool
+    features: dict[str, DataFeatureDiagnostics] = field(default_factory=dict)
+    index_evidence: dict[str, Any] = field(default_factory=dict)
+    provider_status: str = "loaded"
+
+    def to_metadata(self) -> dict[str, Any]:
+        return to_builtin(
+            {
+                "symbol": self.symbol,
+                "configured": self.configured,
+                "features": {
+                    feature: diagnostics.to_metadata()
+                    for feature, diagnostics in self.features.items()
+                },
+                "index_evidence": self.index_evidence,
+                "provider_status": self.provider_status,
+            }
+        )
 
 
 @dataclass(frozen=True)
 class MarketDataResult:
     native_data: Any
     metadata: dict[str, Any]
-    diagnostics: tuple[dict[str, Any], ...]
+    diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
     known_secrets: tuple[str, ...] = ()
 
     def feature(self, feature: str) -> pd.DataFrame:
-        from research.aegis_research.market_data.loading import feature_from_ohlcv
+        from research.aegis_research.market_data.features import feature_from_ohlcv
 
         return feature_from_ohlcv(self, feature)
 

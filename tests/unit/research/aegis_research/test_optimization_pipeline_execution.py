@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
+from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
 from research.aegis_research.optimization.source import OptimizationSourceError
 from tests.support.research.aegis_research.run_config_fixtures import (
@@ -23,21 +24,22 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
     config = resolved.config
 
     class _FakeSource:
-        params = {}
-        evidence = {"strategy": {}}
+        params: ClassVar[dict[str, Any]] = {}
+        evidence: ClassVar[dict[str, Any]] = {"strategy": {}}
 
     class _FakeSplitResult:
-        metadata = {"n_splits": 2}
-        splits = []
+        metadata: ClassVar[dict[str, int]] = {"n_splits": 2}
+        splits: ClassVar[list[Any]] = []
 
     persisted = []
-
-    class _FakeRecorder:
-        class manifest:
-            evidence: dict[str, Any] = {}
-
-        def persist(self) -> None:
-            persisted.append(True)
+    manifest_evidence: dict[str, Any] = {}
+    run_evidence = RunEvidence(
+        manifest_evidence,
+        component_registry_fingerprint="registry-fp",
+        data_arrays={},
+        optimization={"schema_version": "optimization_route.v1"},
+        persist=lambda: persisted.append(True),
+    )
 
     import pandas as pd
 
@@ -58,8 +60,12 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
             close=pd.DataFrame({0: [1.0, 2.0]}),
             open_=pd.DataFrame({0: [1.0, 2.0]}),
             split_result=_FakeSplitResult(),
-            optimization_evidence={"schema_version": "optimization_route.v1"},
-            recorder=_FakeRecorder(),
+            run_evidence=run_evidence,
         )
 
     assert len(persisted) == 1
+    assert manifest_evidence["optimization"]["preflight"] == {"error": True}
+    assert manifest_evidence["optimization"]["preflight_failure"] == {
+        "error_type": "PreflightError",
+        "message": "preflight failed",
+    }

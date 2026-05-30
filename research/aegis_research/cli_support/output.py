@@ -154,7 +154,25 @@ def held_out_summary_lines(
     warning = optimization.get("held_out_warning")
     if warning:
         lines.append(f"WARNING: {warning}")
+    lines.append(_researched_ratio_line(optimization))
     return tuple(lines)
+
+
+def _researched_ratio_line(optimization: Mapping[str, Any]) -> str:
+    """Ratio of Candidates that survived ranking to usable evidence.
+
+    ``researched = total - excluded_degenerate`` (Invalid Candidates are a
+    subset of Degenerate ones, so they are never subtracted twice). The
+    misconfigured clause is appended only when the Invalid count is positive.
+    """
+    total = int(optimization.get("total", 0) or 0)
+    excluded_degenerate = int(optimization.get("excluded_degenerate", 0) or 0)
+    excluded_invalid = int(optimization.get("excluded_invalid", 0) or 0)
+    researched = total - excluded_degenerate
+    line = f"researched candidates: {researched}/{total}"
+    if excluded_invalid > 0:
+        line += f" ({excluded_invalid} misconfigured)"
+    return line
 
 
 def _metric_cell(value: Any) -> str:

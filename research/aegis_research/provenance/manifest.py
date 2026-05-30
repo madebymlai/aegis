@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -9,7 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-MANIFEST_SCHEMA_VERSION = 2
+from research.aegis_research.canonical_json import canonical_json_bytes, to_builtin
+
+MANIFEST_SCHEMA_VERSION = 3
 
 
 class RunStatus:
@@ -81,8 +82,8 @@ class RunManifest:
             run_dir=Path(run_dir),
             run_label=run_label,
             mode=mode,
-            config=_to_builtin(config),
-            lineage=_to_builtin(lineage or {}),
+            config=to_builtin(config),
+            lineage=to_builtin(lineage or {}),
         )
 
     def add_stage(self, stage_id: str, status: str, **metadata: Any) -> None:
@@ -90,7 +91,7 @@ class RunManifest:
             "id": stage_id,
             "status": status,
             "updated_at": _utc_now(),
-            **_to_builtin(metadata),
+            **to_builtin(metadata),
         }
         for index, stage in enumerate(self.stages):
             if stage["id"] == stage_id:
@@ -134,9 +135,9 @@ class RunManifest:
             "schema_version": schema_version,
             "status": status,
             "visibility": visibility,
-            "shape": _to_builtin(shape or {}),
+            "shape": to_builtin(shape or {}),
             "upstream_artifact_ids": list(upstream_artifact_ids or []),
-            "metadata": _to_builtin(metadata or {}),
+            "metadata": to_builtin(metadata or {}),
             "updated_at": _utc_now(),
         }
         self.artifacts.append(artifact)
@@ -155,7 +156,7 @@ class RunManifest:
                 ):
                     raise ManifestValidationError(f"duplicate artifact path: {normalized_path}")
                 artifact["path"] = normalized_path
-                self.artifacts[index] = _to_builtin(artifact)
+                self.artifacts[index] = to_builtin(artifact)
                 return
         raise ManifestValidationError(f"unknown artifact id: {artifact_id}")
 
@@ -171,11 +172,11 @@ class RunManifest:
                 "started_at": self.started_at,
                 "finished_at": self.finished_at,
             },
-            "config": _to_builtin(self.config),
-            "evidence": _to_builtin(self.evidence),
-            "lineage": _to_builtin(self.lineage),
-            "stages": _to_builtin(self.stages),
-            "artifacts": _to_builtin(self.artifacts),
+            "config": to_builtin(self.config),
+            "evidence": to_builtin(self.evidence),
+            "lineage": to_builtin(self.lineage),
+            "stages": to_builtin(self.stages),
+            "artifacts": to_builtin(self.artifacts),
         }
 
 
@@ -226,7 +227,7 @@ def validate_manifest(payload: dict[str, Any], *, run_dir: str | Path | None = N
 def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    data = canonical_json_bytes(payload, pretty=True)
+    json_bytes = canonical_json_bytes(payload, indent=2)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -238,7 +239,7 @@ def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
         ) as handle:
             temp_path = Path(handle.name)
             temp_path.chmod(0o600)
-            handle.write(data)
+            handle.write(json_bytes)
             handle.flush()
             os.fsync(handle.fileno())
         temp_path.replace(target)
@@ -246,15 +247,6 @@ def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
     finally:
         if temp_path is not None and temp_path.exists():
             temp_path.unlink()
-
-
-def canonical_json_bytes(payload: Any, *, pretty: bool = False) -> bytes:
-    kwargs = {"sort_keys": True}
-    if pretty:
-        kwargs["indent"] = 2
-    else:
-        kwargs["separators"] = (",", ":")
-    return (json.dumps(_to_builtin(payload), **kwargs) + "\n").encode()
 
 
 def hash_file(path: str | Path) -> str:
@@ -310,13 +302,3 @@ def _fsync_parent(path: Path) -> None:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
-
-
-def _to_builtin(value: Any) -> Any:
-    if hasattr(value, "item"):
-        return value.item()
-    if isinstance(value, dict):
-        return {str(key): _to_builtin(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_to_builtin(item) for item in value]
-    return value

@@ -8,7 +8,6 @@ artifact has been written.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +49,7 @@ def build_candidate_store_provenance(
         "strategy_artifact_id": "strategy.run",
         "source": optimization_source,
         "data": build_candidate_data_identity(data_result, array_contract),
-        "portfolio": to_builtin(asdict(config.portfolio)),
+        "portfolio": to_builtin(config.portfolio),
         "ranking": {
             "metric": config.ranking.metric,
             "min_weight": config.ranking.min_weight,

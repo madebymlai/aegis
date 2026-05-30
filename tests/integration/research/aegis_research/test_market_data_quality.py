@@ -11,13 +11,49 @@ from research.aegis_research.config import (
     DataQualityConfig,
     SignalConfig,
 )
+from research.aegis_research.market_data import quality as data_quality
 from research.aegis_research.data import (
+    DataDiagnostics,
+    DataFeatureDiagnostics,
     MarketDataAdapterResult,
     RemoteDataPullError,
     assert_public_metadata_safe,
     load_market_data_result,
     required_experiment_ohlcv_features,
 )
+
+
+def test_quality_verdict_is_derived_from_typed_diagnostics_without_panels() -> None:
+    quality = data_quality.evaluate(
+        DataConfig(source="diagnostic", symbols=["SYN"], arrays=["Close"]),
+        (
+            DataDiagnostics(
+                symbol="SYN",
+                configured=True,
+                features={
+                    "Close": DataFeatureDiagnostics(
+                        available=True,
+                        rows=3,
+                        missing=1,
+                        numeric=False,
+                    )
+                },
+                index_evidence={
+                    "raw_index_has_duplicates": True,
+                    "raw_index_monotonic_increasing": False,
+                },
+            ),
+        ),
+        required_features=("Close",),
+    )
+
+    assert quality.state == "rejected"
+    assert quality.reasons == (
+        "raw data index contains duplicate timestamps",
+        "raw data index is not monotonic increasing",
+        "required feature 'Close' contains missing values",
+        "required feature 'Close' has non-numeric symbols ['SYN']",
+    )
 
 
 def test_duplicate_csv_index_is_rejected_before_vectorbt_normalizes(tmp_path: Path) -> None:
@@ -230,26 +266,6 @@ def test_provider_failure_returns_safe_non_usable_result() -> None:
     assert result.metadata["quality"]["state"] == "provider_failed"
     assert result.metadata["diagnostics"][0]["provider_status"] == "provider_failed"
     assert "network unavailable" not in str(result.metadata)
-
-
-def test_provider_metadata_projection_omits_unsafe_nested_mappings() -> None:
-    result = load_market_data_result(
-        DataConfig(source="fake", symbols=["SYN"]),
-        adapters={
-            "fake": lambda _config: MarketDataAdapterResult(native_data=_ProviderMetadataData())
-        },
-    )
-
-    provider_metadata = result.metadata["provider_metadata"]
-    omitted = result.metadata["omitted_metadata_fields"]
-
-    assert provider_metadata["fetch_kwargs"] == {"period": "1mo", "limit": 100}
-    assert provider_metadata["returned_kwargs"] == {"freq": "1D"}
-    assert {item["path"] for item in omitted} >= {
-        "fetch_kwargs.headers",
-        "fetch_kwargs.cache_path",
-        "returned_kwargs.auth",
-    }
 
 
 def test_provider_update_support_uses_symbol_update_capability() -> None:

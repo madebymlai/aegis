@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.config import (
     ResolvedRunConfig,
     redact_config,
@@ -20,7 +21,6 @@ from research.aegis_research.config import (
 )
 from research.aegis_research.provenance.manifest import (
     ArtifactVisibility,
-    canonical_json_bytes,
     hash_file,
 )
 
@@ -180,7 +180,8 @@ def apply_seed_policy(seed: int) -> dict[str, Any]:
 
 
 def canonical_hash(value: Any) -> str:
-    return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+    json_safe_value = to_builtin(value)
+    return hashlib.sha256(canonical_json_bytes(json_safe_value)).hexdigest()
 
 
 def _safe_json_value(value: Any) -> Any:

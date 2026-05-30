@@ -7,6 +7,8 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.optimization.canonical import canonical_json_bytes
+
 SCHEMA_VERSION = 4
 PUBLICATION_PENDING = "pending"
 PUBLICATION_ACTIVE = "active"
@@ -499,7 +501,7 @@ def _float_or_none(value: Any) -> float | None:
 
 
 def _json_dumps(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return canonical_json_bytes(value).decode("utf-8")
 
 
 def _json_loads(value: str) -> Any:

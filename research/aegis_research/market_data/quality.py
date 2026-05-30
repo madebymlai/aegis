@@ -1,0 +1,171 @@
+"""Judge: a pure verdict over typed diagnostics.
+
+``evaluate`` reads only the :class:`DataDiagnostics` records and the config's
+quality policy — never the raw native data or the adapter evidence dict — and
+returns a :class:`MarketDataQuality` verdict. It re-walks nothing the observe
+pass already saw.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.market_data.contracts import (
+    QUALITY_DEGRADED_ALLOWED,
+    QUALITY_HEALTHY,
+    QUALITY_PROVIDER_FAILED,
+    QUALITY_REJECTED,
+    DataDiagnostics,
+    MarketDataQuality,
+)
+
+
+def evaluate(
+    config: DataConfig,
+    diagnostics: tuple[DataDiagnostics, ...],
+    *,
+    required_features: tuple[str, ...],
+) -> MarketDataQuality:
+    reasons: list[str] = []
+    warnings: list[str] = []
+    degradations: set[str] = set()
+    allowed = set(config.quality.allowed_degradations)
+
+    provider_failed = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.configured and diagnostic.provider_status == QUALITY_PROVIDER_FAILED
+    ]
+    if provider_failed:
+        return MarketDataQuality(
+            state=QUALITY_PROVIDER_FAILED,
+            reasons=(f"{config.source} provider failed before usable native data was available",),
+            allowed_degradations=tuple(config.quality.allowed_degradations),
+        )
+
+    skipped_symbols = [
+        diagnostic.symbol
+        for diagnostic in diagnostics
+        if diagnostic.configured and diagnostic.provider_status == "skipped"
+    ]
+    allowed_skipped_symbols = (
+        set(skipped_symbols) if (config.skip_on_error and "skipped_symbols" in allowed) else set()
+    )
+    if skipped_symbols:
+        if allowed_skipped_symbols:
+            _record_quality_issue(
+                "skipped_symbols",
+                f"configured symbols missing from loaded data: {skipped_symbols}",
+                allowed,
+                reasons,
+                warnings,
+                degradations,
+            )
+        else:
+            reasons.append(f"configured symbols missing from loaded data: {skipped_symbols}")
+
+    index_evidence = _combined_index_evidence(diagnostics)
+    if index_evidence.get("raw_index_has_duplicates"):
+        _record_quality_issue(
+            "duplicate_index",
+            "raw data index contains duplicate timestamps",
+            allowed,
+            reasons,
+            warnings,
+            degradations,
+        )
+    if index_evidence.get("raw_index_monotonic_increasing") is False:
+        _record_quality_issue(
+            "non_monotonic_index",
+            "raw data index is not monotonic increasing",
+            allowed,
+            reasons,
+            warnings,
+            degradations,
+        )
+
+    configured_diagnostics = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.configured and diagnostic.symbol not in allowed_skipped_symbols
+    ]
+    for feature in required_features:
+        feature_diagnostics = [
+            (diagnostic, diagnostic.features.get(feature))
+            for diagnostic in configured_diagnostics
+        ]
+        available = [
+            (diagnostic, feature_diagnostic)
+            for diagnostic, feature_diagnostic in feature_diagnostics
+            if feature_diagnostic is not None and feature_diagnostic.available
+        ]
+        if not available:
+            reasons.append(f"required feature {feature!r} is unavailable")
+            continue
+        if all(feature_diagnostic.rows == 0 for _, feature_diagnostic in available):
+            reasons.append(f"required feature {feature!r} is empty")
+            continue
+        missing_required_symbols = [
+            diagnostic.symbol
+            for diagnostic, feature_diagnostic in feature_diagnostics
+            if feature_diagnostic is None or not feature_diagnostic.available
+        ]
+        if missing_required_symbols:
+            reasons.append(
+                f"required feature {feature!r} is missing symbols {missing_required_symbols}"
+            )
+        if any(feature_diagnostic.missing > 0 for _, feature_diagnostic in available):
+            _record_quality_issue(
+                "missing_rows",
+                f"required feature {feature!r} contains missing values",
+                allowed,
+                reasons,
+                warnings,
+                degradations,
+            )
+        non_numeric = [
+            diagnostic.symbol
+            for diagnostic, feature_diagnostic in available
+            if feature_diagnostic.numeric is False
+        ]
+        if non_numeric:
+            reasons.append(f"required feature {feature!r} has non-numeric symbols {non_numeric}")
+
+    if reasons:
+        state = QUALITY_REJECTED
+    elif degradations & allowed:
+        state = QUALITY_DEGRADED_ALLOWED
+    else:
+        state = QUALITY_HEALTHY
+    return MarketDataQuality(
+        state=state,
+        reasons=tuple(reasons),
+        warnings=tuple(warnings),
+        allowed_degradations=tuple(config.quality.allowed_degradations),
+    )
+
+
+def _combined_index_evidence(diagnostics: tuple[DataDiagnostics, ...]) -> dict[str, Any]:
+    evidence: dict[str, Any] = {}
+    for diagnostic in diagnostics:
+        if diagnostic.index_evidence.get("raw_index_has_duplicates"):
+            evidence["raw_index_has_duplicates"] = True
+        if diagnostic.index_evidence.get("raw_index_monotonic_increasing") is False:
+            evidence["raw_index_monotonic_increasing"] = False
+    return evidence
+
+
+def _record_quality_issue(
+    degradation: str,
+    message: str,
+    allowed: set[str],
+    reasons: list[str],
+    warnings: list[str],
+    degradations: set[str],
+) -> None:
+    degradations.add(degradation)
+    if degradation in allowed:
+        warnings.append(message)
+    else:
+        reasons.append(message)
