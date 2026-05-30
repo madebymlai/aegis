@@ -17,6 +17,20 @@ from research.aegis_research.market_data.contracts import (
     SAFE_RETURNED_KWARG_KEYS,
 )
 
+_SAFE_NATIVE_METADATA_FIELDS = (
+    "last_index",
+    "delisted",
+    "missing_index",
+    "missing_columns",
+    "tz_localize",
+    "tz_convert",
+    "freq",
+)
+_SAFE_PROVIDER_METADATA_MAPPINGS = (
+    ("fetch_kwargs", SAFE_FETCH_KWARG_KEYS),
+    ("returned_kwargs", SAFE_RETURNED_KWARG_KEYS),
+)
+
 
 def assert_public_metadata_safe(
     value: Any,
@@ -25,9 +39,7 @@ def assert_public_metadata_safe(
     path: str = "$",
 ) -> None:
     if isinstance(value, str):
-        if any(secret and secret in value for secret in known_secrets) or SECRET_VALUE_RE.search(
-            value
-        ):
+        if _contains_secret_material(value, known_secrets=known_secrets):
             raise ValueError(f"public data metadata contains secret material at {path}")
         if _is_absolute_or_user_path(value):
             raise ValueError(f"public data metadata contains a non-portable path at {path}")
@@ -38,7 +50,7 @@ def assert_public_metadata_safe(
         for key, item in value.items():
             key_text = str(key)
             child_path = f"{path}.{key_text}"
-            if SECRET_KEY_RE.search(key_text) or key_text.lower() in DENIED_PASSTHROUGH_KEYS:
+            if _is_secret_or_denied_key(key_text):
                 raise ValueError(f"public data metadata contains secret-like key at {child_path}")
             assert_public_metadata_safe(item, known_secrets=known_secrets, path=child_path)
         return
@@ -52,21 +64,10 @@ def assert_public_metadata_safe(
 def safe_native_data_metadata(native_object: Any, *, source: str) -> dict[str, Any]:
     omitted: list[dict[str, str]] = []
     metadata: dict[str, Any] = {}
-    for name in (
-        "last_index",
-        "delisted",
-        "missing_index",
-        "missing_columns",
-        "tz_localize",
-        "tz_convert",
-        "freq",
-    ):
+    for name in _SAFE_NATIVE_METADATA_FIELDS:
         if hasattr(native_object, name):
             _project_safe_field(metadata, omitted, name, getattr(native_object, name))
-    for name, allowed_keys in (
-        ("fetch_kwargs", SAFE_FETCH_KWARG_KEYS),
-        ("returned_kwargs", SAFE_RETURNED_KWARG_KEYS),
-    ):
+    for name, allowed_keys in _SAFE_PROVIDER_METADATA_MAPPINGS:
         if hasattr(native_object, name):
             projected = _project_provider_mapping(
                 getattr(native_object, name),
@@ -114,7 +115,7 @@ def _project_provider_mapping(
     for key, item in value.items():
         key_text = str(key)
         child_path = f"{path}.{key_text}"
-        if SECRET_KEY_RE.search(key_text) or key_text.lower() in DENIED_PASSTHROUGH_KEYS:
+        if _is_secret_or_denied_key(key_text):
             omitted.append({"path": child_path, "reason": "secret-like or denied key"})
             continue
         if key_text not in allowed_keys:
@@ -139,7 +140,7 @@ def _safe_public_value(value: Any, *, omitted: list[dict[str, str]], path: str) 
     if isinstance(value, pd.Timestamp):
         return str(value)
     if isinstance(value, str):
-        if SECRET_VALUE_RE.search(value):
+        if _contains_secret_material(value):
             omitted.append({"path": path, "reason": "secret-like value"})
             return _OMITTED
         if _is_absolute_or_user_path(value):
@@ -151,7 +152,7 @@ def _safe_public_value(value: Any, *, omitted: list[dict[str, str]], path: str) 
         for key, item in value.items():
             key_text = str(key)
             child_path = f"{path}.{key_text}"
-            if SECRET_KEY_RE.search(key_text) or key_text.lower() in DENIED_PASSTHROUGH_KEYS:
+            if _is_secret_or_denied_key(key_text):
                 omitted.append({"path": child_path, "reason": "secret-like or denied key"})
                 continue
             safe_value = _safe_public_value(item, omitted=omitted, path=child_path)
@@ -167,6 +168,16 @@ def _safe_public_value(value: Any, *, omitted: list[dict[str, str]], path: str) 
         return projected
     omitted.append({"path": path, "reason": f"unsupported type {type(value).__name__}"})
     return _OMITTED
+
+
+def _contains_secret_material(value: str, *, known_secrets: tuple[str, ...] = ()) -> bool:
+    return any(secret and secret in value for secret in known_secrets) or bool(
+        SECRET_VALUE_RE.search(value)
+    )
+
+
+def _is_secret_or_denied_key(key: str) -> bool:
+    return bool(SECRET_KEY_RE.search(key)) or key.lower() in DENIED_PASSTHROUGH_KEYS
 
 
 def _overrides_vectorbt_update_method(native_data: Any, method_name: str) -> bool:

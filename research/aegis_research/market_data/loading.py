@@ -20,6 +20,8 @@ from research.aegis_research.configuration.secrets import (
     to_builtin,
 )
 from research.aegis_research.data_arrays import merge_data_arrays
+from research.aegis_research.market_data import panels as _panels
+from research.aegis_research.market_data import safety as _safety
 from research.aegis_research.market_data.contracts import (
     OHLCV_FEATURES,
     QUALITY_DEGRADED_ALLOWED,
@@ -32,21 +34,15 @@ from research.aegis_research.market_data.contracts import (
     MarketDataResult,
     RemoteDataPullError,
 )
-from research.aegis_research.market_data.panels import (
-    available_feature_panels as _available_feature_panels,
-    close_from_ohlcv,
-    feature_from_ohlcv,
-    high_from_ohlcv,
-    low_from_ohlcv,
-)
-from research.aegis_research.market_data.safety import (
-    assert_public_metadata_safe,
-    safe_native_data_metadata as _safe_native_data_metadata,
-    supports_update as _supports_update,
-)
 from research.aegis_research.market_data.sources import (
     vbt_data_source_classes,
 )
+
+assert_public_metadata_safe = _safety.assert_public_metadata_safe
+close_from_ohlcv = _panels.close_from_ohlcv
+feature_from_ohlcv = _panels.feature_from_ohlcv
+high_from_ohlcv = _panels.high_from_ohlcv
+low_from_ohlcv = _panels.low_from_ohlcv
 
 __all__ = [
     "assert_public_metadata_safe",
@@ -85,7 +81,7 @@ def load_market_data_result(
         adapter_result = source_loaders[source](config)
     except RemoteDataPullError as error:
         return _provider_failed_result(config, error, required_features=required)
-    panels = _available_feature_panels(adapter_result.native_data, requested)
+    panels = _panels.available_feature_panels(adapter_result.native_data, requested)
     diagnostics, quality = _evaluate_quality(
         config,
         adapter_result.native_data,
@@ -196,7 +192,6 @@ def required_experiment_ohlcv_features(
     return tuple(features)
 
 
-
 def _default_source_loaders() -> dict[str, MarketDataAdapter]:
     return {
         "synthetic": _load_synthetic_source,
@@ -212,7 +207,6 @@ def _default_source_loaders() -> dict[str, MarketDataAdapter]:
             for source, data_cls in vbt_data_source_classes().items()
         },
     }
-
 
 
 def _load_synthetic_source(config: DataConfig) -> MarketDataAdapterResult:
@@ -299,10 +293,12 @@ def _flat_csv_feature_data(frame: pd.DataFrame, config: DataConfig) -> dict[str,
     if len(config.symbols) != 1:
         raise ValueError("flat CSV feature input requires exactly one configured symbol")
     symbol = config.symbols[0]
-    feature_data = {}
+    feature_data: dict[str, pd.DataFrame] = {}
     for feature in _csv_feature_candidates(map(str, frame.columns), config):
         if feature in frame.columns:
-            feature_data[feature] = frame[[feature]].rename(columns={feature: symbol})
+            panel = frame.loc[:, [feature]].copy()
+            panel.columns = pd.Index([symbol] * len(panel.columns), name=frame.columns.name)
+            feature_data[feature] = panel
     if not feature_data:
         raise ValueError("CSV data must contain at least one requested VBT feature column")
     return feature_data
@@ -546,7 +542,6 @@ def _update_common_remote_metadata(
     return common_tz_localize, common_tz_convert, common_freq
 
 
-
 def _evaluate_quality(
     config: DataConfig,
     native_data: Any,
@@ -615,7 +610,7 @@ def _evaluate_quality(
             reasons.append(
                 f"required feature {feature!r} is missing symbols {missing_required_symbols}"
             )
-        if panel.isna().any().any():
+        if bool(panel.isna().to_numpy().any()):
             _record_quality_issue(
                 "missing_rows",
                 f"required feature {feature!r} contains missing values",
@@ -724,7 +719,7 @@ def _data_metadata(
     index = _native_index(native_data)
     features = _native_features(native_data)
     symbols = _native_symbols(native_data, fallback=config.symbols)
-    provider_metadata = _safe_native_data_metadata(native_data, source=config.source)
+    provider_metadata = _safety.safe_native_data_metadata(native_data, source=config.source)
     metadata: dict[str, Any] = {
         "schema_version": "market_data.v2",
         "source": config.source,
@@ -761,7 +756,7 @@ def _data_metadata(
         "index_evidence": evidence,
         "provider_metadata": provider_metadata["metadata"],
         "omitted_metadata_fields": provider_metadata["omitted"],
-        "update_supported": _supports_update(native_data),
+        "update_supported": _safety.supports_update(native_data),
         "cache_policy": "disabled_in_schema_v2",
     }
     return to_builtin(metadata)
@@ -809,7 +804,6 @@ def _native_symbols(native_data: Any, *, fallback: list[str]) -> list[str]:
     return list(fallback)
 
 
-
 def _index_evidence(index: pd.Index, *, source: str) -> dict[str, Any]:
     return {
         "source": source,
@@ -851,7 +845,7 @@ def _synthetic_data(config: DataConfig) -> Any:
         feature_values["Volume"][symbol] = volume
     return _native_from_feature_data(
         {
-            feature: pd.DataFrame(values, index=index, columns=config.symbols)
+            feature: pd.DataFrame(values, index=index, columns=pd.Index(config.symbols))
             for feature, values in feature_values.items()
         },
         config,
