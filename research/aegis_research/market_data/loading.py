@@ -116,7 +116,7 @@ def load_market_data_result(
     return MarketDataResult(
         native_data=adapter_result.native_data,
         metadata=metadata,
-        diagnostics=tuple(diagnostics),
+        diagnostics=diagnostics,
         quality=quality,
         known_secrets=adapter_result.known_secrets,
     )
@@ -675,36 +675,23 @@ def _symbol_diagnostics(
 ) -> tuple[DataDiagnostics, ...]:
     diagnostics: list[DataDiagnostics] = []
     panels = observation.panels
+    observed_symbols = set(observation.symbols)
     for symbol in observation.symbols:
-        feature_diagnostics = {}
-        for feature in config.effective_arrays:
-            panel = panels.get(feature)
-            if panel is None or symbol not in panel.columns:
-                feature_diagnostics[feature] = DataFeatureDiagnostics(available=False)
-                continue
-            series = panel[symbol]
-            missing_count = int(series.isna().sum())
-            row_count = len(series)
-            feature_diagnostics[feature] = DataFeatureDiagnostics(
-                available=True,
-                rows=row_count,
-                missing=missing_count,
-                coverage=(row_count - missing_count) / row_count if row_count else 0,
-                numeric=bool(pd.api.types.is_numeric_dtype(series)),
-                first_timestamp=str(series.index[0]) if row_count else None,
-                last_timestamp=str(series.index[-1]) if row_count else None,
-            )
         diagnostics.append(
             DataDiagnostics(
                 symbol=str(symbol),
                 configured=symbol in config.symbols,
-                features=feature_diagnostics,
+                features=_feature_diagnostics(
+                    panels,
+                    symbol=symbol,
+                    features=config.effective_arrays,
+                ),
                 index_evidence=evidence,
                 provider_status="loaded",
             )
         )
     for symbol in config.symbols:
-        if symbol not in observation.symbols:
+        if symbol not in observed_symbols:
             diagnostics.append(
                 DataDiagnostics(
                     symbol=symbol,
@@ -715,6 +702,36 @@ def _symbol_diagnostics(
                 )
             )
     return tuple(diagnostics)
+
+
+def _feature_diagnostics(
+    panels: dict[str, pd.DataFrame],
+    *,
+    symbol: str,
+    features: tuple[str, ...],
+) -> dict[str, DataFeatureDiagnostics]:
+    diagnostics: dict[str, DataFeatureDiagnostics] = {}
+    for feature in features:
+        panel = panels.get(feature)
+        if panel is None or symbol not in panel.columns:
+            diagnostics[feature] = DataFeatureDiagnostics(available=False)
+            continue
+        diagnostics[feature] = _available_feature_diagnostics(panel[symbol])
+    return diagnostics
+
+
+def _available_feature_diagnostics(series: pd.Series) -> DataFeatureDiagnostics:
+    missing_count = int(series.isna().sum())
+    row_count = len(series)
+    return DataFeatureDiagnostics(
+        available=True,
+        rows=row_count,
+        missing=missing_count,
+        coverage=(row_count - missing_count) / row_count if row_count else 0,
+        numeric=bool(pd.api.types.is_numeric_dtype(series)),
+        first_timestamp=str(series.index[0]) if row_count else None,
+        last_timestamp=str(series.index[-1]) if row_count else None,
+    )
 
 
 def _data_metadata(

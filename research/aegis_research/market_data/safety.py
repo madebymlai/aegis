@@ -195,16 +195,17 @@ def _is_secret_or_denied_key(key: str) -> bool:
 
 
 def _declares_symbol_orientation(native_data: Any) -> bool:
-    if any(
-        "symbol_oriented" in vars(cls) or "symbols" in vars(cls)
-        for cls in type(native_data).mro()
-    ):
+    return _declares_any_attribute(native_data, ("symbol_oriented", "symbols"))
+
+
+def _declares_any_attribute(native_data: Any, names: tuple[str, ...]) -> bool:
+    if any(name in vars(cls) for cls in type(native_data).mro() for name in names):
         return True
     try:
-        values = vars(native_data)
+        instance_attributes = vars(native_data)
     except TypeError:
         return False
-    return "symbol_oriented" in values or "symbols" in values
+    return any(name in instance_attributes for name in names)
 
 
 def _overrides_vectorbt_update_method(native_data: Any, method_name: str) -> bool:
