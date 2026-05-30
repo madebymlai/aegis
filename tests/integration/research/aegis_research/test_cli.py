@@ -306,6 +306,32 @@ def test_held_out_summary_is_empty_without_candidates() -> None:
     assert held_out_summary_lines({"ranking_metric": "sharpe_ratio"}, []) == ()
 
 
+def test_reproduce_lock_lines_emit_copy_paste_handles_and_footer() -> None:
+    # aegis-rd-6ie: post-run output hands the user a copy-paste lock: handle per
+    # representative candidate — best is the default role (bare), others carry :role —
+    # plus a footer naming the run_id and the candidate-store path.
+    from research.aegis_research.cli_support.output import reproduce_lock_lines
+
+    run_id = "20260527T000603791760Z_etf_momentum"
+    candidates = [{"role": "best"}, {"role": "median"}, {"role": "worst"}]
+
+    lines = reproduce_lock_lines(
+        run_id, candidates, store_path="runs/.candidate_store/candidates.sqlite3"
+    )
+
+    assert any(line.rstrip().endswith(f"lock: {run_id}") for line in lines)
+    assert any(line.rstrip().endswith(f"lock: {run_id}:median") for line in lines)
+    assert any(line.rstrip().endswith(f"lock: {run_id}:worst") for line in lines)
+    assert any(line == f"run_id: {run_id}" for line in lines)
+    assert any(line == "candidate store: runs/.candidate_store/candidates.sqlite3" for line in lines)
+
+
+def test_reproduce_lock_lines_empty_without_candidates() -> None:
+    from research.aegis_research.cli_support.output import reproduce_lock_lines
+
+    assert reproduce_lock_lines("run-a", [], store_path="x") == ()
+
+
 def _researched_optimization(
     *, total: int, excluded_invalid: int, excluded_degenerate: int
 ) -> dict[str, object]:

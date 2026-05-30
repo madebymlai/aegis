@@ -46,3 +46,33 @@ Evidence records the overridden values, so the Manifest never silently misrepres
 - Reproduction via `lock:` is faithful only when the locked config's data/portfolio match the
   original Run — the Lock pins parameters; the config still supplies data and portfolio.
 - CONTEXT.md **Lock** entry redefined.
+
+## Amendment (aegis-rd-6ie): human-friendly lock handle
+
+The shipped `{run_id, candidate_id}` mapping is reproducible-by-machine but not
+usable-by-human: the `candidate_id` is a content-hash with no `aerd show candidates`
+command to discover it, and it forces two YAML fields plus an opaque hash. We amend the
+`lock:` contract — **not** the storage model — to accept a single scalar:
+
+```yaml
+lock: 20260527T000603791760Z_etf_momentum          # -> best (default)
+lock: 20260527T000603791760Z_etf_momentum:median   # non-best representative
+```
+
+- A scalar `run_id[:role]` defaults `role` to `best`; `role` is one of `best`/`median`/`worst`.
+  A malformed or unknown role fails at config validation with a clear message. The `run_id`
+  is literally the Run folder name, so the common case is copy-the-directory-name-and-paste.
+- `role` resolves to a `candidate_key` through the existing `candidate_rankings` table
+  (primary key `(run_id, role)`) — storage-free, exactly like the `candidates` primary key
+  this ADR already leaned on. **No minted code, no new storage**: a code->hash map would undo
+  the deletion this ADR made, so it is deliberately avoided.
+- The precise forms still resolve: the `{run_id, candidate_id}` mapping, with `candidate_id`
+  a `role` keyword **or** a raw `candidate_key` hash (hash = durable/exact; role = ergonomic).
+- Lock provenance still records the resolved `candidate_key`, so locking by role keeps a full
+  audit trail of the exact hash — and the lock-wins-plus-Evidence-record rule is unchanged.
+- Post-run terminal output prints, per representative Candidate, the exact copy-paste
+  `lock: <run_id>[:role]` string plus the `run_id` and candidate-store path, so the handle is
+  discoverable without `--json` or raw SQL.
+
+This makes the ADR's "no separate storage" principle hold *better*: the ergonomic handle is a
+pure query over rankings the Run already persists.

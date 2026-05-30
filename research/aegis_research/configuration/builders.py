@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from research.aegis_research.configuration.schema import (
+    DEFAULT_LOCK_ROLE,
     DataConfig,
     DataQualityConfig,
     Lock,
@@ -14,6 +15,7 @@ from research.aegis_research.configuration.schema import (
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
     RunSplitConfig,
+    split_lock_handle,
 )
 
 
@@ -33,9 +35,12 @@ def _build_run_config(raw: dict[str, Any]) -> RunConfig:
     )
 
 
-def _build_lock(raw: dict[str, Any] | None) -> Lock | None:
+def _build_lock(raw: dict[str, Any] | str | None) -> Lock | None:
     if raw is None:
         return None
+    if isinstance(raw, str):
+        run_id, role = split_lock_handle(raw)
+        return Lock(run_id=run_id, candidate_id=role or DEFAULT_LOCK_ROLE)
     return Lock(run_id=raw["run_id"], candidate_id=raw["candidate_id"])
 
 

@@ -198,6 +198,30 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 
 
+def test_strategy_run_prints_copy_paste_lock_handles_in_human_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # aegis-rd-6ie: a successful run hands the user copy-paste lock: handles (best is the
+    # bare run_id; median/worst carry :role) plus a run_id + candidate-store footer.
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+    config_path = _write_run_config(
+        tmp_path,
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    assert cli.main(["run", str(config_path), "--run-id", "lock-handle-run"]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.rstrip().endswith("lock: lock-handle-run") for line in lines)
+    assert any(line.rstrip().endswith("lock: lock-handle-run:median") for line in lines)
+    assert any(line.rstrip().endswith("lock: lock-handle-run:worst") for line in lines)
+    assert any(line == "run_id: lock-handle-run" for line in lines)
+    assert any(line.startswith("candidate store:") for line in lines)
+
+
 def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

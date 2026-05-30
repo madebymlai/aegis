@@ -37,8 +37,8 @@ A partition of the data index into exactly two sets: a **Selection** set and a *
 _Avoid_: fold, in-sample/out-of-sample, train/test
 
 **Lock**:
-A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run** — identified by its `run_id` + `candidate_id`, which together *are* the `lock_id`. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body.
-_Avoid_: promotion, lock token, per-component lock
+A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run**. Written as a human-friendly scalar `run_id[:role]`: a bare `run_id` locks the **best** **Candidate** (the default), and `:median`/`:worst` pick the other representatives — the **Run** folder name *is* the `run_id`, so the common case is copy-the-directory-name-and-paste. The precise mapping form `{run_id, candidate_id}` also resolves, where `candidate_id` is a `role` keyword or a raw `candidate_key` hash; `run_id` + a resolved `candidate_key` together *are* the `candidates` primary key, so a Lock needs no separate storage. A `role` resolves to its `candidate_key` through the storage-free `candidate_rankings` table, and **Lock** provenance always records the resolved hash. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body (the overridden values are recorded in **Evidence**, never silently dropped).
+_Avoid_: promotion, lock token, per-component lock, lock_id
 
 **Manifest**:
 The immutable audit record of a **Run**. Records lifecycle status, config evidence, environment state, artifact hashes, and stage outcomes.

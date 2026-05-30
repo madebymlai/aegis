@@ -50,6 +50,30 @@ def test_candidate_store_persists_three_candidates_and_queries_by_run(tmp_path: 
         assert store_path.parent.stat().st_mode & 0o077 == 0
 
 
+def test_candidate_key_for_role_resolves_each_representative(tmp_path: Path) -> None:
+    # aegis-rd-6ie: roles are the storage-free handle — (run_id, role) maps to the same
+    # candidate_key the ranked table exposes; an unknown role raises.
+    store_path = tmp_path / "candidates.sqlite3"
+    candidates = _candidate_rows(values=(0.30, 0.20, 0.10))
+
+    with CandidateStore(store_path) as store:
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=candidates,
+            ranking_metric="total_return",
+            provenance={"run_id": "run-a"},
+        )
+        by_role = {
+            row["role"]: row["candidate"]["candidate_key"]
+            for row in store.top_candidates_by_run("run-a")
+        }
+
+        for role in ("best", "median", "worst"):
+            assert store.candidate_key_for_role("run-a", role) == by_role[role]
+        with pytest.raises(CandidateStoreError, match="unknown role"):
+            store.candidate_key_for_role("run-a", "nonesuch")
+
+
 def test_candidate_store_deduplicates_single_candidate_into_three_roles(tmp_path: Path) -> None:
     store_path = tmp_path / "candidates.sqlite3"
     only = _candidate({"fast_window": 7, "slow_window": 14}, 0.5, total_return=0.5)

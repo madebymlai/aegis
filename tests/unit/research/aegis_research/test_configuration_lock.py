@@ -99,6 +99,50 @@ def test_builder_produces_typed_lock(registry) -> None:
     assert resolved.config.lock == Lock(run_id="run-a", candidate_id="cand_123")
 
 
+def test_scalar_lock_defaults_role_to_best(registry) -> None:
+    # aegis-rd-6ie: a bare string is the run_id; the role defaults to best, carried
+    # in candidate_id as the role keyword (resolved to a candidate_key at run time).
+    resolved = resolve_run_config(
+        _raw_config(lock="20260527T000603791760Z_etf_momentum"),
+        component_registry=registry,
+    )
+    assert resolved.config.lock == Lock(
+        run_id="20260527T000603791760Z_etf_momentum", candidate_id="best"
+    )
+
+
+def test_scalar_lock_carries_explicit_role(registry) -> None:
+    resolved = resolve_run_config(
+        _raw_config(lock="run-a:median"),
+        component_registry=registry,
+    )
+    assert resolved.config.lock == Lock(run_id="run-a", candidate_id="median")
+
+
+def test_scalar_lock_unknown_role_fails_validation_with_clear_message(registry) -> None:
+    with pytest.raises(ConfigValidationError) as excinfo:
+        resolve_run_config(
+            _raw_config(lock="run-a:bogus"),
+            component_registry=registry,
+        )
+    lock_issues = [issue for issue in excinfo.value.issues if issue.path == "lock"]
+    assert lock_issues, "expected a lock validation issue"
+    message = lock_issues[0].message
+    assert "best" in message and "median" in message and "worst" in message
+    assert "bogus" in message
+
+
+def test_scalar_lock_empty_run_id_fails_validation(registry) -> None:
+    with pytest.raises(ConfigValidationError) as excinfo:
+        resolve_run_config(
+            _raw_config(lock=":best"),
+            component_registry=registry,
+        )
+    assert any(
+        issue.path == "lock" and "run_id" in issue.message for issue in excinfo.value.issues
+    )
+
+
 def test_config_without_lock_has_none_lock(registry) -> None:
     resolved = resolve_run_config(_raw_config(), component_registry=registry)
     assert resolved.config.lock is None
@@ -114,10 +158,11 @@ def test_incomplete_lock_missing_candidate_id_fails_validation(registry) -> None
     assert "lock.candidate_id" in paths
 
 
-def test_malformed_lock_not_a_mapping_fails_validation(registry) -> None:
+def test_malformed_lock_neither_string_nor_mapping_fails_validation(registry) -> None:
+    # A scalar string and a mapping are both valid; anything else (here a list) is not.
     with pytest.raises(ConfigValidationError) as excinfo:
         resolve_run_config(
-            _raw_config(lock="run-a"),
+            _raw_config(lock=["run-a"]),
             component_registry=registry,
         )
     assert any(issue.path == "lock" for issue in excinfo.value.issues)

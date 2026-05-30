@@ -206,6 +206,24 @@ class OptimizationConfig:
     execute: dict[str, Any] = field(default_factory=dict)
 
 
+# The representative roles a Lock handle may name, in rank order. These mirror the
+# roles evidence emits for every Run (evidence.CANDIDATE_ROLES); the config layer keeps
+# its own copy because it must not depend up on the optimization layer.
+LOCK_ROLES: tuple[str, ...] = ("best", "median", "worst")
+DEFAULT_LOCK_ROLE = "best"
+
+
+def split_lock_handle(value: str) -> tuple[str, str | None]:
+    """Split a scalar ``lock:`` handle ``run_id[:role]`` into ``(run_id, role|None)``.
+
+    Pure syntax: splits on the first ``:`` and reports a missing role as ``None`` (the
+    caller defaults it). It does not validate role membership or a non-empty run_id —
+    that is the lock validator's job, so malformed handles fail at config validation.
+    """
+    run_id, separator, role = value.partition(":")
+    return run_id, (role if separator else None)
+
+
 @dataclass(frozen=True)
 class Lock:
     """A top-level Run Config reference that reproduces one prior Candidate.
@@ -214,6 +232,11 @@ class Lock:
     ``(run_id, candidate_key)`` — so a Lock needs no separate storage. A locked
     Run takes every Component's parameters from that Candidate rather than
     searching for new ones.
+
+    ``candidate_id`` carries either a representative role keyword (one of
+    ``LOCK_ROLES`` — the ergonomic handle, resolved through ``candidate_rankings``)
+    or a raw ``candidate_key`` hash (the durable, exact reference). A scalar
+    ``lock: run_id[:role]`` lands here with the role keyword (default ``best``).
     """
 
     run_id: str

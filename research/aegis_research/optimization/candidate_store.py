@@ -158,6 +158,24 @@ class CandidateStore:
         ).fetchall()
         return [_ranked_result(row) for row in rows]
 
+    def candidate_key_for_role(self, run_id: str, role: str) -> str:
+        """Resolve a representative role (best/median/worst) to its candidate_key.
+
+        A role is the storage-free handle into a Run's ranked candidates — the
+        ``candidate_rankings`` primary key is ``(run_id, role)``. Raises when the run
+        has no active candidate filling that role.
+        """
+        row = self._connection.execute(
+            """
+            SELECT candidate_key FROM candidate_rankings
+            WHERE run_id = ? AND role = ? AND publication_state = ?
+            """,
+            (run_id, role, PUBLICATION_ACTIVE),
+        ).fetchone()
+        if row is None:
+            raise CandidateStoreError(f"unknown role {role!r} for run {run_id!r}")
+        return row["candidate_key"]
+
     def params_by_candidate_key(
         self,
         candidate_key: str,

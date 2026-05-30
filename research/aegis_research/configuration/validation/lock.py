@@ -15,22 +15,44 @@ from __future__ import annotations
 
 from typing import Any
 
-from research.aegis_research.configuration.schema import ConfigValidationIssue
+from research.aegis_research.configuration.schema import (
+    LOCK_ROLES,
+    ConfigValidationIssue,
+    split_lock_handle,
+)
 from research.aegis_research.configuration.validation.base import (
     _require_str,
     _validate_known_keys,
 )
 
 _LOCK_ALLOWED_KEYS = {"run_id", "candidate_id"}
+_LOCK_ROLES_LABEL = ", ".join(LOCK_ROLES)
 
 
 def _validate_lock(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
     if raw.get("lock") is None:
         return
     value = raw["lock"]
-    if not isinstance(value, dict):
-        issues.append(ConfigValidationIssue("lock", "must be a mapping of run_id and candidate_id"))
+    if isinstance(value, str):
+        _validate_lock_handle(value, issues)
         return
-    _validate_known_keys("lock", value, _LOCK_ALLOWED_KEYS, issues)
-    _require_str("lock.run_id", value, issues)
-    _require_str("lock.candidate_id", value, issues)
+    if isinstance(value, dict):
+        _validate_known_keys("lock", value, _LOCK_ALLOWED_KEYS, issues)
+        _require_str("lock.run_id", value, issues)
+        _require_str("lock.candidate_id", value, issues)
+        return
+    issues.append(
+        ConfigValidationIssue(
+            "lock", "must be a run_id[:role] string or a mapping of run_id and candidate_id"
+        )
+    )
+
+
+def _validate_lock_handle(value: str, issues: list[ConfigValidationIssue]) -> None:
+    run_id, role = split_lock_handle(value)
+    if not run_id:
+        issues.append(ConfigValidationIssue("lock", "run_id must not be empty"))
+    if role is not None and role not in LOCK_ROLES:
+        issues.append(
+            ConfigValidationIssue("lock", f"role must be one of: {_LOCK_ROLES_LABEL} (got {role!r})")
+        )

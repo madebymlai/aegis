@@ -43,6 +43,45 @@ def test_resolves_per_component_params_for_locked_candidate(tmp_path: Path) -> N
     assert resolved.component_params[indicator_key] == {"window": 20}
 
 
+def test_resolves_role_handle_through_rankings(tmp_path: Path) -> None:
+    # aegis-rd-6ie: a role keyword in candidate_id resolves to the ranked candidate_key
+    # via candidate_rankings, and provenance still records the *resolved* hash.
+    with _store_with_candidate(tmp_path) as store:
+        expected_key = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"][
+            "candidate_key"
+        ]
+
+        resolved = resolve_lock_run(
+            Lock(run_id="run-a", candidate_id="best"),
+            store=store,
+        )
+
+    assert resolved.candidate_key == expected_key
+    assert resolved.provenance["candidate_id"] == expected_key
+
+
+def test_role_selects_the_matching_ranked_candidate(tmp_path: Path) -> None:
+    # With three *distinct* ranked candidates, the median role must resolve to the
+    # median candidate's key and params — never the best's.
+    with _store_with_distinct_roles(tmp_path) as store:
+        ranked = {
+            row["role"]: row["candidate"]["candidate_key"]
+            for row in store.top_candidates_by_run("run-a", limit=3)
+        }
+
+        resolved = resolve_lock_run(
+            Lock(run_id="run-a", candidate_id="median"),
+            store=store,
+        )
+
+    assert resolved.candidate_key == ranked["median"]
+    assert resolved.candidate_key != ranked["best"]
+    strategy_key = ("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
+    indicator_key = ("indicators", "demo.mom", "demo.mom")
+    assert resolved.component_params[strategy_key] == {"fast_window": 3, "slow_window": 12}
+    assert resolved.component_params[indicator_key] == {"window": 22}
+
+
 def test_rejects_unknown_run_id(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
@@ -83,6 +122,32 @@ def _store_with_candidate(tmp_path: Path, *, drop_indicator_runtime: bool = Fals
             "run_id": "run-a",
             "source": _source_evidence(drop_indicator_runtime=drop_indicator_runtime),
         },
+    )
+    return store
+
+
+def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
+    store = CandidateStore(tmp_path / "candidates.sqlite3")
+    fast_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window")
+    slow_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window")
+    window_key = component_param_key("indicators", "demo.mom", "demo.mom", "window")
+    result = OptimizationResult(
+        best=_candidate({fast_key: 2, slow_key: 10, window_key: 20}, 0.30),
+        median=_candidate({fast_key: 3, slow_key: 12, window_key: 22}, 0.20),
+        worst=_candidate({fast_key: 5, slow_key: 15, window_key: 25}, 0.10),
+    )
+    rows = candidate_rows_from_result(
+        result,
+        source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
+        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        portfolio_policy={"target_exposure_cap": 1.0},
+        store_namespace={"kind": "local_sqlite", "name": "default"},
+    )
+    store.insert_completed_run(
+        run_id="run-a",
+        candidate_rows=rows,
+        ranking_metric="total_return",
+        provenance={"run_id": "run-a", "source": _source_evidence()},
     )
     return store
 

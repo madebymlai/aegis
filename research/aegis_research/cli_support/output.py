@@ -16,7 +16,7 @@ from research.aegis_research.cli_support.errors import (
     InternalCliError,
     exit_code_for,
 )
-from research.aegis_research.config import redact_text, to_builtin
+from research.aegis_research.config import DEFAULT_LOCK_ROLE, redact_text, to_builtin
 
 CLI_JSON_SCHEMA_VERSION = 1
 MAX_ERROR_MESSAGE_CHARS = 1000
@@ -155,6 +155,32 @@ def held_out_summary_lines(
     if warning:
         lines.append(f"WARNING: {warning}")
     lines.append(_researched_ratio_line(optimization))
+    return tuple(lines)
+
+
+def reproduce_lock_lines(
+    run_id: str | None,
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    store_path: str | None,
+) -> tuple[str, ...]:
+    """Copy-paste ``lock:`` handles for reproducing each representative candidate.
+
+    Each representative role yields the exact scalar a user pastes into a Run Config's
+    ``lock:`` — best is the default role (a bare ``run_id``), the others carry ``:role``.
+    The footer names the run_id and the candidate-store path so the handle is
+    discoverable straight from the terminal — no ``--json`` or raw SQL required.
+    """
+    if not run_id or not candidates:
+        return ()
+    lines = ["Reproduce a representative candidate — paste a lock: line into a Run Config:"]
+    for candidate in candidates:
+        role = str(candidate.get("role", ""))
+        handle = run_id if role == DEFAULT_LOCK_ROLE else f"{run_id}:{role}"
+        lines.append(f"  {role:<8}lock: {handle}")
+    lines.append(f"run_id: {run_id}")
+    if store_path:
+        lines.append(f"candidate store: {store_path}")
     return tuple(lines)
 
 

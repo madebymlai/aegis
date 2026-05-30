@@ -20,7 +20,7 @@ from research.aegis_research.component_registry import (
     COMPONENT_FAMILIES,
     ComponentFamily,
 )
-from research.aegis_research.configuration.schema import Lock
+from research.aegis_research.configuration.schema import LOCK_ROLES, Lock
 from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
@@ -52,9 +52,15 @@ class ResolvedLockRun:
 
 
 def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
-    """Resolve a ``Lock`` to the per-Component params of the Candidate it reproduces."""
+    """Resolve a ``Lock`` to the per-Component params of the Candidate it reproduces.
+
+    ``candidate_id`` is either a representative role keyword (resolved to a
+    ``candidate_key`` through ``candidate_rankings``) or a raw ``candidate_key`` hash.
+    Either way the loaded Candidate's exact hash is what flows into provenance.
+    """
     try:
-        row = store.candidate_by_key(lock.candidate_id, run_id=lock.run_id)
+        candidate_key = _candidate_key_for_lock(lock, store=store)
+        row = store.candidate_by_key(candidate_key, run_id=lock.run_id)
     except CandidateStoreError as error:
         raise LockRunResolutionError(
             f"unknown candidate for lock run_id={lock.run_id!r} "
@@ -94,6 +100,16 @@ def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
             "candidate": dict(row["provenance"]),
         },
     )
+
+
+def _candidate_key_for_lock(lock: Lock, *, store: CandidateStore) -> str:
+    """Resolve a Lock's ``candidate_id`` to a concrete ``candidate_key``.
+
+    A role keyword resolves through ``candidate_rankings``; a raw hash passes through.
+    """
+    if lock.candidate_id in LOCK_ROLES:
+        return store.candidate_key_for_role(lock.run_id, lock.candidate_id)
+    return lock.candidate_id
 
 
 def _assert_every_slice_resolved(
