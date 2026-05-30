@@ -23,16 +23,18 @@ from research.aegis_research.market_data.contracts import (
 )
 from research.aegis_research.market_data.loading import (
     _pull_remote,
-    assert_public_metadata_safe,
-    close_from_ohlcv,
-    feature_from_ohlcv,
-    high_from_ohlcv,
     load_market_data,
     load_market_data_result,
-    low_from_ohlcv,
     required_experiment_ohlcv_features,
     required_ohlcv_features,
 )
+from research.aegis_research.market_data.panels import (
+    close_from_ohlcv,
+    feature_from_ohlcv,
+    high_from_ohlcv,
+    low_from_ohlcv,
+)
+from research.aegis_research.market_data.safety import assert_public_metadata_safe
 from research.aegis_research.market_data.sources import REMOTE_DATA_CLASSES
 
 __all__ = [

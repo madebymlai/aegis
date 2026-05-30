@@ -10,9 +10,6 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration.schema import (
-    DENIED_PASSTHROUGH_KEYS,
-    SECRET_KEY_RE,
-    SECRET_VALUE_RE,
     DataConfig,
     SignalConfig,
     has_data_array_token_shape,
@@ -22,7 +19,6 @@ from research.aegis_research.configuration.secrets import (
     resolve_secret_refs,
     to_builtin,
 )
-from research.aegis_research.configuration.validation import _is_absolute_or_user_path
 from research.aegis_research.data_arrays import merge_data_arrays
 from research.aegis_research.market_data.contracts import (
     OHLCV_FEATURES,
@@ -30,17 +26,39 @@ from research.aegis_research.market_data.contracts import (
     QUALITY_HEALTHY,
     QUALITY_PROVIDER_FAILED,
     QUALITY_REJECTED,
-    SAFE_FETCH_KWARG_KEYS,
-    SAFE_RETURNED_KWARG_KEYS,
     MarketDataAdapter,
     MarketDataAdapterResult,
     MarketDataQuality,
     MarketDataResult,
     RemoteDataPullError,
 )
+from research.aegis_research.market_data.panels import (
+    available_feature_panels as _available_feature_panels,
+    close_from_ohlcv,
+    feature_from_ohlcv,
+    high_from_ohlcv,
+    low_from_ohlcv,
+)
+from research.aegis_research.market_data.safety import (
+    assert_public_metadata_safe,
+    safe_native_data_metadata as _safe_native_data_metadata,
+    supports_update as _supports_update,
+)
 from research.aegis_research.market_data.sources import (
     vbt_data_source_classes,
 )
+
+__all__ = [
+    "assert_public_metadata_safe",
+    "close_from_ohlcv",
+    "feature_from_ohlcv",
+    "high_from_ohlcv",
+    "load_market_data",
+    "load_market_data_result",
+    "low_from_ohlcv",
+    "required_experiment_ohlcv_features",
+    "required_ohlcv_features",
+]
 
 
 def load_market_data(config: DataConfig) -> Any:
@@ -178,60 +196,6 @@ def required_experiment_ohlcv_features(
     return tuple(features)
 
 
-def close_from_ohlcv(data: Any) -> pd.DataFrame:
-    return feature_from_ohlcv(data, "Close")
-
-
-def high_from_ohlcv(data: Any) -> pd.DataFrame:
-    return feature_from_ohlcv(data, "High")
-
-
-def low_from_ohlcv(data: Any) -> pd.DataFrame:
-    return feature_from_ohlcv(data, "Low")
-
-
-def feature_from_ohlcv(data: Any, feature: str) -> pd.DataFrame:
-    if isinstance(data, MarketDataResult):
-        data.assert_usable()
-        loaded = tuple(data.metadata.get("loaded_arrays", ()))
-        if loaded and feature not in loaded:
-            raise ValueError(f"market data feature {feature!r} was not loaded for this run")
-        return _canonical_feature_panel(data.native_data, feature)
-    if hasattr(data, "get") and not isinstance(data, pd.DataFrame):
-        return _feature_panel(data, feature, role=feature)
-    return _feature_from_frame(data, feature)
-
-
-def assert_public_metadata_safe(
-    value: Any,
-    *,
-    known_secrets: tuple[str, ...] = (),
-    path: str = "$",
-) -> None:
-    if isinstance(value, str):
-        if any(secret and secret in value for secret in known_secrets) or SECRET_VALUE_RE.search(
-            value
-        ):
-            raise ValueError(f"public data metadata contains secret material at {path}")
-        if _is_absolute_or_user_path(value):
-            raise ValueError(f"public data metadata contains a non-portable path at {path}")
-        return
-    if value is None or isinstance(value, bool | int | float):
-        return
-    if isinstance(value, dict):
-        for key, item in value.items():
-            key_text = str(key)
-            child_path = f"{path}.{key_text}"
-            if SECRET_KEY_RE.search(key_text) or key_text.lower() in DENIED_PASSTHROUGH_KEYS:
-                raise ValueError(f"public data metadata contains secret-like key at {child_path}")
-            assert_public_metadata_safe(item, known_secrets=known_secrets, path=child_path)
-        return
-    if isinstance(value, list | tuple):
-        for index, item in enumerate(value):
-            assert_public_metadata_safe(item, known_secrets=known_secrets, path=f"{path}[{index}]")
-        return
-    raise ValueError(f"public data metadata contains unsupported value at {path}")
-
 
 def _default_source_loaders() -> dict[str, MarketDataAdapter]:
     return {
@@ -249,33 +213,6 @@ def _default_source_loaders() -> dict[str, MarketDataAdapter]:
         },
     }
 
-
-def _feature_panel(data: Any, feature: str, *, role: str) -> pd.DataFrame:
-    values = data.get(
-        feature=feature,
-        squeeze_features=False,
-        squeeze_symbols=False,
-    )
-    return _as_panel(values, role=role)
-
-
-def _feature_from_frame(data: pd.DataFrame, feature: str) -> pd.DataFrame:
-    if isinstance(data.columns, pd.MultiIndex):
-        if feature in data.columns.get_level_values(-1):
-            return _as_panel(data.xs(feature, axis=1, level=-1), role=feature)
-        if feature in data.columns.get_level_values(0):
-            return _as_panel(data.xs(feature, axis=1, level=0), role=feature)
-    if feature in data.columns:
-        return _as_panel(data[feature], role=feature)
-    raise ValueError(f"Data must contain a {feature} column")
-
-
-def _as_panel(values: Any, *, role: str) -> pd.DataFrame:
-    if isinstance(values, pd.Series):
-        return values.to_frame(name=values.name or role)
-    if not isinstance(values, pd.DataFrame):
-        raise TypeError(f"{role} values must be a pandas Series or DataFrame")
-    return values
 
 
 def _load_synthetic_source(config: DataConfig) -> MarketDataAdapterResult:
@@ -609,24 +546,6 @@ def _update_common_remote_metadata(
     return common_tz_localize, common_tz_convert, common_freq
 
 
-def _available_feature_panels(
-    native_data: Any, requested_features: tuple[str, ...]
-) -> dict[str, pd.DataFrame]:
-    panels = {}
-    for feature in requested_features:
-        try:
-            panels[feature] = _canonical_feature_panel(native_data, feature)
-        except (KeyError, ValueError, TypeError):
-            continue
-    return panels
-
-
-def _canonical_feature_panel(
-    native_data: Any,
-    feature: str,
-) -> pd.DataFrame:
-    return _feature_panel(native_data, feature, role=feature)
-
 
 def _evaluate_quality(
     config: DataConfig,
@@ -889,131 +808,6 @@ def _native_symbols(native_data: Any, *, fallback: list[str]) -> list[str]:
         return sorted(set(map(str, native_data.columns.get_level_values(level))))
     return list(fallback)
 
-
-def _safe_native_data_metadata(native_object: Any, *, source: str) -> dict[str, Any]:
-    omitted: list[dict[str, str]] = []
-    metadata: dict[str, Any] = {}
-    for name in (
-        "last_index",
-        "delisted",
-        "missing_index",
-        "missing_columns",
-        "tz_localize",
-        "tz_convert",
-        "freq",
-    ):
-        if hasattr(native_object, name):
-            _project_safe_field(metadata, omitted, name, getattr(native_object, name))
-    for name, allowed_keys in (
-        ("fetch_kwargs", SAFE_FETCH_KWARG_KEYS),
-        ("returned_kwargs", SAFE_RETURNED_KWARG_KEYS),
-    ):
-        if hasattr(native_object, name):
-            projected = _project_provider_mapping(
-                getattr(native_object, name),
-                allowed_keys=allowed_keys,
-                omitted=omitted,
-                path=name,
-            )
-            if projected:
-                metadata[name] = projected
-    metadata["source"] = source
-    metadata["class"] = f"{type(native_object).__module__}.{type(native_object).__qualname__}"
-    return {"metadata": metadata, "omitted": omitted}
-
-
-def _project_safe_field(
-    target: dict[str, Any],
-    omitted: list[dict[str, str]],
-    name: str,
-    value: Any,
-) -> None:
-    projected = _safe_public_value(value, omitted=omitted, path=name)
-    if projected is not _OMITTED:
-        target[name] = projected
-
-
-def _project_provider_mapping(
-    value: Any,
-    *,
-    allowed_keys: set[str],
-    omitted: list[dict[str, str]],
-    path: str,
-) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        omitted.append({"path": path, "reason": "not a mapping"})
-        return {}
-    projected: dict[str, Any] = {}
-    for key, item in value.items():
-        key_text = str(key)
-        child_path = f"{path}.{key_text}"
-        if SECRET_KEY_RE.search(key_text) or key_text.lower() in DENIED_PASSTHROUGH_KEYS:
-            omitted.append({"path": child_path, "reason": "secret-like or denied key"})
-            continue
-        if key_text not in allowed_keys:
-            omitted.append({"path": child_path, "reason": "field is not allowlisted"})
-            continue
-        safe_value = _safe_public_value(item, omitted=omitted, path=child_path)
-        if safe_value is not _OMITTED:
-            projected[key_text] = safe_value
-    return projected
-
-
-class _Omitted:
-    pass
-
-
-_OMITTED = _Omitted()
-
-
-def _safe_public_value(value: Any, *, omitted: list[dict[str, str]], path: str) -> Any:
-    if value is None or isinstance(value, bool | int | float):
-        return to_builtin(value)
-    if isinstance(value, pd.Timestamp):
-        return str(value)
-    if isinstance(value, str):
-        if SECRET_VALUE_RE.search(value):
-            omitted.append({"path": path, "reason": "secret-like value"})
-            return _OMITTED
-        if _is_absolute_or_user_path(value):
-            omitted.append({"path": path, "reason": "non-portable absolute path"})
-            return _OMITTED
-        return value
-    if isinstance(value, dict):
-        projected = {}
-        for key, item in value.items():
-            key_text = str(key)
-            child_path = f"{path}.{key_text}"
-            if SECRET_KEY_RE.search(key_text) or key_text.lower() in DENIED_PASSTHROUGH_KEYS:
-                omitted.append({"path": child_path, "reason": "secret-like or denied key"})
-                continue
-            safe_value = _safe_public_value(item, omitted=omitted, path=child_path)
-            if safe_value is not _OMITTED:
-                projected[key_text] = safe_value
-        return projected
-    if isinstance(value, list | tuple):
-        projected = []
-        for index, item in enumerate(value):
-            safe_value = _safe_public_value(item, omitted=omitted, path=f"{path}[{index}]")
-            if safe_value is not _OMITTED:
-                projected.append(safe_value)
-        return projected
-    omitted.append({"path": path, "reason": f"unsupported type {type(value).__name__}"})
-    return _OMITTED
-
-
-def _supports_update(native_data: Any) -> bool:
-    if getattr(native_data, "feature_oriented", False):
-        return _overrides_vectorbt_update_method(native_data, "update_feature")
-    if hasattr(native_data, "symbol_oriented") or hasattr(native_data, "symbols"):
-        return _overrides_vectorbt_update_method(native_data, "update_symbol")
-    return _overrides_vectorbt_update_method(native_data, "update")
-
-
-def _overrides_vectorbt_update_method(native_data: Any, method_name: str) -> bool:
-    method = getattr(type(native_data), method_name, None)
-    base_method = getattr(vbt.Data, method_name, None)
-    return callable(getattr(native_data, method_name, None)) and method is not base_method
 
 
 def _index_evidence(index: pd.Index, *, source: str) -> dict[str, Any]:
