@@ -69,6 +69,7 @@ class _ComponentRuntime:
     fixed_params: dict[str, Any]
     param_space: dict[str, vbt.Param]
     param_keys: dict[str, str]
+    locked: bool
 
 
 @dataclass(frozen=True)
@@ -171,6 +172,7 @@ def build_component_optimization_source(
     component_registry: FrozenComponentRegistry,
     data: MarketDataBundle,
     resolved_component_params: ResolvedComponentParams | None = None,
+    force_locked: bool = False,
 ) -> OptimizationSource:
     resolved_params = resolved_component_params or {}
     strategy = _build_runtime(
@@ -179,6 +181,7 @@ def build_component_optimization_source(
         config.strategy,
         component_registry=component_registry,
         resolved_component_params=resolved_params,
+        force_locked=force_locked,
     )
     indicators = tuple(
         _build_runtime(
@@ -187,6 +190,7 @@ def build_component_optimization_source(
             ref,
             component_registry=component_registry,
             resolved_component_params=resolved_params,
+            force_locked=force_locked,
         )
         for ref in config.indicators
     )
@@ -298,10 +302,12 @@ def _build_runtime(
     *,
     component_registry: FrozenComponentRegistry,
     resolved_component_params: ResolvedComponentParams,
+    force_locked: bool = False,
 ) -> _ComponentRuntime:
     definition = component_registry.get(ComponentSelection(family, ref.id))
+    locked = _is_locked(ref) or force_locked
     param_space_callable_name = (
-        None if _is_locked(ref) else getattr(definition.manifest, "param_space_callable", None)
+        None if locked else getattr(definition.manifest, "param_space_callable", None)
     )
     wide_callable_name = definition.manifest.wide_callable
     attribute_names = [definition.callable_name, wide_callable_name]
@@ -320,6 +326,7 @@ def _build_runtime(
         definition,
         resolved_component_params,
         param_space=param_space,
+        force_locked=force_locked,
     )
     _validate_component_param_sources(definition, fixed_params, param_space)
     param_keys = {
@@ -337,6 +344,7 @@ def _build_runtime(
         fixed_params=fixed_params,
         param_space=dict(param_space),
         param_keys=param_keys,
+        locked=locked,
     )
 
 
@@ -348,15 +356,16 @@ def _fixed_params_for_ref(
     resolved_component_params: ResolvedComponentParams,
     *,
     param_space: Mapping[str, vbt.Param],
+    force_locked: bool = False,
 ) -> dict[str, Any]:
-    if _is_locked(ref):
+    if _is_locked(ref) or force_locked:
         key = component_ref_key(family, definition.id, slot)
         try:
             fixed = dict(resolved_component_params[key])
         except KeyError as error:
             raise ComponentSourceError(
                 f"component {family}/{definition.id} slot {slot!r} requires resolved "
-                "lock_id/candidate_id params before execution"
+                "lock params before execution"
             ) from error
     else:
         fixed = {
@@ -628,7 +637,7 @@ def _runtime_evidence(runtime: _ComponentRuntime) -> dict[str, Any]:
 
 
 def _param_mode(runtime: _ComponentRuntime) -> str:
-    if _is_locked(runtime.ref):
+    if runtime.locked:
         return "locked"
     if runtime.param_keys:
         return "parameterized"

@@ -68,6 +68,7 @@ def test_pipeline_setup_returns_expected_keys(
         "store_path",
         "resolved_component_params",
         "resolved_locks",
+        "locked",
         "optimization_source",
         "strategy_evidence",
         "close",

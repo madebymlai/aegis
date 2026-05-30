@@ -47,6 +47,7 @@ from research.aegis_research.configuration.validation.data import (
     _is_absolute_or_user_path,
     _validate_data,
 )
+from research.aegis_research.configuration.validation.lock import _validate_lock
 from research.aegis_research.configuration.validation.metrics import _validate_ranking
 from research.aegis_research.configuration.validation.optimization import _validate_optimization
 from research.aegis_research.configuration.validation.portfolio import (
@@ -92,6 +93,7 @@ def _validate_raw_run_config(
     _validate_data(data, issues, validate_paths=True)
     _validate_portfolio(portfolio, issues)
     _validate_report(report, issues)
+    _validate_lock(raw, issues)
     _validate_run_config(
         raw,
         issues,
@@ -109,6 +111,7 @@ def _run_allowed_top_level_keys() -> set[str]:
         "report",
         "output_dir",
         "optimization",
+        "lock",
         "indicators",
         "ranking",
         "strategy",

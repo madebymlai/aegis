@@ -26,6 +26,7 @@ from research.aegis_research.data_arrays import (
 from research.aegis_research.optimization.candidate_publishing import (
     candidate_store_path,
 )
+from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import (
     build_component_optimization_source,
 )
@@ -35,6 +36,10 @@ from research.aegis_research.optimization.evidence_ledger import (
 )
 from research.aegis_research.optimization.lock_resolution import (
     resolve_component_locks,
+)
+from research.aegis_research.optimization.lock_run import (
+    ResolvedLockRun,
+    resolve_lock_run,
 )
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_evidence_payload,
@@ -63,15 +68,28 @@ def run_pipeline_setup(
         optimization_builtin, portfolio_builtin.
     """
     store_path = candidate_store_path(config)
-    resolved_component_params, resolved_locks = resolve_component_locks(
-        config,
-        candidate_store_path=store_path,
-    )
+    lock_run = _resolve_lock_run(config, store_path=store_path)
+    if lock_run is not None:
+        # A locked Run reproduces one prior Candidate: every Component takes its
+        # params from that Candidate and nothing is optimized. The old per-Component
+        # lock path is bypassed (a locked config carries no per-Component refs).
+        resolved_component_params = dict(lock_run.component_params)
+        resolved_locks: list[dict[str, Any]] = []
+        force_locked = True
+        lock_evidence = _lock_evidence(config, lock_run)
+    else:
+        resolved_component_params, resolved_locks = resolve_component_locks(
+            config,
+            candidate_store_path=store_path,
+        )
+        force_locked = False
+        lock_evidence = None
     optimization_source = build_component_optimization_source(
         config,
         component_registry=component_registry,
         data=data,
         resolved_component_params=resolved_component_params,
+        force_locked=force_locked,
     )
     strategy_evidence = optimization_source.evidence["strategy"]
     close = data.feature("Close")
@@ -88,12 +106,14 @@ def run_pipeline_setup(
             array_contract=array_contract,
             metric_registry_fingerprint=metric_registry_fingerprint,
             resolved_locks=resolved_locks,
+            lock_evidence=lock_evidence,
         )
     )
     return {
         "store_path": store_path,
         "resolved_component_params": resolved_component_params,
         "resolved_locks": resolved_locks,
+        "locked": lock_run is not None,
         "optimization_source": optimization_source,
         "strategy_evidence": strategy_evidence,
         "close": close,
@@ -101,6 +121,24 @@ def run_pipeline_setup(
         "split_result": split_result,
         "optimization_builtin": optimization_builtin,
         "portfolio_builtin": portfolio_builtin,
+    }
+
+
+def _resolve_lock_run(config: RunConfig, *, store_path: Any) -> ResolvedLockRun | None:
+    if config.lock is None:
+        return None
+    with CandidateStore(store_path) as store:
+        return resolve_lock_run(config.lock, store=store)
+
+
+def _lock_evidence(config: RunConfig, lock_run: ResolvedLockRun) -> dict[str, Any]:
+    assert config.lock is not None
+    return {
+        "mode": "reproduction",
+        "run_id": config.lock.run_id,
+        "candidate_id": config.lock.candidate_id,
+        "resolved_candidate_key": lock_run.candidate_key,
+        "provenance": lock_run.provenance,
     }
 
 
@@ -113,6 +151,7 @@ def _optimization_evidence_baseline(
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
     resolved_locks: list[Mapping[str, Any]],
+    lock_evidence: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     return {
         "schema_version": OPTIMIZATION_ROUTE_SCHEMA_VERSION,
@@ -125,4 +164,5 @@ def _optimization_evidence_baseline(
         "metric_registry_fingerprint": metric_registry_fingerprint,
         "open_prices_available": True,
         "resolved_locks": resolved_locks,
+        "lock": lock_evidence,
     }
