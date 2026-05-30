@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.evidence import (
+    canonical_hash,
     capture_environment_evidence,
     capture_git_evidence,
     capture_run_start_evidence,
@@ -55,7 +57,7 @@ def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
 
     payload = manifest.to_dict()
 
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["run"]["id"] == "run-1"
     assert payload["run"]["run_dir"] == "run-1"
     assert str(tmp_path) not in json.dumps(payload)
@@ -173,6 +175,22 @@ def test_manifest_rejects_unsafe_artifact_paths(tmp_path: Path, path: str) -> No
             schema_version="report.v1",
             status=ArtifactStatus.COMPLETED,
         )
+
+
+def test_atomic_write_json_uses_shared_canonical_json_bytes(tmp_path: Path) -> None:
+    target = tmp_path / "manifest.json"
+    payload = {"b": 2, "a": 1}
+
+    atomic_write_json(target, payload)
+
+    assert target.read_bytes() == canonical_json_bytes(payload)
+    assert target.read_bytes() == b'{"a":1,"b":2}'
+
+
+def test_canonical_hash_uses_shared_canonical_json_bytes() -> None:
+    assert canonical_hash({"b": 2, "a": 1}) == (
+        "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    )
 
 
 def test_atomic_write_json_preserves_previous_file_on_serialization_failure(

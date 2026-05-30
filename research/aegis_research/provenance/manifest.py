@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -9,7 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-MANIFEST_SCHEMA_VERSION = 2
+from research.aegis_research.canonical_json import canonical_json_bytes
+
+MANIFEST_SCHEMA_VERSION = 3
 
 
 class RunStatus:
@@ -226,7 +227,7 @@ def validate_manifest(payload: dict[str, Any], *, run_dir: str | Path | None = N
 def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    data = canonical_json_bytes(payload, pretty=True)
+    data = canonical_json_bytes(_to_builtin(payload))
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -246,15 +247,6 @@ def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
     finally:
         if temp_path is not None and temp_path.exists():
             temp_path.unlink()
-
-
-def canonical_json_bytes(payload: Any, *, pretty: bool = False) -> bytes:
-    kwargs = {"sort_keys": True}
-    if pretty:
-        kwargs["indent"] = 2
-    else:
-        kwargs["separators"] = (",", ":")
-    return (json.dumps(_to_builtin(payload), **kwargs) + "\n").encode()
 
 
 def hash_file(path: str | Path) -> str:
