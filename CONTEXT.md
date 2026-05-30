@@ -1,0 +1,79 @@
+# Aegis RD
+
+A research operating system for turning market hypotheses into reproducible, scored evidence.
+
+## Language
+
+**Run**:
+A single, reproducible execution of a strategy hypothesis against market data, producing scored evidence and a manifest.
+_Avoid_: research loop, experiment, backtest
+
+**Component**:
+A versioned, registered Python module that declares inputs, parameters, and outputs. Components come in two families: **Indicators** and **Strategies**.
+_Avoid_: plugin, module, block
+
+**Indicator**:
+A **Component** that transforms market data features into named numeric outputs consumed by **Strategies**.
+_Avoid_: feature, signal, transform
+
+**Strategy**:
+A **Component** that consumes **Indicator** outputs and emits a single allocation-native output consumed by the **Allocation Policy**.
+_Avoid_: model, algorithm, alpha
+
+**Candidate**:
+A scored parameter combination produced by an optimization **Run**. Each Candidate carries its fixed parameters, per-split metrics on both **Selection** and **Held-out** sets, and provenance. Every Run produces exactly three representative Candidates: best, median, and worst, selected by a min-aware ranking score across **Splits**.
+_Avoid_: trial, result, entry
+
+**Split**:
+A partition of the data index into exactly two sets: a **Selection** set and a **Held-out** set. The Selection set is used for parameter scoring and global ranking during optimization; the Held-out set is used for unbiased validation of the selected **Candidates**.
+_Avoid_: fold, in-sample/out-of-sample, train/test
+
+**Lock**:
+A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run** — identified by its `run_id` + `candidate_id`, which together *are* the `lock_id`. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body.
+_Avoid_: promotion, lock token, per-component lock
+
+**Manifest**:
+The immutable audit record of a **Run**. Records lifecycle status, config evidence, environment state, artifact hashes, and stage outcomes.
+_Avoid_: log, report, receipt
+
+**Evidence**:
+A structured, schema-versioned artifact written by a **Run** stage that records what happened and why. Evidence makes a Run's claims inspectable and reproducible. Examples: config selection record, data quality diagnostics, candidate scoring rows.
+_Avoid_: output, result, log
+
+**Canonical Form**:
+The deterministic, hash-stable byte representation of a value — sorted keys, strict (no NaN/Inf literals), one encoding rule — that makes a **Manifest** hash, an **Evidence** content hash, and a **Candidate** token reproducible across processes and machines. **Candidate** identity is a richer, schema-versioned canonicalization layered on top of it.
+_Avoid_: serialization, JSON dump, to_builtin
+
+**Metric**:
+A registered, named measurement with declared semantics, unit, and ranking eligibility. One Metric is chosen as the primary ranking criterion; all registered Metrics are carried on every **Candidate**.
+_Avoid_: score, stat, KPI
+
+**Allocation Policy**:
+The layer that converts a **Strategy's** declared output shape into a validated target-allocation frame. A Strategy declares one of four shapes — `active` (boolean selection), `scores` (numeric ranking), `ranks` (ordinal ranking), or `target_weights` (explicit per-symbol weights) — and the policy normalizes it against direction constraints and exposure caps before passing it to the VBT portfolio simulator.
+_Avoid_: portfolio policy, portfolio layer, sizing engine
+
+**Provenance**:
+The lineage metadata attached to a **Candidate** that traces its parameters back to the **Components** and **Run** that produced them.
+_Avoid_: lineage, history, audit trail
+
+**Run Config**:
+A declarative YAML specification that fully defines a **Run**: data source, **Components**, ranking criteria, portfolio settings, and optimization parameters. Configs are inert — they select trusted IDs and parameters only; they cannot execute code or reference generated artifacts.
+_Avoid_: spec, recipe, template
+
+**Preflight**:
+A fail-closed budget gate that runs before optimization begins. Estimates parameter combinations, output cell counts, and memory cost, and rejects the **Run** if any limit is exceeded.
+_Avoid_: dry run, validation, sanity check
+
+## Example dialogue
+
+> **Dev**: I want to test a moving-average crossover idea on ETFs.
+>
+> **Expert**: Write an **Indicator** for the moving average and a **Strategy** that consumes it. Define a parameter space in each, then create a **Run Config** that wires them together with a rolling **Split** and ranks **Candidates** by Sharpe on the **Held-out** set.
+>
+> **Dev**: What if the best **Candidate** looks good?
+>
+> **Expert**: The **Run** produces three representative **Candidates** — best, median, and worst — each with per-split **Metrics** on both **Selection** and **Held-out** sets. If the best **Candidate** holds up on **Held-out**, **Lock** it and reference the **Lock** in a new **Run Config** to reuse those exact parameters.
+>
+> **Dev**: How do I know the **Run** was honest?
+>
+> **Expert**: Every **Run** writes a **Manifest** with **Evidence** — config hashes, data quality diagnostics, component source hashes. The **Manifest** is immutable once the **Run** completes.
