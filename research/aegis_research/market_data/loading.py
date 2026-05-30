@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from warnings import warn
@@ -18,9 +17,9 @@ from research.aegis_research.configuration.schema import (
 from research.aegis_research.configuration.secrets import (
     redact_text,
     resolve_secret_refs,
-    to_builtin,
 )
 from research.aegis_research.data_arrays import merge_data_arrays
+from research.aegis_research.market_data import metadata as _metadata
 from research.aegis_research.market_data import panels as _panels
 from research.aegis_research.market_data import safety as _safety
 from research.aegis_research.market_data.contracts import (
@@ -60,12 +59,7 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True)
-class MarketDataObservation:
-    index: pd.Index
-    features: tuple[str, ...]
-    symbols: tuple[str, ...]
-    panels: dict[str, pd.DataFrame]
+MarketDataObservation = _metadata.MarketDataObservation
 
 
 _MISSING = object()
@@ -102,10 +96,10 @@ def load_market_data_result(
         diagnostics,
         required_features=required,
     )
-    metadata = _data_metadata(
+    metadata = _metadata.describe(
         config,
-        adapter_result.native_data,
-        observation,
+        native_data=adapter_result.native_data,
+        observation=observation,
         diagnostics=diagnostics,
         quality=quality,
         source_metadata=adapter_result.source_metadata,
@@ -144,44 +138,19 @@ def _provider_failed_result(
         required_features=required_features,
     )
     reason = quality.reasons[0] if quality.reasons else quality.state
-    metadata: dict[str, Any] = {
-        "schema_version": "market_data.v2",
-        "source": config.source,
-        "provider_class": None,
-        "native_class": None,
-        "requested_symbols": list(config.symbols),
-        "symbols": [],
-        "features": [],
-        "canonical_features": [],
-        "authored_arrays": to_builtin(config.arrays),
-        "effective_arrays": list(config.effective_arrays),
-        "required_arrays": list(required_features),
-        "loaded_arrays": [],
-        "unavailable_arrays": list(required_features),
-        "timeframe": config.timeframe,
-        "shape": {"rows": 0, "symbols": 0, "features": 0, "columns": 0},
-        "ohlc_available": dict.fromkeys(OHLCV_FEATURES, False),
-        "index_start": None,
-        "index_end": None,
-        "missing_index": config.missing_index,
-        "missing_columns": config.missing_columns,
-        "tz_localize": config.tz_localize,
-        "tz_convert": config.tz_convert,
-        "skip_on_error": config.skip_on_error,
-        "silence_warnings": config.silence_warnings,
-        "quality": quality.to_metadata(),
-        "diagnostics": _diagnostics_metadata(diagnostics),
-        "source_metadata": {
+    metadata = _metadata.describe(
+        config,
+        native_data=None,
+        observation=_empty_observation(),
+        diagnostics=diagnostics,
+        quality=quality,
+        source_metadata={
             "provider_error_type": type(error).__name__,
             "provider_error_summary": reason,
         },
-        "index_evidence": {"source": "provider_failed"},
-        "provider_metadata": {},
-        "omitted_metadata_fields": [],
-        "update_supported": False,
-        "cache_policy": "disabled_in_schema_v2",
-    }
-    metadata = to_builtin(metadata)
+        evidence={"source": "provider_failed"},
+        required_features=required_features,
+    )
     assert_public_metadata_safe(metadata)
     return MarketDataResult(
         native_data=None,
@@ -189,6 +158,10 @@ def _provider_failed_result(
         diagnostics=diagnostics,
         quality=quality,
     )
+
+
+def _empty_observation() -> MarketDataObservation:
+    return MarketDataObservation(index=pd.Index([]), features=(), symbols=(), panels={})
 
 
 def required_ohlcv_features() -> tuple[str, ...]:
@@ -772,64 +745,6 @@ def _available_feature_diagnostics(series: pd.Series) -> DataFeatureDiagnostics:
     )
 
 
-def _data_metadata(
-    config: DataConfig,
-    native_data: Any,
-    observation: MarketDataObservation,
-    *,
-    diagnostics: tuple[DataDiagnostics, ...],
-    quality: MarketDataQuality,
-    source_metadata: dict[str, Any],
-    evidence: dict[str, Any],
-    required_features: tuple[str, ...],
-) -> dict[str, Any]:
-    index = observation.index
-    features = list(observation.features)
-    symbols = list(observation.symbols)
-    panels = observation.panels
-    provider_metadata = _safety.safe_native_data_metadata(native_data, source=config.source)
-    metadata: dict[str, Any] = {
-        "schema_version": "market_data.v2",
-        "source": config.source,
-        "provider_class": type(native_data).__name__,
-        "native_class": type(native_data).__name__,
-        "requested_symbols": list(config.symbols),
-        "symbols": symbols,
-        "features": features,
-        "canonical_features": list(panels),
-        "authored_arrays": to_builtin(config.arrays),
-        "effective_arrays": list(config.effective_arrays),
-        "required_arrays": list(required_features),
-        "loaded_arrays": list(panels),
-        "unavailable_arrays": [feature for feature in required_features if feature not in panels],
-        "timeframe": config.timeframe,
-        "shape": {
-            "rows": len(index),
-            "symbols": len(symbols),
-            "features": len(features),
-            "columns": len(symbols) * len(features),
-        },
-        "ohlc_available": {feature: feature in panels for feature in OHLCV_FEATURES},
-        "index_start": str(index[0]) if len(index) else None,
-        "index_end": str(index[-1]) if len(index) else None,
-        "missing_index": config.missing_index,
-        "missing_columns": config.missing_columns,
-        "tz_localize": config.tz_localize,
-        "tz_convert": config.tz_convert,
-        "skip_on_error": config.skip_on_error,
-        "silence_warnings": config.silence_warnings,
-        "quality": quality.to_metadata(),
-        "diagnostics": _diagnostics_metadata(diagnostics),
-        "source_metadata": source_metadata,
-        "index_evidence": evidence,
-        "provider_metadata": provider_metadata["metadata"],
-        "omitted_metadata_fields": provider_metadata["omitted"],
-        "update_supported": _safety.supports_update(native_data),
-        "cache_policy": "disabled_in_schema_v2",
-    }
-    return to_builtin(metadata)
-
-
 def _observe_market_data(
     config: DataConfig,
     native_data: Any,
@@ -923,10 +838,6 @@ def _series_feature_panels(
     if str(values.name) not in requested_features:
         return {}
     return {str(values.name): _panels.as_panel(values, role=str(values.name))}
-
-
-def _diagnostics_metadata(diagnostics: tuple[DataDiagnostics, ...]) -> list[dict[str, Any]]:
-    return [diagnostic.to_metadata() for diagnostic in diagnostics]
 
 
 def _native_index(native_data: Any) -> pd.Index:
