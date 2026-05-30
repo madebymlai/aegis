@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
-
-import pandas as pd
 
 from research.aegis_research.configuration.schema import DataConfig
 from research.aegis_research.configuration.secrets import to_builtin
@@ -12,14 +9,9 @@ from research.aegis_research.market_data.contracts import (
     DataDiagnostics,
     MarketDataQuality,
 )
+from research.aegis_research.market_data.diagnostics import MarketDataObservation
 
-
-@dataclass(frozen=True)
-class MarketDataObservation:
-    index: pd.Index
-    features: tuple[str, ...]
-    symbols: tuple[str, ...]
-    panels: dict[str, pd.DataFrame]
+__all__ = ["MarketDataObservation", "describe"]
 
 
 def describe(

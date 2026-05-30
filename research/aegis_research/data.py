@@ -26,17 +26,17 @@ from research.aegis_research.market_data.contracts import (
     RemoteDataPullError,
     market_data_bundle,
 )
-from research.aegis_research.market_data.loading import (
-    load_market_data,
-    load_market_data_result,
-    required_experiment_ohlcv_features,
-    required_ohlcv_features,
-)
-from research.aegis_research.market_data.panels import (
+from research.aegis_research.market_data.features import (
     close_from_ohlcv,
     feature_from_ohlcv,
     high_from_ohlcv,
     low_from_ohlcv,
+    required_experiment_ohlcv_features,
+    required_ohlcv_features,
+)
+from research.aegis_research.market_data.loading import (
+    load_market_data,
+    load_market_data_result,
 )
 from research.aegis_research.market_data.safety import assert_public_metadata_safe
 from research.aegis_research.market_data.sources import REMOTE_DATA_CLASSES

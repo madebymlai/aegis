@@ -123,7 +123,7 @@ class MarketDataResult:
     known_secrets: tuple[str, ...] = ()
 
     def feature(self, feature: str) -> pd.DataFrame:
-        from research.aegis_research.market_data.panels import feature_from_ohlcv
+        from research.aegis_research.market_data.features import feature_from_ohlcv
 
         return feature_from_ohlcv(self, feature)
 

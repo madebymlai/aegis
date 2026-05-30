@@ -11,7 +11,7 @@ from research.aegis_research.config import (
     DataQualityConfig,
     SignalConfig,
 )
-from research.aegis_research.market_data import loading as data_loading
+from research.aegis_research.market_data import quality as data_quality
 from research.aegis_research.data import (
     DataDiagnostics,
     DataFeatureDiagnostics,
@@ -24,7 +24,7 @@ from research.aegis_research.data import (
 
 
 def test_quality_verdict_is_derived_from_typed_diagnostics_without_panels() -> None:
-    quality = data_loading._quality_from_diagnostics(
+    quality = data_quality.evaluate(
         DataConfig(source="diagnostic", symbols=["SYN"], arrays=["Close"]),
         (
             DataDiagnostics(
