@@ -15,13 +15,13 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
 )
+from research.aegis_research.optimization.canonical_json import canonical_json_bytes
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
     component_param_slices,
     component_params_from_slices,
     component_ref_key,
 )
-from research.aegis_research.optimization.canonical_json import canonical_json_bytes
 from research.aegis_research.optimization.source import OptimizationSourceError
 
 COMPONENT_LOCK_SCHEMA_VERSION = "component_lock.v1"
