@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import research.aegis_research.optimization.candidate_store as candidate_store_module
-import research.aegis_research.optimization.canonical_json as canonical_json_module
 from research.aegis_research.optimization.candidate_store import (
     PUBLICATION_PENDING,
     SCHEMA_VERSION,
@@ -186,18 +186,18 @@ def test_candidate_store_resolves_lock_token_params(tmp_path: Path) -> None:
 def test_candidate_store_json_columns_use_canonical_json_serializer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[object] = []
+    serialized_values: list[object] = []
 
-    def canonical_json_bytes(value: object) -> bytes:
-        calls.append(value)
+    def serialize_canonical_json(value: object) -> bytes:
+        serialized_values.append(value)
         return b'{"serialized":"through-canonical-json"}'
 
-    monkeypatch.setattr(canonical_json_module, "canonical_json_bytes", canonical_json_bytes)
+    monkeypatch.setattr(candidate_store_module, "canonical_json_bytes", serialize_canonical_json)
 
     payload = {"z": 1, "a": 2}
 
     assert candidate_store_module._json_dumps(payload) == '{"serialized":"through-canonical-json"}'
-    assert calls == [payload]
+    assert serialized_values == [payload]
 
 
 def test_candidate_store_rejects_incompatible_schema_version(tmp_path: Path) -> None:
@@ -323,14 +323,16 @@ def test_candidate_store_rejects_conflicting_duplicate_lock_payload(tmp_path: Pa
 
 
 def test_candidate_store_raises_on_empty_candidate_rows(tmp_path: Path) -> None:
-    with CandidateStore(tmp_path / "candidates.sqlite3") as store:
-        with pytest.raises(CandidateStoreError, match="no candidate rows"):
-            store.insert_completed_run(
-                run_id="run-a",
-                candidate_rows=[],
-                ranking_metric="total_return",
-                provenance={"run_id": "run-a"},
-            )
+    with (
+        CandidateStore(tmp_path / "candidates.sqlite3") as store,
+        pytest.raises(CandidateStoreError, match="no candidate rows"),
+    ):
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=[],
+            ranking_metric="total_return",
+            provenance={"run_id": "run-a"},
+        )
 
 
 def test_candidate_store_rejects_group_or_other_readable_directory(tmp_path: Path) -> None:
@@ -358,7 +360,7 @@ def test_candidate_store_rejects_group_or_other_readable_sqlite_file(tmp_path: P
         CandidateStore(store_path)
 
 
-def _candidate(params: dict[str, object], score: float, *, total_return: float) -> EvaluatedCandidate:
+def _candidate(params: dict[str, Any], score: float, *, total_return: float) -> EvaluatedCandidate:
     return EvaluatedCandidate(
         params=params,
         score=score,
@@ -372,7 +374,7 @@ def _candidate_rows(
     *,
     data_symbol: str = "SYN",
     values: tuple[float, float, float] = (0.30, 0.20, 0.10),
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     best, median, worst = values
     result = OptimizationResult(
         best=_candidate({"fast_window": 5, "slow_window": 10}, best, total_return=best),
