@@ -96,11 +96,11 @@ def load_market_data_result(
     except RemoteDataPullError as error:
         return _provider_failed_result(config, error, required_features=required)
     observation = _observe_market_data(config, adapter_result.native_data, requested)
-    diagnostics, quality = _evaluate_quality(
+    diagnostics = _symbol_diagnostics(config, observation, evidence=adapter_result.evidence)
+    quality = _quality_from_diagnostics(
         config,
-        observation,
+        diagnostics,
         required_features=required,
-        evidence=adapter_result.evidence,
     )
     metadata = _data_metadata(
         config,
@@ -128,12 +128,6 @@ def _provider_failed_result(
     *,
     required_features: tuple[str, ...],
 ) -> MarketDataResult:
-    reason = f"{config.source} provider failed before usable native data was available"
-    quality = MarketDataQuality(
-        state=QUALITY_PROVIDER_FAILED,
-        reasons=(reason,),
-        allowed_degradations=tuple(config.quality.allowed_degradations),
-    )
     diagnostics = tuple(
         DataDiagnostics(
             symbol=symbol,
@@ -144,6 +138,12 @@ def _provider_failed_result(
         )
         for symbol in config.symbols
     )
+    quality = _quality_from_diagnostics(
+        config,
+        diagnostics,
+        required_features=required_features,
+    )
+    reason = quality.reasons[0] if quality.reasons else quality.state
     metadata: dict[str, Any] = {
         "schema_version": "market_data.v2",
         "source": config.source,
@@ -555,22 +555,34 @@ def _update_common_remote_metadata(
     return common_tz_localize, common_tz_convert, common_freq
 
 
-def _evaluate_quality(
+def _quality_from_diagnostics(
     config: DataConfig,
-    observation: MarketDataObservation,
+    diagnostics: tuple[DataDiagnostics, ...],
     *,
     required_features: tuple[str, ...],
-    evidence: dict[str, Any],
-) -> tuple[tuple[DataDiagnostics, ...], MarketDataQuality]:
-    panels = observation.panels
-    diagnostics = _symbol_diagnostics(config, observation, evidence=evidence)
+) -> MarketDataQuality:
     reasons: list[str] = []
     warnings: list[str] = []
     degradations: set[str] = set()
     allowed = set(config.quality.allowed_degradations)
 
-    observed_symbols = set(observation.symbols)
-    skipped_symbols = [symbol for symbol in config.symbols if symbol not in observed_symbols]
+    provider_failed = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.configured and diagnostic.provider_status == QUALITY_PROVIDER_FAILED
+    ]
+    if provider_failed:
+        return MarketDataQuality(
+            state=QUALITY_PROVIDER_FAILED,
+            reasons=(f"{config.source} provider failed before usable native data was available",),
+            allowed_degradations=tuple(config.quality.allowed_degradations),
+        )
+
+    skipped_symbols = [
+        diagnostic.symbol
+        for diagnostic in diagnostics
+        if diagnostic.configured and diagnostic.provider_status == "skipped"
+    ]
     allowed_skipped_symbols = (
         set(skipped_symbols) if (config.skip_on_error and "skipped_symbols" in allowed) else set()
     )
@@ -587,7 +599,8 @@ def _evaluate_quality(
         else:
             reasons.append(f"configured symbols missing from loaded data: {skipped_symbols}")
 
-    if evidence.get("raw_index_has_duplicates"):
+    index_evidence = _combined_index_evidence(diagnostics)
+    if index_evidence.get("raw_index_has_duplicates"):
         _record_quality_issue(
             "duplicate_index",
             "raw data index contains duplicate timestamps",
@@ -596,7 +609,7 @@ def _evaluate_quality(
             warnings,
             degradations,
         )
-    if evidence.get("raw_index_monotonic_increasing") is False:
+    if index_evidence.get("raw_index_monotonic_increasing") is False:
         _record_quality_issue(
             "non_monotonic_index",
             "raw data index is not monotonic increasing",
@@ -606,24 +619,37 @@ def _evaluate_quality(
             degradations,
         )
 
+    configured_diagnostics = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.configured and diagnostic.symbol not in allowed_skipped_symbols
+    ]
     for feature in required_features:
-        if feature not in panels:
+        feature_diagnostics = [
+            (diagnostic, diagnostic.features.get(feature))
+            for diagnostic in configured_diagnostics
+        ]
+        available = [
+            (diagnostic, feature_diagnostic)
+            for diagnostic, feature_diagnostic in feature_diagnostics
+            if feature_diagnostic is not None and feature_diagnostic.available
+        ]
+        if not available:
             reasons.append(f"required feature {feature!r} is unavailable")
             continue
-        panel = panels[feature]
-        if panel.empty:
+        if all(feature_diagnostic.rows == 0 for _, feature_diagnostic in available):
             reasons.append(f"required feature {feature!r} is empty")
             continue
         missing_required_symbols = [
-            symbol
-            for symbol in config.symbols
-            if symbol not in panel.columns and symbol not in allowed_skipped_symbols
+            diagnostic.symbol
+            for diagnostic, feature_diagnostic in feature_diagnostics
+            if feature_diagnostic is None or not feature_diagnostic.available
         ]
         if missing_required_symbols:
             reasons.append(
                 f"required feature {feature!r} is missing symbols {missing_required_symbols}"
             )
-        if bool(panel.isna().to_numpy().any()):
+        if any(feature_diagnostic.missing > 0 for _, feature_diagnostic in available):
             _record_quality_issue(
                 "missing_rows",
                 f"required feature {feature!r} contains missing values",
@@ -633,7 +659,9 @@ def _evaluate_quality(
                 degradations,
             )
         non_numeric = [
-            symbol for symbol in panel.columns if not pd.api.types.is_numeric_dtype(panel[symbol])
+            diagnostic.symbol
+            for diagnostic, feature_diagnostic in available
+            if feature_diagnostic.numeric is False
         ]
         if non_numeric:
             reasons.append(f"required feature {feature!r} has non-numeric symbols {non_numeric}")
@@ -644,12 +672,22 @@ def _evaluate_quality(
         state = QUALITY_DEGRADED_ALLOWED
     else:
         state = QUALITY_HEALTHY
-    return diagnostics, MarketDataQuality(
+    return MarketDataQuality(
         state=state,
         reasons=tuple(reasons),
         warnings=tuple(warnings),
         allowed_degradations=tuple(config.quality.allowed_degradations),
     )
+
+
+def _combined_index_evidence(diagnostics: tuple[DataDiagnostics, ...]) -> dict[str, Any]:
+    evidence: dict[str, Any] = {}
+    for diagnostic in diagnostics:
+        if diagnostic.index_evidence.get("raw_index_has_duplicates"):
+            evidence["raw_index_has_duplicates"] = True
+        if diagnostic.index_evidence.get("raw_index_monotonic_increasing") is False:
+            evidence["raw_index_monotonic_increasing"] = False
+    return evidence
 
 
 def _record_quality_issue(
