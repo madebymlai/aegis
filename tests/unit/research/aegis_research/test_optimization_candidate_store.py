@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import research.aegis_research.optimization.candidate_store as candidate_store_module
+import research.aegis_research.optimization.canonical_json as canonical_json_module
 from research.aegis_research.optimization.candidate_store import (
     PUBLICATION_PENDING,
     SCHEMA_VERSION,
@@ -179,6 +181,23 @@ def test_candidate_store_resolves_lock_token_params(tmp_path: Path) -> None:
         params = store.params_by_lock_token("lock_run-a_strategy_demo_ma_cross_rank1")
 
     assert params == candidate["params"]
+
+
+def test_candidate_store_json_columns_use_canonical_json_serializer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    def canonical_json_bytes(value: object) -> bytes:
+        calls.append(value)
+        return b'{"serialized":"through-canonical-json"}'
+
+    monkeypatch.setattr(canonical_json_module, "canonical_json_bytes", canonical_json_bytes)
+
+    payload = {"z": 1, "a": 2}
+
+    assert candidate_store_module._json_dumps(payload) == '{"serialized":"through-canonical-json"}'
+    assert calls == [payload]
 
 
 def test_candidate_store_rejects_incompatible_schema_version(tmp_path: Path) -> None:
