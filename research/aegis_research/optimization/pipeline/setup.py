@@ -6,7 +6,6 @@ evidence baseline for the strategy sweep.
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
 from research.aegis_research.component_registry import (
@@ -72,8 +71,8 @@ def run_pipeline_setup(
     close = data.feature("Close")
     open_ = data.feature("Open")
     split_result = build_run_splits_result(close.index, config.optimization.split)
-    optimization_builtin = to_builtin(asdict(config.optimization))
-    portfolio_builtin = to_builtin(asdict(config.portfolio))
+    optimization_builtin = to_builtin(config.optimization)
+    portfolio_builtin = to_builtin(config.portfolio)
     optimization_evidence: dict[str, Any] = {
         "schema_version": "optimization_route.v1",
         "contract": OPTIMIZATION_SOURCE_CONTRACT,

@@ -39,12 +39,12 @@ from research.aegis_research.configuration.schema import (
     SignalConfig,
     expand_data_arrays,
 )
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration.secrets import (
     known_config_secret_values,
     redact_config,
     redact_text,
     resolve_secret_refs,
-    to_builtin,
 )
 from research.aegis_research.market_data.sources import (
     LOCAL_DATA_SOURCES,

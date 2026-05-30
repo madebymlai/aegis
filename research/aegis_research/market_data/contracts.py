@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import pandas as pd
 
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration.schema import OHLCV_ARRAYS, DataConfig
-from research.aegis_research.configuration.secrets import to_builtin
 
 OHLCV_FEATURES = OHLCV_ARRAYS
 LOGICAL_FEATURES = {
@@ -66,7 +66,7 @@ class MarketDataQuality:
         return self.state in {QUALITY_HEALTHY, QUALITY_DEGRADED_ALLOWED}
 
     def to_metadata(self) -> dict[str, Any]:
-        return to_builtin(asdict(self))
+        return to_builtin(self)
 
 
 @dataclass(frozen=True)

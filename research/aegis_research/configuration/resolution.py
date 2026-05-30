@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
     discover_component_registry,
@@ -18,7 +19,7 @@ from research.aegis_research.configuration.schema import (
     ConfigValidationIssue,
     RunConfig,
 )
-from research.aegis_research.configuration.secrets import redact_config, to_builtin
+from research.aegis_research.configuration.secrets import redact_config
 from research.aegis_research.configuration.validation import (
     _validate_ranking,
     _validate_raw_run_config,
@@ -70,7 +71,7 @@ class ResolvedRunConfig:
         return redact_config(self.authored_config)
 
     def redacted_resolved_config(self) -> dict[str, Any]:
-        return redact_config(to_builtin(asdict(self.config)))
+        return redact_config(to_builtin(self.config))
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -155,7 +156,7 @@ def resolve_run_config(
     registry = component_registry or discover_component_registry()
     effective_metric_registry = frozen_metric_registry or make_default_metric_registry()
     if isinstance(value, RunConfig):
-        raw = to_builtin(asdict(value))
+        raw = to_builtin(value)
         raw_text = yaml.safe_dump(raw, sort_keys=False)
         return _build_resolved_run_config(
             raw,
@@ -214,7 +215,7 @@ def _assert_resolved_config_registries(
     issues: list[ConfigValidationIssue] = []
     _validate_ranking(
         "ranking",
-        to_builtin(asdict(config.ranking)),
+        to_builtin(config.ranking),
         issues,
         registry=frozen_metric_registry,
     )

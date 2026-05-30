@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import asdict
 from typing import Any
 
+from research.aegis_research.canonical_json import to_builtin as to_builtin
 from research.aegis_research.configuration.schema import (
     SECRET_KEY_RE,
     SECRET_VALUE_RE,
@@ -134,15 +134,3 @@ def _collect_known_config_secret_values(value: Any, secrets: list[str]) -> None:
     if isinstance(value, list):
         for item in value:
             _collect_known_config_secret_values(item, secrets)
-
-
-def to_builtin(value: Any) -> Any:
-    if value.__class__.__name__ == "ResolvedRunConfig":
-        return to_builtin(asdict(value.config))
-    if hasattr(value, "item"):
-        return value.item()
-    if isinstance(value, dict):
-        return {str(k): to_builtin(v) for k, v in value.items()}
-    if isinstance(value, list | tuple):
-        return [to_builtin(v) for v in value]
-    return value

@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from research.aegis_research.canonical_json import canonical_json_bytes
+from research.aegis_research.canonical_json import canonical_json_bytes, to_builtin
 
 _DEFAULT_TOKEN_DIGEST_CHARS = 32
+
+__all__ = ["canonical_digest", "canonical_json_bytes", "mint_canonical_token", "to_builtin"]
 
 
 def canonical_digest(value: Any, *, chars: int = _DEFAULT_TOKEN_DIGEST_CHARS) -> str:
