@@ -3,8 +3,9 @@
 A **Strategy** speaks final **signed** target weights (positive = long, negative =
 short); there is nothing left to normalize, so this module neither sizes nor mutates
 weights. It only aligns the frame to the close columns and gates each rebalance row
-against the run-level **gross** cap (``Σ|wᵢ| ≤ gross_cap``) before simulation. The
-``net_cap`` / sign-consistency guards land in later slices.
+against the run-level exposure caps before simulation: **gross** (``Σ|wᵢ| ≤ gross_cap``)
+and **net** (``|Σwᵢ| ≤ net_cap``). A market-neutral book is ``net_cap ≈ 0``; net is the
+only cap VBT cannot enforce natively, so this validator is its sole gate.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ STRATEGY_ALLOCATION_OUTPUTS: frozenset[str] = frozenset(
     {"active", "scores", "ranks", "target_weights"}
 )
 
-_GROSS_TOLERANCE = 1e-9
+_EXPOSURE_TOLERANCE = 1e-9
 
 
 def validate_signed_target_weights(
@@ -24,15 +25,21 @@ def validate_signed_target_weights(
     *,
     close_columns: pd.Index,
     gross_cap: float,
+    net_cap: float | None = None,
 ) -> pd.DataFrame:
-    """Align a signed target-weight frame and enforce ``Σ|wᵢ| ≤ gross_cap`` fail-closed.
+    """Align a signed target-weight frame and enforce the exposure caps fail-closed.
 
     Signed weights are admitted unchanged (negative = short). Every decided rebalance
-    row (a row with at least one non-NaN weight) must satisfy ``Σ|wᵢ| ≤ gross_cap``;
-    an all-NaN row is a no-rebalance and is left untouched.
+    row (a row with at least one non-NaN weight) must satisfy both the gross cap
+    (``Σ|wᵢ| ≤ gross_cap``) and the net cap (``|Σwᵢ| ≤ net_cap``); an all-NaN row is a
+    no-rebalance and is left untouched. ``net_cap`` defaults to ``gross_cap`` — a no-op,
+    since ``|Σwᵢ| ≤ Σ|wᵢ| ≤ gross_cap`` always — so omitting it never tightens the gross
+    gate. ``net_cap ≈ 0`` is market-neutral.
     """
     if gross_cap <= 0:
         raise ValueError(f"gross_cap must be > 0; got {gross_cap!r}")
+    if net_cap is None:
+        net_cap = gross_cap
 
     aligned = _reindex_to_close_columns(target_weights, close_columns)
     values = aligned.to_numpy(dtype=float, copy=False)
@@ -40,11 +47,18 @@ def validate_signed_target_weights(
         decided = values[~np.isnan(values).all(axis=1)]
         if decided.size:
             gross = np.nansum(np.abs(decided), axis=1)
-            if (gross > gross_cap + _GROSS_TOLERANCE).any():
+            if (gross > gross_cap + _EXPOSURE_TOLERANCE).any():
                 offending = float(gross.max())
                 raise ValueError(
                     f"target_weights gross exposure Σ|wᵢ| {offending} "
                     f"exceeds gross_cap {gross_cap}"
+                )
+            net = np.abs(np.nansum(decided, axis=1))
+            if (net > net_cap + _EXPOSURE_TOLERANCE).any():
+                offending = float(net.max())
+                raise ValueError(
+                    f"target_weights net exposure |Σwᵢ| {offending} "
+                    f"exceeds net_cap {net_cap}"
                 )
     return aligned
 

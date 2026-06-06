@@ -32,6 +32,21 @@ VBT_NOT_APPLICABLE_SETTINGS: dict[str, str] = {
     "upon_opposite_entry": "not_applicable_from_orders",
 }
 VBT_LEVERAGE_MODE = "eager"
+# Requested ≈ realized fill-fidelity tolerance, per fill row and asset. ``pfo.allocations``
+# (requested target) and ``pf.get_allocations`` (the executed book revalued at that bar's
+# close) differ by a small, benign amount even on correct fills — a target decided from one
+# price snapshot is revalued at another, so a held leg drifts a few percent (maintainer-
+# confirmed: "most rows have correct allocation; discrepancies are rare"). The known
+# ``cash_sharing`` + multi-asset leverage mis-fill ("only one asset in a group can use
+# leverage at a time") is a different beast: a leg fails to fill and lands ~a full target
+# magnitude away (≈1.0), silently under-trading or drifting the book net-long. This tolerance
+# sits in the wide gap between the two so it catches the mis-fill without flagging revaluation.
+REQUESTED_REALIZED_TOLERANCE = 0.5
+# Bars between a rebalance decision and the row its fill settles into the realized book.
+# Same-close fills land on the decision row (lag 0); next-open fills land on the next row
+# (``from_ago=1`` → lag 1). A fill that would land past the last bar (a next-open terminal
+# liquidation) cannot execute and is skipped by the fidelity check.
+EXECUTION_FILL_LAG: dict[str, int] = {"same_close": 0, "next_open": 1}
 # Next-open execution: a target decided from bar t's close fills at bar t+1's open.
 # VBT's ``price="nextopen"`` sets ``from_ago=1`` (shift one bar) and fills at the open,
 # which is the canonical VBT way to avoid same-bar look-ahead without manual shifting.
@@ -305,14 +320,16 @@ def _portfolio_diagnostics(
             "symbols": [str(column) for column in close.columns],
             "symbol_count": len(close.columns),
         },
-        "allocations": _allocations_diagnostics(pfo, pf),
+        "allocations": _allocations_diagnostics(pfo, pf, execution_timing=execution_timing),
         "order_rejections": _order_rejection_counts(pf),
         "non_executable": non_executable,
         "records": portfolio_record_counts(pf),
     }
 
 
-def _allocations_diagnostics(pfo: Any, pf: vbt.Portfolio) -> dict[str, Any]:
+def _allocations_diagnostics(
+    pfo: Any, pf: vbt.Portfolio, *, execution_timing: str = "same_close"
+) -> dict[str, Any]:
     alloc_records = pfo.alloc_records
     alloc_idx_arr = alloc_records.get_field_arr("alloc_idx")
     col_arr = alloc_records.get_field_arr("col")
@@ -325,9 +342,16 @@ def _allocations_diagnostics(pfo: Any, pf: vbt.Portfolio) -> dict[str, Any]:
         )
         for row_idx, col in zip(alloc_idx_arr, col_arr, strict=True)
     ]
+    realized = pf.get_allocations(group_by=False)
+    assert_requested_realized_fidelity(
+        pfo.allocations,
+        realized,
+        fill_lag=EXECUTION_FILL_LAG[execution_timing],
+        tolerance=REQUESTED_REALIZED_TOLERANCE,
+    )
     requested = _serialize_sparse_frame(pfo.allocations)
     realized_at_fill = _realized_weights_at_fill(
-        pf=pf,
+        realized=realized,
         index=index,
         alloc_idx_arr=alloc_idx_arr,
     )
@@ -338,16 +362,57 @@ def _allocations_diagnostics(pfo: Any, pf: vbt.Portfolio) -> dict[str, Any]:
     }
 
 
+def assert_requested_realized_fidelity(
+    requested: pd.DataFrame,
+    realized: pd.DataFrame,
+    *,
+    fill_lag: int = 0,
+    tolerance: float = REQUESTED_REALIZED_TOLERANCE,
+) -> None:
+    """Fail-closed: the realized book must reproduce the requested book at each fill.
+
+    ``requested`` is the sparse rebalance frame (``pfo.allocations`` — rebalance rows
+    only); ``realized`` is the dense post-fill book (``pf.get_allocations(group_by=False)``).
+    Each requested row is compared against the realized row its fill settles into:
+    ``decision_row + fill_lag`` (lag 0 for same-close, 1 for next-open). A fill that would
+    land past the last bar — a next-open terminal liquidation — cannot execute and is
+    skipped. Realized weights drift between fills as prices move, which is expected and not
+    a fill error, so only the settled fill rows are checked. A divergence beyond
+    ``tolerance`` on a fill row is the known ``cash_sharing`` + multi-asset leverage mis-fill
+    ("only one asset in a group can use leverage at a time"), which silently corrupts metrics
+    by under-trading a leg or drifting the book net-long, and is raised.
+    """
+    if requested.empty:
+        return
+    realized_aligned = realized.reindex(columns=requested.columns)
+    realized_values = realized_aligned.to_numpy(dtype=float)
+    n_rows = len(realized_values)
+    decision_rows = realized_aligned.index.get_indexer(requested.index)
+    worst = 0.0
+    for decision_row, (_, requested_row) in zip(decision_rows, requested.iterrows(), strict=True):
+        fill_row = decision_row + fill_lag
+        requested_values = requested_row.to_numpy(dtype=float)
+        if decision_row < 0 or fill_row >= n_rows or np.isnan(requested_values).all():
+            continue
+        divergence = np.abs(realized_values[fill_row] - requested_values)
+        worst = max(worst, float(np.nanmax(divergence)))
+    if worst > tolerance:
+        raise ValueError(
+            f"realized allocations diverge from requested by {worst} "
+            f"(> tolerance {tolerance}); the cash_sharing + multi-asset leverage "
+            "mis-fill under-traded a leg or drifted the book net-long"
+        )
+
+
 def _realized_weights_at_fill(
     *,
-    pf: vbt.Portfolio,
+    realized: pd.DataFrame,
     index: pd.Index,
     alloc_idx_arr: np.ndarray,
 ) -> list[dict[str, Any]]:
     if len(alloc_idx_arr) == 0:
         return []
-    realized = pf.get_allocations(group_by=False)
-    unique_row_idxs = sorted(set(int(row_idx) for row_idx in alloc_idx_arr))
+    unique_row_idxs = sorted({int(row_idx) for row_idx in alloc_idx_arr})
     records: list[dict[str, Any]] = []
     for row_idx in unique_row_idxs:
         ts = index[row_idx]

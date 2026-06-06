@@ -6,6 +6,7 @@ from research.aegis_research.config import PortfolioConfig
 from research.aegis_research.portfolios import (
     PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION,
     PortfolioSimulationResult,
+    assert_requested_realized_fidelity,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio,
     simulate_portfolio_batch,
@@ -183,6 +184,82 @@ def test_signed_both_direction_run_opens_a_real_short_position() -> None:
     assert assets.iloc[1]["B"] < 0
     realized = result.portfolio.get_allocations(group_by=False)
     assert realized.iloc[1]["B"] < 0
+
+
+def test_market_neutral_run_book_is_net_zero_and_realized_matches_requested() -> None:
+    index = pd.date_range("2024-01-01", periods=5)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0, 14.0], "B": [20.0, 19.0, 18.0, 17.0, 16.0]},
+        index=index,
+    )
+    # gross_cap=2, net_cap≈0: a fully invested long/short pair, net exposure ≈ 0.
+    allocations = pd.DataFrame(
+        {"A": [1.0, np.nan, np.nan, np.nan, np.nan], "B": [-1.0, np.nan, np.nan, np.nan, np.nan]},
+        index=index,
+    )
+
+    result = simulate_portfolio(
+        close,
+        allocations,
+        PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"),
+    )
+
+    requested = result.portfolio.get_allocations(group_by=False)
+    # Realized weights at the rebalance row exactly match the requested signed book.
+    fill_row = requested.loc[index[0]]
+    assert fill_row["A"] == pytest.approx(1.0)
+    assert fill_row["B"] == pytest.approx(-1.0)
+    # Net exposure of the realized book at the fill row is ≈ 0 (market-neutral).
+    assert fill_row.sum() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_requested_realized_fidelity_passes_when_realized_matches_at_rebalance_rows() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    requested = pd.DataFrame(
+        {"A": [1.0, np.nan, 0.0], "B": [-1.0, np.nan, 0.0]}, index=index
+    )
+    realized = pd.DataFrame(
+        # Off-rebalance row drifts (price move) but rebalance rows match exactly.
+        {"A": [1.0, 0.93, 0.0], "B": [-1.0, -0.91, 0.0]}, index=index
+    )
+
+    # Must not raise: divergence on the NaN (no-rebalance) row is ignored.
+    assert_requested_realized_fidelity(requested, realized, tolerance=1e-6)
+
+
+def test_requested_realized_fidelity_fires_when_realized_diverges_at_a_rebalance_row() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    requested = pd.DataFrame(
+        {"A": [1.0, np.nan, 0.0], "B": [-1.0, np.nan, 0.0]}, index=index
+    )
+    realized = pd.DataFrame(
+        # The first rebalance row under-fills the short leg: a mis-fill that would
+        # silently drift the book net-long.
+        {"A": [1.0, 0.93, 0.0], "B": [-0.4, -0.91, 0.0]}, index=index
+    )
+
+    with pytest.raises(ValueError, match=r"requested|realized"):
+        assert_requested_realized_fidelity(requested, realized, tolerance=1e-6)
+
+
+def test_simulate_portfolio_gates_the_real_run_on_requested_realized_fidelity(monkeypatch) -> None:
+    import research.aegis_research.portfolios as portfolios_module
+
+    close, allocations = _two_symbol_inputs()
+    calls: list[tuple[pd.DataFrame, pd.DataFrame]] = []
+
+    def _spy(requested, realized, *, fill_lag=0, tolerance):
+        calls.append((requested, realized))
+
+    monkeypatch.setattr(portfolios_module, "assert_requested_realized_fidelity", _spy)
+    simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+
+    assert len(calls) == 1
+    requested, realized = calls[0]
+    # The gate is fed the sparse requested frame and the dense realized book.
+    assert set(requested.columns) == {"A", "B"}
+    assert set(realized.columns) == {"A", "B"}
+    assert requested.index.isin(realized.index).all()
 
 
 def test_default_longonly_run_holds_only_long_positions() -> None:

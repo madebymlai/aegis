@@ -89,6 +89,58 @@ def test_gross_exposure_above_cap_is_rejected_fail_closed() -> None:
         validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
 
 
+def test_net_exposure_above_net_cap_is_rejected_fail_closed() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    # Σ|wᵢ| = 1.0 ≤ gross_cap, but net Σwᵢ = 1.0 > net_cap 0.2 (drifts net-long).
+    frame = pd.DataFrame({"A": [0.5], "B": [0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    with pytest.raises(ValueError, match="net_cap"):
+        validate_signed_target_weights(
+            frame, close_columns=columns, gross_cap=1.0, net_cap=0.2
+        )
+
+
+def test_market_neutral_book_within_net_cap_passes() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    # Σ|wᵢ| = 2.0 ≤ gross_cap 2.0, net Σwᵢ = 0.0 ≤ net_cap (market-neutral).
+    frame = pd.DataFrame({"A": [1.0], "B": [-1.0], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    out = validate_signed_target_weights(
+        frame, close_columns=columns, gross_cap=2.0, net_cap=0.0
+    )
+
+    assert out.iloc[0].to_dict() == pytest.approx({"A": 1.0, "B": -1.0, "C": 0.0})
+
+
+def test_negative_net_exposure_below_negative_net_cap_is_rejected() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    # net Σwᵢ = -1.0; |net| = 1.0 > net_cap 0.2 (drifts net-short).
+    frame = pd.DataFrame({"A": [-0.5], "B": [-0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    with pytest.raises(ValueError, match="net_cap"):
+        validate_signed_target_weights(
+            frame, close_columns=columns, gross_cap=1.0, net_cap=0.2
+        )
+
+
+def test_net_cap_defaults_to_gross_cap_when_omitted() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    # net Σwᵢ = 1.0 = gross_cap; with no net_cap it defaults to gross and passes.
+    frame = pd.DataFrame({"A": [0.5], "B": [0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
+
+    assert out.iloc[0].to_dict() == pytest.approx({"A": 0.5, "B": 0.5, "C": 0.0})
+
+
 def test_leveraged_gross_cap_above_one_is_allowed() -> None:
     columns = _close_columns()
     index = _index(1)
