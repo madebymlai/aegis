@@ -24,12 +24,16 @@ VBT_CALL_SEQUENCE_CAVEAT = (
     "VectorBT automatic call sequencing sorts approximate order value using predetermined "
     "prices; it is not a custom path-dependent execution engine."
 )
-# These conflict-resolution knobs belong to ``from_signals``; ``from_orders`` (the
-# factory this route uses) never sees them, regardless of direction.
+# These conflict-resolution / accumulation knobs belong to ``from_signals``;
+# ``from_orders`` (the factory this route uses) never sees them, regardless of direction.
+# The signed long/short book makes the prior ``..._long_only_v1`` label subtly wrong: the
+# reason they never apply is the order-based factory, not the (now signed) direction.
 VBT_NOT_APPLICABLE_SETTINGS: dict[str, str] = {
     "upon_short_conflict": "not_applicable_from_orders",
     "upon_dir_conflict": "not_applicable_from_orders",
     "upon_opposite_entry": "not_applicable_from_orders",
+    "upon_long_conflict": "not_applicable_from_orders",
+    "accumulate": "not_applicable_from_orders",
 }
 VBT_LEVERAGE_MODE = "eager"
 # Requested ≈ realized fill-fidelity tolerance, per fill row and asset. ``pfo.allocations``
@@ -252,15 +256,22 @@ def _validate_candidate_columns(columns: pd.Index, *, field_name: str) -> None:
 def portfolio_record_counts(pf: vbt.Portfolio) -> dict[str, Any]:
     group_order_counts = _count_map(pf.orders.count())
     group_trade_counts = _count_map(pf.trades.count())
+    group_exit_trade_counts = _count_map(pf.exit_trades.count())
     symbol_order_counts = _count_map(pf.orders.count(group_by=False))
     symbol_trade_counts = _count_map(pf.trades.count(group_by=False))
+    symbol_exit_trade_counts = _count_map(pf.exit_trades.count(group_by=False))
     return {
         "order_count": _sum_counts(group_order_counts),
         "trade_count": _sum_counts(group_trade_counts),
+        # Exit trades are closed round-trips — long and short alike — so the short
+        # leg's realized activity is audited, not just the long side.
+        "exit_trade_count": _sum_counts(group_exit_trade_counts),
         "orders_per_group": group_order_counts,
         "trades_per_group": group_trade_counts,
+        "exit_trades_per_group": group_exit_trade_counts,
         "orders_per_symbol": symbol_order_counts,
         "trades_per_symbol": symbol_trade_counts,
+        "exit_trades_per_symbol": symbol_exit_trade_counts,
     }
 
 

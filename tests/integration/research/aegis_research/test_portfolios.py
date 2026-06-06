@@ -424,6 +424,64 @@ def test_portfolio_inputs_reject_index_mismatches_instead_of_dropping_rows() -> 
         simulate_portfolio(close, allocations, PortfolioConfig())
 
 
+def test_contract_flags_financing_carry_as_not_modeled() -> None:
+    # Short borrow / holding-period financing carry is deferred (ADR-0007): the contract
+    # must honestly flag it as unmodeled rather than imply it is priced in.
+    close, allocations = _two_symbol_inputs()
+
+    diagnostics = simulate_portfolio(
+        close, allocations, PortfolioConfig(fees=0, slippage=0, direction="both")
+    ).diagnostics
+
+    assert diagnostics["contract"]["financing_carry"] == "not_modeled_v1"
+
+
+def test_records_count_exit_trades_for_long_and_short_legs() -> None:
+    # A signed book that opens a long A / short B, then flattens both: each leg produces a
+    # closed (exit) trade. The records block must count exit trades — long AND short — so the
+    # short leg's realized round-trip is auditable, not just the long one.
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0], "B": [20.0, 19.0, 18.0, 17.0]},
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {"A": [0.5, np.nan, 0.0, np.nan], "B": [-0.5, np.nan, 0.0, np.nan]},
+        index=index,
+    )
+
+    diagnostics = simulate_portfolio(
+        close,
+        allocations,
+        PortfolioConfig(fees=0, slippage=0, gross_cap=1.0, direction="both"),
+    ).diagnostics
+    records = diagnostics["records"]
+
+    assert records["exit_trade_count"] == 2
+    assert records["exit_trades_per_symbol"] == {"A": 1, "B": 1}
+
+
+def test_all_from_signals_only_conflict_settings_attributed_to_from_orders() -> None:
+    # The conflict/accumulate knobs belong to from_signals; from_orders (this route's
+    # factory) never applies them, regardless of direction. The diagnostics must list
+    # every such setting and attribute it to the factory, not the (now signed) direction.
+    close, allocations = _two_symbol_inputs()
+
+    diagnostics = simulate_portfolio(
+        close, allocations, PortfolioConfig(fees=0, slippage=0, direction="both")
+    ).diagnostics
+
+    not_applicable = diagnostics["contract"]["not_applicable_vbt_settings"]
+    assert set(not_applicable) == {
+        "upon_short_conflict",
+        "upon_dir_conflict",
+        "upon_opposite_entry",
+        "upon_long_conflict",
+        "accumulate",
+    }
+    assert set(not_applicable.values()) == {"not_applicable_from_orders"}
+
+
 def _two_symbol_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
     index = pd.date_range("2024-01-01", periods=4)
     close = pd.DataFrame(
