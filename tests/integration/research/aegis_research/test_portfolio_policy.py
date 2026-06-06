@@ -153,6 +153,102 @@ def test_leveraged_gross_cap_above_one_is_allowed() -> None:
     assert out.iloc[0].to_dict() == pytest.approx({"A": -1.0, "B": 0.6, "C": 0.0})
 
 
+def test_longonly_direction_rejects_negative_weight_fail_closed() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    # A long-only Run must not emit a short leg.
+    frame = pd.DataFrame({"A": [0.5], "B": [-0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    with pytest.raises(ValueError, match="longonly"):
+        validate_signed_target_weights(
+            frame, close_columns=columns, gross_cap=1.0, direction="longonly"
+        )
+
+
+def test_shortonly_direction_rejects_positive_weight_fail_closed() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    # A short-only Run must not emit a long leg.
+    frame = pd.DataFrame({"A": [-0.5], "B": [0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    with pytest.raises(ValueError, match="shortonly"):
+        validate_signed_target_weights(
+            frame, close_columns=columns, gross_cap=1.0, direction="shortonly"
+        )
+
+
+def test_shortonly_direction_admits_all_negative_book() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    # An all-negative book is a valid short-only Run (zeros are allowed).
+    frame = pd.DataFrame({"A": [-0.5], "B": [-0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    out = validate_signed_target_weights(
+        frame, close_columns=columns, gross_cap=1.0, direction="shortonly"
+    )
+
+    assert out.iloc[0].to_dict() == pytest.approx({"A": -0.5, "B": -0.5, "C": 0.0})
+
+
+def test_both_direction_admits_either_sign() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    frame = pd.DataFrame({"A": [0.5], "B": [-0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    out = validate_signed_target_weights(
+        frame, close_columns=columns, gross_cap=1.0, direction="both"
+    )
+
+    assert out.iloc[0].to_dict() == pytest.approx({"A": 0.5, "B": -0.5, "C": 0.0})
+
+
+def test_longonly_sign_flip_caught_despite_passing_gross_and_net_caps() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    # A sign-flip in a long-only-intended Run: [+.5, +.5] -> [-.5, +.5].
+    # Σ|wᵢ| = 1.0 (passes gross_cap) and Σwᵢ = 0.0 (passes net_cap), yet the short
+    # leg slips past both caps — only the sign guard catches it.
+    frame = pd.DataFrame({"A": [-0.5], "B": [0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    with pytest.raises(ValueError, match="longonly"):
+        validate_signed_target_weights(
+            frame,
+            close_columns=columns,
+            gross_cap=1.0,
+            net_cap=1.0,
+            direction="longonly",
+        )
+
+
+def test_unknown_direction_is_rejected_fail_closed() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    frame = pd.DataFrame({"A": [0.5], "B": [0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    with pytest.raises(ValueError, match="direction"):
+        validate_signed_target_weights(
+            frame, close_columns=columns, gross_cap=1.0, direction="sideways"
+        )
+
+
+def test_default_direction_admits_signed_book_unchanged() -> None:
+    columns = _close_columns()
+    index = _index(1)
+    # No direction argument: default admits either sign (long-only callers stay green).
+    frame = pd.DataFrame({"A": [0.5], "B": [-0.5], "C": [0.0]}, index=index)
+    frame.columns = columns
+
+    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
+
+    assert out.iloc[0].to_dict() == pytest.approx({"A": 0.5, "B": -0.5, "C": 0.0})
+
+
 def test_all_nan_row_passes_through_as_no_rebalance() -> None:
     columns = _close_columns()
     index = _index(2)

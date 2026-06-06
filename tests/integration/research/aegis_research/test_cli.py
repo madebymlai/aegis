@@ -192,6 +192,71 @@ def test_run_rejects_removed_labeler_without_train_guidance(
     assert not (tmp_path / "runs" / "bad-run").exists()
 
 
+def _signed_book_run_config(direction: str) -> dict[str, object]:
+    return {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "directional_run",
+        "output_dir": "runs",
+        "data": {
+            "source": "synthetic",
+            "symbols": ["SYN"],
+            "rows": 120,
+            "arrays": ["OHLCV"],
+        },
+        "portfolio": {"gross_cap": 1.0, "direction": direction},
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
+        "ranking": {"metric": "total_return"},
+        "optimization": {
+            "search": "grid",
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 40, "offset": 40, "split": 0.5},
+                "max_splits": 2,
+            },
+        },
+    }
+
+
+def test_run_rejects_unknown_portfolio_direction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        yaml.safe_dump(_signed_book_run_config("sideways"), sort_keys=False)
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-dir"]) == 6
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "portfolio.direction" in payload["error"]["message"]
+
+
+def test_run_accepts_shortonly_portfolio_direction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        yaml.safe_dump(_signed_book_run_config("shortonly"), sort_keys=False)
+    )
+
+    cli.main(["run", str(config_path), "--json", "--run-id", "short-dir"])
+
+    output = capsys.readouterr()
+    combined = output.out + output.err
+    assert "portfolio.direction" not in combined
+
+
 def test_run_rejects_stale_train_shaped_config_before_run_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

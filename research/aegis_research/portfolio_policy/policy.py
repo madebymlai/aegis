@@ -18,6 +18,12 @@ STRATEGY_ALLOCATION_OUTPUTS: frozenset[str] = frozenset(
 )
 
 _EXPOSURE_TOLERANCE = 1e-9
+# A run's declared Direction fixes the admissible sign of every emitted weight, mirroring
+# VBT's ``Direction`` enum (the same string is passed to ``from_optimizer``). ``both``
+# admits either sign; ``longonly``/``shortonly`` are the fail-closed sign guard that the
+# gross/net caps cannot supply — a ``[+.5,+.5] → [-.5,+.5]`` flip keeps gross = 1 and
+# net = 0, so only this sign check catches it.
+_SIGN_GUARDS: dict[str, str] = {"longonly": "≥ 0", "shortonly": "≤ 0", "both": "any"}
 
 
 def validate_signed_target_weights(
@@ -26,6 +32,7 @@ def validate_signed_target_weights(
     close_columns: pd.Index,
     gross_cap: float,
     net_cap: float | None = None,
+    direction: str = "both",
 ) -> pd.DataFrame:
     """Align a signed target-weight frame and enforce the exposure caps fail-closed.
 
@@ -35,9 +42,17 @@ def validate_signed_target_weights(
     no-rebalance and is left untouched. ``net_cap`` defaults to ``gross_cap`` — a no-op,
     since ``|Σwᵢ| ≤ Σ|wᵢ| ≤ gross_cap`` always — so omitting it never tightens the gross
     gate. ``net_cap ≈ 0`` is market-neutral.
+
+    ``direction`` is the run-level sign guard: ``longonly`` requires ``wᵢ ≥ 0``,
+    ``shortonly`` requires ``wᵢ ≤ 0``, ``both`` admits either sign. It catches a sign-flip
+    bug the caps miss (a ``[+.5,+.5] → [-.5,+.5]`` flip keeps gross = 1, net = 0).
     """
     if gross_cap <= 0:
         raise ValueError(f"gross_cap must be > 0; got {gross_cap!r}")
+    if direction not in _SIGN_GUARDS:
+        raise ValueError(
+            f"direction must be one of {sorted(_SIGN_GUARDS)}; got {direction!r}"
+        )
     if net_cap is None:
         net_cap = gross_cap
 
@@ -46,6 +61,7 @@ def validate_signed_target_weights(
     if values.size:
         decided = values[~np.isnan(values).all(axis=1)]
         if decided.size:
+            _assert_sign_consistent(decided, direction)
             gross = np.nansum(np.abs(decided), axis=1)
             if (gross > gross_cap + _EXPOSURE_TOLERANCE).any():
                 offending = float(gross.max())
@@ -61,6 +77,22 @@ def validate_signed_target_weights(
                     f"exceeds net_cap {net_cap}"
                 )
     return aligned
+
+
+def _assert_sign_consistent(decided: np.ndarray, direction: str) -> None:
+    """Fail closed when a weight's sign contradicts the run's declared Direction."""
+    if direction == "longonly":
+        offenders = decided < -_EXPOSURE_TOLERANCE
+    elif direction == "shortonly":
+        offenders = decided > _EXPOSURE_TOLERANCE
+    else:
+        return
+    if offenders.any():
+        offending = float(decided[offenders][0])
+        raise ValueError(
+            f"target_weights has weight {offending} violating direction "
+            f"{direction!r} (requires wᵢ {_SIGN_GUARDS[direction]})"
+        )
 
 
 def _reindex_to_close_columns(
