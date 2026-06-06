@@ -14,7 +14,24 @@ from research.aegis_research.portfolio_policy import (
 )
 
 SYMBOL_LEVEL = "symbol"
-PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v3"
+PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v4"
+# Trading periods per year used to convert the flat annual short-financing rates into a
+# per-bar carry, matched to daily metric annualization (252D / 1D). The runner threads its
+# own value derived from ``report.freq``/``report.year_freq`` so carry and Sharpe share one
+# calendar; this is the daily default for the single-run path.
+DEFAULT_PERIODS_PER_YEAR = 252
+# Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
+# of ``(net_rate / periods_per_year) × close``. ``× live position`` gives drifted notional,
+# only-while-open, and the cost-on-short / credit-on-long sign for free — hence the long-leg
+# mask (a positive per-share value would otherwise *credit* a long position).
+FINANCING_CARRY_MECHANISM = "cash_dividends_short_borrow_v2"
+# Margin interest (``int_rate × borrowed_cash``) needs ``vbt.pf_nb.get_debt_nb(c)``, which is
+# unavailable on ``from_orders``; charging it would require ``from_signals``/``from_order_func``.
+# Deferred by architectural boundary, not punted (see ADR-0008).
+MARGIN_INTEREST_REASON = (
+    "from_orders has no get_debt_nb position-debt hook; margin interest would require "
+    "from_signals or from_order_func"
+)
 VBT_PORTFOLIO_FACTORY = "Portfolio.from_optimizer"
 VBT_PF_METHOD = "from_orders"
 VBT_RESOLVED_SIZE_TYPE = "targetpercent"
@@ -90,12 +107,14 @@ def _build_portfolio(
     open_frame: pd.DataFrame | None,
     market_index: pd.Index | None,
     group_by: Any,
+    periods_per_year: int,
 ) -> tuple[vbt.Portfolio, Any, dict[str, Any], str]:
     """Mask allocations, build the PFO, and run ``from_optimizer``.
 
     Shared core for the single-group and per-candidate simulations: identical
-    masking, allocation-filling, and execution settings; only ``group_by`` (and
-    whether the frames are candidate-expanded) differs between the two callers.
+    masking, allocation-filling, short-financing carry, and execution settings; only
+    ``group_by`` (and whether the frames are candidate-expanded) differs between the
+    two callers.
     """
     masked, non_exec_diag = apply_executable_mask_and_terminal_liquidation(
         allocations,
@@ -122,9 +141,38 @@ def _build_portfolio(
         init_cash=config.init_cash,
         leverage=config.gross_cap,
         leverage_mode=VBT_LEVERAGE_MODE,
+        cash_dividends=short_masked_cash_dividends(
+            price_frame, allocations, config, periods_per_year=periods_per_year
+        ),
         **exec_kwargs,
     )
     return pf, pfo, non_exec_diag, execution_timing
+
+
+def short_masked_cash_dividends(
+    close: pd.DataFrame,
+    allocations: pd.DataFrame,
+    config: PortfolioConfig,
+    *,
+    periods_per_year: int,
+) -> pd.DataFrame:
+    """Build the per-bar short-financing carry array (ADR-0008).
+
+    ``cash_dividends[sym, t] = (net_rate / periods_per_year) × close[sym, t]``, masked to the
+    short legs (ffilled signed allocation ``< 0``); long legs are ``0``. ``net_rate`` is
+    ``short_borrow_rate − short_rebate_rate``, floored at zero (a rebate above borrow does not
+    pay the book to hold a short). VBT multiplies this per-share value by the live position to
+    produce drifted-notional carry, charged only while the short is open, with a positive
+    value costing the short — which is why the long legs must be zeroed.
+    """
+    net_rate = max(config.short_borrow_rate - config.short_rebate_rate, 0.0)
+    cash_dividends = pd.DataFrame(0.0, index=close.index, columns=close.columns)
+    if net_rate == 0.0:
+        return cash_dividends
+    rate_per_bar = net_rate / periods_per_year
+    short_mask = allocations.ffill() < 0
+    cash_dividends[short_mask] = rate_per_bar * close[short_mask]
+    return cash_dividends
 
 
 def simulate_portfolio(
@@ -134,6 +182,7 @@ def simulate_portfolio(
     *,
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
+    periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
 ) -> PortfolioSimulationResult:
     _validate_allocations_frame(close, allocations)
     pf, pfo, non_exec_diag, execution_timing = _build_portfolio(
@@ -143,6 +192,7 @@ def simulate_portfolio(
         open_frame=open_,
         market_index=market_index,
         group_by=True,
+        periods_per_year=periods_per_year,
     )
     diagnostics = _portfolio_diagnostics(
         pf=pf,
@@ -153,6 +203,7 @@ def simulate_portfolio(
         group_by_label=VBT_SHARED_GROUP_BY,
         candidate_ids=None,
         execution_timing=execution_timing,
+        periods_per_year=periods_per_year,
     )
     return PortfolioSimulationResult(portfolio=pf, diagnostics=diagnostics)
 
@@ -165,6 +216,7 @@ def simulate_portfolio_batch(
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     compute_diagnostics: bool = True,
+    periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
 ) -> PortfolioSimulationResult:
     _validate_candidate_columns(allocations.columns, field_name="allocations")
     expanded_close = expand_market_frame_to_candidate_columns(
@@ -187,6 +239,7 @@ def simulate_portfolio_batch(
         open_frame=expanded_open,
         market_index=market_index,
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
+        periods_per_year=periods_per_year,
     )
     if not compute_diagnostics:
         return PortfolioSimulationResult(portfolio=pf, diagnostics={})
@@ -200,6 +253,7 @@ def simulate_portfolio_batch(
         group_by_label=VBT_CANDIDATE_GROUP_BY,
         candidate_ids=candidate_ids,
         execution_timing=execution_timing,
+        periods_per_year=periods_per_year,
     )
     diagnostics["shape"] |= {
         "candidate_count": len(candidate_ids),
@@ -285,6 +339,7 @@ def _portfolio_diagnostics(
     group_by_label: str,
     candidate_ids: list[Any] | None,
     execution_timing: str = "same_close",
+    periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
 ) -> dict[str, Any]:
     price_setting = (
         VBT_NEXT_OPEN_PRICE if execution_timing == "next_open" else "default_close_no_kwarg_passed"
@@ -313,7 +368,7 @@ def _portfolio_diagnostics(
             "net_cap": config.net_cap,
             "execution_timing": execution_timing,
             "terminal_liquidation": execution_timing == "same_close",
-            "financing_carry": "not_modeled_v1",
+            "financing_carry": _financing_carry_diagnostics(config, periods_per_year),
             "not_applicable_vbt_settings": dict(VBT_NOT_APPLICABLE_SETTINGS),
         },
         "grouping": {
@@ -335,6 +390,25 @@ def _portfolio_diagnostics(
         "order_rejections": _order_rejection_counts(pf),
         "non_executable": non_executable,
         "records": portfolio_record_counts(pf),
+    }
+
+
+def _financing_carry_diagnostics(
+    config: PortfolioConfig, periods_per_year: int
+) -> dict[str, Any]:
+    """The structured short-financing carry block (ADR-0008, supersedes ``not_modeled_v1``).
+
+    Declares the charging mechanism, the rates it charged at, the annualization base shared
+    with metric annualization, and the still-deferred margin interest with its architectural
+    reason.
+    """
+    return {
+        "mechanism": FINANCING_CARRY_MECHANISM,
+        "short_borrow_rate": config.short_borrow_rate,
+        "short_rebate_rate": config.short_rebate_rate,
+        "periods_per_year": periods_per_year,
+        "margin_interest": "not_modeled",
+        "margin_interest_reason": MARGIN_INTEREST_REASON,
     }
 
 

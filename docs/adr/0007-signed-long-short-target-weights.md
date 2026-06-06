@@ -57,7 +57,10 @@ positions otherwise.
   track position duration," so carry is real work, not a flag; it is small for liquid ETFs
   and this is a *relative-scoring* system. `fees`/`slippage` already apply to short
   transactions; only the holding-period carry is omitted, recorded as
-  `financing_carry: "not_modeled_v1"`.
+  `financing_carry: "not_modeled_v1"`. **Superseded by ADR-0008**: short borrow carry is now
+  charged via a short-masked per-bar `cash_dividends` array on this same `from_optimizer`
+  route, and `financing_carry` is now a structured diagnostics block. Margin interest remains
+  deferred there by an architectural boundary (`from_orders` has no position-debt hook).
 - **Intraday flat-overnight to avoid carry entirely**: rejected. It is incompatible with the
   target-weight architecture — flattening every night requires `from_signals` event signals,
   which *cannot express target percentages* (maintainer-confirmed), so it would discard the

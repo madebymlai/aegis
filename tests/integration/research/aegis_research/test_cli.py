@@ -257,6 +257,48 @@ def test_run_accepts_shortonly_portfolio_direction(
     assert "portfolio.direction" not in combined
 
 
+def _carry_run_config(short_borrow_rate: float | None) -> dict[str, object]:
+    config = _signed_book_run_config("both")
+    config["name"] = "carry_run"
+    if short_borrow_rate is not None:
+        config["portfolio"]["short_borrow_rate"] = short_borrow_rate  # type: ignore[index]
+        config["portfolio"]["short_rebate_rate"] = 0.0  # type: ignore[index]
+    return config
+
+
+def _run_candidate_returns(
+    tmp_path: Path, short_borrow_rate: float | None, run_id: str
+) -> list[object]:
+    config_path = tmp_path / f"{run_id}.yaml"
+    config_path.write_text(
+        yaml.safe_dump(_carry_run_config(short_borrow_rate), sort_keys=False)
+    )
+    assert cli.main(["run", str(config_path), "--json", "--run-id", run_id]) == 0
+    artifact = json.loads(
+        (tmp_path / "runs" / run_id / "strategy_run.json").read_text()
+    )
+    return [candidate["metrics"]["total_return"] for candidate in artifact["candidates"]]
+
+
+def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # End-to-end ADR-0007 guarantee: the demo strategy is long-only, so it has no short
+    # legs to charge. Its candidate returns must be identical whether short borrow carry is
+    # on at the non-zero default or explicitly switched off — carry never touches a long book.
+    monkeypatch.chdir(tmp_path)
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+
+    carry_on = _run_candidate_returns(tmp_path, short_borrow_rate=None, run_id="carry-on")
+    carry_off = _run_candidate_returns(tmp_path, short_borrow_rate=0.0, run_id="carry-off")
+    capsys.readouterr()
+
+    assert carry_on == carry_off
+
+
 def test_run_rejects_stale_train_shaped_config_before_run_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

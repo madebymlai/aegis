@@ -13,13 +13,14 @@ from research.aegis_research.portfolios import (
 )
 
 
-def test_simulate_portfolio_returns_result_and_v3_diagnostics_schema_version() -> None:
+def test_simulate_portfolio_returns_result_and_v4_diagnostics_schema_version() -> None:
     close, allocations = _two_symbol_inputs()
 
     result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
 
     assert isinstance(result, PortfolioSimulationResult)
     assert result.diagnostics["schema_version"] == PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION
+    assert PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION == "portfolio_diagnostics.v4"
 
 
 def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
@@ -331,7 +332,7 @@ def test_diagnostics_v3_payload_contains_required_blocks_and_no_legacy_fields() 
         close, allocations, PortfolioConfig(fees=0, slippage=0)
     ).diagnostics
 
-    assert diagnostics["schema_version"] == "portfolio_diagnostics.v3"
+    assert diagnostics["schema_version"] == "portfolio_diagnostics.v4"
     assert diagnostics["vbt_settings"]["factory"] == "Portfolio.from_optimizer"
     assert diagnostics["vbt_settings"]["pf_method"] == "from_orders"
     assert diagnostics["vbt_settings"]["size_type"] == "targetpercent"
@@ -424,16 +425,107 @@ def test_portfolio_inputs_reject_index_mismatches_instead_of_dropping_rows() -> 
         simulate_portfolio(close, allocations, PortfolioConfig())
 
 
-def test_contract_flags_financing_carry_as_not_modeled() -> None:
-    # Short borrow / holding-period financing carry is deferred (ADR-0007): the contract
-    # must honestly flag it as unmodeled rather than imply it is priced in.
+def test_contract_records_structured_financing_carry_block() -> None:
+    # ADR-0008 supersedes the old `not_modeled_v1` flag: short borrow carry is now charged,
+    # so the contract carries a structured block declaring the mechanism, the rates it
+    # charged at, the annualization base, and the still-deferred margin interest.
     close, allocations = _two_symbol_inputs()
 
     diagnostics = simulate_portfolio(
-        close, allocations, PortfolioConfig(fees=0, slippage=0, direction="both")
+        close,
+        allocations,
+        PortfolioConfig(
+            fees=0,
+            slippage=0,
+            direction="both",
+            short_borrow_rate=0.01,
+            short_rebate_rate=0.002,
+        ),
     ).diagnostics
+    carry = diagnostics["contract"]["financing_carry"]
 
-    assert diagnostics["contract"]["financing_carry"] == "not_modeled_v1"
+    assert carry["mechanism"] == "cash_dividends_short_borrow_v2"
+    assert carry["short_borrow_rate"] == 0.01
+    assert carry["short_rebate_rate"] == 0.002
+    assert carry["periods_per_year"] == 252
+    assert carry["margin_interest"] == "not_modeled"
+    assert "from_orders" in carry["margin_interest_reason"]
+    # The string flag must be gone — no caller should still read it.
+    assert carry != "not_modeled_v1"
+
+
+def test_long_only_book_is_byte_for_byte_unchanged_with_carry_on_by_default() -> None:
+    # ADR-0007 guarantee: a long-only book has no short legs, so the all-zero short-masked
+    # cash_dividends leaves the simulation byte-for-byte identical whether carry rates are
+    # the non-zero default or explicitly zero.
+    close, allocations = _two_symbol_inputs()
+
+    carry_on = simulate_portfolio(
+        close, allocations, PortfolioConfig(fees=0, slippage=0)
+    )
+    carry_off = simulate_portfolio(
+        close,
+        allocations,
+        PortfolioConfig(fees=0, slippage=0, short_borrow_rate=0.0, short_rebate_rate=0.0),
+    )
+
+    pd.testing.assert_series_equal(
+        carry_on.portfolio.value, carry_off.portfolio.value
+    )
+    assert _total_return(carry_on) == _total_return(carry_off)
+
+
+def test_short_leg_carry_drops_return_and_long_leg_is_never_charged() -> None:
+    # The ADR-0007 motivating book: a flat-price market-neutral long A / short B at gross 2
+    # (long funded by short proceeds, free cash to charge carry against). It earns nothing
+    # gross, so charging short borrow carry on the short leg only must drag the return
+    # strictly negative; turning carry off recovers the frictionless zero. The long leg is
+    # never charged — a same-sized long-only book stays flat with carry on.
+    index = pd.date_range("2024-01-01", periods=63)
+    close = pd.DataFrame(
+        {"A": np.full(63, 100.0), "B": np.full(63, 100.0)},
+        index=index,
+    )
+    short_book = pd.DataFrame(
+        {
+            "A": [0.5] + [np.nan] * 62,
+            "B": [-0.5] + [np.nan] * 62,
+        },
+        index=index,
+    )
+    long_only_book = pd.DataFrame(
+        {
+            "A": [0.5] + [np.nan] * 62,
+            "B": [0.5] + [np.nan] * 62,
+        },
+        index=index,
+    )
+
+    carry_on = PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, direction="both")
+    carry_off = PortfolioConfig(
+        fees=0,
+        slippage=0,
+        gross_cap=2.0,
+        direction="both",
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+
+    short_on = _total_return(simulate_portfolio(close, short_book, carry_on))
+    short_off = _total_return(simulate_portfolio(close, short_book, carry_off))
+    long_on = _total_return(simulate_portfolio(close, long_only_book, carry_on))
+
+    assert short_on < short_off
+    assert short_off == pytest.approx(0.0, abs=1e-9)
+    # The long-only flat book is unaffected by carry — long legs are never charged.
+    assert long_on == pytest.approx(0.0, abs=1e-9)
+
+
+def _total_return(result: PortfolioSimulationResult) -> float:
+    value = result.portfolio.get_total_return()
+    if isinstance(value, pd.Series):
+        return float(value.iloc[0])
+    return float(value)
 
 
 def test_records_count_exit_trades_for_long_and_short_legs() -> None:

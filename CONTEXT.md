@@ -72,6 +72,10 @@ _Avoid_: leverage, notional, total exposure
 The signed sum of target weights in a rebalance (Σwᵢ) — the directional tilt remaining after longs and shorts offset. Bounded per **Run** by a net cap; a net cap at (or near) zero defines a market-neutral book.
 _Avoid_: tilt, beta, directional exposure
 
+**Financing Carry**:
+The time-based cost of holding a short position: borrowing the security to sell it accrues a borrow fee, partly offset by a rebate earned on the short-sale proceeds. The net carry (borrow minus rebate) is charged per period on the live short notional for as long as the short is held, independent of any gain or loss on the price. A **Run** sets the borrow and rebate as flat annual rates; a long-only book has no short legs and so carries none. Margin interest on borrowed cash is a related but distinct holding cost that this version does not model.
+_Avoid_: funding, swap, holding cost, interest
+
 **Provenance**:
 The lineage metadata attached to a **Candidate** that traces its parameters back to the **Components** and **Run** that produced them.
 _Avoid_: lineage, history, audit trail

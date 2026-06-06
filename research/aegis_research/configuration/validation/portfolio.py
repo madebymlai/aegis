@@ -40,6 +40,8 @@ def _validate_portfolio(portfolio: dict[str, Any], issues: list[ConfigValidation
         _optional_number("portfolio.gross_cap", portfolio, issues, positive=True)
     if "net_cap" in portfolio:
         _optional_number("portfolio.net_cap", portfolio, issues, minimum=0)
+    _optional_number("portfolio.short_borrow_rate", portfolio, issues, minimum=0)
+    _optional_number("portfolio.short_rebate_rate", portfolio, issues, minimum=0)
     if "size" in portfolio:
         issues.append(
             ConfigValidationIssue(
