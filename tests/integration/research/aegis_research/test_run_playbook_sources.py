@@ -344,7 +344,7 @@ def _run_config_payload(
             "rows": 80,
             "arrays": ["OHLCV"],
         },
-        "portfolio": {"target_exposure_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0},
         "strategy": strategy,
         "indicators": indicators,
         "ranking": {"metric": "total_return"},

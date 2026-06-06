@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 6
+CONFIG_SCHEMA_VERSION = 7
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
@@ -17,7 +17,7 @@ PORTFOLIO_TARGET_SIZE_TYPES = {
     "targetpercent",
     "targetpercent100",
 }
-PORTFOLIO_DIRECTIONS = {"longonly"}
+PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
 SIGNAL_POLICIES = {"long_only_hysteresis"}
 SIGNAL_EXECUTION_TIMINGS = {"next_open", "same_close"}
 MISSING_POLICIES = {"nan", "drop", "raise"}
@@ -165,7 +165,8 @@ class PortfolioConfig:
     init_cash: float = 10_000.0
     fees: float = 0.001
     slippage: float = 0.0005
-    target_exposure_cap: float = 1.0
+    gross_cap: float = 1.0
+    net_cap: float = 1.0
     direction: str = "longonly"
 
 

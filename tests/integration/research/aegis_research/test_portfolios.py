@@ -160,6 +160,63 @@ def test_batched_three_candidate_run_preserves_candidate_identity_in_pfo_columns
     }
 
 
+def test_signed_both_direction_run_opens_a_real_short_position() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0], "B": [20.0, 21.0, 22.0, 23.0]},
+        index=index,
+    )
+    # One long (+0.5) and one short (-0.5) target weight: a signed book.
+    allocations = pd.DataFrame(
+        {"A": [0.5, np.nan, np.nan, np.nan], "B": [-0.5, np.nan, np.nan, np.nan]},
+        index=index,
+    )
+
+    result = simulate_portfolio(
+        close,
+        allocations,
+        PortfolioConfig(fees=0, slippage=0, gross_cap=1.0, direction="both"),
+    )
+
+    assets = result.portfolio.assets
+    assert assets.iloc[1]["A"] > 0
+    assert assets.iloc[1]["B"] < 0
+    realized = result.portfolio.get_allocations(group_by=False)
+    assert realized.iloc[1]["B"] < 0
+
+
+def test_default_longonly_run_holds_only_long_positions() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0], "B": [20.0, 21.0, 22.0, 23.0]},
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {"A": [0.5, np.nan, np.nan, np.nan], "B": [0.5, np.nan, np.nan, np.nan]},
+        index=index,
+    )
+
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+
+    assets = result.portfolio.assets
+    assert (assets.iloc[1] >= 0).all()
+    assert result.diagnostics["vbt_settings"]["direction"] == "longonly"
+
+
+def test_diagnostics_record_leverage_kwargs_from_gross_cap() -> None:
+    close, allocations = _two_symbol_inputs()
+
+    diagnostics = simulate_portfolio(
+        close,
+        allocations,
+        PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, direction="both"),
+    ).diagnostics
+
+    assert diagnostics["vbt_settings"]["leverage"] == 2.0
+    assert diagnostics["vbt_settings"]["leverage_mode"] == "eager"
+    assert diagnostics["vbt_settings"]["direction"] == "both"
+
+
 def test_split_gap_row_is_masked_before_pfo_and_counted_in_non_executable_diagnostics() -> None:
     market_index = pd.date_range("2024-01-01", periods=5)
     split_index = market_index[[0, 1, 3, 4]]
@@ -206,8 +263,9 @@ def test_diagnostics_v3_payload_contains_required_blocks_and_no_legacy_fields() 
     assert diagnostics["vbt_settings"]["one_order_per_bar"] is True
     assert diagnostics["contract"]["execution_timing"] == "same_close"
     assert diagnostics["contract"]["terminal_liquidation"] is True
-    assert diagnostics["contract"]["target_exposure_cap"] == 1.0
-    assert diagnostics["contract"]["direction_scope"] == "long_only_v1"
+    assert diagnostics["contract"]["gross_cap"] == 1.0
+    assert diagnostics["contract"]["net_cap"] == 1.0
+    assert "direction_scope" not in diagnostics["contract"]
     assert set(diagnostics["allocations"]) == {
         "rebalance_rows",
         "requested",

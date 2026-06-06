@@ -29,12 +29,13 @@ STRATEGY_FORBIDDEN_KEYS = {
     "direction",
     "execution_timing",
     "fees",
+    "gross_cap",
+    "net_cap",
     "portfolio",
     "portfolio_config",
     "size",
     "sizing",
     "slippage",
-    "target_exposure_cap",
 }
 
 

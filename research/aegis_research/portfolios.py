@@ -24,11 +24,14 @@ VBT_CALL_SEQUENCE_CAVEAT = (
     "VectorBT automatic call sequencing sorts approximate order value using predetermined "
     "prices; it is not a custom path-dependent execution engine."
 )
+# These conflict-resolution knobs belong to ``from_signals``; ``from_orders`` (the
+# factory this route uses) never sees them, regardless of direction.
 VBT_NOT_APPLICABLE_SETTINGS: dict[str, str] = {
-    "upon_short_conflict": "not_applicable_long_only_v1",
-    "upon_dir_conflict": "not_applicable_long_only_v1",
-    "upon_opposite_entry": "not_applicable_long_only_v1",
+    "upon_short_conflict": "not_applicable_from_orders",
+    "upon_dir_conflict": "not_applicable_from_orders",
+    "upon_opposite_entry": "not_applicable_from_orders",
 }
+VBT_LEVERAGE_MODE = "eager"
 # Next-open execution: a target decided from bar t's close fills at bar t+1's open.
 # VBT's ``price="nextopen"`` sets ``from_ago=1`` (shift one bar) and fills at the open,
 # which is the canonical VBT way to avoid same-bar look-ahead without manual shifting.
@@ -98,6 +101,8 @@ def _build_portfolio(
         fees=config.fees,
         slippage=config.slippage,
         init_cash=config.init_cash,
+        leverage=config.gross_cap,
+        leverage_mode=VBT_LEVERAGE_MODE,
         **exec_kwargs,
     )
     return pf, pfo, non_exec_diag, execution_timing
@@ -272,14 +277,17 @@ def _portfolio_diagnostics(
             "call_sequence_caveat": VBT_CALL_SEQUENCE_CAVEAT,
             "fees": config.fees,
             "slippage": config.slippage,
+            "leverage": config.gross_cap,
+            "leverage_mode": VBT_LEVERAGE_MODE,
             "one_order_per_bar": True,
             "price": price_setting,
         },
         "contract": {
-            "direction_scope": "long_only_v1",
-            "target_exposure_cap": config.target_exposure_cap,
+            "gross_cap": config.gross_cap,
+            "net_cap": config.net_cap,
             "execution_timing": execution_timing,
             "terminal_liquidation": execution_timing == "same_close",
+            "financing_carry": "not_modeled_v1",
             "not_applicable_vbt_settings": dict(VBT_NOT_APPLICABLE_SETTINGS),
         },
         "grouping": {
