@@ -16,11 +16,12 @@ def _index(periods: int = 4) -> pd.DatetimeIndex:
     return pd.date_range("2024-01-01", periods=periods)
 
 
-def test_package_exports_only_two_public_symbols() -> None:
+def test_package_exports_expected_public_symbols() -> None:
     import research.aegis_research.portfolio_policy as package
 
     assert set(package.__all__) == {
         "apply_executable_mask_and_terminal_liquidation",
+        "assert_signed_allocations_within_caps",
         "validate_signed_target_weights",
     }
 

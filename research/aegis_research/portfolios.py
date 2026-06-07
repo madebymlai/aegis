@@ -11,6 +11,7 @@ from vectorbtpro import vbt
 from research.aegis_research.config import PortfolioConfig
 from research.aegis_research.portfolio_policy import (
     apply_executable_mask_and_terminal_liquidation,
+    assert_signed_allocations_within_caps,
 )
 
 SYMBOL_LEVEL = "symbol"
@@ -185,6 +186,12 @@ def simulate_portfolio(
     periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
 ) -> PortfolioSimulationResult:
     _validate_allocations_frame(close, allocations)
+    assert_signed_allocations_within_caps(
+        allocations,
+        gross_cap=config.gross_cap,
+        net_cap=config.net_cap,
+        direction=config.direction,
+    )
     pf, pfo, non_exec_diag, execution_timing = _build_portfolio(
         close,
         allocations,
@@ -225,6 +232,12 @@ def simulate_portfolio_batch(
         feature_name="Close",
     )
     _validate_allocations_frame(expanded_close, allocations)
+    assert_signed_allocations_within_caps(
+        allocations,
+        gross_cap=config.gross_cap,
+        net_cap=config.net_cap,
+        direction=config.direction,
+    )
     expanded_open = (
         None
         if open_ is None

@@ -187,6 +187,97 @@ def test_signed_both_direction_run_opens_a_real_short_position() -> None:
     assert realized.iloc[1]["B"] < 0
 
 
+def test_batch_rejects_candidate_breaching_net_cap_and_names_it() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    close = pd.DataFrame(
+        {"A": [10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["cand-ok", "cand-net-long"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
+    # cand-ok is market-neutral (net 0); cand-net-long breaches net_cap=0 (net 1.0).
+    allocations.loc[index[0], ("cand-ok", "A")] = 0.5
+    allocations.loc[index[0], ("cand-ok", "B")] = -0.5
+    allocations.loc[index[0], ("cand-net-long", "A")] = 0.5
+    allocations.loc[index[0], ("cand-net-long", "B")] = 0.5
+
+    config = PortfolioConfig(
+        fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"
+    )
+    with pytest.raises(ValueError, match="cand-net-long"):
+        simulate_portfolio_batch(close, allocations, config)
+
+
+def test_batch_rejects_longonly_candidate_with_a_negative_weight() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    close = pd.DataFrame(
+        {"A": [10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["cand-long", "cand-has-short"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
+    allocations.loc[index[0], ("cand-long", "A")] = 0.5
+    allocations.loc[index[0], ("cand-long", "B")] = 0.5
+    # cand-has-short stays within both caps (gross 1.0, net 0.0) but the short weight
+    # contradicts the run's longonly Direction — only the sign guard catches it.
+    allocations.loc[index[0], ("cand-has-short", "A")] = 0.5
+    allocations.loc[index[0], ("cand-has-short", "B")] = -0.5
+
+    config = PortfolioConfig(
+        fees=0, slippage=0, gross_cap=1.0, net_cap=1.0, direction="longonly"
+    )
+    with pytest.raises(ValueError, match="longonly"):
+        simulate_portfolio_batch(close, allocations, config)
+
+
+def test_batch_accepts_valid_market_neutral_book_within_caps() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    close = pd.DataFrame(
+        {"A": [10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["cand-neutral"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
+    # gross 1.0 <= 2, net 0.0 <= 0: a legitimate dollar-neutral book must not be rejected.
+    allocations.loc[index[0], ("cand-neutral", "A")] = 0.5
+    allocations.loc[index[0], ("cand-neutral", "B")] = -0.5
+
+    config = PortfolioConfig(
+        fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"
+    )
+    result = simulate_portfolio_batch(close, allocations, config)
+
+    assert isinstance(result, PortfolioSimulationResult)
+
+
+def test_single_portfolio_rejects_book_breaching_gross_cap() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    close = pd.DataFrame(
+        {"A": [10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0]},
+        index=index,
+    )
+    # gross = 0.8 + 0.8 = 1.6 exceeds gross_cap 1.0.
+    allocations = pd.DataFrame(
+        {"A": [0.8, np.nan, np.nan], "B": [0.8, np.nan, np.nan]},
+        index=index,
+    )
+
+    config = PortfolioConfig(
+        fees=0, slippage=0, gross_cap=1.0, net_cap=1.0, direction="longonly"
+    )
+    with pytest.raises(ValueError, match="gross_cap"):
+        simulate_portfolio(close, allocations, config)
+
+
 def test_market_neutral_run_book_is_net_zero_and_realized_matches_requested() -> None:
     index = pd.date_range("2024-01-01", periods=5)
     close = pd.DataFrame(

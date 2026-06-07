@@ -109,7 +109,9 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
     )
     allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
     allocations.loc[index[0], ("candidate-a", slice(None))] = 0.3
-    allocations.loc[index[0], ("candidate-b", slice(None))] = 0.6
+    # candidate-b at 0.5 each is gross 1.0 — distinct from candidate-a yet within the default
+    # exposure caps, so the gate admits this metrics-parity fixture at leverage 1.0.
+    allocations.loc[index[0], ("candidate-b", slice(None))] = 0.5
     simulation = simulate_portfolio_batch(
         close, allocations, PortfolioConfig(fees=0.001, slippage=0)
     )
