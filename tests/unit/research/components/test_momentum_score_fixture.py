@@ -16,9 +16,9 @@ def _make_data(n_dates: int = 300, symbols: list[str] | None = None) -> MarketDa
     return MarketDataBundle(features={"Close": close}, loaded_features=("Close",))
 
 
-class TestVanguardMomentumScoreManifest:
+class TestMomentumScoreManifest:
     def test_manifest_keys(self) -> None:
-        from research.components.indicators.vanguard_momentum_score import (
+        from tests.fixtures.components.indicators.tests_momentum_score import (
             COMPONENT_CALLABLE,
             COMPONENT_MANIFEST,
         )
@@ -30,25 +30,25 @@ class TestVanguardMomentumScoreManifest:
         }
         assert required_keys <= set(COMPONENT_MANIFEST.keys())
         assert COMPONENT_MANIFEST["output_names"] == ["momentum_score"]
-        assert COMPONENT_MANIFEST["id"] == "vanguard.momentum_score"
+        assert COMPONENT_MANIFEST["id"] == "tests.momentum_score"
 
     def test_param_space_returns_params(self) -> None:
-        from research.components.indicators.vanguard_momentum_score import param_space
+        from tests.fixtures.components.indicators.tests_momentum_score import param_space
 
         space = param_space()
         assert set(space.keys()) == {"h1", "h2", "h3", "h4", "w1", "w2", "w3", "w4"}
 
 
-class TestVanguardMomentumScoreRun:
+class TestMomentumScoreRun:
     def test_output_shape(self) -> None:
-        from research.components.indicators.vanguard_momentum_score import run
+        from tests.fixtures.components.indicators.tests_momentum_score import run
 
         data = _make_data()
         result = run(data, h1=21, h2=63, h3=126, h4=252, w1=12.0, w2=4.0, w3=2.0, w4=1.0)
         assert result.shape == (300, 5)
 
     def test_warmup_is_nan_then_real_values(self) -> None:
-        from research.components.indicators.vanguard_momentum_score import run
+        from tests.fixtures.components.indicators.tests_momentum_score import run
 
         data = _make_data()
         result = run(data, h1=21, h2=63, h3=126, h4=252, w1=12.0, w2=4.0, w3=2.0, w4=1.0)
@@ -56,9 +56,9 @@ class TestVanguardMomentumScoreRun:
         assert result.iloc[252:].notna().all().all()
 
 
-class TestVanguardMomentumScoreWideParity:
+class TestMomentumScoreWideParity:
     def test_run_wide_matches_scalar_loop(self) -> None:
-        from research.components.indicators.vanguard_momentum_score import run, run_wide
+        from tests.fixtures.components.indicators.tests_momentum_score import run, run_wide
 
         data = _make_data()
         candidates = [
@@ -87,7 +87,7 @@ class TestVanguardMomentumScoreWideParity:
 
     def test_run_wide_duplicate_candidates(self) -> None:
         """Duplicate param combos should produce identical slices."""
-        from research.components.indicators.vanguard_momentum_score import run, run_wide
+        from tests.fixtures.components.indicators.tests_momentum_score import run, run_wide
 
         data = _make_data()
         params = {"h1": 21, "h2": 63, "h3": 126, "h4": 252, "w1": 12.0, "w2": 4.0, "w3": 2.0, "w4": 1.0}

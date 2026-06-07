@@ -6,13 +6,13 @@ per-Component ``lock_id`` while the Strategy and the other Indicators optimized.
 ADR-0006 removes per-Component lock tokens, so partial freeze must now be
 expressed as inline values-only ``params:`` on the frozen Component.
 
-These configs are gitignored and live only in the working tree, so the tests
-skip when a file is absent rather than failing on a clean checkout; when a file
-is present they pin the migrated contract end to end: it loads and validates,
-carries no per-Component lock reference, inlines the previously-frozen
-Component's literal params, and the optimization source freezes exactly that
-Component (``param_mode == "fixed"``) while every other Component keeps
-optimizing (``param_mode == "parameterized"``).
+These fixtures live in the tracked ``tests/fixtures`` tree (decoupled with
+``tests.*`` Component ids), so the tests always run and pin the migrated
+contract end to end: each config loads and validates, carries no per-Component
+lock reference, inlines the previously-frozen Component's literal params, and
+the optimization source freezes exactly that Component (``param_mode ==
+"fixed"``) while every other Component keeps optimizing (``param_mode ==
+"parameterized"``).
 """
 
 from __future__ import annotations
@@ -30,18 +30,18 @@ from research.aegis_research.optimization.component_source import (
     build_component_optimization_source,
 )
 
-_CONFIG_DIR = Path("research/configs")
+_CONFIG_DIR = Path("tests/fixtures/configs")
 
 # The literal parameter values each config's previously-frozen Indicator
 # resolved to under the old per-Component lock, read once from the candidate
 # store / locked-run manifest while that resolution path still existed.
 _FROZEN = {
-    "etf_vanguard_tune_lock_mom.yaml": (
-        "vanguard.momentum_score",
+    "tests_tune_lock_mom.yaml": (
+        "tests.momentum_score",
         {"h1": 15, "h2": 42, "h3": 100, "h4": 200, "w1": 8.0, "w2": 4.0, "w3": 3.0, "w4": 2.0},
     ),
-    "etf_vanguard_tune_lock_vol.yaml": (
-        "vanguard.realized_vol",
+    "tests_tune_lock_vol.yaml": (
+        "tests.realized_vol",
         {"window": 16},
     ),
 }
@@ -50,10 +50,7 @@ _LOCK_REF_FIELDS = ("lock_id", "candidate_id", "run_id")
 
 
 def _config_path(name: str) -> Path:
-    path = _CONFIG_DIR / name
-    if not path.exists():
-        pytest.skip(f"gitignored sample config not present: {path}")
-    return path
+    return _CONFIG_DIR / name
 
 
 def _market_data_bundle() -> MarketDataBundle:
@@ -71,7 +68,7 @@ def _market_data_bundle() -> MarketDataBundle:
 
 @pytest.fixture(scope="module")
 def registry():
-    return discover_component_registry()
+    return discover_component_registry(root="tests/fixtures/components")
 
 
 @pytest.mark.parametrize("config_name", sorted(_FROZEN))
