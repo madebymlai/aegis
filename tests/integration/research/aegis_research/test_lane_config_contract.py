@@ -36,7 +36,7 @@ def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
         strategy=RunSourceRefConfig(id="demo.strategy"),
         indicators=[RunIndicatorSourceConfig(id="demo.indicator")],
         ranking=RankingConfig(metric="sharpe_ratio"),
-        portfolio=PortfolioConfig(target_exposure_cap=1.0),
+        portfolio=PortfolioConfig(gross_cap=1.0),
         optimization=OptimizationConfig(
             search="grid",
             split=RunSplitConfig(
@@ -61,7 +61,7 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
                 "strategy: {}",
                 "strategy: {}",
                 "portfolio:",
-                "  target_exposure_cap: 1.0",
+                "  gross_cap: 1.0",
             ]
         )
     )
@@ -428,7 +428,7 @@ def _run_config() -> dict[str, object]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "strategy_demo",
         "data": {"source": "synthetic", "rows": 50, "arrays": ["OHLCV"]},
-        "portfolio": {"target_exposure_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.indicator"}],
         "ranking": {"metric": "sharpe_ratio"},

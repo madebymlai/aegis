@@ -74,7 +74,7 @@ def _raw_config(**overrides: Any) -> dict[str, Any]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "locked_run",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
-        "portfolio": {"target_exposure_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},

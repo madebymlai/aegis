@@ -4,7 +4,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-CONFIG_SCHEMA_VERSION = 6
+import pandas as pd
+
+CONFIG_SCHEMA_VERSION = 8
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
@@ -17,7 +19,7 @@ PORTFOLIO_TARGET_SIZE_TYPES = {
     "targetpercent",
     "targetpercent100",
 }
-PORTFOLIO_DIRECTIONS = {"longonly"}
+PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
 SIGNAL_POLICIES = {"long_only_hysteresis"}
 SIGNAL_EXECUTION_TIMINGS = {"next_open", "same_close"}
 MISSING_POLICIES = {"nan", "drop", "raise"}
@@ -165,8 +167,14 @@ class PortfolioConfig:
     init_cash: float = 10_000.0
     fees: float = 0.001
     slippage: float = 0.0005
-    target_exposure_cap: float = 1.0
+    gross_cap: float = 1.0
+    net_cap: float = 1.0
     direction: str = "longonly"
+    # Short financing carry: flat annual rates. Effective net carry = borrow - rebate,
+    # charged only on short legs (see ADR-0008). The non-zero borrow default means carry
+    # is ON by default; a long-only book has no short legs and is unaffected.
+    short_borrow_rate: float = 0.005
+    short_rebate_rate: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -176,6 +184,15 @@ class ReportConfig:
     min_oos_trades: int = 5
     freq: str = "1D"
     year_freq: str = "252D"
+
+    @property
+    def periods_per_year(self) -> int:
+        """Trading periods per year on the metric-annualization calendar.
+
+        ``year_freq / freq`` (252 for the daily defaults) so short-financing carry and the
+        Sharpe ratio share one calendar (ADR-0008). Rounded to the nearest whole period.
+        """
+        return round(pd.Timedelta(self.year_freq) / pd.Timedelta(self.freq))
 
 
 @dataclass(frozen=True)

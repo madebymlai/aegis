@@ -16,9 +16,9 @@ def _make_data(n_dates: int = 200, symbols: list[str] | None = None) -> MarketDa
     return MarketDataBundle(features={"Close": close}, loaded_features=("Close",))
 
 
-class TestVanguardRealizedVolWideParity:
+class TestRealizedVolWideParity:
     def test_run_wide_matches_scalar_loop(self) -> None:
-        from research.components.indicators.vanguard_realized_vol import run, run_wide
+        from tests.fixtures.components.indicators.tests_realized_vol import run, run_wide
 
         data = _make_data()
         candidates = [
@@ -45,7 +45,7 @@ class TestVanguardRealizedVolWideParity:
             np.testing.assert_allclose(wide_slice, scalar_arr, atol=1e-10)
 
     def test_post_warmup_non_negative(self) -> None:
-        from research.components.indicators.vanguard_realized_vol import run
+        from tests.fixtures.components.indicators.tests_realized_vol import run
 
         data = _make_data()
         result = run(data, window=20)
@@ -53,7 +53,7 @@ class TestVanguardRealizedVolWideParity:
         assert (post_warmup >= 0.0).all().all()
 
     def test_warmup_nan_then_real_values(self) -> None:
-        from research.components.indicators.vanguard_realized_vol import run
+        from tests.fixtures.components.indicators.tests_realized_vol import run
 
         data = _make_data()
         result = run(data, window=20)
@@ -61,7 +61,7 @@ class TestVanguardRealizedVolWideParity:
         assert (result.iloc[21] > 0.0).all()
 
     def test_duplicate_candidates_produce_identical_columns(self) -> None:
-        from research.components.indicators.vanguard_realized_vol import run_wide
+        from tests.fixtures.components.indicators.tests_realized_vol import run_wide
 
         data = _make_data()
         n_symbols = 5

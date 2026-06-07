@@ -17,7 +17,7 @@ A **Component** that transforms market data features into named numeric outputs 
 _Avoid_: feature, signal, transform
 
 **Strategy**:
-A **Component** that consumes **Indicator** outputs and emits a single allocation-native output consumed by the **Allocation Policy**.
+A **Component** that consumes **Indicator** outputs and emits a single signed **target-weight** allocation frame — one weight per symbol per rebalance, where the sign is the **Direction** (positive = long, negative = short) and the magnitude is the intended share of capital.
 _Avoid_: model, algorithm, alpha
 
 **Candidate**:
@@ -57,8 +57,24 @@ A registered, named measurement with declared semantics, unit, and ranking eligi
 _Avoid_: score, stat, KPI
 
 **Allocation Policy**:
-The layer that converts a **Strategy's** declared output shape into a validated target-allocation frame. A Strategy declares one of four shapes — `active` (boolean selection), `scores` (numeric ranking), `ranks` (ordinal ranking), or `target_weights` (explicit per-symbol weights) — and the policy normalizes it against direction constraints and exposure caps before passing it to the VBT portfolio simulator.
-_Avoid_: portfolio policy, portfolio layer, sizing engine
+The fail-closed gate that validates a **Strategy's** signed target-weight frame against the **Run's** **Gross Exposure** and **Net Exposure** caps before simulation. It neither sizes nor normalizes allocations: the VBT portfolio simulator sizes the signed weights directly and reads **Direction** from their sign. The policy only rejects books that breach the caps.
+_Avoid_: normalizer, sizing engine, portfolio layer
+
+**Direction**:
+The side an allocation takes, expressed as the sign of a **Strategy's** target weight: a positive weight is long, a negative weight is short. A book with only positive weights is long-only, only negative is short-only, and a mix is long/short.
+_Avoid_: side, bias, position type
+
+**Gross Exposure**:
+The sum of absolute target weights in a rebalance (Σ|wᵢ|) — total capital at work across both sides. Bounded per **Run** by a gross cap; a gross cap above 1.0 is leverage.
+_Avoid_: leverage, notional, total exposure
+
+**Net Exposure**:
+The signed sum of target weights in a rebalance (Σwᵢ) — the directional tilt remaining after longs and shorts offset. Bounded per **Run** by a net cap; a net cap at (or near) zero defines a market-neutral book.
+_Avoid_: tilt, beta, directional exposure
+
+**Financing Carry**:
+The time-based cost of holding a short position: borrowing the security to sell it accrues a borrow fee, partly offset by a rebate earned on the short-sale proceeds. The net carry (borrow minus rebate) is charged per period on the live short notional for as long as the short is held, independent of any gain or loss on the price. A **Run** sets the borrow and rebate as flat annual rates; a long-only book has no short legs and so carries none. Margin interest on borrowed cash is a related but distinct holding cost that this version does not model.
+_Avoid_: funding, swap, holding cost, interest
 
 **Provenance**:
 The lineage metadata attached to a **Candidate** that traces its parameters back to the **Components** and **Run** that produced them.

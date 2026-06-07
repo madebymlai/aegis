@@ -11,10 +11,28 @@ from vectorbtpro import vbt
 from research.aegis_research.config import PortfolioConfig
 from research.aegis_research.portfolio_policy import (
     apply_executable_mask_and_terminal_liquidation,
+    assert_signed_allocations_within_caps,
 )
 
 SYMBOL_LEVEL = "symbol"
-PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v3"
+PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v4"
+# Trading periods per year used to convert the flat annual short-financing rates into a
+# per-bar carry, matched to daily metric annualization (252D / 1D). The runner threads its
+# own value derived from ``report.freq``/``report.year_freq`` so carry and Sharpe share one
+# calendar; this is the daily default for the single-run path.
+DEFAULT_PERIODS_PER_YEAR = 252
+# Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
+# of ``(net_rate / periods_per_year) × close``. ``× live position`` gives drifted notional,
+# only-while-open, and the cost-on-short / credit-on-long sign for free — hence the long-leg
+# mask (a positive per-share value would otherwise *credit* a long position).
+FINANCING_CARRY_MECHANISM = "cash_dividends_short_borrow_v2"
+# Margin interest (``int_rate × borrowed_cash``) needs ``vbt.pf_nb.get_debt_nb(c)``, which is
+# unavailable on ``from_orders``; charging it would require ``from_signals``/``from_order_func``.
+# Deferred by architectural boundary, not punted (see ADR-0008).
+MARGIN_INTEREST_REASON = (
+    "from_orders has no get_debt_nb position-debt hook; margin interest would require "
+    "from_signals or from_order_func"
+)
 VBT_PORTFOLIO_FACTORY = "Portfolio.from_optimizer"
 VBT_PF_METHOD = "from_orders"
 VBT_RESOLVED_SIZE_TYPE = "targetpercent"
@@ -24,11 +42,33 @@ VBT_CALL_SEQUENCE_CAVEAT = (
     "VectorBT automatic call sequencing sorts approximate order value using predetermined "
     "prices; it is not a custom path-dependent execution engine."
 )
+# These conflict-resolution / accumulation knobs belong to ``from_signals``;
+# ``from_orders`` (the factory this route uses) never sees them, regardless of direction.
+# The signed long/short book makes the prior ``..._long_only_v1`` label subtly wrong: the
+# reason they never apply is the order-based factory, not the (now signed) direction.
 VBT_NOT_APPLICABLE_SETTINGS: dict[str, str] = {
-    "upon_short_conflict": "not_applicable_long_only_v1",
-    "upon_dir_conflict": "not_applicable_long_only_v1",
-    "upon_opposite_entry": "not_applicable_long_only_v1",
+    "upon_short_conflict": "not_applicable_from_orders",
+    "upon_dir_conflict": "not_applicable_from_orders",
+    "upon_opposite_entry": "not_applicable_from_orders",
+    "upon_long_conflict": "not_applicable_from_orders",
+    "accumulate": "not_applicable_from_orders",
 }
+VBT_LEVERAGE_MODE = "eager"
+# Requested ≈ realized fill-fidelity tolerance, per fill row and asset. ``pfo.allocations``
+# (requested target) and ``pf.get_allocations`` (the executed book revalued at that bar's
+# close) differ by a small, benign amount even on correct fills — a target decided from one
+# price snapshot is revalued at another, so a held leg drifts a few percent (maintainer-
+# confirmed: "most rows have correct allocation; discrepancies are rare"). The known
+# ``cash_sharing`` + multi-asset leverage mis-fill ("only one asset in a group can use
+# leverage at a time") is a different beast: a leg fails to fill and lands ~a full target
+# magnitude away (≈1.0), silently under-trading or drifting the book net-long. This tolerance
+# sits in the wide gap between the two so it catches the mis-fill without flagging revaluation.
+REQUESTED_REALIZED_TOLERANCE = 0.5
+# Bars between a rebalance decision and the row its fill settles into the realized book.
+# Same-close fills land on the decision row (lag 0); next-open fills land on the next row
+# (``from_ago=1`` → lag 1). A fill that would land past the last bar (a next-open terminal
+# liquidation) cannot execute and is skipped by the fidelity check.
+EXECUTION_FILL_LAG: dict[str, int] = {"same_close": 0, "next_open": 1}
 # Next-open execution: a target decided from bar t's close fills at bar t+1's open.
 # VBT's ``price="nextopen"`` sets ``from_ago=1`` (shift one bar) and fills at the open,
 # which is the canonical VBT way to avoid same-bar look-ahead without manual shifting.
@@ -68,12 +108,14 @@ def _build_portfolio(
     open_frame: pd.DataFrame | None,
     market_index: pd.Index | None,
     group_by: Any,
+    periods_per_year: int,
 ) -> tuple[vbt.Portfolio, Any, dict[str, Any], str]:
     """Mask allocations, build the PFO, and run ``from_optimizer``.
 
     Shared core for the single-group and per-candidate simulations: identical
-    masking, allocation-filling, and execution settings; only ``group_by`` (and
-    whether the frames are candidate-expanded) differs between the two callers.
+    masking, allocation-filling, short-financing carry, and execution settings; only
+    ``group_by`` (and whether the frames are candidate-expanded) differs between the
+    two callers.
     """
     masked, non_exec_diag = apply_executable_mask_and_terminal_liquidation(
         allocations,
@@ -98,9 +140,40 @@ def _build_portfolio(
         fees=config.fees,
         slippage=config.slippage,
         init_cash=config.init_cash,
+        leverage=config.gross_cap,
+        leverage_mode=VBT_LEVERAGE_MODE,
+        cash_dividends=short_masked_cash_dividends(
+            price_frame, allocations, config, periods_per_year=periods_per_year
+        ),
         **exec_kwargs,
     )
     return pf, pfo, non_exec_diag, execution_timing
+
+
+def short_masked_cash_dividends(
+    close: pd.DataFrame,
+    allocations: pd.DataFrame,
+    config: PortfolioConfig,
+    *,
+    periods_per_year: int,
+) -> pd.DataFrame:
+    """Build the per-bar short-financing carry array (ADR-0008).
+
+    ``cash_dividends[sym, t] = (net_rate / periods_per_year) × close[sym, t]``, masked to the
+    short legs (ffilled signed allocation ``< 0``); long legs are ``0``. ``net_rate`` is
+    ``short_borrow_rate − short_rebate_rate``, floored at zero (a rebate above borrow does not
+    pay the book to hold a short). VBT multiplies this per-share value by the live position to
+    produce drifted-notional carry, charged only while the short is open, with a positive
+    value costing the short — which is why the long legs must be zeroed.
+    """
+    net_rate = max(config.short_borrow_rate - config.short_rebate_rate, 0.0)
+    cash_dividends = pd.DataFrame(0.0, index=close.index, columns=close.columns)
+    if net_rate == 0.0:
+        return cash_dividends
+    rate_per_bar = net_rate / periods_per_year
+    short_mask = allocations.ffill() < 0
+    cash_dividends[short_mask] = rate_per_bar * close[short_mask]
+    return cash_dividends
 
 
 def simulate_portfolio(
@@ -110,8 +183,15 @@ def simulate_portfolio(
     *,
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
+    periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
 ) -> PortfolioSimulationResult:
     _validate_allocations_frame(close, allocations)
+    assert_signed_allocations_within_caps(
+        allocations,
+        gross_cap=config.gross_cap,
+        net_cap=config.net_cap,
+        direction=config.direction,
+    )
     pf, pfo, non_exec_diag, execution_timing = _build_portfolio(
         close,
         allocations,
@@ -119,6 +199,7 @@ def simulate_portfolio(
         open_frame=open_,
         market_index=market_index,
         group_by=True,
+        periods_per_year=periods_per_year,
     )
     diagnostics = _portfolio_diagnostics(
         pf=pf,
@@ -129,6 +210,7 @@ def simulate_portfolio(
         group_by_label=VBT_SHARED_GROUP_BY,
         candidate_ids=None,
         execution_timing=execution_timing,
+        periods_per_year=periods_per_year,
     )
     return PortfolioSimulationResult(portfolio=pf, diagnostics=diagnostics)
 
@@ -141,6 +223,7 @@ def simulate_portfolio_batch(
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     compute_diagnostics: bool = True,
+    periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
 ) -> PortfolioSimulationResult:
     _validate_candidate_columns(allocations.columns, field_name="allocations")
     expanded_close = expand_market_frame_to_candidate_columns(
@@ -149,6 +232,12 @@ def simulate_portfolio_batch(
         feature_name="Close",
     )
     _validate_allocations_frame(expanded_close, allocations)
+    assert_signed_allocations_within_caps(
+        allocations,
+        gross_cap=config.gross_cap,
+        net_cap=config.net_cap,
+        direction=config.direction,
+    )
     expanded_open = (
         None
         if open_ is None
@@ -163,6 +252,7 @@ def simulate_portfolio_batch(
         open_frame=expanded_open,
         market_index=market_index,
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
+        periods_per_year=periods_per_year,
     )
     if not compute_diagnostics:
         return PortfolioSimulationResult(portfolio=pf, diagnostics={})
@@ -176,6 +266,7 @@ def simulate_portfolio_batch(
         group_by_label=VBT_CANDIDATE_GROUP_BY,
         candidate_ids=candidate_ids,
         execution_timing=execution_timing,
+        periods_per_year=periods_per_year,
     )
     diagnostics["shape"] |= {
         "candidate_count": len(candidate_ids),
@@ -232,15 +323,22 @@ def _validate_candidate_columns(columns: pd.Index, *, field_name: str) -> None:
 def portfolio_record_counts(pf: vbt.Portfolio) -> dict[str, Any]:
     group_order_counts = _count_map(pf.orders.count())
     group_trade_counts = _count_map(pf.trades.count())
+    group_exit_trade_counts = _count_map(pf.exit_trades.count())
     symbol_order_counts = _count_map(pf.orders.count(group_by=False))
     symbol_trade_counts = _count_map(pf.trades.count(group_by=False))
+    symbol_exit_trade_counts = _count_map(pf.exit_trades.count(group_by=False))
     return {
         "order_count": _sum_counts(group_order_counts),
         "trade_count": _sum_counts(group_trade_counts),
+        # Exit trades are closed round-trips — long and short alike — so the short
+        # leg's realized activity is audited, not just the long side.
+        "exit_trade_count": _sum_counts(group_exit_trade_counts),
         "orders_per_group": group_order_counts,
         "trades_per_group": group_trade_counts,
+        "exit_trades_per_group": group_exit_trade_counts,
         "orders_per_symbol": symbol_order_counts,
         "trades_per_symbol": symbol_trade_counts,
+        "exit_trades_per_symbol": symbol_exit_trade_counts,
     }
 
 
@@ -254,6 +352,7 @@ def _portfolio_diagnostics(
     group_by_label: str,
     candidate_ids: list[Any] | None,
     execution_timing: str = "same_close",
+    periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
 ) -> dict[str, Any]:
     price_setting = (
         VBT_NEXT_OPEN_PRICE if execution_timing == "next_open" else "default_close_no_kwarg_passed"
@@ -272,14 +371,17 @@ def _portfolio_diagnostics(
             "call_sequence_caveat": VBT_CALL_SEQUENCE_CAVEAT,
             "fees": config.fees,
             "slippage": config.slippage,
+            "leverage": config.gross_cap,
+            "leverage_mode": VBT_LEVERAGE_MODE,
             "one_order_per_bar": True,
             "price": price_setting,
         },
         "contract": {
-            "direction_scope": "long_only_v1",
-            "target_exposure_cap": config.target_exposure_cap,
+            "gross_cap": config.gross_cap,
+            "net_cap": config.net_cap,
             "execution_timing": execution_timing,
             "terminal_liquidation": execution_timing == "same_close",
+            "financing_carry": _financing_carry_diagnostics(config, periods_per_year),
             "not_applicable_vbt_settings": dict(VBT_NOT_APPLICABLE_SETTINGS),
         },
         "grouping": {
@@ -297,14 +399,35 @@ def _portfolio_diagnostics(
             "symbols": [str(column) for column in close.columns],
             "symbol_count": len(close.columns),
         },
-        "allocations": _allocations_diagnostics(pfo, pf),
+        "allocations": _allocations_diagnostics(pfo, pf, execution_timing=execution_timing),
         "order_rejections": _order_rejection_counts(pf),
         "non_executable": non_executable,
         "records": portfolio_record_counts(pf),
     }
 
 
-def _allocations_diagnostics(pfo: Any, pf: vbt.Portfolio) -> dict[str, Any]:
+def _financing_carry_diagnostics(
+    config: PortfolioConfig, periods_per_year: int
+) -> dict[str, Any]:
+    """The structured short-financing carry block (ADR-0008, supersedes ``not_modeled_v1``).
+
+    Declares the charging mechanism, the rates it charged at, the annualization base shared
+    with metric annualization, and the still-deferred margin interest with its architectural
+    reason.
+    """
+    return {
+        "mechanism": FINANCING_CARRY_MECHANISM,
+        "short_borrow_rate": config.short_borrow_rate,
+        "short_rebate_rate": config.short_rebate_rate,
+        "periods_per_year": periods_per_year,
+        "margin_interest": "not_modeled",
+        "margin_interest_reason": MARGIN_INTEREST_REASON,
+    }
+
+
+def _allocations_diagnostics(
+    pfo: Any, pf: vbt.Portfolio, *, execution_timing: str = "same_close"
+) -> dict[str, Any]:
     alloc_records = pfo.alloc_records
     alloc_idx_arr = alloc_records.get_field_arr("alloc_idx")
     col_arr = alloc_records.get_field_arr("col")
@@ -317,9 +440,16 @@ def _allocations_diagnostics(pfo: Any, pf: vbt.Portfolio) -> dict[str, Any]:
         )
         for row_idx, col in zip(alloc_idx_arr, col_arr, strict=True)
     ]
+    realized = pf.get_allocations(group_by=False)
+    assert_requested_realized_fidelity(
+        pfo.allocations,
+        realized,
+        fill_lag=EXECUTION_FILL_LAG[execution_timing],
+        tolerance=REQUESTED_REALIZED_TOLERANCE,
+    )
     requested = _serialize_sparse_frame(pfo.allocations)
     realized_at_fill = _realized_weights_at_fill(
-        pf=pf,
+        realized=realized,
         index=index,
         alloc_idx_arr=alloc_idx_arr,
     )
@@ -330,16 +460,57 @@ def _allocations_diagnostics(pfo: Any, pf: vbt.Portfolio) -> dict[str, Any]:
     }
 
 
+def assert_requested_realized_fidelity(
+    requested: pd.DataFrame,
+    realized: pd.DataFrame,
+    *,
+    fill_lag: int = 0,
+    tolerance: float = REQUESTED_REALIZED_TOLERANCE,
+) -> None:
+    """Fail-closed: the realized book must reproduce the requested book at each fill.
+
+    ``requested`` is the sparse rebalance frame (``pfo.allocations`` — rebalance rows
+    only); ``realized`` is the dense post-fill book (``pf.get_allocations(group_by=False)``).
+    Each requested row is compared against the realized row its fill settles into:
+    ``decision_row + fill_lag`` (lag 0 for same-close, 1 for next-open). A fill that would
+    land past the last bar — a next-open terminal liquidation — cannot execute and is
+    skipped. Realized weights drift between fills as prices move, which is expected and not
+    a fill error, so only the settled fill rows are checked. A divergence beyond
+    ``tolerance`` on a fill row is the known ``cash_sharing`` + multi-asset leverage mis-fill
+    ("only one asset in a group can use leverage at a time"), which silently corrupts metrics
+    by under-trading a leg or drifting the book net-long, and is raised.
+    """
+    if requested.empty:
+        return
+    realized_aligned = realized.reindex(columns=requested.columns)
+    realized_values = realized_aligned.to_numpy(dtype=float)
+    n_rows = len(realized_values)
+    decision_rows = realized_aligned.index.get_indexer(requested.index)
+    worst = 0.0
+    for decision_row, (_, requested_row) in zip(decision_rows, requested.iterrows(), strict=True):
+        fill_row = decision_row + fill_lag
+        requested_values = requested_row.to_numpy(dtype=float)
+        if decision_row < 0 or fill_row >= n_rows or np.isnan(requested_values).all():
+            continue
+        divergence = np.abs(realized_values[fill_row] - requested_values)
+        worst = max(worst, float(np.nanmax(divergence)))
+    if worst > tolerance:
+        raise ValueError(
+            f"realized allocations diverge from requested by {worst} "
+            f"(> tolerance {tolerance}); the cash_sharing + multi-asset leverage "
+            "mis-fill under-traded a leg or drifted the book net-long"
+        )
+
+
 def _realized_weights_at_fill(
     *,
-    pf: vbt.Portfolio,
+    realized: pd.DataFrame,
     index: pd.Index,
     alloc_idx_arr: np.ndarray,
 ) -> list[dict[str, Any]]:
     if len(alloc_idx_arr) == 0:
         return []
-    realized = pf.get_allocations(group_by=False)
-    unique_row_idxs = sorted(set(int(row_idx) for row_idx in alloc_idx_arr))
+    unique_row_idxs = sorted({int(row_idx) for row_idx in alloc_idx_arr})
     records: list[dict[str, Any]] = []
     for row_idx in unique_row_idxs:
         ts = index[row_idx]

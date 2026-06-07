@@ -37,8 +37,8 @@ def run(inputs, fast_window, slow_window):
 
     Selection convention: non-NaN cells = selected this rebalance row, NaN = excluded.
     The portfolio policy layer converts the `active` frame to a validated
-    target-allocation frame, applies the executable mask, normalizes against
-    `portfolio.target_exposure_cap`, and writes the terminal-liquidation row.
+    target-allocation frame, applies the executable mask, gates it against
+    `portfolio.gross_cap`, and writes the terminal-liquidation row.
     """
 
     close = inputs.data.feature("Close")

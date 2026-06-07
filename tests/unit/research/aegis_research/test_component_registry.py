@@ -379,7 +379,7 @@ def test_strategy_manifest_rejects_legacy_signal_outputs_field(tmp_path) -> None
         discover_component_registry(root=root, repo_root=tmp_path)
 
 
-def test_strategy_manifest_rejects_forbidden_target_exposure_cap_key(tmp_path) -> None:
+def test_strategy_manifest_rejects_forbidden_gross_cap_key(tmp_path) -> None:
     root = tmp_path / "research" / "components"
     path = root / "strategies" / "strategy.py"
     path.parent.mkdir(parents=True)
@@ -389,7 +389,7 @@ def test_strategy_manifest_rejects_forbidden_target_exposure_cap_key(tmp_path) -
         "version": "1.0.0",
         "input_names": ["Close"],
         "output_name": "active",
-        "target_exposure_cap": 0.5,
+        "gross_cap": 0.5,
         "owns_portfolio": False,
         "wide_callable": "run_wide",
     }
@@ -408,7 +408,7 @@ def test_strategy_manifest_rejects_forbidden_target_exposure_cap_key(tmp_path) -
     )
 
     with pytest.raises(
-        ComponentRegistryError, match="'target_exposure_cap' is forbidden"
+        ComponentRegistryError, match="'gross_cap' is forbidden"
     ):
         discover_component_registry(root=root, repo_root=tmp_path)
 

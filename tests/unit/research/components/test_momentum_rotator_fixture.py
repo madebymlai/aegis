@@ -69,7 +69,7 @@ def _build_indicators(close, *, spy_positive=True, tlt_positive=True, all_positi
 
 class TestManifest:
     def test_manifest_required_keys(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import (
+        from tests.fixtures.components.strategies.tests_momentum_rotator import (
             COMPONENT_CALLABLE,
             COMPONENT_MANIFEST,
         )
@@ -81,12 +81,12 @@ class TestManifest:
             "param_space_callable", "owns_portfolio", "wide_callable",
         }
         assert required_keys <= set(COMPONENT_MANIFEST.keys())
-        assert COMPONENT_MANIFEST["id"] == "vanguard.momentumRotator"
+        assert COMPONENT_MANIFEST["id"] == "tests.momentum_rotator"
         assert COMPONENT_MANIFEST["output_name"] == "target_weights"
         assert COMPONENT_MANIFEST["owns_portfolio"] is False
 
     def test_param_space_returns_params(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import param_space
+        from tests.fixtures.components.strategies.tests_momentum_rotator import param_space
 
         space = param_space()
         assert set(space.keys()) == {"top_n", "top_k_defensive", "tau"}
@@ -98,7 +98,7 @@ class TestManifest:
 
 class TestRiskOnRegime:
     def test_only_offensive_assets_receive_weights(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run
 
         data = _make_data()
         close = data.feature("Close")
@@ -119,7 +119,7 @@ class TestRiskOnRegime:
         assert sum(w > 0 for w in off_weights) > 0
 
     def test_weights_sum_to_one(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run
 
         data = _make_data()
         close = data.feature("Close")
@@ -140,7 +140,7 @@ class TestRiskOnRegime:
 
 class TestRiskOffRegime:
     def test_only_defensive_assets_receive_weights(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run
 
         data = _make_data()
         close = data.feature("Close")
@@ -159,7 +159,7 @@ class TestRiskOffRegime:
         assert row.loc["SPY"] == 0.0
 
     def test_all_cash_when_defensive_momentum_negative(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run
 
         data = _make_data()
         close = data.feature("Close")
@@ -180,7 +180,7 @@ class TestRiskOffRegime:
 
 class TestMixedRegime:
     def test_both_sleeves_receive_weights(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run
 
         data = _make_data()
         close = data.feature("Close")
@@ -204,7 +204,7 @@ class TestMixedRegime:
         assert def_sum > 0
 
     def test_budgets_sum_to_one(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run
 
         data = _make_data()
         close = data.feature("Close")
@@ -225,7 +225,7 @@ class TestMixedRegime:
 
 class TestTurnoverGate:
     def test_high_tau_suppresses_rebalance(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run
 
         data = _make_data(n_dates=50)
         close = data.feature("Close")
@@ -243,7 +243,7 @@ class TestTurnoverGate:
         assert np.isnan(result.iloc[10]).all()
 
     def test_regime_change_overrides_tau(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run
 
         data = _make_data(n_dates=50)
         close = data.feature("Close")
@@ -271,7 +271,7 @@ class TestTurnoverGate:
 
 class TestRunWideMatchesScalar:
     def test_parity_across_candidates(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run, run_wide
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run, run_wide
 
         data = _make_data()
         close = data.feature("Close")
@@ -320,7 +320,7 @@ class TestRunWideMatchesScalar:
             np.testing.assert_allclose(wide_slice, scalar_arr, atol=1e-10)
 
     def test_duplicate_candidates(self) -> None:
-        from research.components.strategies.vanguard_momentum_rotator import run, run_wide
+        from tests.fixtures.components.strategies.tests_momentum_rotator import run, run_wide
 
         data = _make_data()
         close = data.feature("Close")
