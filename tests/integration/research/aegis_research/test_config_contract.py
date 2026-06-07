@@ -94,7 +94,7 @@ def test_removed_target_exposure_cap_field_is_rejected(tmp_path: Path) -> None:
 
 def test_portfolio_gross_cap_validates(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["portfolio"] = {"gross_cap": 0.8}
+    raw["portfolio"] = {"gross_cap": 0.8, "direction": "longonly"}
 
     resolved = resolve_run_config(
         raw,
@@ -613,7 +613,7 @@ def _run_config() -> dict[str, object]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "canonical_run",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
-        "portfolio": {"gross_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},

@@ -428,7 +428,7 @@ def _run_config() -> dict[str, object]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "strategy_demo",
         "data": {"source": "synthetic", "rows": 50, "arrays": ["OHLCV"]},
-        "portfolio": {"gross_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.indicator"}],
         "ranking": {"metric": "sharpe_ratio"},

@@ -33,7 +33,7 @@ def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_componen
             "rows": 200,
             "arrays": ["OHLCV"],
         },
-        "portfolio": {"gross_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {
             "id": "local.e2e.etf_rotation",
             "params": {

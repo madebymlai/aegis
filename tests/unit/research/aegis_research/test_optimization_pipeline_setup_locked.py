@@ -72,7 +72,7 @@ def _locked_raw_config(candidate_key: str) -> dict[str, Any]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "locked_run_fixture",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
-        "portfolio": {"gross_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},

@@ -66,10 +66,11 @@ def _validate_portfolio(portfolio: dict[str, Any], issues: list[ConfigValidation
                     "was removed; the simulator resolves targetpercent sizing internally",
                 )
             )
-    direction = portfolio.get("direction", "longonly")
-    if "direction" in portfolio and not isinstance(direction, str):
+    if "direction" not in portfolio:
+        issues.append(ConfigValidationIssue("portfolio.direction", "is required"))
+    elif not isinstance(portfolio["direction"], str):
         issues.append(ConfigValidationIssue("portfolio.direction", "must be a string"))
-    elif direction not in PORTFOLIO_DIRECTIONS:
+    elif portfolio["direction"] not in PORTFOLIO_DIRECTIONS:
         issues.append(
             ConfigValidationIssue(
                 "portfolio.direction",

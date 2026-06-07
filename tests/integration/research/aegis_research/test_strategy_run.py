@@ -466,7 +466,7 @@ def _write_run_config(
                     "arrays": arrays or ["OHLCV"],
                 }
                 | (data or {}),
-                "portfolio": {"gross_cap": 1.0},
+                "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
                 "strategy": {"id": strategy_id},
                 "indicators": indicators or [],
                 "ranking": {"metric": "total_return"},

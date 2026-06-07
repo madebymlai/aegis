@@ -27,6 +27,12 @@ def test_portfolio_requires_gross_cap() -> None:
     assert ("portfolio.gross_cap", "is required") in [(i.path, i.message) for i in issues]
 
 
+def test_portfolio_requires_direction() -> None:
+    issues: list[ConfigValidationIssue] = []
+    _validate_portfolio({"gross_cap": 1.0}, issues)
+    assert ("portfolio.direction", "is required") in [(i.path, i.message) for i in issues]
+
+
 def test_portfolio_accepts_gross_cap_above_one_no_ceiling() -> None:
     issues: list[ConfigValidationIssue] = []
     _validate_portfolio({"gross_cap": 2.0}, issues)

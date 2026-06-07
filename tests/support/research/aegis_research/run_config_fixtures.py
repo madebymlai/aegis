@@ -34,7 +34,7 @@ def build_resolved_run_config(
             "rows": 120,
             "arrays": ["OHLCV"],
         },
-        "portfolio": {"gross_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},
