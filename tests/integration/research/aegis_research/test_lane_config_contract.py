@@ -36,7 +36,7 @@ def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
         strategy=RunSourceRefConfig(id="demo.strategy"),
         indicators=[RunIndicatorSourceConfig(id="demo.indicator")],
         ranking=RankingConfig(metric="sharpe_ratio"),
-        portfolio=PortfolioConfig(gross_cap=1.0),
+        portfolio=PortfolioConfig(gross_cap=1.0, direction="longonly"),
         optimization=OptimizationConfig(
             search="grid",
             split=RunSplitConfig(

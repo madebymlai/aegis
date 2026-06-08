@@ -114,7 +114,7 @@ def _run(windows: list[int], *, optimization: OptimizationConfig | None = None):
         open_=_uptrend_close(),
         source=_source(windows),
         optimization=optimization or _optimization(),
-        portfolio=PortfolioConfig(fees=0.0, slippage=0.0),
+        portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", min_weight=0.3),
     )

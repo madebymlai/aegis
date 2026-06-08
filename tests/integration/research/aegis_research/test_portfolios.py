@@ -16,7 +16,7 @@ from research.aegis_research.portfolios import (
 def test_simulate_portfolio_returns_result_and_v4_diagnostics_schema_version() -> None:
     close, allocations = _two_symbol_inputs()
 
-    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
 
     assert isinstance(result, PortfolioSimulationResult)
     assert result.diagnostics["schema_version"] == PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION
@@ -34,7 +34,7 @@ def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
         index=index,
     )
 
-    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
     alloc_dates = [row[0] for row in result.diagnostics["allocations"]["rebalance_rows"]]
 
     assert alloc_dates == ["2024-01-01T00:00:00", "2024-01-04T00:00:00"]
@@ -54,7 +54,7 @@ def test_all_zero_allocations_row_in_non_terminal_location_closes_positions_at_c
         index=index,
     )
 
-    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
     assets = result.portfolio.assets
 
     assert assets.iloc[1].to_dict() == pytest.approx({"A": 0.0, "B": 0.0})
@@ -76,7 +76,7 @@ def test_full_a_to_full_b_switch_under_shared_cash_executes_single_rebalance() -
         index=index,
     )
 
-    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
     orders = result.portfolio.orders.records_readable
     third_bar = orders[orders["Index"].astype(str) == "2024-01-03"]
     sides_by_symbol = {row["Column"]: row["Side"] for _, row in third_bar.iterrows()}
@@ -97,7 +97,7 @@ def test_consecutive_identical_target_rows_appear_as_separate_rebalance_records(
         index=index,
     )
 
-    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
     alloc_dates = [row[0] for row in result.diagnostics["allocations"]["rebalance_rows"]]
 
     assert "2024-01-01T00:00:00" in alloc_dates
@@ -115,7 +115,7 @@ def test_terminal_liquidation_sells_all_held_positions_at_last_close() -> None:
         index=index,
     )
 
-    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
     final_assets = result.portfolio.assets.iloc[-1]
     final_cash = float(result.portfolio.cash.iloc[-1])
     final_equity = float(result.portfolio.value.iloc[-1])
@@ -142,7 +142,7 @@ def test_batched_three_candidate_run_preserves_candidate_identity_in_pfo_columns
     allocations.loc[index[0], :] = 0.5
 
     result = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0, slippage=0)
+        close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly")
     )
 
     assert result.diagnostics["grouping"]["candidate_ids"] == [
@@ -344,7 +344,7 @@ def test_simulate_portfolio_gates_the_real_run_on_requested_realized_fidelity(mo
         calls.append((requested, realized))
 
     monkeypatch.setattr(portfolios_module, "assert_requested_realized_fidelity", _spy)
-    simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
 
     assert len(calls) == 1
     requested, realized = calls[0]
@@ -365,7 +365,7 @@ def test_default_longonly_run_holds_only_long_positions() -> None:
         index=index,
     )
 
-    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0))
+    result = simulate_portfolio(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
 
     assets = result.portfolio.assets
     assert (assets.iloc[1] >= 0).all()
@@ -401,7 +401,7 @@ def test_split_gap_row_is_masked_before_pfo_and_counted_in_non_executable_diagno
     result = simulate_portfolio(
         close,
         allocations,
-        PortfolioConfig(fees=0, slippage=0),
+        PortfolioConfig(fees=0, slippage=0, direction="longonly"),
         market_index=market_index,
     )
 
@@ -420,7 +420,7 @@ def test_diagnostics_v3_payload_contains_required_blocks_and_no_legacy_fields() 
     close, allocations = _two_symbol_inputs()
 
     diagnostics = simulate_portfolio(
-        close, allocations, PortfolioConfig(fees=0, slippage=0)
+        close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly")
     ).diagnostics
 
     assert diagnostics["schema_version"] == "portfolio_diagnostics.v4"
@@ -472,7 +472,7 @@ def test_diagnostics_records_realized_weights_at_each_rebalance_row() -> None:
     close, allocations = _two_symbol_inputs()
 
     diagnostics = simulate_portfolio(
-        close, allocations, PortfolioConfig(fees=0, slippage=0)
+        close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly")
     ).diagnostics
     realized = diagnostics["allocations"]["realized_at_fill"]
 
@@ -505,7 +505,7 @@ def test_portfolio_inputs_reject_symbol_mismatches_instead_of_dropping_columns()
     allocations["EXTRA"] = 0.0
 
     with pytest.raises(ValueError, match="columns"):
-        simulate_portfolio(close, allocations, PortfolioConfig())
+        simulate_portfolio(close, allocations, PortfolioConfig(direction="longonly"))
 
 
 def test_portfolio_inputs_reject_index_mismatches_instead_of_dropping_rows() -> None:
@@ -513,7 +513,7 @@ def test_portfolio_inputs_reject_index_mismatches_instead_of_dropping_rows() -> 
     allocations = allocations.iloc[:-1]
 
     with pytest.raises(ValueError, match="index"):
-        simulate_portfolio(close, allocations, PortfolioConfig())
+        simulate_portfolio(close, allocations, PortfolioConfig(direction="longonly"))
 
 
 def test_contract_records_structured_financing_carry_block() -> None:
@@ -552,12 +552,14 @@ def test_long_only_book_is_byte_for_byte_unchanged_with_carry_on_by_default() ->
     close, allocations = _two_symbol_inputs()
 
     carry_on = simulate_portfolio(
-        close, allocations, PortfolioConfig(fees=0, slippage=0)
+        close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly")
     )
     carry_off = simulate_portfolio(
         close,
         allocations,
-        PortfolioConfig(fees=0, slippage=0, short_borrow_rate=0.0, short_rebate_rate=0.0),
+        PortfolioConfig(
+            fees=0, slippage=0, direction="longonly", short_borrow_rate=0.0, short_rebate_rate=0.0
+        ),
     )
 
     pd.testing.assert_series_equal(

@@ -169,7 +169,9 @@ class PortfolioConfig:
     slippage: float = 0.0005
     gross_cap: float = 1.0
     net_cap: float = 1.0
-    direction: str = "longonly"
+    # Required (validation rejects a config missing it); no silent long-only default. Keyword-only
+    # so a required field can sit among defaulted ones — every construction site splats **raw anyway.
+    direction: str = field(kw_only=True)
     # Short financing carry: flat annual rates. Effective net carry = borrow - rebate,
     # charged only on short legs (see ADR-0008). The non-zero borrow default means carry
     # is ON by default; a long-only book has no short legs and is unaffected.
@@ -268,7 +270,9 @@ class RunConfig:
     ranking: RankingConfig
     schema_version: int = CONFIG_SCHEMA_VERSION
     data: DataConfig = field(default_factory=DataConfig)
-    portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
+    # Required (keyword-only so it can sit among defaulted fields): a run must declare its
+    # portfolio, which in turn requires an explicit direction — no silently long-only default.
+    portfolio: PortfolioConfig = field(kw_only=True)
     report: ReportConfig = field(default_factory=ReportConfig)
     optimization: OptimizationConfig | None = None
     lock: Lock | None = None

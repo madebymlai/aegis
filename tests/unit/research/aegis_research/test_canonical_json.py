@@ -46,6 +46,7 @@ def test_to_builtin_serializes_resolved_run_config_wrapped_config() -> None:
         strategy=public_config.RunSourceRefConfig(id="demo.strategy"),
         indicators=[],
         ranking=public_config.RankingConfig(metric="sharpe"),
+        portfolio=public_config.PortfolioConfig(direction="longonly"),
     )
     wrapper = public_config.ResolvedRunConfig(
         config=run_config,

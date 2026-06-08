@@ -113,7 +113,7 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
     # exposure caps, so the gate admits this metrics-parity fixture at leverage 1.0.
     allocations.loc[index[0], ("candidate-b", slice(None))] = 0.5
     simulation = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0.001, slippage=0)
+        close, allocations, PortfolioConfig(fees=0.001, slippage=0, direction="longonly")
     )
     config = ReportConfig(freq="1D", year_freq="252D")
 

@@ -59,7 +59,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
             open_=close,
             source=source,
             optimization=_optimization_config(),
-            portfolio=PortfolioConfig(fees=0, slippage=0),
+            portfolio=PortfolioConfig(fees=0, slippage=0, direction="longonly"),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return"),
         )
@@ -87,7 +87,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
             open_=close,
             source=source,
             optimization=_optimization_config(),
-            portfolio=PortfolioConfig(fees=0, slippage=0),
+            portfolio=PortfolioConfig(fees=0, slippage=0, direction="longonly"),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return"),
         )

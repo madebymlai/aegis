@@ -86,7 +86,7 @@ def test_report_periods_per_year_shares_metric_annualization_calendar() -> None:
 
 def test_short_financing_rate_defaults_carry_on() -> None:
     # Non-zero borrow default = carry ON by default; rebate defaults to 0.0.
-    config = PortfolioConfig()
+    config = PortfolioConfig(direction="longonly")
     assert config.short_borrow_rate == 0.005
     assert config.short_rebate_rate == 0.0
 

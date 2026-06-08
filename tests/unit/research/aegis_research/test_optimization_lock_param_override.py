@@ -10,6 +10,7 @@ Manifest never silently misrepresents what ran.
 from __future__ import annotations
 
 from research.aegis_research.config import (
+    PortfolioConfig,
     RankingConfig,
     RunConfig,
     RunIndicatorSourceConfig,
@@ -32,6 +33,7 @@ def _config(
             RunIndicatorSourceConfig(id="demo.returns", params=indicator_params or {})
         ],
         ranking=RankingConfig(metric="total_return"),
+        portfolio=PortfolioConfig(direction="longonly"),
     )
 
 

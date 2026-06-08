@@ -8,6 +8,7 @@ import pytest
 
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.config import (
+    PortfolioConfig,
     RankingConfig,
     RunConfig,
     RunIndicatorSourceConfig,
@@ -170,6 +171,7 @@ def _config(
         if indicators is not None
         else [RunIndicatorSourceConfig(id="demo.trend")],
         ranking=RankingConfig(metric="total_return"),
+        portfolio=PortfolioConfig(direction="longonly"),
     )
 
 
