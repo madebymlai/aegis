@@ -19,7 +19,6 @@ from research.aegis_research.configuration.schema import (
     ConfigValidationIssue,
     RunConfig,
 )
-from research.aegis_research.configuration.secrets import redact_config
 from research.aegis_research.configuration.validation import (
     _validate_ranking,
     _validate_raw_run_config,
@@ -67,11 +66,11 @@ class ResolvedRunConfig:
     metric_registry: FrozenMetricRegistry | None = None
     selection: ConfigSelectionEvidence | None = None
 
-    def redacted_authored_config(self) -> dict[str, Any]:
-        return redact_config(self.authored_config)
+    def authored_config_document(self) -> dict[str, Any]:
+        return self.authored_config
 
-    def redacted_resolved_config(self) -> dict[str, Any]:
-        return redact_config(to_builtin(self.config))
+    def resolved_config_document(self) -> dict[str, Any]:
+        return to_builtin(self.config)
 
     def manifest(self) -> dict[str, Any]:
         return {

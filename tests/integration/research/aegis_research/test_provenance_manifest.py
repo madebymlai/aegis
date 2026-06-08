@@ -346,13 +346,15 @@ def test_git_evidence_includes_staged_and_untracked_content_identity(tmp_path: P
     assert second_untracked["diff_hash"] != first_untracked["diff_hash"]
 
 
-def test_run_start_evidence_uses_public_redacted_config_hashes(tmp_path: Path) -> None:
+def test_run_start_evidence_hashes_raw_config(tmp_path: Path) -> None:
+    from research.aegis_research.canonical_json import to_builtin
+
     config = build_resolved_run_config(tmp_path)
 
     evidence = capture_run_start_evidence(config, repo_path=Path.cwd())
 
-    assert evidence["config"]["authored_config_hash"]
-    assert evidence["config"]["resolved_config_hash"]
+    assert evidence["config"]["authored_config_hash"] == canonical_hash(config.authored_config)
+    assert evidence["config"]["resolved_config_hash"] == canonical_hash(to_builtin(config.config))
     assert evidence["config"]["raw_config_identity"]["visibility"] == ArtifactVisibility.PRIVATE
     assert evidence["environment"]["variables"] == capture_environment_evidence()["variables"]
 

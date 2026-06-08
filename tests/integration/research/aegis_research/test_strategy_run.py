@@ -282,7 +282,7 @@ def test_strategy_run_rejects_fixed_strategy_side_path_without_optimization(
     _assert_missing_optimization_config_error(capsys, tmp_path, "fixed-run")
 
 
-def test_strategy_run_redacts_known_config_secrets_on_validation_failure(
+def test_strategy_run_reports_config_validation_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -304,10 +304,10 @@ def test_strategy_run_redacts_known_config_secrets_on_validation_failure(
     assert cli.main(["run", str(config_path), "--json", "--run-id", "secret-run"]) == 6
 
     output = capsys.readouterr()
-    assert "hunter2" not in output.err
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
     assert "fixed/non-optimized strategy runs are removed" in payload["error"]["message"]
+    assert "<redacted>" not in output.err
 
 
 def test_strategy_run_maps_component_registry_errors_to_config_errors(

@@ -28,7 +28,6 @@ EXPECTED_PUBLIC_NAMES = (
     "MarketDataResult",
     "RemoteDataPullError",
     "_pull_remote",
-    "assert_public_metadata_safe",
     "close_from_ohlcv",
     "feature_from_ohlcv",
     "high_from_ohlcv",

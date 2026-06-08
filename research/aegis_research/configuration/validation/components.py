@@ -21,7 +21,6 @@ from research.aegis_research.configuration.schema import (
     EXPERIMENT_NAME_RE,
     ConfigValidationIssue,
 )
-from research.aegis_research.configuration.secrets import _validate_no_inline_secrets
 from research.aegis_research.configuration.validation.base import (
     _require_str,
     _validate_json_like,
@@ -137,7 +136,6 @@ def _validate_component_params(
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return None
     _validate_json_like(path, value, issues)
-    _validate_no_inline_secrets(path, value, issues)
     _validate_no_run_executable_keys(path, value, issues)
     unknown = sorted(set(value) - set(param_names))
     if unknown:

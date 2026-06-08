@@ -70,7 +70,7 @@ def test_describe_consumes_pre_scrubbed_provider_metadata_from_the_adapter() -> 
     ]
 
 
-def test_remote_adapter_pre_scrubs_unsafe_provider_mappings() -> None:
+def test_remote_adapter_projects_allowlisted_provider_mappings() -> None:
     config = DataConfig(source="fakeremote", symbols=["SYN"], arrays=["Close"])
 
     result = remote_adapter.load_vbt_remote_source("fakeremote", _FakeRemoteData, config)
@@ -84,7 +84,7 @@ def test_remote_adapter_pre_scrubs_unsafe_provider_mappings() -> None:
     }
 
 
-def test_remote_adapter_redacts_resolved_secrets_from_pull_errors(
+def test_remote_adapter_chains_original_pull_failure_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("FAKE_REMOTE_API_KEY", "super-secret-token")
@@ -98,8 +98,10 @@ def test_remote_adapter_redacts_resolved_secrets_from_pull_errors(
     with pytest.raises(RemoteDataPullError) as error:
         remote_adapter.load_vbt_remote_source("fakeremote", _ExplodingRemoteData, config)
 
-    assert "super-secret-token" not in str(error.value)
-    assert "<redacted>" in str(error.value)
+    assert "super-secret-token" in str(error.value)
+    assert "<redacted>" not in str(error.value)
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert "super-secret-token" in str(error.value.__cause__)
 
 
 class _ExplodingRemoteData:

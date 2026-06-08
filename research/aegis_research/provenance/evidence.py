@@ -10,13 +10,10 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.config import (
     ResolvedRunConfig,
-    redact_config,
-    redact_text,
     to_builtin,
 )
 from research.aegis_research.provenance.manifest import (
@@ -69,19 +66,16 @@ def capture_run_start_evidence(
 def capture_config_evidence(config: ResolvedRunConfig) -> dict[str, Any]:
     evidence = {
         "schema_version": config.config.schema_version,
-        "source_path": _sanitize_text(config.source_path) if config.source_path else None,
-        "authored_config_hash": canonical_hash(config.redacted_authored_config()),
-        "resolved_config_hash": canonical_hash(config.redacted_resolved_config()),
+        "source_path": config.source_path,
+        "authored_config_hash": canonical_hash(config.authored_config_document()),
+        "resolved_config_hash": canonical_hash(config.resolved_config_document()),
         "raw_config_identity": {
             "hash": config.raw_config_hash,
             "visibility": ArtifactVisibility.PRIVATE,
         },
     }
     if config.selection is not None:
-        evidence["selection"] = {
-            key: _sanitize_text(value) if isinstance(value, str) else value
-            for key, value in config.selection.manifest().items()
-        }
+        evidence["selection"] = dict(config.selection.manifest())
     return evidence
 
 
@@ -118,11 +112,11 @@ def capture_git_evidence(repo_path: str | Path) -> dict[str, Any]:
     return {
         "available": True,
         "commit": commit,
-        "branch": _sanitize_text(branch),
+        "branch": branch,
         "dirty": bool(changed_files),
         "changed_files": sorted(set(changed_files)),
         "diff_hash": hashlib.sha256(diff.encode()).hexdigest(),
-        "remote": _sanitize_remote(remote) if remote else None,
+        "remote": remote if remote else None,
     }
 
 
@@ -145,7 +139,7 @@ def capture_vectorbt_settings() -> dict[str, Any]:
     settings = {}
     for section in VBT_SETTINGS_SECTIONS:
         try:
-            settings[section] = _safe_json_value(redact_config(to_builtin(vbt.settings[section])))
+            settings[section] = _safe_json_value(to_builtin(vbt.settings[section]))
         except Exception:
             settings[section] = {"available": False}
     return {"available": True, "sections": settings}
@@ -188,7 +182,7 @@ def _safe_json_value(value: Any) -> Any:
     if value is None or isinstance(value, int | float | bool):
         return value
     if isinstance(value, str):
-        return _sanitize_text(redact_text(value))
+        return value
     if isinstance(value, Mapping):
         return {str(key): _safe_json_value(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
@@ -215,7 +209,7 @@ def _git_lines(repo_path: Path, *args: str) -> list[str]:
     output = _git(repo_path, *args)
     if not output:
         return []
-    return [_sanitize_text(line) for line in output.splitlines() if line]
+    return [line for line in output.splitlines() if line]
 
 
 def _untracked_content_identity(repo_path: Path, paths: list[str]) -> str:
@@ -227,17 +221,3 @@ def _untracked_content_identity(repo_path: Path, paths: list[str]) -> str:
         else:
             records.append({"path": relative_path, "type": "non-file"})
     return canonical_json_bytes(records).decode()
-
-
-def _sanitize_remote(remote: str) -> str:
-    if "://" not in remote:
-        return _sanitize_text(remote)
-    parts = urlsplit(remote)
-    hostname = parts.hostname or ""
-    port = f":{parts.port}" if parts.port else ""
-    netloc = f"{hostname}{port}"
-    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
-
-
-def _sanitize_text(value: str) -> str:
-    return value.replace(str(Path.home()), "~")

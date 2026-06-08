@@ -24,6 +24,16 @@ tags:
 
 # Schema-Versioned Lane Config Contracts
 
+> **Partially retired — see [ADR-0009](../../adr/0009-remove-secret-redaction-machinery.md).**
+> The **secret-redaction** guidance in this pattern (reject inline credentials, redact secrets
+> from configs/errors/manifests, byte-scan native artifacts, project "secret-safe" public
+> metadata) was removed: Aegis RD Runs are local and single-machine, so the leak it guarded
+> against cannot occur. What survives is the `{env: VAR}` → value **resolution** (now in
+> `configuration/env_references.py`) for credentialed sources. The rest of this pattern —
+> schema-versioned fail-fast validation, path-aware `ConfigValidationError`, resolved/authored
+> config provenance, explicit passthrough boundaries — still holds. Read the secret-redaction
+> sections below as historical.
+
 ## Context
 
 The research scaffold originally loaded experiment YAML directly into frozen dataclasses. That made the YAML file look like the public contract, but most real validation lived downstream in data loading, labeling, portfolio construction, reporting, and VectorBT calls.

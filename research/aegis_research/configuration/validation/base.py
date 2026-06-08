@@ -2,7 +2,7 @@
 
 Domain-agnostic building blocks used by every domain validator: required/optional
 scalar checks, known-key enforcement, JSON-safety, denied-key scans, and the generic
-section extractor. No domain imports beyond the schema value types and secrets guard.
+section extractor. No domain imports beyond the schema value types.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from research.aegis_research.configuration.schema import (
     RUN_EXECUTABLE_DENIED_KEYS,
     ConfigValidationIssue,
 )
-from research.aegis_research.configuration.secrets import _validate_no_inline_secrets
 
 
 def _section(
@@ -50,7 +49,6 @@ def _validate_passthrough(path: str, value: Any, issues: list[ConfigValidationIs
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
     _validate_json_like(path, value, issues)
-    _validate_no_inline_secrets(path, value, issues)
     _validate_no_denied_passthrough_keys(path, value, issues)
 
 

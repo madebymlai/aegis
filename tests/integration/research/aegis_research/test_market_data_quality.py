@@ -4,23 +4,21 @@ from pathlib import Path
 from typing import ClassVar
 
 import pandas as pd
-import pytest
 
 from research.aegis_research.config import (
     DataConfig,
     DataQualityConfig,
     SignalConfig,
 )
-from research.aegis_research.market_data import quality as data_quality
 from research.aegis_research.data import (
     DataDiagnostics,
     DataFeatureDiagnostics,
     MarketDataAdapterResult,
     RemoteDataPullError,
-    assert_public_metadata_safe,
     load_market_data_result,
     required_experiment_ohlcv_features,
 )
+from research.aegis_research.market_data import quality as data_quality
 
 
 def test_quality_verdict_is_derived_from_typed_diagnostics_without_panels() -> None:
@@ -292,22 +290,6 @@ def test_provider_update_support_uses_feature_update_capability() -> None:
     )
 
     assert result.metadata["update_supported"] is True
-
-
-@pytest.mark.parametrize(
-    "path_value",
-    [
-        "/home/alice/cache.db",
-        "C:\\Users\\alice\\cache.db",
-        "\\\\server\\share\\cache.db",
-        "~",
-        "~/.cache/provider",
-        "~alice/.cache/provider",
-    ],
-)
-def test_public_metadata_rejects_nonportable_paths(path_value: str) -> None:
-    with pytest.raises(ValueError, match="non-portable path"):
-        assert_public_metadata_safe({"path": path_value})
 
 
 class _ProviderMetadataData:

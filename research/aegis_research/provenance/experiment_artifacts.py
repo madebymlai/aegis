@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from research.aegis_research.config import ResolvedRunConfig
-from research.aegis_research.data import MarketDataResult, assert_public_metadata_safe
+from research.aegis_research.data import MarketDataResult
 from research.aegis_research.provenance.manifest import (
     ArtifactVisibility,
     atomic_write_json,
@@ -34,7 +34,7 @@ class ExperimentArtifactWriter:
             role="resolved_config",
             producer_stage="config",
             path="config.yaml",
-            text=yaml.safe_dump(config.redacted_resolved_config(), sort_keys=False),
+            text=yaml.safe_dump(config.resolved_config_document(), sort_keys=False),
             schema_version="resolved_config.v1",
         )
         _write_text_artifact(
@@ -43,7 +43,7 @@ class ExperimentArtifactWriter:
             role="authored_config",
             producer_stage="config",
             path="config_authored.yaml",
-            text=yaml.safe_dump(config.redacted_authored_config(), sort_keys=False),
+            text=yaml.safe_dump(config.authored_config_document(), sort_keys=False),
             schema_version="authored_config.v1",
         )
         _write_json_artifact(
@@ -58,10 +58,6 @@ class ExperimentArtifactWriter:
         )
 
     def write_data_metadata_artifact(self, data_result: MarketDataResult) -> None:
-        assert_public_metadata_safe(
-            data_result.metadata,
-            known_secrets=data_result.known_secrets,
-        )
         _write_json_artifact(
             self.recorder,
             artifact_id="data.metadata",
@@ -80,7 +76,6 @@ class ExperimentArtifactWriter:
             path="native/data.pkl",
             obj=data_result.native_data,
             metadata=data_result.metadata,
-            known_secrets=data_result.known_secrets,
         )
 
 

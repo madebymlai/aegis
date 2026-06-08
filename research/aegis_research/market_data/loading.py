@@ -2,9 +2,8 @@
 
 `loading` owns no concern logic. It dispatches to a source adapter, then
 threads the result through the leaf modules — observe (:mod:`diagnostics`),
-judge (:mod:`quality`), describe (:mod:`metadata`) — and applies the safety
-backstop. Public feature accessors are re-exported from :mod:`features` so the
-facade surface stays stable.
+judge (:mod:`quality`), describe (:mod:`metadata`). Public feature accessors
+are re-exported from :mod:`features` so the facade surface stays stable.
 """
 
 from __future__ import annotations
@@ -16,8 +15,8 @@ from research.aegis_research.data_arrays import merge_data_arrays
 from research.aegis_research.market_data import diagnostics as _observe
 from research.aegis_research.market_data import features as _features
 from research.aegis_research.market_data import metadata as _metadata
+from research.aegis_research.market_data import native_metadata as _native_metadata
 from research.aegis_research.market_data import quality as _judge
-from research.aegis_research.market_data import safety as _safety
 from research.aegis_research.market_data.adapters import default_source_loaders
 from research.aegis_research.market_data.contracts import (
     MarketDataAdapter,
@@ -25,7 +24,6 @@ from research.aegis_research.market_data.contracts import (
     RemoteDataPullError,
 )
 
-assert_public_metadata_safe = _safety.assert_public_metadata_safe
 close_from_ohlcv = _features.close_from_ohlcv
 feature_from_ohlcv = _features.feature_from_ohlcv
 high_from_ohlcv = _features.high_from_ohlcv
@@ -36,7 +34,6 @@ required_experiment_ohlcv_features = _features.required_experiment_ohlcv_feature
 MarketDataObservation = _observe.MarketDataObservation
 
 __all__ = [
-    "assert_public_metadata_safe",
     "close_from_ohlcv",
     "feature_from_ohlcv",
     "high_from_ohlcv",
@@ -92,13 +89,11 @@ def load_market_data_result(
         update_supported=_update_supported(native_data),
         required_features=required,
     )
-    assert_public_metadata_safe(metadata, known_secrets=adapter_result.known_secrets)
     return MarketDataResult(
         native_data=native_data,
         metadata=metadata,
         diagnostics=diagnostics,
         quality=quality,
-        known_secrets=adapter_result.known_secrets,
     )
 
 
@@ -127,7 +122,6 @@ def _provider_failed_result(
         update_supported=False,
         required_features=required_features,
     )
-    assert_public_metadata_safe(metadata)
     return MarketDataResult(
         native_data=None,
         metadata=metadata,
@@ -145,4 +139,4 @@ def _native_class(native_data: Any) -> str | None:
 def _update_supported(native_data: Any) -> bool:
     if native_data is None:
         return False
-    return _safety.supports_update(native_data)
+    return _native_metadata.supports_update(native_data)

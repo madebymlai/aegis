@@ -38,7 +38,6 @@ from research.aegis_research.market_data.loading import (
     load_market_data,
     load_market_data_result,
 )
-from research.aegis_research.market_data.safety import assert_public_metadata_safe
 from research.aegis_research.market_data.sources import REMOTE_DATA_CLASSES
 
 __all__ = [
@@ -61,7 +60,6 @@ __all__ = [
     "MarketDataResult",
     "RemoteDataPullError",
     "_pull_remote",
-    "assert_public_metadata_safe",
     "close_from_ohlcv",
     "feature_from_ohlcv",
     "high_from_ohlcv",

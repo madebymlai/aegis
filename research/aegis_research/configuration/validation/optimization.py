@@ -16,7 +16,6 @@ from research.aegis_research.configuration.schema import (
     OptimizationConfig,
     RunSplitConfig,
 )
-from research.aegis_research.configuration.secrets import _validate_no_inline_secrets
 from research.aegis_research.configuration.validation.base import (
     _optional_int,
     _require_str,
@@ -104,7 +103,6 @@ def _validate_run_split(
         issues.append(ConfigValidationIssue(f"{path}.params", "must be a mapping"))
     else:
         _validate_json_like(f"{path}.params", params, issues)
-        _validate_no_inline_secrets(f"{path}.params", params, issues)
         _validate_no_run_executable_keys(f"{path}.params", params, issues)
         if "set_labels" in params:
             issues.append(
@@ -161,7 +159,6 @@ def _validate_optimization_execute(value: Any, issues: list[ConfigValidationIssu
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
     _validate_json_like(path, value, issues)
-    _validate_no_inline_secrets(path, value, issues)
     _validate_no_run_executable_keys(path, value, issues)
     reserved = sorted(set(value) & OPTIMIZATION_EXECUTE_RESERVED_KEYS)
     if reserved:

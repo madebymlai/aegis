@@ -12,8 +12,6 @@ from research.aegis_research.config import (
     ConfigValidationIssue,
     ResolvedRunConfig,
     RunConfig,
-    known_config_secret_values,
-    redact_text,
 )
 from research.aegis_research.data import (
     MarketDataBundle,
@@ -71,7 +69,7 @@ def run_strategy_sweep(
 
     recorder = RunStore(config.output_dir).start_run(
         run_label=config.name,
-        config=resolved_config.redacted_resolved_config(),
+        config=resolved_config.resolved_config_document(),
         mode=rerun_mode,
         run_id=run_id,
         parent_run_id=parent_run_id,
@@ -85,7 +83,6 @@ def run_strategy_sweep(
         persist=recorder.persist,
     )
     recorder.persist()
-    known_secrets = known_config_secret_values(resolved_config.authored_config)
 
     try:
         if on_run_started is not None:
@@ -119,17 +116,17 @@ def run_strategy_sweep(
         )
         raise
     except ConfigValidationError as error:
-        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error, known_secrets=known_secrets))
+        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
         raise
     except Exception as error:
-        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error, known_secrets=known_secrets))
+        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
         raise
 
 
-def _failure_diagnostic(error: Exception, *, known_secrets: tuple[str, ...]) -> dict[str, str]:
+def _failure_diagnostic(error: Exception) -> dict[str, str]:
     return {
         "error_type": type(error).__name__,
-        "message": redact_text(str(error), known_secrets)[:1000],
+        "message": str(error)[:1000],
     }
 
 

@@ -13,10 +13,7 @@ from research.aegis_research.provenance.manifest import (
     hash_file,
     validate_manifest,
 )
-from research.aegis_research.provenance.native import (
-    NativeArtifactSafetyError,
-    NativeArtifactWriter,
-)
+from research.aegis_research.provenance.native import NativeArtifactWriter
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
 
@@ -25,7 +22,6 @@ __all__ = [
     "ArtifactStatus",
     "ArtifactVisibility",
     "ManifestValidationError",
-    "NativeArtifactSafetyError",
     "NativeArtifactWriter",
     "RerunMode",
     "RunCollisionError",

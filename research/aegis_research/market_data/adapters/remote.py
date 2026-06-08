@@ -5,12 +5,11 @@ from warnings import warn
 
 import pandas as pd
 
-from research.aegis_research.configuration.schema import DataConfig
-from research.aegis_research.configuration.secrets import (
-    redact_text,
-    resolve_secret_refs,
+from research.aegis_research.configuration.env_references import (
+    resolve_env_refs,
 )
-from research.aegis_research.market_data import safety as _safety
+from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.market_data import native_metadata as _native_metadata
 from research.aegis_research.market_data.adapters._support import (
     index_evidence,
     native_index,
@@ -56,15 +55,14 @@ def remote_source_loaders() -> dict[str, MarketDataAdapter]:
 
 
 def load_vbt_remote_source(source: str, data_cls, config: DataConfig) -> MarketDataAdapterResult:
-    native_data, known_secrets = _pull_remote(data_cls, config)
-    projected = _safety.safe_native_data_metadata(
+    native_data = _pull_remote(data_cls, config)
+    projected = _native_metadata.native_data_metadata(
         native_data,
         source=config.source,
         provider_mappings=_REMOTE_PROVIDER_MAPPINGS,
     )
     return MarketDataAdapterResult(
         native_data=native_data,
-        known_secrets=known_secrets,
         source_metadata={"provider_class": f"{data_cls.__module__}.{data_cls.__qualname__}"},
         evidence=index_evidence(native_index(native_data), source="post_vectorbt_alignment"),
         provider_metadata=projected["metadata"],
@@ -72,21 +70,19 @@ def load_vbt_remote_source(source: str, data_cls, config: DataConfig) -> MarketD
     )
 
 
-def _pull_remote(data_cls, config: DataConfig) -> tuple[Any, tuple[str, ...]]:
-    wrapper_kwargs, wrapper_secrets = resolve_secret_refs(
+def _pull_remote(data_cls, config: DataConfig) -> Any:
+    wrapper_kwargs = resolve_env_refs(
         config.wrapper_kwargs,
         "data.wrapper_kwargs",
     )
-    provider_kwargs, provider_secrets = resolve_secret_refs(
+    provider_kwargs = resolve_env_refs(
         config.provider_kwargs,
         "data.provider_kwargs",
     )
-    execution_kwargs, execution_secrets = resolve_secret_refs(
+    execution_kwargs = resolve_env_refs(
         config.execution_kwargs,
         "data.execution_kwargs",
     )
-    secrets = wrapper_secrets + provider_secrets + execution_secrets
-    error_message = None
     try:
         raw_outputs = data_cls.pull(
             config.symbols,
@@ -104,17 +100,15 @@ def _pull_remote(data_cls, config: DataConfig) -> tuple[Any, tuple[str, ...]]:
             return_raw=True,
             **provider_kwargs,
         )
-        native_data = _native_from_remote_raw_outputs(
+        return _native_from_remote_raw_outputs(
             data_cls,
             config,
             raw_outputs,
             wrapper_kwargs=wrapper_kwargs,
             provider_kwargs=provider_kwargs,
         )
-        return native_data, tuple(secrets)
     except Exception as error:
-        error_message = redact_text(str(error), secrets)
-    raise RemoteDataPullError(config.source, error_message)
+        raise RemoteDataPullError(config.source, str(error)) from error
 
 
 def _native_from_remote_raw_outputs(

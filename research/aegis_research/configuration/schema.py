@@ -54,17 +54,6 @@ RUN_EXECUTABLE_DENIED_KEYS = {
     "script_path",
 }
 
-SECRET_KEY_RE = re.compile(
-    r"(?:api[_-]?key|token|secret|password|access[_-]?key|private[_-]?key|"
-    r"credential|authorization|client[_-]?secret)",
-    re.IGNORECASE,
-)
-SECRET_VALUE_RE = re.compile(
-    r"(Bearer\s+\S+|Basic\s+\S+|(?:^|[?&;\s])(?:api[_-]?key|token|access[_-]?token|"
-    r"secret|password|passphrase|signature|key|auth(?:orization)?)=|"
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----|://[^\s:/]+:[^\s@]+@)",
-    re.IGNORECASE,
-)
 DENIED_PASSTHROUGH_KEYS = {
     "auth",
     "authentication",

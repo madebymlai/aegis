@@ -24,9 +24,7 @@ from research.aegis_research.component_registry import (
 from research.aegis_research.config import (
     ConfigSelectionEvidence,
     ConfigValidationError,
-    known_config_secret_values,
     load_run_config,
-    redact_text,
     with_run_config_selection,
 )
 from research.aegis_research.provenance.recorder import RerunMode
@@ -84,7 +82,6 @@ def _handle_strategy_run(
     except OSError as error:
         raise ConfigCliError(str(error)) from error
 
-    known_secrets = known_config_secret_values(resolved.authored_config)
     try:
         result = run_strategy_sweep(
             resolved,
@@ -103,12 +100,12 @@ def _handle_strategy_run(
         ) from error
     except ConfigValidationError as error:
         raise ConfigCliError(
-            redact_text(str(error), known_secrets),
+            str(error),
             run_refs=_refreshed_run_refs(run_refs),
         ) from error
     except Exception as error:
         raise ExecutionFailureError(
-            redact_text(str(error), known_secrets),
+            str(error),
             run_refs=_refreshed_run_refs(run_refs),
         ) from error
 

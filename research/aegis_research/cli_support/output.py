@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -16,7 +15,7 @@ from research.aegis_research.cli_support.errors import (
     InternalCliError,
     exit_code_for,
 )
-from research.aegis_research.config import DEFAULT_LOCK_ROLE, redact_text, to_builtin
+from research.aegis_research.config import DEFAULT_LOCK_ROLE, to_builtin
 
 CLI_JSON_SCHEMA_VERSION = 1
 MAX_ERROR_MESSAGE_CHARS = 1000
@@ -78,7 +77,7 @@ def write_error(
             {
                 "error": {
                     "category": error.category,
-                    "message": safe_message(error.message),
+                    "message": clip_message(error.message),
                     "details": safe_json_value(error.details),
                 }
             },
@@ -103,7 +102,7 @@ def write_error(
         stderr.write(document)
         return exit_code
 
-    stderr.write(f"{error.category}: {safe_message(error.message)}\n")
+    stderr.write(f"{error.category}: {clip_message(error.message)}\n")
     return exit_code
 
 
@@ -214,7 +213,7 @@ def report_summary(report: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not report:
         return None
     reasons = [
-        safe_message(str(reason), max_chars=MAX_REASON_CHARS)
+        clip_message(str(reason), max_chars=MAX_REASON_CHARS)
         for reason in report.get("reasons", [])
     ]
     gate_outcomes = report.get("gate_outcomes", [])
@@ -263,12 +262,8 @@ def safe_path(value: Any) -> str | None:
     return "<path>"
 
 
-def safe_message(text: str, *, max_chars: int = MAX_ERROR_MESSAGE_CHARS) -> str:
-    message = redact_text(str(text))
-    message = message.replace(str(Path.home()), "~")
-    message = message.replace(tempfile.gettempdir(), "<tmp>")
-    message = re.sub(r"(?<!\w)/(?:[^\s'\"]+/)*[^\s'\"]+", "<path>", message)
-    return message[:max_chars]
+def clip_message(text: str, *, max_chars: int = MAX_ERROR_MESSAGE_CHARS) -> str:
+    return str(text)[:max_chars]
 
 
 def safe_json_value(value: Any) -> Any:
@@ -278,14 +273,14 @@ def safe_json_value(value: Any) -> Any:
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, str):
-        return safe_message(value, max_chars=MAX_REASON_CHARS)
+        return clip_message(value, max_chars=MAX_REASON_CHARS)
     if isinstance(value, Path):
         return safe_path(value)
     if isinstance(value, Mapping):
         return {str(key): safe_json_value(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
         return [safe_json_value(item) for item in value]
-    return safe_message(repr(value), max_chars=MAX_REASON_CHARS)
+    return clip_message(repr(value), max_chars=MAX_REASON_CHARS)
 
 
 def _envelope(command: str, status: str, payload: Mapping[str, Any]) -> dict[str, Any]:

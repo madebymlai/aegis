@@ -21,8 +21,6 @@ from research.aegis_research.configuration.schema import (
     PORTFOLIO_DIRECTIONS,
     PORTFOLIO_TARGET_SIZE_TYPES,
     RUN_EXECUTABLE_DENIED_KEYS,
-    SECRET_KEY_RE,
-    SECRET_VALUE_RE,
     SIGNAL_EXECUTION_TIMINGS,
     SIGNAL_POLICIES,
     ConfigSelectionEvidence,
@@ -43,11 +41,8 @@ from research.aegis_research.configuration.schema import (
     expand_data_arrays,
 )
 from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.configuration.secrets import (
-    known_config_secret_values,
-    redact_config,
-    redact_text,
-    resolve_secret_refs,
+from research.aegis_research.configuration.env_references import (
+    resolve_env_refs,
 )
 from research.aegis_research.market_data.sources import (
     LOCAL_DATA_SOURCES,
@@ -76,8 +71,6 @@ __all__ = [
     "PORTFOLIO_TARGET_SIZE_TYPES",
     "REMOTE_DATA_SOURCES",
     "RUN_EXECUTABLE_DENIED_KEYS",
-    "SECRET_KEY_RE",
-    "SECRET_VALUE_RE",
     "SIGNAL_EXECUTION_TIMINGS",
     "SIGNAL_POLICIES",
     "ConfigSelectionEvidence",
@@ -97,12 +90,9 @@ __all__ = [
     "RunSplitConfig",
     "SignalConfig",
     "expand_data_arrays",
-    "known_config_secret_values",
     "load_run_config",
-    "redact_config",
-    "redact_text",
+    "resolve_env_refs",
     "resolve_run_config",
-    "resolve_secret_refs",
     "to_builtin",
     "with_run_config_selection",
 ]

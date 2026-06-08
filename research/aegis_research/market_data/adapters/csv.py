@@ -13,8 +13,8 @@ from research.aegis_research.configuration.schema import (
 from research.aegis_research.data_arrays import merge_data_arrays
 from research.aegis_research.market_data.adapters._support import (
     index_evidence,
+    local_provider_metadata,
     native_from_feature_data,
-    safe_provider_metadata,
 )
 from research.aegis_research.market_data.contracts import MarketDataAdapterResult
 
@@ -26,7 +26,7 @@ def load_csv_source(config: DataConfig) -> MarketDataAdapterResult:
     evidence = index_evidence(frame.index, source="csv_raw")
     feature_data = _csv_feature_data(frame, config)
     native_data = native_from_feature_data(feature_data, config)
-    projected = safe_provider_metadata(native_data, source=config.source)
+    projected = local_provider_metadata(native_data, source=config.source)
     return MarketDataAdapterResult(
         native_data=native_data,
         source_metadata={"path": "<redacted>", "layout": _csv_layout(frame)},

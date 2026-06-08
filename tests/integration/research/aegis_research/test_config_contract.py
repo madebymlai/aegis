@@ -13,8 +13,8 @@ from research.aegis_research.config import (
     ConfigValidationError,
     DataConfig,
     load_run_config,
+    resolve_env_refs,
     resolve_run_config,
-    resolve_secret_refs,
 )
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
 
@@ -297,7 +297,7 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
     assert "duplicate mapping key" in str(error.value)
 
 
-def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:
+def test_env_refs_are_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("BINANCE_API_KEY", "super-secret-token")
     config = DataConfig(
         source="binance",
@@ -308,10 +308,26 @@ def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, mo
         provider_kwargs={"api_key": {"env": "BINANCE_API_KEY"}},
     )
 
-    resolved_kwargs, secrets = resolve_secret_refs(config.provider_kwargs)
+    resolved_kwargs = resolve_env_refs(config.provider_kwargs)
 
     assert resolved_kwargs == {"api_key": "super-secret-token"}
-    assert secrets == ["super-secret-token"]
+
+
+def test_run_config_accepts_inline_credential_under_secret_like_key(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "yf",
+        "symbols": ["BTC-USD"],
+        "start": "2020-01-01",
+        "end": "2020-02-01",
+        "timeframe": "1D",
+        "arrays": ["OHLCV"],
+        "provider_kwargs": {"api_key": "literal-secret-value"},
+    }
+
+    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert resolved.config.data.provider_kwargs == {"api_key": "literal-secret-value"}
 
 
 def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
