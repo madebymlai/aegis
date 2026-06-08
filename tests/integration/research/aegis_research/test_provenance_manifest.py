@@ -16,7 +16,6 @@ from research.aegis_research.provenance.evidence import (
 )
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
-    ArtifactVisibility,
     ManifestValidationError,
     RunManifest,
     RunStatus,
@@ -52,12 +51,11 @@ def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
         schema_version="prices.v1",
         status=ArtifactStatus.COMPLETED,
         upstream_artifact_ids=[],
-        visibility=ArtifactVisibility.PUBLIC,
     )
 
     payload = manifest.to_dict()
 
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["run"]["id"] == "run-1"
     assert payload["run"]["run_dir"] == "run-1"
     assert str(tmp_path) not in json.dumps(payload)
@@ -355,7 +353,7 @@ def test_run_start_evidence_hashes_raw_config(tmp_path: Path) -> None:
 
     assert evidence["config"]["authored_config_hash"] == canonical_hash(config.authored_config)
     assert evidence["config"]["resolved_config_hash"] == canonical_hash(to_builtin(config.config))
-    assert evidence["config"]["raw_config_identity"]["visibility"] == ArtifactVisibility.PRIVATE
+    assert "visibility" not in evidence["config"]["raw_config_identity"]
     assert evidence["environment"]["variables"] == capture_environment_evidence()["variables"]
 
 

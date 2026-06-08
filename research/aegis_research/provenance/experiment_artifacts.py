@@ -10,10 +10,7 @@ import yaml
 
 from research.aegis_research.config import ResolvedRunConfig
 from research.aegis_research.data import MarketDataResult
-from research.aegis_research.provenance.manifest import (
-    ArtifactVisibility,
-    atomic_write_json,
-)
+from research.aegis_research.provenance.manifest import atomic_write_json
 from research.aegis_research.provenance.native import NativeArtifactWriter
 from research.aegis_research.provenance.recorder import RunRecorder
 
@@ -54,7 +51,6 @@ class ExperimentArtifactWriter:
             path="config_manifest.json",
             payload=config.manifest(),
             schema_version="config_manifest.v1",
-            visibility=ArtifactVisibility.PRIVATE,
         )
 
     def write_data_metadata_artifact(self, data_result: MarketDataResult) -> None:
@@ -89,7 +85,6 @@ def _write_json_artifact(
     payload: dict[str, Any],
     schema_version: str,
     upstream_artifact_ids: list[str] | None = None,
-    visibility: str = ArtifactVisibility.PUBLIC,
 ) -> None:
     recorder.artifacts.plan_artifact(
         artifact_id=artifact_id,
@@ -99,7 +94,6 @@ def _write_json_artifact(
         path=path,
         schema_version=schema_version,
         upstream_artifact_ids=upstream_artifact_ids,
-        visibility=visibility,
     )
     _write_artifact_file(
         recorder,

@@ -7,14 +7,13 @@ import pytest
 
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
-    ArtifactVisibility,
     RunManifest,
     validate_manifest,
 )
 from research.aegis_research.provenance.native import NativeArtifactWriter
 
 
-def test_native_writer_persists_private_artifact_and_public_metadata(tmp_path: Path) -> None:
+def test_native_writer_persists_artifact_and_metadata_sidecar(tmp_path: Path) -> None:
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
@@ -42,11 +41,11 @@ def test_native_writer_persists_private_artifact_and_public_metadata(tmp_path: P
         if artifact["id"] == "portfolio.split_0.test.metadata"
     )
     assert native["status"] == ArtifactStatus.COMPLETED
-    assert native["visibility"] == ArtifactVisibility.PRIVATE
+    assert "visibility" not in native
     assert native["hash"]
     assert native["size"] == len(b"portfolio-bytes")
     assert sidecar["status"] == ArtifactStatus.COMPLETED
-    assert sidecar["visibility"] == ArtifactVisibility.PUBLIC
+    assert "visibility" not in sidecar
     assert sidecar["upstream_artifact_ids"] == []
     assert native["upstream_artifact_ids"] == [sidecar["id"]]
     sidecar_payload = json.loads((tmp_path / sidecar["path"]).read_text())

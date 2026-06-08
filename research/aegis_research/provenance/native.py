@@ -11,7 +11,6 @@ from typing import Any
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
-    ArtifactVisibility,
     RunManifest,
     atomic_write_json,
     normalize_artifact_path,
@@ -55,7 +54,6 @@ class NativeArtifactWriter:
             producer_stage=producer_stage,
             path=path,
             schema_version=schema_version,
-            visibility=ArtifactVisibility.PRIVATE,
             upstream_artifact_ids=[sidecar_id],
             metadata={"metadata_artifact_id": sidecar_id},
         )
@@ -66,7 +64,6 @@ class NativeArtifactWriter:
             producer_stage=producer_stage,
             path=sidecar_path,
             schema_version="native_metadata.v1",
-            visibility=ArtifactVisibility.PUBLIC,
             metadata={"native_artifact_id": artifact_id},
         )
 

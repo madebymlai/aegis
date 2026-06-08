@@ -16,10 +16,7 @@ from research.aegis_research.config import (
     ResolvedRunConfig,
     to_builtin,
 )
-from research.aegis_research.provenance.manifest import (
-    ArtifactVisibility,
-    hash_file,
-)
+from research.aegis_research.provenance.manifest import hash_file
 
 SAFE_ENV_KEYS = ("LANG", "LC_ALL", "TZ", "PYTHONHASHSEED")
 PACKAGE_NAMES = (
@@ -69,10 +66,7 @@ def capture_config_evidence(config: ResolvedRunConfig) -> dict[str, Any]:
         "source_path": config.source_path,
         "authored_config_hash": canonical_hash(config.authored_config_document()),
         "resolved_config_hash": canonical_hash(config.resolved_config_document()),
-        "raw_config_identity": {
-            "hash": config.raw_config_hash,
-            "visibility": ArtifactVisibility.PRIVATE,
-        },
+        "raw_config_identity": {"hash": config.raw_config_hash},
     }
     if config.selection is not None:
         evidence["selection"] = dict(config.selection.manifest())

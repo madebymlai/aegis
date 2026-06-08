@@ -10,7 +10,7 @@ from typing import Any
 
 from research.aegis_research.canonical_json import canonical_json_bytes, to_builtin
 
-MANIFEST_SCHEMA_VERSION = 3
+MANIFEST_SCHEMA_VERSION = 4
 
 
 class RunStatus:
@@ -36,11 +36,6 @@ class ArtifactStatus:
     COMPLETED = "completed"
     FAILED = "failed"
     PARTIAL = "partial"
-
-
-class ArtifactVisibility:
-    PUBLIC = "public"
-    PRIVATE = "private"
 
 
 class ManifestValidationError(ValueError):
@@ -113,7 +108,6 @@ class RunManifest:
         size: int | None = None,
         shape: dict[str, Any] | None = None,
         upstream_artifact_ids: list[str] | None = None,
-        visibility: str = ArtifactVisibility.PUBLIC,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_path = normalize_artifact_path(path)
@@ -134,7 +128,6 @@ class RunManifest:
             "size": size,
             "schema_version": schema_version,
             "status": status,
-            "visibility": visibility,
             "shape": to_builtin(shape or {}),
             "upstream_artifact_ids": list(upstream_artifact_ids or []),
             "metadata": to_builtin(metadata or {}),

@@ -4,7 +4,6 @@ from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.evidence import capture_run_start_evidence
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
-    ArtifactVisibility,
     ManifestValidationError,
     RunManifest,
     RunStatus,
@@ -20,7 +19,6 @@ from research.aegis_research.provenance.run_store import RunCollisionError, RunS
 __all__ = [
     "ArtifactRegistry",
     "ArtifactStatus",
-    "ArtifactVisibility",
     "ManifestValidationError",
     "NativeArtifactWriter",
     "RerunMode",
