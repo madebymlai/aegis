@@ -18,7 +18,7 @@ def test_schema_version_is_eight() -> None:
 
 
 def test_portfolio_directions_admit_signed_book() -> None:
-    assert PORTFOLIO_DIRECTIONS == {"longonly", "shortonly", "both"}
+    assert {"longonly", "shortonly", "both"} == PORTFOLIO_DIRECTIONS
 
 
 def test_portfolio_requires_gross_cap() -> None:
