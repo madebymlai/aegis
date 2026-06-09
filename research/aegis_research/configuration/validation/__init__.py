@@ -11,9 +11,9 @@ and imports only what it validates:
 - ``optimization`` — search policy, run split, random policy, execute passthrough
 - ``metrics``      — ranking metric selection
 
-Portfolio and report are pydantic-ported — validated by the coordinator in
+Data, portfolio, and report are pydantic-ported — validated by the coordinator in
 ``resolution._build_resolved_run_config`` via ``TypeAdapter`` + ``ValidationError``
-adapter, with a tombstone prepass for removed fields.
+adapter, with a tombstone prepass for removed fields where applicable.
 
 The public surface (re-exported below) is the validation entry point plus the two
 validators reached directly by callers outside this package.
@@ -21,7 +21,7 @@ validators reached directly by callers outside this package.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from research.aegis_research.component_registry import FrozenComponentRegistry
@@ -30,23 +30,17 @@ from research.aegis_research.configuration.schema import (
     EXPERIMENT_NAME_RE,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     ConfigValidationIssue,
-    DataConfig,
 )
 from research.aegis_research.configuration.validation.base import (
     _optional_str,
     _require_int,
     _require_str,
-    _section,
     _validate_known_keys,
 )
 from research.aegis_research.configuration.validation.components import (
     _validate_component_indicator_refs,
     _validate_component_output_contract,
     _validate_component_ref,
-)
-from research.aegis_research.configuration.validation.data import (
-    _is_absolute_or_user_path,
-    _validate_data,
 )
 from research.aegis_research.configuration.validation.lock import _validate_lock
 from research.aegis_research.configuration.validation.metrics import _validate_ranking
@@ -58,6 +52,24 @@ __all__ = [
     "_validate_ranking",
     "_validate_raw_run_config",
 ]
+
+
+def _is_absolute_or_user_path(value: str) -> bool:
+    """Predicate: is *value* an absolute or user-home path?
+
+    Relocated from the deleted data validator module. Re-exported for
+    the public API surface (used by external path-security checks).
+    """
+    if value.startswith("~"):
+        return True
+    try:
+        return (
+            Path(value).is_absolute()
+            or PurePosixPath(value).is_absolute()
+            or PureWindowsPath(value).is_absolute()
+        )
+    except ValueError:
+        return False
 
 
 def _validate_raw_run_config(
@@ -76,10 +88,8 @@ def _validate_raw_run_config(
         _validate_experiment_name(raw["name"], issues)
     _validate_output_dir(raw, issues)
 
-    # Portfolio and report sections are pydantic-ported, validated upstream
+    # Data, portfolio, and report sections are pydantic-ported, validated upstream
     # in the coordinator (resolution._build_resolved_run_config).
-    data = _section(raw, "data", set(DataConfig.__dataclass_fields__), issues)
-    _validate_data(data, issues, validate_paths=True)
     _validate_lock(raw, issues)
     _validate_run_config(
         raw,

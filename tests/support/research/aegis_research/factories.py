@@ -39,7 +39,11 @@ def make_data_quality_config(**overrides: Any) -> DataQualityConfig:
 
 
 def make_data_config(**overrides: Any) -> DataConfig:
-    """Return a DataConfig with valid defaults, overridden by any kwargs."""
+    """Return a DataConfig with valid defaults, overridden by any kwargs.
+
+    ``arrays`` is field-required on the pydantic DataConfig; the factory
+    supplies it as a kwarg just like every other field.
+    """
     defaults: dict[str, Any] = {
         "source": "synthetic",
         "arrays": ["OHLCV"],
@@ -56,7 +60,7 @@ def make_data_config(**overrides: Any) -> DataConfig:
         "tz_convert": None,
         "skip_on_error": False,
         "silence_warnings": False,
-        "quality": DataQualityConfig(),
+        "quality": make_data_quality_config(),
         "wrapper_kwargs": {},
         "provider_kwargs": {},
         "execution_kwargs": {},

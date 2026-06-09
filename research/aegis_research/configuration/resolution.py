@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -23,11 +23,13 @@ from research.aegis_research.configuration.schema import (
     ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
+    DataConfig,
     PortfolioConfig,
     ReportConfig,
     RunConfig,
 )
 from research.aegis_research.configuration.validation import (
+    _is_absolute_or_user_path,
     _validate_ranking,
     _validate_raw_run_config,
 )
@@ -195,7 +197,8 @@ def _build_resolved_run_config(
 
     issues: list[ConfigValidationIssue] = []
 
-    # ── pydantic-ported sections: portfolio, report ──────────────────────
+    # ── pydantic-ported sections: data, portfolio, report ────────────────
+    data_config = _validate_data_section(raw, issues)
     portfolio_config = _validate_portfolio_section(raw, issues)
     report_config = _validate_report_section(raw, issues)
 
@@ -213,6 +216,7 @@ def _build_resolved_run_config(
     return ResolvedRunConfig(
         config=_build_run_config(
             raw,
+            data_config=data_config,
             portfolio_config=portfolio_config,
             report_config=report_config,
         ),
@@ -222,6 +226,72 @@ def _build_resolved_run_config(
         component_registry=component_registry,
         metric_registry=metric_registry,
     )
+
+
+def _validate_data_section(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> DataConfig | None:
+    """Pydantic validate/construct for data, plus post-pydantic path-security."""
+    data_raw = raw.get("data", {})
+    if not isinstance(data_raw, dict):
+        if data_raw or "data" in raw:
+            issues.append(ConfigValidationIssue("data", "must be a mapping"))
+        return None
+
+    try:
+        config = TypeAdapter(DataConfig).validate_python(data_raw)
+    except ValidationError as e:
+        issues.extend(_validation_error_to_issues(e, section="data"))
+        return None
+
+    # Post-pydantic checks (not suitable for @model_validator):
+    # - Source whitelist (programmatic construction uses internal sources).
+    # - Path security (requires filesystem access).
+    _validate_data_source_whitelist(config.source, issues)
+    if config.source == "csv" and config.path:
+        _validate_csv_path_security(config.path, issues)
+
+    return config
+
+
+def _validate_data_source_whitelist(
+    source: str,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    """Reject sources outside the known local + remote VBT set."""
+    from research.aegis_research.market_data.sources import (
+        LOCAL_DATA_SOURCES,
+        remote_data_sources,
+    )
+
+    supported = LOCAL_DATA_SOURCES | remote_data_sources()
+    if source not in supported:
+        issues.append(
+            ConfigValidationIssue(
+                "data.source",
+                f"must be one of {sorted(supported)}",
+            )
+        )
+
+
+def _validate_csv_path_security(
+    path: str,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    """Reject absolute, user-home, and parent-traversal csv paths."""
+    parts = (
+        set(Path(path).parts)
+        | set(PurePosixPath(path).parts)
+        | set(PureWindowsPath(path).parts)
+    )
+    if _is_absolute_or_user_path(path) or ".." in parts:
+        issues.append(
+            ConfigValidationIssue(
+                "data.path",
+                "must be a relative path under the project root",
+            )
+        )
 
 
 def _validate_portfolio_section(

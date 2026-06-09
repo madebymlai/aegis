@@ -230,7 +230,7 @@ def test_run_config_rejects_removed_feature_map(tmp_path: Path) -> None:
         )
 
     assert "data.feature_map" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 @pytest.mark.parametrize("arrays", ["OHLCV", ["Close "], [""], [1], []])
