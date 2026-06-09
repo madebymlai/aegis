@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from research.aegis_research.metrics.contracts import MetricDefinition, MetricRegistryError
+from research.aegis_research.metrics.contracts import MetricDefinition
 from research.aegis_research.metrics.extractors import ExtractorSpec, register_custom_extractors
 from research.aegis_research.metrics.registry import MetricRegistry
 
