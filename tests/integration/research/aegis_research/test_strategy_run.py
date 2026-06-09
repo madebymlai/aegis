@@ -8,7 +8,7 @@ import yaml
 
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
-from research.aegis_research.optimization.component_source import FIXED_CANDIDATE_PARAM
+from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
 
 
 def test_strategy_run_cli_rejects_component_strategy_without_optimization(

@@ -16,10 +16,12 @@ import pytest
 from research.aegis_research.config import resolve_run_config
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.component_source import FIXED_CANDIDATE_PARAM
 from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
-from research.aegis_research.optimization.param_namespace import ComponentRef
+from research.aegis_research.optimization.param_namespace import (
+    FIXED_CANDIDATE_PARAM,
+    ComponentRef,
+)
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,

@@ -120,7 +120,10 @@ def _assert_every_slice_resolved(
     candidate_slices: Mapping[ComponentRef, Mapping[str, Any]],
     component_params: ResolvedComponentParams,
 ) -> None:
-    orphaned = sorted(set(candidate_slices) - set(component_params), key=str)
+    orphaned = sorted(
+        set(candidate_slices) - set(component_params),
+        key=lambda r: (r.family, r.component_id, r.slot),
+    )
     if orphaned:
         ref = orphaned[0]
         family, component_id, component_slot = ref.family, ref.component_id, ref.slot

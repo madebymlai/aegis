@@ -44,12 +44,11 @@ def encode(ref: ComponentRef, param_name: str) -> str:
     The per-part hex escaping ensures a part's contents can never collide with
     the ``__`` separator.
     """
-    parts = (PARAM_KEY_PREFIX, ref.family, ref.component_id, ref.slot, param_name)
-    for part in parts:
-        if not part:
-            raise ParamNamespaceError("component param namespace parts must not be empty")
+    namespace_parts = (ref.family, ref.component_id, ref.slot, param_name)
+    if not all(namespace_parts):
+        raise ParamNamespaceError("component param namespace parts must not be empty")
     return PARAM_KEY_SEPARATOR.join(
-        (PARAM_KEY_PREFIX, *(_encode_namespace_part(part) for part in parts[1:]))
+        (PARAM_KEY_PREFIX, *(_encode_namespace_part(p) for p in namespace_parts))
     )
 
 
