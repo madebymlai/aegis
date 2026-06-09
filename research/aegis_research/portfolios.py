@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
+from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.config import PortfolioConfig
 from research.aegis_research.portfolio_policy import (
@@ -145,9 +146,63 @@ def _build_portfolio(
         cash_dividends=short_masked_cash_dividends(
             price_frame, allocations, config, periods_per_year=periods_per_year
         ),
+        log=True,
         **exec_kwargs,
     )
     return pf, pfo, non_exec_diag, execution_timing
+
+
+# Maximum allowed allocation-pct gap between a NoCash-rejected order's requested size and
+# the held position.  A gap below this is a harmless maintenance no-op (the book already
+# holds the target); a gap above it is a genuine mis-fill (the order silently failed).
+_NOCASH_ALLOC_MISMATCH_TOLERANCE = 0.01
+# Orders with a requested size at or below this absolute value are treated as zero-sized
+# (VBT may emit them as bookkeeping artifacts) and skipped by the NoCash guard.
+_NEGLIGIBLE_ORDER_SIZE = 1e-9
+
+
+def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
+    """Fail-closed: detect unexpected NoCash order rejections in the batched simulation.
+
+    Reads the native typed ``res_status_info`` column from ``pf.logs.records`` (an
+    O(records) pass that avoids building a human-readable frame or materializing
+    allocations).  Rejects only when a NoCash rejection represents a genuine allocation
+    mis-fill — the requested target percent differs measurably from the current holding
+    and the order silently failed, corrupting the book.
+
+    A harmless no-op (VBT re-executes an unchanged target when free-cash is zero) has
+    the position already matching the target, so the allocation gap stays below
+    ``_NOCASH_ALLOC_MISMATCH_TOLERANCE`` and is silently accepted.
+    """
+    records = pf.logs.records
+    if records.empty:
+        return
+    no_cash = records[records["res_status_info"] == OrderStatusInfo.NoCash]
+    if no_cash.empty:
+        return
+    has_size = abs(no_cash["req_size"]) > _NEGLIGIBLE_ORDER_SIZE
+    if not has_size.any():
+        return
+    no_cash_with_size = no_cash[has_size]
+    has_value = no_cash_with_size["st0_value"] > 0
+    if not has_value.any():
+        return
+    no_cash_with_value = no_cash_with_size[has_value]
+    current_allocation = (
+        no_cash_with_value["st0_position"]
+        * no_cash_with_value["st0_val_price"]
+        / no_cash_with_value["st0_value"]
+    )
+    mismatch = abs(current_allocation - no_cash_with_value["req_size"])
+    if (mismatch > _NOCASH_ALLOC_MISMATCH_TOLERANCE).any():
+        worst = float(mismatch.max())
+        raise ValueError(
+            f"portfolio simulation produced an unexpected NoCash order rejection "
+            f"(allocation mismatch {worst:.4f} exceeds tolerance "
+            f"{_NOCASH_ALLOC_MISMATCH_TOLERANCE}): "
+            "the cash_sharing + multi-asset leverage mis-fill under-traded a leg "
+            "or drifted the book net-long"
+        )
 
 
 def short_masked_cash_dividends(
@@ -254,6 +309,7 @@ def simulate_portfolio_batch(
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
         periods_per_year=periods_per_year,
     )
+    _assert_no_nocash_rejection(pf)
     if not compute_diagnostics:
         return PortfolioSimulationResult(portfolio=pf, diagnostics={})
     candidate_ids = _candidate_group_ids(allocations.columns)

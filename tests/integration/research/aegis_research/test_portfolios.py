@@ -667,6 +667,99 @@ def test_all_from_signals_only_conflict_settings_attributed_to_from_orders() -> 
     assert set(not_applicable.values()) == {"not_applicable_from_orders"}
 
 
+def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, PortfolioConfig]:
+    """Return (close, allocations, config) for a leveraged book that triggers
+    the cash_sharing + multi-asset-leverage NoCash mis-fill.
+
+    Gross equals the leverage cap (5.0), then a mid-run price drift at bar 10
+    forces a rebalance whose position-adjustment orders exhaust the shared cash
+    pool under eager leverage within a cash_sharing group.
+    """
+    index = pd.date_range("2024-01-01", periods=20)
+    symbols = ["A", "B", "C", "D"]
+    close = pd.DataFrame(
+        {
+            "A": [100.0] * 5 + [110.0] * 15,
+            "B": [200.0] * 5 + [180.0] * 15,
+            "C": [300.0] * 20,
+            "D": [400.0] * 20,
+        },
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["cand-underfilled"], symbols],
+        names=["candidate_id", "symbol"],
+    )
+    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
+    for i, s in enumerate(symbols):
+        allocations.loc[index[0], ("cand-underfilled", s)] = 1.25 if i % 2 == 0 else -1.25
+    for i, s in enumerate(symbols):
+        allocations.loc[index[10], ("cand-underfilled", s)] = 1.25 if i % 2 == 0 else -1.25
+
+    config = PortfolioConfig(
+        fees=0,
+        slippage=0,
+        gross_cap=5.0,
+        net_cap=0.0,
+        direction="both",
+        init_cash=10000,
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+    return close, allocations, config
+
+
+def test_batch_fail_closed_nocash_guard_raises_on_underfilled_leveraged_book() -> None:
+    # A leveraged long/short book that triggers the cash_sharing +
+    # multi-asset-leverage mis-fill must raise a fail-closed error from the
+    # batched simulation so no Candidate can be silently scored on a corrupted book.
+    close, allocations, config = _underfilled_leverage_inputs()
+    with pytest.raises(ValueError, match="NoCash"):
+        simulate_portfolio_batch(close, allocations, config)
+
+
+def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
+    # A well-formed market-neutral book must simulate without raising.
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0], "B": [20.0, 21.0, 22.0, 23.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["cand-neutral"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
+    allocations.loc[index[0], ("cand-neutral", "A")] = 0.5
+    allocations.loc[index[0], ("cand-neutral", "B")] = -0.5
+
+    result = simulate_portfolio_batch(
+        close, allocations, PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both")
+    )
+    assert isinstance(result, PortfolioSimulationResult)
+
+
+def test_batch_nocash_guard_is_invoked_and_error_propagates(monkeypatch) -> None:
+    # The NoCash guard is called exactly once during simulate_portfolio_batch
+    # and its ValueError propagates to the caller.
+    import research.aegis_research.portfolios as portfolios_module
+
+    close, allocations, config = _underfilled_leverage_inputs()
+
+    calls = []
+
+    def _spy_guard(pf):
+        calls.append(pf)
+        raise ValueError("NoCash")
+
+    monkeypatch.setattr(portfolios_module, "_assert_no_nocash_rejection", _spy_guard)
+
+    with pytest.raises(ValueError, match="NoCash"):
+        simulate_portfolio_batch(close, allocations, config)
+
+    assert len(calls) == 1
+
+
 def _two_symbol_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
     index = pd.date_range("2024-01-01", periods=4)
     close = pd.DataFrame(
