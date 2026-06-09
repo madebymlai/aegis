@@ -37,12 +37,8 @@ def central_metrics_from_grouped_accessors(
         row: dict[str, Any] = {}
         for metric_id in PORTFOLIO_METRIC_VALUE_KEYS:
             spec = EXTRACTORS[metric_id]
-            val = _ith(raw_series[metric_id], i)
-            if spec.abs_:
-                val = abs(val)
-            if spec.scale == "percent":
-                val = _pct(val)
-            row[metric_id] = _finalize(val)
+            raw = _ith(raw_series[metric_id], i)
+            row[metric_id] = _apply_transforms(raw, spec)
         rows.append(row)
 
     index = pd.MultiIndex.from_tuples(candidate_keys, names=param_names)
@@ -50,21 +46,16 @@ def central_metrics_from_grouped_accessors(
 
 
 def central_metrics_from_accessors(pf: Any, config: ReportConfig) -> pd.Series:
-    """Single-portfolio metric extraction via the registry-driven loop.
+    """Single-portfolio central metrics.
 
-    Uses the same ``EXTRACTORS`` map as
-    ``central_metrics_from_grouped_accessors``, applying the same
-    declarative transforms (scale, abs) and non-finite normalisation.
+    Uses the same ``EXTRACTORS`` registry and transform pipeline as
+    ``central_metrics_from_grouped_accessors``.
     """
     values: dict[str, Any] = {}
     for metric_id in PORTFOLIO_METRIC_VALUE_KEYS:
         spec = EXTRACTORS[metric_id]
-        val = _ith(spec.read(pf, config), 0)
-        if spec.abs_:
-            val = abs(val)
-        if spec.scale == "percent":
-            val = _pct(val)
-        values[metric_id] = _finalize(val)
+        raw = _ith(spec.read(pf, config), 0)
+        values[metric_id] = _apply_transforms(raw, spec)
     series = pd.Series(values, name="value")
     series.index.name = METRIC_INDEX_NAME
     return series
@@ -83,6 +74,16 @@ def _pct(value: Any) -> float | None:
         return float(value) * 100.0
     except (TypeError, ValueError):
         return value
+
+
+def _apply_transforms(raw: Any, spec: Any) -> float | None:
+    """Apply the declarative transforms declared by an ExtractorSpec."""
+    val = raw
+    if spec.abs_:
+        val = abs(val)
+    if spec.scale == "percent":
+        val = _pct(val)
+    return _finalize(val)
 
 
 def _finalize(value: Any) -> float | None:
