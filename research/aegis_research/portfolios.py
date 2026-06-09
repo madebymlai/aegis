@@ -24,6 +24,14 @@ _SINGLE_CANDIDATE_ID = "single"
 VBT_PF_METHOD = "from_orders"
 VBT_RESOLVED_SIZE_TYPE = "targetpercent"
 VBT_LEVERAGE_MODE = "eager"
+# Surplus buying power for the VBT engine, expressed as a multiple of gross_cap.
+# The Allocation Policy gate is the sole gross_cap enforcer (ADR-0007 amended 2026-06-09);
+# giving the engine k x gross_cap of headroom (k >= 2) prevents the engine from silently
+# under-filling orders during compliant at-cap rebalance transitions that need >1x cap
+# of temporary buying power (e.g. sell A -> buy B when call_seq="auto" sequences buys
+# before sells). The multiplier is tied to gross_cap (never np.inf) to stay bounded for
+# any config, avoiding a 0 x inf division-by-zero at zero free cash.
+_GROSS_CAP_LEVERAGE_MULTIPLIER = 2
 # Next-open execution: a target decided from bar t's close fills at bar t+1's open.
 # VBT's ``price="nextopen"`` sets ``from_ago=1`` (shift one bar) and fills at the open,
 # which is the canonical VBT way to avoid same-bar look-ahead without manual shifting.
@@ -76,7 +84,7 @@ def _build_portfolio(
         fees=config.fees,
         slippage=config.slippage,
         init_cash=config.init_cash,
-        leverage=config.gross_cap,
+        leverage=config.gross_cap * _GROSS_CAP_LEVERAGE_MULTIPLIER,
         leverage_mode=VBT_LEVERAGE_MODE,
         cash_dividends=short_masked_cash_dividends(
             price_frame, allocations, config, periods_per_year=periods_per_year
@@ -86,56 +94,21 @@ def _build_portfolio(
     )
 
 
-# Maximum allowed allocation-pct gap between a NoCash-rejected order's requested size and
-# the held position.  A gap below this is a harmless maintenance no-op (the book already
-# holds the target); a gap above it is a genuine mis-fill (the order silently failed).
-_NOCASH_ALLOC_MISMATCH_TOLERANCE = 0.01
-# Orders with a requested size at or below this absolute value are treated as zero-sized
-# (VBT may emit them as bookkeeping artifacts) and skipped by the NoCash guard.
-_NEGLIGIBLE_ORDER_SIZE = 1e-9
-
-
 def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
-    """Fail-closed: detect unexpected NoCash order rejections in the batched simulation.
+    """Exact tripwire: any NoCash rejection is a genuine bug.
 
-    Reads the native typed ``res_status_info`` column from ``pf.logs.records`` (an
-    O(records) pass that avoids building a human-readable frame or materializing
-    allocations).  Rejects only when a NoCash rejection represents a genuine allocation
-    mis-fill — the requested target percent differs measurably from the current holding
-    and the order silently failed, corrupting the book.
-
-    A harmless no-op (VBT re-executes an unchanged target when free-cash is zero) has
-    the position already matching the target, so the allocation gap stays below
-    ``_NOCASH_ALLOC_MISMATCH_TOLERANCE`` and is silently accepted.
+    With surplus buying power (leverage = k x gross_cap, k >= 2) the engine always has
+    headroom to fill every Allocation-Policy-compliant order.  A NoCash rejection under
+    these conditions is not a tolerance-graded under-fill — it is a genuine mis-fill
+    that must fail closed so no Candidate is silently scored on a corrupted book.
     """
     records = pf.logs.records
     if records.empty:
         return
-    no_cash = records[records["res_status_info"] == OrderStatusInfo.NoCash]
-    if no_cash.empty:
-        return
-    has_size = abs(no_cash["req_size"]) > _NEGLIGIBLE_ORDER_SIZE
-    if not has_size.any():
-        return
-    no_cash_with_size = no_cash[has_size]
-    has_value = no_cash_with_size["st0_value"] > 0
-    if not has_value.any():
-        return
-    no_cash_with_value = no_cash_with_size[has_value]
-    current_allocation = (
-        no_cash_with_value["st0_position"]
-        * no_cash_with_value["st0_val_price"]
-        / no_cash_with_value["st0_value"]
-    )
-    mismatch = abs(current_allocation - no_cash_with_value["req_size"])
-    if (mismatch > _NOCASH_ALLOC_MISMATCH_TOLERANCE).any():
-        worst = float(mismatch.max())
+    if (records["res_status_info"] == OrderStatusInfo.NoCash).any():
         raise ValueError(
-            f"portfolio simulation produced an unexpected NoCash order rejection "
-            f"(allocation mismatch {worst:.4f} exceeds tolerance "
-            f"{_NOCASH_ALLOC_MISMATCH_TOLERANCE}): "
-            "the cash_sharing + multi-asset leverage mis-fill under-traded a leg "
-            "or drifted the book net-long"
+            "portfolio simulation produced an unexpected NoCash order rejection: "
+            "the engine exhausted buying power on an Allocation-Policy-compliant book"
         )
 
 

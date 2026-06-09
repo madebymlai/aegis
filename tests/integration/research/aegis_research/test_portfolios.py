@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from vectorbtpro import vbt
+from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.config import PortfolioConfig
 from research.aegis_research.portfolios import (
@@ -258,10 +259,10 @@ def test_market_neutral_run_book_is_net_zero_and_realized_matches_requested() ->
         PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"),
     )
 
-    requested = pf.get_allocations(group_by=False)
-    fill_row = requested.loc[index[0]]
-    assert fill_row[(_SINGLE_CANDIDATE_ID, "A")] == pytest.approx(1.0)
-    assert fill_row[(_SINGLE_CANDIDATE_ID, "B")] == pytest.approx(-1.0)
+    realized = pf.get_allocations(group_by=None)
+    fill_row = realized.loc[index[0]]
+    assert fill_row[(_SINGLE_CANDIDATE_ID, "A")] == pytest.approx(1.0, abs=2e-5)
+    assert fill_row[(_SINGLE_CANDIDATE_ID, "B")] == pytest.approx(-1.0, abs=2e-5)
     assert fill_row.sum() == pytest.approx(0.0, abs=1e-9)
 
 
@@ -448,12 +449,12 @@ def test_records_count_exit_trades_for_long_and_short_legs() -> None:
 
 
 def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, PortfolioConfig]:
-    """Return (close, allocations, config) for a leveraged book that triggers
-    the cash_sharing + multi-asset-leverage NoCash mis-fill.
+    """Return (close, allocations, config) for a leveraged long/short book.
 
     Gross equals the leverage cap (5.0), then a mid-run price drift at bar 10
-    forces a rebalance whose position-adjustment orders exhaust the shared cash
-    pool under eager leverage within a cash_sharing group.
+    forces a rebalance that stresses the cash-sharing pool.  With the surplus
+    buying-power multiplier (k >= 2) the book fills cleanly; without it, the
+    engine would under-fill under eager leverage.
     """
     index = pd.date_range("2024-01-01", periods=20)
     symbols = ["A", "B", "C", "D"]
@@ -489,13 +490,25 @@ def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, Portfoli
     return close, allocations, config
 
 
-def test_batch_fail_closed_nocash_guard_raises_on_underfilled_leveraged_book() -> None:
-    # A leveraged long/short book that triggers the cash_sharing +
-    # multi-asset-leverage mis-fill must raise a fail-closed error from the
-    # batched simulation so no Candidate can be silently scored on a corrupted book.
+def test_underfilled_leveraged_book_fills_cleanly_with_surplus_buying_power() -> None:
+    # With surplus buying power (leverage = k x gross_cap, k >= 2), the
+    # formerly under-filled leveraged book now fills exactly: zero NoCash
+    # rejections, realized weights == requested at the mid-run rebalance.
     close, allocations, config = _underfilled_leverage_inputs()
-    with pytest.raises(ValueError, match="NoCash"):
-        simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+    pf = simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+
+    # No NoCash rejections in the logs.
+    records = pf.logs.records
+    assert records.empty or records[records["res_status_info"] == OrderStatusInfo.NoCash].empty
+
+    # Realized allocations match requested at the bar-10 rebalance.
+    realized = pf.get_allocations(group_by=None)
+    fill_row = realized.loc[allocations.index[10]]
+    # cand-underfilled: A/C long, B/D short at 1.25 each
+    assert fill_row[("cand-underfilled", "A")] == pytest.approx(1.25, abs=1e-9)
+    assert fill_row[("cand-underfilled", "B")] == pytest.approx(-1.25, abs=1e-9)
+    assert fill_row[("cand-underfilled", "C")] == pytest.approx(1.25, abs=1e-9)
+    assert fill_row[("cand-underfilled", "D")] == pytest.approx(-1.25, abs=1e-9)
 
 
 def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
@@ -521,12 +534,24 @@ def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
     assert isinstance(pf, vbt.Portfolio)
 
 
-def test_batch_nocash_guard_is_invoked_and_error_propagates(monkeypatch) -> None:
-    # The NoCash guard is called exactly once during simulate_portfolio_batch
+def test_batch_nocash_tripwire_is_invoked_and_error_propagates(monkeypatch) -> None:
+    # The NoCash tripwire is called exactly once during simulate_portfolio_batch
     # and its ValueError propagates to the caller.
     import research.aegis_research.portfolios as portfolios_module
 
-    close, allocations, config = _underfilled_leverage_inputs()
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {"A": [10.0, 11.0, 12.0, 13.0], "B": [20.0, 21.0, 22.0, 23.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["cand-neutral"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
+    allocations.loc[index[0], ("cand-neutral", "A")] = 0.5
+    allocations.loc[index[0], ("cand-neutral", "B")] = -0.5
+    config = PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both")
 
     calls = []
 
