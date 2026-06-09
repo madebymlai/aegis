@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 
 from research.aegis_research.configuration.schema import ReportConfig
+from research.aegis_research.metrics.extractors import EXTRACTORS
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 
 METRIC_INDEX_NAME = "metric_name"
@@ -17,27 +18,33 @@ def central_metrics_from_grouped_accessors(
     candidate_keys: list[tuple],
     param_names: list[str],
 ) -> pd.DataFrame:
-    raw_total_return = _to_series(pf.get_total_return())
-    raw_max_dd = _to_series(pf.get_max_drawdown()).abs()
-    raw_trades = _to_series(pf.exit_trades.count())
-    raw_win_rate = _to_series(pf.exit_trades.get_win_rate())
-    raw_fees = _to_series(pf.orders.fees.sum())
-    raw_sharpe = _to_series(pf.get_sharpe_ratio(
-        freq=pd.Timedelta(config.freq),
-        year_freq=pd.Timedelta(config.year_freq),
-    ))
+    """Grouped metric extraction via registry-driven loop.
+
+    One VBT accessor call per metric over the whole batched portfolio,
+    independent of candidate count.  Transforms (scale, abs) are applied
+    per-candidate via declarative flags from the ``EXTRACTORS`` map.
+    """
+    # --- one read per metric ---
+    raw_series: dict[str, pd.Series] = {}
+    for metric_id in PORTFOLIO_METRIC_VALUE_KEYS:
+        spec = EXTRACTORS[metric_id]
+        raw_series[metric_id] = spec.read(pf, config)
+
+    # --- per-candidate slice + transforms ---
     n = len(candidate_keys)
-    rows = []
+    rows: list[dict[str, Any]] = []
     for i in range(n):
-        raw = {
-            "total_return": _pct(_ith(raw_total_return, i, n)),
-            "max_dd": _pct(abs(_ith(raw_max_dd, i, n))),
-            "total_trades": _ith(raw_trades, i, n),
-            "win_rate": _pct(_ith(raw_win_rate, i, n)),
-            "total_fees_paid": _ith(raw_fees, i, n),
-            "sharpe_ratio": _ith(raw_sharpe, i, n),
-        }
-        rows.append({name: _finalize(raw[name]) for name in PORTFOLIO_METRIC_VALUE_KEYS})
+        row: dict[str, Any] = {}
+        for metric_id in PORTFOLIO_METRIC_VALUE_KEYS:
+            spec = EXTRACTORS[metric_id]
+            val = _ith(raw_series[metric_id], i, n)
+            if spec.abs_:
+                val = abs(val)
+            if spec.scale == "percent":
+                val = _pct(val)
+            row[metric_id] = _finalize(val)
+        rows.append(row)
+
     index = pd.MultiIndex.from_tuples(candidate_keys, names=param_names)
     return pd.DataFrame(rows, index=index)
 
@@ -60,12 +67,6 @@ def central_metrics_from_accessors(pf: Any, config: ReportConfig) -> pd.Series:
     series = pd.Series(values, name="value")
     series.index.name = METRIC_INDEX_NAME
     return series
-
-
-def _to_series(value: Any) -> pd.Series:
-    if isinstance(value, pd.Series):
-        return value
-    return pd.Series([value])
 
 
 def _ith(series: Any, idx: int, total: int) -> Any:
