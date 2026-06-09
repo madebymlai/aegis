@@ -180,7 +180,7 @@ def test_strategy_rejects_unknown_id(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(tmp_path=tmp_path, strategy={"id": "missing.one"})
     issues = {(i.path, i.message) for i in e.value.issues}
-    assert ("strategy.id", "unknown strategie component id") in issues
+    assert ("strategy.id", "unknown strategy component id") in issues
 
 
 def test_strategy_rejects_all_id(tmp_path: Path) -> None:

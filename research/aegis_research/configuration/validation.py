@@ -310,7 +310,7 @@ def _post_validate_components(
         strategy_config, issues, component_registry=component_registry
     )
     ind_defs = _check_indicators_membership(
-        strategy_config, indicator_configs, issues, component_registry=component_registry
+        indicator_configs, issues, component_registry=component_registry
     )
     _check_component_output_contract(strategy_def, ind_defs, issues)
     if strategy_def is not None:
@@ -349,7 +349,6 @@ def _check_strategy_membership(
 
 
 def _check_indicators_membership(
-    strategy_config: RunSourceRefConfig | None,
     indicator_configs: list[RunIndicatorSourceConfig],
     issues: list[ConfigValidationIssue],
     *,
