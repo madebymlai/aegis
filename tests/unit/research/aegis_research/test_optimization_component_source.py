@@ -166,22 +166,19 @@ def test_component_param_keys_round_trip_to_component_slices() -> None:
 
 
 def test_golden_param_namespace_keys_pin_exact_hex_literals() -> None:
-    """Freeze the param-namespace wire format with literal-string assertions.
+    """Pin the param-namespace wire format with literal-string assertions.
 
-    The encoded key strings are persisted in Candidate rows and feed Candidate
-    identity (canonical_params_key). A symmetric prefix/hex change would pass a
-    round-trip test while silently re-keying every Candidate and orphaning every
-    persisted Lock. These literal assertions are the regression oracle — they are
-    the only tests that break on a format change.
+    A symmetric prefix/hex change would pass a round-trip test while silently
+    re-keying every Candidate and orphaning every persisted Lock. These literal
+    assertions are the regression oracle — they are the only tests that break on
+    a format change.
     """
-    # Indicator-side key: indicators / demo.mom / demo.mom / window
     indicator_key = component_param_key("indicators", "demo.mom", "demo.mom", "window")
     assert (
         indicator_key
         == "component__696e64696361746f7273__64656d6f2e6d6f6d__64656d6f2e6d6f6d__77696e646f77"
     )
 
-    # Strategy-side key: strategies / demo.ma_cross / strategy:demo.ma_cross / fast_window
     strategy_key = component_param_key(
         "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window"
     )
@@ -192,14 +189,8 @@ def test_golden_param_namespace_keys_pin_exact_hex_literals() -> None:
 
 
 def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
-    """Decode a real stored Candidate row through the fixture path, not hand-synthesized.
-
-    Builds a multi-Component Candidate row via candidate_rows_from_result +
-    CandidateStore.insert_completed_run (the same path resolve_lock_run reads),
-    loads it back, then decodes with component_param_slices and asserts:
-    - Per-Component slices carry correct params.
-    - The __aegis_fixed_candidate__ sentinel is skipped.
-    """
+    """Decode a stored Candidate row — not hand-synthesized — through the same
+    insert/load path the lock resolver uses, then verify component_param_slices."""
     store = CandidateStore(tmp_path / "candidates.sqlite3")
 
     fast_key = component_param_key(
@@ -274,26 +265,19 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
         },
     )
 
-    # Load the median candidate from the store — a realistic stored row.
     row = store.top_candidates_by_run("stored-decode-run", limit=3)[1]["candidate"]
-    params = row["params"]
+    slices = component_param_slices(row["params"])
 
-    # Decode through component_param_slices — the same codec resolve_lock_run uses.
-    slices = component_param_slices(params)
+    strategy_slice_key = ("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
+    assert strategy_slice_key in slices
+    assert slices[strategy_slice_key] == {"fast_window": 3, "slow_window": 12}
 
-    # Per-Component slices carry correct params.
-    strategy_slice = ("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
-    assert strategy_slice in slices
-    assert slices[strategy_slice] == {"fast_window": 3, "slow_window": 12}
+    indicator_slice_key = ("indicators", "demo.mom", "demo.mom")
+    assert indicator_slice_key in slices
+    assert slices[indicator_slice_key] == {"window": 22}
 
-    indicator_slice = ("indicators", "demo.mom", "demo.mom")
-    assert indicator_slice in slices
-    assert slices[indicator_slice] == {"window": 22}
-
-    # The __aegis_fixed_candidate__ sentinel is skipped.
-    assert FIXED_CANDIDATE_PARAM not in slices.get(strategy_slice, {})
-    assert FIXED_CANDIDATE_PARAM not in slices.get(indicator_slice, {})
-    # The sentinel is never a slice key itself.
+    assert FIXED_CANDIDATE_PARAM not in slices[strategy_slice_key]
+    assert FIXED_CANDIDATE_PARAM not in slices[indicator_slice_key]
     for slice_key in slices:
         assert FIXED_CANDIDATE_PARAM not in slice_key
 
