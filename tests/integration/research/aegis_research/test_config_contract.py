@@ -417,7 +417,7 @@ def test_run_rejects_per_component_lock_reference_fields(tmp_path: Path) -> None
     assert "strategy.lock_id" in message
     assert "indicators[0].candidate_id" in message
     assert "indicators[0].run_id" in message
-    assert "unknown field" in message
+    assert "Unexpected keyword argument" in message
 
 
 def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) -> None:
@@ -605,7 +605,7 @@ def test_run_rejects_source_selectors_and_indicator_ids_as_unknown_fields(tmp_pa
 
     assert "strategy.source" in str(error.value)
     assert "indicators[0].ids" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_rejects_playbook_source_selectors(tmp_path: Path) -> None:
@@ -621,7 +621,7 @@ def test_run_rejects_playbook_source_selectors(tmp_path: Path) -> None:
 
     assert "strategy.source" in str(error.value)
     assert "indicators[0].source" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def _run_config() -> dict[str, object]:

@@ -42,13 +42,19 @@ def _build_run_config(
     *,
     portfolio_config: PortfolioConfig | None = None,
     report_config: ReportConfig | None = None,
+    strategy_config: RunSourceRefConfig | None = None,
+    indicator_configs: list[RunIndicatorSourceConfig] | None = None,
 ) -> RunConfig:
-    # Pydantic-ported sections (portfolio, report) are validated + constructed by the
-    # coordinator. If they weren't constructed (validation failure short-circuit), raise.
+    # Pydantic-ported sections are validated + constructed by the coordinator.
+    # If they weren't constructed (validation failure short-circuit), raise.
     if portfolio_config is None:
         raise ValueError("portfolio_config required")
     if report_config is None:
         raise ValueError("report_config required")
+    if strategy_config is None:
+        raise ValueError("strategy_config required")
+    if indicator_configs is None:
+        raise ValueError("indicator_configs required")
     ranking_raw = dict(raw["ranking"])
     _coerce_float_fields(ranking_raw, _float_field_names(RankingConfig))
     return RunConfig(
@@ -57,8 +63,8 @@ def _build_run_config(
         data=_build_data_config(raw.get("data", {})),
         portfolio=portfolio_config,
         report=report_config,
-        strategy=_build_run_source_ref(raw["strategy"]),
-        indicators=_build_run_indicator_sources(raw["indicators"]),
+        strategy=strategy_config,
+        indicators=indicator_configs,
         ranking=_build_ranking(ranking_raw),
         optimization=_build_optimization(raw.get("optimization")),
         lock=_build_lock(raw.get("lock")),

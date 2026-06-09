@@ -39,7 +39,7 @@ def test_run_cli_rejects_playbook_source_selectors_before_artifacts(
     payload = _last_json_line(capsys.readouterr().err)
     assert payload["error"]["category"] == "config_validation"
     assert "strategy.source" in payload["error"]["message"]
-    assert "unknown field" in payload["error"]["message"]
+    assert "Unexpected keyword argument" in payload["error"]["message"]
     assert "indicators[0].ids" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "removed-playbook").exists()
 

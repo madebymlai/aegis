@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
@@ -9,6 +8,8 @@ from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration.field_types import (
+    EXPERIMENT_NAME_RE,  # noqa: F401 — re-exported for config.py
+    ComponentIdStr,
     NonNegativeRate,
     PositiveCash,
     StrictFloat,
@@ -16,7 +17,6 @@ from research.aegis_research.configuration.field_types import (
 )
 
 CONFIG_SCHEMA_VERSION = 8
-EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
 # Full VBT feature names are source-specific and discovered from native_data.features.
@@ -180,15 +180,15 @@ class ReportConfig:
         return round(pd.Timedelta(self.year_freq) / pd.Timedelta(self.freq))
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class RunSourceRefConfig:
-    id: str
+    id: ComponentIdStr
     params: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class RunIndicatorSourceConfig:
-    id: str
+    id: ComponentIdStr
     params: dict[str, Any] = field(default_factory=dict)
 
 

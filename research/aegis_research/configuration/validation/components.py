@@ -1,10 +1,11 @@
-"""Component and Indicator reference validation.
+"""Component and Indicator reference validation (slim — structural checks moved to pydantic).
 
-Validates ``strategy`` and ``indicators`` refs against the frozen Component registry:
-component ids must resolve, ``params:`` must be values-only and manifest-declared (or
-sourced from defaults), and the strategy's consumed outputs must be produced by the
-configured indicators. Whole-Candidate reproduction lives on the top-level ``lock:`` —
-there is no per-Component lock/candidate reference surface (ADR-0006).
+Structural validation (id type/pattern, params type, extra=forbid) is now owned by
+the pydantic ``RunSourceRefConfig`` / ``RunIndicatorSourceConfig`` models and executed
+by the coordinator in ``resolution._build_resolved_run_config``.
+
+These functions provide only membership checks (is the id registered in the component
+registry?) and the output-contract cross-check — both need the registry.
 """
 
 from __future__ import annotations

@@ -6,14 +6,16 @@ legacy fields) and sequences the domain validators; each domain lives in its own
 and imports only what it validates:
 
 - ``base``         — shared type/structure validators
-- ``components``   — strategy & indicator component refs and output contracts
+- ``components``   — strategy & indicator membership and output contracts (slim, registry-only)
 - ``data``         — market-data source, arrays, quality policy, paths
 - ``optimization`` — search policy, run split, random policy, execute passthrough
 - ``metrics``      — ranking metric selection
 
-Portfolio and report are pydantic-ported — validated by the coordinator in
-``resolution._build_resolved_run_config`` via ``TypeAdapter`` + ``ValidationError``
-adapter, with a tombstone prepass for removed fields.
+Portfolio, report, strategy, and indicators are pydantic-ported — structural
+validation is handled in ``resolution._build_resolved_run_config`` via
+``TypeAdapter`` + ``ValidationError`` adapter, with a tombstone prepass for
+removed portfolio fields. Membership and output-contract checks (which need
+the registry) also live in the coordinator.
 
 The public surface (re-exported below) is the validation entry point plus the two
 validators reached directly by callers outside this package.
@@ -38,11 +40,6 @@ from research.aegis_research.configuration.validation.base import (
     _require_str,
     _section,
     _validate_known_keys,
-)
-from research.aegis_research.configuration.validation.components import (
-    _validate_component_indicator_refs,
-    _validate_component_output_contract,
-    _validate_component_ref,
 )
 from research.aegis_research.configuration.validation.data import (
     _is_absolute_or_user_path,
@@ -84,7 +81,6 @@ def _validate_raw_run_config(
     _validate_run_config(
         raw,
         issues,
-        component_registry=component_registry,
         metric_registry=metric_registry,
     )
 
@@ -109,23 +105,10 @@ def _validate_run_config(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
     *,
-    component_registry: FrozenComponentRegistry,
     metric_registry: FrozenMetricRegistry,
 ) -> None:
-    strategy_definition = _validate_component_ref(
-        "strategy",
-        raw.get("strategy"),
-        "strategies",
-        issues,
-        component_registry=component_registry,
-    )
-    indicator_definitions = _validate_component_indicator_refs(
-        "indicators",
-        raw.get("indicators"),
-        issues,
-        component_registry=component_registry,
-    )
-    _validate_component_output_contract(strategy_definition, indicator_definitions, issues)
+    # Component validation (structural + membership + output-contract) is now pydantic-ported
+    # and handled by the coordinator in resolution._build_resolved_run_config.
     _validate_ranking("ranking", raw.get("ranking"), issues, registry=metric_registry)
     if "optimization" not in raw:
         issues.append(

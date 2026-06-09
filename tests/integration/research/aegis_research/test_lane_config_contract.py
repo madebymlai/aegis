@@ -115,6 +115,7 @@ def test_run_configs_reject_inline_code_and_arbitrary_paths(
     assert (
         "not allowed" in str(error.value)
         or "unknown field" in str(error.value)
+        or "Unexpected keyword argument" in str(error.value)
         or "params must be declared by the component manifest" in str(error.value)
     )
 
