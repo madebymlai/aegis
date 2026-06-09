@@ -41,6 +41,13 @@ def _uptrend_close() -> pd.DataFrame:
     return pd.DataFrame({"SYN": levels}, index=index)
 
 
+def _downtrend_close() -> pd.DataFrame:
+    """Close that falls ~0.99^x each day so a buy-and-hold valid candidate loses money."""
+    index = pd.date_range("2024-01-01", periods=N_ROWS, freq="D")
+    levels = 100.0 * (0.99 ** np.arange(N_ROWS))
+    return pd.DataFrame({"SYN": levels}, index=index)
+
+
 def _warmup_precompute(
     close: pd.DataFrame, n_candidates: int, **param_lists
 ) -> WideIndicatorPrecompute:
@@ -268,3 +275,52 @@ def test_parallel_and_sequential_selection_grids_are_byte_identical(monkeypatch)
             getattr(parallel, slot).selection_metrics
             == getattr(sequential_result, slot).selection_metrics
         )
+
+
+def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> None:
+    """Regression: the runner.py:194 comment made executable.
+
+    An Invalid Candidate (lookback > full history → all-NaN indicator → strategy
+    holds cash → total_return == 0.0, finite) must never be selected as a
+    representative, even when every valid candidate loses money (total_return < 0).
+
+    Without masking the Invalid cash-holder scores a real 0.0 in the grid, which
+    beats a money-losing valid candidate at, e.g., -0.86 if ranked by total_return.
+    The verdict excludes the Invalid by key, so the cash-holder never reaches the
+    three representative slots.
+
+    Ranking metric MUST be total_return (finite-for-cash). Under Sharpe the
+    cash-holder scores NaN and is excluded as non-trading regardless, so the
+    regression would pass vacuously.
+    """
+    close = _downtrend_close()
+    # window=2 is warmup-complete (buys equal-weight in a downtrend → loses money).
+    # window=N_ROWS+1 is invalid (lookback > full history → all-NaN → cash hold).
+    invalid_window = N_ROWS + 1
+    windows = [2, invalid_window]
+
+    result = execute_optimization(
+        close=close,
+        open_=close,
+        source=_source(windows),
+        optimization=_optimization(),
+        portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
+        report=ReportConfig(),
+        ranking=RankingConfig(metric="total_return", min_weight=0.3),
+    )
+
+    invalid_params: dict = {"window": invalid_window}
+    for candidate in (result.best, result.median, result.worst):
+        assert candidate.params != invalid_params, (
+            f"Invalid cash-holder {invalid_params!r} must not appear among "
+            f"representatives; got score={candidate.score}, params={candidate.params}"
+        )
+        assert candidate.score < 0.0, (
+            f"valid candidate {candidate.params} should lose money in a downtrend; "
+            f"got score={candidate.score}"
+        )
+
+    # The Invalid Candidate is counted in the result.
+    assert result.excluded_invalid == 1
+    assert result.excluded_degenerate >= 1
+    assert result.total_candidates == 2

@@ -195,15 +195,14 @@ def _build_precomputed_window_metrics(
         wide_allocations = source.simulate(
             close_window, indicator_window, n_combos, **combo_lists
         )
-        metrics = _metrics_from_allocations(
+        # Invalid Candidates are excluded by-key in the verdict
+        # (classify_candidates); no metric-masking needed — their real
+        # simulated values (e.g. a finite cash-holding 0.0) stay in the
+        # grid.  The all-invalid-chunk short-circuit above is kept as a
+        # pure performance guard that preserves grid shape.
+        return _metrics_from_allocations(
             close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names
         )
-        # Masking is EXPLICIT here rather than relying on store-level NaN propagation:
-        # an all-NaN indicator block can still simulate to a finite 0.0 (the strategy
-        # holds cash and takes zero trades, not NaN), so an unmasked Invalid Candidate
-        # would surface a real 0.0 metric and pollute the global ranking instead of
-        # being excluded. We overwrite its metric rows with NaN at the source.
-        return _mask_invalid_metrics(metrics, invalid_positions)
 
     return window_metrics
 
@@ -255,14 +254,6 @@ def _metrics_from_allocations(
 def _nan_metric_frame(metric_keys: list[tuple], param_names: list[str]) -> pd.DataFrame:
     index = pd.MultiIndex.from_tuples(metric_keys, names=param_names)
     return pd.DataFrame(np.nan, index=index, columns=list(PORTFOLIO_METRIC_VALUE_KEYS))
-
-
-def _mask_invalid_metrics(metrics: Any, invalid_positions: list[int]) -> Any:
-    if not invalid_positions or metrics is vbt.NoResult:
-        return metrics
-    masked = metrics.copy()
-    masked.iloc[invalid_positions, :] = np.nan
-    return masked
 
 
 def _combo_values(value: Any) -> list[Any]:

@@ -284,7 +284,7 @@ def _run_warmup(windows: list[int]) -> OptimizationResult:
 def test_held_out_and_selection_builds_receive_the_same_invalid_candidate_set(
     monkeypatch,
 ) -> None:
-    """Both sweeps must mask the same Invalid Candidates so they cannot drift.
+    """Both sweeps must receive the same Invalid-Candidate set so they cannot drift.
 
     A genuine Invalid Candidate (lookback exceeding full history) makes the
     Selection build's Invalid-Candidate set non-empty. The held-out build must
@@ -306,7 +306,7 @@ def test_held_out_and_selection_builds_receive_the_same_invalid_candidate_set(
 
     assert len(captured) == 2, "expected one selection build then one held-out build"
     selection_keys, held_out_keys = captured
-    assert selection_keys, "selection build should mask a non-empty Invalid-Candidate set"
+    assert selection_keys, "selection build should carry a non-empty Invalid-Candidate set"
     assert held_out_keys == selection_keys, (
         "held-out build must receive the SAME Invalid-Candidate set as selection"
     )
