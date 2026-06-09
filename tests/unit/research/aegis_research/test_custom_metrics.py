@@ -106,7 +106,7 @@ def test_register_custom_extractors_rejects_shadowing() -> None:
     def _read(pf: Any, config: ReportConfig) -> pd.Series:
         return pd.Series([1.0])
 
-    with pytest.raises(ValueError, match="conflict with built-in"):
+    with pytest.raises(MetricRegistryError, match="conflict with built-in"):
         register_custom_extractors({"total_return": ExtractorSpec(_read)})
 
 

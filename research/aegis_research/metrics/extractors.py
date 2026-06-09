@@ -20,6 +20,7 @@ from typing import Any, Literal
 import pandas as pd
 
 from research.aegis_research.configuration.schema import ReportConfig
+from research.aegis_research.metrics.contracts import MetricRegistryError
 
 
 @dataclass(frozen=True)
@@ -100,16 +101,17 @@ _custom_extractors: dict[str, ExtractorSpec] = {}
 def register_custom_extractors(extractors: Mapping[str, ExtractorSpec]) -> None:
     """Register custom metric extractors (called by register_custom_metrics).
 
-    Raises ValueError if any custom metric id conflicts with a built-in id.
+    Raises MetricRegistryError if any custom metric id conflicts with a built-in
+    or already-registered custom id.
     """
     conflicts = set(extractors) & set(EXTRACTORS)
     if conflicts:
-        raise ValueError(
+        raise MetricRegistryError(
             f"custom extractor ids conflict with built-in metrics: {sorted(conflicts)}"
         )
     duplicates = set(extractors) & set(_custom_extractors)
     if duplicates:
-        raise ValueError(
+        raise MetricRegistryError(
             f"custom extractor ids already registered: {sorted(duplicates)}"
         )
     _custom_extractors.update(extractors)

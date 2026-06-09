@@ -25,7 +25,7 @@ def central_metrics_from_grouped_accessors(
 
     One VBT accessor call per metric over the whole batched portfolio,
     independent of candidate count.  Transforms (scale, abs) are applied
-    per-candidate via declarative flags from the ``EXTRACTORS`` map.
+    per-candidate via declarative flags from ``get_extractors()``.
     """
     extractors = get_extractors()
     all_metric_keys = list(PORTFOLIO_METRIC_VALUE_KEYS) + list(get_custom_extractor_keys())

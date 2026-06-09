@@ -36,8 +36,6 @@ def register_custom_metrics(
     extractors_map: dict[str, ExtractorSpec] = {}
     for definition, spec in metrics:
         registry.register(definition)
-        if definition.id in extractors_map:
-            raise MetricRegistryError(f"duplicate custom metric id: {definition.id}")
         extractors_map[definition.id] = spec
 
     if extractors_map:
