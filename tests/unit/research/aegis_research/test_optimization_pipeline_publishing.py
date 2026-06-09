@@ -6,8 +6,11 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.component_source import component_param_key
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
+from research.aegis_research.optimization.param_namespace import (
+    ComponentRef,
+    encode,
+)
 from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -49,8 +52,9 @@ class _FakeManifest:
 _FAMILY = "strategies"
 _COMPONENT_ID = "demo.ma_cross"
 _SLOT = "strategy:demo.ma_cross"
-_FAST_KEY = component_param_key(_FAMILY, _COMPONENT_ID, _SLOT, "fast_window")
-_SLOW_KEY = component_param_key(_FAMILY, _COMPONENT_ID, _SLOT, "slow_window")
+_STRATEGY_REF = ComponentRef(_FAMILY, _COMPONENT_ID, _SLOT)
+_FAST_KEY = encode(_STRATEGY_REF, "fast_window")
+_SLOW_KEY = encode(_STRATEGY_REF, "slow_window")
 
 
 class _FakeSource:

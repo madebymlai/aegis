@@ -13,11 +13,14 @@ import pytest
 
 from research.aegis_research.config import Lock
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.component_source import component_param_key
 from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.lock_run import (
     LockRunResolutionError,
     resolve_lock_run,
+)
+from research.aegis_research.optimization.param_namespace import (
+    ComponentRef,
+    encode,
 )
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -37,10 +40,10 @@ def test_resolves_per_component_params_for_locked_candidate(tmp_path: Path) -> N
     assert resolved.run_id == "run-a"
     assert resolved.candidate_key == candidate["candidate_key"]
     # Params fan across both the strategy and the indicator slots.
-    strategy_key = ("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
-    indicator_key = ("indicators", "demo.mom", "demo.mom")
-    assert resolved.component_params[strategy_key] == {"fast_window": 2, "slow_window": 10}
-    assert resolved.component_params[indicator_key] == {"window": 20}
+    strategy_ref = ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
+    indicator_ref = ComponentRef("indicators", "demo.mom", "demo.mom")
+    assert resolved.component_params[strategy_ref] == {"fast_window": 2, "slow_window": 10}
+    assert resolved.component_params[indicator_ref] == {"window": 20}
 
 
 def test_resolves_role_handle_through_rankings(tmp_path: Path) -> None:
@@ -76,10 +79,10 @@ def test_role_selects_the_matching_ranked_candidate(tmp_path: Path) -> None:
 
     assert resolved.candidate_key == ranked["median"]
     assert resolved.candidate_key != ranked["best"]
-    strategy_key = ("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
-    indicator_key = ("indicators", "demo.mom", "demo.mom")
-    assert resolved.component_params[strategy_key] == {"fast_window": 3, "slow_window": 12}
-    assert resolved.component_params[indicator_key] == {"window": 22}
+    strategy_ref = ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
+    indicator_ref = ComponentRef("indicators", "demo.mom", "demo.mom")
+    assert resolved.component_params[strategy_ref] == {"fast_window": 3, "slow_window": 12}
+    assert resolved.component_params[indicator_ref] == {"window": 22}
 
 
 def test_rejects_unknown_run_id(tmp_path: Path) -> None:
@@ -128,9 +131,9 @@ def _store_with_candidate(tmp_path: Path, *, drop_indicator_runtime: bool = Fals
 
 def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
     store = CandidateStore(tmp_path / "candidates.sqlite3")
-    fast_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window")
-    slow_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window")
-    window_key = component_param_key("indicators", "demo.mom", "demo.mom", "window")
+    fast_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window")
+    slow_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "slow_window")
+    window_key = encode(ComponentRef("indicators", "demo.mom", "demo.mom"), "window")
     result = OptimizationResult(
         best=_candidate({fast_key: 2, slow_key: 10, window_key: 20}, 0.30),
         median=_candidate({fast_key: 3, slow_key: 12, window_key: 22}, 0.20),
@@ -163,9 +166,9 @@ def _candidate(params: dict[str, object], score: float) -> EvaluatedCandidate:
 
 
 def _candidate_rows() -> list[dict[str, object]]:
-    fast_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window")
-    slow_key = component_param_key("strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window")
-    window_key = component_param_key("indicators", "demo.mom", "demo.mom", "window")
+    fast_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window")
+    slow_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "slow_window")
+    window_key = encode(ComponentRef("indicators", "demo.mom", "demo.mom"), "window")
     winner = _candidate({fast_key: 2, slow_key: 10, window_key: 20}, 0.30)
     result = OptimizationResult(best=winner, median=winner, worst=winner)
     return candidate_rows_from_result(
@@ -188,7 +191,7 @@ def _source_evidence(*, drop_indicator_runtime: bool = False) -> dict[str, objec
                 "version": "1.0.0",
                 "fixed_params": {},
                 "param_keys": {
-                    "window": component_param_key("indicators", "demo.mom", "demo.mom", "window"),
+                    "window": encode(ComponentRef("indicators", "demo.mom", "demo.mom"), "window"),
                 },
             }
         )
@@ -202,11 +205,11 @@ def _source_evidence(*, drop_indicator_runtime: bool = False) -> dict[str, objec
             "version": "1.0.0",
             "fixed_params": {},
             "param_keys": {
-                "fast_window": component_param_key(
-                    "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window"
+                "fast_window": encode(
+                    ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window"
                 ),
-                "slow_window": component_param_key(
-                    "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window"
+                "slow_window": encode(
+                    ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "slow_window"
                 ),
             },
         },

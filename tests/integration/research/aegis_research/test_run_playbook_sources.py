@@ -9,8 +9,9 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.candidate_store import CandidateStore, CandidateStoreError
-from research.aegis_research.optimization.component_source import (
-    component_param_key,
+from research.aegis_research.optimization.param_namespace import (
+    ComponentRef,
+    encode,
 )
 from research.aegis_research.optimization.pipeline import completion, publishing
 from research.aegis_research.provenance.manifest import RunStatus
@@ -84,8 +85,8 @@ def test_component_optimization_uses_component_native_candidate_grid(
         record for record in manifest["artifacts"] if record["id"] == "strategy.run"
     )
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
-    fast_key = component_param_key("strategies", "demo.ma_opt", "strategy", "fast_window")
-    slow_key = component_param_key("strategies", "demo.ma_opt", "strategy", "slow_window")
+    fast_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "fast_window")
+    slow_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "slow_window")
 
     assert payload["status"] == "success"
     assert (

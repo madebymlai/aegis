@@ -17,15 +17,17 @@ from research.aegis_research.config import (
 from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import (
-    FIXED_CANDIDATE_PARAM,
     ComponentSourceError,
     build_component_optimization_source,
-    component_param_key,
-    component_param_slices,
-    component_ref_key,
-    parse_component_param_key,
 )
 from research.aegis_research.optimization.evidence import candidate_rows_from_result
+from research.aegis_research.optimization.param_namespace import (
+    FIXED_CANDIDATE_PARAM,
+    ComponentRef,
+    decode,
+    encode,
+    slice_by_component,
+)
 from research.aegis_research.optimization.precompute import candidate_keys
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -40,8 +42,8 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
 
     source = build_component_optimization_source(config, component_registry=registry, data=data)
 
-    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
-    strategy_key = component_param_key("strategies", "demo.strategy", "strategy", "threshold")
+    indicator_key = encode(ComponentRef("indicators", "demo.trend", "demo.trend"), "window")
+    strategy_key = encode(ComponentRef("strategies", "demo.strategy", "strategy"), "threshold")
     assert set(source.params) == {indicator_key, strategy_key}
     assert source.output_name == "active"
     assert source.evidence["produced_outputs"] == ["trend"]
@@ -87,8 +89,8 @@ def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Pat
         indicators=[RunIndicatorSourceConfig(id="demo.trend")],
     )
     resolved = {
-        component_ref_key("strategies", "demo.strategy", "strategy"): {"threshold": 0.95},
-        component_ref_key("indicators", "demo.trend", "demo.trend"): {"window": 3},
+        ComponentRef("strategies", "demo.strategy", "strategy"): {"threshold": 0.95},
+        ComponentRef("indicators", "demo.trend", "demo.trend"): {"window": 3},
     }
 
     source = build_component_optimization_source(
@@ -99,7 +101,7 @@ def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Pat
         force_locked=True,
     )
 
-    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
+    indicator_key = encode(ComponentRef("indicators", "demo.trend", "demo.trend"), "window")
 
     assert indicator_key not in source.params
     assert source.evidence["indicators"][0]["param_mode"] == "locked"
@@ -152,16 +154,12 @@ def test_component_source_rejects_duplicate_produced_outputs(tmp_path: Path) -> 
 
 
 def test_component_param_keys_round_trip_to_component_slices() -> None:
-    key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
+    ref = ComponentRef("indicators", "demo.trend", "demo.trend")
+    key = encode(ref, "window")
 
-    assert parse_component_param_key(key) == {
-        "family": "indicators",
-        "component_id": "demo.trend",
-        "slot": "demo.trend",
-        "param_name": "window",
-    }
-    assert component_param_slices({key: 5, FIXED_CANDIDATE_PARAM: 0}) == {
-        ("indicators", "demo.trend", "demo.trend"): {"window": 5}
+    assert decode(key) == (ref, "window")
+    assert slice_by_component({key: 5, FIXED_CANDIDATE_PARAM: 0}) == {
+        ref: {"window": 5}
     }
 
 
@@ -173,14 +171,14 @@ def test_golden_param_namespace_keys_pin_exact_hex_literals() -> None:
     assertions are the regression oracle — they are the only tests that break on
     a format change.
     """
-    indicator_key = component_param_key("indicators", "demo.mom", "demo.mom", "window")
+    indicator_key = encode(ComponentRef("indicators", "demo.mom", "demo.mom"), "window")
     assert (
         indicator_key
         == "component__696e64696361746f7273__64656d6f2e6d6f6d__64656d6f2e6d6f6d__77696e646f77"
     )
 
-    strategy_key = component_param_key(
-        "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window"
+    strategy_key = encode(
+        ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window"
     )
     assert (
         strategy_key
@@ -190,16 +188,14 @@ def test_golden_param_namespace_keys_pin_exact_hex_literals() -> None:
 
 def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
     """Decode a stored Candidate row — not hand-synthesized — through the same
-    insert/load path the lock resolver uses, then verify component_param_slices."""
+    insert/load path the lock resolver uses, then verify slice_by_component."""
     store = CandidateStore(tmp_path / "candidates.sqlite3")
 
-    fast_key = component_param_key(
-        "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window"
-    )
-    slow_key = component_param_key(
-        "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window"
-    )
-    window_key = component_param_key("indicators", "demo.mom", "demo.mom", "window")
+    strategy_ref = ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
+    indicator_ref = ComponentRef("indicators", "demo.mom", "demo.mom")
+    fast_key = encode(strategy_ref, "fast_window")
+    slow_key = encode(strategy_ref, "slow_window")
+    window_key = encode(indicator_ref, "window")
 
     result = OptimizationResult(
         best=EvaluatedCandidate(
@@ -266,20 +262,18 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
     )
 
     row = store.top_candidates_by_run("stored-decode-run", limit=3)[1]["candidate"]
-    slices = component_param_slices(row["params"])
+    slices = slice_by_component(row["params"])
 
-    strategy_slice_key = ("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
-    assert strategy_slice_key in slices
-    assert slices[strategy_slice_key] == {"fast_window": 3, "slow_window": 12}
+    assert strategy_ref in slices
+    assert slices[strategy_ref] == {"fast_window": 3, "slow_window": 12}
 
-    indicator_slice_key = ("indicators", "demo.mom", "demo.mom")
-    assert indicator_slice_key in slices
-    assert slices[indicator_slice_key] == {"window": 22}
+    assert indicator_ref in slices
+    assert slices[indicator_ref] == {"window": 22}
 
-    assert FIXED_CANDIDATE_PARAM not in slices[strategy_slice_key]
-    assert FIXED_CANDIDATE_PARAM not in slices[indicator_slice_key]
-    for slice_key in slices:
-        assert FIXED_CANDIDATE_PARAM not in slice_key
+    assert FIXED_CANDIDATE_PARAM not in slices[strategy_ref]
+    assert FIXED_CANDIDATE_PARAM not in slices[indicator_ref]
+    for ref_key in slices:
+        assert not isinstance(ref_key, str)
 
 
 def _config(
@@ -450,8 +444,8 @@ def test_component_source_wide_pipeline_returns_multiindex_frame(tmp_path: Path)
     n_candidates = 2
     n_symbols = len(close.columns)
 
-    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
-    strategy_key = component_param_key("strategies", "demo.strategy", "strategy", "threshold")
+    indicator_key = encode(ComponentRef("indicators", "demo.trend", "demo.trend"), "window")
+    strategy_key = encode(ComponentRef("strategies", "demo.strategy", "strategy"), "threshold")
     result = source.pipeline(
         close,
         n_candidates,
@@ -476,8 +470,8 @@ def test_component_precompute_deduplicates_indicator_params_with_window_parity(
     source = build_component_optimization_source(_config(), component_registry=registry, data=data)
     close = data.feature("Close")
 
-    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
-    strategy_key = component_param_key("strategies", "demo.strategy", "strategy", "threshold")
+    indicator_key = encode(ComponentRef("indicators", "demo.trend", "demo.trend"), "window")
+    strategy_key = encode(ComponentRef("strategies", "demo.strategy", "strategy"), "threshold")
     param_lists = {
         indicator_key: [2, 2, 3, 3],
         strategy_key: [0.95, 1.0, 0.95, 1.0],

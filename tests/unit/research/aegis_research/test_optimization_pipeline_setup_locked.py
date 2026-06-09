@@ -19,6 +19,7 @@ from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import FIXED_CANDIDATE_PARAM
 from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
+from research.aegis_research.optimization.param_namespace import ComponentRef
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -166,8 +167,8 @@ def test_locked_setup_resolves_every_component_from_candidate(
     )
 
     params = result["resolved_component_params"]
-    assert ("strategies", "demo.strategy", "strategy") in params
-    assert ("indicators", "demo.returns", "demo.returns") in params
+    assert ComponentRef("strategies", "demo.strategy", "strategy") in params
+    assert ComponentRef("indicators", "demo.returns", "demo.returns") in params
 
 
 def test_locked_setup_performs_no_optimization(

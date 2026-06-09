@@ -27,14 +27,17 @@ from research.aegis_research.optimization.candidate_store import (
 )
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
-    component_param_slices,
     component_params_from_slices,
+)
+from research.aegis_research.optimization.param_namespace import (
+    ComponentRef,
+    slice_by_component,
 )
 
 LOCK_RUN_PROVENANCE_SCHEMA_VERSION = "lock_run_provenance.v1"
 
-# (component_family, component_id, component_slot) -> param-name -> value
-ResolvedComponentParams = dict[tuple[ComponentFamily, str, str], dict[str, Any]]
+# ComponentRef -> param-name -> value
+ResolvedComponentParams = dict[ComponentRef, dict[str, Any]]
 
 
 class LockRunResolutionError(ValueError):
@@ -68,7 +71,7 @@ def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
         ) from error
 
     runtimes = _candidate_component_runtimes(lock, row["provenance"])
-    candidate_slices = component_param_slices(row["params"])
+    candidate_slices = slice_by_component(row["params"])
     component_params: ResolvedComponentParams = {}
     for runtime in runtimes:
         family = _component_family(runtime["family"])
@@ -85,7 +88,7 @@ def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
             )
         except ComponentSourceError as error:
             raise LockRunResolutionError(str(error)) from error
-        component_params[(family, component_id, component_slot)] = params
+        component_params[ComponentRef(family, component_id, component_slot)] = params
 
     _assert_every_slice_resolved(lock, candidate_slices, component_params)
 
@@ -114,12 +117,13 @@ def _candidate_key_for_lock(lock: Lock, *, store: CandidateStore) -> str:
 
 def _assert_every_slice_resolved(
     lock: Lock,
-    candidate_slices: Mapping[tuple[str, str, str], Mapping[str, Any]],
+    candidate_slices: Mapping[ComponentRef, Mapping[str, Any]],
     component_params: ResolvedComponentParams,
 ) -> None:
-    orphaned = sorted(set(candidate_slices) - set(component_params))
+    orphaned = sorted(set(candidate_slices) - set(component_params), key=str)
     if orphaned:
-        family, component_id, component_slot = orphaned[0]
+        ref = orphaned[0]
+        family, component_id, component_slot = ref.family, ref.component_id, ref.slot
         raise LockRunResolutionError(
             f"candidate {lock.candidate_id!r} does not include component "
             f"{family}/{component_id} slot {component_slot!r} in its source provenance, "

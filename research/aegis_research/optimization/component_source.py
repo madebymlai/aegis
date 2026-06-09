@@ -9,7 +9,6 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry import (
-    COMPONENT_FAMILIES,
     ComponentDefinition,
     ComponentFamily,
     ComponentSelection,
@@ -22,6 +21,12 @@ from research.aegis_research.config import (
     to_builtin,
 )
 from research.aegis_research.data import MarketDataBundle
+from research.aegis_research.optimization.param_namespace import (
+    FIXED_CANDIDATE_PARAM,
+    PARAM_KEY_PREFIX,
+    ComponentRef,
+    encode,
+)
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
     WideIndicatorPrecompute,
@@ -31,11 +36,8 @@ from research.aegis_research.optimization.precompute import (
 from research.aegis_research.optimization.source import OptimizationSource
 
 COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION = "component_optimization_source.v1"
-FIXED_CANDIDATE_PARAM = "__aegis_fixed_candidate__"
-PARAM_KEY_PREFIX = "component"
-PARAM_KEY_SEPARATOR = "__"
 
-ResolvedComponentParams = Mapping[tuple[ComponentFamily, str, str], Mapping[str, Any]]
+ResolvedComponentParams = Mapping[ComponentRef, Mapping[str, Any]]
 
 
 class ComponentSourceError(ValueError):
@@ -79,83 +81,17 @@ class _RuntimeParamDeduplication:
     n_candidates: int
 
 
-def component_ref_key(
-    family: ComponentFamily,
-    component_id: str,
-    slot: str,
-) -> tuple[ComponentFamily, str, str]:
-    return (family, component_id, slot)
-
-
-def component_param_key(
-    family: ComponentFamily,
-    component_id: str,
-    slot: str,
-    param_name: str,
-) -> str:
-    parts = (PARAM_KEY_PREFIX, family, component_id, slot, param_name)
-    for part in parts:
-        if not part:
-            raise ComponentSourceError("component param namespace parts must not be empty")
-    return PARAM_KEY_SEPARATOR.join(
-        (PARAM_KEY_PREFIX, *(_encode_namespace_part(part) for part in parts[1:]))
-    )
-
-
-def parse_component_param_key(key: str) -> dict[str, str]:
-    parts = key.split(PARAM_KEY_SEPARATOR)
-    if len(parts) != 5 or parts[0] != PARAM_KEY_PREFIX:
-        raise ComponentSourceError(f"not a component param key: {key!r}")
-    _, encoded_family, encoded_component_id, encoded_slot, encoded_param_name = parts
-    family = _decode_namespace_part(encoded_family)
-    component_id = _decode_namespace_part(encoded_component_id)
-    slot = _decode_namespace_part(encoded_slot)
-    param_name = _decode_namespace_part(encoded_param_name)
-    if family not in COMPONENT_FAMILIES:
-        raise ComponentSourceError(f"unsupported component param family: {family!r}")
-    return {
-        "family": family,
-        "component_id": component_id,
-        "slot": slot,
-        "param_name": param_name,
-    }
-
-
-def _encode_namespace_part(value: str) -> str:
-    return value.encode("utf-8").hex()
-
-
-def _decode_namespace_part(value: str) -> str:
-    try:
-        return bytes.fromhex(value).decode("utf-8")
-    except ValueError as error:
-        raise ComponentSourceError(f"invalid component param namespace part: {value!r}") from error
-
-
-def component_param_slices(
-    param_row: Mapping[str, Any],
-) -> dict[tuple[str, str, str], dict[str, Any]]:
-    slices: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for key, value in param_row.items():
-        if key == FIXED_CANDIDATE_PARAM:
-            continue
-        parsed = parse_component_param_key(key)
-        slice_key = (parsed["family"], parsed["component_id"], parsed["slot"])
-        slices.setdefault(slice_key, {})[parsed["param_name"]] = value
-    return slices
-
-
 def component_params_from_slices(
     *,
     component_family: ComponentFamily,
     component_id: str,
     component_slot: str,
-    component_slices: Mapping[tuple[str, str, str], Mapping[str, Any]],
+    component_slices: Mapping[ComponentRef, Mapping[str, Any]],
     runtime: Mapping[str, Any],
     candidate_key: str,
 ) -> dict[str, Any]:
     params = dict(runtime.get("fixed_params", {}))
-    slice_key = (component_family, component_id, component_slot)
+    slice_key = ComponentRef(component_family, component_id, component_slot)
     params.update(component_slices.get(slice_key, {}))
     missing = sorted(set(runtime.get("param_keys", {})) - set(params))
     if missing:
@@ -330,7 +266,7 @@ def _build_runtime(
     )
     _validate_component_param_sources(definition, fixed_params, param_space)
     param_keys = {
-        param_name: component_param_key(family, definition.id, slot, param_name)
+        param_name: encode(ComponentRef(family, definition.id, slot), param_name)
         for param_name in param_space
         if param_name not in fixed_params
     }
@@ -359,7 +295,7 @@ def _fixed_params_for_ref(
     force_locked: bool = False,
 ) -> dict[str, Any]:
     if force_locked:
-        key = component_ref_key(family, definition.id, slot)
+        key = ComponentRef(family, definition.id, slot)
         try:
             fixed = dict(resolved_component_params[key])
         except KeyError as error:
