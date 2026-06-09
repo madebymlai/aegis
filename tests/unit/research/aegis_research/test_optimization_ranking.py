@@ -8,6 +8,10 @@ import pandas as pd
 import pytest
 
 from research.aegis_research.optimization import ranking
+from research.aegis_research.optimization.candidate_validity import (
+    Verdicts,
+    classify_candidates,
+)
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -46,6 +50,16 @@ def _grid_with_trades(
     return pd.DataFrame(rows, index=index)
 
 
+def _all_valid_verdict(grid: pd.DataFrame, *, metric: str = "sharpe") -> Verdicts:
+    """Build a verdict where every candidate is valid."""
+    return classify_candidates(grid, invalid_keys=set(), min_trades=0, metric=metric)
+
+
+# ---------------------------------------------------------------------------
+# Pure ranking (all-valid verdict)
+# ---------------------------------------------------------------------------
+
+
 def test_worked_example_min_aware_penalty_ranks_steady_candidate_first() -> None:
     # Equal means (0.6) but A has a catastrophic split. Min-aware MUST rank B above A.
     grid = _grid(
@@ -54,8 +68,9 @@ def test_worked_example_min_aware_penalty_ranks_steady_candidate_first() -> None
             "B": {"s0": 0.7, "s1": 0.5},  # mean 0.6, min  0.5 -> score 0.57
         }
     )
+    verdict = _all_valid_verdict(grid)
 
-    result = select_representative_candidates(grid, metric="sharpe", min_weight=0.3)
+    result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=0.3)
 
     assert result.best.params == {"param": "B"}
     assert result.worst.params == {"param": "A"}
@@ -71,8 +86,9 @@ def test_three_candidates_pick_best_median_worst_by_rank() -> None:
             "lo": {"s0": 0.1, "s1": 0.1},  # score 0.1
         }
     )
+    verdict = _all_valid_verdict(grid)
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     # N=3 -> median is rank ceil(3/2)=2, a real candidate distinct from best/worst.
     assert result.best.params == {"param": "hi"}
@@ -82,8 +98,9 @@ def test_three_candidates_pick_best_median_worst_by_rank() -> None:
 
 def test_single_candidate_is_best_median_and_worst() -> None:
     grid = _grid({"only": {"s0": 0.3, "s1": 0.9}})
+    verdict = _all_valid_verdict(grid)
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     assert result.best is result.median is result.worst
     assert result.best.params == {"param": "only"}
@@ -91,8 +108,9 @@ def test_single_candidate_is_best_median_and_worst() -> None:
 
 def test_two_candidates_median_is_one_of_them() -> None:
     grid = _grid({"x": {"s0": 1.0, "s1": 1.0}, "y": {"s0": 0.0, "s1": 0.0}})
+    verdict = _all_valid_verdict(grid)
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     # N=2 -> median is rank ceil(2/2)=1, i.e. the best; still a real candidate.
     assert result.median is result.best
@@ -102,8 +120,9 @@ def test_two_candidates_median_is_one_of_them() -> None:
 def test_min_weight_zero_is_pure_mean_ranking() -> None:
     # A has the higher mean but a catastrophic split; B is steadier.
     grid = _grid({"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.5, "s1": 0.5}})
+    verdict = _all_valid_verdict(grid)
 
-    result = select_representative_candidates(grid, metric="sharpe", min_weight=0.0)
+    result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=0.0)
 
     # Pure mean: A (0.6) beats B (0.5), reversing the min-aware order.
     assert result.best.params == {"param": "A"}
@@ -112,8 +131,9 @@ def test_min_weight_zero_is_pure_mean_ranking() -> None:
 
 def test_min_weight_one_is_pure_min_ranking() -> None:
     grid = _grid({"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.7, "s1": 0.5}})
+    verdict = _all_valid_verdict(grid)
 
-    result = select_representative_candidates(grid, metric="sharpe", min_weight=1.0)
+    result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=1.0)
 
     # Pure min: B (0.5) beats A (-0.4).
     assert result.best.params == {"param": "B"}
@@ -128,8 +148,9 @@ def test_nan_split_is_skipped_in_score_and_aggregate() -> None:
             "B": {"s0": 0.4, "s1": 0.4},
         }
     )
+    verdict = _all_valid_verdict(grid)
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     assert result.best.params == {"param": "A"}
     assert result.best.score == pytest.approx(1.0)
@@ -137,17 +158,69 @@ def test_nan_split_is_skipped_in_score_and_aggregate() -> None:
     assert result.best.selection_metrics["s1"]["sharpe"] is None
 
 
+def test_tied_scores_keep_parameter_sorted_order() -> None:
+    grid = _grid({"b": {"s0": 0.5, "s1": 0.5}, "a": {"s0": 0.5, "s1": 0.5}})
+    verdict = _all_valid_verdict(grid)
+
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
+
+    # Equal scores: stable order follows parameter-sorted grouping ("a" before "b").
+    assert result.best.params == {"param": "a"}
+    assert result.worst.params == {"param": "b"}
+
+
+def test_all_registered_metrics_are_carried_per_split_and_aggregated() -> None:
+    index = pd.MultiIndex.from_tuples([("A", "s0"), ("A", "s1")], names=["param", "split"])
+    grid = pd.DataFrame({"sharpe": [1.0, 0.5], "max_drawdown": [-0.2, -0.4]}, index=index)
+    verdict = _all_valid_verdict(grid)
+
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
+    candidate = result.best
+
+    assert candidate.metrics["sharpe"] == pytest.approx(0.75)
+    assert candidate.metrics["max_drawdown"] == pytest.approx(-0.3)
+    assert candidate.selection_metrics["s0"] == {"sharpe": 1.0, "max_drawdown": -0.2}
+
+
+def test_held_out_metrics_start_empty() -> None:
+    grid = _grid({"only": {"s0": 0.3, "s1": 0.9}})
+    verdict = _all_valid_verdict(grid)
+
+    candidate = select_representative_candidates(grid, verdict, metric="sharpe").best
+
+    assert candidate.held_out_metrics == {}
+
+
+def test_supports_multiple_parameter_levels() -> None:
+    index = pd.MultiIndex.from_tuples(
+        [(2, 10, "s0"), (2, 10, "s1"), (5, 20, "s0"), (5, 20, "s1")],
+        names=["fast_window", "slow_window", "split"],
+    )
+    grid = pd.DataFrame({"sharpe": [0.9, 0.9, 0.1, 0.1]}, index=index)
+    verdict = _all_valid_verdict(grid)
+
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
+
+    assert result.best.params == {"fast_window": 2, "slow_window": 10}
+
+
+# ---------------------------------------------------------------------------
+# Ranking with excluded candidates via verdict
+# ---------------------------------------------------------------------------
+
+
 def test_single_trading_candidate_fills_all_roles_and_excludes_dead() -> None:
-    # One trading + one dead: the dead combo is excluded, so the lone trading
-    # candidate fills all three roles (never the NaN-scored one).
+    # One trading + one dead: the dead combo is excluded by the verdict, so the
+    # lone trading candidate fills all three roles (never the NaN-scored one).
     grid = _grid(
         {
             "good": {"s0": 0.2, "s1": 0.2},
             "blank": {"s0": float("nan"), "s1": float("nan")},
         }
     )
+    verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     assert result.best is result.median is result.worst
     assert result.best.params == {"param": "good"}
@@ -166,8 +239,9 @@ def test_median_and_worst_skip_degenerate_candidates() -> None:
             "dead2": {"s0": float("nan"), "s1": float("nan")},
         }
     )
+    verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     assert result.best.params == {"param": "good_hi"}
     assert result.median.params == {"param": "good_mid"}
@@ -184,24 +258,26 @@ def test_excluded_degenerate_count_is_reported() -> None:
             "dead2": {"s0": float("nan"), "s1": float("nan")},
         }
     )
+    verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     assert result.excluded_degenerate == 2
 
 
 def test_no_degenerate_candidates_reports_zero_excluded() -> None:
     grid = _grid({"hi": {"s0": 1.0, "s1": 1.0}, "lo": {"s0": 0.1, "s1": 0.1}})
+    verdict = _all_valid_verdict(grid)
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     assert result.excluded_degenerate == 0
 
 
-def test_total_candidates_is_exact_ranked_set_size() -> None:
-    # total_candidates is the EXACT count of candidates that entered ranking
-    # (the ranked-set size), never a preflight sampling estimate. Four distinct
-    # parameter combinations enter ranking, two of which are degenerate.
+def test_total_candidates_is_exact_classified_set_size() -> None:
+    # total_candidates is the EXACT count of candidates that were classified
+    # (sourced from the verdict partition). Four distinct parameter combinations
+    # enter classification, two of which are degenerate.
     grid = _grid(
         {
             "good_hi": {"s0": 1.0, "s1": 1.0},
@@ -210,8 +286,9 @@ def test_total_candidates_is_exact_ranked_set_size() -> None:
             "dead2": {"s0": float("nan"), "s1": float("nan")},
         }
     )
+    verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     assert result.total_candidates == 4
     # Nesting invariant: invalid is a subset of degenerate, degenerate of total.
@@ -219,16 +296,17 @@ def test_total_candidates_is_exact_ranked_set_size() -> None:
 
 
 def test_all_degenerate_grid_raises_clear_error() -> None:
-    # Every candidate is dead: there is no trading population to represent.
+    # Every candidate is dead: there is no admissible population to represent.
     grid = _grid(
         {
             "dead1": {"s0": float("nan"), "s1": float("nan")},
             "dead2": {"s0": float("nan"), "s1": float("nan")},
         }
     )
+    verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
-    with pytest.raises(ValueError, match="finite ranking score"):
-        select_representative_candidates(grid, metric="sharpe")
+    with pytest.raises(ValueError, match="no admissible candidate"):
+        select_representative_candidates(grid, verdict, metric="sharpe")
 
 
 def test_two_trading_candidates_with_dead_combos_pick_median_from_trading() -> None:
@@ -239,8 +317,9 @@ def test_two_trading_candidates_with_dead_combos_pick_median_from_trading() -> N
             "dead": {"s0": float("nan"), "s1": float("nan")},
         }
     )
+    verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
-    result = select_representative_candidates(grid, metric="sharpe")
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     # 2 trading -> median is rank ceil(2/2)=1 (the best of the trading set).
     assert result.median is result.best
@@ -249,124 +328,9 @@ def test_two_trading_candidates_with_dead_combos_pick_median_from_trading() -> N
     assert result.excluded_degenerate == 1
 
 
-def test_min_trades_floor_excludes_thin_high_sharpe_winner() -> None:
-    # The thin candidate has the best score but won on 2-3 lucky trades/split; the
-    # min-trades floor must drop it so the well-traded candidate wins instead.
-    grid = _grid_with_trades(
-        {
-            "lucky": {"s0": (2.0, 2.0), "s1": (2.0, 3.0)},  # top score, far too few trades
-            "real": {"s0": (0.6, 40.0), "s1": (0.6, 38.0)},  # lower score, plenty of trades
-        }
-    )
-
-    result = select_representative_candidates(grid, metric="sharpe", min_trades=10)
-
-    assert result.best.params == {"param": "real"}
-    assert result.best.params != {"param": "lucky"}
-    assert result.excluded_degenerate == 1  # the thin candidate counts as degenerate
-
-
-def test_min_trades_floor_is_per_split_minimum() -> None:
-    # A candidate that trades enough on one split but is thin on another fails the
-    # floor: it must clear min_trades on the *thinnest* split it scored.
-    grid = _grid_with_trades(
-        {
-            "uneven": {"s0": (3.0, 50.0), "s1": (3.0, 4.0)},  # min 4 trades -> excluded
-            "steady": {"s0": (0.5, 25.0), "s1": (0.5, 30.0)},  # min 25 -> kept
-        }
-    )
-
-    result = select_representative_candidates(grid, metric="sharpe", min_trades=10)
-
-    assert result.best.params == {"param": "steady"}
-    assert result.excluded_degenerate == 1
-
-
-def test_min_trades_zero_is_disabled_and_needs_no_trades_column() -> None:
-    # Default (min_trades=0): floor off, behaviour identical, no trades column needed.
-    grid = _grid({"thin": {"s0": 2.0, "s1": 2.0}, "fat": {"s0": 0.5, "s1": 0.5}})
-
-    result = select_representative_candidates(grid, metric="sharpe")
-
-    assert result.best.params == {"param": "thin"}
-    assert result.excluded_degenerate == 0
-
-
-def test_min_trades_floor_requires_trades_column() -> None:
-    grid = _grid({"a": {"s0": 1.0, "s1": 1.0}})
-
-    with pytest.raises(KeyError, match="total_trades"):
-        select_representative_candidates(grid, metric="sharpe", min_trades=10)
-
-
-def test_all_candidates_under_traded_raises() -> None:
-    grid = _grid_with_trades(
-        {
-            "a": {"s0": (2.0, 2.0), "s1": (2.0, 3.0)},
-            "b": {"s0": (1.5, 1.0), "s1": (1.5, 4.0)},
-        }
-    )
-
-    with pytest.raises(ValueError, match="min_trades=10"):
-        select_representative_candidates(grid, metric="sharpe", min_trades=10)
-
-
-def test_min_trades_floor_combines_with_nan_score_exclusion() -> None:
-    # Both exclusion classes (NaN-score and under-traded) fold into excluded_degenerate.
-    grid = _grid_with_trades(
-        {
-            "real": {"s0": (0.6, 40.0), "s1": (0.6, 40.0)},
-            "thin": {"s0": (2.0, 2.0), "s1": (2.0, 2.0)},  # under-traded
-            "dead": {"s0": (float("nan"), 0.0), "s1": (float("nan"), 0.0)},  # NaN score
-        }
-    )
-
-    result = select_representative_candidates(grid, metric="sharpe", min_trades=10)
-
-    assert result.best.params == {"param": "real"}
-    assert result.excluded_degenerate == 2
-
-
-def test_tied_scores_keep_parameter_sorted_order() -> None:
-    grid = _grid({"b": {"s0": 0.5, "s1": 0.5}, "a": {"s0": 0.5, "s1": 0.5}})
-
-    result = select_representative_candidates(grid, metric="sharpe")
-
-    # Equal scores: stable order follows parameter-sorted grouping ("a" before "b").
-    assert result.best.params == {"param": "a"}
-    assert result.worst.params == {"param": "b"}
-
-
-def test_all_registered_metrics_are_carried_per_split_and_aggregated() -> None:
-    index = pd.MultiIndex.from_tuples([("A", "s0"), ("A", "s1")], names=["param", "split"])
-    grid = pd.DataFrame({"sharpe": [1.0, 0.5], "max_drawdown": [-0.2, -0.4]}, index=index)
-
-    result = select_representative_candidates(grid, metric="sharpe")
-    candidate = result.best
-
-    assert candidate.metrics["sharpe"] == pytest.approx(0.75)
-    assert candidate.metrics["max_drawdown"] == pytest.approx(-0.3)
-    assert candidate.selection_metrics["s0"] == {"sharpe": 1.0, "max_drawdown": -0.2}
-
-
-def test_held_out_metrics_start_empty() -> None:
-    grid = _grid({"only": {"s0": 0.3, "s1": 0.9}})
-
-    candidate = select_representative_candidates(grid, metric="sharpe").best
-
-    assert candidate.held_out_metrics == {}
-
-
-def test_supports_multiple_parameter_levels() -> None:
-    index = pd.MultiIndex.from_tuples(
-        [(2, 10, "s0"), (2, 10, "s1"), (5, 20, "s0"), (5, 20, "s1")],
-        names=["fast_window", "slow_window", "split"],
-    )
-    grid = pd.DataFrame({"sharpe": [0.9, 0.9, 0.1, 0.1]}, index=index)
-
-    result = select_representative_candidates(grid, metric="sharpe")
-
-    assert result.best.params == {"fast_window": 2, "slow_window": 10}
+# ---------------------------------------------------------------------------
+# Structure / signature
+# ---------------------------------------------------------------------------
 
 
 def test_evaluated_candidate_has_no_legacy_winner_or_direction_fields() -> None:
@@ -399,10 +363,10 @@ def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
 def test_signature_has_no_direction_parameter() -> None:
     params = inspect.signature(select_representative_candidates).parameters
 
-    assert list(params) == ["grid", "metric", "min_weight", "min_trades", "trades_metric"]
+    assert list(params) == ["grid", "verdicts", "metric", "min_weight"]
     assert params["min_weight"].default == 0.3
-    assert params["min_trades"].default == 0
-    assert params["trades_metric"].default == "total_trades"
+    assert "min_trades" not in params
+    assert "trades_metric" not in params
     assert "direction" not in params
 
 

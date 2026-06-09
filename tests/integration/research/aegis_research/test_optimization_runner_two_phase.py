@@ -174,8 +174,8 @@ def test_runner_preserves_excluded_degenerate_through_held_out(monkeypatch) -> N
 
     real_select = runner.select_representative_candidates
 
-    def select_with_injected_exclusions(grid, **kwargs):
-        result = real_select(grid, **kwargs)
+    def select_with_injected_exclusions(grid, verdicts, **kwargs):
+        result = real_select(grid, verdicts, **kwargs)
         return dataclasses.replace(result, excluded_degenerate=7)
 
     monkeypatch.setattr(runner, "select_representative_candidates", select_with_injected_exclusions)
@@ -200,8 +200,8 @@ def test_runner_preserves_total_candidates_through_held_out(monkeypatch) -> None
 
     real_select = runner.select_representative_candidates
 
-    def select_with_injected_total(grid, **kwargs):
-        result = real_select(grid, **kwargs)
+    def select_with_injected_total(grid, verdicts, **kwargs):
+        result = real_select(grid, verdicts, **kwargs)
         return dataclasses.replace(result, total_candidates=11)
 
     monkeypatch.setattr(runner, "select_representative_candidates", select_with_injected_total)

@@ -43,6 +43,7 @@ from research.aegis_research.metrics.accessors import (
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.candidate_validity import (
+    classify_candidates,
     invalid_candidate_positions,
     invalid_candidates,
 )
@@ -124,16 +125,18 @@ def execute_optimization(
         set_=SELECTION_SET,
         parallel=True,
     )
+    verdicts = classify_candidates(
+        selection_grid,
+        invalid_keys=invalid_candidate_keys,
+        min_trades=ranking.min_trades,
+        metric=ranking.metric,
+    )
     result = select_representative_candidates(
         selection_grid,
+        verdicts,
         metric=ranking.metric,
         min_weight=ranking.min_weight,
-        min_trades=ranking.min_trades,
     )
-    # Distinguish *misconfigured* (lookback > full history) from merely *degenerate*:
-    # the ranking layer only sees NaN scores, so the runner — which knows which keys
-    # were full-history-invalid — surfaces that subset count.
-    result = dataclasses.replace(result, excluded_invalid=len(invalid_candidate_keys))
 
     param_names = [name for name in selection_grid.index.names if name != SPLIT_LEVEL]
     return _attach_held_out(
