@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
@@ -42,6 +42,10 @@ from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
+from research.aegis_research.optimization.candidate_validity import (
+    invalid_candidate_positions,
+    invalid_candidates,
+)
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
     WideIndicatorPrecompute,
@@ -98,7 +102,7 @@ def execute_optimization(
     # Stage 1: run each indicator's wide callable once over the full series.
     sampled_candidate_keys = candidate_keys(sampled_lists)
     store = source.precompute(close, n_candidates, **sampled_lists)
-    invalid_candidate_keys = _invalid_full_history_candidate_keys(
+    invalid_candidate_keys = invalid_candidates(
         store, sampled_candidate_keys
     )
 
@@ -177,7 +181,7 @@ def _build_precomputed_window_metrics(
     def window_metrics(range_: slice, **params: Any) -> Any:
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
         keys = candidate_keys(combo_lists)
-        invalid_positions = _invalid_candidate_positions(keys, invalid_candidate_keys)
+        invalid_positions = invalid_candidate_positions(keys, invalid_candidate_keys)
         if len(invalid_positions) == n_combos:
             return _nan_metric_frame(metric_keys, param_names)
 
@@ -255,51 +259,6 @@ def _mask_invalid_metrics(metrics: Any, invalid_positions: list[int]) -> Any:
     masked = metrics.copy()
     masked.iloc[invalid_positions, :] = np.nan
     return masked
-
-
-def _invalid_candidate_positions(
-    keys: Sequence[CandidateKey], invalid_keys: set[CandidateKey]
-) -> list[int]:
-    return [position for position, key in enumerate(keys) if key in invalid_keys]
-
-
-def _invalid_full_history_candidate_keys(
-    store: WideIndicatorPrecompute, keys: Sequence[CandidateKey]
-) -> set[CandidateKey]:
-    outputs = store.outputs
-    if not outputs or store.n_symbols < 1:
-        return set()
-
-    invalid: set[CandidateKey] = set()
-    for key in keys:
-        for output_name, output in outputs.items():
-            position = _candidate_index_for_output(store, output_name)[key]
-            if _candidate_output_is_non_finite(output, position, store.n_symbols):
-                invalid.add(key)
-                break
-    return invalid
-
-
-def _candidate_index_for_output(
-    store: WideIndicatorPrecompute, output_name: str
-) -> Mapping[CandidateKey, int]:
-    if store.output_candidate_index is None:
-        return store.candidate_index
-    return store.output_candidate_index.get(output_name, store.candidate_index)
-
-
-def _candidate_output_is_non_finite(output: Any, position: int, n_symbols: int) -> bool:
-    start = position * n_symbols
-    stop = start + n_symbols
-    block = np.asarray(output)[:, start:stop]
-    return block.size == 0 or not _has_finite_value(block)
-
-
-def _has_finite_value(values: Any) -> bool:
-    try:
-        return bool(np.isfinite(values).any())
-    except TypeError:
-        return bool(pd.notna(values).any())
 
 
 def _combo_values(value: Any) -> list[Any]:

@@ -25,11 +25,11 @@ A scored parameter combination produced by an optimization **Run**. Each Candida
 _Avoid_: trial, result, entry
 
 **Invalid Candidate**:
-A **Candidate** whose configuration is unworkable: an **Indicator** output is entirely non-finite over the full series because its lookback exceeds all available history. Decided before scoring; misconfigured rather than merely poor. Every Invalid Candidate is also **Degenerate**.
+A **Candidate** whose configuration is unworkable: an **Indicator** output is entirely non-finite over the full series because its lookback exceeds all available history. Detected before scoring, independent of the finite cash-holding score it would otherwise simulate to; misconfigured rather than merely poor. Every Invalid Candidate is also **Degenerate**.
 _Avoid_: broken candidate, bad candidate, error
 
 **Degenerate Candidate**:
-A **Candidate** that cannot represent the grid: it either earned no finite ranking score (non-trading) or traded too few times to be trusted (under-traded). Decided from results, after scoring. **Invalid Candidates** are the misconfigured subset.
+A **Candidate** that cannot represent the grid, excluded for one of three reasons: it is misconfigured (an **Invalid Candidate**), it earned no finite ranking score (non-trading), or it traded too few times to be trusted (under-traded). Non-trading is the absence of a finite ranking score — not merely zero trades: an Invalid cash-holder takes zero trades yet scores a finite 0.0 and is reported as **Invalid**, its more specific cause. Invalid is decided before scoring, the other two from results after; **Invalid Candidates** are the misconfigured subset.
 _Avoid_: failed candidate, junk candidate, outlier
 
 **Split**:
