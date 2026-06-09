@@ -37,19 +37,26 @@ def _float_field_names(cls: type) -> set[str]:
     return {f.name for f in fields(cls) if f.type in (float, "float")}
 
 
-def _build_run_config(raw: dict[str, Any]) -> RunConfig:
-    portfolio_raw = dict(raw.get("portfolio", {}))
-    _coerce_float_fields(portfolio_raw, _float_field_names(PortfolioConfig))
-    report_raw = dict(raw.get("report", {}))
-    _coerce_float_fields(report_raw, _float_field_names(ReportConfig))
+def _build_run_config(
+    raw: dict[str, Any],
+    *,
+    portfolio_config: PortfolioConfig | None = None,
+    report_config: ReportConfig | None = None,
+) -> RunConfig:
+    # Pydantic-ported sections (portfolio, report) are validated + constructed by the
+    # coordinator. If they weren't constructed (validation failure short-circuit), raise.
+    if portfolio_config is None:
+        raise ValueError("portfolio_config required")
+    if report_config is None:
+        raise ValueError("report_config required")
     ranking_raw = dict(raw["ranking"])
     _coerce_float_fields(ranking_raw, _float_field_names(RankingConfig))
     return RunConfig(
         name=raw["name"],
         schema_version=raw["schema_version"],
         data=_build_data_config(raw.get("data", {})),
-        portfolio=PortfolioConfig(**portfolio_raw),
-        report=ReportConfig(**report_raw),
+        portfolio=portfolio_config,
+        report=report_config,
         strategy=_build_run_source_ref(raw["strategy"]),
         indicators=_build_run_indicator_sources(raw["indicators"]),
         ranking=_build_ranking(ranking_raw),

@@ -10,7 +10,10 @@ and imports only what it validates:
 - ``data``         — market-data source, arrays, quality policy, paths
 - ``optimization`` — search policy, run split, random policy, execute passthrough
 - ``metrics``      — ranking metric selection
-- ``portfolio``    — portfolio & report thresholds
+
+Portfolio and report are pydantic-ported — validated by the coordinator in
+``resolution._build_resolved_run_config`` via ``TypeAdapter`` + ``ValidationError``
+adapter, with a tombstone prepass for removed fields.
 
 The public surface (re-exported below) is the validation entry point plus the two
 validators reached directly by callers outside this package.
@@ -28,8 +31,6 @@ from research.aegis_research.configuration.schema import (
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     ConfigValidationIssue,
     DataConfig,
-    PortfolioConfig,
-    ReportConfig,
 )
 from research.aegis_research.configuration.validation.base import (
     _optional_str,
@@ -50,11 +51,6 @@ from research.aegis_research.configuration.validation.data import (
 from research.aegis_research.configuration.validation.lock import _validate_lock
 from research.aegis_research.configuration.validation.metrics import _validate_ranking
 from research.aegis_research.configuration.validation.optimization import _validate_optimization
-from research.aegis_research.configuration.validation.portfolio import (
-    PORTFOLIO_REMOVED_FIELDS,
-    _validate_portfolio,
-    _validate_report,
-)
 from research.aegis_research.metrics import FrozenMetricRegistry
 
 __all__ = [
@@ -80,19 +76,10 @@ def _validate_raw_run_config(
         _validate_experiment_name(raw["name"], issues)
     _validate_output_dir(raw, issues)
 
+    # Portfolio and report sections are pydantic-ported, validated upstream
+    # in the coordinator (resolution._build_resolved_run_config).
     data = _section(raw, "data", set(DataConfig.__dataclass_fields__), issues)
-    portfolio = _section(
-        raw,
-        "portfolio",
-        set(PortfolioConfig.__dataclass_fields__)
-        | {"size", "size_type"}
-        | set(PORTFOLIO_REMOVED_FIELDS),
-        issues,
-    )
-    report = _section(raw, "report", set(ReportConfig.__dataclass_fields__), issues)
     _validate_data(data, issues, validate_paths=True)
-    _validate_portfolio(portfolio, issues)
-    _validate_report(report, issues)
     _validate_lock(raw, issues)
     _validate_run_config(
         raw,

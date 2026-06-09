@@ -1,18 +1,87 @@
+"""Portfolio and Report validation — pydantic v2 structural tests.
+
+Tests for structural validation are driven through pydantic construction
+(``TypeAdapter.validate_python``) and the coordinator (``resolve_run_config`` for
+tombstone prepass tests). Assertions use pydantic's structural wording.
+
+Smoke tests for constants, defaults, and the ``periods_per_year`` calculator are
+unchanged — they don't hit validation codepaths.
+"""
+
 from __future__ import annotations
 
-from research.aegis_research.configuration.schema import (
+from pathlib import Path
+from typing import Any
+
+import pytest
+from pydantic import TypeAdapter, ValidationError
+
+from research.aegis_research.component_registry import discover_component_registry
+from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
     PORTFOLIO_DIRECTIONS,
-    ConfigValidationIssue,
+    ConfigValidationError,
+    PortfolioConfig,
+    ReportConfig,
+    resolve_run_config,
 )
-from research.aegis_research.configuration.validation.portfolio import (
-    _validate_portfolio,
-    _validate_report,
+from tests.support.research.aegis_research.component_fixtures import (
+    write_indicator_component,
 )
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,
 )
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+_PORTFOLIO_ADAPTER = TypeAdapter(PortfolioConfig)
+_REPORT_ADAPTER = TypeAdapter(ReportConfig)
+
+
+def _component_registry(tmp_path: Path):
+    root = tmp_path / "research" / "components"
+    write_indicator_component(root / "indicators" / "returns.py")
+    strategy = root / "strategies" / "strategy.py"
+    strategy.parent.mkdir(parents=True, exist_ok=True)
+    strategy.write_text(
+        "# %% component overview\n# Strategy fixture for validation tests.\n"
+        "# Source: synthetic Close data supplied by the test fixture.\n\n"
+        "# %% define component metadata\n"
+        "COMPONENT_MANIFEST = {'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
+        "'input_names': ['Close'], 'output_name': 'active', 'consumes_outputs': ['returns'], "
+        "'wide_callable': 'run_wide'}\n"
+        "COMPONENT_CALLABLE = 'run'\n\n# %% main compute\n"
+        "def run(bundle):\n    \"\"\"Fixture strategy, never executed.\"\"\"\n"
+        "    raise RuntimeError('not executed during config tests')\n"
+    )
+    return discover_component_registry(root=root, repo_root=tmp_path)
+
+
+def _resolve(portfolio: dict[str, Any], *, tmp_path: Path):
+    """Resolve a minimal valid Run Config with the given portfolio section."""
+    raw: dict[str, Any] = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "val-test",
+        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
+        "portfolio": portfolio,
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
+        "ranking": {"metric": "total_return"},
+        "optimization": {
+            "search": "grid",
+            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
+        },
+    }
+    return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+
+def _get_issues(path: str, error: ValidationError) -> list[dict[str, Any]]:
+    """Return pydantic error dicts matching the given dotted path."""
+    return [e for e in error.errors() if e["loc"] == tuple(path.split("."))]
+
+
+# ── smoke tests (constants, defaults, calculator) ────────────────────────────
 
 
 def test_schema_version_is_eight() -> None:
@@ -21,62 +90,6 @@ def test_schema_version_is_eight() -> None:
 
 def test_portfolio_directions_admit_signed_book() -> None:
     assert {"longonly", "shortonly", "both"} == PORTFOLIO_DIRECTIONS
-
-
-def test_portfolio_requires_gross_cap() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({}, issues)
-    assert ("portfolio.gross_cap", "is required") in [(i.path, i.message) for i in issues]
-
-
-def test_portfolio_requires_direction() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 1.0}, issues)
-    assert ("portfolio.direction", "is required") in [(i.path, i.message) for i in issues]
-
-
-def test_portfolio_accepts_gross_cap_above_one_no_ceiling() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 2.0}, issues)
-    assert [i for i in issues if i.path == "portfolio.gross_cap"] == []
-
-
-def test_portfolio_rejects_non_positive_gross_cap() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 0.0}, issues)
-    assert [i.path for i in issues if i.path == "portfolio.gross_cap"] == ["portfolio.gross_cap"]
-
-
-def test_portfolio_accepts_net_cap() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 2.0, "net_cap": 0.0}, issues)
-    assert [i for i in issues if i.path == "portfolio.net_cap"] == []
-
-
-def test_portfolio_rejects_removed_target_exposure_cap_with_clear_message() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 1.0, "target_exposure_cap": 1.0}, issues)
-    messages = [i.message for i in issues if i.path == "portfolio.target_exposure_cap"]
-    assert messages, "target_exposure_cap must be rejected"
-    assert "gross_cap" in messages[0]
-
-
-def test_portfolio_admits_direction_both() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 2.0, "direction": "both"}, issues)
-    assert [i for i in issues if i.path == "portfolio.direction"] == []
-
-
-def test_portfolio_admits_direction_shortonly() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 2.0, "direction": "shortonly"}, issues)
-    assert [i for i in issues if i.path == "portfolio.direction"] == []
-
-
-def test_portfolio_rejects_unknown_direction() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 1.0, "direction": "sideways"}, issues)
-    assert [i.path for i in issues if i.path == "portfolio.direction"] == ["portfolio.direction"]
 
 
 def test_report_periods_per_year_shares_metric_annualization_calendar() -> None:
@@ -88,39 +101,181 @@ def test_report_periods_per_year_shares_metric_annualization_calendar() -> None:
 
 def test_short_financing_rate_defaults_carry_on() -> None:
     # Non-zero borrow default = carry ON by default; rebate defaults to 0.0.
-    config = make_portfolio_config(direction="longonly")
+    config = make_portfolio_config(gross_cap=1.0, direction="longonly")
     assert config.short_borrow_rate == 0.005
     assert config.short_rebate_rate == 0.0
 
 
-def test_portfolio_accepts_short_financing_rates() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio(
-        {"gross_cap": 2.0, "short_borrow_rate": 0.01, "short_rebate_rate": 0.002},
-        issues,
+# ── construction validates (pydantic dataclass) ──────────────────────────────
+
+
+def test_portfolio_construction_requires_gross_cap() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python({"direction": "longonly"})
+    assert any(err["loc"] == ("gross_cap",) for err in e.value.errors())
+    gross_errors = _get_issues("gross_cap", e.value)
+    assert gross_errors[0]["msg"] == "Field required"
+
+
+def test_portfolio_construction_requires_direction() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 1.0})
+    assert any(err["loc"] == ("direction",) for err in e.value.errors())
+    dir_errors = _get_issues("direction", e.value)
+    assert dir_errors[0]["msg"] == "Field required"
+
+
+def test_portfolio_construction_accepts_gross_cap_above_one_no_ceiling() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 2.0, "direction": "longonly"})
+    assert config.gross_cap == 2.0
+
+
+def test_portfolio_construction_rejects_non_positive_gross_cap() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 0.0, "direction": "longonly"})
+    gross_errors = _get_issues("gross_cap", e.value)
+    assert gross_errors[0]["msg"] == "Input should be greater than 0"
+
+
+def test_portfolio_construction_accepts_net_cap_zero() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python(
+        {"gross_cap": 2.0, "net_cap": 0.0, "direction": "longonly"}
     )
-    assert [
-        i for i in issues if i.path in {"portfolio.short_borrow_rate", "portfolio.short_rebate_rate"}
-    ] == []
+    assert config.net_cap == 0.0
 
 
-def test_portfolio_rejects_negative_short_borrow_rate() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 1.0, "short_borrow_rate": -0.001}, issues)
-    assert [i.path for i in issues if i.path == "portfolio.short_borrow_rate"] == [
-        "portfolio.short_borrow_rate"
-    ]
+def test_portfolio_construction_admits_direction_both() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 2.0, "direction": "both"})
+    assert config.direction == "both"
 
 
-def test_portfolio_rejects_negative_short_rebate_rate() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_portfolio({"gross_cap": 1.0, "short_rebate_rate": -0.001}, issues)
-    assert [i.path for i in issues if i.path == "portfolio.short_rebate_rate"] == [
-        "portfolio.short_rebate_rate"
-    ]
+def test_portfolio_construction_admits_direction_shortonly() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 2.0, "direction": "shortonly"})
+    assert config.direction == "shortonly"
 
 
-def test_report_rejects_out_of_range_drawdown() -> None:
-    issues: list[ConfigValidationIssue] = []
-    _validate_report({"max_oos_drawdown": 2.0}, issues)
-    assert ("report.max_oos_drawdown", "must be at most 1") in [(i.path, i.message) for i in issues]
+def test_portfolio_construction_rejects_unknown_direction() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 1.0, "direction": "sideways"})
+    dir_errors = _get_issues("direction", e.value)
+    assert "longonly" in dir_errors[0]["msg"] or dir_errors[0]["type"] == "literal_error"
+
+
+def test_portfolio_construction_accepts_short_financing_rates() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python(
+        {"gross_cap": 2.0, "direction": "longonly", "short_borrow_rate": 0.01, "short_rebate_rate": 0.002}
+    )
+    assert config.short_borrow_rate == 0.01
+    assert config.short_rebate_rate == 0.002
+
+
+def test_portfolio_construction_rejects_negative_short_borrow_rate() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python(
+            {"gross_cap": 1.0, "direction": "longonly", "short_borrow_rate": -0.001}
+        )
+    assert any(err["loc"] == ("short_borrow_rate",) for err in e.value.errors())
+
+
+def test_portfolio_construction_rejects_negative_short_rebate_rate() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python(
+            {"gross_cap": 1.0, "direction": "longonly", "short_rebate_rate": -0.001}
+        )
+    assert any(err["loc"] == ("short_rebate_rate",) for err in e.value.errors())
+
+
+def test_portfolio_construction_rejects_unknown_key() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python(
+            {"gross_cap": 1.0, "direction": "longonly", "bogus": 42}
+        )
+    assert any(err["type"] == "unexpected_keyword_argument" for err in e.value.errors())
+
+
+# ── report structural validation ─────────────────────────────────────────────
+
+
+def test_report_construction_rejects_out_of_range_drawdown() -> None:
+    with pytest.raises(ValidationError) as e:
+        _REPORT_ADAPTER.validate_python({"max_oos_drawdown": 2.0})
+    dd_errors = _get_issues("max_oos_drawdown", e.value)
+    assert dd_errors[0]["msg"] == "Input should be less than or equal to 1"
+
+
+def test_report_construction_accepts_defaults() -> None:
+    config = _REPORT_ADAPTER.validate_python({})
+    assert config.min_oos_sharpe == 0.5
+    assert config.max_oos_drawdown == 0.35
+    assert config.min_oos_trades == 5
+
+
+# ── tombstone fields (coordinator prepass via resolve_run_config) ─────────────
+
+
+def test_portfolio_rejects_removed_entry_budget_with_exact_message(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve({"entry_budget": 0.6, "gross_cap": 1.0, "direction": "longonly"}, tmp_path=tmp_path)
+    issues = [(i.path, i.message) for i in e.value.issues]
+    assert ("portfolio.entry_budget", "renamed to portfolio.gross_cap") in issues
+
+
+def test_portfolio_rejects_removed_target_exposure_cap_with_clear_message(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve({"gross_cap": 1.0, "target_exposure_cap": 1.0, "direction": "longonly"}, tmp_path=tmp_path)
+    messages = [i.message for i in e.value.issues if i.path == "portfolio.target_exposure_cap"]
+    assert messages, "target_exposure_cap must be rejected"
+    assert "gross_cap" in messages[0]
+
+
+def test_portfolio_rejects_removed_size_field(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve({"gross_cap": 1.0, "size": 100, "direction": "longonly"}, tmp_path=tmp_path)
+    messages = [i.message for i in e.value.issues if i.path == "portfolio.size"]
+    assert messages
+    assert "gross_cap" in messages[0]
+
+
+def test_portfolio_size_type_target_rejected_with_internal_message(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {"gross_cap": 1.0, "size_type": "targetpercent", "direction": "longonly"},
+            tmp_path=tmp_path,
+        )
+    messages = [i.message for i in e.value.issues if i.path == "portfolio.size_type"]
+    assert messages
+    assert "internally" in messages[0]
+
+
+def test_portfolio_size_type_non_target_rejected_with_generic_message(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {"gross_cap": 1.0, "size_type": "bogus_type", "direction": "longonly"},
+            tmp_path=tmp_path,
+        )
+    messages = [i.message for i in e.value.issues if i.path == "portfolio.size_type"]
+    assert messages
+    assert "removed" in messages[0]
+
+
+def test_portfolio_size_type_non_string_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {"gross_cap": 1.0, "size_type": 42, "direction": "longonly"},
+            tmp_path=tmp_path,
+        )
+    messages = [i.message for i in e.value.issues if i.path == "portfolio.size_type"]
+    assert messages
+    assert "string" in messages[0]
+
+
+# ── all-errors-at-once (tombstone + structural co-reported) ──────────────────
+
+
+def test_portfolio_co_reports_tombstone_and_structural_error(tmp_path: Path) -> None:
+    """A removed field *and* a missing gross_cap are both reported."""
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve({"entry_budget": 0.6, "direction": "longonly"}, tmp_path=tmp_path)
+    paths = {i.path for i in e.value.issues}
+    assert "portfolio.entry_budget" in paths
+    assert "portfolio.gross_cap" in paths

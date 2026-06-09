@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import TypeAdapter, ValidationError
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.component_registry import (
@@ -13,10 +14,17 @@ from research.aegis_research.component_registry import (
     discover_component_registry,
 )
 from research.aegis_research.configuration.builders import _build_run_config
+from research.aegis_research.configuration.pydantic_adapter import (
+    _apply_removed_fields,
+    _validation_error_to_issues,
+)
 from research.aegis_research.configuration.schema import (
+    PORTFOLIO_TARGET_SIZE_TYPES,
     ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
+    PortfolioConfig,
+    ReportConfig,
     RunConfig,
 )
 from research.aegis_research.configuration.validation import (
@@ -186,6 +194,12 @@ def _build_resolved_run_config(
         raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
 
     issues: list[ConfigValidationIssue] = []
+
+    # ── pydantic-ported sections: portfolio, report ──────────────────────
+    portfolio_config = _validate_portfolio_section(raw, issues)
+    report_config = _validate_report_section(raw, issues)
+
+    # ── legacy (still-raw-dict) sections ─────────────────────────────────
     _validate_raw_run_config(
         raw,
         issues,
@@ -197,13 +211,79 @@ def _build_resolved_run_config(
 
     text_for_hash = raw_text if raw_text is not None else yaml.safe_dump(raw, sort_keys=False)
     return ResolvedRunConfig(
-        config=_build_run_config(raw),
+        config=_build_run_config(
+            raw,
+            portfolio_config=portfolio_config,
+            report_config=report_config,
+        ),
         raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
         authored_config=to_builtin(raw),
         source_path=source_path,
         component_registry=component_registry,
         metric_registry=metric_registry,
     )
+
+
+def _validate_portfolio_section(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> PortfolioConfig | None:
+    """Tombstone prepass + pydantic validate/construct for portfolio."""
+    portfolio_raw = raw.get("portfolio", {})
+    if not isinstance(portfolio_raw, dict):
+        issues.append(ConfigValidationIssue("portfolio", "must be a mapping"))
+        return None
+
+    # ── tombstone prepass (strips removed keys, appends bespoke messages) ─
+    cleaned = _apply_removed_fields(
+        portfolio_raw, "portfolio", PortfolioConfig.REMOVED_FIELDS, issues
+    )
+    # size_type has conditional messages (not a simple fixed text)
+    if "size_type" in cleaned:
+        st_value = cleaned.pop("size_type")
+        if not isinstance(st_value, str):
+            issues.append(
+                ConfigValidationIssue("portfolio.size_type", "must be a string")
+            )
+        elif st_value in PORTFOLIO_TARGET_SIZE_TYPES:
+            issues.append(
+                ConfigValidationIssue(
+                    "portfolio.size_type",
+                    PortfolioConfig._SIZE_TYPE_TOMBSTONES["target"],
+                )
+            )
+        else:
+            issues.append(
+                ConfigValidationIssue(
+                    "portfolio.size_type",
+                    PortfolioConfig._SIZE_TYPE_TOMBSTONES["other"],
+                )
+            )
+
+    # ── pydantic validate + construct ────────────────────────────────────
+    try:
+        return TypeAdapter(PortfolioConfig).validate_python(cleaned)
+    except ValidationError as e:
+        issues.extend(_validation_error_to_issues(e, section="portfolio"))
+        return None
+
+
+def _validate_report_section(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> ReportConfig | None:
+    """Pydantic validate/construct for report."""
+    report_raw = raw.get("report", {})
+    if not isinstance(report_raw, dict):
+        if report_raw or "report" in raw:
+            issues.append(ConfigValidationIssue("report", "must be a mapping"))
+        return None
+
+    try:
+        return TypeAdapter(ReportConfig).validate_python(report_raw)
+    except ValidationError as e:
+        issues.extend(_validation_error_to_issues(e, section="report"))
+        return None
 
 
 def _assert_resolved_config_registries(

@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 import pandas as pd
+from pydantic import ConfigDict
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+
+from research.aegis_research.configuration.field_types import (
+    NonNegativeRate,
+    PositiveCash,
+    StrictFloat,
+    UnitInterval,
+)
 
 CONFIG_SCHEMA_VERSION = 8
 EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -115,27 +124,48 @@ class SignalConfig:
     execution_timing: str = "next_open"
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class PortfolioConfig:
-    init_cash: float = 10_000.0
-    fees: float = 0.001
-    slippage: float = 0.0005
-    gross_cap: float = 1.0
-    net_cap: float = 1.0
-    # Required (validation rejects a config missing it); no silent long-only default. Keyword-only
-    # so a required field can sit among defaulted ones — every construction site splats **raw anyway.
-    direction: str = field(kw_only=True)
+    init_cash: PositiveCash = 10_000.0
+    fees: NonNegativeRate = 0.001
+    slippage: NonNegativeRate = 0.0005
+    net_cap: NonNegativeRate = 1.0
     # Short financing carry: flat annual rates. Effective net carry = borrow - rebate,
     # charged only on short legs (see ADR-0008). The non-zero borrow default means carry
     # is ON by default; a long-only book has no short legs and is unaffected.
-    short_borrow_rate: float = 0.005
-    short_rebate_rate: float = 0.0
+    short_borrow_rate: NonNegativeRate = 0.005
+    short_rebate_rate: NonNegativeRate = 0.0
+    # No schema default — required. Keyword-only so a required field can sit among
+    # defaulted ones — every construction site splats **raw anyway.
+    gross_cap: PositiveCash = field(kw_only=True)
+    # Required (validation rejects a config missing it); no silent long-only default.
+    direction: Literal["longonly", "shortonly", "both"] = field(kw_only=True)
+
+    # Tombstone fields rejected by the coordinator prepass (NOT @model_validator —
+    # a validator raising ValueError loses the dotted path and mangles the message).
+    REMOVED_FIELDS: ClassVar[dict[str, str]] = {
+        "entry_budget": "renamed to portfolio.gross_cap",
+        "target_exposure_cap": (
+            "was replaced by portfolio.gross_cap (max Σ|wᵢ|) "
+            "and portfolio.net_cap (max |Σwᵢ|)"
+        ),
+        "size": "was removed; use portfolio.gross_cap for exposure sizing",
+    }
+    _SIZE_TYPE_TOMBSTONES: ClassVar[dict[str, str]] = {
+        "target": (
+            "target allocation sizing is resolved internally; "
+            "size_type is not a config knob"
+        ),
+        "other": (
+            "was removed; the simulator resolves targetpercent sizing internally"
+        ),
+    }
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class ReportConfig:
-    min_oos_sharpe: float = 0.5
-    max_oos_drawdown: float = 0.35
+    min_oos_sharpe: StrictFloat = 0.5
+    max_oos_drawdown: UnitInterval = 0.35
     min_oos_trades: int = 5
     freq: str = "1D"
     year_freq: str = "252D"
