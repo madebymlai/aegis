@@ -6,7 +6,7 @@ non-finite over the full series (lookback exceeds all available history).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -35,7 +35,7 @@ def invalid_candidates(
     invalid: set[CandidateKey] = set()
     for key in keys:
         for output_name, output in outputs.items():
-            position = _candidate_index_for_output(store, output_name)[key]
+            position = store._candidate_index_for_output(output_name)[key]
             if _candidate_output_is_non_finite(output, position, store.n_symbols):
                 invalid.add(key)
                 break
@@ -47,14 +47,6 @@ def invalid_candidate_positions(
 ) -> list[int]:
     """Return the positional indices within ``keys`` that are Invalid."""
     return [position for position, key in enumerate(keys) if key in invalid_keys]
-
-
-def _candidate_index_for_output(
-    store: WideIndicatorPrecompute, output_name: str
-) -> Mapping[CandidateKey, int]:
-    if store.output_candidate_index is None:
-        return store.candidate_index
-    return store.output_candidate_index.get(output_name, store.candidate_index)
 
 
 def _candidate_output_is_non_finite(output: Any, position: int, n_symbols: int) -> bool:
