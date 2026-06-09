@@ -8,6 +8,7 @@ import pytest
 
 from research.aegis_research.config import PortfolioConfig
 from research.aegis_research.configuration.schema import ReportConfig
+from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
@@ -65,7 +66,11 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
 
     candidate_keys = [(candidate_id,) for candidate_id in candidate_ids]
     production = central_metrics_from_grouped_accessors(
-        simulation.portfolio, config, candidate_keys, ["candidate_id"]
+        simulation.portfolio,
+        config,
+        candidate_keys,
+        ["candidate_id"],
+        make_default_metric_registry().extractors,
     )
     oracle = report_grade_metrics_by_candidate(simulation.portfolio, config, candidate_ids)
 
@@ -108,7 +113,11 @@ def test_non_finite_values_land_as_nan_in_a_float64_grid() -> None:
 
     candidate_keys = [(c,) for c in candidate_ids]
     result = central_metrics_from_grouped_accessors(
-        simulation.portfolio, config, candidate_keys, ["candidate_id"]
+        simulation.portfolio,
+        config,
+        candidate_keys,
+        ["candidate_id"],
+        make_default_metric_registry().extractors,
     )
     row = result.loc[("flat",)]
 

@@ -12,6 +12,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     RunSplitConfig,
 )
+from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.runner import (
     OptimizationRunnerError,
@@ -62,6 +63,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
             portfolio=PortfolioConfig(fees=0, slippage=0, direction="longonly"),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return"),
+            metric_registry=make_default_metric_registry(),
         )
 
 
@@ -90,4 +92,5 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
             portfolio=PortfolioConfig(fees=0, slippage=0, direction="longonly"),
             report=ReportConfig(),
             ranking=RankingConfig(metric="total_return"),
+            metric_registry=make_default_metric_registry(),
         )

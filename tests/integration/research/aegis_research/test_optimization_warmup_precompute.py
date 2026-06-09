@@ -23,6 +23,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     RunSplitConfig,
 )
+from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,
     build_candidate_index,
@@ -124,6 +125,7 @@ def _run(windows: list[int], *, optimization: OptimizationConfig | None = None):
         portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
     )
 
 
@@ -307,6 +309,7 @@ def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> No
         portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
     )
 
     invalid_params: dict = {"window": invalid_window}

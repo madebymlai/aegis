@@ -19,6 +19,7 @@ from research.aegis_research.configuration.schema import (
     ReportConfig,
     RunSplitConfig,
 )
+from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,
     build_candidate_index,
@@ -91,6 +92,7 @@ def _run(alphas: list[float], *, min_weight: float = 0.3) -> OptimizationResult:
         portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", min_weight=min_weight),
+        metric_registry=make_default_metric_registry(),
     )
 
 
@@ -278,6 +280,7 @@ def _run_warmup(windows: list[int]) -> OptimizationResult:
         portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
         report=ReportConfig(),
         ranking=RankingConfig(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
     )
 
 

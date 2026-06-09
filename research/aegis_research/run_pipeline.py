@@ -108,6 +108,7 @@ def run_strategy_sweep(
                 if resolved_config.metric_registry
                 else None
             ),
+            metric_registry=resolved_config.metric_registry,
             run_evidence=run_evidence,
         )
     except KeyboardInterrupt:
@@ -139,6 +140,7 @@ def _run_optimization_strategy_sweep(
     data: MarketDataBundle,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
+    metric_registry: Any,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
     # Stage 1: Setup — resolve locks, build optimization source and evidence baseline
@@ -163,6 +165,7 @@ def _run_optimization_strategy_sweep(
         close=setup["close"],
         open_=setup["open_"],
         split_result=setup["split_result"],
+        metric_registry=metric_registry,
         run_evidence=run_evidence,
     )
 

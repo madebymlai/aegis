@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
 
 from research.aegis_research.configuration.schema import ReportConfig
-from research.aegis_research.metrics.extractors import (
-    get_custom_extractor_keys,
-    get_extractors,
-)
-from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
+from research.aegis_research.metrics.contracts import ExtractorSpec
 
 
 def central_metrics_from_grouped_accessors(
@@ -18,30 +15,33 @@ def central_metrics_from_grouped_accessors(
     config: ReportConfig,
     candidate_keys: list[tuple],
     param_names: list[str],
+    extractors: Mapping[str, ExtractorSpec],
 ) -> pd.DataFrame:
-    """Grouped metric extraction via registry-driven loop.
+    """Grouped metric extraction via a registry-driven loop.
 
     One VBT accessor call per metric over the whole batched portfolio,
-    independent of candidate count.  Transforms (scale, abs) are applied
-    per-candidate via declarative flags from ``get_extractors()``.
-    """
-    extractors = get_extractors()
-    all_metric_keys = list(PORTFOLIO_METRIC_VALUE_KEYS) + list(get_custom_extractor_keys())
+    independent of candidate count. Transforms (scale, abs) are applied
+    per-candidate via the declarative flags on each ``ExtractorSpec``.
 
-    # --- one read per metric ---
-    raw_series: dict[str, pd.Series] = {}
-    for metric_id in all_metric_keys:
-        spec = extractors[metric_id]
-        raw_series[metric_id] = spec.read(pf, config)
+    ``extractors`` is the registry's extractor mapping in registration order
+    (catalog metrics, then any custom ones); that order is the output column
+    order. The loop owns no knowledge of which metrics exist — it computes
+    exactly the records it is handed.
+    """
+    metric_ids = list(extractors)
+
+    # --- one read per metric, over the whole batch ---
+    raw: dict[str, Any] = {
+        metric_id: extractors[metric_id].read(pf, config) for metric_id in metric_ids
+    }
 
     # --- per-candidate slice + transforms ---
-    n = len(candidate_keys)
     rows: list[dict[str, Any]] = []
-    for i in range(n):
+    for i in range(len(candidate_keys)):
         row: dict[str, Any] = {}
-        for metric_id in all_metric_keys:
+        for metric_id in metric_ids:
             spec = extractors[metric_id]
-            val = _ith(raw_series[metric_id], i)
+            val = _ith(raw[metric_id], i)
             if spec.abs_:
                 val = abs(val)
             if spec.scale == "percent":

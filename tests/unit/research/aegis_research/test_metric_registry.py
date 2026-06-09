@@ -9,13 +9,20 @@ from research.aegis_research.metrics import (
     MetricRegistryError,
     make_default_metric_registry,
 )
-from research.aegis_research.metrics.stats import register_vbt_stats_metrics
+from research.aegis_research.metrics.contracts import ExtractorSpec
+from research.aegis_research.metrics.stats import (
+    PORTFOLIO_METRIC_VALUE_KEYS,
+    register_vbt_stats_metrics,
+)
+
+_SPEC = ExtractorSpec(lambda pf, config: None)
+_STATS_TITLES = {m: {"title": m} for m in PORTFOLIO_METRIC_VALUE_KEYS}
 
 
 def test_metric_registry_freezes_definitions_and_fingerprint() -> None:
     registry = MetricRegistry()
-    registry.register(_definition("sharpe_ratio", title="Sharpe Ratio"))
-    registry.register(_definition("total_return", title="Total Return"))
+    registry.register(_definition("sharpe_ratio", title="Sharpe Ratio"), _SPEC)
+    registry.register(_definition("total_return", title="Total Return"), _SPEC)
 
     frozen = registry.freeze()
 
@@ -24,24 +31,64 @@ def test_metric_registry_freezes_definitions_and_fingerprint() -> None:
     assert len(frozen.fingerprint) == 64
 
 
+def test_register_requires_an_extractor() -> None:
+    """A definition cannot enter the registry without a way to compute it.
+
+    Catalog-only drift is a missing argument at the call site, fail-closed at
+    startup — not a KeyError discovered mid-extraction.
+    """
+    registry = MetricRegistry()
+
+    with pytest.raises(TypeError):
+        registry.register(_definition("total_return"))  # type: ignore[call-arg]
+
+
+def test_frozen_registry_extractors_match_definitions() -> None:
+    """Every frozen definition has exactly one extractor and vice versa."""
+    registry = MetricRegistry()
+    registry.register(_definition("total_return"), _SPEC)
+    registry.register(_definition("sharpe_ratio"), _SPEC)
+
+    frozen = registry.freeze()
+
+    assert set(frozen.extractors) == set(frozen.definitions)
+
+
+def test_default_registry_extractors_match_definitions() -> None:
+    frozen = make_default_metric_registry()
+
+    assert set(frozen.extractors) == set(frozen.definitions)
+
+
+def test_default_registry_extractors_preserve_catalog_order() -> None:
+    """Extractor iteration order is registration (catalog) order, not sorted id order.
+
+    The extraction loop's column order is this iteration order, so it must match
+    the catalog rather than the fingerprint's sorted definition order.
+    """
+    frozen = make_default_metric_registry()
+
+    assert tuple(frozen.extractors) == PORTFOLIO_METRIC_VALUE_KEYS
+
+
 def test_metric_registry_rejects_duplicate_ids() -> None:
     registry = MetricRegistry()
-    registry.register(_definition("total_return"))
+    registry.register(_definition("total_return"), _SPEC)
 
     with pytest.raises(MetricRegistryError, match="duplicate metric id"):
-        registry.register(_definition("total_return"))
+        registry.register(_definition("total_return"), _SPEC)
 
 
 def test_metric_registry_rejects_malformed_definition() -> None:
     registry = MetricRegistry()
 
     with pytest.raises(MetricRegistryError, match="metric id must be non-empty"):
-        registry.register(_definition(""))
+        registry.register(_definition(""), _SPEC)
 
 
 def test_frozen_metric_registry_definitions_are_immutable() -> None:
     registry = MetricRegistry()
-    registry.register(_definition("total_return"))
+    registry.register(_definition("total_return"), _SPEC)
     frozen = registry.freeze()
 
     with pytest.raises(TypeError):
@@ -50,32 +97,51 @@ def test_frozen_metric_registry_definitions_are_immutable() -> None:
 
 def test_metric_registry_fingerprint_is_order_independent() -> None:
     first = MetricRegistry()
-    first.register(_definition("total_return", title="Total Return"))
-    first.register(_definition("sharpe_ratio", title="Sharpe Ratio"))
+    first.register(_definition("total_return", title="Total Return"), _SPEC)
+    first.register(_definition("sharpe_ratio", title="Sharpe Ratio"), _SPEC)
     second = MetricRegistry()
-    second.register(_definition("sharpe_ratio", title="Sharpe Ratio"))
-    second.register(_definition("total_return", title="Total Return"))
+    second.register(_definition("sharpe_ratio", title="Sharpe Ratio"), _SPEC)
+    second.register(_definition("total_return", title="Total Return"), _SPEC)
 
     assert first.freeze().fingerprint == second.freeze().fingerprint
 
     changed = MetricRegistry()
-    changed.register(_definition("total_return", title="Total Return [%]"))
-    changed.register(_definition("sharpe_ratio", title="Sharpe Ratio"))
+    changed.register(_definition("total_return", title="Total Return [%]"), _SPEC)
+    changed.register(_definition("sharpe_ratio", title="Sharpe Ratio"), _SPEC)
 
     assert first.freeze().fingerprint != changed.freeze().fingerprint
 
 
-def test_default_metric_registry_contains_supported_stats_and_custom_metrics() -> None:
+def test_fingerprint_is_independent_of_the_extractor() -> None:
+    """The extractor carries a callable and must never enter the fingerprint.
+
+    Two registries with identical definitions but different extractors hash the
+    same — the fingerprint is a property of the definitions alone.
+    """
+    one = MetricRegistry()
+    one.register(_definition("total_return"), ExtractorSpec(lambda pf, config: None))
+    other = MetricRegistry()
+    other.register(_definition("total_return"), ExtractorSpec(lambda pf, config: 1.0, scale="percent"))
+
+    assert one.freeze().fingerprint == other.freeze().fingerprint
+
+
+def test_default_registry_fingerprint_is_byte_stable() -> None:
+    """Golden fingerprint: guards against a silent change to the recorded hash.
+
+    The fingerprint flows into Evidence; if a definition field or its
+    serialization ever shifts, this pinned value catches it deterministically.
+    """
+    assert (
+        make_default_metric_registry().fingerprint
+        == "25995c4bdb5f6c98e4bf62fc60bc38a534e927d2ff469e02102e075d3bdaa3ae"
+    )
+
+
+def test_default_metric_registry_contains_supported_stats() -> None:
     registry = make_default_metric_registry()
 
-    assert {
-        "total_return",
-        "max_dd",
-        "total_trades",
-        "win_rate",
-        "total_fees_paid",
-        "sharpe_ratio",
-    }.issubset(registry.ids())
+    assert set(PORTFOLIO_METRIC_VALUE_KEYS).issubset(registry.ids())
     assert registry.get("total_return").target == "portfolio"
 
 
@@ -108,6 +174,38 @@ def test_vbt_stats_registration_fails_when_supported_metric_is_missing() -> None
                 "total_return": {"title": "Total Return"},
             },
         )
+
+
+def test_custom_extractor_does_not_leak_across_registries() -> None:
+    """A custom metric registered into one registry must not bleed into another.
+
+    The extractor is part of the per-registry record, not process-global state,
+    so a custom metric's lifetime is its registry's lifetime — registering it
+    here cannot make a freshly built registry compute it.
+    """
+    from research.aegis_research.metrics.custom import register_custom_metrics
+
+    tainted = MetricRegistry()
+    register_vbt_stats_metrics(tainted, portfolio_metrics=_STATS_TITLES)
+    register_custom_metrics(
+        tainted,
+        metrics=[
+            (
+                MetricDefinition(
+                    id="leaked",
+                    title="Leaked",
+                    source_type="custom",
+                    unit="ratio",
+                    value_semantics="test",
+                ),
+                _SPEC,
+            )
+        ],
+    )
+    assert "leaked" in tainted.freeze().extractors
+
+    fresh = make_default_metric_registry()
+    assert "leaked" not in fresh.extractors
 
 
 def _definition(metric_id: str, *, title: str = "Total Return") -> MetricDefinition:

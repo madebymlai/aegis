@@ -23,7 +23,6 @@ splitter is built with explicit ``set_labels=["selection", "held_out"]`` so that
 from __future__ import annotations
 
 import dataclasses
-
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -41,6 +40,8 @@ from research.aegis_research.configuration.schema import (
 from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
+from research.aegis_research.metrics.contracts import ExtractorSpec
+from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
@@ -83,6 +84,7 @@ def execute_optimization(
     portfolio: PortfolioConfig,
     report: ReportConfig,
     ranking: RankingConfig,
+    metric_registry: FrozenMetricRegistry,
 ) -> OptimizationResult:
     _validate_source_param_names(source.params)
     if ranking.metric not in PORTFOLIO_METRIC_VALUE_KEYS:
@@ -91,6 +93,10 @@ def execute_optimization(
             f"portfolio metric catalog: {sorted(PORTFOLIO_METRIC_VALUE_KEYS)}"
         )
 
+    # The registry record is the single home for each Metric's definition and its
+    # extractor; the sweep is handed a plain extractor mapping (catalog order) so
+    # the dill-serialised Phase-1 closure carries no registry/proxy machinery.
+    extractors = dict(metric_registry.extractors)
     splitter = _build_splitter(close.index, optimization)
 
     # Stage 0: materialise the sampled candidate set once, deterministically, and
@@ -117,6 +123,7 @@ def execute_optimization(
         open_=open_,
         store=store,
         invalid_candidate_keys=invalid_candidate_keys,
+        extractors=extractors,
     )
     selection_grid = _sweep(
         splitter=splitter,
@@ -151,6 +158,7 @@ def execute_optimization(
         store=store,
         param_names=param_names,
         invalid_candidate_keys=invalid_candidate_keys,
+        extractors=extractors,
     )
 
 
@@ -171,6 +179,7 @@ def _build_precomputed_window_metrics(
     open_: pd.DataFrame,
     store: WideIndicatorPrecompute,
     invalid_candidate_keys: set[CandidateKey],
+    extractors: Mapping[str, ExtractorSpec],
 ) -> Callable[..., Any]:
     """Build a split callback that slices the full-series store before simulation.
 
@@ -200,7 +209,7 @@ def _build_precomputed_window_metrics(
         # stay in the grid without masking. The all-invalid short-circuit
         # above is a pure performance guard.
         return _metrics_from_allocations(
-            close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names
+            close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names, extractors
         )
 
     return window_metrics
@@ -230,6 +239,7 @@ def _metrics_from_allocations(
     report: ReportConfig,
     metric_keys: list[tuple],
     param_names: list[str],
+    extractors: Mapping[str, ExtractorSpec],
 ) -> Any:
     if wide_allocations is vbt.NoResult:
         return vbt.NoResult
@@ -246,7 +256,7 @@ def _metrics_from_allocations(
         periods_per_year=report.periods_per_year,
     )
     return central_metrics_from_grouped_accessors(
-        result.portfolio, report, metric_keys, param_names
+        result.portfolio, report, metric_keys, param_names, extractors
     )
 
 
@@ -336,6 +346,7 @@ def _attach_held_out(
     store: WideIndicatorPrecompute,
     param_names: list[str],
     invalid_candidate_keys: set[CandidateKey],
+    extractors: Mapping[str, ExtractorSpec],
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
     unique_params: list[dict[str, Any]] = []
@@ -356,6 +367,7 @@ def _attach_held_out(
         open_=open_,
         store=store,
         invalid_candidate_keys=invalid_candidate_keys,
+        extractors=extractors,
     )
     held_out_grid = _sweep(
         splitter=splitter,

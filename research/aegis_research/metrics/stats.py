@@ -8,6 +8,7 @@ from research.aegis_research.metrics.contracts import (
     MetricDefinition,
     MetricRegistryError,
 )
+from research.aegis_research.metrics.extractors import BUILTIN_EXTRACTORS
 from research.aegis_research.metrics.registry import MetricRegistry
 
 VBT_STATS_PROVIDER = "vectorbtpro"
@@ -84,7 +85,10 @@ def register_vbt_stats_metrics(
 ) -> None:
     metrics = portfolio_metrics if portfolio_metrics is not None else _portfolio_metrics()
     for metric_id, overlay in SUPPORTED_PORTFOLIO_STATS.items():
-        registry.register(_portfolio_metric_definition(metric_id, overlay, metrics))
+        registry.register(
+            _portfolio_metric_definition(metric_id, overlay, metrics),
+            BUILTIN_EXTRACTORS[metric_id],
+        )
 
 
 def _portfolio_metrics() -> Mapping[str, Mapping[str, Any]]:
