@@ -4,12 +4,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.atomic_write import write_json
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.manifest import (
     RunManifest,
     RunStatus,
     StageStatus,
-    atomic_write_json,
 )
 
 
@@ -53,7 +53,7 @@ class RunRecorder:
         return recorder
 
     def persist(self) -> None:
-        atomic_write_json(self.manifest_path, self.manifest.to_dict())
+        write_json(self.manifest_path, self.manifest.to_dict())
 
     def mark_stage(self, stage_id: str, status: str, **metadata: Any) -> None:
         self.manifest.add_stage(stage_id, status, **metadata)

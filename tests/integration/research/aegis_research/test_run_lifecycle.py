@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus, hash_file
+from research.aegis_research.atomic_write import hash_file
+from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
 from research.aegis_research.run_pipeline import run_strategy_sweep

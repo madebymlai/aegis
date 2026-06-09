@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from research.aegis_research.atomic_write import write_json
 from research.aegis_research.market_data.contracts import MarketDataResult
-from research.aegis_research.provenance.manifest import atomic_write_json
 from research.aegis_research.provenance.recorder import RunRecorder
 
 
@@ -31,7 +31,7 @@ def write_data_metadata_artifact(recorder: RunRecorder, data_result: MarketDataR
     target = recorder.run_dir / path
     recorder.artifacts.begin_artifact_write(artifact_id)
     try:
-        atomic_write_json(target, data_result.metadata)
+        write_json(target, data_result.metadata)
         recorder.artifacts.complete_existing_file(artifact_id)
     except Exception as error:
         try:

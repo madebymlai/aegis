@@ -11,12 +11,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.atomic_write import hash_file
 from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.config import (
     ResolvedRunConfig,
     to_builtin,
 )
-from research.aegis_research.provenance.manifest import hash_file
 
 SAFE_ENV_KEYS = ("LANG", "LC_ALL", "TZ", "PYTHONHASHSEED")
 PACKAGE_NAMES = (
