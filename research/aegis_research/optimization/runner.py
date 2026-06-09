@@ -246,17 +246,16 @@ def _metrics_from_allocations(
     n_symbols = len(close_window.columns)
     if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
         return vbt.NoResult
-    result = simulate_portfolio_batch(
+    pf = simulate_portfolio_batch(
         close_window,
         wide_allocations,
         portfolio,
         open_=open_window,
         market_index=close_window.index,
-        compute_diagnostics=False,
         periods_per_year=report.periods_per_year,
     )
     return central_metrics_from_grouped_accessors(
-        result.portfolio, report, metric_keys, param_names, extractors
+        pf, report, metric_keys, param_names, extractors
     )
 
 
