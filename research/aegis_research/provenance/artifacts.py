@@ -5,11 +5,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.atomic_write import hash_file
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
     ManifestValidationError,
     RunManifest,
-    hash_file,
 )
 
 

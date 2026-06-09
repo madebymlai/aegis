@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from research.aegis_research.atomic_write import hash_file, write_json
 from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.evidence import (
@@ -20,8 +21,6 @@ from research.aegis_research.provenance.manifest import (
     RunManifest,
     RunStatus,
     StageStatus,
-    atomic_write_json,
-    hash_file,
     validate_manifest,
 )
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
@@ -175,13 +174,13 @@ def test_manifest_rejects_unsafe_artifact_paths(tmp_path: Path, path: str) -> No
         )
 
 
-def test_atomic_write_json_keeps_manifest_pretty_but_hashes_compact_bytes(
+def test_write_json_keeps_manifest_pretty_but_hashes_compact_bytes(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "manifest.json"
     payload = {"b": 2, "a": 1}
 
-    atomic_write_json(target, payload)
+    write_json(target, payload)
     written_bytes = target.read_bytes()
 
     assert written_bytes == canonical_json_bytes(payload, indent=2)
@@ -200,14 +199,14 @@ def test_canonical_hash_serializes_non_finite_values_as_null() -> None:
     )
 
 
-def test_atomic_write_json_preserves_previous_file_on_serialization_failure(
+def test_write_json_preserves_previous_file_on_serialization_failure(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "manifest.json"
-    atomic_write_json(target, {"valid": True})
+    write_json(target, {"valid": True})
 
     with pytest.raises(TypeError):
-        atomic_write_json(target, {"invalid": {object()}})
+        write_json(target, {"invalid": {object()}})
 
     assert json.loads(target.read_text()) == {"valid": True}
     assert not list(tmp_path.glob("*.tmp"))

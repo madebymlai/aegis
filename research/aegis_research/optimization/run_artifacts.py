@@ -10,11 +10,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.atomic_write import hash_file, write_json
 from research.aegis_research.data_arrays import DataArrayContract
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_evidence_payload,
 )
-from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
 
 OPTIMIZATION_ARTIFACT_SCHEMA_VERSION = "optimization_artifact.v1"
 
@@ -60,7 +60,7 @@ def write_strategy_artifact(recorder: Any, payload: dict[str, Any]) -> None:
     artifact_path = Path("strategy_run.json")
     recorder.artifacts.begin_artifact_write("strategy.run")
     full_path = recorder.run_dir / artifact_path
-    atomic_write_json(full_path, payload)
+    write_json(full_path, payload)
     recorder.artifacts.complete_artifact(
         "strategy.run",
         content_hash=hash_file(full_path),
