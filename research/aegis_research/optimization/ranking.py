@@ -129,7 +129,7 @@ def select_representative_candidates(
         selection_metrics: dict[Any, dict[str, float | None]] = {}
         for split_label, (_, row) in zip(split_labels, sub.iterrows(), strict=True):
             selection_metrics[split_label] = {
-                col: _to_optional_float(row[col]) for col in metric_columns
+                col: optional_float(row[col]) for col in metric_columns
             }
 
         aggregated = {
@@ -167,10 +167,16 @@ def select_representative_candidates(
 
 
 def _rank_key(candidate: EvaluatedCandidate) -> tuple[int, float]:
+    """Sort key: highest score first; NaN sinks to the bottom.
+
+    NaN is a defensive safety net — admissible candidates (the only ones scored)
+    should never carry a NaN score — but the guard keeps an unexpected NaN from
+    accidentally outranking real values in descending sort.
+    """
     score = candidate.score
     if isnan(score):
-        return (1, 0.0)  # NaN scores rank last, regardless of value
-    return (0, -score)  # descending: highest score first
+        return (1, 0.0)
+    return (0, -score)
 
 
 def _min_aware_score(values: Iterable[float | None], min_weight: float) -> float:
@@ -186,7 +192,7 @@ def _mean(values: Iterable[float | None]) -> float | None:
     return sum(valid) / len(valid) if valid else None
 
 
-def _to_optional_float(value: Any) -> float | None:
+def optional_float(value: Any) -> float | None:
     if value is None:
         return None
     number = float(value)

@@ -23,7 +23,7 @@ splitter is built with explicit ``set_labels=["selection", "held_out"]`` so that
 from __future__ import annotations
 
 import dataclasses
-import math
+
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -56,6 +56,7 @@ from research.aegis_research.optimization.ranking import (
     SPLIT_LEVEL,
     EvaluatedCandidate,
     OptimizationResult,
+    optional_float,
     select_representative_candidates,
 )
 from research.aegis_research.optimization.source import (
@@ -402,7 +403,7 @@ def _candidate_split_metrics(
     metrics: dict[Any, dict[str, float | None]] = {}
     split_labels = rows.index.get_level_values(SPLIT_LEVEL)
     for split_label, (_, row) in zip(split_labels, rows.iterrows(), strict=True):
-        metrics[split_label] = {col: _optional_float(row[col]) for col in grid.columns}
+        metrics[split_label] = {col: optional_float(row[col]) for col in grid.columns}
     return metrics
 
 
@@ -439,9 +440,3 @@ def _validate_source_param_names(params: Mapping[str, vbt.Param]) -> None:
             "coordinates; choose distinct parameter names"
         )
 
-
-def _optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    number = float(value)
-    return None if math.isnan(number) else number
