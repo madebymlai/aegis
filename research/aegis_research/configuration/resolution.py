@@ -275,6 +275,9 @@ def _validate_report_section(
     """Pydantic validate/construct for report."""
     report_raw = raw.get("report", {})
     if not isinstance(report_raw, dict):
+        # ``report_raw`` is falsy when the raw value is ``None`` (YAML ``report:``)
+        # or an empty collection; the ``"report" in raw`` guard catches those so
+        # every non-dict value that was explicitly set produces an issue.
         if report_raw or "report" in raw:
             issues.append(ConfigValidationIssue("report", "must be a mapping"))
         return None

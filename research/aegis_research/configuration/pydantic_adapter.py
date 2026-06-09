@@ -22,20 +22,19 @@ def _validation_error_to_issues(
 ) -> list[ConfigValidationIssue]:
     """Map every pydantic ``ValidationError`` entry to a ``ConfigValidationIssue``.
 
-    ``loc`` is joined with ``.`` (``[i]`` for int elements), prepended with the
-    section name. The pydantic ``msg`` is taken verbatim — no translation table.
+    ``loc`` is dotted-joined and prepended with the section name.
+    Int elements use bracket notation (``[i]``) without an extra dot.
+    The pydantic ``msg`` is taken verbatim — no translation table.
     """
     issues: list[ConfigValidationIssue] = []
     for entry in error.errors():
-        loc = entry["loc"]
-        path_parts: list[str] = [section]
-        for part in loc:
+        path = section
+        for part in entry["loc"]:
             if isinstance(part, int):
-                path_parts.append(f"[{part}]")
+                path += f"[{part}]"
             else:
-                path_parts.append(str(part))
-        dotted = ".".join(path_parts)
-        issues.append(ConfigValidationIssue(dotted, entry["msg"]))
+                path += f".{part}"
+        issues.append(ConfigValidationIssue(path, entry["msg"]))
     return issues
 
 
