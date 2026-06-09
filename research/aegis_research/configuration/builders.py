@@ -81,25 +81,6 @@ def _build_lock(raw: dict[str, Any] | str | None) -> Lock | None:
     return Lock(run_id=raw["run_id"], candidate_id=raw["candidate_id"])
 
 
-def _build_run_source_ref(raw: dict[str, Any]) -> RunSourceRefConfig:
-    return RunSourceRefConfig(
-        id=raw["id"],
-        params=dict(raw.get("params", {})),
-    )
-
-
-def _build_run_indicator_sources(raw: list[dict[str, Any]]) -> list[RunIndicatorSourceConfig]:
-    refs: list[RunIndicatorSourceConfig] = []
-    for item in raw:
-        refs.append(
-            RunIndicatorSourceConfig(
-                id=item["id"],
-                params=dict(item.get("params", {})),
-            )
-        )
-    return refs
-
-
 def _build_ranking(raw: dict[str, Any]) -> RankingConfig:
     return RankingConfig(
         metric=raw["metric"],

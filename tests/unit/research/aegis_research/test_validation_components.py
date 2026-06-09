@@ -1,12 +1,11 @@
 """Component (strategy + indicators) validation — pydantic v2 structural tests.
 
-Tests for structural validation are driven through pydantic construction
+Structural validation is driven through pydantic construction
 (``TypeAdapter.validate_python``) and the coordinator (``resolve_run_config`` for
 membership + output-contract checks). Assertions use pydantic's structural wording.
 
-The old ``_validate_component_ref`` / ``_validate_component_indicator_refs``
-entry points are preserved for backwards-compatibility but their structural
-checks are now owned by the pydantic models.
+Structural checks are now owned by the pydantic models, validated in the
+coordinator in ``resolution._build_resolved_run_config``.
 """
 
 from __future__ import annotations

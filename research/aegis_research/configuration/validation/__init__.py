@@ -6,7 +6,6 @@ legacy fields) and sequences the domain validators; each domain lives in its own
 and imports only what it validates:
 
 - ``base``         — shared type/structure validators
-- ``components``   — strategy & indicator membership and output contracts (slim, registry-only)
 - ``data``         — market-data source, arrays, quality policy, paths
 - ``optimization`` — search policy, run split, random policy, execute passthrough
 - ``metrics``      — ranking metric selection

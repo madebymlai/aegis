@@ -349,16 +349,6 @@ def _validate_indicators_section(
         issues.append(ConfigValidationIssue("indicators", "must be a list"))
         return []
 
-    # Reject legacy "specs" key inside the indicators section value (not per-item)
-    if isinstance(indicators_raw, dict) and "specs" in indicators_raw:
-        issues.append(
-            ConfigValidationIssue(
-                "indicators",
-                "must use component refs; legacy indicators.specs is not accepted in run configs",
-            )
-        )
-        return []
-
     adapter = TypeAdapter(RunIndicatorSourceConfig)
     configs: list[RunIndicatorSourceConfig] = []
     seen_ids: set[str] = set()
@@ -404,7 +394,6 @@ def _validate_component_membership(
     Also rejects ``id == "all"`` (must select one component).
     Returns the registry definitions needed for the output-contract cross-check.
     """
-
 
     strategy_definition: ComponentDefinition | None = None
     if strategy_config is not None:
