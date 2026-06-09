@@ -208,7 +208,6 @@ def _build_resolved_run_config(
         raw,
         issues,
         component_registry=component_registry,
-        metric_registry=metric_registry,
     )
     if issues:
         raise ConfigValidationError(issues)
@@ -346,7 +345,7 @@ def _validate_lock_section(
     if lock_raw is None:
         return None
 
-    # ── polymorphic — TypeAdapter coerce (before validator normalizes handles) ─
+    # ── Record original shape before the model_validator normalizes handle strings ─
     if isinstance(lock_raw, str):
         was_handle = True
     elif isinstance(lock_raw, dict):

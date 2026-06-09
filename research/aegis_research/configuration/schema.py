@@ -216,17 +216,6 @@ LOCK_ROLES: tuple[str, ...] = ("best", "median", "worst")
 DEFAULT_LOCK_ROLE = "best"
 
 
-def split_lock_handle(value: str) -> tuple[str, str | None]:
-    """Split a scalar ``lock:`` handle ``run_id[:role]`` into ``(run_id, role|None)``.
-
-    Pure syntax: splits on the first ``:`` and reports a missing role as ``None`` (the
-    caller defaults it). It does not validate role membership or a non-empty run_id —
-    that is the lock validator's job, so malformed handles fail at config validation.
-    """
-    run_id, separator, role = value.partition(":")
-    return run_id, (role if separator else None)
-
-
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Lock:
     """A top-level Run Config reference that reproduces one prior Candidate.

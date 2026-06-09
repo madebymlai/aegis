@@ -48,7 +48,6 @@ from research.aegis_research.configuration.validation.data import (
     _validate_data,
 )
 from research.aegis_research.configuration.validation.optimization import _validate_optimization
-from research.aegis_research.metrics import FrozenMetricRegistry
 
 __all__ = [
     "_is_absolute_or_user_path",
@@ -61,7 +60,6 @@ def _validate_raw_run_config(
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
-    metric_registry: FrozenMetricRegistry,
 ) -> None:
     _validate_known_keys("$", raw, _run_allowed_top_level_keys(), issues)
     _require_int("schema_version", raw, issues, positive=True)
@@ -80,7 +78,6 @@ def _validate_raw_run_config(
         raw,
         issues,
         component_registry=component_registry,
-        metric_registry=metric_registry,
     )
 
 
@@ -105,7 +102,6 @@ def _validate_run_config(
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
-    metric_registry: FrozenMetricRegistry,
 ) -> None:
     strategy_definition = _validate_component_ref(
         "strategy",

@@ -104,7 +104,7 @@ def test_ranking_construction_rejects_min_weight_out_of_range() -> None:
     assert mw_errors[0]["msg"] == "Input should be less than or equal to 1"
 
 
-def test_ranking_construction_accepts_bool_min_weight() -> None:
+def test_ranking_construction_rejects_bool_min_weight() -> None:
     """pydantic strict float rejects bool (bool is a subclass of int)."""
     with pytest.raises(ValidationError) as e:
         _RANKING_ADAPTER.validate_python({"metric": "sharpe_ratio", "min_weight": True})
