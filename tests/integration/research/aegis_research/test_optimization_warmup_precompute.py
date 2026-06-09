@@ -278,7 +278,7 @@ def test_parallel_and_sequential_selection_grids_are_byte_identical(monkeypatch)
 
 
 def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> None:
-    """Regression: the runner.py:194 comment made executable.
+    """Regression: invalid cash-holder must not outrank a money-losing valid candidate.
 
     An Invalid Candidate (lookback > full history → all-NaN indicator → strategy
     holds cash → total_return == 0.0, finite) must never be selected as a

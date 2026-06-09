@@ -195,11 +195,10 @@ def _build_precomputed_window_metrics(
         wide_allocations = source.simulate(
             close_window, indicator_window, n_combos, **combo_lists
         )
-        # Invalid Candidates are excluded by-key in the verdict
-        # (classify_candidates); no metric-masking needed — their real
-        # simulated values (e.g. a finite cash-holding 0.0) stay in the
-        # grid.  The all-invalid-chunk short-circuit above is kept as a
-        # pure performance guard that preserves grid shape.
+        # Invalid Candidates are excluded by-key via classify_candidates;
+        # their real simulated values (e.g. a finite cash-holding 0.0)
+        # stay in the grid without masking. The all-invalid short-circuit
+        # above is a pure performance guard.
         return _metrics_from_allocations(
             close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names
         )
