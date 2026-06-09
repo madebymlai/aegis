@@ -5,10 +5,11 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
 import pandas as pd
-from pydantic import ConfigDict
+from pydantic import ConfigDict, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration.field_types import (
+    NonNegativeInt,
     NonNegativeRate,
     PositiveCash,
     StrictFloat,
@@ -192,11 +193,11 @@ class RunIndicatorSourceConfig:
     params: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class RankingConfig:
     metric: str
-    min_weight: float = 0.3
-    min_trades: int = 0
+    min_weight: UnitInterval = 0.3
+    min_trades: NonNegativeInt = 0
 
 
 @dataclass(frozen=True)
@@ -226,7 +227,7 @@ def split_lock_handle(value: str) -> tuple[str, str | None]:
     return run_id, (role if separator else None)
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Lock:
     """A top-level Run Config reference that reproduces one prior Candidate.
 
@@ -243,6 +244,15 @@ class Lock:
 
     run_id: str
     candidate_id: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_handle(cls, data: Any) -> Any:
+        """Normalize a scalar ``run_id[:role]`` handle to the mapping shape."""
+        if isinstance(data, str):
+            run_id, _, role = data.partition(":")
+            return {"run_id": run_id, "candidate_id": role or DEFAULT_LOCK_ROLE}
+        return data
 
 
 @dataclass(frozen=True)

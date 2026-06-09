@@ -9,14 +9,13 @@ and imports only what it validates:
 - ``components``   — strategy & indicator component refs and output contracts
 - ``data``         — market-data source, arrays, quality policy, paths
 - ``optimization`` — search policy, run split, random policy, execute passthrough
-- ``metrics``      — ranking metric selection
 
-Portfolio and report are pydantic-ported — validated by the coordinator in
-``resolution._build_resolved_run_config`` via ``TypeAdapter`` + ``ValidationError``
-adapter, with a tombstone prepass for removed fields.
+Portfolio, report, ranking, and lock are pydantic-ported — validated by the coordinator
+in ``resolution._build_resolved_run_config`` via ``TypeAdapter`` + ``ValidationError``
+adapter, with tombstone/prepass checks where needed.
 
-The public surface (re-exported below) is the validation entry point plus the two
-validators reached directly by callers outside this package.
+The public surface (re-exported below) is the validation entry point plus one
+validator reached directly by callers outside this package.
 """
 
 from __future__ import annotations
@@ -48,14 +47,11 @@ from research.aegis_research.configuration.validation.data import (
     _is_absolute_or_user_path,
     _validate_data,
 )
-from research.aegis_research.configuration.validation.lock import _validate_lock
-from research.aegis_research.configuration.validation.metrics import _validate_ranking
 from research.aegis_research.configuration.validation.optimization import _validate_optimization
 from research.aegis_research.metrics import FrozenMetricRegistry
 
 __all__ = [
     "_is_absolute_or_user_path",
-    "_validate_ranking",
     "_validate_raw_run_config",
 ]
 
@@ -80,7 +76,6 @@ def _validate_raw_run_config(
     # in the coordinator (resolution._build_resolved_run_config).
     data = _section(raw, "data", set(DataConfig.__dataclass_fields__), issues)
     _validate_data(data, issues, validate_paths=True)
-    _validate_lock(raw, issues)
     _validate_run_config(
         raw,
         issues,
@@ -126,7 +121,8 @@ def _validate_run_config(
         component_registry=component_registry,
     )
     _validate_component_output_contract(strategy_definition, indicator_definitions, issues)
-    _validate_ranking("ranking", raw.get("ranking"), issues, registry=metric_registry)
+    # Ranking structural validation is pydantic-ported; metric membership is
+    # checked by the coordinator (resolution._validate_ranking_section).
     if "optimization" not in raw:
         issues.append(
             ConfigValidationIssue(
