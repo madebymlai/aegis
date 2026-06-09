@@ -31,7 +31,14 @@ VBT_LEVERAGE_MODE = "eager"
 # of temporary buying power (e.g. sell A -> buy B when call_seq="auto" sequences buys
 # before sells). The multiplier is tied to gross_cap (never np.inf) to stay bounded for
 # any config, avoiding a 0 x inf division-by-zero at zero free cash.
-_GROSS_CAP_LEVERAGE_MULTIPLIER = 2
+#
+# k = 2 is the floor, not the value: under drawdown drift a compliant transition can
+# transiently need ~3x cap (book at cap + equity halves -> drifted gross ~2x cap relative
+# to current equity, co-held with the new at-cap book when sequencing fails). k = 5 keeps
+# legitimate Runs clear of the tripwire; unused headroom costs nothing (margin interest is
+# unmodeled, ADR-0008). If the tripwire ever fires on a legitimate Run, raise k — never
+# reintroduce a tolerance (ADR-0011 amendment).
+_GROSS_CAP_LEVERAGE_MULTIPLIER = 5
 # Next-open execution: a target decided from bar t's close fills at bar t+1's open.
 # VBT's ``price="nextopen"`` sets ``from_ago=1`` (shift one bar) and fills at the open,
 # which is the canonical VBT way to avoid same-bar look-ahead without manual shifting.
