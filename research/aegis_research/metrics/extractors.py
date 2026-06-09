@@ -13,13 +13,14 @@ fingerprint payload (``public_snapshot`` / ``fingerprint_payload``).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import pandas as pd
 
 from research.aegis_research.configuration.schema import ReportConfig
+from research.aegis_research.metrics.contracts import MetricRegistryError
 
 
 @dataclass(frozen=True)
@@ -89,3 +90,43 @@ EXTRACTORS: dict[str, ExtractorSpec] = {
     "total_fees_paid": ExtractorSpec(_read_total_fees_paid),
     "sharpe_ratio": ExtractorSpec(_read_sharpe_ratio),
 }
+
+# ---------------------------------------------------------------------------
+# Custom extractor registration (populated by register_custom_metrics)
+# ---------------------------------------------------------------------------
+
+_custom_extractors: dict[str, ExtractorSpec] = {}
+
+
+def register_custom_extractors(extractors: Mapping[str, ExtractorSpec]) -> None:
+    """Register custom metric extractors (called by register_custom_metrics).
+
+    Raises MetricRegistryError if any custom metric id conflicts with a built-in
+    or already-registered custom id.
+    """
+    conflicts = set(extractors) & set(EXTRACTORS)
+    if conflicts:
+        raise MetricRegistryError(
+            f"custom extractor ids conflict with built-in metrics: {sorted(conflicts)}"
+        )
+    duplicates = set(extractors) & set(_custom_extractors)
+    if duplicates:
+        raise MetricRegistryError(
+            f"custom extractor ids already registered: {sorted(duplicates)}"
+        )
+    _custom_extractors.update(extractors)
+
+
+def get_extractors() -> dict[str, ExtractorSpec]:
+    """Return the merged view of built-in and custom extractors."""
+    return {**EXTRACTORS, **_custom_extractors}
+
+
+def get_custom_extractor_keys() -> tuple[str, ...]:
+    """Return the ids of all registered custom extractors."""
+    return tuple(_custom_extractors)
+
+
+def clear_custom_extractors() -> None:
+    """Clear all registered custom extractors (for test isolation)."""
+    _custom_extractors.clear()
