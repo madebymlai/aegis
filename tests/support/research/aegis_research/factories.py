@@ -176,18 +176,10 @@ def make_lock(**overrides: Any) -> Lock:
 def make_run_config(**overrides: Any) -> RunConfig:
     """Return a RunConfig with valid defaults, overridden by any kwargs.
 
-    Nested section factories are used for every section; callers override only what
-    differs.  Each section field can be overridden either with a ready-made instance
-    (e.g. ``portfolio=make_portfolio_config(fees=0)``) or with a dict of overrides
-    (e.g. ``portfolio={"fees": 0}``).
+    Nested section factories supply defaults for every section; callers pass
+    ready-made instances for the sections they need to differ
+    (e.g. ``portfolio=make_portfolio_config(fees=0)``).
     """
-    # Resolve section overrides: if a section is passed as a dict, merge it into the
-    # factory defaults; otherwise use the passed instance directly.
-    section_overrides: dict[str, Any] = {}
-    for key in list(overrides):
-        if key in _RUN_CONFIG_SECTION_KEYS:
-            section_overrides[key] = overrides.pop(key)
-
     defaults: dict[str, Any] = {
         "name": "test-run",
         "strategy": make_run_source_ref_config(),
@@ -201,28 +193,5 @@ def make_run_config(**overrides: Any) -> RunConfig:
         "lock": None,
         "output_dir": "runs",
     }
-
-    for key, value in section_overrides.items():
-        if key in _RUN_CONFIG_SECTION_FACTORIES and isinstance(value, dict):
-            defaults[key] = _RUN_CONFIG_SECTION_FACTORIES[key](**value)
-        else:
-            defaults[key] = value
-
     defaults.update(overrides)
     return RunConfig(**defaults)
-
-
-_RUN_CONFIG_SECTION_KEYS = frozenset({
-    "strategy", "indicators", "ranking", "data", "portfolio", "report",
-    "optimization", "lock",
-})
-
-_RUN_CONFIG_SECTION_FACTORIES: dict[str, Any] = {
-    "strategy": make_run_source_ref_config,
-    "data": make_data_config,
-    "portfolio": make_portfolio_config,
-    "report": make_report_config,
-    "ranking": make_ranking_config,
-    "optimization": make_optimization_config,
-    "lock": make_lock,
-}

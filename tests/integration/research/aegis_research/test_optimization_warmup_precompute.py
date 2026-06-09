@@ -16,11 +16,13 @@ import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
+from research.aegis_research.config import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,
     build_candidate_index,
 )
+from research.aegis_research.optimization.ranking import OptimizationResult
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
 from tests.support.research.aegis_research.factories import (
@@ -107,7 +109,7 @@ def _source(windows: list[int]) -> OptimizationSource:
 
 def _optimization(
     *, search: str = "grid", random_subset: int | None = None, seed: int | None = None
-):
+) -> OptimizationConfig:
     return make_optimization_config(
         search=search,
         random_subset=random_subset,
@@ -116,7 +118,7 @@ def _optimization(
     )
 
 
-def _run(windows: list[int], *, optimization=None):
+def _run(windows: list[int], *, optimization: OptimizationConfig | None = None) -> OptimizationResult:
     return execute_optimization(
         close=_uptrend_close(),
         open_=_uptrend_close(),

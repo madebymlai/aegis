@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
+from research.aegis_research.config import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.runner import (
@@ -28,7 +29,7 @@ def _close_frame() -> pd.DataFrame:
     return pd.DataFrame({"SYN": levels}, index=index)
 
 
-def _optimization_config():
+def _optimization_config() -> OptimizationConfig:
     return make_optimization_config(
         search="grid",
         split=make_run_split_config(method="from_rolling", params={"length": 20, "split": 0.5}),

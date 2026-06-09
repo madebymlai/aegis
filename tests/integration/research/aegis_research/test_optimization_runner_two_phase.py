@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
+from research.aegis_research.config import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,
@@ -76,7 +77,7 @@ def _source(alphas: list[float]) -> OptimizationSource:
     )
 
 
-def _optimization():
+def _optimization() -> OptimizationConfig:
     return make_optimization_config(
         search="grid",
         split=make_run_split_config(method="from_rolling", params={"length": IS_LENGTH, "split": 0.5}),

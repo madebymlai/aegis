@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
+from research.aegis_research.config import OptimizationConfig
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
@@ -269,7 +270,7 @@ def _optimization(
     max_estimated_output_cells: int = 1_000_000,
     max_public_artifact_bytes: int = 1_000_000,
     execute: dict[str, object] | None = None,
-):
+) -> OptimizationConfig:
     return make_optimization_config(
         search=search,
         split=make_run_split_config(

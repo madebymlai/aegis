@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from research.aegis_research.component_registry import discover_component_registry
+from research.aegis_research.config import (
+    RunConfig,
+    RunIndicatorSourceConfig,
+    RunSourceRefConfig,
+)
 from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
@@ -148,9 +152,9 @@ def test_component_source_rejects_duplicate_produced_outputs(tmp_path: Path) -> 
 
 def _config(
     *,
-    strategy: Any = None,
-    indicators: Any = None,
-) -> Any:
+    strategy: RunSourceRefConfig | None = None,
+    indicators: list[RunIndicatorSourceConfig] | None = None,
+) -> RunConfig:
     return make_run_config(
         name="component_source",
         strategy=strategy or make_run_source_ref_config(id="demo.strategy"),
