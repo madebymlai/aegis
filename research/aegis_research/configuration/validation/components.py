@@ -25,7 +25,6 @@ from research.aegis_research.configuration.validation.base import (
     _require_str,
     _validate_json_like,
     _validate_known_keys,
-    _validate_no_run_executable_keys,
 )
 
 
@@ -88,7 +87,6 @@ def _validate_component_ref(
         return None
     allowed = {"id", "params"}
     _validate_known_keys(path, value, allowed, issues)
-    _validate_no_run_executable_keys(path, value, issues)
     if not _require_str(f"{path}.id", value, issues):
         return None
     component_id = value["id"]
@@ -136,7 +134,6 @@ def _validate_component_params(
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return None
     _validate_json_like(path, value, issues)
-    _validate_no_run_executable_keys(path, value, issues)
     unknown = sorted(set(value) - set(param_names))
     if unknown:
         issues.append(

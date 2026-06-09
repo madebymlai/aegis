@@ -154,7 +154,7 @@ def test_run_indicator_selection_rejects_config_params(tmp_path: Path) -> None:
         resolve_run_config(raw, component_registry=registry)
 
     assert "indicators[0].params" in str(error.value)
-    assert "not allowed" in str(error.value)
+    assert "params must be declared by the component manifest" in str(error.value)
 
 
 def test_run_indicator_ref_rejects_duplicate_component_ids(tmp_path: Path) -> None:

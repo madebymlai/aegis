@@ -34,42 +34,6 @@ FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
     "run contract; use optimization.search and optimization.split"
 )
 OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
-RUN_EXECUTABLE_DENIED_KEYS = {
-    "artifact_path",
-    "callable",
-    "class",
-    "code",
-    "formula",
-    "function",
-    "import",
-    "last_run",
-    "leaderboard_row",
-    "load",
-    "module",
-    "notebook",
-    "notebook_path",
-    "path",
-    "python",
-    "script",
-    "script_path",
-}
-
-DENIED_PASSTHROUGH_KEYS = {
-    "auth",
-    "authentication",
-    "cookie",
-    "cookies",
-    "header",
-    "headers",
-    "proxy",
-    "proxies",
-    "session",
-    "client",
-    "transport",
-    "cache",
-    "cache_path",
-    "cache_dir",
-}
 
 
 @dataclass(frozen=True)

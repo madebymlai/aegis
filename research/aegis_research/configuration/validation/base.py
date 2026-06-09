@@ -13,8 +13,6 @@ from typing import Any
 import pandas as pd
 
 from research.aegis_research.configuration.schema import (
-    DENIED_PASSTHROUGH_KEYS,
-    RUN_EXECUTABLE_DENIED_KEYS,
     ConfigValidationIssue,
 )
 
@@ -49,62 +47,6 @@ def _validate_passthrough(path: str, value: Any, issues: list[ConfigValidationIs
         issues.append(ConfigValidationIssue(path, "must be a mapping"))
         return
     _validate_json_like(path, value, issues)
-    _validate_no_denied_passthrough_keys(path, value, issues)
-
-
-def _validate_no_denied_passthrough_keys(
-    path: str,
-    value: Any,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    _validate_no_denied_keys(
-        path,
-        value,
-        DENIED_PASSTHROUGH_KEYS,
-        "is not allowed in passthrough config",
-        issues,
-    )
-
-
-def _validate_no_denied_keys(
-    path: str,
-    value: Any,
-    denied_keys: set[str],
-    message: str,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            child_path = f"{path}.{key}"
-            if str(key).lower() in denied_keys:
-                issues.append(ConfigValidationIssue(child_path, message))
-            _validate_no_denied_keys(child_path, item, denied_keys, message, issues)
-        return
-    if isinstance(value, list):
-        for index, item in enumerate(value):
-            _validate_no_denied_keys(f"{path}[{index}]", item, denied_keys, message, issues)
-
-
-def _validate_no_run_executable_keys(
-    path: str,
-    value: Any,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            child_path = f"{path}.{key}"
-            if str(key).lower() in RUN_EXECUTABLE_DENIED_KEYS:
-                issues.append(
-                    ConfigValidationIssue(
-                        child_path,
-                        "is not allowed in run config; select trusted component IDs",
-                    )
-                )
-            _validate_no_run_executable_keys(child_path, item, issues)
-        return
-    if isinstance(value, list):
-        for index, item in enumerate(value):
-            _validate_no_run_executable_keys(f"{path}[{index}]", item, issues)
 
 
 def _validate_json_like(path: str, value: Any, issues: list[ConfigValidationIssue]) -> None:
