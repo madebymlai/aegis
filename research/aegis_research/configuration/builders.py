@@ -15,7 +15,6 @@ from research.aegis_research.configuration.schema import (
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
-    RunSplitConfig,
     split_lock_handle,
 )
 
@@ -42,9 +41,11 @@ def _build_run_config(
     *,
     portfolio_config: PortfolioConfig | None = None,
     report_config: ReportConfig | None = None,
+    optimization_config: OptimizationConfig | None = None,
 ) -> RunConfig:
-    # Pydantic-ported sections (portfolio, report) are validated + constructed by the
-    # coordinator. If they weren't constructed (validation failure short-circuit), raise.
+    # Pydantic-ported sections (portfolio, report, optimization) are validated +
+    # constructed by the coordinator. If they weren't constructed (validation
+    # failure short-circuit), raise.
     if portfolio_config is None:
         raise ValueError("portfolio_config required")
     if report_config is None:
@@ -60,7 +61,7 @@ def _build_run_config(
         strategy=_build_run_source_ref(raw["strategy"]),
         indicators=_build_run_indicator_sources(raw["indicators"]),
         ranking=_build_ranking(ranking_raw),
-        optimization=_build_optimization(raw.get("optimization")),
+        optimization=optimization_config,
         lock=_build_lock(raw.get("lock")),
         output_dir=raw.get("output_dir", "runs"),
     )
@@ -99,33 +100,6 @@ def _build_ranking(raw: dict[str, Any]) -> RankingConfig:
         metric=raw["metric"],
         min_weight=raw.get("min_weight", RankingConfig.min_weight),
         min_trades=raw.get("min_trades", RankingConfig.min_trades),
-    )
-
-
-def _build_run_split(raw: dict[str, Any] | None) -> RunSplitConfig | None:
-    if raw is None:
-        return None
-    return RunSplitConfig(
-        method=raw["method"],
-        params=dict(raw.get("params", {})),
-        max_splits=raw.get("max_splits", 100),
-        max_estimated_output_cells=raw.get("max_estimated_output_cells", 25_000_000),
-        max_public_artifact_bytes=raw.get("max_public_artifact_bytes", 10_000_000),
-    )
-
-
-def _build_optimization(raw: dict[str, Any] | None) -> OptimizationConfig | None:
-    if raw is None:
-        return None
-    split = _build_run_split(raw["split"])
-    if split is None:
-        raise ValueError("optimization.split is required")
-    return OptimizationConfig(
-        search=raw["search"],
-        split=split,
-        random_subset=raw.get("random_subset"),
-        seed=raw.get("seed"),
-        execute=dict(raw.get("execute", {})),
     )
 
 

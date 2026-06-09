@@ -50,7 +50,6 @@ from research.aegis_research.configuration.validation.data import (
 )
 from research.aegis_research.configuration.validation.lock import _validate_lock
 from research.aegis_research.configuration.validation.metrics import _validate_ranking
-from research.aegis_research.configuration.validation.optimization import _validate_optimization
 from research.aegis_research.metrics import FrozenMetricRegistry
 
 __all__ = [
@@ -134,7 +133,6 @@ def _validate_run_config(
                 FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
             )
         )
-    _validate_optimization(raw, issues)
 
 
 def _validate_removed_training_fields(
