@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from research.aegis_research.config import Lock
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.lock_run import (
@@ -26,6 +25,7 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from tests.support.research.aegis_research.factories import make_lock
 
 
 def test_resolves_per_component_params_for_locked_candidate(tmp_path: Path) -> None:
@@ -33,7 +33,7 @@ def test_resolves_per_component_params_for_locked_candidate(tmp_path: Path) -> N
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
 
         resolved = resolve_lock_run(
-            Lock(run_id="run-a", candidate_id=candidate["candidate_key"]),
+            make_lock(run_id="run-a", candidate_id=candidate["candidate_key"]),
             store=store,
         )
 
@@ -55,7 +55,7 @@ def test_resolves_role_handle_through_rankings(tmp_path: Path) -> None:
         ]
 
         resolved = resolve_lock_run(
-            Lock(run_id="run-a", candidate_id="best"),
+            make_lock(run_id="run-a", candidate_id="best"),
             store=store,
         )
 
@@ -73,7 +73,7 @@ def test_role_selects_the_matching_ranked_candidate(tmp_path: Path) -> None:
         }
 
         resolved = resolve_lock_run(
-            Lock(run_id="run-a", candidate_id="median"),
+            make_lock(run_id="run-a", candidate_id="median"),
             store=store,
         )
 
@@ -90,7 +90,7 @@ def test_rejects_unknown_run_id(tmp_path: Path) -> None:
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
         with pytest.raises(LockRunResolutionError, match="unknown candidate"):
             resolve_lock_run(
-                Lock(run_id="run-missing", candidate_id=candidate["candidate_key"]),
+                make_lock(run_id="run-missing", candidate_id=candidate["candidate_key"]),
                 store=store,
             )
 
@@ -99,7 +99,7 @@ def test_rejects_unknown_candidate_id(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:  # noqa: SIM117
         with pytest.raises(LockRunResolutionError, match="unknown candidate"):
             resolve_lock_run(
-                Lock(run_id="run-a", candidate_id="cand_missing"),
+                make_lock(run_id="run-a", candidate_id="cand_missing"),
                 store=store,
             )
 
@@ -109,7 +109,7 @@ def test_rejects_candidate_missing_referenced_component(tmp_path: Path) -> None:
         candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
         with pytest.raises(LockRunResolutionError, match="does not include component"):
             resolve_lock_run(
-                Lock(run_id="run-a", candidate_id=candidate["candidate_key"]),
+                make_lock(run_id="run-a", candidate_id=candidate["candidate_key"]),
                 store=store,
             )
 

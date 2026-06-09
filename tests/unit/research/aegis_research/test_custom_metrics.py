@@ -20,7 +20,6 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.config import PortfolioConfig
 from research.aegis_research.configuration.schema import ReportConfig
 from research.aegis_research.metrics import (
     SOURCE_TYPE_CUSTOM,
@@ -39,6 +38,10 @@ from research.aegis_research.metrics.stats import (
     register_vbt_stats_metrics,
 )
 from research.aegis_research.portfolios import simulate_portfolio_batch
+from tests.support.research.aegis_research.factories import (
+    make_portfolio_config,
+    make_report_config,
+)
 
 
 def _registry_with_custom(
@@ -70,7 +73,7 @@ def test_single_extractor_read_is_testable_in_isolation() -> None:
     exits.iloc[5] = True
     pf = vbt.Portfolio.from_signals(close, entries=entries, exits=exits, init_cash=10_000, fees=0.001)
 
-    result = BUILTIN_EXTRACTORS["total_return"].read(pf, ReportConfig())
+    result = BUILTIN_EXTRACTORS["total_return"].read(pf, make_report_config())
     assert isinstance(result, pd.Series)
 
 
@@ -140,7 +143,7 @@ def _two_candidate_portfolio():
     allocations.loc[index[0], ("candidate-a", "A")] = 0.3
     allocations.loc[index[0], ("candidate-b", "A")] = 0.5
     simulation = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0.001, slippage=0, direction="longonly"),
+        close, allocations, make_portfolio_config(fees=0.001, slippage=0, direction="longonly"),
         periods_per_year=252,
     )
     return simulation, candidate_ids
@@ -163,7 +166,7 @@ def test_custom_metric_computed_through_extraction_loop() -> None:
     portfolio, candidate_ids = _two_candidate_portfolio()
     result = central_metrics_from_grouped_accessors(
         portfolio,
-        ReportConfig(freq="1D", year_freq="252D"),
+        make_report_config(freq="1D", year_freq="252D"),
         [(c,) for c in candidate_ids],
         ["candidate_id"],
         frozen.extractors,
@@ -178,7 +181,7 @@ def test_custom_metric_computed_through_extraction_loop() -> None:
 def test_custom_metric_does_not_perturb_existing_metrics() -> None:
     """Adding a custom metric leaves the six built-in metric values unchanged."""
     portfolio, candidate_ids = _two_candidate_portfolio()
-    config = ReportConfig(freq="1D", year_freq="252D")
+    config = make_report_config(freq="1D", year_freq="252D")
     candidate_keys = [(c,) for c in candidate_ids]
 
     baseline = central_metrics_from_grouped_accessors(

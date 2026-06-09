@@ -9,15 +9,16 @@ Manifest never silently misrepresents what ran.
 
 from __future__ import annotations
 
-from research.aegis_research.config import (
-    PortfolioConfig,
-    RankingConfig,
-    RunConfig,
-    RunIndicatorSourceConfig,
-    RunSourceRefConfig,
-)
+from research.aegis_research.config import RunConfig
 from research.aegis_research.optimization.lock_param_override import (
     overridden_component_params,
+)
+from tests.support.research.aegis_research.factories import (
+    make_portfolio_config,
+    make_ranking_config,
+    make_run_config,
+    make_run_indicator_source_config,
+    make_run_source_ref_config,
 )
 
 
@@ -26,14 +27,14 @@ def _config(
     strategy_params: dict | None = None,
     indicator_params: dict | None = None,
 ) -> RunConfig:
-    return RunConfig(
+    return make_run_config(
         name="locked_overlay",
-        strategy=RunSourceRefConfig(id="demo.strategy", params=strategy_params or {}),
+        strategy=make_run_source_ref_config(id="demo.strategy", params=strategy_params or {}),
         indicators=[
-            RunIndicatorSourceConfig(id="demo.returns", params=indicator_params or {})
+            make_run_indicator_source_config(id="demo.returns", params=indicator_params or {})
         ],
-        ranking=RankingConfig(metric="total_return"),
-        portfolio=PortfolioConfig(direction="longonly"),
+        ranking=make_ranking_config(metric="total_return"),
+        portfolio=make_portfolio_config(direction="longonly"),
     )
 
 

@@ -8,15 +8,17 @@ from research.aegis_research.component_registry import discover_component_regist
 from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
-    OptimizationConfig,
-    PortfolioConfig,
-    RankingConfig,
-    RunConfig,
-    RunIndicatorSourceConfig,
-    RunSourceRefConfig,
-    RunSplitConfig,
     load_run_config,
     resolve_run_config,
+)
+from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
+    make_portfolio_config,
+    make_ranking_config,
+    make_run_config,
+    make_run_indicator_source_config,
+    make_run_source_ref_config,
+    make_run_split_config,
 )
 
 
@@ -31,15 +33,15 @@ def test_valid_run_config_resolves_without_lane_identity(tmp_path: Path) -> None
 
 def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    config = RunConfig(
+    config = make_run_config(
         name="typed_strategy_demo",
-        strategy=RunSourceRefConfig(id="demo.strategy"),
-        indicators=[RunIndicatorSourceConfig(id="demo.indicator")],
-        ranking=RankingConfig(metric="sharpe_ratio"),
-        portfolio=PortfolioConfig(gross_cap=1.0, direction="longonly"),
-        optimization=OptimizationConfig(
+        strategy=make_run_source_ref_config(id="demo.strategy"),
+        indicators=[make_run_indicator_source_config(id="demo.indicator")],
+        ranking=make_ranking_config(metric="sharpe_ratio"),
+        portfolio=make_portfolio_config(gross_cap=1.0, direction="longonly"),
+        optimization=make_optimization_config(
             search="grid",
-            split=RunSplitConfig(
+            split=make_run_split_config(
                 method="from_rolling",
                 params={"length": 20, "offset": 20, "split": 0.5},
             ),

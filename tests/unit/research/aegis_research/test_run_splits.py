@@ -3,8 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from research.aegis_research.config import RunSplitConfig
 from research.aegis_research.run_splits import build_run_splits_result
+from tests.support.research.aegis_research.factories import make_run_split_config
 
 
 def test_build_run_splits_result_invokes_from_rolling_with_public_evidence() -> None:
@@ -12,7 +12,7 @@ def test_build_run_splits_result_invokes_from_rolling_with_public_evidence() -> 
 
     result = build_run_splits_result(
         index,
-        RunSplitConfig(
+        make_run_split_config(
             method="from_rolling",
             params={"length": 6, "split": 0.5},
         ),
@@ -39,7 +39,7 @@ def test_build_run_splits_result_invokes_purged_kfold_generically() -> None:
 
     result = build_run_splits_result(
         index,
-        RunSplitConfig(method="from_purged_kfold", params={"n_folds": 3, "n_test_folds": 1}),
+        make_run_split_config(method="from_purged_kfold", params={"n_folds": 3, "n_test_folds": 1}),
     )
 
     assert result.metadata["method"] == "from_purged_kfold"
@@ -57,7 +57,7 @@ def test_build_run_splits_result_preserves_single_split_two_set_output() -> None
 
     result = build_run_splits_result(
         index,
-        RunSplitConfig(
+        make_run_split_config(
             method="from_rolling",
             params={"length": 12, "split": 0.5},
         ),
@@ -72,7 +72,7 @@ def test_build_run_splits_result_rejects_one_set_output() -> None:
     index = pd.date_range("2024-01-01", periods=12, freq="D")
 
     with pytest.raises(ValueError, match="exactly two sets"):
-        build_run_splits_result(index, RunSplitConfig(method="from_rolling", params={"length": 4}))
+        build_run_splits_result(index, make_run_split_config(method="from_rolling", params={"length": 4}))
 
 
 def test_build_run_splits_result_rejects_three_set_output() -> None:
@@ -81,7 +81,7 @@ def test_build_run_splits_result_rejects_three_set_output() -> None:
     with pytest.raises(ValueError, match="exactly two sets"):
         build_run_splits_result(
             index,
-            RunSplitConfig(
+            make_run_split_config(
                 method="from_rolling",
                 params={
                     "length": 20,
@@ -97,7 +97,7 @@ def test_build_run_splits_result_enforces_split_count_guard() -> None:
     with pytest.raises(ValueError, match="max_splits"):
         build_run_splits_result(
             index,
-            RunSplitConfig(
+            make_run_split_config(
                 method="from_rolling",
                 params={"length": 4, "split": 0.5},
                 max_splits=1,
@@ -111,7 +111,7 @@ def test_build_run_splits_result_enforces_estimated_output_cell_guard() -> None:
     with pytest.raises(ValueError, match="max_estimated_output_cells"):
         build_run_splits_result(
             index,
-            RunSplitConfig(
+            make_run_split_config(
                 method="from_rolling",
                 params={"length": 6, "split": 0.5},
                 max_estimated_output_cells=1,
@@ -125,7 +125,7 @@ def test_build_run_splits_result_enforces_public_artifact_guard() -> None:
     with pytest.raises(ValueError, match="max_public_artifact_bytes"):
         build_run_splits_result(
             index,
-            RunSplitConfig(
+            make_run_split_config(
                 method="from_rolling",
                 params={"length": 6, "split": 0.5},
                 max_public_artifact_bytes=1,

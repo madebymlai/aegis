@@ -1,19 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import (
-    PortfolioConfig,
-    RankingConfig,
-    RunConfig,
-    RunIndicatorSourceConfig,
-    RunSourceRefConfig,
-)
 from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
@@ -25,6 +19,13 @@ from research.aegis_research.optimization.param_namespace import (
     encode,
 )
 from research.aegis_research.optimization.precompute import candidate_keys
+from tests.support.research.aegis_research.factories import (
+    make_portfolio_config,
+    make_ranking_config,
+    make_run_config,
+    make_run_indicator_source_config,
+    make_run_source_ref_config,
+)
 
 
 def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path: Path) -> None:
@@ -57,8 +58,8 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
 def test_component_source_fixed_params_override_param_space_axes(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     config = _config(
-        strategy=RunSourceRefConfig(id="demo.strategy", params={"threshold": 0.95}),
-        indicators=[RunIndicatorSourceConfig(id="demo.trend", params={"window": 3})],
+        strategy=make_run_source_ref_config(id="demo.strategy", params={"threshold": 0.95}),
+        indicators=[make_run_indicator_source_config(id="demo.trend", params={"window": 3})],
     )
 
     source = build_component_optimization_source(
@@ -78,7 +79,7 @@ def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Pat
     # the reproduced Candidate. There is no per-Component lock reference any more.
     registry = _registry(tmp_path)
     config = _config(
-        indicators=[RunIndicatorSourceConfig(id="demo.trend")],
+        indicators=[make_run_indicator_source_config(id="demo.trend")],
     )
     resolved = {
         ComponentRef("strategies", "demo.strategy", "strategy"): {"threshold": 0.95},
@@ -104,7 +105,7 @@ def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Pat
 def test_component_source_rejects_unresolved_lock_refs(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     config = _config(
-        indicators=[RunIndicatorSourceConfig(id="demo.trend")],
+        indicators=[make_run_indicator_source_config(id="demo.trend")],
     )
 
     with pytest.raises(ComponentSourceError, match="requires resolved"):
@@ -118,7 +119,7 @@ def test_component_source_rejects_hidden_param_space_axes(tmp_path: Path) -> Non
     _write_hidden_strategy(root / "strategies" / "hidden_strategy.py")
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     config = _config(
-        strategy=RunSourceRefConfig(id="demo.hidden_strategy"),
+        strategy=make_run_source_ref_config(id="demo.hidden_strategy"),
         indicators=[],
     )
 
@@ -134,8 +135,8 @@ def test_component_source_rejects_duplicate_produced_outputs(tmp_path: Path) -> 
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     config = _config(
         indicators=[
-            RunIndicatorSourceConfig(id="demo.trend"),
-            RunIndicatorSourceConfig(id="demo.trend_copy"),
+            make_run_indicator_source_config(id="demo.trend"),
+            make_run_indicator_source_config(id="demo.trend_copy"),
         ],
     )
 
@@ -147,17 +148,17 @@ def test_component_source_rejects_duplicate_produced_outputs(tmp_path: Path) -> 
 
 def _config(
     *,
-    strategy: RunSourceRefConfig | None = None,
-    indicators: list[RunIndicatorSourceConfig] | None = None,
-) -> RunConfig:
-    return RunConfig(
+    strategy: Any = None,
+    indicators: Any = None,
+) -> Any:
+    return make_run_config(
         name="component_source",
-        strategy=strategy or RunSourceRefConfig(id="demo.strategy"),
+        strategy=strategy or make_run_source_ref_config(id="demo.strategy"),
         indicators=indicators
         if indicators is not None
-        else [RunIndicatorSourceConfig(id="demo.trend")],
-        ranking=RankingConfig(metric="total_return"),
-        portfolio=PortfolioConfig(direction="longonly"),
+        else [make_run_indicator_source_config(id="demo.trend")],
+        ranking=make_ranking_config(metric="total_return"),
+        portfolio=make_portfolio_config(direction="longonly"),
     )
 
 

@@ -11,6 +11,7 @@ from research.aegis_research.portfolios import (
     simulate_portfolio_batch,
     simulate_single_book,
 )
+from tests.support.research.aegis_research.factories import make_portfolio_config
 
 
 def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
@@ -24,7 +25,7 @@ def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
+    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     # Only the first bar and terminal-liquidation last bar produce orders;
     # the NaN rows in between do not rebalance.
@@ -48,7 +49,7 @@ def test_all_zero_allocations_row_in_non_terminal_location_closes_positions_at_c
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
+    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     assets = pf.assets
     assert assets.iloc[1].to_dict() == pytest.approx({(_SINGLE_CANDIDATE_ID, "A"): 0.0, (_SINGLE_CANDIDATE_ID, "B"): 0.0})
@@ -70,7 +71,7 @@ def test_full_a_to_full_b_switch_under_shared_cash_executes_single_rebalance() -
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
+    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     orders = pf.orders.records_readable
     third_bar = orders[orders["Index"].astype(str) == "2024-01-03"]
@@ -91,7 +92,7 @@ def test_terminal_liquidation_sells_all_held_positions_at_last_close() -> None:
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
+    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     final_assets = pf.assets.iloc[-1]
     final_cash = float(pf.cash.iloc[-1])
@@ -118,7 +119,7 @@ def test_batched_three_candidate_run_preserves_candidate_identity_in_pfo_columns
     allocations.loc[index[0], :] = 0.5
 
     pf = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"),
+        close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"),
         periods_per_year=252,
     )
 
@@ -146,7 +147,7 @@ def test_signed_both_direction_run_opens_a_real_short_position() -> None:
     pf = simulate_single_book(
         close,
         allocations,
-        PortfolioConfig(fees=0, slippage=0, gross_cap=1.0, direction="both"),
+        make_portfolio_config(fees=0, slippage=0, gross_cap=1.0, direction="both"),
     )
 
     assets = pf.assets
@@ -172,7 +173,7 @@ def test_batch_rejects_candidate_breaching_net_cap_and_names_it() -> None:
     allocations.loc[index[0], ("cand-net-long", "A")] = 0.5
     allocations.loc[index[0], ("cand-net-long", "B")] = 0.5
 
-    config = PortfolioConfig(
+    config = make_portfolio_config(
         fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"
     )
     with pytest.raises(ValueError, match="cand-net-long"):
@@ -195,7 +196,7 @@ def test_batch_rejects_longonly_candidate_with_a_negative_weight() -> None:
     allocations.loc[index[0], ("cand-has-short", "A")] = 0.5
     allocations.loc[index[0], ("cand-has-short", "B")] = -0.5
 
-    config = PortfolioConfig(
+    config = make_portfolio_config(
         fees=0, slippage=0, gross_cap=1.0, net_cap=1.0, direction="longonly"
     )
     with pytest.raises(ValueError, match="longonly"):
@@ -216,7 +217,7 @@ def test_batch_accepts_valid_market_neutral_book_within_caps() -> None:
     allocations.loc[index[0], ("cand-neutral", "A")] = 0.5
     allocations.loc[index[0], ("cand-neutral", "B")] = -0.5
 
-    config = PortfolioConfig(
+    config = make_portfolio_config(
         fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"
     )
     pf = simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
@@ -235,7 +236,7 @@ def test_single_portfolio_rejects_book_breaching_gross_cap() -> None:
         index=index,
     )
 
-    config = PortfolioConfig(
+    config = make_portfolio_config(
         fees=0, slippage=0, gross_cap=1.0, net_cap=1.0, direction="longonly"
     )
     with pytest.raises(ValueError, match="gross_cap"):
@@ -256,7 +257,7 @@ def test_market_neutral_run_book_is_net_zero_and_realized_matches_requested() ->
     pf = simulate_single_book(
         close,
         allocations,
-        PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"),
+        make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"),
     )
 
     realized = pf.get_allocations(group_by=None)
@@ -277,7 +278,7 @@ def test_default_longonly_run_holds_only_long_positions() -> None:
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly"))
+    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     assets = pf.assets
     assert (assets.iloc[1] >= 0).all()
@@ -298,7 +299,7 @@ def test_split_gap_row_is_masked_before_pfo_and_no_orders_land_on_gap_affected_r
     pf = simulate_single_book(
         close,
         allocations,
-        PortfolioConfig(fees=0, slippage=0, direction="longonly"),
+        make_portfolio_config(fees=0, slippage=0, direction="longonly"),
         market_index=market_index,
     )
 
@@ -335,7 +336,7 @@ def test_portfolio_inputs_reject_symbol_mismatches_instead_of_dropping_columns()
     allocations["EXTRA"] = 0.0
 
     with pytest.raises(ValueError, match="columns"):
-        simulate_single_book(close, allocations, PortfolioConfig(direction="longonly"))
+        simulate_single_book(close, allocations, make_portfolio_config(direction="longonly"))
 
 
 def test_portfolio_inputs_reject_index_mismatches_instead_of_dropping_rows() -> None:
@@ -343,7 +344,7 @@ def test_portfolio_inputs_reject_index_mismatches_instead_of_dropping_rows() -> 
     allocations = allocations.iloc[:-1]
 
     with pytest.raises(ValueError, match="index"):
-        simulate_single_book(close, allocations, PortfolioConfig(direction="longonly"))
+        simulate_single_book(close, allocations, make_portfolio_config(direction="longonly"))
 
 
 def test_long_only_book_is_byte_for_byte_unchanged_with_carry_on_by_default() -> None:
@@ -353,12 +354,12 @@ def test_long_only_book_is_byte_for_byte_unchanged_with_carry_on_by_default() ->
     close, allocations = _two_symbol_inputs()
 
     carry_on = simulate_single_book(
-        close, allocations, PortfolioConfig(fees=0, slippage=0, direction="longonly")
+        close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly")
     )
     carry_off = simulate_single_book(
         close,
         allocations,
-        PortfolioConfig(
+        make_portfolio_config(
             fees=0, slippage=0, direction="longonly", short_borrow_rate=0.0, short_rebate_rate=0.0
         ),
     )
@@ -395,8 +396,8 @@ def test_short_leg_carry_drops_return_and_long_leg_is_never_charged() -> None:
         index=index,
     )
 
-    carry_on = PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, direction="both")
-    carry_off = PortfolioConfig(
+    carry_on = make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, direction="both")
+    carry_off = make_portfolio_config(
         fees=0,
         slippage=0,
         gross_cap=2.0,
@@ -439,7 +440,7 @@ def test_records_count_exit_trades_for_long_and_short_legs() -> None:
     pf = simulate_single_book(
         close,
         allocations,
-        PortfolioConfig(fees=0, slippage=0, gross_cap=1.0, direction="both"),
+        make_portfolio_config(fees=0, slippage=0, gross_cap=1.0, direction="both"),
     )
 
     exit_trades = pf.exit_trades.records_readable
@@ -477,7 +478,7 @@ def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, Portfoli
     for i, s in enumerate(symbols):
         allocations.loc[index[10], ("cand-underfilled", s)] = 1.25 if i % 2 == 0 else -1.25
 
-    config = PortfolioConfig(
+    config = make_portfolio_config(
         fees=0,
         slippage=0,
         gross_cap=5.0,
@@ -528,7 +529,7 @@ def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
 
     pf = simulate_portfolio_batch(
         close, allocations,
-        PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"),
+        make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"),
         periods_per_year=252,
     )
     assert isinstance(pf, vbt.Portfolio)
@@ -551,7 +552,7 @@ def test_batch_nocash_tripwire_is_invoked_and_error_propagates(monkeypatch) -> N
     allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
     allocations.loc[index[0], ("cand-neutral", "A")] = 0.5
     allocations.loc[index[0], ("cand-neutral", "B")] = -0.5
-    config = PortfolioConfig(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both")
+    config = make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both")
 
     calls = []
 
@@ -594,7 +595,7 @@ def test_batch_of_one_candidate_equals_single_group_by_true() -> None:
         },
         index=index,
     )
-    config = PortfolioConfig(fees=0, slippage=0, direction="longonly")
+    config = make_portfolio_config(fees=0, slippage=0, direction="longonly")
 
     pf_single = simulate_single_book(
         close, allocations, config, periods_per_year=252

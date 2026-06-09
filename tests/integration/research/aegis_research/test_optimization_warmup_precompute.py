@@ -16,13 +16,6 @@ import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.configuration.schema import (
-    OptimizationConfig,
-    PortfolioConfig,
-    RankingConfig,
-    ReportConfig,
-    RunSplitConfig,
-)
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,
@@ -30,6 +23,13 @@ from research.aegis_research.optimization.precompute import (
 )
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
+    make_portfolio_config,
+    make_ranking_config,
+    make_report_config,
+    make_run_split_config,
+)
 
 N_ROWS = 32
 SLICE_LEN = 4  # length=8, split=0.5 -> 4-bar selection slice per split
@@ -107,24 +107,24 @@ def _source(windows: list[int]) -> OptimizationSource:
 
 def _optimization(
     *, search: str = "grid", random_subset: int | None = None, seed: int | None = None
-) -> OptimizationConfig:
-    return OptimizationConfig(
+):
+    return make_optimization_config(
         search=search,
         random_subset=random_subset,
         seed=seed,
-        split=RunSplitConfig(method="from_rolling", params={"length": 8, "split": 0.5}),
+        split=make_run_split_config(method="from_rolling", params={"length": 8, "split": 0.5}),
     )
 
 
-def _run(windows: list[int], *, optimization: OptimizationConfig | None = None):
+def _run(windows: list[int], *, optimization=None):
     return execute_optimization(
         close=_uptrend_close(),
         open_=_uptrend_close(),
         source=_source(windows),
         optimization=optimization or _optimization(),
-        portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
-        report=ReportConfig(),
-        ranking=RankingConfig(metric="total_return", min_weight=0.3),
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
         metric_registry=make_default_metric_registry(),
     )
 
@@ -306,9 +306,9 @@ def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> No
         open_=close,
         source=_source(windows),
         optimization=_optimization(),
-        portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
-        report=ReportConfig(),
-        ranking=RankingConfig(metric="total_return", min_weight=0.3),
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
         metric_registry=make_default_metric_registry(),
     )
 

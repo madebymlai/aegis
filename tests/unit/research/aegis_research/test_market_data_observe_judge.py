@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import pandas as pd
 
-from research.aegis_research.config import DataConfig
 from research.aegis_research.market_data import diagnostics as observe
 from research.aegis_research.market_data import quality as judge
 from research.aegis_research.market_data.contracts import (
     DataDiagnostics,
     DataFeatureDiagnostics,
 )
+from tests.support.research.aegis_research.factories import make_data_config
 
 
 def test_judge_is_a_pure_verdict_over_typed_diagnostics() -> None:
     verdict = judge.evaluate(
-        DataConfig(source="diagnostic", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="diagnostic", symbols=["SYN"], arrays=["Close"]),
         (
             DataDiagnostics(
                 symbol="SYN",
@@ -51,7 +51,7 @@ def test_observe_reports_per_symbol_feature_diagnostics() -> None:
         index=index,
     )
     frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["symbol", "feature"])
-    config = DataConfig(source="frame", symbols=["SYN"], arrays=["Close"])
+    config = make_data_config(source="frame", symbols=["SYN"], arrays=["Close"])
 
     observation = observe.observe(
         config,
