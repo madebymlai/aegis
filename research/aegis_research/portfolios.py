@@ -35,7 +35,7 @@ VBT_LEVERAGE_MODE = "eager"
 VBT_NEXT_OPEN_PRICE = "nextopen"
 
 
-def _execution_settings(open_: pd.DataFrame | None) -> tuple[dict[str, Any], str]:
+def _execution_settings(open_: pd.DataFrame | None) -> dict[str, Any]:
     """Resolve VBT fill-timing kwargs.
 
     With ``open_`` provided, fill at the next bar's open (``price="nextopen"`` ->
@@ -43,8 +43,8 @@ def _execution_settings(open_: pd.DataFrame | None) -> tuple[dict[str, Any], str
     eliminating same-bar look-ahead. Without it, fall back to close fills.
     """
     if open_ is None:
-        return {}, "same_close"
-    return {"price": VBT_NEXT_OPEN_PRICE, "open": open_}, "next_open"
+        return {}
+    return {"price": VBT_NEXT_OPEN_PRICE, "open": open_}
 
 
 def _build_portfolio(
@@ -64,7 +64,7 @@ def _build_portfolio(
     ``group_by`` (and whether the frames are candidate-expanded) differs between the
     two callers.
     """
-    masked, _non_exec_diag = apply_executable_mask_and_terminal_liquidation(
+    masked, _ = apply_executable_mask_and_terminal_liquidation(
         allocations,
         market_index=market_index,
     )
@@ -74,7 +74,7 @@ def _build_portfolio(
         nonzero_only=False,
         unique_only=False,
     )
-    exec_kwargs, _execution_timing = _execution_settings(open_frame)
+    exec_kwargs = _execution_settings(open_frame)
     return vbt.Portfolio.from_optimizer(
         price_frame,
         pfo,
