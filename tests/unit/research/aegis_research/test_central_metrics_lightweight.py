@@ -60,7 +60,8 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
     # exposure caps, so the gate admits this metrics-parity fixture at leverage 1.0.
     allocations.loc[index[0], ("candidate-b", slice(None))] = 0.5
     simulation = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0.001, slippage=0, direction="longonly")
+        close, allocations, PortfolioConfig(fees=0.001, slippage=0, direction="longonly"),
+        periods_per_year=252,
     )
     config = ReportConfig(freq="1D", year_freq="252D")
 
@@ -107,7 +108,8 @@ def test_non_finite_values_land_as_nan_in_a_float64_grid() -> None:
     allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
     allocations.loc[index[0], ("flat", "A")] = 0.0
     simulation = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0.0, slippage=0, direction="longonly")
+        close, allocations, PortfolioConfig(fees=0.0, slippage=0, direction="longonly"),
+        periods_per_year=252,
     )
     config = ReportConfig(freq="1D", year_freq="252D")
 

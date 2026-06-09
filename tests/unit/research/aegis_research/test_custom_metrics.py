@@ -140,7 +140,8 @@ def _two_candidate_portfolio():
     allocations.loc[index[0], ("candidate-a", "A")] = 0.3
     allocations.loc[index[0], ("candidate-b", "A")] = 0.5
     simulation = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0.001, slippage=0, direction="longonly")
+        close, allocations, PortfolioConfig(fees=0.001, slippage=0, direction="longonly"),
+        periods_per_year=252,
     )
     return simulation, candidate_ids
 

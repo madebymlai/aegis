@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
@@ -14,11 +13,6 @@ from research.aegis_research.portfolio_policy import (
 )
 
 SYMBOL_LEVEL = "symbol"
-# Trading periods per year used to convert the flat annual short-financing rates into a
-# per-bar carry, matched to daily metric annualization (252D / 1D). The runner threads its
-# own value derived from ``report.freq``/``report.year_freq`` so carry and Sharpe share one
-# calendar; this is the daily default for the single-run path.
-DEFAULT_PERIODS_PER_YEAR = 252
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
 # of ``(net_rate / periods_per_year) * close``. ``* live position`` gives drifted notional,
 # only-while-open, and the cost-on-short / credit-on-long sign for free — hence the long-leg
@@ -176,29 +170,34 @@ def short_masked_cash_dividends(
     return cash_dividends
 
 
-def simulate_portfolio(
+def simulate_single_book(
     close: pd.DataFrame,
     allocations: pd.DataFrame,
     config: PortfolioConfig,
     *,
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
-    periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
+    periods_per_year: int = 252,
 ) -> vbt.Portfolio:
-    _validate_allocations_frame(close, allocations)
-    assert_signed_allocations_within_caps(
-        allocations,
-        gross_cap=config.gross_cap,
-        net_cap=config.net_cap,
-        direction=config.direction,
+    """Test-support wrapper: simulate one book through the batched path.
+
+    Wraps plain-symbol ``allocations`` into a one-candidate MultiIndex, then
+    delegates to ``simulate_portfolio_batch``.  Only for carry/mechanics tests
+    that need plain symbol columns — not a production interface.
+    """
+    columns = pd.MultiIndex.from_product(
+        [["single"], allocations.columns],
+        names=["candidate_id", SYMBOL_LEVEL],
     )
-    return _build_portfolio(
+    alloc_mi = pd.DataFrame(
+        allocations.to_numpy(), index=allocations.index, columns=columns
+    )
+    return simulate_portfolio_batch(
         close,
-        allocations,
+        alloc_mi,
         config,
-        open_frame=open_,
+        open_=open_,
         market_index=market_index,
-        group_by=True,
         periods_per_year=periods_per_year,
     )
 
@@ -210,7 +209,7 @@ def simulate_portfolio_batch(
     *,
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
-    periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
+    periods_per_year: int,
 ) -> vbt.Portfolio:
     _validate_candidate_columns(allocations.columns, field_name="allocations")
     expanded_close = expand_market_frame_to_candidate_columns(
