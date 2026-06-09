@@ -18,7 +18,7 @@ _SINGLE_CANDIDATE_ID = "single"
 # of ``(net_rate / periods_per_year) * close``. ``* live position`` gives drifted notional,
 # only-while-open, and the cost-on-short / credit-on-long sign for free — hence the long-leg
 # mask (a positive per-share value would otherwise *credit* a long position).
-# Margin interest (``int_rate × borrowed_cash``) needs ``vbt.pf_nb.get_debt_nb(c)``, which is
+# Margin interest (``int_rate x borrowed_cash``) needs ``vbt.pf_nb.get_debt_nb(c)``, which is
 # unavailable on ``from_orders``; charging it would require ``from_signals``/``from_order_func``.
 # Deferred by architectural boundary, not punted (see ADR-0008).
 VBT_PF_METHOD = "from_orders"
