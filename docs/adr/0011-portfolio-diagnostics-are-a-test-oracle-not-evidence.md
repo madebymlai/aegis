@@ -73,6 +73,26 @@ a VBT-contract regression guard and labeled a sample. The same split replaces
 `_order_rejection_counts`' string-matching over `records_readable` with the native `res_status_*`
 fields, deleting the hand-maintained `ORDER_REJECTION_STATUSES` tuple.
 
+## Amendment (2026-06-09): the production guard is an exact NoCash tripwire, not a tolerance
+
+The fidelity-gate split above assumed the production guard would carry a tolerance (it must
+distinguish a benign `NoCash` — VBT re-executing an unchanged target when free cash is zero —
+from a genuine under-fill). aegis-rd-ce4.1 implemented exactly that: a
+`_NOCASH_ALLOC_MISMATCH_TOLERANCE` classifier comparing the requested target against the held
+allocation. That tolerance is being removed.
+
+The benign `NoCash` class only exists because free cash can be pinned at zero against the
+engine's `leverage=gross_cap` ceiling. The ADR-0007 amendment (2026-06-09) removes that
+ceiling — the **Allocation Policy** gate becomes the sole enforcer of `gross_cap` and the
+engine runs with surplus buying power (`leverage = k × gross_cap`). With no zero-buying-power
+states, **every `NoCash` rejection is a bug**, so the guard collapses to an exact tripwire
+(`if any(NoCash): raise`) with no tolerance, no `req_size`/`st0_*` reconstruction, and no
+benign-vs-genuine classifier. The categorical improvement: the old threshold *graded
+corruption* (a judgment with no right answer); the headroom *sizes a resource* (correct value
+is just "enough"), and the tripwire stays exact at zero forever. If it ever fires, the response
+is a capacity bump, not a recalibration. Tracked as a `discovered-from` follow-up to
+aegis-rd-ce4.1.
+
 ## Consequences
 
 - `PortfolioSimulationResult` is removed; `simulate_portfolio_batch` returns `vbt.Portfolio`

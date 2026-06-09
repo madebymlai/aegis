@@ -93,3 +93,38 @@ positions otherwise.
   portfolio block, and reproduction builds a fresh v7 config.
 - CONTEXT.md updated: **Strategy** and **Allocation Policy** redefined; **Direction**,
   **Gross Exposure**, **Net Exposure** added.
+
+## Amendment (2026-06-09): gross_cap is enforced at the gate, not by the engine
+
+This ADR set `leverage=gross_cap`, making the cap enforced **twice**: once fail-closed at the
+**Allocation Policy** gate (it rejects any requested book with `Σ|wᵢ| > gross_cap` before
+simulation) and again inside VBT as a buying-power ceiling. For a compliant book the second
+enforcer is pure redundancy; it can only bite in transient states (equity shrank, prices
+drifted the realized book above cap, a losing short needs cash to close), and its bite mode is
+to **silently under-fill the rebalance** — perversely blocking the very order that returns the
+book to compliance. The `requested ≈ realized` assertion this ADR added (and the NoCash guard
+that succeeded it in ADR-0011 / aegis-rd-ce4.1) existed *solely* to detect corruption the
+second enforcer created.
+
+We therefore make the **gate the sole enforcer** of `gross_cap` and give the engine surplus
+buying power: `leverage = k × gross_cap` (k ≥ 2), large enough that no compliant rebalance ever
+hits the ceiling — `gross_cap` is unbounded above by config, so the headroom is tied to it
+rather than a flat constant, and `np.inf` is avoided (free cash pinned at 0 gives a `0 × ∞`
+division-by-zero; the VBT maintainer prescribes a generous *finite* leverage). `leverage_mode`
+stays `"eager"`.
+
+This changes no economics for scored evidence: surplus buying power only affects whether a
+marginal order *fills*, not the resulting accounting. `from_orders` executes a bar's orders at
+one price and marks `pf.value` at bar close, so a within-bar transition spike between two
+compliant books never enters the close-to-close value series the **Metrics** are computed on;
+and margin interest is unmodeled (ADR-0008), so extra borrowing power carries no cost. In drift
+states the simulator may transiently borrow above cap to transition between two compliant
+books — strictly more honest than today's alternative of holding a silently under-filled,
+already-above-cap book and scoring it. `gross_cap` was always a constraint on the *requested*
+rebalance (CONTEXT.md: `Σ|wᵢ|` per rebalance), never on realized exposure, which already drifts
+above cap between rebalances regardless.
+
+The downstream guard collapses accordingly: with no zero-buying-power states, every `NoCash`
+rejection is a bug, so the tolerance-graded benign-vs-genuine classifier becomes an exact
+`if any(NoCash): raise` tripwire (see the ADR-0011 amendment). Tracked as a `discovered-from`
+follow-up to aegis-rd-ce4.1.
