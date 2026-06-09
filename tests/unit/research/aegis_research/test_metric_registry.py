@@ -10,6 +10,7 @@ from research.aegis_research.metrics import (
     make_default_metric_registry,
 )
 from research.aegis_research.metrics.contracts import ExtractorSpec
+from research.aegis_research.metrics.extractors import BUILTIN_EXTRACTORS
 from research.aegis_research.metrics.stats import (
     PORTFOLIO_METRIC_VALUE_KEYS,
     register_vbt_stats_metrics,
@@ -220,3 +221,15 @@ def _definition(metric_id: str, *, title: str = "Total Return") -> MetricDefinit
         vbt_metric=metric_id,
         source_method="stats",
     )
+
+
+def test_builtin_extractors_match_the_portfolio_catalog_exactly() -> None:
+    """Pin the one drift direction registration cannot fail-close on.
+
+    A catalog entry without an extractor already fails loudly at registry
+    construction (``BUILTIN_EXTRACTORS[metric_id]`` raises KeyError in
+    ``register_vbt_stats_metrics``). The reverse is silent: an extractor
+    authored in ``BUILTIN_EXTRACTORS`` but never cataloged would never
+    register and never compute — dead code. Exact set equality closes it.
+    """
+    assert set(BUILTIN_EXTRACTORS) == set(PORTFOLIO_METRIC_VALUE_KEYS)
