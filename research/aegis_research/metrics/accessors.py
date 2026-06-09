@@ -50,7 +50,14 @@ def central_metrics_from_grouped_accessors(
         rows.append(row)
 
     index = pd.MultiIndex.from_tuples(candidate_keys, names=param_names)
-    return pd.DataFrame(rows, index=index)
+    # The metric grid is uniformly float64 (None -> NaN). Without the explicit
+    # dtype, a column whose every candidate finalizes to None (e.g. sharpe in a
+    # no-trade window) lands as an all-NA object column, and pandas' deprecated
+    # all-NA dtype reconciliation fires (FutureWarning) when vbt row-stacks it
+    # with the float64 frames from other windows (incl. the runner's all-invalid
+    # NaN frame). Downstream consumers read values through optional_float, so
+    # NaN-vs-None inside the grid is invisible to ranking and Evidence.
+    return pd.DataFrame(rows, index=index, dtype="float64")
 
 
 def _ith(series: Any, idx: int) -> Any:

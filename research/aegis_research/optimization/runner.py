@@ -251,6 +251,9 @@ def _metrics_from_allocations(
 
 
 def _nan_metric_frame(metric_keys: list[tuple], param_names: list[str]) -> pd.DataFrame:
+    # float64 by construction — same grid dtype contract as
+    # central_metrics_from_grouped_accessors, so vbt's row_stack concat
+    # never has to reconcile divergent dtypes across windows.
     index = pd.MultiIndex.from_tuples(metric_keys, names=param_names)
     return pd.DataFrame(np.nan, index=index, columns=list(PORTFOLIO_METRIC_VALUE_KEYS))
 

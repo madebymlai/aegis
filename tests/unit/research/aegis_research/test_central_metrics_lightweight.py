@@ -80,12 +80,15 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
             )
 
 
-def test_non_finite_values_normalize_to_none() -> None:
-    """The grouped path normalises non-finite metric values (NaN/inf) to None.
+def test_non_finite_values_land_as_nan_in_a_float64_grid() -> None:
+    """Non-finite metric values land as NaN inside a uniformly float64 grid.
 
     A flat-price candidate with no closed trades has an undefined win rate and
-    Sharpe (NaN); the registry-driven loop's ``_finalize`` must surface those as
-    None while leaving the finite zeros intact.
+    Sharpe. The grid carries those as NaN in float64 columns — never as None in
+    an object column — so vbt's row_stack concat across windows is dtype-stable
+    (an all-None column would trip pandas' deprecated all-NA dtype
+    reconciliation, FutureWarning). The None contract lives downstream at the
+    optional_float seam (ranking/Evidence), not inside the grid.
     """
     index = pd.date_range("2024-01-01", periods=10)
     close = pd.DataFrame({"A": [100.0] * 10}, index=index)
@@ -113,5 +116,9 @@ def test_non_finite_values_normalize_to_none() -> None:
     assert row["max_dd"] == pytest.approx(0.0)
     assert row["total_trades"] == pytest.approx(0.0)
     assert row["total_fees_paid"] == pytest.approx(0.0)
-    assert row["win_rate"] is None, "win_rate should normalise to None when no trades"
-    assert row["sharpe_ratio"] is None, "sharpe_ratio should normalise to None for flat returns"
+    assert np.isnan(row["win_rate"]), "win_rate should be NaN when no trades"
+    assert np.isnan(row["sharpe_ratio"]), "sharpe_ratio should be NaN for flat returns"
+    assert result.dtypes.eq("float64").all(), (
+        "metric grid must be uniformly float64 — object columns break vbt "
+        "row_stack dtype stability"
+    )
