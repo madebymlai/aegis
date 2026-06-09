@@ -13,6 +13,7 @@ from research.aegis_research.portfolio_policy import (
 )
 
 SYMBOL_LEVEL = "symbol"
+_SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
 # of ``(net_rate / periods_per_year) * close``. ``* live position`` gives drifted notional,
 # only-while-open, and the cost-on-short / credit-on-long sign for free — hence the long-leg
@@ -51,13 +52,7 @@ def _build_portfolio(
     group_by: Any,
     periods_per_year: int,
 ) -> vbt.Portfolio:
-    """Mask allocations, build the PFO, and run ``from_optimizer``.
-
-    Shared core for the single-group and per-candidate simulations: identical
-    masking, allocation-filling, short-financing carry, and execution settings; only
-    ``group_by`` (and whether the frames are candidate-expanded) differs between the
-    two callers.
-    """
+    """Mask allocations, build the PFO, and run ``from_optimizer``."""
     masked, _ = apply_executable_mask_and_terminal_liquidation(
         allocations,
         market_index=market_index,
@@ -186,7 +181,7 @@ def simulate_single_book(
     that need plain symbol columns — not a production interface.
     """
     columns = pd.MultiIndex.from_product(
-        [["single"], allocations.columns],
+        [[_SINGLE_CANDIDATE_ID], allocations.columns],
         names=["candidate_id", SYMBOL_LEVEL],
     )
     alloc_mi = pd.DataFrame(
