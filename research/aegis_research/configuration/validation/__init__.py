@@ -5,14 +5,13 @@ The coordinator owns the top-level Run shape (schema version, name, output dir, 
 legacy fields) and sequences the domain validators; each domain lives in its own module
 and imports only what it validates:
 
-- ``base``         — shared type/structure validators
-- ``components``   — strategy & indicator component refs and output contracts
-- ``data``         — market-data source, arrays, quality policy, paths
-- ``optimization`` — search policy, run split, random policy, execute passthrough
-- ``metrics``      — ranking metric selection
+- ``base``       — shared type/structure validators
+- ``components`` — strategy & indicator component refs and output contracts
+- ``data``       — market-data source, arrays, quality policy, paths
+- ``metrics``    — ranking metric selection
 
-Portfolio and report are pydantic-ported — validated by the coordinator in
-``resolution._build_resolved_run_config`` via ``TypeAdapter`` + ``ValidationError``
+Portfolio, report, and optimization are pydantic-ported — validated by the coordinator
+in ``resolution._build_resolved_run_config`` via ``TypeAdapter`` + ``ValidationError``
 adapter, with a tombstone prepass for removed fields.
 
 The public surface (re-exported below) is the validation entry point plus the two
@@ -75,8 +74,8 @@ def _validate_raw_run_config(
         _validate_experiment_name(raw["name"], issues)
     _validate_output_dir(raw, issues)
 
-    # Portfolio and report sections are pydantic-ported, validated upstream
-    # in the coordinator (resolution._build_resolved_run_config).
+    # Portfolio, report, and optimization are pydantic-ported, validated
+    # upstream in the coordinator (resolution._build_resolved_run_config).
     data = _section(raw, "data", set(DataConfig.__dataclass_fields__), issues)
     _validate_data(data, issues, validate_paths=True)
     _validate_lock(raw, issues)
