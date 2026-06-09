@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from pydantic import TypeAdapter, ValidationError
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.component_registry import (
+    ComponentRegistryError,
+    ComponentSelection,
     FrozenComponentRegistry,
     discover_component_registry,
 )
+
+if TYPE_CHECKING:
+    from research.aegis_research.component_registry import ComponentDefinition
 from research.aegis_research.configuration.builders import _build_run_config
 from research.aegis_research.configuration.pydantic_adapter import (
     _apply_removed_fields,
@@ -28,6 +34,8 @@ from research.aegis_research.configuration.schema import (
     PortfolioConfig,
     ReportConfig,
     RunConfig,
+    RunIndicatorSourceConfig,
+    RunSourceRefConfig,
 )
 from research.aegis_research.configuration.validation import (
     _is_absolute_or_user_path,
@@ -204,6 +212,30 @@ def _build_resolved_run_config(
     report_config = _validate_report_section(raw, issues)
     optimization_config = _validate_optimization_section(raw, issues)
 
+    # ── pydantic-ported sections: strategy, indicators ──────────────────
+    strategy_config = _validate_strategy_section(raw, issues)
+    indicator_configs = _validate_indicators_section(raw, issues)
+
+    # ── membership + output-contract checks (need the registry) ─────────
+    strategy_definition, indicator_definitions = _validate_component_membership(
+        strategy_config,
+        indicator_configs,
+        issues,
+        component_registry=component_registry,
+    )
+    _validate_component_output_contract(strategy_definition, indicator_definitions, issues)
+
+    # ── params validation (needs manifest param_names) ───────────────────
+    _validate_component_params_for_definition(
+        "strategy", strategy_config, strategy_definition, issues
+    )
+    for _i, (ind_config, (ind_path, ind_def)) in enumerate(
+        zip(indicator_configs, indicator_definitions, strict=False)
+    ):
+        _validate_component_params_for_definition(
+            ind_path, ind_config, ind_def, issues
+        )
+
     # ── legacy (still-raw-dict) sections ─────────────────────────────────
     _validate_raw_run_config(
         raw,
@@ -222,6 +254,8 @@ def _build_resolved_run_config(
             portfolio_config=portfolio_config,
             report_config=report_config,
             optimization_config=optimization_config,
+            strategy_config=strategy_config,
+            indicator_configs=indicator_configs,
         ),
         raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
         authored_config=to_builtin(raw),
@@ -387,6 +421,193 @@ def _validate_optimization_section(
     except ValidationError as e:
         issues.extend(_validation_error_to_issues(e, section="optimization"))
         return None
+
+
+def _validate_strategy_section(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> RunSourceRefConfig | None:
+    """Pydantic validate/construct for strategy."""
+    strategy_raw = raw.get("strategy")
+    if not isinstance(strategy_raw, dict):
+        issues.append(ConfigValidationIssue("strategy", "must be a mapping"))
+        return None
+    try:
+        return TypeAdapter(RunSourceRefConfig).validate_python(strategy_raw)
+    except ValidationError as e:
+        issues.extend(_validation_error_to_issues(e, section="strategy"))
+        return None
+
+
+def _validate_indicators_section(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> list[RunIndicatorSourceConfig]:
+    """Pydantic validate/construct for each indicator."""
+    indicators_raw = raw.get("indicators")
+    if not isinstance(indicators_raw, list):
+        issues.append(ConfigValidationIssue("indicators", "must be a list"))
+        return []
+
+    adapter = TypeAdapter(RunIndicatorSourceConfig)
+    configs: list[RunIndicatorSourceConfig] = []
+    seen_ids: set[str] = set()
+    for i, item in enumerate(indicators_raw):
+        if not isinstance(item, dict):
+            issues.append(
+                ConfigValidationIssue(f"indicators[{i}]", "must be a mapping")
+            )
+            # Still attempt pydantic validation so we get the structural issues
+            # on a best-effort basis.
+            with contextlib.suppress(ValidationError):
+                adapter.validate_python(item)
+            continue
+        try:
+            config = adapter.validate_python(item)
+        except ValidationError as e:
+            issues.extend(_validation_error_to_issues(e, section=f"indicators[{i}]"))
+            continue
+        if config.id in seen_ids:
+            issues.append(
+                ConfigValidationIssue(
+                    f"indicators[{i}].id",
+                    f"duplicates indicator component id {config.id!r}",
+                )
+            )
+        seen_ids.add(config.id)
+        configs.append(config)
+    return configs
+
+
+def _validate_component_membership(
+    strategy_config: RunSourceRefConfig | None,
+    indicator_configs: list[RunIndicatorSourceConfig],
+    issues: list[ConfigValidationIssue],
+    *,
+    component_registry: FrozenComponentRegistry,
+) -> tuple[
+    ComponentDefinition | None,
+    tuple[tuple[str, ComponentDefinition], ...],
+]:
+    """Membership check: reject unregistered component ids.
+
+    Also rejects ``id == "all"`` (must select one component).
+    Returns the registry definitions needed for the output-contract cross-check.
+    """
+
+    strategy_definition: ComponentDefinition | None = None
+    if strategy_config is not None:
+        if strategy_config.id == "all":
+            issues.append(
+                ConfigValidationIssue("strategy.id", "must select one component id")
+            )
+        else:
+            try:
+                strategy_definition = component_registry.get(
+                    ComponentSelection("strategies", strategy_config.id)
+                )
+            except ComponentRegistryError:
+                issues.append(
+                    ConfigValidationIssue(
+                        "strategy.id", "unknown strategie component id"
+                    )
+                )
+
+    indicator_definitions: list[tuple[str, ComponentDefinition]] = []
+    for i, config in enumerate(indicator_configs):
+        item_path = f"indicators[{i}]"
+        if config.id == "all":
+            issues.append(
+                ConfigValidationIssue(
+                    f"{item_path}.id", "must select one component id"
+                )
+            )
+            continue
+        try:
+            definition = component_registry.get(
+                ComponentSelection("indicators", config.id)
+            )
+        except ComponentRegistryError:
+            issues.append(
+                ConfigValidationIssue(
+                    f"{item_path}.id", "unknown indicator component id"
+                )
+            )
+            continue
+        indicator_definitions.append((item_path, definition))
+    return strategy_definition, tuple(indicator_definitions)
+
+
+def _validate_component_output_contract(
+    strategy_definition: ComponentDefinition | None,
+    indicator_definitions: tuple[tuple[str, ComponentDefinition], ...],
+    issues: list[ConfigValidationIssue],
+) -> None:
+    """Output-contract cross-check: strategy consumes outputs produced by indicators."""
+    if strategy_definition is None:
+        return
+    produced: dict[str, str] = {}
+    for path, definition in indicator_definitions:
+        for output_name in getattr(definition.manifest, "output_names", ()):
+            previous = produced.get(output_name)
+            if previous is not None:
+                issues.append(
+                    ConfigValidationIssue(
+                        f"{path}.id",
+                        f"duplicates produced indicator output {output_name!r} from {previous}",
+                    )
+                )
+                continue
+            produced[output_name] = f"{path}.id"
+
+    missing = sorted(
+        set(getattr(strategy_definition.manifest, "consumes_outputs", ())) - set(produced)
+    )
+    if missing:
+        issues.append(
+            ConfigValidationIssue(
+                "strategy.consumes_outputs",
+                f"strategy consumes outputs not produced by configured indicators: {missing}",
+            )
+        )
+
+
+def _validate_component_params_for_definition(
+    path: str,
+    config: RunSourceRefConfig | RunIndicatorSourceConfig | None,
+    definition: ComponentDefinition | None,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    """Validate params against the manifest's param_names, defaults, and param_space_callable."""
+    if config is None or definition is None:
+        return
+    param_names = tuple(getattr(definition.manifest, "param_names", ()))
+    if not param_names and not config.params:
+        return
+    unknown = sorted(set(config.params) - set(param_names))
+    if unknown:
+        issues.append(
+            ConfigValidationIssue(
+                f"{path}.params",
+                f"params must be declared by the component manifest; unknown: {unknown}",
+            )
+        )
+        return
+    if not param_names:
+        return
+    if getattr(definition.manifest, "param_space_callable", None):
+        return
+    provided = set(config.params)
+    defaults = set(getattr(definition.manifest, "defaults", {}))
+    missing = sorted(set(param_names) - provided - defaults)
+    if missing:
+        issues.append(
+            ConfigValidationIssue(
+                path,
+                "must provide params, component defaults, or param_space_callable "
+                f"for params {missing}",
+            )
+        )
 
 
 def _assert_resolved_config_registries(

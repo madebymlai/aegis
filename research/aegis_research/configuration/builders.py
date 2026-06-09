@@ -43,16 +43,21 @@ def _build_run_config(
     portfolio_config: PortfolioConfig | None = None,
     report_config: ReportConfig | None = None,
     optimization_config: OptimizationConfig | None = None,
+    strategy_config: RunSourceRefConfig | None = None,
+    indicator_configs: list[RunIndicatorSourceConfig] | None = None,
 ) -> RunConfig:
-    # Pydantic-ported sections (data, portfolio, report, optimization) are
-    # validated + constructed by the coordinator. If they weren't constructed
-    # (validation failure short-circuit), raise.
+    # Pydantic-ported sections are validated + constructed by the coordinator.
+    # If they weren't constructed (validation failure short-circuit), raise.
     if data_config is None:
         raise ValueError("data_config required")
     if portfolio_config is None:
         raise ValueError("portfolio_config required")
     if report_config is None:
         raise ValueError("report_config required")
+    if strategy_config is None:
+        raise ValueError("strategy_config required")
+    if indicator_configs is None:
+        raise ValueError("indicator_configs required")
     ranking_raw = dict(raw["ranking"])
     _coerce_float_fields(ranking_raw, _float_field_names(RankingConfig))
     return RunConfig(
@@ -61,8 +66,8 @@ def _build_run_config(
         data=data_config,
         portfolio=portfolio_config,
         report=report_config,
-        strategy=_build_run_source_ref(raw["strategy"]),
-        indicators=_build_run_indicator_sources(raw["indicators"]),
+        strategy=strategy_config,
+        indicators=indicator_configs,
         ranking=_build_ranking(ranking_raw),
         optimization=optimization_config,
         lock=_build_lock(raw.get("lock")),
@@ -77,25 +82,6 @@ def _build_lock(raw: dict[str, Any] | str | None) -> Lock | None:
         run_id, role = split_lock_handle(raw)
         return Lock(run_id=run_id, candidate_id=role or DEFAULT_LOCK_ROLE)
     return Lock(run_id=raw["run_id"], candidate_id=raw["candidate_id"])
-
-
-def _build_run_source_ref(raw: dict[str, Any]) -> RunSourceRefConfig:
-    return RunSourceRefConfig(
-        id=raw["id"],
-        params=dict(raw.get("params", {})),
-    )
-
-
-def _build_run_indicator_sources(raw: list[dict[str, Any]]) -> list[RunIndicatorSourceConfig]:
-    refs: list[RunIndicatorSourceConfig] = []
-    for item in raw:
-        refs.append(
-            RunIndicatorSourceConfig(
-                id=item["id"],
-                params=dict(item.get("params", {})),
-            )
-        )
-    return refs
 
 
 def _build_ranking(raw: dict[str, Any]) -> RankingConfig:
