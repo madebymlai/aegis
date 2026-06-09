@@ -29,7 +29,6 @@ from research.aegis_research.component_registry import (
     ComponentSelection,
     FrozenComponentRegistry,
 )
-
 from research.aegis_research.configuration.field_types import EXPERIMENT_NAME_RE
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
@@ -118,11 +117,7 @@ def _prepass_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]
     loses dotted paths).
     """
     # schema_version presence + version check
-    if "schema_version" not in raw:
-        issues.append(
-            ConfigValidationIssue("schema_version", f"must be {CONFIG_SCHEMA_VERSION}")
-        )
-    elif raw.get("schema_version") != CONFIG_SCHEMA_VERSION:
+    if "schema_version" not in raw or raw.get("schema_version") != CONFIG_SCHEMA_VERSION:
         issues.append(
             ConfigValidationIssue("schema_version", f"must be {CONFIG_SCHEMA_VERSION}")
         )
@@ -348,13 +343,13 @@ def _check_strategy_membership(
         )
     except ComponentRegistryError:
         issues.append(
-            ConfigValidationIssue("strategy.id", "unknown strategie component id")
+            ConfigValidationIssue("strategy.id", "unknown strategy component id")
         )
         return None
 
 
 def _check_indicators_membership(
-    strategy_config: RunSourceRefConfig | None,  # noqa: ARG001 — unified signature
+    strategy_config: RunSourceRefConfig | None,
     indicator_configs: list[RunIndicatorSourceConfig],
     issues: list[ConfigValidationIssue],
     *,
@@ -524,7 +519,7 @@ def _best_effort_registry_checks(
                 component_registry.get(ComponentSelection("strategies", sid))
             except ComponentRegistryError:
                 issues.append(
-                    ConfigValidationIssue("strategy.id", "unknown strategie component id")
+                    ConfigValidationIssue("strategy.id", "unknown strategy component id")
                 )
 
     # Indicators

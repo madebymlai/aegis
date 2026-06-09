@@ -19,8 +19,10 @@ from research.aegis_research.configuration.schema import (
     RunConfig,
 )
 from research.aegis_research.configuration.validation import (
-    validate_run_config,
     _post_validate_ranking_metric as _check_ranking_metric_membership,
+)
+from research.aegis_research.configuration.validation import (
+    validate_run_config,
 )
 from research.aegis_research.metrics import (
     FrozenMetricRegistry,
