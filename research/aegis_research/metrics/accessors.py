@@ -37,12 +37,8 @@ def central_metrics_from_grouped_accessors(
         row: dict[str, Any] = {}
         for metric_id in PORTFOLIO_METRIC_VALUE_KEYS:
             spec = EXTRACTORS[metric_id]
-            val = _ith(raw_series[metric_id], i)
-            if spec.abs_:
-                val = abs(val)
-            if spec.scale == "percent":
-                val = _pct(val)
-            row[metric_id] = _finalize(val)
+            raw = _ith(raw_series[metric_id], i)
+            row[metric_id] = _apply_transforms(raw, spec)
         rows.append(row)
 
     index = pd.MultiIndex.from_tuples(candidate_keys, names=param_names)
@@ -50,20 +46,16 @@ def central_metrics_from_grouped_accessors(
 
 
 def central_metrics_from_accessors(pf: Any, config: ReportConfig) -> pd.Series:
-    raw = {
-        "total_return": _pct(_scalar(pf.get_total_return())),
-        "max_dd": _pct(abs(_scalar(pf.get_max_drawdown()))),
-        "total_trades": _scalar(pf.exit_trades.count()),
-        "win_rate": _pct(_scalar(pf.exit_trades.get_win_rate())),
-        "total_fees_paid": _scalar(pf.orders.fees.sum()),
-        "sharpe_ratio": _scalar(
-            pf.get_sharpe_ratio(
-                freq=pd.Timedelta(config.freq),
-                year_freq=pd.Timedelta(config.year_freq),
-            )
-        ),
-    }
-    values = {name: _finalize(raw[name]) for name in PORTFOLIO_METRIC_VALUE_KEYS}
+    """Single-portfolio central metrics.
+
+    Uses the same ``EXTRACTORS`` registry and transform pipeline as
+    ``central_metrics_from_grouped_accessors``.
+    """
+    values: dict[str, Any] = {}
+    for metric_id in PORTFOLIO_METRIC_VALUE_KEYS:
+        spec = EXTRACTORS[metric_id]
+        raw = _ith(spec.read(pf, config), 0)
+        values[metric_id] = _apply_transforms(raw, spec)
     series = pd.Series(values, name="value")
     series.index.name = METRIC_INDEX_NAME
     return series
@@ -75,14 +67,6 @@ def _ith(series: Any, idx: int) -> Any:
     return series
 
 
-def _scalar(value: Any) -> float:
-    if isinstance(value, (pd.Series, pd.DataFrame)):
-        return value.iloc[0]
-    if hasattr(value, "item"):
-        return value.item()
-    return value
-
-
 def _pct(value: Any) -> float | None:
     if value is None:
         return None
@@ -90,6 +74,16 @@ def _pct(value: Any) -> float | None:
         return float(value) * 100.0
     except (TypeError, ValueError):
         return value
+
+
+def _apply_transforms(raw: Any, spec: Any) -> float | None:
+    """Apply the declarative transforms declared by an ExtractorSpec."""
+    val = raw
+    if spec.abs_:
+        val = abs(val)
+    if spec.scale == "percent":
+        val = _pct(val)
+    return _finalize(val)
 
 
 def _finalize(value: Any) -> float | None:
