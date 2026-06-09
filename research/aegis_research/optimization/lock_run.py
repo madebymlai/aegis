@@ -25,10 +25,6 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
 )
-from research.aegis_research.optimization.component_source import (
-    ComponentSourceError,
-    component_params_from_slices,
-)
 from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     slice_by_component,
@@ -71,23 +67,23 @@ def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
         ) from error
 
     runtimes = _candidate_component_runtimes(lock, row["provenance"])
+    # Lock-run reads the runtime-provenance shape that component_source writes — the one
+    # accepted coupling cost (ADR-0006). The shape is a schema-versioned frozen artifact
+    # and concentrating the previously-split reader is strictly better.
     candidate_slices = slice_by_component(row["params"])
     component_params: ResolvedComponentParams = {}
     for runtime in runtimes:
         family = _component_family(runtime["family"])
         component_id = str(runtime["id"])
         component_slot = str(runtime["slot"])
-        try:
-            params = component_params_from_slices(
-                component_family=family,
-                component_id=component_id,
-                component_slot=component_slot,
-                component_slices=candidate_slices,
-                runtime=runtime,
-                candidate_key=row["candidate_key"],
-            )
-        except ComponentSourceError as error:
-            raise LockRunResolutionError(str(error)) from error
+        params = _component_params_for_runtime(
+            component_family=family,
+            component_id=component_id,
+            component_slot=component_slot,
+            component_slices=candidate_slices,
+            runtime=runtime,
+            candidate_key=row["candidate_key"],
+        )
         component_params[ComponentRef(family, component_id, component_slot)] = params
 
     _assert_every_slice_resolved(lock, candidate_slices, component_params)
@@ -103,6 +99,27 @@ def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
             "candidate": dict(row["provenance"]),
         },
     )
+
+
+def _component_params_for_runtime(
+    *,
+    component_family: ComponentFamily,
+    component_id: str,
+    component_slot: str,
+    component_slices: Mapping[ComponentRef, Mapping[str, Any]],
+    runtime: Mapping[str, Any],
+    candidate_key: str,
+) -> dict[str, Any]:
+    params = dict(runtime.get("fixed_params", {}))
+    slice_key = ComponentRef(component_family, component_id, component_slot)
+    params.update(component_slices.get(slice_key, {}))
+    missing = sorted(set(runtime.get("param_keys", {})) - set(params))
+    if missing:
+        raise LockRunResolutionError(
+            f"candidate {candidate_key} is missing params for component "
+            f"{component_family}/{component_id} slot {component_slot!r}: {missing}"
+        )
+    return params
 
 
 def _candidate_key_for_lock(lock: Lock, *, store: CandidateStore) -> str:

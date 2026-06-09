@@ -81,27 +81,6 @@ class _RuntimeParamDeduplication:
     n_candidates: int
 
 
-def component_params_from_slices(
-    *,
-    component_family: ComponentFamily,
-    component_id: str,
-    component_slot: str,
-    component_slices: Mapping[ComponentRef, Mapping[str, Any]],
-    runtime: Mapping[str, Any],
-    candidate_key: str,
-) -> dict[str, Any]:
-    params = dict(runtime.get("fixed_params", {}))
-    slice_key = ComponentRef(component_family, component_id, component_slot)
-    params.update(component_slices.get(slice_key, {}))
-    missing = sorted(set(runtime.get("param_keys", {})) - set(params))
-    if missing:
-        raise ComponentSourceError(
-            f"candidate {candidate_key} is missing params for component "
-            f"{component_family}/{component_id} slot {component_slot!r}: {missing}"
-        )
-    return params
-
-
 def build_component_optimization_source(
     config: RunConfig,
     *,
