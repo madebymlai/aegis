@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -17,10 +18,7 @@ def test_write_json_bytes_identical_to_canonical_json_indented(tmp_path: Path) -
 
     write_json(target, payload)
 
-    written = target.read_bytes()
-    expected = canonical_json_bytes(payload, indent=2)
-    assert written == expected
-    assert written == b'{\n  "a": 1,\n  "b": 2\n}'
+    assert target.read_bytes() == canonical_json_bytes(payload, indent=2)
 
 
 def test_write_json_creates_parent_directories(tmp_path: Path) -> None:
@@ -50,10 +48,9 @@ def test_write_json_chmod_restricted(tmp_path: Path) -> None:
     """Written files have mode 0600 (owner read/write only)."""
     target = tmp_path / "restricted.json"
     write_json(target, {"secret": "value"})
-    import stat
 
-    file_mode = target.stat().st_mode & stat.S_IRWXO
-    assert file_mode == 0, f"expected no other/world permissions, got {file_mode:#o}"
+    group_other_bits = target.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO)
+    assert group_other_bits == 0, f"expected no group/other permissions, got {group_other_bits:#o}"
 
 
 def test_hash_file_is_sha256_hexdigest(tmp_path: Path) -> None:

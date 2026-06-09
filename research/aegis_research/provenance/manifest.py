@@ -252,6 +252,3 @@ def _validate_file_identity(artifact: dict[str, Any], path: Path) -> None:
         raise ManifestValidationError(f"artifact size mismatch: {artifact.get('id')}")
     if artifact.get("hash") != hash_file(path):
         raise ManifestValidationError(f"artifact hash mismatch: {artifact.get('id')}")
-
-
-

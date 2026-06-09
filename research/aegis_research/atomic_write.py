@@ -41,9 +41,6 @@ def hash_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-# ── private durability recipe ────────────────────────────────────────────────
-
-
 def _atomic_write(target: Path, data: bytes) -> None:
     temp_path: Path | None = None
     try:
