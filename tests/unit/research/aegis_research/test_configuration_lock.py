@@ -17,12 +17,12 @@ from research.aegis_research.component_registry import discover_component_regist
 from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
-    Lock,
     resolve_run_config,
 )
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
 )
+from tests.support.research.aegis_research.factories import make_lock
 
 
 def _write_parameterized_strategy(path: Path) -> None:
@@ -96,7 +96,7 @@ def test_builder_produces_typed_lock(registry) -> None:
         _raw_config(lock={"run_id": "run-a", "candidate_id": "cand_123"}),
         component_registry=registry,
     )
-    assert resolved.config.lock == Lock(run_id="run-a", candidate_id="cand_123")
+    assert resolved.config.lock == make_lock(run_id="run-a", candidate_id="cand_123")
 
 
 def test_scalar_lock_defaults_role_to_best(registry) -> None:
@@ -106,7 +106,7 @@ def test_scalar_lock_defaults_role_to_best(registry) -> None:
         _raw_config(lock="20260527T000603791760Z_etf_momentum"),
         component_registry=registry,
     )
-    assert resolved.config.lock == Lock(
+    assert resolved.config.lock == make_lock(
         run_id="20260527T000603791760Z_etf_momentum", candidate_id="best"
     )
 
@@ -116,7 +116,7 @@ def test_scalar_lock_carries_explicit_role(registry) -> None:
         _raw_config(lock="run-a:median"),
         component_registry=registry,
     )
-    assert resolved.config.lock == Lock(run_id="run-a", candidate_id="median")
+    assert resolved.config.lock == make_lock(run_id="run-a", candidate_id="median")
 
 
 def test_scalar_lock_unknown_role_fails_validation_with_clear_message(registry) -> None:
@@ -188,7 +188,7 @@ def test_lock_with_component_params_is_accepted(registry) -> None:
         ),
         component_registry=registry,
     )
-    assert resolved.config.lock == Lock(run_id="run-a", candidate_id="cand_123")
+    assert resolved.config.lock == make_lock(run_id="run-a", candidate_id="cand_123")
     assert resolved.config.strategy.params == {"threshold": 2.0}
 
 

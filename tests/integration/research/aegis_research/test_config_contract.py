@@ -11,12 +11,12 @@ from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
     OHLCV_ARRAYS,
     ConfigValidationError,
-    DataConfig,
     load_run_config,
     resolve_env_refs,
     resolve_run_config,
 )
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
+from tests.support.research.aegis_research.factories import make_data_config
 
 
 def test_public_config_exports_only_run_config_contract() -> None:
@@ -299,7 +299,7 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
 
 def test_env_refs_are_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("BINANCE_API_KEY", "super-secret-token")
-    config = DataConfig(
+    config = make_data_config(
         source="binance",
         symbols=["BTCUSDT"],
         start="2020-01-01",

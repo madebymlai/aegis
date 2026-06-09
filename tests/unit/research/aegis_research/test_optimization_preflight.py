@@ -4,15 +4,16 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.config import (
-    OptimizationConfig,
-    RunSplitConfig,
-)
+from research.aegis_research.config import OptimizationConfig
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
 )
 from research.aegis_research.run_splits import RunSplit, RunSplitsResult
+from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
+    make_run_split_config,
+)
 
 
 def test_preflight_reports_two_phase_shape_and_execution_policy() -> None:
@@ -270,9 +271,9 @@ def _optimization(
     max_public_artifact_bytes: int = 1_000_000,
     execute: dict[str, object] | None = None,
 ) -> OptimizationConfig:
-    return OptimizationConfig(
+    return make_optimization_config(
         search=search,
-        split=RunSplitConfig(
+        split=make_run_split_config(
             method="from_rolling",
             params={"length": 10, "split": 0.5},
             max_splits=100,

@@ -5,13 +5,7 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.configuration.schema import (
-    OptimizationConfig,
-    PortfolioConfig,
-    RankingConfig,
-    ReportConfig,
-    RunSplitConfig,
-)
+from research.aegis_research.config import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.runner import (
@@ -19,6 +13,13 @@ from research.aegis_research.optimization.runner import (
     execute_optimization,
 )
 from research.aegis_research.optimization.source import OptimizationSource
+from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
+    make_portfolio_config,
+    make_ranking_config,
+    make_report_config,
+    make_run_split_config,
+)
 
 
 def _close_frame() -> pd.DataFrame:
@@ -29,12 +30,9 @@ def _close_frame() -> pd.DataFrame:
 
 
 def _optimization_config() -> OptimizationConfig:
-    return OptimizationConfig(
+    return make_optimization_config(
         search="grid",
-        split=RunSplitConfig(method="from_rolling", params={"length": 20, "split": 0.5}),
-        random_subset=None,
-        seed=None,
-        execute={},
+        split=make_run_split_config(method="from_rolling", params={"length": 20, "split": 0.5}),
     )
 
 
@@ -60,9 +58,9 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
             open_=close,
             source=source,
             optimization=_optimization_config(),
-            portfolio=PortfolioConfig(fees=0, slippage=0, direction="longonly"),
-            report=ReportConfig(),
-            ranking=RankingConfig(metric="total_return"),
+            portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+            report=make_report_config(),
+            ranking=make_ranking_config(metric="total_return"),
             metric_registry=make_default_metric_registry(),
         )
 
@@ -89,8 +87,8 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
             open_=close,
             source=source,
             optimization=_optimization_config(),
-            portfolio=PortfolioConfig(fees=0, slippage=0, direction="longonly"),
-            report=ReportConfig(),
-            ranking=RankingConfig(metric="total_return"),
+            portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+            report=make_report_config(),
+            ranking=make_ranking_config(metric="total_return"),
             metric_registry=make_default_metric_registry(),
         )

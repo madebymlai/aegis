@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import Any
 
 from research.aegis_research.configuration.schema import (
@@ -19,16 +20,39 @@ from research.aegis_research.configuration.schema import (
 )
 
 
+def _coerce_float_fields(raw: dict[str, Any], field_names: set[str]) -> None:
+    """Coerce integer values to float for the named float-typed fields.
+
+    ADR-0012: An integer YAML literal in a float field (e.g. ``gross_cap: 1``)
+    is stored as an ``int`` and serialized as ``1``. Coerce it to ``1.0`` now so
+    the subsequent pydantic ports are byte-neutral.
+    """
+    for name in field_names:
+        if name in raw and isinstance(raw[name], int) and not isinstance(raw[name], bool):
+            raw[name] = float(raw[name])
+
+
+def _float_field_names(cls: type) -> set[str]:
+    """Return the names of float-typed fields on a dataclass."""
+    return {f.name for f in fields(cls) if f.type in (float, "float")}
+
+
 def _build_run_config(raw: dict[str, Any]) -> RunConfig:
+    portfolio_raw = dict(raw.get("portfolio", {}))
+    _coerce_float_fields(portfolio_raw, _float_field_names(PortfolioConfig))
+    report_raw = dict(raw.get("report", {}))
+    _coerce_float_fields(report_raw, _float_field_names(ReportConfig))
+    ranking_raw = dict(raw["ranking"])
+    _coerce_float_fields(ranking_raw, _float_field_names(RankingConfig))
     return RunConfig(
         name=raw["name"],
         schema_version=raw["schema_version"],
         data=_build_data_config(raw.get("data", {})),
-        portfolio=PortfolioConfig(**raw.get("portfolio", {})),
-        report=ReportConfig(**raw.get("report", {})),
+        portfolio=PortfolioConfig(**portfolio_raw),
+        report=ReportConfig(**report_raw),
         strategy=_build_run_source_ref(raw["strategy"]),
         indicators=_build_run_indicator_sources(raw["indicators"]),
-        ranking=_build_ranking(raw["ranking"]),
+        ranking=_build_ranking(ranking_raw),
         optimization=_build_optimization(raw.get("optimization")),
         lock=_build_lock(raw.get("lock")),
         output_dir=raw.get("output_dir", "runs"),

@@ -4,12 +4,14 @@ from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     PORTFOLIO_DIRECTIONS,
     ConfigValidationIssue,
-    PortfolioConfig,
-    ReportConfig,
 )
 from research.aegis_research.configuration.validation.portfolio import (
     _validate_portfolio,
     _validate_report,
+)
+from tests.support.research.aegis_research.factories import (
+    make_portfolio_config,
+    make_report_config,
 )
 
 
@@ -80,13 +82,13 @@ def test_portfolio_rejects_unknown_direction() -> None:
 def test_report_periods_per_year_shares_metric_annualization_calendar() -> None:
     # Carry annualizes on the same freq/year_freq the Sharpe ratio uses (one calendar):
     # daily defaults give 252, and a weekly book gives 52.
-    assert ReportConfig().periods_per_year == 252
-    assert ReportConfig(freq="7D", year_freq="364D").periods_per_year == 52
+    assert make_report_config().periods_per_year == 252
+    assert make_report_config(freq="7D", year_freq="364D").periods_per_year == 52
 
 
 def test_short_financing_rate_defaults_carry_on() -> None:
     # Non-zero borrow default = carry ON by default; rebate defaults to 0.0.
-    config = PortfolioConfig(direction="longonly")
+    config = make_portfolio_config(direction="longonly")
     assert config.short_borrow_rate == 0.005
     assert config.short_rebate_rate == 0.0
 

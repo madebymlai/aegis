@@ -6,6 +6,12 @@ import numpy as np
 
 from research.aegis_research import config as public_config
 from research.aegis_research.canonical_json import canonical_json_bytes, to_builtin
+from tests.support.research.aegis_research.factories import (
+    make_portfolio_config,
+    make_ranking_config,
+    make_run_config,
+    make_run_source_ref_config,
+)
 
 
 @dataclass(frozen=True)
@@ -41,12 +47,12 @@ def test_to_builtin_is_shared_canonical_dataclass_converter() -> None:
 
 
 def test_to_builtin_serializes_resolved_run_config_wrapped_config() -> None:
-    run_config = public_config.RunConfig(
+    run_config = make_run_config(
         name="demo",
-        strategy=public_config.RunSourceRefConfig(id="demo.strategy"),
+        strategy=make_run_source_ref_config(id="demo.strategy"),
         indicators=[],
-        ranking=public_config.RankingConfig(metric="sharpe"),
-        portfolio=public_config.PortfolioConfig(direction="longonly"),
+        ranking=make_ranking_config(metric="sharpe"),
+        portfolio=make_portfolio_config(direction="longonly"),
     )
     wrapper = public_config.ResolvedRunConfig(
         config=run_config,

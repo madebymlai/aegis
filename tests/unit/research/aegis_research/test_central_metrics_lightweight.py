@@ -6,14 +6,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from research.aegis_research.config import PortfolioConfig
-from research.aegis_research.configuration.schema import ReportConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.portfolios import simulate_portfolio_batch
+from tests.support.research.aegis_research.factories import (
+    make_portfolio_config,
+    make_report_config,
+)
 from tests.support.research.aegis_research.metric_oracle import (
     report_grade_metrics_by_candidate,
 )
@@ -60,10 +62,10 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
     # exposure caps, so the gate admits this metrics-parity fixture at leverage 1.0.
     allocations.loc[index[0], ("candidate-b", slice(None))] = 0.5
     simulation = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0.001, slippage=0, direction="longonly"),
+        close, allocations, make_portfolio_config(fees=0.001, slippage=0, direction="longonly"),
         periods_per_year=252,
     )
-    config = ReportConfig(freq="1D", year_freq="252D")
+    config = make_report_config(freq="1D", year_freq="252D")
 
     candidate_keys = [(candidate_id,) for candidate_id in candidate_ids]
     production = central_metrics_from_grouped_accessors(
@@ -108,10 +110,10 @@ def test_non_finite_values_land_as_nan_in_a_float64_grid() -> None:
     allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
     allocations.loc[index[0], ("flat", "A")] = 0.0
     simulation = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0.0, slippage=0, direction="longonly"),
+        close, allocations, make_portfolio_config(fees=0.0, slippage=0, direction="longonly"),
         periods_per_year=252,
     )
-    config = ReportConfig(freq="1D", year_freq="252D")
+    config = make_report_config(freq="1D", year_freq="252D")
 
     candidate_keys = [(c,) for c in candidate_ids]
     result = central_metrics_from_grouped_accessors(

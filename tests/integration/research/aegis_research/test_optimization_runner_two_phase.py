@@ -12,13 +12,7 @@ import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.configuration.schema import (
-    OptimizationConfig,
-    PortfolioConfig,
-    RankingConfig,
-    ReportConfig,
-    RunSplitConfig,
-)
+from research.aegis_research.config import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,
@@ -31,6 +25,13 @@ from research.aegis_research.optimization.ranking import (
 )
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
+    make_portfolio_config,
+    make_ranking_config,
+    make_report_config,
+    make_run_split_config,
+)
 
 N_ROWS = 24
 IS_LENGTH = 8  # length=8, split=0.5 -> 4-row selection + 4-row held_out per split
@@ -77,9 +78,9 @@ def _source(alphas: list[float]) -> OptimizationSource:
 
 
 def _optimization() -> OptimizationConfig:
-    return OptimizationConfig(
+    return make_optimization_config(
         search="grid",
-        split=RunSplitConfig(method="from_rolling", params={"length": IS_LENGTH, "split": 0.5}),
+        split=make_run_split_config(method="from_rolling", params={"length": IS_LENGTH, "split": 0.5}),
     )
 
 
@@ -89,9 +90,9 @@ def _run(alphas: list[float], *, min_weight: float = 0.3) -> OptimizationResult:
         open_=_uptrend_close(),
         source=_source(alphas),
         optimization=_optimization(),
-        portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
-        report=ReportConfig(),
-        ranking=RankingConfig(metric="total_return", min_weight=min_weight),
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=min_weight),
         metric_registry=make_default_metric_registry(),
     )
 
@@ -277,9 +278,9 @@ def _run_warmup(windows: list[int]) -> OptimizationResult:
         open_=_uptrend_close(),
         source=_warmup_source(windows),
         optimization=_optimization(),
-        portfolio=PortfolioConfig(fees=0.0, slippage=0.0, direction="longonly"),
-        report=ReportConfig(),
-        ranking=RankingConfig(metric="total_return", min_weight=0.3),
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
         metric_registry=make_default_metric_registry(),
     )
 
