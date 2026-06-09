@@ -5,15 +5,15 @@ The coordinator owns the top-level Run shape (schema version, name, output dir, 
 legacy fields) and sequences the domain validators; each domain lives in its own module
 and imports only what it validates:
 
-- ``base``         — shared type/structure validators
-- ``components``   — strategy & indicator component refs and output contracts
-- ``data``         — market-data source, arrays, quality policy, paths
-- ``optimization`` — search policy, run split, random policy, execute passthrough
-- ``metrics``      — ranking metric selection
+- ``base``       — shared type/structure validators
+- ``components`` — strategy & indicator component refs and output contracts
+- ``data``       — market-data source, arrays, quality policy, paths
+- ``metrics``    — ranking metric selection
 
-Data, portfolio, and report are pydantic-ported — validated by the coordinator in
-``resolution._build_resolved_run_config`` via ``TypeAdapter`` + ``ValidationError``
-adapter, with a tombstone prepass for removed fields where applicable.
+Data, portfolio, report, and optimization are pydantic-ported — validated by the
+coordinator in ``resolution._build_resolved_run_config`` via ``TypeAdapter`` +
+``ValidationError`` adapter, with a tombstone prepass for removed fields where
+applicable.
 
 The public surface (re-exported below) is the validation entry point plus the two
 validators reached directly by callers outside this package.
@@ -44,7 +44,6 @@ from research.aegis_research.configuration.validation.components import (
 )
 from research.aegis_research.configuration.validation.lock import _validate_lock
 from research.aegis_research.configuration.validation.metrics import _validate_ranking
-from research.aegis_research.configuration.validation.optimization import _validate_optimization
 from research.aegis_research.metrics import FrozenMetricRegistry
 
 __all__ = [
@@ -88,8 +87,8 @@ def _validate_raw_run_config(
         _validate_experiment_name(raw["name"], issues)
     _validate_output_dir(raw, issues)
 
-    # Data, portfolio, and report sections are pydantic-ported, validated upstream
-    # in the coordinator (resolution._build_resolved_run_config).
+    # Data, portfolio, report, and optimization are pydantic-ported, validated
+    # upstream in the coordinator (resolution._build_resolved_run_config).
     _validate_lock(raw, issues)
     _validate_run_config(
         raw,
@@ -144,7 +143,6 @@ def _validate_run_config(
                 FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
             )
         )
-    _validate_optimization(raw, issues)
 
 
 def _validate_removed_training_fields(

@@ -450,7 +450,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 "engine": "custom",
             },
             "optimization.engine",
-            "unknown field",
+            "Unexpected keyword argument",
         ),
         (
             {
@@ -465,7 +465,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 "mode": "native",
             },
             "optimization.mode",
-            "unknown field",
+            "Unexpected keyword argument",
         ),
         (
             {
@@ -478,8 +478,8 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                     },
                 },
             },
-            "optimization.random_subset",
-            "is required",
+            "optimization",
+            "Value error, random_subset is required when optimization.search is 'random'",
         ),
         (
             {
@@ -493,8 +493,8 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 },
                 "random_subset": 5,
             },
-            "optimization.seed",
-            "is required",
+            "optimization",
+            "Value error, seed is required when optimization.search is 'random' so sampled evidence is deterministic",
         ),
         (
             {
@@ -508,13 +508,13 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 },
                 "random_subset": 5,
             },
-            "optimization.random_subset",
-            "only valid when optimization.search is 'random'",
+            "optimization",
+            "Value error, random_subset is only valid when optimization.search is 'random'",
         ),
         (
             {"search": "grid"},
             "optimization.split",
-            "is required",
+            "Field required",
         ),
     ],
 )
@@ -558,7 +558,7 @@ def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> 
             component_registry=_component_registry(tmp_path),
         )
 
-    assert "optimization.split.params.set_labels" in str(error.value)
+    assert "optimization.split" in str(error.value)
     assert "owned by Aegis" in str(error.value)
 
 

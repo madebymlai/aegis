@@ -167,13 +167,22 @@ def has_data_array_token_shape(value: str) -> bool:
     return bool(value) and value.strip() == value and not any(char in "\t\n\r" for char in value)
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class RunSplitConfig:
     method: str
     params: dict[str, Any] = field(default_factory=dict)
     max_splits: int = 100
     max_estimated_output_cells: int = 25_000_000
     max_public_artifact_bytes: int = 10_000_000
+
+    @model_validator(mode="after")
+    def _no_set_labels(self):
+        if "set_labels" in self.params:
+            raise ValueError(
+                "set roles are owned by Aegis and assigned positionally "
+                "(set 0 selection, set 1 held_out); set_labels is not configurable"
+            )
+        return self
 
 
 @dataclass(frozen=True)
@@ -259,13 +268,53 @@ class RankingConfig:
     min_trades: int = 0
 
 
-@dataclass(frozen=True)
+OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
+    {
+        "random_subset",
+        "seed",
+        "merge_func",
+        "raise_no_results",
+        "filter_results",
+    }
+)
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class OptimizationConfig:
-    search: str
+    search: Literal["grid", "random"]
     split: RunSplitConfig
     random_subset: int | None = None
     seed: int | None = None
     execute: dict[str, Any] = field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _random_needs_subset_and_seed(self):
+        if self.search == "random":
+            if self.random_subset is None:
+                raise ValueError(
+                    "random_subset is required when optimization.search is 'random'"
+                )
+            if self.seed is None:
+                raise ValueError(
+                    "seed is required when optimization.search is 'random' "
+                    "so sampled evidence is deterministic"
+                )
+        if self.search == "grid" and self.random_subset is not None:
+            raise ValueError(
+                "random_subset is only valid when optimization.search is 'random'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _execute_no_reserved_keys(self):
+        reserved = sorted(set(self.execute) & OPTIMIZATION_EXECUTE_RESERVED_KEYS)
+        if reserved:
+            raise ValueError(
+                f"reserved keys {reserved} are owned by optimization.search / "
+                "Aegis ranking policy and must not appear "
+                "under optimization.execute"
+            )
+        return self
 
 
 # The representative roles a Lock handle may name, in rank order. These mirror the

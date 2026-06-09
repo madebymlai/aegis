@@ -24,6 +24,7 @@ from research.aegis_research.configuration.schema import (
     ConfigValidationError,
     ConfigValidationIssue,
     DataConfig,
+    OptimizationConfig,
     PortfolioConfig,
     ReportConfig,
     RunConfig,
@@ -197,10 +198,11 @@ def _build_resolved_run_config(
 
     issues: list[ConfigValidationIssue] = []
 
-    # ── pydantic-ported sections: data, portfolio, report ────────────────
+    # ── pydantic-ported sections: data, portfolio, report, optimization ─
     data_config = _validate_data_section(raw, issues)
     portfolio_config = _validate_portfolio_section(raw, issues)
     report_config = _validate_report_section(raw, issues)
+    optimization_config = _validate_optimization_section(raw, issues)
 
     # ── legacy (still-raw-dict) sections ─────────────────────────────────
     _validate_raw_run_config(
@@ -219,6 +221,7 @@ def _build_resolved_run_config(
             data_config=data_config,
             portfolio_config=portfolio_config,
             report_config=report_config,
+            optimization_config=optimization_config,
         ),
         raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
         authored_config=to_builtin(raw),
@@ -356,6 +359,33 @@ def _validate_report_section(
         return TypeAdapter(ReportConfig).validate_python(report_raw)
     except ValidationError as e:
         issues.extend(_validation_error_to_issues(e, section="report"))
+        return None
+
+
+def _validate_optimization_section(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> OptimizationConfig | None:
+    """Pydantic validate/construct for optimization, with split-method prepass."""
+    optimization_raw = raw.get("optimization")
+    if optimization_raw is None:
+        return None
+    if not isinstance(optimization_raw, dict):
+        issues.append(ConfigValidationIssue("optimization", "must be a mapping"))
+        return None
+
+    # ── split-method prepass (VBT introspection, produces dotted paths) ──
+    split_raw = optimization_raw.get("split")
+    if isinstance(split_raw, dict):
+        from research.aegis_research.run_splits import validate_run_split_config
+
+        validate_run_split_config(split_raw, issues, path="optimization.split")
+
+    # ── pydantic validate + construct ────────────────────────────────────
+    try:
+        return TypeAdapter(OptimizationConfig).validate_python(optimization_raw)
+    except ValidationError as e:
+        issues.extend(_validation_error_to_issues(e, section="optimization"))
         return None
 
 
