@@ -37,7 +37,7 @@ def central_metrics_from_grouped_accessors(
         row: dict[str, Any] = {}
         for metric_id in PORTFOLIO_METRIC_VALUE_KEYS:
             spec = EXTRACTORS[metric_id]
-            val = _ith(raw_series[metric_id], i, n)
+            val = _ith(raw_series[metric_id], i)
             if spec.abs_:
                 val = abs(val)
             if spec.scale == "percent":
@@ -69,7 +69,7 @@ def central_metrics_from_accessors(pf: Any, config: ReportConfig) -> pd.Series:
     return series
 
 
-def _ith(series: Any, idx: int, total: int) -> Any:
+def _ith(series: Any, idx: int) -> Any:
     if isinstance(series, (pd.Series, pd.DataFrame)):
         return series.iloc[idx]
     return series
