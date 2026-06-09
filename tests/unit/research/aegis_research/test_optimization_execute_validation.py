@@ -46,7 +46,7 @@ def test_optimization_execute_rejects_reserved_merge_func_key(tmp_path) -> None:
 def test_optimization_rejects_removed_evidence_field(tmp_path) -> None:
     raw = _base_config()
     raw["optimization"]["evidence"] = {"return_grid": "off"}
-    with pytest.raises(ConfigValidationError, match="optimization.evidence"):
+    with pytest.raises(ConfigValidationError, match=r"optimization\.evidence"):
         resolve_run_config(
             raw, raw_text="", source_path="run.yaml", component_registry=_registry(tmp_path)
         )

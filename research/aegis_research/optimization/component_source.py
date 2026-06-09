@@ -403,7 +403,6 @@ def _build_wide_frame(
     param_defs: Mapping[str, Any],
 ) -> pd.DataFrame:
     symbols = close_slice.columns
-    n_symbols = len(symbols)
     param_keys = [k for k in param_defs if k != FIXED_CANDIDATE_PARAM]
     if not param_keys:
         param_keys = [FIXED_CANDIDATE_PARAM]
@@ -411,9 +410,9 @@ def _build_wide_frame(
     for i in range(n_candidates):
         for sym in symbols:
             col_tuples.append(
-                tuple(param_lists[k][i] for k in param_keys) + (sym,)
+                (*(param_lists[k][i] for k in param_keys), sym)
             )
-    col_names = param_keys + ["symbol"]
+    col_names = [*param_keys, "symbol"]
     col_mi = pd.MultiIndex.from_tuples(col_tuples, names=col_names)
     return pd.DataFrame(alloc_arr, index=close_slice.index, columns=col_mi)
 

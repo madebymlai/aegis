@@ -23,11 +23,11 @@ PORTFOLIO_DIAGNOSTICS_SCHEMA_VERSION = "portfolio_diagnostics.v4"
 # calendar; this is the daily default for the single-run path.
 DEFAULT_PERIODS_PER_YEAR = 252
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
-# of ``(net_rate / periods_per_year) × close``. ``× live position`` gives drifted notional,
+# of ``(net_rate / periods_per_year) * close``. ``* live position`` gives drifted notional,
 # only-while-open, and the cost-on-short / credit-on-long sign for free — hence the long-leg
 # mask (a positive per-share value would otherwise *credit* a long position).
 FINANCING_CARRY_MECHANISM = "cash_dividends_short_borrow_v2"
-# Margin interest (``int_rate × borrowed_cash``) needs ``vbt.pf_nb.get_debt_nb(c)``, which is
+# Margin interest (``int_rate * borrowed_cash``) needs ``vbt.pf_nb.get_debt_nb(c)``, which is
 # unavailable on ``from_orders``; charging it would require ``from_signals``/``from_order_func``.
 # Deferred by architectural boundary, not punted (see ADR-0008).
 MARGIN_INTEREST_REASON = (
@@ -214,9 +214,9 @@ def short_masked_cash_dividends(
 ) -> pd.DataFrame:
     """Build the per-bar short-financing carry array (ADR-0008).
 
-    ``cash_dividends[sym, t] = (net_rate / periods_per_year) × close[sym, t]``, masked to the
+    ``cash_dividends[sym, t] = (net_rate / periods_per_year) * close[sym, t]``, masked to the
     short legs (ffilled signed allocation ``< 0``); long legs are ``0``. ``net_rate`` is
-    ``short_borrow_rate − short_rebate_rate``, floored at zero (a rebate above borrow does not
+    ``short_borrow_rate - short_rebate_rate``, floored at zero (a rebate above borrow does not
     pay the book to hold a short). VBT multiplies this per-share value by the live position to
     produce drifted-notional carry, charged only while the short is open, with a positive
     value costing the short — which is why the long legs must be zeroed.

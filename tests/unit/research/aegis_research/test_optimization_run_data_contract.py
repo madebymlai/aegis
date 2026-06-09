@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from research.aegis_research.data_arrays import DataArrayContract
@@ -61,7 +63,7 @@ def test_build_run_data_evidence_payload_extends_contract_payload(
     class _FakeResult:
         class quality:
             state = "ok"
-        metadata = {
+        metadata: ClassVar = {
             "source": "synthetic",
             "symbols": ["SYN"],
             "loaded_arrays": ["Close", "Open"],
@@ -83,7 +85,7 @@ def test_build_candidate_data_identity_captures_source_and_contract(
     resolved = build_resolved_run_config(tmp_path)
 
     class _FakeResult:
-        metadata = {
+        metadata: ClassVar = {
             "source": "synthetic",
             "symbols": ["SYN"],
             "timeframe": "1D",

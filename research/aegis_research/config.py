@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from research.aegis_research.canonical_json import to_builtin
+from research.aegis_research.configuration.env_references import (
+    resolve_env_refs,
+)
 from research.aegis_research.configuration.resolution import (
     ResolvedRunConfig,
     load_run_config,
@@ -40,10 +44,6 @@ from research.aegis_research.configuration.schema import (
     SignalConfig,
     expand_data_arrays,
 )
-from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.configuration.env_references import (
-    resolve_env_refs,
-)
 from research.aegis_research.market_data.sources import (
     LOCAL_DATA_SOURCES,
     data_sources,
@@ -58,9 +58,9 @@ __all__ = [
     "DATA_ARRAY_SHORTCUTS",
     "DATA_QUALITY_DEGRADATIONS",
     "DATA_SOURCES",
+    "DEFAULT_LOCK_ROLE",
     "DENIED_PASSTHROUGH_KEYS",
     "EXPERIMENT_NAME_RE",
-    "DEFAULT_LOCK_ROLE",
     "FORWARD_OPTIMIZATION_REQUIRED_MESSAGE",
     "LOCAL_DATA_SOURCES",
     "LOCK_ROLES",

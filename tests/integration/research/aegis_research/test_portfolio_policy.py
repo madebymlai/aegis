@@ -281,7 +281,7 @@ def test_symbol_mismatch_raises_with_named_symbol() -> None:
     index = _index(1)
     frame = pd.DataFrame({"A": [0.5], "B": [0.5], "Z": [0.0]}, index=index)
 
-    with pytest.raises(ValueError, match="missing|not present"):
+    with pytest.raises(ValueError, match=r"missing|not present"):
         validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
 
 
@@ -295,7 +295,6 @@ def test_empty_frame_passes_through() -> None:
 
 
 def test_terminal_row_is_force_liquidated_to_zero_for_every_symbol() -> None:
-    columns = _close_columns()
     index = _index(4)
     allocations = pd.DataFrame(
         {

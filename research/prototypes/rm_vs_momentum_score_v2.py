@@ -97,7 +97,7 @@ for rm_L in RM_LOOKBACKS:
         so_ret = []
         ro_ret = []
 
-        for split_name, is_mask, oos_mask in splits:
+        for _split_name, _is_mask, oos_mask in splits:
             for sym in cls_syms:
                 oos_idx = close.index[oos_mask]
                 valid = gate_score[sym].loc[oos_idx].notna() & gate_rm[sym].loc[oos_idx].notna()
@@ -153,7 +153,7 @@ for sym in SYMBOLS:
     ro_ret = []
     bi_n = so_n = ro_n = bo_n = 0
 
-    for split_name, is_mask, oos_mask in splits:
+    for _split_name, _is_mask, oos_mask in splits:
         oos_idx = close.index[oos_mask]
         valid = gate_score[sym].loc[oos_idx].notna() & gate_rm[sym].loc[oos_idx].notna()
         oos_idx = oos_idx[valid]
@@ -202,7 +202,7 @@ header = f"{'Split':<30} {'Score>RM fwd':>13} {'BothIN fwd':>11} {'RM veto helps
 print(header)
 print("-" * len(header))
 
-for split_name, is_mask, oos_mask in splits:
+for split_name, _is_mask, oos_mask in splits:
     oos_idx = close.index[oos_mask]
     so_rets = []
     bi_rets = []
