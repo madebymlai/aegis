@@ -142,7 +142,7 @@ def _two_candidate_portfolio():
     simulation = simulate_portfolio_batch(
         close, allocations, PortfolioConfig(fees=0.001, slippage=0, direction="longonly")
     )
-    return simulation.portfolio, candidate_ids
+    return simulation, candidate_ids
 
 
 def test_custom_metric_computed_through_extraction_loop() -> None:

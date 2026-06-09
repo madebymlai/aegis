@@ -252,11 +252,10 @@ def _metrics_from_allocations(
         portfolio,
         open_=open_window,
         market_index=close_window.index,
-        compute_diagnostics=False,
         periods_per_year=report.periods_per_year,
     )
     return central_metrics_from_grouped_accessors(
-        result.portfolio, report, metric_keys, param_names, extractors
+        result, report, metric_keys, param_names, extractors
     )
 
 
