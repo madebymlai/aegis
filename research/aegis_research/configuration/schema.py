@@ -353,8 +353,16 @@ class Lock:
         return data
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class RunConfig:
+    """Whole-tree pydantic dataclass: one ``TypeAdapter(RunConfig).validate_python(raw)``
+    validates the entire run config and accumulates all structural errors across sections.
+
+    Top-level prepass (removed-training-field tombstones, portfolio tombstones,
+    ``schema_version`` presence check) lives in the resolution coordinator so custom
+    messages survive (``@model_validator`` loses dotted paths).
+    """
+
     name: str
     strategy: RunSourceRefConfig
     indicators: list[RunIndicatorSourceConfig]
