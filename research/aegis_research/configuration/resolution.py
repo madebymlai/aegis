@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -29,6 +29,7 @@ from research.aegis_research.configuration.schema import (
     RunConfig,
 )
 from research.aegis_research.configuration.validation import (
+    _is_absolute_or_user_path,
     _validate_ranking,
     _validate_raw_run_config,
 )
@@ -279,37 +280,18 @@ def _validate_csv_path_security(
     issues: list[ConfigValidationIssue],
 ) -> None:
     """Reject absolute, user-home, and parent-traversal csv paths."""
-    from pathlib import Path, PurePosixPath, PureWindowsPath
-
-    value = path
     parts = (
-        set(Path(value).parts)
-        | set(PurePosixPath(value).parts)
-        | set(PureWindowsPath(value).parts)
+        set(Path(path).parts)
+        | set(PurePosixPath(path).parts)
+        | set(PureWindowsPath(path).parts)
     )
-    if _is_absolute_or_user_path(value) or ".." in parts:
+    if _is_absolute_or_user_path(path) or ".." in parts:
         issues.append(
             ConfigValidationIssue(
                 "data.path",
                 "must be a relative path under the project root",
             )
         )
-
-
-def _is_absolute_or_user_path(value: str) -> bool:
-    """Predicate: is *value* an absolute or user-home path?"""
-    from pathlib import Path, PurePosixPath, PureWindowsPath
-
-    if value.startswith("~"):
-        return True
-    try:
-        return (
-            Path(value).is_absolute()
-            or PurePosixPath(value).is_absolute()
-            or PureWindowsPath(value).is_absolute()
-        )
-    except ValueError:
-        return False
 
 
 def _validate_portfolio_section(

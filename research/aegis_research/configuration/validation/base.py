@@ -17,20 +17,6 @@ from research.aegis_research.configuration.schema import (
 )
 
 
-def _section(
-    raw: dict[str, Any],
-    name: str,
-    allowed: set[str],
-    issues: list[ConfigValidationIssue],
-) -> dict[str, Any]:
-    value = raw.get(name, {})
-    if not isinstance(value, dict):
-        issues.append(ConfigValidationIssue(name, "must be a mapping"))
-        return {}
-    _validate_known_keys(name, value, allowed, issues)
-    return value
-
-
 def _validate_known_keys(
     path: str,
     value: dict[str, Any],

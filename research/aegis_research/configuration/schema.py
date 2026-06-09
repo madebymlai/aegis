@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal
-
-from typing import Annotated
+from typing import Annotated, Any, ClassVar, Literal
 
 import pandas as pd
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
