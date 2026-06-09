@@ -25,13 +25,16 @@ from research.aegis_research.configuration.pydantic_adapter import (
     _validation_error_to_issues,
 )
 from research.aegis_research.configuration.schema import (
+    LOCK_ROLES,
     PORTFOLIO_TARGET_SIZE_TYPES,
     ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
     DataConfig,
+    Lock,
     OptimizationConfig,
     PortfolioConfig,
+    RankingConfig,
     ReportConfig,
     RunConfig,
     RunIndicatorSourceConfig,
@@ -39,7 +42,6 @@ from research.aegis_research.configuration.schema import (
 )
 from research.aegis_research.configuration.validation import (
     _is_absolute_or_user_path,
-    _validate_ranking,
     _validate_raw_run_config,
 )
 from research.aegis_research.metrics import (
@@ -216,6 +218,10 @@ def _build_resolved_run_config(
     strategy_config = _validate_strategy_section(raw, issues)
     indicator_configs = _validate_indicators_section(raw, issues)
 
+    # ── pydantic-ported sections: ranking, lock ─────────────────────────
+    ranking_config = _validate_ranking_section(raw, issues, registry=metric_registry)
+    lock_config = _validate_lock_section(raw, issues)
+
     # ── membership + output-contract checks (need the registry) ─────────
     strategy_definition, indicator_definitions = _validate_component_membership(
         strategy_config,
@@ -241,7 +247,6 @@ def _build_resolved_run_config(
         raw,
         issues,
         component_registry=component_registry,
-        metric_registry=metric_registry,
     )
     if issues:
         raise ConfigValidationError(issues)
@@ -256,6 +261,8 @@ def _build_resolved_run_config(
             optimization_config=optimization_config,
             strategy_config=strategy_config,
             indicator_configs=indicator_configs,
+            ranking_config=ranking_config,
+            lock_config=lock_config,
         ),
         raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
         authored_config=to_builtin(raw),
@@ -610,15 +617,100 @@ def _validate_component_params_for_definition(
         )
 
 
+def _validate_ranking_section(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+    *,
+    registry: FrozenMetricRegistry,
+) -> RankingConfig | None:
+    """Pydantic validate/construct for ranking + metric membership check."""
+    ranking_raw = raw.get("ranking")
+    if not isinstance(ranking_raw, dict):
+        issues.append(ConfigValidationIssue("ranking", "must be a mapping"))
+        return None
+
+    # ── pydantic structural validation ───────────────────────────────────
+    try:
+        config = TypeAdapter(RankingConfig).validate_python(ranking_raw)
+    except ValidationError as e:
+        issues.extend(_validation_error_to_issues(e, section="ranking"))
+        # Still check metric membership so both errors are co-reported.
+        if isinstance(ranking_raw.get("metric"), str) and ranking_raw["metric"]:
+            _check_ranking_metric_membership(ranking_raw["metric"], issues, registry=registry)
+        return None
+
+    # ── metric membership (needs the live registry) ──────────────────────
+    _check_ranking_metric_membership(config.metric, issues, registry=registry)
+    return config
+
+
+def _check_ranking_metric_membership(
+    metric: str,
+    issues: list[ConfigValidationIssue],
+    *,
+    registry: FrozenMetricRegistry,
+) -> None:
+    if metric not in registry:
+        issues.append(
+            ConfigValidationIssue(
+                "ranking.metric",
+                f"must be one of {sorted(registry.ids())}",
+            )
+        )
+
+
+def _validate_lock_section(
+    raw: dict[str, Any],
+    issues: list[ConfigValidationIssue],
+) -> Lock | None:
+    """Pydantic validate/construct for lock + coordinator prepass checks."""
+    lock_raw = raw.get("lock")
+    if lock_raw is None:
+        return None
+
+    # ── Record original shape before the model_validator normalizes handle strings ─
+    if isinstance(lock_raw, str):
+        was_handle = True
+    elif isinstance(lock_raw, dict):
+        was_handle = False
+    else:
+        issues.append(
+            ConfigValidationIssue(
+                "lock",
+                "must be a run_id[:role] string or a mapping of run_id and candidate_id",
+            )
+        )
+        return None
+
+    try:
+        config = TypeAdapter(Lock).validate_python(lock_raw)
+    except ValidationError as e:
+        issues.extend(_validation_error_to_issues(e, section="lock"))
+        return None
+
+    # ── coordinator prepass checks (NOT @model_validator — ValueErrors lose the
+    #    dotted path and mangle the message) ──────────────────────────────
+    if not config.run_id:
+        issues.append(ConfigValidationIssue("lock", "run_id must not be empty"))
+    if was_handle and config.candidate_id not in LOCK_ROLES:
+        _lock_roles_label = ", ".join(LOCK_ROLES)
+        issues.append(
+            ConfigValidationIssue(
+                "lock",
+                f"role must be one of: {_lock_roles_label} (got {config.candidate_id!r})",
+            )
+        )
+    return config
+
+
 def _assert_resolved_config_registries(
     config: RunConfig,
     *,
     frozen_metric_registry: FrozenMetricRegistry,
 ) -> None:
     issues: list[ConfigValidationIssue] = []
-    _validate_ranking(
-        "ranking",
-        to_builtin(config.ranking),
+    _check_ranking_metric_membership(
+        config.ranking.metric,
         issues,
         registry=frozen_metric_registry,
     )

@@ -10,6 +10,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from research.aegis_research.configuration.field_types import (
     EXPERIMENT_NAME_RE,  # noqa: F401 — re-exported for config.py
     ComponentIdStr,
+    NonNegativeInt,
     NonNegativeRate,
     PositiveCash,
     StrictFloat,
@@ -261,11 +262,11 @@ class RunIndicatorSourceConfig:
     params: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class RankingConfig:
     metric: str
-    min_weight: float = 0.3
-    min_trades: int = 0
+    min_weight: UnitInterval = 0.3
+    min_trades: NonNegativeInt = 0
 
 
 OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
@@ -324,18 +325,7 @@ LOCK_ROLES: tuple[str, ...] = ("best", "median", "worst")
 DEFAULT_LOCK_ROLE = "best"
 
 
-def split_lock_handle(value: str) -> tuple[str, str | None]:
-    """Split a scalar ``lock:`` handle ``run_id[:role]`` into ``(run_id, role|None)``.
-
-    Pure syntax: splits on the first ``:`` and reports a missing role as ``None`` (the
-    caller defaults it). It does not validate role membership or a non-empty run_id —
-    that is the lock validator's job, so malformed handles fail at config validation.
-    """
-    run_id, separator, role = value.partition(":")
-    return run_id, (role if separator else None)
-
-
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Lock:
     """A top-level Run Config reference that reproduces one prior Candidate.
 
@@ -352,6 +342,15 @@ class Lock:
 
     run_id: str
     candidate_id: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_handle(cls, data: Any) -> Any:
+        """Normalize a scalar ``run_id[:role]`` handle to the mapping shape."""
+        if isinstance(data, str):
+            run_id, _, role = data.partition(":")
+            return {"run_id": run_id, "candidate_id": role or DEFAULT_LOCK_ROLE}
+        return data
 
 
 @dataclass(frozen=True)

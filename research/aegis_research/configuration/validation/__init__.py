@@ -6,17 +6,16 @@ legacy fields) and sequences the domain validators; each domain lives in its own
 and imports only what it validates:
 
 - ``base``       — shared type/structure validators
-- ``metrics``    — ranking metric selection
 
-Data, portfolio, report, optimization, strategy, and indicators are
-pydantic-ported — structural validation is handled in
+Data, portfolio, report, optimization, strategy, indicators, ranking, and
+lock are pydantic-ported — structural validation is handled in
 ``resolution._build_resolved_run_config`` via ``TypeAdapter`` +
-``ValidationError`` adapter, with a tombstone prepass for removed
-portfolio fields. Membership and output-contract checks (which need
-the registry) also live in the coordinator.
+``ValidationError`` adapter, with tombstone/prepass checks where needed.
+Membership and output-contract checks (which need the registry) also
+live in the coordinator.
 
-The public surface (re-exported below) is the validation entry point plus the two
-validators reached directly by callers outside this package.
+The public surface (re-exported below) is the validation entry point plus one
+validator reached directly by callers outside this package.
 """
 
 from __future__ import annotations
@@ -37,13 +36,9 @@ from research.aegis_research.configuration.validation.base import (
     _require_str,
     _validate_known_keys,
 )
-from research.aegis_research.configuration.validation.lock import _validate_lock
-from research.aegis_research.configuration.validation.metrics import _validate_ranking
-from research.aegis_research.metrics import FrozenMetricRegistry
 
 __all__ = [
     "_is_absolute_or_user_path",
-    "_validate_ranking",
     "_validate_raw_run_config",
 ]
 
@@ -71,7 +66,6 @@ def _validate_raw_run_config(
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
-    metric_registry: FrozenMetricRegistry,
 ) -> None:
     _validate_known_keys("$", raw, _run_allowed_top_level_keys(), issues)
     _require_int("schema_version", raw, issues, positive=True)
@@ -82,14 +76,10 @@ def _validate_raw_run_config(
         _validate_experiment_name(raw["name"], issues)
     _validate_output_dir(raw, issues)
 
-    # Data, portfolio, report, and optimization are pydantic-ported, validated
-    # upstream in the coordinator (resolution._build_resolved_run_config).
-    _validate_lock(raw, issues)
-    _validate_run_config(
-        raw,
-        issues,
-        metric_registry=metric_registry,
-    )
+    # Data, portfolio, report, optimization, strategy, indicators, ranking,
+    # and lock are pydantic-ported, validated upstream in the coordinator
+    # (resolution._build_resolved_run_config).
+    _validate_run_config(raw, issues)
 
 
 def _run_allowed_top_level_keys() -> set[str]:
@@ -111,12 +101,9 @@ def _run_allowed_top_level_keys() -> set[str]:
 def _validate_run_config(
     raw: dict[str, Any],
     issues: list[ConfigValidationIssue],
-    *,
-    metric_registry: FrozenMetricRegistry,
 ) -> None:
-    # Component validation (structural + membership + output-contract) is now pydantic-ported
-    # and handled by the coordinator in resolution._build_resolved_run_config.
-    _validate_ranking("ranking", raw.get("ranking"), issues, registry=metric_registry)
+    # Component, ranking, and lock validation are all pydantic-ported and
+    # handled by the coordinator in resolution._build_resolved_run_config.
     if "optimization" not in raw:
         issues.append(
             ConfigValidationIssue(
