@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from vectorbtpro import vbt
+from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.config import PortfolioConfig
 from research.aegis_research.portfolios import (
@@ -448,12 +449,12 @@ def test_records_count_exit_trades_for_long_and_short_legs() -> None:
 
 
 def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, PortfolioConfig]:
-    """Return (close, allocations, config) for a leveraged book that triggers
-    the cash_sharing + multi-asset-leverage NoCash mis-fill.
+    """Return (close, allocations, config) for a leveraged long/short book.
 
     Gross equals the leverage cap (5.0), then a mid-run price drift at bar 10
-    forces a rebalance whose position-adjustment orders exhaust the shared cash
-    pool under eager leverage within a cash_sharing group.
+    forces a rebalance that stresses the cash-sharing pool.  With the surplus
+    buying-power multiplier (k >= 2) the book fills cleanly; without it, the
+    engine would under-fill under eager leverage.
     """
     index = pd.date_range("2024-01-01", periods=20)
     symbols = ["A", "B", "C", "D"]
@@ -498,9 +499,7 @@ def test_underfilled_leveraged_book_fills_cleanly_with_surplus_buying_power() ->
 
     # No NoCash rejections in the logs.
     records = pf.logs.records
-    from vectorbtpro.portfolio.enums import OrderStatusInfo
-    no_cash = records[records["res_status_info"] == OrderStatusInfo.NoCash] if not records.empty else records
-    assert no_cash.empty, f"unexpected NoCash rejection(s): {len(no_cash)}"
+    assert records.empty or records[records["res_status_info"] == OrderStatusInfo.NoCash].empty
 
     # Realized allocations match requested at the bar-10 rebalance.
     realized = pf.get_allocations(group_by=None)
