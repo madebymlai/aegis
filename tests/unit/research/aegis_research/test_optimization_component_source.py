@@ -15,6 +15,7 @@ from research.aegis_research.config import (
     RunSourceRefConfig,
 )
 from research.aegis_research.data import MarketDataBundle
+from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import (
     FIXED_CANDIDATE_PARAM,
     ComponentSourceError,
@@ -24,7 +25,12 @@ from research.aegis_research.optimization.component_source import (
     component_ref_key,
     parse_component_param_key,
 )
+from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.precompute import candidate_keys
+from research.aegis_research.optimization.ranking import (
+    EvaluatedCandidate,
+    OptimizationResult,
+)
 
 
 def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path: Path) -> None:
@@ -157,6 +163,139 @@ def test_component_param_keys_round_trip_to_component_slices() -> None:
     assert component_param_slices({key: 5, FIXED_CANDIDATE_PARAM: 0}) == {
         ("indicators", "demo.trend", "demo.trend"): {"window": 5}
     }
+
+
+def test_golden_param_namespace_keys_pin_exact_hex_literals() -> None:
+    """Freeze the param-namespace wire format with literal-string assertions.
+
+    The encoded key strings are persisted in Candidate rows and feed Candidate
+    identity (canonical_params_key). A symmetric prefix/hex change would pass a
+    round-trip test while silently re-keying every Candidate and orphaning every
+    persisted Lock. These literal assertions are the regression oracle — they are
+    the only tests that break on a format change.
+    """
+    # Indicator-side key: indicators / demo.mom / demo.mom / window
+    indicator_key = component_param_key("indicators", "demo.mom", "demo.mom", "window")
+    assert (
+        indicator_key
+        == "component__696e64696361746f7273__64656d6f2e6d6f6d__64656d6f2e6d6f6d__77696e646f77"
+    )
+
+    # Strategy-side key: strategies / demo.ma_cross / strategy:demo.ma_cross / fast_window
+    strategy_key = component_param_key(
+        "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window"
+    )
+    assert (
+        strategy_key
+        == "component__73747261746567696573__64656d6f2e6d615f63726f7373__73747261746567793a64656d6f2e6d615f63726f7373__666173745f77696e646f77"
+    )
+
+
+def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
+    """Decode a real stored Candidate row through the fixture path, not hand-synthesized.
+
+    Builds a multi-Component Candidate row via candidate_rows_from_result +
+    CandidateStore.insert_completed_run (the same path resolve_lock_run reads),
+    loads it back, then decodes with component_param_slices and asserts:
+    - Per-Component slices carry correct params.
+    - The __aegis_fixed_candidate__ sentinel is skipped.
+    """
+    store = CandidateStore(tmp_path / "candidates.sqlite3")
+
+    fast_key = component_param_key(
+        "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "fast_window"
+    )
+    slow_key = component_param_key(
+        "strategies", "demo.ma_cross", "strategy:demo.ma_cross", "slow_window"
+    )
+    window_key = component_param_key("indicators", "demo.mom", "demo.mom", "window")
+
+    result = OptimizationResult(
+        best=EvaluatedCandidate(
+            params={fast_key: 2, slow_key: 10, window_key: 20},
+            score=0.30,
+            selection_metrics={0: {"total_return": 0.30}},
+            metrics={"total_return": 0.30},
+            held_out_metrics={0: {"total_return": 0.25}},
+        ),
+        median=EvaluatedCandidate(
+            params={fast_key: 3, slow_key: 12, window_key: 22},
+            score=0.20,
+            selection_metrics={0: {"total_return": 0.20}},
+            metrics={"total_return": 0.20},
+            held_out_metrics={0: {"total_return": 0.15}},
+        ),
+        worst=EvaluatedCandidate(
+            params={fast_key: 5, slow_key: 15, window_key: 25},
+            score=0.10,
+            selection_metrics={0: {"total_return": 0.10}},
+            metrics={"total_return": 0.10},
+            held_out_metrics={0: {"total_return": 0.05}},
+        ),
+    )
+    rows = candidate_rows_from_result(
+        result,
+        source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
+        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        portfolio_policy={"target_exposure_cap": 1.0},
+        store_namespace={"kind": "local_sqlite", "name": "default"},
+    )
+    store.insert_completed_run(
+        run_id="stored-decode-run",
+        candidate_rows=rows,
+        ranking_metric="total_return",
+        provenance={
+            "run_id": "stored-decode-run",
+            "source": {
+                "schema_version": "component_optimization_source.v1",
+                "source": "component",
+                "strategy": {
+                    "family": "strategies",
+                    "slot": "strategy:demo.ma_cross",
+                    "id": "demo.ma_cross",
+                    "version": "1.0.0",
+                    "fixed_params": {},
+                    "param_keys": {
+                        "fast_window": fast_key,
+                        "slow_window": slow_key,
+                    },
+                },
+                "indicators": [
+                    {
+                        "family": "indicators",
+                        "slot": "demo.mom",
+                        "id": "demo.mom",
+                        "version": "1.0.0",
+                        "fixed_params": {},
+                        "param_keys": {"window": window_key},
+                    }
+                ],
+            },
+        },
+    )
+
+    # Load the median candidate from the store — a realistic stored row.
+    row = store.top_candidates_by_run("stored-decode-run", limit=3)[1]["candidate"]
+    params = row["params"]
+
+    # Decode through component_param_slices — the same codec resolve_lock_run uses.
+    slices = component_param_slices(params)
+
+    # Per-Component slices carry correct params.
+    strategy_slice = ("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
+    assert strategy_slice in slices
+    assert slices[strategy_slice] == {"fast_window": 3, "slow_window": 12}
+
+    indicator_slice = ("indicators", "demo.mom", "demo.mom")
+    assert indicator_slice in slices
+    assert slices[indicator_slice] == {"window": 22}
+
+    # The __aegis_fixed_candidate__ sentinel is skipped.
+    assert FIXED_CANDIDATE_PARAM not in slices.get(strategy_slice, {})
+    assert FIXED_CANDIDATE_PARAM not in slices.get(indicator_slice, {})
+    # The sentinel is never a slice key itself.
+    for slice_key in slices:
+        assert FIXED_CANDIDATE_PARAM not in slice_key
 
 
 def _config(
