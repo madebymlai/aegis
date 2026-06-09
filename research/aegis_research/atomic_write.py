@@ -1,10 +1,8 @@
 """Durable, content-addressed file I/O for artifact persistence.
 
-A deep root-level leaf (beside canonical_json.py) serving provenance/*
-and optimization/*. Public interface: free functions over paths.
-
-``write_json`` is a command (serialize + durable atomic write).
-``hash_file`` is a query (content-addressed digest).
+``write_json``: serialize a payload to stable JSON and atomically write it to
+a path (command).
+``hash_file``: return the hex-encoded SHA-256 digest of a file (query).
 """
 
 from __future__ import annotations
@@ -21,10 +19,7 @@ from research.aegis_research.canonical_json import canonical_json_bytes
 def write_json(path: str | Path, payload: dict[str, Any]) -> None:
     """Serialize *payload* to stable UTF-8 JSON and atomically write to *path*.
 
-    The on-disk recipe: write to a hidden ``.{name}.*.tmp`` temp file in the
-    target directory, chmod 0600, write+flush+fsync the data fd, atomic
-    ``replace``, and fsync the parent directory.  On failure the temp file is
-    removed and any existing target is left intact.
+    On failure, any existing file at *path* is left intact.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -42,6 +37,13 @@ def hash_file(path: str | Path) -> str:
 
 
 def _atomic_write(target: Path, data: bytes) -> None:
+    """Durably write *data* to *target* via a temp-file-and-rename dance.
+
+    Recipe: write to a ``.{name}.*.tmp`` file in the target directory,
+    chmod 0600, flush+fsync the data, atomically ``replace``, then fsync
+    the parent directory.  On failure the temp file is removed and
+    *target* is left intact.
+    """
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
