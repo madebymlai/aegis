@@ -667,14 +667,14 @@ def test_all_from_signals_only_conflict_settings_attributed_to_from_orders() -> 
     assert set(not_applicable.values()) == {"not_applicable_from_orders"}
 
 
-def test_batch_fail_closed_nocash_guard_raises_on_underfilled_leveraged_book() -> None:
-    # A leveraged long/short book that triggers the cash_sharing +
-    # multi-asset-leverage mis-fill must raise a fail-closed error from the
-    # batched simulation so no Candidate can be silently scored on a corrupted book.
-    #
-    # Trigger: gross equals leverage cap, then a mid-run price drift forces a
-    # rebalance whose position-adjustment orders exhaust the shared cash pool
-    # (eager leverage within a cash_sharing group).
+def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, PortfolioConfig]:
+    """Return (close, allocations, config) for a leveraged book that triggers
+    the cash_sharing + multi-asset-leverage NoCash mis-fill.
+
+    Gross equals the leverage cap (5.0), then a mid-run price drift at bar 10
+    forces a rebalance whose position-adjustment orders exhaust the shared cash
+    pool under eager leverage within a cash_sharing group.
+    """
     index = pd.date_range("2024-01-01", periods=20)
     symbols = ["A", "B", "C", "D"]
     close = pd.DataFrame(
@@ -691,10 +691,8 @@ def test_batch_fail_closed_nocash_guard_raises_on_underfilled_leveraged_book() -
         names=["candidate_id", "symbol"],
     )
     allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
-    # First rebalance: equal long/short at 1.25 each → gross = 5.0, within cap.
     for i, s in enumerate(symbols):
         allocations.loc[index[0], ("cand-underfilled", s)] = 1.25 if i % 2 == 0 else -1.25
-    # Second rebalance at bar 10 after price drift exhausts the shared cash pool.
     for i, s in enumerate(symbols):
         allocations.loc[index[10], ("cand-underfilled", s)] = 1.25 if i % 2 == 0 else -1.25
 
@@ -708,6 +706,14 @@ def test_batch_fail_closed_nocash_guard_raises_on_underfilled_leveraged_book() -
         short_borrow_rate=0.0,
         short_rebate_rate=0.0,
     )
+    return close, allocations, config
+
+
+def test_batch_fail_closed_nocash_guard_raises_on_underfilled_leveraged_book() -> None:
+    # A leveraged long/short book that triggers the cash_sharing +
+    # multi-asset-leverage mis-fill must raise a fail-closed error from the
+    # batched simulation so no Candidate can be silently scored on a corrupted book.
+    close, allocations, config = _underfilled_leverage_inputs()
     with pytest.raises(ValueError, match="NoCash"):
         simulate_portfolio_batch(close, allocations, config)
 
@@ -733,46 +739,13 @@ def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
     assert isinstance(result, PortfolioSimulationResult)
 
 
-def test_batch_nocash_guard_reads_native_typed_field_not_readable_frame(monkeypatch) -> None:
-    # The guard must read VBT's native typed res_status_info column, not the
-    # human-readable records frame.
+def test_batch_nocash_guard_is_invoked_and_error_propagates(monkeypatch) -> None:
+    # The NoCash guard is called exactly once during simulate_portfolio_batch
+    # and its ValueError propagates to the caller.
     import research.aegis_research.portfolios as portfolios_module
 
-    index = pd.date_range("2024-01-01", periods=20)
-    symbols = ["A", "B", "C", "D"]
-    close = pd.DataFrame(
-        {
-            "A": [100.0] * 5 + [110.0] * 15,
-            "B": [200.0] * 5 + [180.0] * 15,
-            "C": [300.0] * 20,
-            "D": [400.0] * 20,
-        },
-        index=index,
-    )
-    columns = pd.MultiIndex.from_product(
-        [["cand-underfilled"], symbols],
-        names=["candidate_id", "symbol"],
-    )
-    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
-    for i, s in enumerate(symbols):
-        allocations.loc[index[0], ("cand-underfilled", s)] = 1.25 if i % 2 == 0 else -1.25
-    for i, s in enumerate(symbols):
-        allocations.loc[index[10], ("cand-underfilled", s)] = 1.25 if i % 2 == 0 else -1.25
+    close, allocations, config = _underfilled_leverage_inputs()
 
-    config = PortfolioConfig(
-        fees=0,
-        slippage=0,
-        gross_cap=5.0,
-        net_cap=0.0,
-        direction="both",
-        init_cash=10000,
-        short_borrow_rate=0.0,
-        short_rebate_rate=0.0,
-    )
-
-    # Prove the guard does NOT parse records_readable: if it did, patching
-    # records_readable to return an empty frame would bypass the guard.
-    # Instead, it reads records (native typed), so the guard still fires.
     calls = []
 
     def _spy_guard(pf):

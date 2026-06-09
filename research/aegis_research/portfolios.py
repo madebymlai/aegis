@@ -152,48 +152,48 @@ def _build_portfolio(
     return pf, pfo, non_exec_diag, execution_timing
 
 
-# Tolerance for distinguishing "maintenance" NoCash (VBT re-executing an allocation the
-# book already holds — harmless no-op) from a genuine under-fill (position is measurably
-# away from the target and the order silently failed).  Expressed in allocation-pct units.
+# Maximum allowed allocation-pct gap between a NoCash-rejected order's requested size and
+# the held position.  A gap below this is a harmless maintenance no-op (the book already
+# holds the target); a gap above it is a genuine mis-fill (the order silently failed).
 _NOCASH_ALLOC_MISMATCH_TOLERANCE = 0.01
+# Orders with a requested size at or below this absolute value are treated as zero-sized
+# (VBT may emit them as bookkeeping artifacts) and skipped by the NoCash guard.
+_NEGLIGIBLE_ORDER_SIZE = 1e-9
 
 
 def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
-    """Fail-closed: detect unexpected NoCash order rejection in the batched simulation.
+    """Fail-closed: detect unexpected NoCash order rejections in the batched simulation.
 
-    Reads VBT's native typed rejection status field (``res_status_info`` column of
-    ``pf.logs.records``) — an O(records) reduction that does not build a human-readable
-    frame or materialize allocations. Rejects only when the NoCash rejection represents
-    a genuine allocation mis-fill rather than a harmless maintenance no-op.
+    Reads the native typed ``res_status_info`` column from ``pf.logs.records`` (an
+    O(records) pass that avoids building a human-readable frame or materializing
+    allocations).  Rejects only when a NoCash rejection represents a genuine allocation
+    mis-fill — the requested target percent differs measurably from the current holding
+    and the order silently failed, corrupting the book.
 
-    Harmless no-op: VBT re-executes an unchanged target when free-cash is zero; the
-    position already matches so the rejection is cosmetic. Genuine mis-fill: the
-    requested target percent differs measurably from the current holding and the order
-    silently failed — the book is corrupted.
-
-    This is the production half of the fidelity-gate split (ADR-0011). The rich
-    requested ≈ realized frame comparison stays a test-side regression guard.
+    A harmless no-op (VBT re-executes an unchanged target when free-cash is zero) has
+    the position already matching the target, so the allocation gap stays below
+    ``_NOCASH_ALLOC_MISMATCH_TOLERANCE`` and is silently accepted.
     """
     records = pf.logs.records
     if records.empty:
         return
-    noca = records[records["res_status_info"] == OrderStatusInfo.NoCash]
-    if noca.empty:
+    no_cash = records[records["res_status_info"] == OrderStatusInfo.NoCash]
+    if no_cash.empty:
         return
-    nonzero = abs(noca["req_size"]) > 1e-9
-    if not nonzero.any():
+    has_size = abs(no_cash["req_size"]) > _NEGLIGIBLE_ORDER_SIZE
+    if not has_size.any():
         return
-    noca_nz = noca[nonzero]
-    valid = noca_nz["st0_value"] > 0
-    if not valid.any():
+    no_cash_with_size = no_cash[has_size]
+    has_value = no_cash_with_size["st0_value"] > 0
+    if not has_value.any():
         return
-    noca_valid = noca_nz[valid]
-    curr_alloc = (
-        noca_valid["st0_position"]
-        * noca_valid["st0_val_price"]
-        / noca_valid["st0_value"]
+    no_cash_with_value = no_cash_with_size[has_value]
+    current_allocation = (
+        no_cash_with_value["st0_position"]
+        * no_cash_with_value["st0_val_price"]
+        / no_cash_with_value["st0_value"]
     )
-    mismatch = abs(curr_alloc - noca_valid["req_size"])
+    mismatch = abs(current_allocation - no_cash_with_value["req_size"])
     if (mismatch > _NOCASH_ALLOC_MISMATCH_TOLERANCE).any():
         worst = float(mismatch.max())
         raise ValueError(
