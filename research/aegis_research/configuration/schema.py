@@ -4,8 +4,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
+from typing import Annotated
+
 import pandas as pd
-from pydantic import ConfigDict
+from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration.field_types import (
@@ -58,15 +60,31 @@ class ConfigValidationError(ValueError):
         super().__init__(f"Invalid run config: {details}")
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DataQualityConfig:
     allowed_degradations: list[str] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
+def _validate_array_token(token: str) -> str:
+    """Pydantic item-validator: reject tokens not in shortcuts or malformed."""
+    if token in DATA_ARRAY_SHORTCUTS:
+        return token
+    if not has_data_array_token_shape(token):
+        raise ValueError(
+            "must be a VBT feature name without surrounding whitespace or control characters"
+        )
+    return token
+
+
+ArrayToken = Annotated[str, AfterValidator(_validate_array_token)]
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DataConfig:
     source: str = "synthetic"
-    arrays: list[str] = field(default_factory=lambda: ["OHLCV"])
+    # No schema default — required. Keyword-only so a required field can sit among
+    # defaulted ones — every construction site splats **raw anyway.
+    arrays: Annotated[list[ArrayToken], Field(min_length=1)] = field(kw_only=True)
     symbols: list[str] = field(default_factory=lambda: ["SYN"])
     start: str | None = None
     end: str | None = None
@@ -88,6 +106,50 @@ class DataConfig:
     @property
     def effective_arrays(self) -> tuple[str, ...]:
         return expand_data_arrays(self.arrays)
+
+    @model_validator(mode="after")
+    def _validate_conditional_requireds(self) -> DataConfig:
+        """Cross-field conditional requiredness.
+
+        - Remote sources require non-empty symbols.
+        - csv source requires a path.
+        - skip_on_error requires quality to allow 'skipped_symbols'.
+        - Local sources (synthetic, csv) do not support provider/execution kwargs.
+
+        Source whitelisting is NOT here — it's a post-pydantic check in the
+        resolution coordinator so programmatic DataConfig construction (which
+        uses internal source names like "frame") is not rejected at the model
+        level.
+        """
+        from research.aegis_research.market_data.sources import (
+            LOCAL_DATA_SOURCES,
+            remote_data_sources,
+        )
+
+        supported_remote = remote_data_sources()
+        if self.source in supported_remote:
+            if not self.symbols:
+                raise ValueError(
+                    f"symbols is required for {self.source} source"
+                )
+            for field_name in ("start", "end", "timeframe"):
+                if not getattr(self, field_name):
+                    raise ValueError(
+                        f"{field_name} is required for {self.source} source"
+                    )
+        if self.source == "csv" and not self.path:
+            raise ValueError("path is required for csv source")
+        if self.skip_on_error and "skipped_symbols" not in self.quality.allowed_degradations:
+            raise ValueError(
+                "skip_on_error requires data.quality.allowed_degradations to include 'skipped_symbols'"
+            )
+        if self.source in LOCAL_DATA_SOURCES:
+            for key in ("wrapper_kwargs", "provider_kwargs", "execution_kwargs"):
+                if getattr(self, key):
+                    raise ValueError(
+                        f"{key} is not supported for {self.source} source"
+                    )
+        return self
 
 
 def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:
@@ -252,7 +314,7 @@ class RunConfig:
     indicators: list[RunIndicatorSourceConfig]
     ranking: RankingConfig
     schema_version: int = CONFIG_SCHEMA_VERSION
-    data: DataConfig = field(default_factory=DataConfig)
+    data: DataConfig = field(default_factory=lambda: DataConfig(arrays=["OHLCV"]))
     # Required (keyword-only so it can sit among defaulted fields): a run must declare its
     # portfolio, which in turn requires an explicit direction — no silently long-only default.
     portfolio: PortfolioConfig = field(kw_only=True)

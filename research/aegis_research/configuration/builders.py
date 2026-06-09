@@ -6,7 +6,6 @@ from typing import Any
 from research.aegis_research.configuration.schema import (
     DEFAULT_LOCK_ROLE,
     DataConfig,
-    DataQualityConfig,
     Lock,
     OptimizationConfig,
     PortfolioConfig,
@@ -40,11 +39,14 @@ def _float_field_names(cls: type) -> set[str]:
 def _build_run_config(
     raw: dict[str, Any],
     *,
+    data_config: DataConfig | None = None,
     portfolio_config: PortfolioConfig | None = None,
     report_config: ReportConfig | None = None,
 ) -> RunConfig:
-    # Pydantic-ported sections (portfolio, report) are validated + constructed by the
-    # coordinator. If they weren't constructed (validation failure short-circuit), raise.
+    # Pydantic-ported sections (data, portfolio, report) are validated + constructed by
+    # the coordinator. If they weren't constructed (validation failure short-circuit), raise.
+    if data_config is None:
+        raise ValueError("data_config required")
     if portfolio_config is None:
         raise ValueError("portfolio_config required")
     if report_config is None:
@@ -54,7 +56,7 @@ def _build_run_config(
     return RunConfig(
         name=raw["name"],
         schema_version=raw["schema_version"],
-        data=_build_data_config(raw.get("data", {})),
+        data=data_config,
         portfolio=portfolio_config,
         report=report_config,
         strategy=_build_run_source_ref(raw["strategy"]),
@@ -129,12 +131,4 @@ def _build_optimization(raw: dict[str, Any] | None) -> OptimizationConfig | None
     )
 
 
-def _build_data_config(raw: dict[str, Any]) -> DataConfig:
-    value = dict(raw)
-    quality = value.get("quality", {})
-    if isinstance(quality, DataQualityConfig):
-        quality_config = quality
-    else:
-        quality_config = DataQualityConfig(**quality)
-    value["quality"] = quality_config
-    return DataConfig(**value)
+
