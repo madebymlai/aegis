@@ -67,9 +67,8 @@ def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
         ) from error
 
     runtimes = _candidate_component_runtimes(lock, row["provenance"])
-    # Lock-run reads the runtime-provenance shape that component_source writes — the one
-    # accepted coupling cost (ADR-0006). The shape is a schema-versioned frozen artifact
-    # and concentrating the previously-split reader is strictly better.
+    # Lock-run reads the runtime-provenance shape that component_source writes —
+    # the one accepted coupling cost (ADR-0006).
     candidate_slices = slice_by_component(row["params"])
     component_params: ResolvedComponentParams = {}
     for runtime in runtimes:
