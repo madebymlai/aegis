@@ -18,10 +18,7 @@ from research.aegis_research.optimization.candidate_publishing import candidate_
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
-from research.aegis_research.optimization.param_namespace import (
-    FIXED_CANDIDATE_PARAM,
-    ComponentRef,
-)
+from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -154,6 +151,11 @@ def _resolved_locked_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_locked_setup_resolves_every_component_from_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Locked setup resolves every Component's params from the candidate store.
+
+    Observe Lock application through the optimization source's evidence
+    (param_mode == "locked") instead of reading a relayed copy.
+    """
     resolved = _resolved_locked_config(tmp_path, monkeypatch)
     config = resolved.config
     array_contract = build_run_data_array_contract(config, resolved.component_registry)
@@ -168,9 +170,13 @@ def test_locked_setup_resolves_every_component_from_candidate(
         run_evidence=_run_evidence(),
     )
 
-    params = result["resolved_component_params"]
-    assert ComponentRef("strategies", "demo.strategy", "strategy") in params
-    assert ComponentRef("indicators", "demo.returns", "demo.returns") in params
+    evidence = result.optimization_source.evidence
+    assert evidence["strategy"]["param_mode"] == "locked"
+    assert all(
+        indicator["param_mode"] == "locked" for indicator in evidence["indicators"]
+    )
+    assert evidence["strategy"]["id"] == "demo.strategy"
+    assert any(indicator["id"] == "demo.returns" for indicator in evidence["indicators"])
 
 
 def test_locked_setup_performs_no_optimization(
@@ -191,7 +197,7 @@ def test_locked_setup_performs_no_optimization(
     )
 
     # A locked run pins a single Candidate: no free parameters remain to sweep.
-    assert list(result["optimization_source"].params) == [FIXED_CANDIDATE_PARAM]
+    assert list(result.optimization_source.params) == [FIXED_CANDIDATE_PARAM]
 
 
 def test_locked_setup_records_reproduction_evidence(

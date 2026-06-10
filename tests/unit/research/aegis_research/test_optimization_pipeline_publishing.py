@@ -11,7 +11,11 @@ from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     encode,
 )
-from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
+from research.aegis_research.optimization.pipeline.execution import ExecutionResult
+from research.aegis_research.optimization.pipeline.publishing import (
+    PublishingResult,
+    run_pipeline_publishing,
+)
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -113,14 +117,15 @@ def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) ->
         data_result=_FakeDataResult(),
         array_contract=_FakeArrayContract(),
         optimization_source=_FakeSource(),
-        optimization_result=_result(),
+        execution=ExecutionResult(optimization_result=_result()),
         portfolio_builtin={"fees": 0.001},
         run_evidence=run_evidence,
         store_path=store_path,
         metric_registry_fingerprint="fp-test",
     )
 
-    candidate_rows = out["candidate_rows"]
+    assert isinstance(out, PublishingResult)
+    candidate_rows = out.candidate_rows
     assert [row["role"] for row in candidate_rows] == ["best", "median", "worst"]
     assert [row["rank"] for row in candidate_rows] == [1, 2, 3]
 
@@ -145,7 +150,7 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
         data_result=_FakeDataResult(),
         array_contract=_FakeArrayContract(),
         optimization_source=_FakeSource(),
-        optimization_result=_result(),
+        execution=ExecutionResult(optimization_result=_result()),
         portfolio_builtin={"fees": 0.001},
         run_evidence=run_evidence,
         store_path=store_path,

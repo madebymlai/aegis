@@ -7,7 +7,11 @@ evidence baseline for the strategy sweep.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+import pandas as pd
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
@@ -46,8 +50,30 @@ from research.aegis_research.optimization.run_data_contract import (
 )
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_SOURCE_CONTRACT,
+    OptimizationSource,
 )
-from research.aegis_research.run_splits import build_run_splits_result
+from research.aegis_research.run_splits import RunSplitsResult, build_run_splits_result
+
+
+@dataclass(frozen=True)
+class SetupResult:
+    """Typed hand-off from the pipeline setup stage.
+
+    Carries the eight fields consumed by downstream stages: the store path
+    (an identity all stages must agree on), the optimization source and split
+    result (genuine products), the price frames (products of setup's data
+    preparation), and the config builtins (deterministic serialisation of the
+    config sections consumed by publishing/completion).
+    """
+
+    store_path: Path
+    optimization_source: OptimizationSource
+    strategy_evidence: Mapping[str, Any]
+    close: pd.DataFrame
+    open_: pd.DataFrame
+    split_result: RunSplitsResult
+    optimization_builtin: Mapping[str, Any]
+    portfolio_builtin: Mapping[str, Any]
 
 
 def run_pipeline_setup(
@@ -59,14 +85,8 @@ def run_pipeline_setup(
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
     run_evidence: RunEvidence,
-) -> dict[str, Any]:
-    """Resolve the Lock, build the optimization source, and construct the evidence baseline.
-
-    Returns a dict with keys:
-        store_path, resolved_component_params, locked,
-        optimization_source, strategy_evidence, close, split_result,
-        optimization_builtin, portfolio_builtin.
-    """
+) -> SetupResult:
+    """Resolve the Lock, build the optimization source, and construct the evidence baseline."""
     # The public entry point rejects runs without an optimization block, so by the
     # time setup executes the optimization config is guaranteed present.
     assert config.optimization is not None
@@ -106,18 +126,16 @@ def run_pipeline_setup(
             lock_evidence=lock_evidence,
         )
     )
-    return {
-        "store_path": store_path,
-        "resolved_component_params": resolved_component_params,
-        "locked": lock_run is not None,
-        "optimization_source": optimization_source,
-        "strategy_evidence": strategy_evidence,
-        "close": close,
-        "open_": open_,
-        "split_result": split_result,
-        "optimization_builtin": optimization_builtin,
-        "portfolio_builtin": portfolio_builtin,
-    }
+    return SetupResult(
+        store_path=store_path,
+        optimization_source=optimization_source,
+        strategy_evidence=strategy_evidence,
+        close=close,
+        open_=open_,
+        split_result=split_result,
+        optimization_builtin=optimization_builtin,
+        portfolio_builtin=portfolio_builtin,
+    )
 
 
 def _resolve_lock_run(config: RunConfig, *, store_path: Any) -> ResolvedLockRun | None:

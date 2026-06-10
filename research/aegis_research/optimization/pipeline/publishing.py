@@ -6,6 +6,8 @@ and publishes them to the candidate store.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,10 +31,20 @@ from research.aegis_research.optimization.evidence_ledger import (
     EvidenceSection,
     RunEvidence,
 )
+from research.aegis_research.optimization.pipeline.execution import ExecutionResult
 from research.aegis_research.optimization.run_data_contract import (
     build_candidate_data_identity,
 )
+from research.aegis_research.optimization.source import OptimizationSource
 from research.aegis_research.provenance.recorder import RunRecorder
+
+
+@dataclass(frozen=True)
+class PublishingResult:
+    """Typed hand-off from the pipeline publishing stage."""
+
+    candidate_rows: list[dict[str, Any]]
+    candidate_store_provenance: Mapping[str, Any]
 
 
 def run_pipeline_publishing(
@@ -41,22 +53,18 @@ def run_pipeline_publishing(
     recorder: RunRecorder,
     data_result: MarketDataResult,
     array_contract: DataArrayContract,
-    optimization_source: Any,
-    optimization_result: Any,
-    portfolio_builtin: dict[str, Any],
+    optimization_source: OptimizationSource,
+    execution: ExecutionResult,
+    portfolio_builtin: Mapping[str, Any],
     run_evidence: RunEvidence,
     store_path: Path,
     metric_registry_fingerprint: str | None,
-) -> dict[str, Any]:
-    """Build the three candidate rows and publish them to the candidate store.
-
-    Returns a dict with keys:
-        candidate_rows, candidate_store_provenance.
-    """
+) -> PublishingResult:
+    """Build the three candidate rows and publish them to the candidate store."""
     try:
         store_namespace = candidate_store_namespace()
         candidate_rows = candidate_rows_from_result(
-            optimization_result,
+            execution.optimization_result,
             source_identity=optimization_source.evidence,
             data_identity=build_candidate_data_identity(data_result, array_contract),
             portfolio_policy=portfolio_builtin,
@@ -82,7 +90,7 @@ def run_pipeline_publishing(
         run_evidence.fail(EvidenceFailureStage.PUBLISHING, error)
         raise
 
-    return {
-        "candidate_rows": candidate_rows,
-        "candidate_store_provenance": candidate_store_provenance,
-    }
+    return PublishingResult(
+        candidate_rows=candidate_rows,
+        candidate_store_provenance=candidate_store_provenance,
+    )

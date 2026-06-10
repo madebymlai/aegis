@@ -23,6 +23,7 @@ from research.aegis_research.data_arrays import (
     DataArrayContract,
     with_data_array_contract_metadata,
 )
+from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_publishing import (
     candidate_store_namespace,
 )
@@ -96,6 +97,7 @@ def run_strategy_sweep(
         write_data_metadata_artifact(recorder, data_result)
         data_result.assert_usable()
         data_bundle = market_data_bundle(data_result)
+        metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
             config,
             component_registry=component_registry,
@@ -104,11 +106,9 @@ def run_strategy_sweep(
             data=data_bundle,
             array_contract=array_contract,
             metric_registry_fingerprint=(
-                resolved_config.metric_registry.fingerprint
-                if resolved_config.metric_registry
-                else None
+                metric_registry.fingerprint if metric_registry else None
             ),
-            metric_registry=resolved_config.metric_registry,
+            metric_registry=metric_registry,
             run_evidence=run_evidence,
         )
     except KeyboardInterrupt:
@@ -140,9 +140,11 @@ def _run_optimization_strategy_sweep(
     data: MarketDataBundle,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
-    metric_registry: Any,
+    metric_registry: FrozenMetricRegistry | None,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
+    assert metric_registry is not None
+
     # Stage 1: Setup — resolve locks, build optimization source and evidence baseline
     try:
         setup = run_pipeline_setup(
@@ -161,10 +163,7 @@ def _run_optimization_strategy_sweep(
     # Stage 2: Execution — preflight gate, two-phase optimization sweep
     execution = run_pipeline_execution(
         config=config,
-        optimization_source=setup["optimization_source"],
-        close=setup["close"],
-        open_=setup["open_"],
-        split_result=setup["split_result"],
+        setup=setup,
         metric_registry=metric_registry,
         run_evidence=run_evidence,
     )
@@ -175,11 +174,11 @@ def _run_optimization_strategy_sweep(
         recorder=recorder,
         data_result=data_result,
         array_contract=array_contract,
-        optimization_source=setup["optimization_source"],
-        optimization_result=execution["optimization_result"],
-        portfolio_builtin=setup["portfolio_builtin"],
+        optimization_source=setup.optimization_source,
+        execution=execution,
+        portfolio_builtin=setup.portfolio_builtin,
         run_evidence=run_evidence,
-        store_path=setup["store_path"],
+        store_path=setup.store_path,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
 
@@ -187,18 +186,13 @@ def _run_optimization_strategy_sweep(
 
     # Stage 4: Completion — artifact, completion, activation, result
     return run_pipeline_completion(
+        setup=setup,
+        publishing=publishing,
         config=config,
         recorder=recorder,
         data_result=data_result,
         array_contract=array_contract,
-        strategy_evidence=setup["strategy_evidence"],
-        optimization_builtin=setup["optimization_builtin"],
-        portfolio_builtin=setup["portfolio_builtin"],
-        split_result=setup["split_result"],
         run_evidence=run_evidence,
-        candidate_rows=publishing["candidate_rows"],
-        candidate_store_provenance=publishing["candidate_store_provenance"],
-        store_path=setup["store_path"],
         store_namespace=store_namespace,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )

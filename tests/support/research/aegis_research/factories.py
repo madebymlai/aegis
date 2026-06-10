@@ -13,8 +13,9 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -44,6 +45,7 @@ from research.aegis_research.optimization.candidate_grid import (
     SPLIT_LEVEL,
     CandidateGrid,
 )
+from research.aegis_research.optimization.pipeline.setup import SetupResult
 from research.aegis_research.optimization.precompute import CandidateKey
 
 
@@ -323,3 +325,42 @@ def make_component_registry(
         definitions=frozen,
         fingerprint=hashlib.sha256(data).hexdigest(),
     )
+
+
+def make_setup_result(**overrides: Any) -> SetupResult:
+    """Return a SetupResult with valid defaults, overridden by any kwargs.
+
+    All fields carry plausible no-op values so tests that only exercise a
+    single field (or a subset) can construct the wrapper directly without
+    reaching into the setup stage internals.
+    """
+    defaults: dict[str, Any] = {
+        "store_path": Path("candidates.sqlite3"),
+        "optimization_source": _fake_optimization_source(),
+        "strategy_evidence": {},
+        "close": pd.DataFrame({0: [1.0, 2.0]}),
+        "open_": pd.DataFrame({0: [1.0, 2.0]}),
+        "split_result": _fake_split_result(),
+        "optimization_builtin": {},
+        "portfolio_builtin": {},
+    }
+    defaults.update(overrides)
+    return SetupResult(**defaults)
+
+
+class _FakeOptimizationSource:
+    params: ClassVar[dict[str, Any]] = {}
+    evidence: ClassVar[dict[str, Any]] = {"strategy": {}}
+
+
+def _fake_optimization_source() -> Any:
+    return _FakeOptimizationSource()
+
+
+class _FakeSplitResult:
+    metadata: ClassVar[dict[str, int]] = {"n_splits": 2}
+    splits: ClassVar[list[Any]] = []
+
+
+def _fake_split_result() -> Any:
+    return _FakeSplitResult()
