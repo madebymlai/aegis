@@ -396,10 +396,17 @@ def test_runner_records_zero_non_executable_rows_for_contiguous_split() -> None:
     )
 
 
-def test_runner_records_positive_non_executable_rows_for_purged_kfold_split() -> None:
-    """A purged k-fold split has purge gaps between folds; the complement
-    (held-out) set is non-contiguous, so the seam mask fires and
-    non_executable_rows must be positive."""
+def test_runner_records_exact_non_executable_rows_for_purged_kfold_split() -> None:
+    """``non_executable_rows`` is the seam cost of the Split structure — exact,
+    not merely positive, and independent of how the sweep was chunked.
+
+    With 24 rows and 3 folds of 8, each split's *selection* window is the
+    complement of one test fold. Only the middle fold's complement
+    (rows 0-7 + 16-23) has an internal seam: the window jumps from row 7 to
+    row 16, whose bar is not the immediate calendar successor — so exactly
+    one row is non-executable across the whole structure. A chunked sweep
+    that re-counts the same window per candidate chunk would inflate this —
+    asserting the exact value pins the structural semantic."""
     close = _uptrend_close()
     purged_opt = make_optimization_config(
         search="grid",
@@ -418,8 +425,8 @@ def test_runner_records_positive_non_executable_rows_for_purged_kfold_split() ->
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(close.index, purged_opt.split),
     )
-    assert result.non_executable_rows > 0, (
-        f"purged k-fold split must record positive non_executable_rows; got {result.non_executable_rows}"
+    assert result.non_executable_rows == 1, (
+        f"purged k-fold 3x8 structure has exactly one seam row; got {result.non_executable_rows}"
     )
 
 

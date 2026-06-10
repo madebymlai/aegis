@@ -66,18 +66,14 @@ def _build_portfolio(
     market_index: pd.Index | None,
     group_by: Any,
     periods_per_year: int,
-) -> tuple[vbt.Portfolio, int]:
+) -> vbt.Portfolio:
     """Build a simulated portfolio from allocations.
 
     Masks gap rows as non-executable, force-liquidates the terminal row to
     cash, builds the PFO, runs ``from_optimizer``, and asserts no NoCash
     rejection occurred.
-
-    Returns the simulated portfolio and the count of held (non-executable) rows.
     """
-    masked, held_count = _apply_non_executable_mask(
-        allocations, market_index=market_index
-    )
+    masked = _apply_non_executable_mask(allocations, market_index=market_index)
     # Terminal liquidation: zero the final row so runs end in realized cash.
     if not masked.empty:
         masked.iloc[-1, :] = 0.0
@@ -109,7 +105,7 @@ def _build_portfolio(
         **exec_kwargs,
     )
     _assert_no_nocash_rejection(pf)
-    return pf, held_count
+    return pf
 
 
 def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
@@ -164,14 +160,12 @@ def simulate_single_book(
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     periods_per_year: int = 252,
-) -> tuple[vbt.Portfolio, int]:
+) -> vbt.Portfolio:
     """Test-support wrapper: simulate one book through the batched path.
 
     Wraps plain-symbol ``allocations`` into a one-candidate MultiIndex, then
     delegates to ``simulate_portfolio_batch``.  Only for carry/mechanics tests
     that need plain symbol columns — not a production interface.
-
-    Returns the simulated portfolio and the count of held (non-executable) rows.
     """
     columns = pd.MultiIndex.from_product(
         [[_SINGLE_CANDIDATE_ID], allocations.columns],
@@ -198,11 +192,8 @@ def simulate_portfolio_batch(
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     periods_per_year: int,
-) -> tuple[vbt.Portfolio, int]:
-    """Simulate a batch of candidate portfolios.
-
-    Returns the simulated portfolio and the count of held (non-executable) rows.
-    """
+) -> vbt.Portfolio:
+    """Simulate a batch of candidate portfolios."""
     _validate_candidate_columns(allocations.columns, field_name="allocations")
     expanded_close = expand_market_frame_to_candidate_columns(
         close,
@@ -223,7 +214,7 @@ def simulate_portfolio_batch(
             open_, allocations.columns, feature_name="Open"
         )
     )
-    pf, held_count = _build_portfolio(
+    return _build_portfolio(
         expanded_close,
         allocations,
         config,
@@ -232,7 +223,6 @@ def simulate_portfolio_batch(
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
         periods_per_year=periods_per_year,
     )
-    return pf, held_count
 
 
 def expand_market_frame_to_candidate_columns(
@@ -305,23 +295,36 @@ def _apply_non_executable_mask(
     allocations: pd.DataFrame,
     *,
     market_index: pd.Index | None,
-) -> tuple[pd.DataFrame, int]:
-    """Return the masked frame with gap rows NaN'd and the held-row count.
+) -> pd.DataFrame:
+    """Return the masked frame with gap rows NaN'd.
 
     Rebalance rows whose bar is not the immediate successor of the previous
     row's bar in the provided market index are NaN'd so the simulator holds
-    instead of trading.  The held-row count is the number of rows that were
-    masked as non-executable.
+    instead of trading.
     """
     if allocations.empty or len(allocations.columns) == 0:
-        return allocations.copy(), 0
+        return allocations.copy()
     executable = _next_open_executable_mask(allocations.index, market_index)
     masked = allocations.copy().astype(float)
     non_executable_rows = ~executable
     if non_executable_rows.any():
         masked.iloc[non_executable_rows.to_numpy(), :] = np.nan
-    held_count = int(non_executable_rows.sum())
-    return masked, held_count
+    return masked
+
+
+def count_non_executable_rows(
+    window_index: pd.Index,
+    market_index: pd.Index | None,
+) -> int:
+    """Count window rows that would be held (non-executable) under next-open rules.
+
+    Pure index geometry — the seam cost of one window: the number of rows in
+    ``window_index`` whose bar is not the immediate successor of the previous
+    row's bar in ``market_index``, independent of allocation values. Raises
+    ``ValueError`` if ``market_index`` does not contain every window row.
+    """
+    executable = _next_open_executable_mask(window_index, market_index)
+    return int((~executable).sum())
 
 
 def _next_open_executable_mask(

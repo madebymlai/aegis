@@ -390,13 +390,16 @@ def structural_checks(audit, sr):
 
 
 def masking_check(audit, repo):
-    """C7 -- next-open execution guard: simulate a gapped book and prove the
-    post-gap bar produces no orders (held) and the terminal bar liquidates."""
+    """C7 -- next-open execution guard: the seam rule must see the gap and the
+    simulated post-gap bar must produce no orders (held); terminal liquidates."""
     sys.path.insert(0, str(repo))
     try:
         import pandas as pd
 
-        from research.aegis_research.portfolios import simulate_single_book
+        from research.aegis_research.portfolios import (
+            count_non_executable_rows,
+            simulate_single_book,
+        )
         from tests.support.research.aegis_research.factories import (
             make_portfolio_config,
         )
@@ -405,25 +408,29 @@ def masking_check(audit, repo):
         alloc_idx = market.delete(2)
         close = pd.DataFrame(100.0, index=alloc_idx, columns=["A", "B"])
         alloc = pd.DataFrame(1.0, index=alloc_idx, columns=["A", "B"])
-        pf, held_count = simulate_single_book(
+        pf = simulate_single_book(
             close,
             alloc,
-            make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, direction="both"),
+            make_portfolio_config(
+                fees=0, slippage=0, gross_cap=2.0, net_cap=2.0, direction="both"
+            ),
             market_index=market,
         )
-        # The post-gap bar must produce zero orders; terminal bar liquidates.
+        # Two independent layers: the geometry rule must count the seam, and
+        # the post-gap bar must produce zero orders; terminal bar liquidates.
+        seam_rows = count_non_executable_rows(alloc_idx, market)
         orders = pf.orders.records_readable
         order_dates = set(orders["Index"].astype(str))
         post_gap_date = str(alloc_idx[2].date())
         terminal_date = str(alloc_idx[-1].date())
         gap_held = post_gap_date not in order_dates
         terminal_sold = terminal_date in order_dates
-        ok = gap_held and terminal_sold and held_count > 0
+        ok = gap_held and terminal_sold and seam_rows > 0
         audit.add("C7.next_open_masking",
                   "Next-open executable mask + terminal liquidation enforced",
                   "hard", "pass" if ok else "fail",
                   f"post-gap row held={gap_held} terminal liquidated={terminal_sold} "
-                  f"held_count={held_count}")
+                  f"seam_rows={seam_rows}")
     except Exception as e:  # pragma: no cover - defensive
         audit.add("C7.next_open_masking", "Next-open executable mask",
                   "hard", "fail", f"masking import/behaviour check errored: {e!r}")

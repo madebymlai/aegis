@@ -59,13 +59,13 @@ class OptimizationResult:
     is authoritative by construction. It lets consumers report the
     researched/total terminal ratio.
 
-    ``non_executable_rows`` is the total number of index rows the portfolio
-    engine could not execute because of gaps in the market calendar (purge
-    embargoes, held-out non-contiguity). It is the sum of the held-count
-    accumulated across every selection and held-out sweep window. A value of
-    zero means the split method produced contiguous windows; a positive value
-    records the combined execution-footprint cost of non-contiguous splits
-    (e.g. purged k-fold).
+    ``non_executable_rows`` is the seam cost of the Split structure: the
+    number of rebalance rows held at calendar seams across all (split, set)
+    windows, computed from the split geometry and the loaded-data calendar
+    alone — independent of which candidates ran or how the sweep was chunked.
+    A value of zero means the split method produced contiguous windows; a
+    positive value records the structural execution-footprint cost of
+    non-contiguous splits (e.g. purged k-fold).
     """
 
     best: EvaluatedCandidate
