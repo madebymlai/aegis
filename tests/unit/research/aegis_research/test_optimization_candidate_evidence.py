@@ -127,7 +127,7 @@ def test_canonical_params_key_matches_candidate_row_param_canonicalization() -> 
     assert canonical_params_key(params) == canonical_params_key(rows[0]["params"])
 
 
-def test_candidate_key_includes_hidden_source_and_portfolio_identity() -> None:
+def test_candidate_key_includes_hidden_source_and_allocation_identity() -> None:
     index = pd.MultiIndex.from_tuples([(14,)], names=["rsi_window"])
 
     base = candidate_rows_from_param_index(
