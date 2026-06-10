@@ -52,6 +52,11 @@ class IndicatorManifest(ComponentManifest):
     param_space_callable: str | None = None
     bar_aligned: bool = True
 
+    @property
+    def consumes_outputs(self) -> tuple[str, ...]:
+        """Indicators consume no strategy outputs — uniform query surface."""
+        return ()
+
 
 @dataclass(frozen=True)
 class StrategyManifest(ComponentManifest):
@@ -73,6 +78,11 @@ class StrategyManifest(ComponentManifest):
     param_space_callable: str | None = None
     owns_portfolio: bool = False
 
+    @property
+    def output_names(self) -> tuple[str, ...]:
+        """Strategies produce no indicator outputs — uniform query surface."""
+        return ()
+
 
 @dataclass(frozen=True)
 class ComponentDefinition:
@@ -92,6 +102,44 @@ class ComponentDefinition:
     @property
     def input_names(self) -> tuple[str, ...]:
         return self.manifest.input_names
+
+    # ── Query surface ──────────────────────────────────────────────────────
+
+    def undeclared_params(self, provided: frozenset[str]) -> frozenset[str]:
+        """Return params in *provided* that are not declared in the manifest."""
+        return provided - frozenset(self.manifest.param_names)
+
+    def unsatisfied_params(self, provided: frozenset[str]) -> frozenset[str]:
+        """Return declared params neither provided, nor defaulted, nor waived.
+
+        A ``param_space_callable`` waives all declared params regardless of
+        what is provided or defaulted.
+        """
+        if self.manifest.param_space_callable is not None:
+            return frozenset()
+        return (
+            frozenset(self.manifest.param_names)
+            - provided
+            - frozenset(self.manifest.defaults)
+        )
+
+    def produced_output_names(self) -> frozenset[str]:
+        """Output names this component produces (uniform across families).
+
+        Indicator manifests return their ``output_names``; strategy manifests
+        return empty — callers never type-dispatch.
+        """
+        return frozenset(self.manifest.output_names)
+
+    def consumed_output_names(self) -> frozenset[str]:
+        """Output names this component consumes (uniform across families).
+
+        Strategy manifests return their ``consumes_outputs``; indicator
+        manifests return empty — callers never type-dispatch.
+        """
+        return frozenset(self.manifest.consumes_outputs)
+
+    # ── Callable loading ───────────────────────────────────────────────────
 
     def load_callable(self) -> Any:
         from research.aegis_research.component_registry.registry import load_component_callable
