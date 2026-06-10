@@ -8,7 +8,7 @@ from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration.field_types import (
-    IDENTIFIER_RE,  # noqa: F401 — re-exported for config.py
+    IDENTIFIER_RE,  # noqa: F401 — re-exported for configuration
     ComponentIdStr,
     NonEmptyStr,
     NonNegativeInt,

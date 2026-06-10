@@ -3,15 +3,11 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.component_registry import (
-    FrozenComponentRegistry,
-    discover_component_registry,
-)
 from research.aegis_research.configuration.schema import (
     ConfigSelectionEvidence,
     ConfigValidationError,
@@ -27,6 +23,9 @@ from research.aegis_research.metrics import (
     freeze_metric_registry,
     make_default_metric_registry,
 )
+
+if TYPE_CHECKING:
+    from research.aegis_research.component_registry import FrozenComponentRegistry
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -134,6 +133,8 @@ def resolve_run_config(
     """
     if not isinstance(value, dict):
         raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
+
+    from research.aegis_research.component_registry import discover_component_registry
 
     registry = component_registry or discover_component_registry()
     frozen_metric_registry = freeze_metric_registry(metric_registry)
