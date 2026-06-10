@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
+from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
     WideIndicatorPrecompute,
@@ -69,7 +69,7 @@ class Verdicts:
 
 
 def classify_candidates(
-    grid: pd.DataFrame,
+    grid: CandidateGrid,
     *,
     invalid_keys: set[CandidateKey],
     min_trades: int,
@@ -82,39 +82,35 @@ def classify_candidates(
     * **invalid** — the Candidate key appears in ``invalid_keys`` (pre-score
       Invalid rule: indicator output entirely non-finite over full history).
     * **non_trading** — the Candidate has no finite ranking score across any
-      split (``grid[metric].isna().all()`` per candidate group).
+      split (the ``metric`` is None on every split in ``grid``).
     * **under_traded** — when ``min_trades > 0``, the Candidate's closed-trade
-      count (``total_trades`` column) falls below ``min_trades`` on the
+      count (``total_trades`` metric) falls below ``min_trades`` on the
       thinnest split it scored.
     * **valid** — none of the above.
 
     Returns a ``Verdicts`` whose counts satisfy
     ``excluded_invalid <= excluded_degenerate <= total`` by construction.
     """
-    split_level = "split"
-    if split_level not in grid.index.names:
-        raise ValueError(f"grid index must include a {split_level!r} level")
-    param_levels = [name for name in grid.index.names if name != split_level]
-    if not param_levels:
-        raise ValueError("grid index must carry at least one parameter level")
-    group_level = param_levels[0] if len(param_levels) == 1 else param_levels
+    metric_ids = grid.metric_ids
 
     invalid: set[CandidateKey] = set()
     non_trading: set[CandidateKey] = set()
     under_traded: set[CandidateKey] = set()
     valid: set[CandidateKey] = set()
 
-    for key, sub in grid.groupby(level=group_level, sort=True):
-        key_tuple: CandidateKey = key if isinstance(key, tuple) else (key,)
-
+    for key_tuple, split_metrics in grid.by_candidate():
         if key_tuple in invalid_keys:
             invalid.add(key_tuple)
-        elif sub[metric].isna().all():
-            non_trading.add(key_tuple)
-        elif not _meets_trade_floor(sub, min_trades):
-            under_traded.add(key_tuple)
         else:
-            valid.add(key_tuple)
+            metric_values = [
+                split_metrics[s].get(metric) for s in split_metrics
+            ]
+            if all(v is None for v in metric_values):
+                non_trading.add(key_tuple)
+            elif not _meets_trade_floor(split_metrics, min_trades, metric_ids):
+                under_traded.add(key_tuple)
+            else:
+                valid.add(key_tuple)
 
     return Verdicts(
         invalid=invalid,
@@ -124,20 +120,29 @@ def classify_candidates(
     )
 
 
-def _meets_trade_floor(sub: pd.DataFrame, min_trades: int) -> bool:
-    """Whether a candidate's grid subset clears the per-split trade floor.
+def _meets_trade_floor(
+    split_metrics: dict[Any, dict[str, float | None]],
+    min_trades: int,
+    metric_ids: list[str],
+) -> bool:
+    """Whether a candidate clears the per-split trade floor.
 
     The floor is disabled when ``min_trades <= 0``. Otherwise the candidate must
     have closed at least ``min_trades`` trades on the *thinnest* split it
-    actually scored: splits where the candidate did not trade (NaN in
-    ``total_trades``) are skipped.
+    actually scored: splits where the candidate did not trade (None in
+    ``total_trades``) are skipped. The trade-count column's absence is checked
+    via ``metric_ids``.
     """
     if min_trades <= 0:
         return True
-    if TRADES_METRIC not in sub.columns:
+    if TRADES_METRIC not in metric_ids:
         return False
-    counts = sub[TRADES_METRIC].dropna()
-    return len(counts) > 0 and counts.min() >= min_trades
+    counts = [
+        v
+        for metrics in split_metrics.values()
+        if (v := metrics.get(TRADES_METRIC)) is not None
+    ]
+    return len(counts) > 0 and min(counts) >= min_trades
 
 
 def invalid_candidates(
@@ -182,4 +187,4 @@ def _has_finite_value(values: Any) -> bool:
     try:
         return bool(np.isfinite(values).any())
     except TypeError:
-        return bool(pd.notna(values).any())
+        return True

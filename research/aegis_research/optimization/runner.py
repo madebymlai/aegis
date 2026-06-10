@@ -43,6 +43,7 @@ from research.aegis_research.metrics.accessors import (
 from research.aegis_research.metrics.contracts import ExtractorSpec
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
+from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
     invalid_candidate_positions,
@@ -125,7 +126,7 @@ def execute_optimization(
         invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,
     )
-    selection_grid = _sweep(
+    selection_frame = _sweep(
         splitter=splitter,
         candidate_metrics=selection_metrics,
         apply_input=vbt.Rep("range_"),
@@ -133,6 +134,7 @@ def execute_optimization(
         set_=SELECTION_SET,
         parallel=True,
     )
+    selection_grid = CandidateGrid.from_sweep(selection_frame)
     verdicts = classify_candidates(
         selection_grid,
         invalid_keys=invalid_candidate_keys,
@@ -140,13 +142,13 @@ def execute_optimization(
         metric=ranking.metric,
     )
     result = select_representative_candidates(
-        selection_grid,
+        selection_frame,
         verdicts,
         metric=ranking.metric,
         min_weight=ranking.min_weight,
     )
 
-    param_names = [name for name in selection_grid.index.names if name != SPLIT_LEVEL]
+    param_names = selection_grid.param_levels
     return _attach_held_out(
         result,
         splitter=splitter,
@@ -321,21 +323,7 @@ def _sweep(
             "filtered out — return finite metrics from invalid combinations instead so "
             "they remain visible in evidence"
         ) from error
-    return _tidy_grid(stacked)
-
-
-def _tidy_grid(stacked: Any) -> pd.DataFrame:
-    # Mono-chunking row-stacks the per-combo metric rows into a DataFrame indexed
-    # by ``[split, <params>]`` with one column per metric — already the tidy grid
-    # ``select_representative_candidates`` consumes.
-    if not isinstance(stacked, pd.DataFrame) or not isinstance(stacked.index, pd.MultiIndex):
-        raise OptimizationRunnerError(
-            "optimization sweep must row-stack into a DataFrame indexed by split and "
-            f"parameters with one column per metric; got {type(stacked).__name__}"
-        )
-    tidy = stacked.copy()
-    tidy.columns.name = None
-    return tidy
+    return stacked
 
 
 def _attach_held_out(

@@ -29,12 +29,16 @@ A **Candidate** whose configuration is unworkable: an **Indicator** output is en
 _Avoid_: broken candidate, bad candidate, error
 
 **Degenerate Candidate**:
-A **Candidate** that cannot represent the grid, excluded for one of three reasons: it is misconfigured (an **Invalid Candidate**), it earned no finite ranking score (non-trading), or it traded too few times to be trusted (under-traded). Non-trading is the absence of a finite ranking score — not merely zero trades: an Invalid cash-holder takes zero trades yet scores a finite 0.0 and is reported as **Invalid**, its more specific cause. Invalid is decided before scoring, the other two from results after; **Invalid Candidates** are the misconfigured subset.
+A **Candidate** that cannot represent the **Candidate Grid**, excluded for one of three reasons: it is misconfigured (an **Invalid Candidate**), it earned no finite ranking score (non-trading), or it traded too few times to be trusted (under-traded). Non-trading is the absence of a finite ranking score — not merely zero trades: an Invalid cash-holder takes zero trades yet scores a finite 0.0 and is reported as **Invalid**, its more specific cause. Invalid is decided before scoring, the other two from results after; **Invalid Candidates** are the misconfigured subset.
 _Avoid_: failed candidate, junk candidate, outlier
 
 **Split**:
 A partition of the data index into exactly two sets: a **Selection** set and a **Held-out** set. The Selection set is used for parameter scoring and global ranking during optimization; the Held-out set is used for unbiased validation of the selected **Candidates**.
 _Avoid_: fold, in-sample/out-of-sample, train/test
+
+**Candidate Grid**:
+The scored table an optimization **Run** produces: every registered **Metric**, per **Split**, for every sampled **Candidate**. Built once from the **Selection** sets — the data validity verdicts and global ranking read — and again from the **Held-out** sets for the three representatives. Internal to the Run; never part of **Evidence**.
+_Avoid_: tidy grid, metrics frame, results table, parameter grid
 
 **Lock**:
 A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run**. Written as a human-friendly scalar `run_id[:role]`: a bare `run_id` locks the **best** **Candidate** (the default), and `:median`/`:worst` pick the other representatives — the **Run** folder name *is* the `run_id`, so the common case is copy-the-directory-name-and-paste. The precise mapping form `{run_id, candidate_id}` also resolves, where `candidate_id` is a `role` keyword or a raw `candidate_key` hash; `run_id` + a resolved `candidate_key` together *are* the `candidates` primary key, so a Lock needs no separate storage. A `role` resolves to its `candidate_key` through the storage-free `candidate_rankings` table, and **Lock** provenance always records the resolved hash. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body (the overridden values are recorded in **Evidence**, never silently dropped).
