@@ -37,6 +37,27 @@ def register_custom_metrics(
         registry.register(definition, spec)
 
 
+def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec]]:
+    """Catalog of available opt-in custom metrics, keyed by metric id.
+
+    Nothing here registers itself: a custom metric enters a registry only when
+    a caller (``make_metric_registry_for``) passes its record through
+    ``register_custom_metrics`` because a run requested it.
+    """
+    from research.aegis_research.metrics.custom.ulcer import (
+        ULCER_PERFORMANCE_INDEX_DEFINITION,
+        ULCER_PERFORMANCE_INDEX_EXTRACTOR,
+    )
+
+    return {
+        ULCER_PERFORMANCE_INDEX_DEFINITION.id: (
+            ULCER_PERFORMANCE_INDEX_DEFINITION,
+            ULCER_PERFORMANCE_INDEX_EXTRACTOR,
+        ),
+    }
+
+
 __all__ = [
+    "optional_custom_metrics",
     "register_custom_metrics",
 ]

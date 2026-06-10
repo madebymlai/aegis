@@ -22,6 +22,7 @@ from research.aegis_research.metrics import (
     MetricRegistry,
     freeze_metric_registry,
     make_default_metric_registry,
+    make_metric_registry_for,
 )
 
 if TYPE_CHECKING:
@@ -138,7 +139,9 @@ def resolve_run_config(
 
     registry = component_registry or discover_component_registry()
     frozen_metric_registry = freeze_metric_registry(metric_registry)
-    effective_metric_registry = frozen_metric_registry or make_default_metric_registry()
+    effective_metric_registry = frozen_metric_registry or make_metric_registry_for(
+        _requested_metric_ids(value)
+    )
 
     return _build_resolved_run_config(
         value,
@@ -147,6 +150,20 @@ def resolve_run_config(
         component_registry=registry,
         metric_registry=effective_metric_registry,
     )
+
+
+def _requested_metric_ids(raw: dict[str, Any]) -> tuple[str, ...]:
+    """Metric ids the raw config asks for, before validation has run.
+
+    Custom metrics are opt-in per run: only a requested id can pull its record
+    into the effective registry. Malformed shapes return empty — validation
+    reports them properly later.
+    """
+    ranking = raw.get("ranking")
+    if not isinstance(ranking, dict):
+        return ()
+    metric = ranking.get("metric")
+    return (metric,) if isinstance(metric, str) else ()
 
 
 def _build_resolved_run_config(

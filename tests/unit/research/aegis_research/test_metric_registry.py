@@ -62,20 +62,44 @@ def test_default_registry_extractors_match_definitions() -> None:
 
 
 def test_default_registry_extractors_preserve_catalog_order() -> None:
-    """Extractor iteration order is registration order, not sorted id order.
+    """Extractor iteration order is registration (catalog) order, not sorted id order.
 
-    The extraction loop's column order is this iteration order, so it must be
-    the catalog metrics first, then the default custom metrics, rather than
-    the fingerprint's sorted definition order.
+    The extraction loop's column order is this iteration order, so it must match
+    the catalog rather than the fingerprint's sorted definition order.
     """
-    from research.aegis_research.metrics.custom.ulcer import DEFAULT_CUSTOM_METRICS
-
     frozen = make_default_metric_registry()
 
-    expected = PORTFOLIO_METRIC_VALUE_KEYS + tuple(
-        definition.id for definition, _ in DEFAULT_CUSTOM_METRICS
+    assert tuple(frozen.extractors) == PORTFOLIO_METRIC_VALUE_KEYS
+
+
+def test_metric_registry_for_registers_only_requested_custom_metrics() -> None:
+    """Custom metrics are opt-in per run: present only when a requested id names one.
+
+    The no-request registry must be byte-identical to the default one, so runs
+    that never ask for a custom metric keep their Evidence fingerprint.
+    """
+    from research.aegis_research.metrics import make_metric_registry_for
+
+    frozen = make_metric_registry_for(("ulcer_performance_index",))
+
+    assert "ulcer_performance_index" in frozen
+    assert tuple(frozen.extractors) == (
+        PORTFOLIO_METRIC_VALUE_KEYS + ("ulcer_performance_index",)
     )
-    assert tuple(frozen.extractors) == expected
+    assert frozen.fingerprint != make_default_metric_registry().fingerprint
+    assert (
+        make_metric_registry_for(()).fingerprint
+        == make_default_metric_registry().fingerprint
+    )
+
+
+def test_metric_registry_for_passes_unknown_ids_through_to_validation() -> None:
+    """Unknown ids do not error here; config validation cross-checks fail closed."""
+    from research.aegis_research.metrics import make_metric_registry_for
+
+    frozen = make_metric_registry_for(("sharpe_ratio", "not_a_metric"))
+
+    assert frozen.ids() == make_default_metric_registry().ids()
 
 
 def test_metric_registry_rejects_duplicate_ids() -> None:
@@ -141,7 +165,7 @@ def test_default_registry_fingerprint_is_byte_stable() -> None:
     """
     assert (
         make_default_metric_registry().fingerprint
-        == "5558ead3c5faf04178b8fa3922e59712cf83fb5c7a64eeef09c7809a9ae2d66c"
+        == "25995c4bdb5f6c98e4bf62fc60bc38a534e927d2ff469e02102e075d3bdaa3ae"
     )
 
 

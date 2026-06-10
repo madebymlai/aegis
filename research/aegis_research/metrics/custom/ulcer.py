@@ -64,12 +64,7 @@ def _read_ulcer_performance_index(pf: Any, config: ReportConfig) -> pd.Series:
 
 ULCER_PERFORMANCE_INDEX_EXTRACTOR = ExtractorSpec(_read_ulcer_performance_index)
 
-DEFAULT_CUSTOM_METRICS: tuple[tuple[MetricDefinition, ExtractorSpec], ...] = (
-    (ULCER_PERFORMANCE_INDEX_DEFINITION, ULCER_PERFORMANCE_INDEX_EXTRACTOR),
-)
-
 __all__ = [
-    "DEFAULT_CUSTOM_METRICS",
     "ULCER_PERFORMANCE_INDEX_DEFINITION",
     "ULCER_PERFORMANCE_INDEX_EXTRACTOR",
     "ULCER_PERFORMANCE_INDEX_ID",
