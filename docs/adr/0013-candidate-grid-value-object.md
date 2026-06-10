@@ -137,11 +137,16 @@ preserves.
   level, no param levels, not a MultiIndex) move out of consumer tests into
   `test_optimization_candidate_grid.py`.
 - **Regression oracle: the grid never persists, so no Evidence/Manifest bytes may move.**
-  `manifest.json` and `evidence/optimization.json` must stay byte-identical (golden-bytes
+  `manifest.json` and the optimization Evidence must stay byte-identical (golden-bytes
   style, per ADR-0003/0004 precedent). *Correction (2026-06-10 implementation review):*
-  no executable byte-level proof exists yet — the two-phase integration test exercises
-  behaviour but never persists or compares bytes, so the full suite is the regression
-  gate today. Building the real golden-bytes oracle is tracked as aegis-rd-0vh.
+  the originally cited proof did not exist — the two-phase integration test exercises
+  behaviour but never persists or compares bytes. The real oracle was built as
+  aegis-rd-0vh: `test_optimization_run_golden_bytes.py` executes a full synthetic Run
+  through the CLI and compares the persisted Manifest — volatile fields masked,
+  re-serialized in Canonical Form — byte-for-byte against a committed golden.
+  Optimization Evidence is embedded in the Manifest (there is no separate
+  `evidence/optimization.json` file), and the Manifest's artifact content hashes pin
+  the other persisted artifacts transitively.
 - CONTEXT.md gains **Candidate Grid** and the Degenerate Candidate definition now
   references it (both edits applied with this ADR).
 - Lineage: 2026-06-10 architecture review candidate 1 (top recommendation), grilled and

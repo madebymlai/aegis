@@ -159,6 +159,10 @@ regardless of the finite cash-holding score it would otherwise simulate to.
   byte-identical to the post-uvv baseline. This is the regression guard for the
   implementation slices (kj5.2–kj5.4): "structure-only, no behaviour change" is verified,
   not asserted. The integration test `test_optimization_runner_two_phase.py` proves it.
+  *Correction (2026-06-10, aegis-rd-0vh):* the cited test never persisted or compared
+  bytes; the executable byte-level oracle is `test_optimization_run_golden_bytes.py`
+  (masked-canonical Manifest vs committed golden). Optimization Evidence is embedded in
+  the Manifest, not a separate `evidence/optimization.json` file.
 
 - **Accepted residual exposure.** An all-non-finite indicator block simulates to a finite
   cash-holding `0.0` (the strategy holds cash, takes zero trades). This is already live on
