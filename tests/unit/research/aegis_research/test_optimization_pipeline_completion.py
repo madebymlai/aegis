@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import pytest
 
@@ -22,6 +22,10 @@ from research.aegis_research.optimization.pipeline.publishing import PublishingR
 from tests.support.research.aegis_research.factories import (
     make_run_config,
     make_setup_result,
+)
+from tests.support.research.aegis_research.test_doubles import (
+    FakeArrayContract,
+    FakeDataResult,
 )
 
 
@@ -48,28 +52,6 @@ class _FakeRecorder:
         self.manifest.status = "completed"
         self.manifest.finished_at = "2025-01-01T01:00:00Z"
         self.persist()
-
-
-class _FakeQuality:
-    state = "healthy"
-
-
-class _FakeDataResult:
-    metadata: ClassVar[dict[str, Any]] = {
-        "source": "synthetic",
-        "symbols": ["SYN"],
-        "timeframe": "1D",
-        "loaded_arrays": ["Close", "Open"],
-        "shape": (120, 1),
-        "index_start": "2020-01-01",
-        "index_end": "2020-06-01",
-    }
-    quality = _FakeQuality()
-
-
-class _FakeArrayContract:
-    def metadata(self) -> dict[str, Any]:
-        return {"schema_version": "data_array_contract.v1"}
 
 
 def _candidate_rows() -> list[dict[str, Any]]:
@@ -164,7 +146,7 @@ def test_completion_returns_result_and_marks_completed(
     # capturing the payload that would have been written.
     captured_artifact: dict[str, Any] = {}
 
-    def _capture_write(rec: Any, payload: dict[str, Any]) -> None:
+    def _capture_write(_rec: object, payload: dict[str, Any]) -> None:
         captured_artifact.update(payload)
 
     monkeypatch.setattr(
@@ -177,14 +159,14 @@ def test_completion_returns_result_and_marks_completed(
         publishing=publishing,
         config=config,
         recorder=recorder,
-        data_result=_FakeDataResult(),
-        array_contract=_FakeArrayContract(),
+        data_result=FakeDataResult(),
+        array_contract=FakeArrayContract(),
         run_evidence=run_evidence,
         store_namespace={"path": str(store_path)},
         metric_registry_fingerprint="test-fp",
     )
 
-    # --- Assert returned result dict (CLI-facing) ---
+    # Assert returned result dict
     assert result["run_id"] == run_id
     assert result["run_dir"] == str(run_dir)
     assert result["manifest_path"] == str(run_dir / "manifest.json")
@@ -219,11 +201,11 @@ def test_completion_returns_result_and_marks_completed(
     assert best["held_out_headline"]["held_out"] == pytest.approx(0.29)
     assert best["held_out_headline"]["gap"] == pytest.approx(0.01)
 
-    # --- Assert completion marking (external behaviour) ---
+    # Assert completion marking
     assert manifest.status == "completed"
     assert manifest.finished_at == "2025-01-01T01:00:00Z"
 
-    # --- Assert candidate-run activation (external behaviour) ---
+    # Assert candidate-run activation
     # top_candidates_by_run filters to PUBLICATION_ACTIVE rows only.
     with CandidateStore(store_path) as store:
         top = store.top_candidates_by_run(run_id)
@@ -234,7 +216,7 @@ def test_completion_returns_result_and_marks_completed(
     assert top[1]["ranking_metric_value"] == pytest.approx(0.20)
     assert top[2]["ranking_metric_value"] == pytest.approx(0.10)
 
-    # --- Assert artifact payload structure ---
+    # Assert artifact payload structure
     assert "schema_version" in captured_artifact
     assert "strategy" in captured_artifact
     assert len(captured_artifact["candidates"]) == 3
