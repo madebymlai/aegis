@@ -790,3 +790,178 @@ def test_show_config_schema_coherence_optimization_required(
 
     messages = "; ".join(i.message for i in exc_info.value.issues)
     assert "optimization" in messages.lower()
+
+
+# ── indicator-schema ────────────────────────────────────────────────────────
+
+
+def test_show_indicator_schema_exits_zero_and_prints_markdown(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main(["show", "indicator-schema"]) == 0
+
+    output = capsys.readouterr()
+    markdown = output.out
+
+    # Title and key sections
+    assert "# Indicator Component Authoring Guide" in markdown
+    assert "## Percent-Cell Structure" in markdown
+    assert "## Manifest" in markdown
+    assert "## Entry Points" in markdown
+    assert "## The `run` Entry Point" in markdown
+    assert "## Optional `param_space`" in markdown
+    assert "## Batch-Invariance Rule" in markdown
+    assert "## Legacy Declarations" in markdown
+    assert "## Complete Example" in markdown
+
+    # v2 contract = run entry point (not legacy callable)
+    assert "`run`" in markdown
+    # Batched signature
+    assert "n_candidates" in markdown
+    # Mapping return contract
+    assert 'return {"ma": result}' in markdown or 'return {"ma":' in markdown
+    # Candidate-major layout
+    assert "candidate_index * n_symbols" in markdown
+    # Legacy keys are documented as hard errors
+    assert "COMPONENT_CALLABLE" in markdown
+    assert "wide_callable" in markdown
+    assert "param_space_callable" in markdown
+
+
+def test_show_indicator_schema_json_returns_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main(["show", "indicator-schema", "--json"]) == 0
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["status"] == "success"
+    assert payload["format"] == "markdown"
+    assert payload["schema_version"] == "indicator_schema_guide.v1"
+    assert "# Indicator Component Authoring Guide" in payload["content"]
+
+
+def test_show_indicator_schema_manifest_table_is_interpolated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The manifest field table is interpolated from the pydantic model, not hand-written."""
+    assert cli.main(["show", "indicator-schema"]) == 0
+
+    markdown = capsys.readouterr().out
+
+    # Field table has the Indicator-specific output_names field
+    assert "| `output_names` |" in markdown
+    assert "| `family` |" in markdown
+    assert "| `id` |" in markdown
+    assert "| `version` |" in markdown
+    assert "| `input_names` |" in markdown
+    assert "| `param_names` |" in markdown
+    assert "| `defaults` |" in markdown
+    assert "| `bar_aligned` |" in markdown
+
+
+def test_show_indicator_schema_entrypoint_names_from_constants(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Entry-point names come from code constants, not hand-written strings."""
+    from research.aegis_research.component_registry.contracts import (
+        COMPONENT_ENTRYPOINT,
+        COMPONENT_PARAM_SPACE_ENTRYPOINT,
+    )
+
+    assert cli.main(["show", "indicator-schema"]) == 0
+
+    markdown = capsys.readouterr().out
+    # The entry point name "run" appears in the guide (from COMPONENT_ENTRYPOINT)
+    assert f"`{COMPONENT_ENTRYPOINT}` Entry Point" in markdown
+    # The param space entry point name appears (from COMPONENT_PARAM_SPACE_ENTRYPOINT)
+    assert f"Optional `{COMPONENT_PARAM_SPACE_ENTRYPOINT}`" in markdown
+
+
+def test_show_indicator_schema_example_round_trips_through_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The packaged indicator example round-trips through the real registry parser/discovery."""
+    # Copy the example into a fake component root
+    import shutil
+
+    from research.aegis_research.component_registry.contracts import (
+        ComponentSelection,
+        IndicatorManifest,
+    )
+    from research.aegis_research.component_registry.registry import (
+        discover_component_registry,
+    )
+    example_src = Path(
+        "research/aegis_research/component_registry/indicator_example.py"
+    )
+    dest = tmp_path / "research" / "components" / "indicators" / "example_ma.py"
+    dest.parent.mkdir(parents=True)
+    shutil.copy(example_src, dest)
+
+    monkeypatch.chdir(tmp_path)
+    registry = discover_component_registry(
+        root=tmp_path / "research" / "components",
+        repo_root=tmp_path,
+    )
+
+    assert registry.ids("indicators") == ("example.ma",)
+    definition = registry.get(ComponentSelection("indicators", "example.ma"))
+    manifest = definition.manifest
+    assert isinstance(manifest, IndicatorManifest)
+    assert manifest.id == "example.ma"
+    assert manifest.version == "1.0.0"
+    assert manifest.input_names == ("Close",)
+    assert manifest.param_names == ("window", "wtype")
+    assert manifest.output_names == ("ma",)
+    assert manifest.defaults == {"window": 20, "wtype": "simple"}
+    assert definition.has_param_space is True
+
+
+def test_show_indicator_schema_guide_embeds_example_source(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The guide embeds the complete example source under ## Complete Example."""
+    assert cli.main(["show", "indicator-schema"]) == 0
+
+    markdown = capsys.readouterr().out
+    # The example source is embedded as a code block
+    assert "## Complete Example" in markdown
+    # Key lines from the example
+    assert 'COMPONENT_MANIFEST = {' in markdown
+    assert '"family": "indicators"' in markdown
+    assert '"id": "example.ma"' in markdown
+    assert "def run(data, *, n_candidates, **param_lists):" in markdown
+
+
+def test_show_components_unchanged_after_indicator_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`aerd show components` behavior is unchanged."""
+    monkeypatch.chdir(tmp_path)
+    write_indicator_component(tmp_path / "research/components/indicators/returns.py")
+    write_strategy_component(tmp_path / "research/components/strategies/strategy.py")
+
+    assert cli.main(["show", "components", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "success"
+    assert payload["schema_version"] == "component_registry_snapshot.v1"
+    assert "fingerprint" in payload
+    assert "families" in payload
+
+
+def test_show_splitters_catalog_unchanged_after_indicator_schema(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`aerd show splitters` behavior is unchanged."""
+    assert cli.main(["show", "splitters", "--json"]) == 0
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["status"] == "success"
+    assert payload["schema_version"] == "splitter_catalog.v1"
+    assert any(method["method"] == "from_rolling" for method in payload["methods"])
