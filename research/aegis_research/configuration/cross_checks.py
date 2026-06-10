@@ -225,7 +225,7 @@ def _check_params(
         issues.append(
             ConfigValidationIssue(
                 path,
-                "must provide params, component defaults, or param_space_callable "
+                "must provide params, component defaults, or module-level param_space "
                 f"for params {missing}",
             )
         )

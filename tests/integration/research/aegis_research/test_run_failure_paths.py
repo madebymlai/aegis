@@ -338,9 +338,8 @@ def _write_parameterized_strategy_component(
         "'input_names': ['Close'], 'param_names': ['fast_window', 'slow_window'], "
         "'output_name': 'active', "
         "'defaults': {'fast_window': 2, 'slow_window': 5}, "
-        "'param_space_callable': 'param_space', 'owns_portfolio': False, "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'owns_portfolio': False, "
+        "}\n"
         "\n# %% parameter space\n"
         "def param_space():\n"
         f"    return {{'fast_window': vbt.Param({fast_values!r}), "
@@ -361,7 +360,7 @@ def _write_parameterized_strategy_component(
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from MA crossover params."""\n'
         "    close = inputs.data.feature('Close')\n"
         "    T, S = close.shape\n"
@@ -394,9 +393,8 @@ def _write_runtime_error_strategy_component(path: Path) -> None:
         "'family': 'strategies', 'id': 'demo.ma_boom', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['window'], "
         "'output_name': 'active', 'owns_portfolio': False, "
-        "'defaults': {'window': 2}, 'param_space_callable': 'param_space', "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'defaults': {'window': 2}, "
+        "}\n"
         "\n# %% parameter space\n"
         "def param_space():\n"
         "    return {'window': vbt.Param([2])}\n"
@@ -405,7 +403,7 @@ def _write_runtime_error_strategy_component(path: Path) -> None:
         '    """Raise a deterministic execution failure."""\n'
         "    raise RuntimeError('component optimization failed intentionally')\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Raise a deterministic execution failure."""\n'
         "    raise RuntimeError('component optimization failed intentionally')\n"
     )

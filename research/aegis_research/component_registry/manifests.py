@@ -19,6 +19,8 @@ from pydantic import (
 )
 
 from research.aegis_research.component_registry.contracts import (
+    COMPONENT_ENTRYPOINT,
+    COMPONENT_PARAM_SPACE_ENTRYPOINT,
     STRATEGY_ALLOCATION_OUTPUTS,
     ComponentDefinition,
     ComponentFamily,
@@ -34,7 +36,8 @@ from research.aegis_research.configuration.field_types import (
 from research.aegis_research.configuration.schema import has_data_array_token_shape
 
 COMPONENT_MANIFEST_NAME = "COMPONENT_MANIFEST"
-COMPONENT_CALLABLE_NAME = "COMPONENT_CALLABLE"
+LEGACY_COMPONENT_CALLABLE_NAME = "COMPONENT_CALLABLE"
+LEGACY_MANIFEST_CALLABLE_KEYS = frozenset({"wide_callable", "param_space_callable"})
 COMPONENT_PERCENT_CELL_MARKER = "# %%"
 COMPONENT_PERCENT_CELL_RE = re.compile(r"^# %%.*$", re.MULTILINE)
 COMPONENT_MAIN_CELL_RE = re.compile(r"^# %%\s+main\b", re.MULTILINE)
@@ -46,17 +49,17 @@ def parse_component_file(
     repo_root: Path,
 ) -> ComponentDefinition:
     source_bytes = path.read_bytes()
-    manifest_payload, callable_name = _read_static_declaration(path, source_bytes.decode())
+    manifest_payload, has_param_space = _read_static_declaration(path, source_bytes.decode())
     manifest = build_manifest(manifest_payload, expected_family=family, path=path)
     return ComponentDefinition(
         manifest=manifest,
-        callable_name=callable_name,
         file_path=path,
         identity=_source_identity(
             path,
             repo_root=repo_root,
             source_hash=hashlib.sha256(source_bytes).hexdigest(),
         ),
+        has_param_space=has_param_space,
     )
 
 def build_manifest(
@@ -81,7 +84,7 @@ def build_manifest(
             _format_manifest_errors(e, path)
         ) from e
 
-def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], str]:
+def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], bool]:
     percent_cell_markers = COMPONENT_PERCENT_CELL_RE.findall(source)
     if not percent_cell_markers:
         raise ComponentRegistryError(f"{path}: component files must use # %% percent cells")
@@ -95,11 +98,14 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], s
         raise ComponentRegistryError(f"{path}: invalid Python syntax") from error
 
     manifest: Any = None
-    callable_name: Any = None
-    callable_node: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    run_node: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    has_param_space = False
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == callable_name:
-            callable_node = node
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            if node.name == COMPONENT_ENTRYPOINT:
+                run_node = node
+            elif node.name == COMPONENT_PARAM_SPACE_ENTRYPOINT:
+                has_param_space = True
             continue
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
@@ -107,32 +113,30 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], s
                 continue
             if target.id == COMPONENT_MANIFEST_NAME:
                 manifest = _literal_value(path, COMPONENT_MANIFEST_NAME, node.value)
-            elif target.id == COMPONENT_CALLABLE_NAME:
-                callable_name = _literal_value(path, COMPONENT_CALLABLE_NAME, node.value)
+            elif target.id == LEGACY_COMPONENT_CALLABLE_NAME:
+                raise ComponentRegistryError(
+                    f"{path}: legacy {LEGACY_COMPONENT_CALLABLE_NAME} declaration is not supported; "
+                    f"define module-level {COMPONENT_ENTRYPOINT!r} instead"
+                )
 
     if manifest is None:
         raise ComponentRegistryError(f"{path}: missing {COMPONENT_MANIFEST_NAME}")
-    if callable_name is None:
-        raise ComponentRegistryError(f"{path}: missing {COMPONENT_CALLABLE_NAME}")
-    if not isinstance(callable_name, str) or not callable_name:
-        raise ComponentRegistryError(f"{path}: {COMPONENT_CALLABLE_NAME} must be a literal string")
     if not isinstance(manifest, dict):
         raise ComponentRegistryError(f"{path}: {COMPONENT_MANIFEST_NAME} must be a literal mapping")
-    if callable_node is None:
-        for node in tree.body:
-            if (
-                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-                and node.name == callable_name
-            ):
-                callable_node = node
-                break
-    if callable_node is None:
-        raise ComponentRegistryError(f"{path}: missing callable function {callable_name!r}")
-    if not ast.get_docstring(callable_node):
+    if run_node is None:
         raise ComponentRegistryError(
-            f"{path}: component callable {callable_name!r} must have a docstring"
+            f"{path}: missing required component entry point {COMPONENT_ENTRYPOINT!r}"
         )
-    return manifest, callable_name
+    if not ast.get_docstring(run_node):
+        raise ComponentRegistryError(
+            f"{path}: component entry point {COMPONENT_ENTRYPOINT!r} must have a docstring"
+        )
+    legacy_manifest_keys = sorted(LEGACY_MANIFEST_CALLABLE_KEYS & set(manifest))
+    if legacy_manifest_keys:
+        raise ComponentRegistryError(
+            f"{path}: legacy manifest callable keys are not supported: {legacy_manifest_keys}"
+        )
+    return manifest, has_param_space
 
 def _literal_value(path: Path, name: str, node: ast.AST) -> Any:
     try:
@@ -194,10 +198,8 @@ class _BaseManifestPayload(BaseModel):
     id: ComponentIdStr
     version: NonEmptyStr
     input_names: list[_ManifestInputName]
-    wide_callable: NonEmptyStr
     param_names: list[NonEmptyStr] = []
     defaults: dict[str, Any] = {}
-    param_space_callable: NonEmptyStr | None = None
 
     @model_validator(mode="after")
     def _reject_dot_ids(self) -> _BaseManifestPayload:
@@ -265,8 +267,6 @@ def _build_indicator_manifest(
         param_names=tuple(validated.param_names),
         output_names=tuple(validated.output_names),
         defaults=dict(validated.defaults),
-        wide_callable=validated.wide_callable,
-        param_space_callable=validated.param_space_callable,
         bar_aligned=True,
     )
 
@@ -284,8 +284,6 @@ def _build_strategy_manifest(
         output_name=validated.output_name,
         consumes_outputs=tuple(validated.consumes_outputs),
         defaults=dict(validated.defaults),
-        wide_callable=validated.wide_callable,
-        param_space_callable=validated.param_space_callable,
         owns_portfolio=False,
     )
 

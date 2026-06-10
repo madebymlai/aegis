@@ -15,14 +15,13 @@ def write_indicator_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.returns', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': [], 'output_names': ['returns'], "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "}\n"
         "\n# %% main compute\n"
         "def run(data):\n"
         '    """Compute fixed one-bar Close returns with the initial value filled."""\n'
         "    return data.feature('Close').pct_change().fillna(0.0)\n"
         "\n# %% wide compute\n"
-        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide indicator output."""\n'
         "    close = data.feature('Close')\n"
         "    T, S = close.shape\n"
@@ -47,8 +46,7 @@ def write_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'output_name': 'active', 'owns_portfolio': False, "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "}\n"
         "\n# %% main compute\n"
         "def run(inputs):\n"
         '    """Emit a deterministic active allocation frame for fixture runs."""\n'
@@ -58,7 +56,7 @@ def write_strategy_component(path: Path) -> None:
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide strategy output."""\n'
         "    close = inputs.data.feature('Close')\n"
         "    T, S = close.shape\n"

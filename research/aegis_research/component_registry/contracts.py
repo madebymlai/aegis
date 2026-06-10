@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 ComponentFamily = Literal["indicators", "strategies"]
 COMPONENT_FAMILIES: tuple[ComponentFamily, ...] = ("indicators", "strategies")
+COMPONENT_ENTRYPOINT = "run"
+COMPONENT_PARAM_SPACE_ENTRYPOINT = "param_space"
 
 # The four allocation-native channels a Strategy may emit; every strategy must
 # declare exactly one as its ``output_name`` (see `StrategyManifest`).
@@ -60,8 +62,6 @@ class IndicatorManifest(ComponentManifest):
     param_names: tuple[str, ...]
     output_names: tuple[str, ...]
     defaults: Mapping[str, Any]
-    wide_callable: str
-    param_space_callable: str | None = None
     bar_aligned: bool = True
 
     @property
@@ -86,8 +86,6 @@ class StrategyManifest(ComponentManifest):
     output_name: str
     consumes_outputs: tuple[str, ...]
     defaults: Mapping[str, Any]
-    wide_callable: str
-    param_space_callable: str | None = None
     owns_portfolio: bool = False
 
     @property
@@ -99,9 +97,17 @@ class StrategyManifest(ComponentManifest):
 @dataclass(frozen=True)
 class ComponentDefinition:
     manifest: IndicatorManifest | StrategyManifest
-    callable_name: str
     file_path: Path
     identity: ComponentSourceIdentity
+    has_param_space: bool = False
+
+    @property
+    def callable_name(self) -> str:
+        return COMPONENT_ENTRYPOINT
+
+    @property
+    def param_space_entrypoint_name(self) -> str | None:
+        return COMPONENT_PARAM_SPACE_ENTRYPOINT if self.has_param_space else None
 
     @property
     def family(self) -> ComponentFamily:
@@ -124,10 +130,10 @@ class ComponentDefinition:
     def unsatisfied_params(self, provided: frozenset[str]) -> frozenset[str]:
         """Return declared params neither provided, nor defaulted, nor waived.
 
-        A ``param_space_callable`` waives all declared params regardless of
+        A module-level ``param_space`` waives all declared params regardless of
         what is provided or defaulted.
         """
-        if self.manifest.param_space_callable is not None:
+        if self.has_param_space:
             return frozenset()
         return (
             frozenset(self.manifest.param_names)

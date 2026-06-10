@@ -40,9 +40,8 @@ def _write_parameterized_strategy(path: Path) -> None:
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['threshold'], "
         "'output_name': 'active', 'owns_portfolio': False, "
-        "'defaults': {'threshold': 1.0}, 'param_space_callable': 'param_space', "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'defaults': {'threshold': 1.0}, "
+        "}\n"
         "\n# %% param space\n"
         "def param_space():\n"
         '    """Return the searchable threshold param space."""\n'
@@ -53,7 +52,7 @@ def _write_parameterized_strategy(path: Path) -> None:
         "    close = inputs.data.feature('Close')\n"
         "    return close.gt(close.shift(1)).fillna(False).astype(object)\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide strategy output."""\n'
         "    close = inputs.data.feature('Close')\n"
         "    T, S = close.shape\n"
