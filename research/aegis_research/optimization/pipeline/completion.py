@@ -31,6 +31,8 @@ from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
     RunEvidence,
 )
+from research.aegis_research.optimization.pipeline.publishing import PublishingResult
+from research.aegis_research.optimization.pipeline.setup import SetupResult
 from research.aegis_research.optimization.run_artifacts import (
     build_strategy_artifact_payload,
     write_strategy_artifact,
@@ -40,18 +42,13 @@ from research.aegis_research.provenance.recorder import RunRecorder
 
 def run_pipeline_completion(
     *,
+    setup: SetupResult,
+    publishing: PublishingResult,
     config: RunConfig,
     recorder: RunRecorder,
     data_result: MarketDataResult,
     array_contract: DataArrayContract,
-    strategy_evidence: Mapping[str, Any],
-    optimization_builtin: Mapping[str, Any],
-    portfolio_builtin: Mapping[str, Any],
-    split_result: Any,
     run_evidence: RunEvidence,
-    candidate_rows: list[Mapping[str, Any]],
-    candidate_store_provenance: Mapping[str, Any],
-    store_path: Path,
     store_namespace: Mapping[str, str],
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
@@ -65,32 +62,32 @@ def run_pipeline_completion(
         optimization_evidence = run_evidence.optimization()
         execution = dict(optimization_evidence.get("execution", {}))
         artifact_payload = build_strategy_artifact_payload(
-            strategy_evidence=strategy_evidence,
+            strategy_evidence=setup.strategy_evidence,
             data_result=data_result,
             array_contract=array_contract,
             ranking={
                 "metric": config.ranking.metric,
                 "min_weight": config.ranking.min_weight,
             },
-            portfolio=portfolio_builtin,
-            optimization=optimization_builtin,
-            split_metadata=split_result.metadata,
+            portfolio=setup.portfolio_builtin,
+            optimization=setup.optimization_builtin,
+            split_metadata=setup.split_result.metadata,
             preflight=optimization_evidence["preflight"],
             execution=execution,
-            candidates=[to_builtin(record) for record in candidate_rows],
+            candidates=[to_builtin(record) for record in publishing.candidate_rows],
             candidate_store_path=store_namespace["path"],
-            candidate_store_provenance=candidate_store_provenance,
+            candidate_store_provenance=publishing.candidate_store_provenance,
             metric_registry_fingerprint=metric_registry_fingerprint,
         )
         write_strategy_artifact(recorder, artifact_payload)
         recorder.mark_run_completed()
-        activate_candidate_run(store_path, recorder.manifest.run_id)
+        activate_candidate_run(setup.store_path, recorder.manifest.run_id)
         return _completion_result(
             config=config,
             recorder=recorder,
-            split_result=split_result,
-            candidate_rows=candidate_rows,
-            store_path=store_path,
+            split_result=setup.split_result,
+            candidate_rows=publishing.candidate_rows,
+            store_path=setup.store_path,
             execution=execution,
         )
     except Exception as error:
@@ -103,7 +100,7 @@ def _completion_result(
     config: RunConfig,
     recorder: RunRecorder,
     split_result: Any,
-    candidate_rows: list[Mapping[str, Any]],
+    candidate_rows: list[dict[str, Any]],
     store_path: Path,
     execution: Mapping[str, Any],
 ) -> dict[str, Any]:
