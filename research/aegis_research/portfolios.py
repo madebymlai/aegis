@@ -7,15 +7,11 @@ import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
-from research.aegis_research.configuration import PortfolioConfig
-
-SYMBOL_LEVEL = "symbol"
-
-# Import after SYMBOL_LEVEL to break circular dependency: allocation_policy
-# modules import SYMBOL_LEVEL from here at call time (deferred imports).
-from research.aegis_research.allocation_policy import (  # noqa: E402
+from research.aegis_research.allocation_policy import (
     assert_signed_allocations_within_caps,
 )
+from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
+from research.aegis_research.configuration import PortfolioConfig
 
 _SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array

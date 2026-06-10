@@ -13,6 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
+
 _EXPOSURE_TOLERANCE = 1e-9
 # A run's declared Direction fixes the admissible sign of every emitted weight, mirroring
 # VBT's ``Direction`` enum (the same string is passed to ``from_optimizer``). ``both``
@@ -49,10 +51,6 @@ def assert_signed_allocations_within_caps(
         net_cap = gross_cap
     if allocations.empty or len(allocations.columns) == 0:
         return
-    # Deferred import to break circular dependency: portfolios.py imports
-    # allocation_policy at module level, so we import portfolios inside the call.
-    from research.aegis_research.portfolios import SYMBOL_LEVEL
-
     _assert_sign_consistent(allocations.to_numpy(dtype=float, copy=False), direction)
     columns = allocations.columns
     if isinstance(columns, pd.MultiIndex) and SYMBOL_LEVEL in columns.names:
