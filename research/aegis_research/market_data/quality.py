@@ -30,7 +30,7 @@ def evaluate(
     reasons: list[str] = []
     warnings: list[str] = []
     degradations: set[str] = set()
-    allowed = set(config.quality.allowed_degradations)
+    allowed: set[str] = set(config.quality.allowed_degradations)
 
     provider_failed = [
         diagnostic

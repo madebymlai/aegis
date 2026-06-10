@@ -24,12 +24,19 @@ class CandidateStore:
         self.path = Path(path)
         _ensure_private_location(self.path)
         self._connection = sqlite3.connect(self.path)
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA foreign_keys = ON")
-        self._connection.execute("PRAGMA busy_timeout = 5000")
-        if os.name == "posix":
-            self.path.chmod(0o600)
-        self._ensure_schema()
+        try:
+            self._connection.row_factory = sqlite3.Row
+            self._connection.execute("PRAGMA foreign_keys = ON")
+            self._connection.execute("PRAGMA busy_timeout = 5000")
+            if os.name == "posix":
+                self.path.chmod(0o600)
+            self._ensure_schema()
+        except BaseException:
+            # The connection is open before validation runs; a failed schema check
+            # (or any init error) must not leak it, since __enter__ never fires when
+            # __init__ raises inside a `with`.
+            self._connection.close()
+            raise
 
     def close(self) -> None:
         self._connection.close()

@@ -295,7 +295,12 @@ def _sweep(
         # closure and precomputed store serialize cleanly), while within each chunk
         # the wide strategy vectorizes its candidates through numpy.
         options["mono_n_chunks"] = "auto"
-        options["execute_kwargs"] = {"engine": "pathos"}
+        # ``join_pool=True`` closes/joins/clears the pathos worker pool after the sweep.
+        # vbt defaults this off to reuse a warm pool across repeated sweeps, but a run
+        # performs exactly one parallel sweep and the CLI runs one optimization per
+        # process, so reuse never applies here; joining tears down the workers
+        # deterministically instead of leaking the pool until interpreter exit.
+        options["execute_kwargs"] = {"engine": "pathos", "join_pool": True}
     else:
         # Phase 3 (3 candidates x S splits) is too small to amortize per-process
         # serialization, so its single mono-chunk sweeps sequentially in-process.

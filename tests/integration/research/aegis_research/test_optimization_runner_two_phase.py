@@ -340,7 +340,7 @@ def test_phase1_sweeps_in_parallel_with_pathos_and_phase3_runs_sequentially(monk
 
     # Phase 1: full grid distributed across cores under pathos.
     assert phase1["mono_n_chunks"] == "auto"
-    assert phase1["execute_kwargs"] == {"engine": "pathos"}
+    assert phase1["execute_kwargs"] == {"engine": "pathos", "join_pool": True}
 
     # Phase 3: one sequential mono-chunk, no parallel engine.
     assert phase3["mono_n_chunks"] == 1

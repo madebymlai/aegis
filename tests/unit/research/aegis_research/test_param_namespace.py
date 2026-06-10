@@ -53,8 +53,6 @@ def test_golden_param_namespace_keys_pin_exact_hex_literals() -> None:
 def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
     """Decode a stored Candidate row — not hand-synthesized — through the same
     insert/load path the lock resolver uses, then verify slice_by_component."""
-    store = CandidateStore(tmp_path / "candidates.sqlite3")
-
     strategy_ref = ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
     indicator_ref = ComponentRef("indicators", "demo.mom", "demo.mom")
     fast_key = encode(strategy_ref, "fast_window")
@@ -91,41 +89,42 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
         portfolio_policy={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
-    store.insert_completed_run(
-        run_id="stored-decode-run",
-        candidate_rows=rows,
-        ranking_metric="total_return",
-        provenance={
-            "run_id": "stored-decode-run",
-            "source": {
-                "schema_version": "component_optimization_source.v1",
-                "source": "component",
-                "strategy": {
-                    "family": "strategies",
-                    "slot": "strategy:demo.ma_cross",
-                    "id": "demo.ma_cross",
-                    "version": "1.0.0",
-                    "fixed_params": {},
-                    "param_keys": {
-                        "fast_window": fast_key,
-                        "slow_window": slow_key,
-                    },
-                },
-                "indicators": [
-                    {
-                        "family": "indicators",
-                        "slot": "demo.mom",
-                        "id": "demo.mom",
+    with CandidateStore(tmp_path / "candidates.sqlite3") as store:
+        store.insert_completed_run(
+            run_id="stored-decode-run",
+            candidate_rows=rows,
+            ranking_metric="total_return",
+            provenance={
+                "run_id": "stored-decode-run",
+                "source": {
+                    "schema_version": "component_optimization_source.v1",
+                    "source": "component",
+                    "strategy": {
+                        "family": "strategies",
+                        "slot": "strategy:demo.ma_cross",
+                        "id": "demo.ma_cross",
                         "version": "1.0.0",
                         "fixed_params": {},
-                        "param_keys": {"window": window_key},
-                    }
-                ],
+                        "param_keys": {
+                            "fast_window": fast_key,
+                            "slow_window": slow_key,
+                        },
+                    },
+                    "indicators": [
+                        {
+                            "family": "indicators",
+                            "slot": "demo.mom",
+                            "id": "demo.mom",
+                            "version": "1.0.0",
+                            "fixed_params": {},
+                            "param_keys": {"window": window_key},
+                        }
+                    ],
+                },
             },
-        },
-    )
+        )
 
-    row = store.top_candidates_by_run("stored-decode-run", limit=3)[1]["candidate"]
+        row = store.top_candidates_by_run("stored-decode-run", limit=3)[1]["candidate"]
     slices = slice_by_component(row["params"])
 
     assert strategy_ref in slices
