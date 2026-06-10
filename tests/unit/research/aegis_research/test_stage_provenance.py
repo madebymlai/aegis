@@ -9,11 +9,10 @@ from tests.support.research.aegis_research.factories import make_data_config
 
 
 def test_recorder_run_refs_returns_six_field_snapshot(tmp_path: Path) -> None:
-    """RunRecorder.run_refs() returns a six-field snapshot of current Manifest state.
+    """run_refs() returns a snapshot of run_id, run_dir, manifest_path, status, started_at, and finished_at.
 
-    Fields: run_id, run_dir, manifest_path, status, started_at, finished_at.
-    The snapshot tracks state changes through mark methods — status and
-    finished_at reflect the terminal mark-methods.
+    The snapshot tracks Manifest state changes through mark methods — status
+    and finished_at reflect the terminal mark-methods.
     """
     recorder = RunRecorder.start(
         run_dir=tmp_path / "run-refs",

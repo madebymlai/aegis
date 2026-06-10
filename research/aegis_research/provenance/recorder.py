@@ -87,7 +87,7 @@ class RunRecorder:
         self.persist()
 
     def run_refs(self) -> dict[str, Any]:
-        """Return a six-field snapshot of current Manifest state."""
+        """Return a snapshot of the current Manifest state (run_id, status, timestamps, paths)."""
         return {
             "run_id": self.manifest.run_id,
             "run_dir": str(self.run_dir),
