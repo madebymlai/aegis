@@ -75,8 +75,6 @@ def test_pipeline_setup_returns_setup_result(
     assert result.close is not None
     assert result.open_ is not None
     assert result.split_result is not None
-    assert isinstance(result.optimization_builtin, dict)
-    assert isinstance(result.portfolio_builtin, dict)
 
 
 def test_pipeline_setup_evidence_baseline_shape(

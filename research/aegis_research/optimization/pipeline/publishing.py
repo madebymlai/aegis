@@ -13,6 +13,7 @@ from typing import Any
 
 from research.aegis_research.configuration import (
     RunConfig,
+    to_builtin,
 )
 from research.aegis_research.data import (
     MarketDataResult,
@@ -55,7 +56,6 @@ def run_pipeline_publishing(
     array_contract: DataArrayContract,
     optimization_source: OptimizationSource,
     execution: ExecutionResult,
-    portfolio_builtin: Mapping[str, Any],
     run_evidence: RunEvidence,
     store_path: Path,
     metric_registry_fingerprint: str | None,
@@ -67,7 +67,7 @@ def run_pipeline_publishing(
             execution.optimization_result,
             source_identity=optimization_source.evidence,
             data_identity=build_candidate_data_identity(data_result, array_contract),
-            portfolio_policy=portfolio_builtin,
+            portfolio_policy=to_builtin(config.portfolio),
             store_namespace=store_namespace,
         )
         run_evidence.record(EvidenceSection.CANDIDATES, candidate_rows)
