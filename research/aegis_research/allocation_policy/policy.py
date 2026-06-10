@@ -13,10 +13,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-STRATEGY_ALLOCATION_OUTPUTS: frozenset[str] = frozenset(
-    {"active", "scores", "ranks", "target_weights"}
-)
-
 _EXPOSURE_TOLERANCE = 1e-9
 # A run's declared Direction fixes the admissible sign of every emitted weight, mirroring
 # VBT's ``Direction`` enum (the same string is passed to ``from_optimizer``). ``both``
@@ -24,10 +20,6 @@ _EXPOSURE_TOLERANCE = 1e-9
 # gross/net caps cannot supply — a ``[+.5,+.5] → [-.5,+.5]`` flip keeps gross = 1 and
 # net = 0, so only this sign check catches it.
 _SIGN_GUARDS: dict[str, str] = {"longonly": "≥ 0", "shortonly": "≤ 0", "both": "any"}
-
-# Per-symbol level in a candidate-expanded (wide) allocations frame; the remaining column
-# levels jointly identify a Candidate, so a wide frame is gated one Candidate at a time.
-SYMBOL_LEVEL = "symbol"
 
 
 def assert_signed_allocations_within_caps(
@@ -57,6 +49,8 @@ def assert_signed_allocations_within_caps(
         net_cap = gross_cap
     if allocations.empty or len(allocations.columns) == 0:
         return
+    from research.aegis_research.portfolios import SYMBOL_LEVEL
+
     _assert_sign_consistent(allocations.to_numpy(dtype=float, copy=False), direction)
     columns = allocations.columns
     if isinstance(columns, pd.MultiIndex) and SYMBOL_LEVEL in columns.names:

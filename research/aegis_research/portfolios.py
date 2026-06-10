@@ -7,12 +7,14 @@ from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.portfolio_policy import (
+
+SYMBOL_LEVEL = "symbol"
+
+from research.aegis_research.allocation_policy import (  # noqa: E402
     apply_executable_mask_and_terminal_liquidation,
     assert_signed_allocations_within_caps,
 )
 
-SYMBOL_LEVEL = "symbol"
 _SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
 # of ``(net_rate / periods_per_year) * close``. ``* live position`` gives drifted notional,

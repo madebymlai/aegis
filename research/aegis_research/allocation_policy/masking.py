@@ -5,8 +5,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-SYMBOL_LEVEL = "symbol"
-
 
 def apply_executable_mask_and_terminal_liquidation(
     allocations: pd.DataFrame,
@@ -65,6 +63,8 @@ def _per_symbol_non_executable(
     allocations: pd.DataFrame,
     executable: pd.Series,
 ) -> dict[str, int]:
+    from research.aegis_research.portfolios import SYMBOL_LEVEL
+
     columns = allocations.columns
     non_exec_count = int((~executable).sum())
     if isinstance(columns, pd.MultiIndex) and SYMBOL_LEVEL in columns.names:

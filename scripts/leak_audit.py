@@ -396,7 +396,7 @@ def masking_check(audit, repo):
     try:
         import pandas as pd
 
-        from research.aegis_research.portfolio_policy.masking import (
+        from research.aegis_research.allocation_policy.masking import (
             apply_executable_mask_and_terminal_liquidation,
         )
         market = pd.date_range("2020-01-01", periods=6, freq="D")

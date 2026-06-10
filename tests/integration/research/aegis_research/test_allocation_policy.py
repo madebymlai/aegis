@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from research.aegis_research.portfolio_policy import (
+from research.aegis_research.allocation_policy import (
     apply_executable_mask_and_terminal_liquidation,
     assert_signed_allocations_within_caps,
 )
@@ -23,7 +23,7 @@ def _book(weights: dict[str, list[float]], periods: int = 1) -> pd.DataFrame:
 
 
 def test_package_exports_expected_public_symbols() -> None:
-    import research.aegis_research.portfolio_policy as package
+    import research.aegis_research.allocation_policy as package
 
     assert set(package.__all__) == {
         "apply_executable_mask_and_terminal_liquidation",
@@ -32,7 +32,7 @@ def test_package_exports_expected_public_symbols() -> None:
 
 
 def test_convert_to_allocations_is_deleted() -> None:
-    import research.aegis_research.portfolio_policy as package
+    import research.aegis_research.allocation_policy as package
 
     assert not hasattr(package, "convert_to_allocations")
 
@@ -40,7 +40,7 @@ def test_convert_to_allocations_is_deleted() -> None:
 def test_validate_signed_target_weights_is_deleted() -> None:
     # The aligning validator had zero production callers; the simulation path is
     # gated by assert_signed_allocations_within_caps alone.
-    import research.aegis_research.portfolio_policy as package
+    import research.aegis_research.allocation_policy as package
 
     assert not hasattr(package, "validate_signed_target_weights")
 
