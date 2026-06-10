@@ -20,6 +20,7 @@ from research.aegis_research.optimization.pipeline.completion import (
 )
 from research.aegis_research.optimization.pipeline.publishing import PublishingResult
 from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
     make_run_config,
     make_setup_result,
 )
@@ -102,7 +103,7 @@ def test_completion_returns_result_and_marks_completed(
 ) -> None:
     """Completion stage returns CLI-facing result dict, marks run completed,
     and activates the candidate run in the store."""
-    config = make_run_config()
+    config = make_run_config(optimization=make_optimization_config())
     store_path = tmp_path / "candidates.sqlite3"
     setup = make_setup_result(store_path=store_path)
     run_id = "run-cmp"
@@ -162,7 +163,6 @@ def test_completion_returns_result_and_marks_completed(
         data_result=FakeDataResult(),
         array_contract=FakeArrayContract(),
         run_evidence=run_evidence,
-        store_namespace={"path": str(store_path)},
         metric_registry_fingerprint="test-fp",
     )
 
@@ -220,5 +220,5 @@ def test_completion_returns_result_and_marks_completed(
     assert "schema_version" in captured_artifact
     assert "strategy" in captured_artifact
     assert len(captured_artifact["candidates"]) == 3
-    assert captured_artifact["candidate_store"]["path"] == str(store_path)
+    assert captured_artifact["candidate_store"]["path"] == ".candidate_store/candidates.sqlite3"
     assert captured_artifact["metric_registry_fingerprint"] == "test-fp"
