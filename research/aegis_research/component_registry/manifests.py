@@ -4,16 +4,31 @@ import ast
 import hashlib
 import re
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
+
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    model_validator,
+)
+from pydantic import (
+    ValidationError as PydanticValidationError,
+)
 
 from research.aegis_research.component_registry.contracts import (
-    COMPONENT_FAMILIES,
     ComponentDefinition,
     ComponentFamily,
     ComponentRegistryError,
     ComponentSourceIdentity,
     IndicatorManifest,
     StrategyManifest,
+)
+from research.aegis_research.configuration.field_types import (
+    ComponentIdStr,
+    NonEmptyStr,
 )
 from research.aegis_research.configuration.schema import has_data_array_token_shape
 
@@ -22,22 +37,7 @@ COMPONENT_CALLABLE_NAME = "COMPONENT_CALLABLE"
 COMPONENT_PERCENT_CELL_MARKER = "# %%"
 COMPONENT_PERCENT_CELL_RE = re.compile(r"^# %%.*$", re.MULTILINE)
 COMPONENT_MAIN_CELL_RE = re.compile(r"^# %%\s+main\b", re.MULTILINE)
-COMPONENT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 STRATEGY_ALLOCATION_OUTPUTS = {"active", "scores", "ranks", "target_weights"}
-STRATEGY_FORBIDDEN_KEYS = {
-    "costs",
-    "direction",
-    "execution_timing",
-    "fees",
-    "gross_cap",
-    "net_cap",
-    "portfolio",
-    "portfolio_config",
-    "size",
-    "sizing",
-    "slippage",
-}
-
 
 def parse_component_file(
     path: Path,
@@ -59,7 +59,6 @@ def parse_component_file(
         ),
     )
 
-
 def build_manifest(
     payload: Any,
     *,
@@ -67,16 +66,20 @@ def build_manifest(
     path: Path,
 ) -> IndicatorManifest | StrategyManifest:
     if not isinstance(payload, dict):
-        raise ComponentRegistryError(f"{path}: {COMPONENT_MANIFEST_NAME} must be a literal mapping")
+        raise ComponentRegistryError(
+            f"{path}: {COMPONENT_MANIFEST_NAME} must be a literal mapping"
+        )
     payload = dict(payload)
-    _validate_common(payload, expected_family=expected_family, path=path)
-    family = payload["family"]
-    if family == "indicators":
-        return _indicator_manifest(payload, path)
-    if family == "strategies":
-        return _strategy_manifest(payload, path)
-    raise ComponentRegistryError(f"{path}: component family must be one of {COMPONENT_FAMILIES}")
-
+    try:
+        if expected_family == "indicators":
+            indicator = _INDICATOR_ADAPTER.validate_python(payload, strict=True)
+            return _build_indicator_manifest(indicator, payload)
+        strategy = _STRATEGY_ADAPTER.validate_python(payload, strict=True)
+        return _build_strategy_manifest(strategy, payload)
+    except PydanticValidationError as e:
+        raise ComponentRegistryError(
+            _format_manifest_errors(e, path)
+        ) from e
 
 def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], str]:
     percent_cell_markers = COMPONENT_PERCENT_CELL_RE.findall(source)
@@ -131,167 +134,169 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], s
         )
     return manifest, callable_name
 
-
 def _literal_value(path: Path, name: str, node: ast.AST) -> Any:
     try:
         return ast.literal_eval(node)
     except (SyntaxError, ValueError) as error:
         raise ComponentRegistryError(f"{path}: {name} must be a Python literal") from error
 
+# ── Pydantic manifest payload models ──────────────────────────────────────
 
-def _validate_common(payload: dict[str, Any], *, expected_family: str, path: Path) -> None:
-    family = payload.get("family")
-    if family not in COMPONENT_FAMILIES:
-        raise ComponentRegistryError(
-            f"{path}: component family must be one of {COMPONENT_FAMILIES}"
+def _validate_manifest_input_name(token: str) -> str:
+    """Pydantic item-validator: input_names must be VBT feature names."""
+    if not has_data_array_token_shape(token):
+        raise ValueError(
+            "must be a VBT feature name without surrounding whitespace or control characters"
         )
-    if family != expected_family:
-        raise ComponentRegistryError(
-            f"{path}: component family {family!r} does not match {expected_family!r} directory"
-        )
-    component_id = payload.get("id")
-    if not isinstance(component_id, str) or not component_id:
-        raise ComponentRegistryError(f"{path}: component id must be a non-empty string")
-    if not COMPONENT_ID_RE.fullmatch(component_id) or component_id in {".", ".."}:
-        raise ComponentRegistryError(
-            f"{path}: component id must contain only letters, numbers, dots, underscores, and hyphens"
-        )
-    version = payload.get("version")
-    if not isinstance(version, str) or not version:
-        raise ComponentRegistryError(f"{path}: component version must be a non-empty string")
+    return token
 
+def _validate_manifest_output_name(token: str) -> str:
+    """Pydantic item-validator: output_names must be VBT feature names."""
+    if not token or not has_data_array_token_shape(token):
+        raise ValueError(
+            "must be a VBT feature name without surrounding whitespace or control characters"
+        )
+    return token
 
-def _indicator_manifest(payload: dict[str, Any], path: Path) -> IndicatorManifest:
-    input_names = _required_input_names(payload, path)
-    param_names = _required_string_tuple(payload, "param_names", path, allow_empty=True)
-    output_names = _required_string_tuple(payload, "output_names", path)
-    defaults = _optional_mapping(payload, "defaults", path)
-    _validate_param_defaults(defaults, param_names, path)
-    wide_callable = _required_string(payload, "wide_callable", path)
-    param_space_callable = _optional_string(payload, "param_space_callable", path)
-    bar_aligned = payload.get("bar_aligned", True)
-    if bar_aligned is not True:
-        raise ComponentRegistryError(f"{path}: indicator components must be bar-aligned in v1")
+def _format_manifest_errors(
+    error: PydanticValidationError,
+    path: Path,
+) -> str:
+    """Accumulate all pydantic errors for one manifest file into a single message."""
+    messages: list[str] = []
+    for entry in error.errors(include_url=False):
+        loc = entry.get("loc", ())
+        if loc:
+            field = ".".join(str(p) for p in loc)
+            messages.append(f"{path}: {field}: {entry['msg']}")
+        else:
+            messages.append(f"{path}: {entry['msg']}")
+    return "; ".join(messages)
+
+_ManifestInputName = Annotated[
+    str,
+    Field(min_length=1),
+    AfterValidator(_validate_manifest_input_name),
+]
+
+_ManifestOutputName = Annotated[
+    str,
+    Field(min_length=1),
+    AfterValidator(_validate_manifest_output_name),
+]
+
+class _BaseManifestPayload(BaseModel):
+    """Common pydantic model for indicator and strategy manifest payloads."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    family: ComponentFamily
+    id: ComponentIdStr
+    version: NonEmptyStr
+    input_names: list[_ManifestInputName]
+    wide_callable: NonEmptyStr
+
+    @model_validator(mode="after")
+    def _reject_dot_ids(self) -> _BaseManifestPayload:
+        if self.id in {".", ".."}:
+            raise ValueError(
+                "component id must contain only letters, numbers, dots, underscores, and hyphens"
+            )
+        return self
+
+class _IndicatorManifestPayload(_BaseManifestPayload):
+    """Pydantic model for indicator manifest payload validation."""
+
+    family: Literal["indicators"]
+    param_names: list[NonEmptyStr] = []
+    output_names: list[_ManifestOutputName]
+    defaults: dict[str, Any] = {}
+    param_space_callable: NonEmptyStr | None = None
+    bar_aligned: Literal[True] = True
+
+    @model_validator(mode="after")
+    def _check_output_names_nonempty(self) -> _IndicatorManifestPayload:
+        if not self.output_names:
+            raise ValueError("output_names must not be empty")
+        return self
+
+    @model_validator(mode="after")
+    def _check_defaults_in_params(self) -> _IndicatorManifestPayload:
+        unknown = sorted(set(self.defaults) - set(self.param_names))
+        if unknown:
+            raise ValueError(
+                f"defaults keys must be declared in param_names; unknown: {unknown}"
+            )
+        return self
+
+class _StrategyManifestPayload(_BaseManifestPayload):
+    """Pydantic model for strategy manifest payload validation."""
+
+    family: Literal["strategies"]
+    param_names: list[NonEmptyStr] = []
+    output_name: NonEmptyStr
+    consumes_outputs: list[NonEmptyStr] = []
+    defaults: dict[str, Any] = {}
+    param_space_callable: NonEmptyStr | None = None
+    owns_portfolio: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _check_output_name_allowed(self) -> _StrategyManifestPayload:
+        if self.output_name not in STRATEGY_ALLOCATION_OUTPUTS:
+            raise ValueError(
+                f"unsupported allocation output {self.output_name!r}; "
+                f"registered shapes are {STRATEGY_ALLOCATION_OUTPUTS}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_defaults_in_params(self) -> _StrategyManifestPayload:
+        unknown = sorted(set(self.defaults) - set(self.param_names))
+        if unknown:
+            raise ValueError(
+                f"defaults keys must be declared in param_names; unknown: {unknown}"
+            )
+        return self
+
+_INDICATOR_ADAPTER = TypeAdapter(_IndicatorManifestPayload)
+_STRATEGY_ADAPTER = TypeAdapter(_StrategyManifestPayload)
+
+def _build_indicator_manifest(
+    validated: _IndicatorManifestPayload,
+    payload: dict[str, Any],
+) -> IndicatorManifest:
     return IndicatorManifest(
         family="indicators",
-        id=payload["id"],
-        version=payload["version"],
+        id=validated.id,
+        version=validated.version,
         payload=payload,
-        input_names=input_names,
-        param_names=param_names,
-        output_names=output_names,
-        defaults=defaults,
-        wide_callable=wide_callable,
-        param_space_callable=param_space_callable,
+        input_names=tuple(validated.input_names),
+        param_names=tuple(validated.param_names),
+        output_names=tuple(validated.output_names),
+        defaults=dict(validated.defaults),
+        wide_callable=validated.wide_callable,
+        param_space_callable=validated.param_space_callable,
         bar_aligned=True,
     )
 
-
-def _strategy_manifest(payload: dict[str, Any], path: Path) -> StrategyManifest:
-    input_names = _required_input_names(payload, path)
-    param_names = _optional_string_tuple(payload, "param_names", path)
-    output_name = _required_string(payload, "output_name", path)
-    consumes_outputs = _optional_string_tuple(payload, "consumes_outputs", path)
-    defaults = _optional_mapping(payload, "defaults", path)
-    _validate_param_defaults(defaults, param_names, path)
-    wide_callable = _required_string(payload, "wide_callable", path)
-    param_space_callable = _optional_string(payload, "param_space_callable", path)
-    if output_name not in STRATEGY_ALLOCATION_OUTPUTS:
-        raise ComponentRegistryError(
-            f"{path}: unsupported allocation output {output_name!r}; "
-            f"registered shapes are {STRATEGY_ALLOCATION_OUTPUTS}"
-        )
-    owns_portfolio = payload.get("owns_portfolio", False)
-    if owns_portfolio is not False:
-        raise ComponentRegistryError(f"{path}: strategy components must not own portfolio behavior")
-    for key in STRATEGY_FORBIDDEN_KEYS:
-        if key in payload:
-            raise ComponentRegistryError(f"{path}: strategy manifest field {key!r} is forbidden")
+def _build_strategy_manifest(
+    validated: _StrategyManifestPayload,
+    payload: dict[str, Any],
+) -> StrategyManifest:
     return StrategyManifest(
         family="strategies",
-        id=payload["id"],
-        version=payload["version"],
+        id=validated.id,
+        version=validated.version,
         payload=payload,
-        input_names=input_names,
-        param_names=param_names,
-        output_name=output_name,
-        consumes_outputs=consumes_outputs,
-        defaults=defaults,
-        wide_callable=wide_callable,
-        param_space_callable=param_space_callable,
+        input_names=tuple(validated.input_names),
+        param_names=tuple(validated.param_names),
+        output_name=validated.output_name,
+        consumes_outputs=tuple(validated.consumes_outputs),
+        defaults=dict(validated.defaults),
+        wide_callable=validated.wide_callable,
+        param_space_callable=validated.param_space_callable,
         owns_portfolio=False,
     )
-
-
-def _required_input_names(payload: dict[str, Any], path: Path) -> tuple[str, ...]:
-    input_names = _required_string_tuple(payload, "input_names", path)
-    invalid = [name for name in input_names if not has_data_array_token_shape(name)]
-    if invalid:
-        raise ComponentRegistryError(
-            f"{path}: input_names must contain VBT feature names without surrounding "
-            f"whitespace or control characters: {invalid}"
-        )
-    return input_names
-
-
-def _required_string(payload: dict[str, Any], key: str, path: Path) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value:
-        raise ComponentRegistryError(f"{path}: {key} must be a non-empty string")
-    return value
-
-
-def _required_string_tuple(
-    payload: dict[str, Any],
-    key: str,
-    path: Path,
-    *,
-    allow_empty: bool = False,
-) -> tuple[str, ...]:
-    value = payload.get(key)
-    if not isinstance(value, list):
-        raise ComponentRegistryError(f"{path}: {key} must be a literal list of strings")
-    if not allow_empty and not value:
-        raise ComponentRegistryError(f"{path}: {key} must not be empty")
-    if not all(isinstance(item, str) and item for item in value):
-        raise ComponentRegistryError(f"{path}: {key} must contain only non-empty strings")
-    return tuple(value)
-
-
-def _optional_string_tuple(payload: dict[str, Any], key: str, path: Path) -> tuple[str, ...]:
-    if key not in payload:
-        return ()
-    return _required_string_tuple(payload, key, path, allow_empty=True)
-
-
-def _optional_string(payload: dict[str, Any], key: str, path: Path) -> str | None:
-    if key not in payload:
-        return None
-    return _required_string(payload, key, path)
-
-
-def _optional_mapping(payload: dict[str, Any], key: str, path: Path) -> dict[str, Any]:
-    if key not in payload:
-        return {}
-    value = payload[key]
-    if not isinstance(value, dict):
-        raise ComponentRegistryError(f"{path}: {key} must be a literal mapping")
-    if not all(isinstance(item, str) and item for item in value):
-        raise ComponentRegistryError(f"{path}: {key} keys must be non-empty strings")
-    return dict(value)
-
-
-def _validate_param_defaults(
-    defaults: dict[str, Any],
-    param_names: tuple[str, ...],
-    path: Path,
-) -> None:
-    unknown = sorted(set(defaults) - set(param_names))
-    if unknown:
-        raise ComponentRegistryError(
-            f"{path}: defaults keys must be declared in param_names; unknown: {unknown}"
-        )
-
 
 def _source_identity(path: Path, *, repo_root: Path, source_hash: str) -> ComponentSourceIdentity:
     resolved_repo = repo_root.resolve(strict=False)
