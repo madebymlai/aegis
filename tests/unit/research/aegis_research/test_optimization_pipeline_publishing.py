@@ -39,7 +39,7 @@ _SLOW_KEY = encode(_STRATEGY_REF, "slow_window")
 
 class _FakeSource:
     evidence: ClassVar[dict[str, Any]] = {
-        "schema_version": "component_optimization_source.v1",
+        "schema_version": "component_optimization_source.v2",
         "source": "component",
         "strategy": {
             "family": _FAMILY,

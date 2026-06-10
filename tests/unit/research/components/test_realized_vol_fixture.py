@@ -34,7 +34,8 @@ class TestRealizedVolWideParity:
         }
 
         wide_result = run_wide(data, n_candidates=n_candidates, **param_lists)
-        wide_arr = np.asarray(wide_result)
+        assert set(wide_result) == {"realized_vol"}
+        wide_arr = np.asarray(wide_result["realized_vol"])
 
         assert wide_arr.shape == (200, n_candidates * n_symbols)
 
@@ -70,7 +71,8 @@ class TestRealizedVolWideParity:
             n_candidates=2,
             window=[20, 20],
         )
-        wide_arr = np.asarray(wide_result)
+        assert set(wide_result) == {"realized_vol"}
+        wide_arr = np.asarray(wide_result["realized_vol"])
         np.testing.assert_array_equal(
             wide_arr[:, :n_symbols],
             wide_arr[:, n_symbols:],

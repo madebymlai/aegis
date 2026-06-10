@@ -196,7 +196,7 @@ def _source_evidence(*, drop_indicator_runtime: bool = False) -> dict[str, objec
             }
         )
     return {
-        "schema_version": "component_optimization_source.v1",
+        "schema_version": "component_optimization_source.v2",
         "source": "component",
         "strategy": {
             "family": "strategies",

@@ -52,10 +52,7 @@ def run_wide(data, *, n_candidates, **param_lists):
     result = np.full((T, n_candidates * n_symbols), np.nan)
 
     for w in set(windows):
-        candidate_indices = [
-            i for i in range(n_candidates)
-            if windows[i] == w
-        ]
+        candidate_indices = [i for i in range(n_candidates) if windows[i] == w]
         w = int(w)
         vol = log_returns.rolling(w).std() * np.sqrt(252)
         arr = vol.values
@@ -63,4 +60,4 @@ def run_wide(data, *, n_candidates, **param_lists):
         for ci in candidate_indices:
             result[:, ci * n_symbols : (ci + 1) * n_symbols] = arr
 
-    return result
+    return {"realized_vol": result}

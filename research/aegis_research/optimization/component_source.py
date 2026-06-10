@@ -37,7 +37,7 @@ from research.aegis_research.optimization.precompute import (
 )
 from research.aegis_research.optimization.source import OptimizationSource
 
-COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION = "component_optimization_source.v1"
+COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION = "component_optimization_source.v2"
 
 ResolvedComponentParams = Mapping[ComponentRef, Mapping[str, Any]]
 
@@ -147,10 +147,14 @@ def build_component_optimization_source(
             output = runtime.wide_callable(
                 data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
             )
-            output_arr = np.asarray(output)
             indicator_manifest = runtime.definition.manifest
             assert isinstance(indicator_manifest, IndicatorManifest)
-            for output_name in indicator_manifest.output_names:
+            output_arrays = _indicator_output_arrays(
+                runtime,
+                output,
+                expected_shape=(len(close), deduped.n_candidates * n_symbols),
+            )
+            for output_name, output_arr in output_arrays.items():
                 if output_name in outputs:
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
                 outputs[output_name] = output_arr
@@ -186,14 +190,15 @@ def build_component_optimization_source(
         strategy_wide_params = _wide_params_for_runtime(
             strategy, param_lists, n_candidates=n_candidates
         )
-        alloc_arr = np.asarray(
+        alloc_arr = _component_array(
+            strategy,
             strategy.wide_callable(
                 strategy_wide_inputs, n_candidates=n_candidates, **strategy_wide_params
-            )
+            ),
+            expected_shape=(len(close_window), n_candidates * n_symbols),
+            output_label="allocation",
         )
-        return _build_wide_frame(
-            alloc_arr, close_window, n_candidates, param_lists, params
-        )
+        return _build_wide_frame(alloc_arr, close_window, n_candidates, param_lists, params)
 
     evidence = _source_evidence(strategy, indicators, params)
     strategy_manifest = strategy.definition.manifest
@@ -376,9 +381,7 @@ def _deduplicate_runtime_params(
     full_candidate_keys: Sequence[CandidateKey],
     n_candidates: int,
 ) -> _RuntimeParamDeduplication:
-    runtime_param_lists = _wide_params_for_runtime(
-        runtime, param_lists, n_candidates=n_candidates
-    )
+    runtime_param_lists = _wide_params_for_runtime(runtime, param_lists, n_candidates=n_candidates)
     runtime_param_names = sorted(runtime_param_lists)
     unique_positions: dict[tuple[Any, ...], int] = {}
     unique_param_lists: dict[str, list[Any]] = {name: [] for name in runtime_param_names}
@@ -401,6 +404,58 @@ def _deduplicate_runtime_params(
     )
 
 
+def _indicator_output_arrays(
+    runtime: _ComponentRuntime,
+    output: Any,
+    *,
+    expected_shape: tuple[int, int],
+) -> dict[str, np.ndarray]:
+    manifest = runtime.definition.manifest
+    assert isinstance(manifest, IndicatorManifest)
+    output_names = tuple(manifest.output_names)
+    if not isinstance(output, Mapping):
+        raise ComponentSourceError(
+            f"indicator {runtime.definition.id!r} must return a mapping for outputs "
+            f"{list(output_names)}"
+        )
+    missing = _sorted_names(set(output_names) - set(output))
+    unknown = _sorted_names(set(output) - set(output_names))
+    if missing or unknown:
+        raise ComponentSourceError(
+            f"indicator {runtime.definition.id!r} output mismatch; "
+            f"missing={missing}, unknown={unknown}"
+        )
+    return {
+        output_name: _component_array(
+            runtime,
+            output[output_name],
+            expected_shape=expected_shape,
+            output_label=f"output {output_name!r}",
+        )
+        for output_name in output_names
+    }
+
+
+def _sorted_names(names: set[Any]) -> list[Any]:
+    return sorted(names, key=repr)
+
+
+def _component_array(
+    runtime: _ComponentRuntime,
+    value: Any,
+    *,
+    expected_shape: tuple[int, int],
+    output_label: str,
+) -> np.ndarray:
+    arr = np.asarray(value)
+    if arr.shape != expected_shape:
+        raise ComponentSourceError(
+            f"component {runtime.family}/{runtime.definition.id} {output_label} has "
+            f"expected shape {expected_shape}; actual shape {arr.shape}"
+        )
+    return arr
+
+
 def _build_wide_frame(
     alloc_arr: np.ndarray,
     close_slice: pd.DataFrame,
@@ -415,9 +470,7 @@ def _build_wide_frame(
     col_tuples = []
     for i in range(n_candidates):
         for sym in symbols:
-            col_tuples.append(
-                (*(param_lists[k][i] for k in param_keys), sym)
-            )
+            col_tuples.append((*(param_lists[k][i] for k in param_keys), sym))
     col_names = [*param_keys, "symbol"]
     col_mi = pd.MultiIndex.from_tuples(col_tuples, names=col_names)
     return pd.DataFrame(alloc_arr, index=close_slice.index, columns=col_mi)

@@ -55,7 +55,9 @@ def run(data, h1, h2, h3, h4, w1, w2, w3, w4):
     """
 
     close = data.feature("Close")
-    return _compute_score(close, int(h1), int(h2), int(h3), int(h4), float(w1), float(w2), float(w3), float(w4))
+    return _compute_score(
+        close, int(h1), int(h2), int(h3), int(h4), float(w1), float(w2), float(w3), float(w4)
+    )
 
 
 def _compute_score(close, h1, h2, h3, h4, w1, w2, w3, w4):
@@ -99,19 +101,32 @@ def run_wide(data, *, n_candidates, **param_lists):
     unique_combos = set(zip(h1s, h2s, h3s, h4s, w1s, w2s, w3s, w4s, strict=True))
     for h1, h2, h3, h4, w1, w2, w3, w4 in unique_combos:
         candidate_indices = [
-            i for i in range(n_candidates)
-            if h1s[i] == h1 and h2s[i] == h2 and h3s[i] == h3 and h4s[i] == h4
-            and w1s[i] == w1 and w2s[i] == w2 and w3s[i] == w3 and w4s[i] == w4
+            i
+            for i in range(n_candidates)
+            if h1s[i] == h1
+            and h2s[i] == h2
+            and h3s[i] == h3
+            and h4s[i] == h4
+            and w1s[i] == w1
+            and w2s[i] == w2
+            and w3s[i] == w3
+            and w4s[i] == w4
         ]
 
         score_df = _compute_score(
             close,
-            int(h1), int(h2), int(h3), int(h4),
-            float(w1), float(w2), float(w3), float(w4),
+            int(h1),
+            int(h2),
+            int(h3),
+            int(h4),
+            float(w1),
+            float(w2),
+            float(w3),
+            float(w4),
         )
         arr = score_df.values
 
         for ci in candidate_indices:
             result[:, ci * n_symbols : (ci + 1) * n_symbols] = arr
 
-    return result
+    return {"momentum_score": result}

@@ -44,7 +44,11 @@ def test_optimization_run_manifest_matches_golden_bytes(tmp_path, monkeypatch) -
 
     assert cli.main(["run", str(config_path), "--json", "--run-id", _RUN_ID]) == 0
 
-    manifest = json.loads((tmp_path / "runs" / _RUN_ID / "manifest.json").read_text())
+    run_dir = tmp_path / "runs" / _RUN_ID
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    source_evidence = manifest["evidence"]["optimization"]["source"]
+
+    assert source_evidence["schema_version"] == "component_optimization_source.v2"
     assert_matches_golden(masked_canonical_manifest(manifest), _GOLDEN_PATH)
 
 
