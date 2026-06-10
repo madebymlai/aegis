@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 import multiprocessing
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableSequence
 from typing import Any
 
 import numpy as np
@@ -261,7 +261,7 @@ def _metrics_from_allocations(
     extractors: Mapping[str, ExtractorSpec],
     *,
     market_index: pd.Index,
-    held_counts_out: list | None = None,
+    held_counts_out: MutableSequence[int] | None = None,
 ) -> Any:
     if wide_allocations is vbt.NoResult:
         return vbt.NoResult
