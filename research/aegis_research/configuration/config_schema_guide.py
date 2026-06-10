@@ -182,21 +182,20 @@ def _render_top_level_fields() -> str:
     ]
 
     for fdef in _walk_dataclass_fields(RunConfig):
-        name = fdef.name
-        type_str = fdef.type_str
         required = "yes" if fdef.is_required else "no"
         default = fdef.default_str or "—"
 
-        # Apply prepass overlay
-        if name == "schema_version":
+        if fdef.name in PREPASS_REQUIRED_FIELDS:
             required = "yes"
-            default = f"*const* `{PREPASS_CONST_FIELDS[name]}`"
-        elif name == "optimization":
+            if fdef.name == "optimization":
+                default = f"*required* (model default `None` ignored; {FORWARD_OPTIMIZATION_REQUIRED_MESSAGE})"
+
+        if fdef.name in PREPASS_CONST_FIELDS:
             required = "yes"
-            default = f"*required* (model default `None` ignored; {FORWARD_OPTIMIZATION_REQUIRED_MESSAGE})"
+            default = f"*const* `{PREPASS_CONST_FIELDS[fdef.name]}`"
 
         notes = fdef.notes or "—"
-        lines.append(f"| `{name}` | `{type_str}` | {required} | {default} | {notes} |")
+        lines.append(f"| `{fdef.name}` | `{fdef.type_str}` | {required} | {default} | {notes} |")
 
     return "\n".join(lines)
 
@@ -232,30 +231,20 @@ def _render_strategy_section() -> str:
 
 
 def _render_indicators_section() -> str:
+    item_type = _SECTION_TYPES["indicators"]
+    if isinstance(item_type, list):
+        item_type = item_type[0]
+
     lines = [
         "### `indicators` (required)",
         "",
         "A list of indicator Component references. Each entry has:",
         "",
-        "| Field | Type | Required | Default | Notes |",
-        "|-------|------|----------|---------|-------|",
-    ]
-    item_type = _SECTION_TYPES["indicators"]
-    if isinstance(item_type, list):
-        item_type = item_type[0]
-    for fdef in _walk_dataclass_fields(item_type):
-        name = fdef.name
-        type_str = fdef.type_str
-        required = "yes" if fdef.is_required else "no"
-        default = fdef.default_str or "—"
-        notes = fdef.notes or "—"
-        lines.append(f"| `{name}` | `{type_str}` | {required} | {default} | {notes} |")
-
-    lines.append("")
-    lines.append(
+        _render_field_table(item_type),
+        "",
         "Must contain at least one entry. Each `id` must be unique across the list. "
-        f"Use {_SHOW_COMPONENTS} to discover available component IDs."
-    )
+        f"Use {_SHOW_COMPONENTS} to discover available component IDs.",
+    ]
     return "\n".join(lines)
 
 
@@ -344,17 +333,8 @@ def _render_lock_section() -> str:
         "locked Candidate rather than searching for new ones. The `optimization` "
         "section is still required but its `search` / `split` values are ignored.",
         "",
-        "| Field | Type | Required | Default | Notes |",
-        "|-------|------|----------|---------|-------|",
     ]
-    for fdef in _walk_dataclass_fields(Lock):
-        name = fdef.name
-        type_str = fdef.type_str
-        required = "yes" if fdef.is_required else "no"
-        default = fdef.default_str or "—"
-        notes = fdef.notes or "—"
-        lines.append(f"| `{name}` | `{type_str}` | {required} | {default} | {notes} |")
-
+    lines.append(_render_field_table(Lock))
     return "\n".join(lines)
 
 
@@ -516,34 +496,29 @@ class FieldDef:
 def _walk_dataclass_fields(cls: Any) -> list[FieldDef]:
     """Walk a pydantic dataclass and return flattened field definitions.
 
-    Excludes internal/sentinel fields (names starting with underscore)
-    and fields whose pydantic annotation is marked ``init=False``.
+    Excludes internal/sentinel fields (names starting with underscore).
     """
     result: list[FieldDef] = []
     for f in dc_fields(cls):
         if f.name.startswith("_"):
             continue
-        result.append(_field_def(f, cls.__name__))
+        result.append(_field_def(f))
     return result
 
 
-def _field_def(field: DcField[Any], _cls_name: str) -> FieldDef:
+def _field_def(field: DcField[Any]) -> FieldDef:
     name = field.name
     annotation = field.type
 
     # Unwrap typing constructs
     type_str = _render_type(annotation)
 
-    # Requiredness: no default AND no default_factory
     has_default = field.default is not MISSING
     has_factory = field.default_factory is not MISSING
-    raw_required = not has_default and not has_factory
-
-    is_required = raw_required
+    is_required = not has_default and not has_factory
     default_str = None
 
     if has_factory:
-        # default_factory — call it to see what it produces (if safe)
         try:
             val = field.default_factory()  # type: ignore[misc]
             default_str = _format_default(val)
@@ -551,12 +526,6 @@ def _field_def(field: DcField[Any], _cls_name: str) -> FieldDef:
             default_str = "(factory)"
     elif has_default:
         default_str = _format_default(field.default)
-
-    # Check if this is an Optional type (X | None) — still required if
-    # pydantic says so, but note the None default if present.
-    if _is_optional(annotation) and has_default and field.default is None:
-        # The pydantic model allows None; the prepass may override.
-        pass
 
     return FieldDef(
         name=name,
@@ -654,20 +623,12 @@ def _render_nested_section(
     if isinstance(cls, list):
         cls = cls[0]
 
-    lines = [title, "", f"*{tag}*", ""]
+    lines = [title, "", f"*{tag}*", "", _render_field_table(cls)]
 
-    # Render quality sub-section inline with data
     quality_cls = _SECTION_TYPES.get(f"{section_key}.quality")
-    quality_fields: list[str] = []
     if quality_cls is not None and not isinstance(quality_cls, list):
-        quality_fields.append("\n**`quality` sub-section:**\n")
-        quality_fields.append("")
-        quality_fields.append(_render_field_table(quality_cls))
-        quality_fields.append("")
+        lines.extend(["", "**`quality` sub-section:**", "", _render_field_table(quality_cls)])
 
-    lines.append(_render_field_table(cls))
-    if quality_fields:
-        lines.extend(quality_fields)
     if extra_lines:
         lines.extend(extra_lines)
 
