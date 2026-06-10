@@ -371,18 +371,18 @@ def _check_lock_shape(
     lock_raw: Any,
     issues: list[ConfigValidationIssue],
 ) -> None:
-    """Typo-catcher: reject empty run_id and unknown role keywords."""
+    """Reject empty run_id and unknown role keywords (shape check, not registry check)."""
     if lock is None:
         return
     was_handle = isinstance(lock_raw, str)
     if not lock.run_id:
         issues.append(ConfigValidationIssue("lock", "run_id must not be empty"))
     if was_handle and lock.candidate_id not in LOCK_ROLES:
-        _lock_roles_label = ", ".join(LOCK_ROLES)
+        roles_label = ", ".join(LOCK_ROLES)
         issues.append(
             ConfigValidationIssue(
                 "lock",
-                f"role must be one of: {_lock_roles_label} (got {lock.candidate_id!r})",
+                f"role must be one of: {roles_label} (got {lock.candidate_id!r})",
             )
         )
 
@@ -458,6 +458,4 @@ def _best_effort_registry_checks(
                     f"must be one of {sorted(metric_registry.ids())}",
                 )
             )
-
-
 
