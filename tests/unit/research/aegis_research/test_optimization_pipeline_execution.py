@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import pytest
 
 from research.aegis_research.metrics.registry import empty_metric_registry
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
-from research.aegis_research.optimization.pipeline.execution import (
-    ExecutionResult,
-    run_pipeline_execution,
-)
-from research.aegis_research.optimization.pipeline.setup import SetupResult
+from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
 from research.aegis_research.optimization.source import OptimizationSourceError
+from tests.support.research.aegis_research.factories import make_setup_result
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -28,26 +25,7 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
     resolved = build_resolved_run_config(tmp_path)
     config = resolved.config
 
-    import pandas as pd
-
-    class _FakeSource:
-        params: ClassVar[dict[str, Any]] = {}
-        evidence: ClassVar[dict[str, Any]] = {"strategy": {}}
-
-    class _FakeSplitResult:
-        metadata: ClassVar[dict[str, int]] = {"n_splits": 2}
-        splits: ClassVar[list[Any]] = []
-
-    setup = SetupResult(
-        store_path=tmp_path / "store.sqlite3",
-        optimization_source=_FakeSource(),
-        strategy_evidence={},
-        close=pd.DataFrame({0: [1.0, 2.0]}),
-        open_=pd.DataFrame({0: [1.0, 2.0]}),
-        split_result=_FakeSplitResult(),
-        optimization_builtin={},
-        portfolio_builtin={},
-    )
+    setup = make_setup_result(store_path=tmp_path / "store.sqlite3")
 
     persisted = []
     manifest_evidence: dict[str, Any] = {}

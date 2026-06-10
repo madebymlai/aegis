@@ -97,6 +97,7 @@ def run_strategy_sweep(
         write_data_metadata_artifact(recorder, data_result)
         data_result.assert_usable()
         data_bundle = market_data_bundle(data_result)
+        metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
             config,
             component_registry=component_registry,
@@ -105,13 +106,9 @@ def run_strategy_sweep(
             data=data_bundle,
             array_contract=array_contract,
             metric_registry_fingerprint=(
-                resolved_config.metric_registry.fingerprint
-                if resolved_config.metric_registry
-                else None
+                metric_registry.fingerprint if metric_registry else None
             ),
-            metric_registry=(
-                resolved_config.metric_registry
-            ),
+            metric_registry=metric_registry,
             run_evidence=run_evidence,
         )
     except KeyboardInterrupt:
@@ -146,6 +143,8 @@ def _run_optimization_strategy_sweep(
     metric_registry: FrozenMetricRegistry | None,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
+    assert metric_registry is not None
+
     # Stage 1: Setup — resolve locks, build optimization source and evidence baseline
     try:
         setup = run_pipeline_setup(
@@ -162,7 +161,6 @@ def _run_optimization_strategy_sweep(
         raise
 
     # Stage 2: Execution — preflight gate, two-phase optimization sweep
-    assert metric_registry is not None
     execution = run_pipeline_execution(
         config=config,
         setup=setup,

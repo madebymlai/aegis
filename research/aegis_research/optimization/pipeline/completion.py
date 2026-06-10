@@ -38,6 +38,7 @@ from research.aegis_research.optimization.run_artifacts import (
     write_strategy_artifact,
 )
 from research.aegis_research.provenance.recorder import RunRecorder
+from research.aegis_research.run_splits import RunSplitsResult
 
 
 def run_pipeline_completion(
@@ -99,7 +100,7 @@ def _completion_result(
     *,
     config: RunConfig,
     recorder: RunRecorder,
-    split_result: Any,
+    split_result: RunSplitsResult,
     candidate_rows: list[dict[str, Any]],
     store_path: Path,
     execution: Mapping[str, Any],

@@ -13,13 +13,12 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
-
-from pathlib import Path
 
 from research.aegis_research.component_registry.contracts import (
     COMPONENT_FAMILIES,
@@ -48,8 +47,6 @@ from research.aegis_research.optimization.candidate_grid import (
 )
 from research.aegis_research.optimization.pipeline.setup import SetupResult
 from research.aegis_research.optimization.precompute import CandidateKey
-from research.aegis_research.optimization.source import OptimizationSource
-from research.aegis_research.run_splits import RunSplitsResult
 
 
 def make_data_quality_config(**overrides: Any) -> DataQualityConfig:
@@ -352,11 +349,8 @@ def make_setup_result(**overrides: Any) -> SetupResult:
 
 
 class _FakeOptimizationSource:
-    params: dict[str, Any] = {}
-    evidence: dict[str, Any] = {"strategy": {}}
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        raise TypeError("do not subclass the fake optimization source")
+    params: ClassVar[dict[str, Any]] = {}
+    evidence: ClassVar[dict[str, Any]] = {"strategy": {}}
 
 
 def _fake_optimization_source() -> Any:
@@ -364,8 +358,8 @@ def _fake_optimization_source() -> Any:
 
 
 class _FakeSplitResult:
-    metadata: dict[str, int] = {"n_splits": 2}
-    splits: list[Any] = []
+    metadata: ClassVar[dict[str, int]] = {"n_splits": 2}
+    splits: ClassVar[list[Any]] = []
 
 
 def _fake_split_result() -> Any:

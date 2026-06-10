@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -65,7 +66,7 @@ class SetupResult:
     config sections consumed by publishing/completion).
     """
 
-    store_path: Any  # Path | str
+    store_path: Path
     optimization_source: OptimizationSource
     strategy_evidence: Mapping[str, Any]
     close: pd.DataFrame
