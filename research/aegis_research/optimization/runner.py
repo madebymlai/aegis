@@ -197,8 +197,7 @@ def _build_precomputed_window_metrics(
     ``multiprocessing.Manager.list`` of per-call non-executable-row counts
     accumulated during the sweep (parallel-safe via proxy serialization).
     """
-    manager = multiprocessing.Manager()
-    held_counts = manager.list()  # type: ignore[var-annotated]
+    held_counts = multiprocessing.Manager().list()  # type: ignore[var-annotated]
     full_index = close.index
 
     def window_metrics(range_: slice, **params: Any) -> Any:
@@ -262,7 +261,7 @@ def _metrics_from_allocations(
     extractors: Mapping[str, ExtractorSpec],
     *,
     market_index: pd.Index,
-    held_counts_out: Any = None,
+    held_counts_out: list | None = None,
 ) -> Any:
     if wide_allocations is vbt.NoResult:
         return vbt.NoResult
