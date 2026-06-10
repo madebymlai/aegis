@@ -40,6 +40,10 @@ _Avoid_: fold, in-sample/out-of-sample, train/test
 The scored table an optimization **Run** produces: every registered **Metric**, per **Split**, for every sampled **Candidate**. Built once from the **Selection** sets — the data validity verdicts and global ranking read — and again from the **Held-out** sets for the three representatives. Internal to the Run; never part of **Evidence**.
 _Avoid_: tidy grid, metrics frame, results table, parameter grid
 
+**Candidate Store**:
+The durable, cross-**Run** store of published **Candidates** and their **Provenance**. Publishing a **Run's** three representative Candidates into it is what makes them referenceable by later Runs: a **Lock** resolves against the Candidate Store. It is the boundary between results internal to one Run and results visible to all Runs.
+_Avoid_: database, candidate cache, results table
+
 **Lock**:
 A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run**. Written as a human-friendly scalar `run_id[:role]`: a bare `run_id` locks the **best** **Candidate** (the default), and `:median`/`:worst` pick the other representatives — the **Run** folder name *is* the `run_id`, so the common case is copy-the-directory-name-and-paste. The precise mapping form `{run_id, candidate_id}` also resolves, where `candidate_id` is a `role` keyword or a raw `candidate_key` hash; `run_id` + a resolved `candidate_key` together *are* the `candidates` primary key, so a Lock needs no separate storage. A `role` resolves to its `candidate_key` through the storage-free `candidate_rankings` table, and **Lock** provenance always records the resolved hash. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body (the overridden values are recorded in **Evidence**, never silently dropped).
 _Avoid_: promotion, lock token, per-component lock, lock_id

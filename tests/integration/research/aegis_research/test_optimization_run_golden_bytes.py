@@ -21,7 +21,7 @@ from pathlib import Path
 import yaml
 
 from research.aegis_research import cli
-from research.aegis_research.config import CONFIG_SCHEMA_VERSION
+from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 from tests.support.research.aegis_research.golden import (
     assert_matches_golden,
     masked_canonical_manifest,
