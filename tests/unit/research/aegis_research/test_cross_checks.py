@@ -48,7 +48,7 @@ def _indicator(
     param_names: tuple[str, ...] = ("window",),
     output_names: tuple[str, ...] = ("value",),
     defaults: dict[str, object] | None = None,
-    param_space_callable: str | None = None,
+    has_param_space: bool = False,
 ) -> ComponentDefinition:
     payload: dict[str, Any] = {
         "family": "indicators",
@@ -58,10 +58,7 @@ def _indicator(
         "param_names": list(param_names),
         "output_names": list(output_names),
         "defaults": defaults or {},
-        "wide_callable": "run_wide",
     }
-    if param_space_callable is not None:
-        payload["param_space_callable"] = param_space_callable
     manifest = IndicatorManifest(
         family="indicators",
         id=id,
@@ -71,14 +68,12 @@ def _indicator(
         param_names=param_names,
         output_names=output_names,
         defaults=defaults or {},
-        wide_callable="run_wide",
-        param_space_callable=param_space_callable,
     )
     return ComponentDefinition(
         manifest=manifest,
-        callable_name="run",
         file_path=Path(f"/fixtures/{id}.py"),
         identity=_identity(),
+        has_param_space=has_param_space,
     )
 
 
@@ -90,7 +85,7 @@ def _strategy(
     output_name: str = "active",
     consumes_outputs: tuple[str, ...] = ("value",),
     defaults: dict[str, object] | None = None,
-    param_space_callable: str | None = None,
+    has_param_space: bool = False,
 ) -> ComponentDefinition:
     payload: dict[str, Any] = {
         "family": "strategies",
@@ -101,10 +96,7 @@ def _strategy(
         "output_name": output_name,
         "consumes_outputs": list(consumes_outputs),
         "defaults": defaults or {},
-        "wide_callable": "run_wide",
     }
-    if param_space_callable is not None:
-        payload["param_space_callable"] = param_space_callable
     manifest = StrategyManifest(
         family="strategies",
         id=id,
@@ -115,14 +107,12 @@ def _strategy(
         output_name=output_name,
         consumes_outputs=consumes_outputs,
         defaults=defaults or {},
-        wide_callable="run_wide",
-        param_space_callable=param_space_callable,
     )
     return ComponentDefinition(
         manifest=manifest,
-        callable_name="run",
         file_path=Path(f"/fixtures/{id}.py"),
         identity=_identity(),
+        has_param_space=has_param_space,
     )
 
 
@@ -432,13 +422,13 @@ def test_params_missing_rejected_when_not_defaulted() -> None:
     assert any("must provide params" in msg for msg in by_path["strategy"])
 
 
-def test_params_waived_by_param_space_callable() -> None:
+def test_params_waived_by_param_space_function() -> None:
     reg = _component_registry(
         indicators={"demo.signal": _indicator(param_names=(), output_names=("value",))},
         strategies={
             "demo.strategy": _strategy(
                 param_names=("lookback", "threshold"),
-                param_space_callable="param_space",
+                has_param_space=True,
                 consumes_outputs=("value",),
             ),
         },

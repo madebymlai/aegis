@@ -313,7 +313,8 @@ def make_component_registry(
         for component_id, definition in frozen[family].items():
             family_payload[component_id] = {
                 "manifest": definition.manifest.fingerprint_payload(),
-                "callable": definition.callable_name,
+                "entrypoint": definition.callable_name,
+                "has_param_space": definition.has_param_space,
                 "source": definition.identity.public(),
             }
         fingerprint_payload[family] = family_payload

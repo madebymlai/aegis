@@ -1,6 +1,6 @@
 # %% component overview
 # Parameterized moving-average crossover strategy component.
-# Emits a single allocation-native `active` frame consumed by the portfolio policy
+# Emits a single allocation-native `active` array consumed by the allocation policy
 # layer; portfolio sizing, direction, and timing remain centrally configured.
 
 # %% imports
@@ -16,11 +16,8 @@ COMPONENT_MANIFEST = {
     "param_names": ["fast_window", "slow_window"],
     "output_name": "active",
     "defaults": {"fast_window": 10, "slow_window": 20},
-    "param_space_callable": "param_space",
     "owns_portfolio": False,
-    "wide_callable": "run_wide",
 }
-COMPONENT_CALLABLE = "run"
 
 
 # %% parameter space
@@ -33,22 +30,9 @@ def param_space():
     }
 
 
-# %% main compute
-def run(inputs, fast_window, slow_window):
-    """Return one `active` frame for the moving-average parameter row.
-
-    Selection convention: non-NaN cells = selected this rebalance row, NaN = excluded.
-    The portfolio policy layer converts the `active` frame to a validated
-    target-allocation frame, applies the executable mask, gates it against
-    `portfolio.gross_cap`, and writes the terminal-liquidation row.
-    """
-
-    close = inputs.data.feature("Close")
-    return _active(close, int(fast_window), int(slow_window))
-
-
+# %% helpers
 def _active(close, fast_window, slow_window):
-    """Shared crossover formula for run and run_wide: one (rows, symbols) frame."""
+    """Compute one active-allocation frame for one parameter row."""
 
     fast = close.rolling(fast_window, min_periods=1).mean()
     slow = close.rolling(slow_window, min_periods=1).mean()
@@ -57,9 +41,9 @@ def _active(close, fast_window, slow_window):
     return selected.where(selected, other=float("nan")).astype(float)
 
 
-# %% wide compute
-def run_wide(inputs, *, n_candidates, **param_lists):
-    """Vectorized crossover `active` blocks for all candidates in a single call.
+# %% main compute
+def run(inputs, *, n_candidates, **param_lists):
+    """Compute candidate-major crossover allocations for all candidates.
 
     Indicator inputs (none here) arrive as candidate-major arrays under
     ``inputs.indicators[output_name]``. The return value uses the same layout:
@@ -73,7 +57,11 @@ def run_wide(inputs, *, n_candidates, **param_lists):
     slows = param_lists["slow_window"]
 
     result = np.full((len(close), n_candidates * n_symbols), np.nan)
-    for ci in range(n_candidates):
-        active = _active(close, int(fasts[ci]), int(slows[ci]))
-        result[:, ci * n_symbols : (ci + 1) * n_symbols] = active.values
+    for candidate_index in range(n_candidates):
+        active = _active(close, int(fasts[candidate_index]), int(slows[candidate_index]))
+        cols = slice(
+            candidate_index * n_symbols,
+            (candidate_index + 1) * n_symbols,
+        )
+        result[:, cols] = active.values
     return result

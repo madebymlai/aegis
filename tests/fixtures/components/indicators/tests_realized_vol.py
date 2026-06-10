@@ -14,10 +14,7 @@ COMPONENT_MANIFEST = {
     "param_names": ["window"],
     "output_names": ["realized_vol"],
     "defaults": {"window": 20},
-    "param_space_callable": "param_space",
-    "wide_callable": "run_wide",
 }
-COMPONENT_CALLABLE = "run"
 
 
 # %% parameter space
@@ -30,17 +27,7 @@ def param_space():
 
 
 # %% main compute
-def run(data, window):
-    """Compute annualized realized volatility from log returns."""
-
-    close = data.feature("Close")
-    window = int(window)
-    log_returns = np.log(close / close.shift(1))
-    return log_returns.rolling(window).std() * np.sqrt(252)
-
-
-# %% wide compute
-def run_wide(data, *, n_candidates, **param_lists):
+def run(data, *, n_candidates, **param_lists):
     """Vectorized realized volatility for all candidates in a single call."""
 
     close = data.feature("Close")

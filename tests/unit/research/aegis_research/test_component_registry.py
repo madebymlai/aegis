@@ -59,7 +59,6 @@ def test_component_discovery_rejects_non_literal_metadata(tmp_path) -> None:
         "\n"
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {'family': 'indicators', 'id': f'bad', 'version': '1'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return the indicator output."""\n'
@@ -77,7 +76,6 @@ def test_component_discovery_rejects_bare_percent_cells(tmp_path) -> None:
     path.write_text(
         "# %%\n"
         f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'bare.cell')!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return the indicator output."""\n'
@@ -99,7 +97,6 @@ def test_component_discovery_requires_main_compute_cell(tmp_path) -> None:
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'no.main')!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "def run():\n"
         '    """Return the indicator output."""\n'
         "    pass\n"
@@ -107,6 +104,30 @@ def test_component_discovery_requires_main_compute_cell(tmp_path) -> None:
 
     with pytest.raises(ComponentRegistryError, match="# %% main cell"):
         discover_component_registry(root=root, repo_root=tmp_path)
+
+
+def test_component_discovery_requires_run_entrypoint(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    path = root / "indicators" / "missing_run.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture without the fixed run entrypoint.\n"
+        "# Source: in-memory pytest component file.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'missing.run')!r}\n"
+        "\n# %% main compute\n"
+        "def run_wide():\n"
+        '    """Legacy entrypoint name."""\n'
+        "    pass\n"
+    )
+
+    with pytest.raises(ComponentRegistryError) as excinfo:
+        discover_component_registry(root=root, repo_root=tmp_path)
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "missing required component entry point 'run'" in message
 
 
 def test_component_discovery_requires_callable_docstring(tmp_path) -> None:
@@ -120,7 +141,6 @@ def test_component_discovery_requires_callable_docstring(tmp_path) -> None:
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'missing.docstring')!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         "    pass\n"
@@ -150,9 +170,7 @@ def test_component_discovery_does_not_execute_top_level_code(tmp_path) -> None:
         "    'input_names': ['Close'],\n"
         "    'param_names': ['window'],\n"
         "    'output_names': ['value'],\n"
-        "    'wide_callable': 'run_wide',\n"
         "}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return the indicator output."""\n'
@@ -218,32 +236,46 @@ def test_component_manifest_exposes_param_space_defaults_and_consumed_outputs(tm
     indicator_path = root / "indicators" / "indicator.py"
     strategy_path = root / "strategies" / "strategy.py"
     indicator_path.write_text(
-        indicator_path.read_text().replace(
+        indicator_path.read_text()
+        .replace(
             "'output_names': ['value']",
-            "'output_names': ['value'], 'defaults': {'window': 20}, "
-            "'param_space_callable': 'param_space'",
+            "'output_names': ['value'], 'defaults': {'window': 20}",
+        )
+        .replace(
+            "\n# %% main compute\n",
+            "\n# %% parameter space\ndef param_space():\n"
+            "    return {'window': object()}\n\n# %% main compute\n",
         )
     )
     strategy_path.write_text(
-        strategy_path.read_text().replace(
+        strategy_path.read_text()
+        .replace(
             "'output_name': 'active'",
             "'param_names': ['threshold'], 'output_name': 'active', "
-            "'consumes_outputs': ['value'], 'defaults': {'threshold': 0.0}, "
-            "'param_space_callable': 'param_space'",
+            "'consumes_outputs': ['value'], 'defaults': {'threshold': 0.0}",
+        )
+        .replace(
+            "\n# %% main compute\n",
+            "\n# %% parameter space\ndef param_space():\n"
+            "    return {'threshold': object()}\n\n# %% main compute\n",
         )
     )
 
     registry = discover_component_registry(root=root, repo_root=tmp_path)
-    indicator = registry.get(ComponentSelection("indicators", "demo.indicator")).manifest
-    strategy = registry.get(ComponentSelection("strategies", "demo.strategy")).manifest
+    indicator_def = registry.get(ComponentSelection("indicators", "demo.indicator"))
+    strategy_def = registry.get(ComponentSelection("strategies", "demo.strategy"))
+    indicator = indicator_def.manifest
+    strategy = strategy_def.manifest
 
     assert indicator.defaults == {"window": 20}
-    assert indicator.param_space_callable == "param_space"
+    assert indicator_def.has_param_space is True
+    assert indicator_def.param_space_entrypoint_name == "param_space"
     assert strategy.param_names == ("threshold",)
     assert strategy.output_name == "active"
     assert strategy.consumes_outputs == ("value",)
     assert strategy.defaults == {"threshold": 0.0}
-    assert strategy.param_space_callable == "param_space"
+    assert strategy_def.has_param_space is True
+    assert strategy_def.param_space_entrypoint_name == "param_space"
 
 
 def test_component_manifest_rejects_defaults_outside_param_names(tmp_path) -> None:
@@ -297,7 +329,6 @@ def test_component_callable_module_is_registered_while_loading(tmp_path) -> None
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'registered')!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "import sys\n"
         "MODULE_REGISTERED = __name__ in sys.modules\n"
         "\n# %% main compute\n"
@@ -383,7 +414,6 @@ def test_strategy_manifest_rejects_legacy_signal_outputs_field(tmp_path) -> None
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return a fixture value."""\n'
@@ -409,7 +439,6 @@ def test_strategy_manifest_rejects_forbidden_gross_cap_key(tmp_path) -> None:
         "output_name": "active",
         "gross_cap": 0.5,
         "owns_portfolio": False,
-        "wide_callable": "run_wide",
     }
     path.write_text(
         "# %% component overview\n"
@@ -418,7 +447,6 @@ def test_strategy_manifest_rejects_forbidden_gross_cap_key(tmp_path) -> None:
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return a fixture value."""\n'
@@ -458,7 +486,6 @@ def test_manifest_payload_errors_accumulate_per_file(tmp_path) -> None:
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return fixture value."""\n'
@@ -486,7 +513,6 @@ def _write_strategy_component(path, *, component_id: str, output_name: str) -> N
         "input_names": ["Close"],
         "output_name": output_name,
         "owns_portfolio": False,
-        "wide_callable": "run_wide",
     }
     path.write_text(
         "# %% component overview\n"
@@ -495,7 +521,6 @@ def _write_strategy_component(path, *, component_id: str, output_name: str) -> N
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return a deterministic fixture value."""\n'
@@ -513,7 +538,6 @@ def _write_component(path, family: str, component_id: str) -> None:
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return a deterministic fixture value."""\n'
@@ -529,7 +553,6 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "input_names": ["Close"],
             "param_names": ["window"],
             "output_names": ["value"],
-            "wide_callable": "run_wide",
         }
     if family == "strategies":
         return {
@@ -537,31 +560,79 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "input_names": ["Close"],
             "output_name": "active",
             "owns_portfolio": False,
-            "wide_callable": "run_wide",
         }
     raise AssertionError(f"unknown family {family}")
 
 
 @pytest.mark.parametrize("family", ["indicators", "strategies"])
-def test_manifest_rejects_missing_wide_callable(tmp_path, family) -> None:
+def test_manifest_rejects_legacy_callable_name_key(tmp_path, family) -> None:
     root = tmp_path / "research" / "components"
-    manifest = _manifest_for(family, "demo.no_wide")
-    del manifest["wide_callable"]
-    path = root / family / "no_wide.py"
+    manifest = _manifest_for(family, "demo.legacy")
+    manifest["wide_callable"] = "run_wide"
+    path = root / family / "legacy.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "# %% component overview\n"
-        "# Fixture missing wide_callable.\n"
+        "# Fixture with legacy callable-name manifest plumbing.\n"
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return fixture value."""\n'
-        "    return 'no_wide'\n"
+        "    return 'legacy'\n"
     )
 
     with pytest.raises(ComponentRegistryError) as excinfo:
         discover_component_registry(root=root, repo_root=tmp_path)
-    assert "wide_callable" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "legacy manifest callable keys" in message
+    assert "wide_callable" in message
+
+
+def test_manifest_rejects_legacy_component_callable_declaration(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    path = root / "indicators" / "legacy_callable.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture with legacy top-level callable declaration.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'demo.legacy_callable')!r}\n"
+        "COMPONENT_CALLABLE = 'run_wide'\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return fixture value."""\n'
+        "    return 'legacy'\n"
+    )
+
+    with pytest.raises(ComponentRegistryError) as excinfo:
+        discover_component_registry(root=root, repo_root=tmp_path)
+    message = str(excinfo.value)
+    assert "legacy COMPONENT_CALLABLE declaration is not supported" in message
+
+
+def test_manifest_rejects_legacy_param_space_callable_key(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    manifest = _manifest_for("indicators", "demo.legacy_param_space")
+    manifest["param_space_callable"] = "custom_param_space"
+    path = root / "indicators" / "legacy_param_space.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture with legacy param-space manifest plumbing.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {manifest!r}\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return fixture value."""\n'
+        "    return 'legacy'\n"
+    )
+
+    with pytest.raises(ComponentRegistryError) as excinfo:
+        discover_component_registry(root=root, repo_root=tmp_path)
+    message = str(excinfo.value)
+    assert "legacy manifest callable keys" in message
+    assert "param_space_callable" in message

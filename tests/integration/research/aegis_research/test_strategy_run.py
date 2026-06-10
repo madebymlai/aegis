@@ -513,8 +513,7 @@ def _write_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.cross', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'output_name': 'active', 'owns_portfolio': False, 'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'output_name': 'active', 'owns_portfolio': False}\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
         '    """Emit a deterministic active allocation frame from a fixed MA crossover."""\n'
@@ -524,7 +523,7 @@ def _write_strategy_component(path: Path) -> None:
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from a fixed MA crossover."""\n'
         "    close = inputs.data.feature('Close')\n"
         "    T, S = close.shape\n"
@@ -553,14 +552,13 @@ def _write_indicator_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma'], "
-        "'defaults': {'window': 2}, 'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'defaults': {'window': 2}}\n"
         "\n# %% main compute\n"
         "def run(data, window=2):\n"
         '    """Compute the fixed moving-average indicator."""\n'
         "    return data.feature('Close').rolling(int(window)).mean().bfill()\n"
         "\n# %% wide compute\n"
-        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide indicator output."""\n'
         "    close = data.feature('Close')\n"
         "    T, S = close.shape\n"
@@ -585,8 +583,7 @@ def _write_misaligned_indicator_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': [], 'output_names': ['ma'], "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "}\n"
         "\n# %% main compute\n"
         "def run(data):\n"
         '    """Return a deliberately misaligned indicator fixture."""\n'
@@ -594,7 +591,7 @@ def _write_misaligned_indicator_component(path: Path) -> None:
         "    result.columns = ['OTHER']\n"
         "    return result\n"
         "\n# %% wide compute\n"
-        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide output for misaligned fixture."""\n'
         "    close = data.feature('Close')\n"
         "    T, S = close.shape\n"
@@ -615,14 +612,13 @@ def _write_named_indicator_component(path: Path, component_id: str) -> None:
         "COMPONENT_MANIFEST = {"
         f"'family': 'indicators', 'id': {component_id!r}, 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': [], 'output_names': ['value'], "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "}\n"
         "\n# %% main compute\n"
         "def run(data):\n"
         '    """Compute a fixed moving-average indicator fixture."""\n'
         "    return data.feature('Close').rolling(2).mean().bfill()\n"
         "\n# %% wide compute\n"
-        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide indicator output."""\n'
         "    close = data.feature('Close')\n"
         "    T, S = close.shape\n"
@@ -648,8 +644,7 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "'family': 'strategies', 'id': 'demo.uses_ma', 'version': '1.0.0', "
         "'input_names': ['Close'], "
         "'output_name': 'active', 'consumes_outputs': ['ma'], "
-        "'owns_portfolio': False, 'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'owns_portfolio': False}\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
         '    """Emit an active allocation frame from the selected MA indicator."""\n'
@@ -660,7 +655,7 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from MA indicator."""\n'
         "    close = inputs.data.feature('Close')\n"
         "    T, S = close.shape\n"
@@ -689,8 +684,7 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.uses_all', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'output_name': 'active', 'owns_portfolio': False, 'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'output_name': 'active', 'owns_portfolio': False}\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
         '    """Emit an active allocation frame from fast and slow indicator outputs."""\n'
@@ -702,7 +696,7 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from fast and slow indicators."""\n'
         "    close = inputs.data.feature('Close')\n"
         "    T, S = close.shape\n"

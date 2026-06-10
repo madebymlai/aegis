@@ -433,7 +433,6 @@ def _write_component(path: Path, family: str, component_id: str) -> None:
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return no output because run-config tests only validate selection."""\n'
@@ -450,7 +449,6 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "param_names": ["window"],
             "output_names": ["value"],
             "defaults": {"window": 2},
-            "wide_callable": "run_wide",
         }
     if family == "strategies":
         return {
@@ -458,7 +456,6 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "input_names": ["Close"],
             "output_name": "active",
             "owns_portfolio": False,
-            "wide_callable": "run_wide",
         }
     raise AssertionError(family)
 

@@ -47,13 +47,6 @@ class ComponentSourceError(ValueError):
 
 
 @dataclass(frozen=True)
-class ComponentStrategyInputs:
-    data: MarketDataBundle
-    indicators: Mapping[str, Any]
-    metadata: dict[str, Any]
-
-
-@dataclass(frozen=True)
 class WideComponentStrategyInputs:
     data: MarketDataBundle
     indicators: Mapping[str, np.ndarray]
@@ -69,7 +62,6 @@ class _ComponentRuntime:
     ref: RunSourceRefConfig | RunIndicatorSourceConfig
     definition: ComponentDefinition
     callable: Any
-    wide_callable: Any
     fixed_params: dict[str, Any]
     param_space: dict[str, vbt.Param]
     param_keys: dict[str, str]
@@ -128,7 +120,7 @@ def build_component_optimization_source(
     def precompute(
         close: pd.DataFrame, n_candidates: int, **param_lists: Any
     ) -> WideIndicatorPrecompute:
-        # Run each indicator's wide callable once over ``close`` (the full series in
+        # Run each indicator's batched callable once over ``close`` (the full series in
         # the selection phase) and return a candidate-major store sliceable by split
         # range. Candidates whose warmup still exceeds the full series are marked
         # invalid by the runner before ranking.
@@ -144,7 +136,7 @@ def build_component_optimization_source(
                 full_candidate_keys=full_candidate_keys,
                 n_candidates=n_candidates,
             )
-            output = runtime.wide_callable(
+            output = runtime.callable(
                 data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
             )
             output_arrays = _validated_indicator_output_arrays(
@@ -190,7 +182,7 @@ def build_component_optimization_source(
         )
         alloc_arr = _validated_component_array(
             strategy,
-            strategy.wide_callable(
+            strategy.callable(
                 strategy_wide_inputs, n_candidates=n_candidates, **strategy_wide_params
             ),
             expected_shape=_candidate_major_shape(close_window, n_candidates),
@@ -230,18 +222,15 @@ def _build_runtime(
 ) -> _ComponentRuntime:
     definition = component_registry.get(ComponentSelection(family, ref.id))
     locked = force_locked
-    param_space_callable_name = (
-        None if locked else getattr(definition.manifest, "param_space_callable", None)
-    )
-    wide_callable_name = definition.manifest.wide_callable
-    attribute_names = [definition.callable_name, wide_callable_name]
-    if param_space_callable_name is not None:
-        attribute_names.append(param_space_callable_name)
+    param_space_entrypoint_name = None if locked else definition.param_space_entrypoint_name
+    attribute_names = [definition.callable_name]
+    if param_space_entrypoint_name is not None:
+        attribute_names.append(param_space_entrypoint_name)
     attributes = definition.load_attributes(attribute_names)
     param_space = (
         {}
-        if param_space_callable_name is None
-        else _load_param_space(definition, attributes[param_space_callable_name])
+        if param_space_entrypoint_name is None
+        else _load_param_space(definition, attributes[param_space_entrypoint_name])
     )
     fixed_params = _fixed_params_for_ref(
         family,
@@ -264,7 +253,6 @@ def _build_runtime(
         ref=ref,
         definition=definition,
         callable=attributes[definition.callable_name],
-        wide_callable=attributes[wide_callable_name],
         fixed_params=fixed_params,
         param_space=dict(param_space),
         param_keys=param_keys,
@@ -308,9 +296,9 @@ def _fixed_params_for_ref(
 
 def _load_param_space(
     definition: ComponentDefinition,
-    param_space_callable: Any,
+    param_space_entrypoint: Any,
 ) -> dict[str, vbt.Param]:
-    result = param_space_callable()
+    result = param_space_entrypoint()
     if not isinstance(result, Mapping):
         raise ComponentSourceError(
             f"component {definition.family}/{definition.id} param space must return a mapping"
@@ -508,41 +496,6 @@ def _slice_data(
         native_data=data.native_data,
         loaded_features=tuple(features),
     )
-
-
-def _coerce_indicator_outputs(
-    output: Any,
-    definition: ComponentDefinition,
-    close: pd.DataFrame,
-) -> dict[str, pd.DataFrame]:
-    output_names = tuple(getattr(definition.manifest, "output_names", ()))
-    if isinstance(output, Mapping):
-        missing = sorted(set(output_names) - set(output))
-        unknown = sorted(set(output) - set(output_names))
-        if missing or unknown:
-            raise ComponentSourceError(
-                f"indicator {definition.id!r} output mismatch; missing={missing}, unknown={unknown}"
-            )
-        return {
-            output_name: _coerce_indicator_frame(output[output_name], close, definition.id)
-            for output_name in output_names
-        }
-    if len(output_names) != 1:
-        raise ComponentSourceError(
-            f"indicator {definition.id!r} must return a mapping for outputs {list(output_names)}"
-        )
-    return {output_names[0]: _coerce_indicator_frame(output, close, definition.id)}
-
-
-def _coerce_indicator_frame(value: Any, close: pd.DataFrame, component_id: str) -> pd.DataFrame:
-    frame = value.to_frame() if isinstance(value, pd.Series) else value
-    if not isinstance(frame, pd.DataFrame):
-        raise ComponentSourceError(f"indicator {component_id!r} output must be a pandas object")
-    if not frame.index.equals(close.index):
-        raise ComponentSourceError(f"indicator {component_id!r} output has misaligned timestamps")
-    if list(map(str, frame.columns)) != list(map(str, close.columns)):
-        raise ComponentSourceError(f"indicator {component_id!r} output has misaligned symbols")
-    return frame
 
 
 def _assert_output_contract(

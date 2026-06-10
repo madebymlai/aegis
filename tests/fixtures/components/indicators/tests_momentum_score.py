@@ -24,10 +24,7 @@ COMPONENT_MANIFEST = {
         "w3": 2.0,
         "w4": 1.0,
     },
-    "param_space_callable": "param_space",
-    "wide_callable": "run_wide",
 }
-COMPONENT_CALLABLE = "run"
 
 
 # %% parameter space
@@ -46,22 +43,9 @@ def param_space():
     }
 
 
-# %% main compute
-def run(data, h1, h2, h3, h4, w1, w2, w3, w4):
-    """Compute multi-period annualized momentum score.
-
-    R(delta) = (Close(t) / Close(t - delta))^(252/delta) - 1
-    Score(t) = w1*R(h1) + w2*R(h2) + w3*R(h3) + w4*R(h4)
-    """
-
-    close = data.feature("Close")
-    return _compute_score(
-        close, int(h1), int(h2), int(h3), int(h4), float(w1), float(w2), float(w3), float(w4)
-    )
-
-
+# %% helpers
 def _compute_score(close, h1, h2, h3, h4, w1, w2, w3, w4):
-    """Shared formula for both run and run_wide."""
+    """Compute multi-period annualized momentum score for one parameter tuple."""
 
     horizons = (h1, h2, h3, h4)
     weights = (w1, w2, w3, w4)
@@ -79,8 +63,8 @@ def _compute_score(close, h1, h2, h3, h4, w1, w2, w3, w4):
     return close.__class__(score, index=close.index, columns=close.columns)
 
 
-# %% wide compute
-def run_wide(data, *, n_candidates, **param_lists):
+# %% main compute
+def run(data, *, n_candidates, **param_lists):
     """Vectorized multi-period momentum score for all candidates in a single call."""
 
     close = data.feature("Close")

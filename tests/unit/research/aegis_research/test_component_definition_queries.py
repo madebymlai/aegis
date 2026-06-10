@@ -1,6 +1,6 @@
 """Direct tests for the ComponentDefinition query surface and in-memory registry factory.
 
-Covers: undeclared vs unsatisfied params, waiver via param_space_callable,
+Covers: undeclared vs unsatisfied params, waiver via module-level param_space,
 family-uniform empty results, and the factory's snapshot/fingerprint invariants.
 """
 
@@ -36,7 +36,7 @@ def _indicator(
     param_names: tuple[str, ...] = ("window", "smooth"),
     output_names: tuple[str, ...] = ("value", "signal"),
     defaults: dict[str, object] | None = None,
-    param_space_callable: str | None = None,
+    has_param_space: bool = False,
 ) -> ComponentDefinition:
     payload = {
         "family": "indicators",
@@ -46,10 +46,7 @@ def _indicator(
         "param_names": list(param_names),
         "output_names": list(output_names),
         "defaults": defaults or {},
-        "wide_callable": "run_wide",
     }
-    if param_space_callable is not None:
-        payload["param_space_callable"] = param_space_callable
     manifest = IndicatorManifest(
         family="indicators",
         id=id,
@@ -59,14 +56,12 @@ def _indicator(
         param_names=param_names,
         output_names=output_names,
         defaults=defaults or {},
-        wide_callable="run_wide",
-        param_space_callable=param_space_callable,
     )
     return ComponentDefinition(
         manifest=manifest,
-        callable_name="run",
         file_path=Path(f"/fixtures/{id}.py"),
         identity=_identity(),
+        has_param_space=has_param_space,
     )
 
 
@@ -78,7 +73,7 @@ def _strategy(
     output_name: str = "active",
     consumes_outputs: tuple[str, ...] = ("value",),
     defaults: dict[str, object] | None = None,
-    param_space_callable: str | None = None,
+    has_param_space: bool = False,
 ) -> ComponentDefinition:
     payload = {
         "family": "strategies",
@@ -89,10 +84,7 @@ def _strategy(
         "output_name": output_name,
         "consumes_outputs": list(consumes_outputs),
         "defaults": defaults or {},
-        "wide_callable": "run_wide",
     }
-    if param_space_callable is not None:
-        payload["param_space_callable"] = param_space_callable
     manifest = StrategyManifest(
         family="strategies",
         id=id,
@@ -103,14 +95,12 @@ def _strategy(
         output_name=output_name,
         consumes_outputs=consumes_outputs,
         defaults=defaults or {},
-        wide_callable="run_wide",
-        param_space_callable=param_space_callable,
     )
     return ComponentDefinition(
         manifest=manifest,
-        callable_name="run",
         file_path=Path(f"/fixtures/{id}.py"),
         identity=_identity(),
+        has_param_space=has_param_space,
     )
 
 
@@ -167,12 +157,12 @@ def test_unsatisfied_params_empty_when_all_defaulted() -> None:
     assert definition.unsatisfied_params(frozenset()) == frozenset()
 
 
-def test_unsatisfied_params_waived_by_param_space_callable() -> None:
+def test_unsatisfied_params_waived_by_param_space_function() -> None:
     definition = _indicator(
         param_names=("window", "smooth", "decay"),
-        param_space_callable="param_space",
+        has_param_space=True,
     )
-    # param_space_callable waives all declared params regardless of provided/defaults.
+    # param_space waives all declared params regardless of provided/defaults.
     assert definition.unsatisfied_params(frozenset()) == frozenset()
     assert definition.unsatisfied_params(frozenset({"window"})) == frozenset()
 

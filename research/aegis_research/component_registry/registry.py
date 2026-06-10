@@ -104,8 +104,8 @@ def _definition_public_snapshot(definition: ComponentDefinition) -> dict[str, An
             "names": list(manifest.param_names),
             "defaults": dict(manifest.defaults),
             "param_space": {
-                "available": manifest.param_space_callable is not None,
-                "callable": manifest.param_space_callable,
+                "available": definition.has_param_space,
+                "entrypoint": definition.param_space_entrypoint_name,
             },
         },
     }
@@ -211,7 +211,8 @@ def _registry_fingerprint(
         family: {
             component_id: {
                 "manifest": definition.manifest.fingerprint_payload(),
-                "callable": definition.callable_name,
+                "entrypoint": definition.callable_name,
+                "has_param_space": definition.has_param_space,
                 "source": definition.identity.public(),
             }
             for component_id, definition in family_definitions.items()
