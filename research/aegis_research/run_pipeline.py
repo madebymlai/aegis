@@ -50,6 +50,16 @@ def run_strategy_sweep(
     supersedes_run_id: str | None = None,
     on_run_refs: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    """Run a strategy sweep end-to-end, recording provenance for the Run.
+
+    ``on_run_refs`` receives the Run's refs snapshot (run id, run directory,
+    manifest path, status, started-at, finished-at) when the Run is created,
+    and again with terminal refs after a failure or interruption is recorded,
+    immediately before the exception re-raises. It does not fire on successful
+    completion — the returned result carries the final refs. The callback must
+    not raise: a raising callback's error propagates with the Run's real
+    failure as its ``__context__``. (ADR-0016)
+    """
     config = resolved_config.config
     if config.optimization is None:
         raise ConfigValidationError(
