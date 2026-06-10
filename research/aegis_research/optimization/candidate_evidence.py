@@ -16,7 +16,7 @@ from research.aegis_research.optimization.ranking import (
 )
 
 CANDIDATE_ROW_SCHEMA_VERSION = "candidate_row.v2"
-CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v2"
+CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v3"
 CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v2"
 OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v3"
 CANDIDATE_ROLES = ("best", "median", "worst")
@@ -34,7 +34,7 @@ def candidate_rows_from_param_index(
     source_identity: Mapping[str, Any],
     data_identity: Mapping[str, Any],
     hidden_params: Mapping[str, Any] | None = None,
-    portfolio_policy: Mapping[str, Any] | None = None,
+    allocation_policy: Mapping[str, Any] | None = None,
     store_namespace: Mapping[str, Any] | None = None,
     coordinate_levels: Sequence[str] = tuple(DEFAULT_COORDINATE_LEVELS),
 ) -> list[dict[str, Any]]:
@@ -43,7 +43,7 @@ def candidate_rows_from_param_index(
     source_identity = _canonical_mapping(source_identity)
     data_identity = _canonical_mapping(data_identity)
     hidden_params = _canonical_mapping(hidden_params or {})
-    portfolio_policy = _canonical_mapping(portfolio_policy or {})
+    allocation_policy = _canonical_mapping(allocation_policy or {})
     store_namespace = _canonical_mapping(store_namespace or {})
     rows = []
     for row_index, values in enumerate(row_values):
@@ -62,7 +62,7 @@ def candidate_rows_from_param_index(
             source_identity=source_identity,
             data_identity=data_identity,
             hidden_params=hidden_params,
-            portfolio_policy=portfolio_policy,
+            allocation_policy=allocation_policy,
         )
         rows.append(
             {
@@ -88,7 +88,7 @@ def candidate_rows_from_result(
     source_identity: Mapping[str, Any],
     data_identity: Mapping[str, Any],
     hidden_params: Mapping[str, Any] | None = None,
-    portfolio_policy: Mapping[str, Any] | None = None,
+    allocation_policy: Mapping[str, Any] | None = None,
     store_namespace: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one role-tagged candidate row per representative candidate.
@@ -102,7 +102,7 @@ def candidate_rows_from_result(
     source_identity = _canonical_mapping(source_identity)
     data_identity = _canonical_mapping(data_identity)
     hidden_params = _canonical_mapping(hidden_params or {})
-    portfolio_policy = _canonical_mapping(portfolio_policy or {})
+    allocation_policy = _canonical_mapping(allocation_policy or {})
     store_namespace = _canonical_mapping(store_namespace or {})
     candidates = (result.best, result.median, result.worst)
     rows = []
@@ -113,7 +113,7 @@ def candidate_rows_from_result(
             source_identity=source_identity,
             data_identity=data_identity,
             hidden_params=hidden_params,
-            portfolio_policy=portfolio_policy,
+            allocation_policy=allocation_policy,
         )
         rows.append(
             {
@@ -250,7 +250,7 @@ def _candidate_identity(
     source_identity: Mapping[str, Any],
     data_identity: Mapping[str, Any],
     hidden_params: Mapping[str, Any],
-    portfolio_policy: Mapping[str, Any],
+    allocation_policy: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {
         "schema_version": CANDIDATE_IDENTITY_SCHEMA_VERSION,
@@ -258,7 +258,7 @@ def _candidate_identity(
         "data_identity": dict(data_identity),
         "params": dict(params),
         "hidden_params": dict(hidden_params),
-        "portfolio_policy": dict(portfolio_policy),
+        "allocation_policy": dict(allocation_policy),
     }
 
 

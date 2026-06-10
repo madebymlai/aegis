@@ -101,7 +101,7 @@ def _seed_candidate_store(config: Any) -> str:
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
         source_identity=_source_evidence(),
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        portfolio_policy={"target_exposure_cap": 1.0},
+        allocation_policy={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     candidate_key = rows[0]["candidate_key"]
@@ -303,7 +303,7 @@ def _seed_parameterized_candidate(config: Any) -> str:
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
         source_identity=_parameterized_source_evidence(),
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        portfolio_policy={"target_exposure_cap": 1.0},
+        allocation_policy={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     candidate_key = rows[0]["candidate_key"]
