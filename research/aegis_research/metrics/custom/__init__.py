@@ -38,8 +38,10 @@ def register_custom_metrics(
 
 
 def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec]]:
-    """Catalog of available opt-in custom metrics, keyed by metric id.
+    """Available opt-in custom metrics, keyed by each definition's own id.
 
+    One flat tuple of records is the only thing a new custom metric module has
+    to join; the id keys are derived from the definitions, never written twice.
     Nothing here registers itself: a custom metric enters a registry only when
     a caller (``make_metric_registry_for``) passes its record through
     ``register_custom_metrics`` because a run requested it.
@@ -49,12 +51,10 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         ULCER_PERFORMANCE_INDEX_EXTRACTOR,
     )
 
-    return {
-        ULCER_PERFORMANCE_INDEX_DEFINITION.id: (
-            ULCER_PERFORMANCE_INDEX_DEFINITION,
-            ULCER_PERFORMANCE_INDEX_EXTRACTOR,
-        ),
-    }
+    available: tuple[tuple[MetricDefinition, ExtractorSpec], ...] = (
+        (ULCER_PERFORMANCE_INDEX_DEFINITION, ULCER_PERFORMANCE_INDEX_EXTRACTOR),
+    )
+    return {definition.id: (definition, spec) for definition, spec in available}
 
 
 __all__ = [

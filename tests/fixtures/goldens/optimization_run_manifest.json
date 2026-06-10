@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "f057f7914276479f02da6f949fb473b3bf48fd95e156a355746948a978d9e2e5",
+      "hash": "b55432fe23d58a91b5571505a0011aeb4de6cef2c556f7d873349a24fdadc26b",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 52099,
+      "size": 49377,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -177,7 +177,6 @@
               "total_fees_paid": 472.87016684089275,
               "total_return": 3.3729563695052756,
               "total_trades": 226.0,
-              "ulcer_performance_index": 0.3171731865540841,
               "win_rate": 60.17699115044248
             },
             "1": {
@@ -186,7 +185,6 @@
               "total_fees_paid": 382.03582984576957,
               "total_return": -19.81416143561923,
               "total_trades": 200.0,
-              "ulcer_performance_index": -0.9929117526558223,
               "win_rate": 52.0
             },
             "2": {
@@ -195,7 +193,6 @@
               "total_fees_paid": 575.4331292707328,
               "total_return": 47.108636231217275,
               "total_trades": 190.0,
-              "ulcer_performance_index": 3.8466722707096213,
               "win_rate": 57.36842105263158
             }
           },
@@ -205,7 +202,6 @@
             "total_fees_paid": 476.779708652465,
             "total_return": 10.22247705503444,
             "total_trades": 205.33333333333334,
-            "ulcer_performance_index": 1.056977901535961,
             "win_rate": 56.515137401024695
           },
           "identity": {
@@ -388,7 +384,6 @@
             "total_fees_paid": 322.3354208800294,
             "total_return": -1.4782323858154973,
             "total_trades": 164.0,
-            "ulcer_performance_index": 1.5111594039122815,
             "win_rate": 57.594350585501026
           },
           "params": {
@@ -407,7 +402,6 @@
               "total_fees_paid": 112.10026595342593,
               "total_return": 12.006507908667462,
               "total_trades": 66.0,
-              "ulcer_performance_index": 5.2092167778385825,
               "win_rate": 60.60606060606061
             },
             "1": {
@@ -416,7 +410,6 @@
               "total_fees_paid": 472.87016684089275,
               "total_return": 3.3729563695052756,
               "total_trades": 226.0,
-              "ulcer_performance_index": 0.3171731865540841,
               "win_rate": 60.17699115044248
             },
             "2": {
@@ -425,7 +418,6 @@
               "total_fees_paid": 382.03582984576957,
               "total_return": -19.81416143561923,
               "total_trades": 200.0,
-              "ulcer_performance_index": -0.9929117526558223,
               "win_rate": 52.0
             }
           },
@@ -443,7 +435,6 @@
               "total_fees_paid": 422.3688181318641,
               "total_return": -1.1506608411979005,
               "total_trades": 266.0,
-              "ulcer_performance_index": -0.10898473884181928,
               "win_rate": 54.51127819548872
             },
             "1": {
@@ -452,7 +443,6 @@
               "total_fees_paid": 401.8596931487011,
               "total_return": -24.268147501967096,
               "total_trades": 295.0,
-              "ulcer_performance_index": -1.3056264134407187,
               "win_rate": 54.57627118644067
             },
             "2": {
@@ -461,7 +451,6 @@
               "total_fees_paid": 484.1866837695087,
               "total_return": 28.012033108859658,
               "total_trades": 215.0,
-              "ulcer_performance_index": 2.2744921911013143,
               "win_rate": 51.627906976744185
             }
           },
@@ -471,7 +460,6 @@
             "total_fees_paid": 436.1383983500246,
             "total_return": 0.8644082552315537,
             "total_trades": 258.6666666666667,
-            "ulcer_performance_index": 0.2866270129395921,
             "win_rate": 53.571818786224526
           },
           "identity": {
@@ -654,7 +642,6 @@
             "total_fees_paid": 321.5834682507712,
             "total_return": -5.14921129631593,
             "total_trades": 214.33333333333334,
-            "ulcer_performance_index": 1.0441486405285016,
             "win_rate": 57.0942237777163
           },
           "params": {
@@ -673,7 +660,6 @@
               "total_fees_paid": 140.5218934717484,
               "total_return": 9.971174454217206,
               "total_trades": 82.0,
-              "ulcer_performance_index": 4.547057073868043,
               "win_rate": 62.19512195121951
             },
             "1": {
@@ -682,7 +668,6 @@
               "total_fees_paid": 422.3688181318641,
               "total_return": -1.1506608411979005,
               "total_trades": 266.0,
-              "ulcer_performance_index": -0.10898473884181928,
               "win_rate": 54.51127819548872
             },
             "2": {
@@ -691,7 +676,6 @@
               "total_fees_paid": 401.8596931487011,
               "total_return": -24.268147501967096,
               "total_trades": 295.0,
-              "ulcer_performance_index": -1.3056264134407187,
               "win_rate": 54.57627118644067
             }
           },
@@ -709,7 +693,6 @@
               "total_fees_paid": 419.0968270199723,
               "total_return": -10.638052466283279,
               "total_trades": 249.0,
-              "ulcer_performance_index": -0.624839110898729,
               "win_rate": 53.01204819277109
             },
             "1": {
@@ -718,7 +701,6 @@
               "total_fees_paid": 461.88094946013024,
               "total_return": -35.8603973997995,
               "total_trades": 275.0,
-              "ulcer_performance_index": -1.5537921697725352,
               "win_rate": 48.0
             },
             "2": {
@@ -727,7 +709,6 @@
               "total_fees_paid": 555.1662138023486,
               "total_return": 54.77853033557337,
               "total_trades": 196.0,
-              "ulcer_performance_index": 5.3272197547299225,
               "win_rate": 53.06122448979592
             }
           },
@@ -737,7 +718,6 @@
             "total_fees_paid": 478.7146634274837,
             "total_return": 2.76002682316353,
             "total_trades": 240.0,
-            "ulcer_performance_index": 1.049529491352886,
             "win_rate": 51.35775756085567
           },
           "identity": {
@@ -920,7 +900,6 @@
             "total_fees_paid": 353.1943209403859,
             "total_return": -11.215683813871308,
             "total_trades": 200.33333333333334,
-            "ulcer_performance_index": 1.3422237806319153,
             "win_rate": 53.15120221144318
           },
           "params": {
@@ -939,7 +918,6 @@
               "total_fees_paid": 178.6051863410552,
               "total_return": 12.851398424468858,
               "total_trades": 77.0,
-              "ulcer_performance_index": 6.20530262256701,
               "win_rate": 58.44155844155844
             },
             "1": {
@@ -948,7 +926,6 @@
               "total_fees_paid": 419.0968270199723,
               "total_return": -10.638052466283279,
               "total_trades": 249.0,
-              "ulcer_performance_index": -0.624839110898729,
               "win_rate": 53.01204819277109
             },
             "2": {
@@ -957,7 +934,6 @@
               "total_fees_paid": 461.88094946013024,
               "total_return": -35.8603973997995,
               "total_trades": 275.0,
-              "ulcer_performance_index": -1.5537921697725352,
               "win_rate": 48.0
             }
           },
@@ -1019,7 +995,6 @@
               "total_fees_paid": 472.87016684089275,
               "total_return": 3.3729563695052756,
               "total_trades": 226.0,
-              "ulcer_performance_index": 0.3171731865540841,
               "win_rate": 60.17699115044248
             },
             "1": {
@@ -1028,7 +1003,6 @@
               "total_fees_paid": 382.03582984576957,
               "total_return": -19.81416143561923,
               "total_trades": 200.0,
-              "ulcer_performance_index": -0.9929117526558223,
               "win_rate": 52.0
             },
             "2": {
@@ -1037,7 +1011,6 @@
               "total_fees_paid": 575.4331292707328,
               "total_return": 47.108636231217275,
               "total_trades": 190.0,
-              "ulcer_performance_index": 3.8466722707096213,
               "win_rate": 57.36842105263158
             }
           },
@@ -1047,7 +1020,6 @@
             "total_fees_paid": 476.779708652465,
             "total_return": 10.22247705503444,
             "total_trades": 205.33333333333334,
-            "ulcer_performance_index": 1.056977901535961,
             "win_rate": 56.515137401024695
           },
           "metrics": {
@@ -1056,7 +1028,6 @@
             "total_fees_paid": 322.3354208800294,
             "total_return": -1.4782323858154973,
             "total_trades": 164.0,
-            "ulcer_performance_index": 1.5111594039122815,
             "win_rate": 57.594350585501026
           },
           "params": {
@@ -1072,7 +1043,6 @@
               "total_fees_paid": 112.10026595342593,
               "total_return": 12.006507908667462,
               "total_trades": 66.0,
-              "ulcer_performance_index": 5.2092167778385825,
               "win_rate": 60.60606060606061
             },
             "1": {
@@ -1081,7 +1051,6 @@
               "total_fees_paid": 472.87016684089275,
               "total_return": 3.3729563695052756,
               "total_trades": 226.0,
-              "ulcer_performance_index": 0.3171731865540841,
               "win_rate": 60.17699115044248
             },
             "2": {
@@ -1090,7 +1059,6 @@
               "total_fees_paid": 382.03582984576957,
               "total_return": -19.81416143561923,
               "total_trades": 200.0,
-              "ulcer_performance_index": -0.9929117526558223,
               "win_rate": 52.0
             }
           }
@@ -1105,7 +1073,6 @@
               "total_fees_paid": 422.3688181318641,
               "total_return": -1.1506608411979005,
               "total_trades": 266.0,
-              "ulcer_performance_index": -0.10898473884181928,
               "win_rate": 54.51127819548872
             },
             "1": {
@@ -1114,7 +1081,6 @@
               "total_fees_paid": 401.8596931487011,
               "total_return": -24.268147501967096,
               "total_trades": 295.0,
-              "ulcer_performance_index": -1.3056264134407187,
               "win_rate": 54.57627118644067
             },
             "2": {
@@ -1123,7 +1089,6 @@
               "total_fees_paid": 484.1866837695087,
               "total_return": 28.012033108859658,
               "total_trades": 215.0,
-              "ulcer_performance_index": 2.2744921911013143,
               "win_rate": 51.627906976744185
             }
           },
@@ -1133,7 +1098,6 @@
             "total_fees_paid": 436.1383983500246,
             "total_return": 0.8644082552315537,
             "total_trades": 258.6666666666667,
-            "ulcer_performance_index": 0.2866270129395921,
             "win_rate": 53.571818786224526
           },
           "metrics": {
@@ -1142,7 +1106,6 @@
             "total_fees_paid": 321.5834682507712,
             "total_return": -5.14921129631593,
             "total_trades": 214.33333333333334,
-            "ulcer_performance_index": 1.0441486405285016,
             "win_rate": 57.0942237777163
           },
           "params": {
@@ -1158,7 +1121,6 @@
               "total_fees_paid": 140.5218934717484,
               "total_return": 9.971174454217206,
               "total_trades": 82.0,
-              "ulcer_performance_index": 4.547057073868043,
               "win_rate": 62.19512195121951
             },
             "1": {
@@ -1167,7 +1129,6 @@
               "total_fees_paid": 422.3688181318641,
               "total_return": -1.1506608411979005,
               "total_trades": 266.0,
-              "ulcer_performance_index": -0.10898473884181928,
               "win_rate": 54.51127819548872
             },
             "2": {
@@ -1176,7 +1137,6 @@
               "total_fees_paid": 401.8596931487011,
               "total_return": -24.268147501967096,
               "total_trades": 295.0,
-              "ulcer_performance_index": -1.3056264134407187,
               "win_rate": 54.57627118644067
             }
           }
@@ -1191,7 +1151,6 @@
               "total_fees_paid": 419.0968270199723,
               "total_return": -10.638052466283279,
               "total_trades": 249.0,
-              "ulcer_performance_index": -0.624839110898729,
               "win_rate": 53.01204819277109
             },
             "1": {
@@ -1200,7 +1159,6 @@
               "total_fees_paid": 461.88094946013024,
               "total_return": -35.8603973997995,
               "total_trades": 275.0,
-              "ulcer_performance_index": -1.5537921697725352,
               "win_rate": 48.0
             },
             "2": {
@@ -1209,7 +1167,6 @@
               "total_fees_paid": 555.1662138023486,
               "total_return": 54.77853033557337,
               "total_trades": 196.0,
-              "ulcer_performance_index": 5.3272197547299225,
               "win_rate": 53.06122448979592
             }
           },
@@ -1219,7 +1176,6 @@
             "total_fees_paid": 478.7146634274837,
             "total_return": 2.76002682316353,
             "total_trades": 240.0,
-            "ulcer_performance_index": 1.049529491352886,
             "win_rate": 51.35775756085567
           },
           "metrics": {
@@ -1228,7 +1184,6 @@
             "total_fees_paid": 353.1943209403859,
             "total_return": -11.215683813871308,
             "total_trades": 200.33333333333334,
-            "ulcer_performance_index": 1.3422237806319153,
             "win_rate": 53.15120221144318
           },
           "params": {
@@ -1244,7 +1199,6 @@
               "total_fees_paid": 178.6051863410552,
               "total_return": 12.851398424468858,
               "total_trades": 77.0,
-              "ulcer_performance_index": 6.20530262256701,
               "win_rate": 58.44155844155844
             },
             "1": {
@@ -1253,7 +1207,6 @@
               "total_fees_paid": 419.0968270199723,
               "total_return": -10.638052466283279,
               "total_trades": 249.0,
-              "ulcer_performance_index": -0.624839110898729,
               "win_rate": 53.01204819277109
             },
             "2": {
@@ -1262,14 +1215,13 @@
               "total_fees_paid": 461.88094946013024,
               "total_return": -35.8603973997995,
               "total_trades": 275.0,
-              "ulcer_performance_index": -1.5537921697725352,
               "win_rate": 48.0
             }
           }
         }
       },
       "lock": null,
-      "metric_registry_fingerprint": "5558ead3c5faf04178b8fa3922e59712cf83fb5c7a64eeef09c7809a9ae2d66c",
+      "metric_registry_fingerprint": "25995c4bdb5f6c98e4bf62fc60bc38a534e927d2ff469e02102e075d3bdaa3ae",
       "open_prices_available": true,
       "optimization": {
         "execute": {},
