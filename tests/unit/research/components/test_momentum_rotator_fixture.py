@@ -8,7 +8,7 @@ from research.aegis_research.market_data.contracts import MarketDataBundle
 _SYMBOLS = ["SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU"]
 
 
-class FakeWideInputs:
+class FakeComponentInputs:
     def __init__(self, data, indicators, n_candidates, n_symbols):
         self.data = data
         self.indicators = indicators
@@ -55,7 +55,7 @@ def test_run_returns_candidate_major_allocation_array() -> None:
     data = _make_data()
     close = data.feature("Close")
     n_candidates = 2
-    inputs = FakeWideInputs(
+    inputs = FakeComponentInputs(
         data,
         {
             "momentum_score": _indicator_array(close, n_candidates, 0.05),

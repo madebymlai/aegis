@@ -1,4 +1,4 @@
-"""Unit tests for the WideIndicatorPrecompute store.
+"""Unit tests for the IndicatorPrecompute store.
 
 The store holds indicator outputs computed once over the full series, addressed
 candidate-major (each candidate owns a contiguous ``n_symbols`` column block) and
@@ -13,8 +13,8 @@ import pandas as pd
 import pytest
 
 from research.aegis_research.optimization.precompute import (
+    IndicatorPrecompute,
     PrecomputeCausalityError,
-    WideIndicatorPrecompute,
     build_candidate_index,
     validate_precompute_no_lookahead,
 )
@@ -33,7 +33,7 @@ def _candidate_major_array(n_rows: int, n_candidates: int, n_symbols: int) -> np
 def test_window_selects_rows_and_gathers_candidate_columns_in_requested_order() -> None:
     n_rows, n_candidates, n_symbols = 6, 3, 2
     arr = _candidate_major_array(n_rows, n_candidates, n_symbols)
-    store = WideIndicatorPrecompute(
+    store = IndicatorPrecompute(
         outputs={"sig": arr},
         candidate_index={("A",): 0, ("B",): 1, ("C",): 2},
         n_symbols=n_symbols,
@@ -52,7 +52,7 @@ def test_window_selects_rows_and_gathers_candidate_columns_in_requested_order() 
 def test_window_can_use_output_specific_deduped_candidate_index() -> None:
     n_rows, n_symbols = 4, 1
     arr = _candidate_major_array(n_rows, n_candidates=2, n_symbols=n_symbols)
-    store = WideIndicatorPrecompute(
+    store = IndicatorPrecompute(
         outputs={"sig": arr},
         candidate_index={("A", 1): 0, ("A", 2): 1, ("B", 1): 2, ("B", 2): 3},
         n_symbols=n_symbols,
@@ -86,7 +86,7 @@ def _close_frame(n_rows: int = 10) -> pd.DataFrame:
 
 def _lagged_delta_precompute(
     close: pd.DataFrame, n_candidates: int, **param_lists
-) -> WideIndicatorPrecompute:
+) -> IndicatorPrecompute:
     prices = close.to_numpy()
     n_rows, n_symbols = prices.shape
     outputs = np.full((n_rows, n_candidates * n_symbols), np.nan)
@@ -95,7 +95,7 @@ def _lagged_delta_precompute(
             outputs[lag:, candidate * n_symbols : (candidate + 1) * n_symbols] = (
                 prices[lag:] - prices[:-lag]
             )
-    return WideIndicatorPrecompute(
+    return IndicatorPrecompute(
         outputs={"delta": outputs},
         candidate_index=build_candidate_index(param_lists),
         n_symbols=n_symbols,
@@ -104,7 +104,7 @@ def _lagged_delta_precompute(
 
 def _future_delta_precompute(
     close: pd.DataFrame, n_candidates: int, **param_lists
-) -> WideIndicatorPrecompute:
+) -> IndicatorPrecompute:
     prices = close.to_numpy()
     n_rows, n_symbols = prices.shape
     outputs = np.full((n_rows, n_candidates * n_symbols), np.nan)
@@ -113,7 +113,7 @@ def _future_delta_precompute(
             outputs[:-horizon, candidate * n_symbols : (candidate + 1) * n_symbols] = (
                 prices[horizon:] - prices[:-horizon]
             )
-    return WideIndicatorPrecompute(
+    return IndicatorPrecompute(
         outputs={"delta": outputs},
         candidate_index=build_candidate_index(param_lists),
         n_symbols=n_symbols,

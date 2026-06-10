@@ -26,7 +26,7 @@ from research.aegis_research.optimization.candidate_grid import (
 )
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
 )
 
 TRADES_METRIC = "total_trades"
@@ -149,7 +149,7 @@ def _meets_trade_floor(
 
 
 def invalid_candidates(
-    store: WideIndicatorPrecompute, keys: Sequence[CandidateKey]
+    store: IndicatorPrecompute, keys: Sequence[CandidateKey]
 ) -> set[CandidateKey]:
     """Return keys of Candidates whose Indicator output is entirely non-finite.
 

@@ -188,7 +188,7 @@ def test_empty_frame_passes() -> None:
     assert_signed_allocations_within_caps(allocations, gross_cap=1.0)
 
 
-def _candidate_wide_frame(weights_by_candidate: dict[str, list[float]]) -> pd.DataFrame:
+def _candidate_frame(weights_by_candidate: dict[str, list[float]]) -> pd.DataFrame:
     columns = pd.MultiIndex.from_tuples(
         [
             (candidate, symbol)
@@ -201,19 +201,19 @@ def _candidate_wide_frame(weights_by_candidate: dict[str, list[float]]) -> pd.Da
     return pd.DataFrame([values], index=_index(1), columns=columns)
 
 
-def test_candidate_wide_frame_gates_each_candidate_independently() -> None:
+def test_candidate_frame_gates_each_candidate_independently() -> None:
     # candidate-a is fully invested both legs (gross 1.0); candidate-b idles.
-    allocations = _candidate_wide_frame(
+    allocations = _candidate_frame(
         {"candidate-a": [0.5, -0.5], "candidate-b": [0.0, 0.0]}
     )
 
     assert_signed_allocations_within_caps(allocations, gross_cap=1.0, net_cap=0.0)
 
 
-def test_candidate_wide_frame_names_the_breaching_candidate() -> None:
+def test_candidate_frame_names_the_breaching_candidate() -> None:
     # candidate-b breaches gross (Σ|wᵢ| = 1.5) while candidate-a stays within cap;
     # the error must name the offender, not just report a breach.
-    allocations = _candidate_wide_frame(
+    allocations = _candidate_frame(
         {"candidate-a": [0.5, 0.5], "candidate-b": [1.0, 0.5]}
     )
 

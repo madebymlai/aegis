@@ -3,8 +3,8 @@
 Signal-side parameter optimization only. A source exposes two stages plus a
 ``params`` mapping of ``vbt.Param`` axes:
 
-- ``precompute(close, n_candidates, **param_lists) -> WideIndicatorPrecompute``
-  runs each indicator's wide callable once over the given series, returning a
+- ``precompute(close, n_candidates, **param_lists) -> IndicatorPrecompute``
+  runs each indicator's callable once over the given series, returning a
   candidate-major store sliceable by split range. Run over the **full** series,
   it preserves all available warmup history; candidates whose lookback still
   exceeds that history are invalidated before ranking. Outputs must satisfy the
@@ -50,7 +50,7 @@ from research.aegis_research.component_registry.contracts import (
     STRATEGY_ALLOCATION_OUTPUTS,
 )
 from research.aegis_research.optimization.precompute import (
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     candidate_keys,
 )
 
@@ -91,7 +91,7 @@ class OptimizationSourceError(ValueError):
 
 @dataclass(frozen=True)
 class OptimizationSource:
-    precompute: Callable[..., WideIndicatorPrecompute]
+    precompute: Callable[..., IndicatorPrecompute]
     simulate: Callable[..., Any]
     params: dict[str, vbt.Param]
     output_name: str

@@ -31,7 +31,7 @@ from research.aegis_research.optimization.param_namespace import (
 )
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     build_candidate_index,
     candidate_keys,
 )
@@ -47,7 +47,7 @@ class ComponentSourceError(ValueError):
 
 
 @dataclass(frozen=True)
-class WideComponentStrategyInputs:
+class ComponentStrategyInputs:
     data: MarketDataBundle
     indicators: Mapping[str, np.ndarray]
     n_candidates: int
@@ -119,7 +119,7 @@ def build_component_optimization_source(
 
     def precompute(
         close: pd.DataFrame, n_candidates: int, **param_lists: Any
-    ) -> WideIndicatorPrecompute:
+    ) -> IndicatorPrecompute:
         # Run each indicator's batched callable once over ``close`` (the full series in
         # the selection phase) and return a candidate-major store sliceable by split
         # range. Candidates whose warmup still exceeds the full series are marked
@@ -149,7 +149,7 @@ def build_component_optimization_source(
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
                 outputs[output_name] = output_arr
                 candidate_index_by_output[output_name] = deduped.candidate_index
-        return WideIndicatorPrecompute(
+        return IndicatorPrecompute(
             outputs=outputs,
             candidate_index=build_candidate_index(param_lists),
             n_symbols=n_symbols,
@@ -166,7 +166,7 @@ def build_component_optimization_source(
         # sliced to that window; the central-metrics step prices the allocations.
         data_slice = _slice_data(data, close_window, input_names)
         n_symbols = len(close_window.columns)
-        strategy_wide_inputs = WideComponentStrategyInputs(
+        strategy_inputs = ComponentStrategyInputs(
             data=data_slice,
             indicators=indicator_window,
             n_candidates=n_candidates,
@@ -177,18 +177,18 @@ def build_component_optimization_source(
                 "component_optimization_source": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
             },
         )
-        strategy_wide_params = _wide_params_for_runtime(
+        strategy_params = _params_for_runtime(
             strategy, param_lists, n_candidates=n_candidates
         )
         alloc_arr = _validated_component_array(
             strategy,
             strategy.callable(
-                strategy_wide_inputs, n_candidates=n_candidates, **strategy_wide_params
+                strategy_inputs, n_candidates=n_candidates, **strategy_params
             ),
             expected_shape=_candidate_major_shape(close_window, n_candidates),
             output_label="allocation",
         )
-        return _build_wide_frame(alloc_arr, close_window, n_candidates, param_lists, params)
+        return _build_frame(alloc_arr, close_window, n_candidates, param_lists, params)
 
     evidence = _source_evidence(strategy, indicators, params)
     strategy_manifest = strategy.definition.manifest
@@ -346,7 +346,7 @@ def _validate_component_param_sources(
         )
 
 
-def _wide_params_for_runtime(
+def _params_for_runtime(
     runtime: _ComponentRuntime,
     param_lists: Mapping[str, Sequence[Any]],
     *,
@@ -367,7 +367,7 @@ def _deduplicate_runtime_params(
     full_candidate_keys: Sequence[CandidateKey],
     n_candidates: int,
 ) -> _RuntimeParamDeduplication:
-    runtime_param_lists = _wide_params_for_runtime(runtime, param_lists, n_candidates=n_candidates)
+    runtime_param_lists = _params_for_runtime(runtime, param_lists, n_candidates=n_candidates)
     runtime_param_names = sorted(runtime_param_lists)
     unique_positions: dict[tuple[Any, ...], int] = {}
     unique_param_lists: dict[str, list[Any]] = {name: [] for name in runtime_param_names}
@@ -446,7 +446,7 @@ def _validated_component_array(
     return arr
 
 
-def _build_wide_frame(
+def _build_frame(
     alloc_arr: np.ndarray,
     close_slice: pd.DataFrame,
     n_candidates: int,

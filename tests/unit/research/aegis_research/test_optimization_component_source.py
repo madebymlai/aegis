@@ -151,11 +151,11 @@ def test_component_source_rejects_duplicate_produced_outputs(tmp_path: Path) -> 
 
 def test_indicator_batched_callable_must_return_mapping(tmp_path: Path) -> None:
     root = tmp_path / "research" / "components"
-    _write_wide_indicator(
+    _write_indicator_template(
         root / "indicators" / "trend.py",
         return_expression="result",
     )
-    _write_wide_strategy(root / "strategies" / "strategy.py")
+    _write_strategy_template(root / "strategies" / "strategy.py")
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     source = build_component_optimization_source(
         _config(), component_registry=registry, data=_data_bundle()
@@ -182,11 +182,11 @@ def test_indicator_mapping_keys_must_match_manifest_outputs(
     tmp_path: Path, return_expression: str, match: str
 ) -> None:
     root = tmp_path / "research" / "components"
-    _write_wide_indicator(
+    _write_indicator_template(
         root / "indicators" / "trend.py",
         return_expression=return_expression,
     )
-    _write_wide_strategy(root / "strategies" / "strategy.py")
+    _write_strategy_template(root / "strategies" / "strategy.py")
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     source = build_component_optimization_source(
         _config(), component_registry=registry, data=_data_bundle()
@@ -241,8 +241,8 @@ def test_indicator_output_shape_gate_rejects_wrong_rows_and_columns(
     tmp_path: Path, return_expression: str, match: str
 ) -> None:
     root = tmp_path / "research" / "components"
-    _write_wide_indicator(root / "indicators" / "trend.py", return_expression=return_expression)
-    _write_wide_strategy(root / "strategies" / "strategy.py")
+    _write_indicator_template(root / "indicators" / "trend.py", return_expression=return_expression)
+    _write_strategy_template(root / "strategies" / "strategy.py")
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     source = build_component_optimization_source(
         _config(), component_registry=registry, data=_data_bundle()
@@ -273,8 +273,8 @@ def test_strategy_allocation_shape_gate_rejects_wrong_rows_and_columns(
     tmp_path: Path, return_expression: str, match: str
 ) -> None:
     root = tmp_path / "research" / "components"
-    _write_wide_indicator(root / "indicators" / "trend.py")
-    _write_wide_strategy(root / "strategies" / "strategy.py", return_expression=return_expression)
+    _write_indicator_template(root / "indicators" / "trend.py")
+    _write_strategy_template(root / "strategies" / "strategy.py", return_expression=return_expression)
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     source = build_component_optimization_source(
         _config(), component_registry=registry, data=_data_bundle()
@@ -456,10 +456,10 @@ def _write_hidden_strategy(path: Path) -> None:
     )
 
 
-def test_component_source_wide_pipeline_returns_multiindex_frame(tmp_path: Path) -> None:
+def test_component_source_pipeline_returns_multiindex_frame(tmp_path: Path) -> None:
     root = tmp_path / "research" / "components"
-    _write_wide_indicator(root / "indicators" / "trend.py")
-    _write_wide_strategy(root / "strategies" / "strategy.py")
+    _write_indicator_template(root / "indicators" / "trend.py")
+    _write_strategy_template(root / "strategies" / "strategy.py")
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     config = _config()
     data = _data_bundle()
@@ -486,8 +486,8 @@ def test_component_precompute_deduplicates_indicator_params_with_window_parity(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "research" / "components"
-    _write_wide_indicator(root / "indicators" / "trend.py")
-    _write_wide_strategy(root / "strategies" / "strategy.py")
+    _write_indicator_template(root / "indicators" / "trend.py")
+    _write_strategy_template(root / "strategies" / "strategy.py")
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     data = _data_bundle()
     source = build_component_optimization_source(_config(), component_registry=registry, data=data)
@@ -591,7 +591,7 @@ def _data_bundle() -> MarketDataBundle:
     return MarketDataBundle(features={"Close": close}, loaded_features=("Close",))
 
 
-def _write_wide_indicator(
+def _write_indicator_template(
     path: Path,
     *,
     return_expression: str = "{'trend': result}",
@@ -599,7 +599,7 @@ def _write_wide_indicator(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "# %% component overview\n"
-        "# Parameterized indicator fixture with wide callable.\n"
+        "# Parameterized indicator fixture with callable.\n"
         "# %% define component metadata\n"
         "import numpy as np\n"
         "from vectorbtpro import vbt\n"
@@ -630,7 +630,7 @@ def _write_wide_indicator(
     )
 
 
-def _write_wide_strategy(
+def _write_strategy_template(
     path: Path,
     *,
     return_expression: str = "alloc",
@@ -638,7 +638,7 @@ def _write_wide_strategy(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "# %% component overview\n"
-        "# Parameterized strategy fixture with wide callable.\n"
+        "# Parameterized strategy fixture with callable.\n"
         "# %% define component metadata\n"
         "import numpy as np\n"
         "import pandas as pd\n"

@@ -14,7 +14,7 @@ COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components
 _SYMBOLS = ["SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU"]
 
 
-def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_components(
+def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -28,7 +28,7 @@ def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_componen
         yaml.safe_dump(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
-                "name": "wide_pipeline_e2e",
+                "name": "pipeline_e2e",
                 "output_dir": "runs",
                 "data": {
                     "source": "synthetic",
@@ -68,7 +68,7 @@ def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_componen
         )
     )
 
-    exit_code = cli.main(["run", str(config_path), "--json", "--run-id", "wide-e2e"])
+    exit_code = cli.main(["run", str(config_path), "--json", "--run-id", "pipeline-e2e"])
 
     output = capsys.readouterr()
     assert exit_code == 0, f"CLI failed: {output.err}"
@@ -76,11 +76,11 @@ def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_componen
     payload = json.loads(output.out)
     assert payload["status"] == "success"
 
-    artifact_path = tmp_path / "runs" / "wide-e2e" / "strategy_run.json"
+    artifact_path = tmp_path / "runs" / "pipeline-e2e" / "strategy_run.json"
     assert artifact_path.exists()
     artifact = json.loads(artifact_path.read_text())
 
-    manifest_path = tmp_path / "runs" / "wide-e2e" / "manifest.json"
+    manifest_path = tmp_path / "runs" / "pipeline-e2e" / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     assert (
         manifest["evidence"]["optimization"]["source"]["schema_version"]

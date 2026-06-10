@@ -2,7 +2,7 @@
 
 The selection phase runs in two stages so indicator warmup can use the full
 available history. The candidate set is materialised once up front (seeded
-``combine_params``); each indicator's wide callable runs once over the **full**
+``combine_params``); each indicator's callable runs once over the **full**
 series into a candidate-major store (stage 1, ``precompute``); candidates with an
 entirely non-finite full-history block for any indicator output are marked invalid;
 then Phase 1 sweeps every split's *selection* set running only stage 2
@@ -50,7 +50,7 @@ from research.aegis_research.optimization.candidate_validity import (
 )
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     candidate_keys,
 )
 from research.aegis_research.optimization.ranking import (
@@ -110,7 +110,7 @@ def execute_optimization(
         name: vbt.Param(values, level=0) for name, values in sampled_lists.items()
     }
 
-    # Stage 1: run each indicator's wide callable once over the full series.
+    # Stage 1: run each indicator's callable once over the full series.
     sampled_candidate_keys = candidate_keys(sampled_lists)
     store = source.precompute(close, n_candidates, **sampled_lists)
     invalid_candidate_keys = invalid_candidates(
@@ -181,7 +181,7 @@ def _build_precomputed_window_metrics(
     report: ReportConfig,
     close: pd.DataFrame,
     open_: pd.DataFrame,
-    store: WideIndicatorPrecompute,
+    store: IndicatorPrecompute,
     invalid_candidate_keys: set[CandidateKey],
     extractors: Mapping[str, ExtractorSpec],
 ) -> Callable[..., Any]:
@@ -207,7 +207,7 @@ def _build_precomputed_window_metrics(
         close_window = close.iloc[range_]
         open_window = open_.iloc[range_]
         indicator_window = store.window(range_, keys)
-        wide_allocations = source.simulate(
+        allocations = source.simulate(
             close_window, indicator_window, n_combos, **combo_lists
         )
         # Invalid Candidates are excluded by-key via classify_candidates;
@@ -217,7 +217,7 @@ def _build_precomputed_window_metrics(
         return _metrics_from_allocations(
             close_window,
             open_window,
-            wide_allocations,
+            allocations,
             portfolio,
             report,
             metric_keys,
@@ -248,7 +248,7 @@ def _extract_combos(
 def _metrics_from_allocations(
     close_window: pd.DataFrame,
     open_window: pd.DataFrame,
-    wide_allocations: Any,
+    allocations: Any,
     portfolio: PortfolioConfig,
     report: ReportConfig,
     metric_keys: list[tuple],
@@ -257,14 +257,14 @@ def _metrics_from_allocations(
     *,
     market_index: pd.Index,
 ) -> Any:
-    if wide_allocations is vbt.NoResult:
+    if allocations is vbt.NoResult:
         return vbt.NoResult
     n_symbols = len(close_window.columns)
-    if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
+    if n_symbols == 0 or len(allocations.columns) // n_symbols < 1:
         return vbt.NoResult
     pf = simulate_portfolio_batch(
         close_window,
-        wide_allocations,
+        allocations,
         portfolio,
         open_=open_window,
         market_index=market_index,
@@ -312,7 +312,7 @@ def _sweep(
         # ``mono_n_chunks="auto"`` builds one super-chunk per core that
         # ``engine="pathos"`` runs in parallel (pathos uses dill, so the simulate
         # closure and precomputed store serialize cleanly), while within each chunk
-        # the wide strategy vectorizes its candidates through numpy.
+        # the strategy vectorizes its candidates through numpy.
         options["mono_n_chunks"] = "auto"
         # ``join_pool=True`` closes/joins/clears the pathos worker pool after the sweep.
         # vbt defaults this off to reuse a warm pool across repeated sweeps, but a run
@@ -352,7 +352,7 @@ def _attach_held_out(
     report: ReportConfig,
     close: pd.DataFrame,
     open_: pd.DataFrame,
-    store: WideIndicatorPrecompute,
+    store: IndicatorPrecompute,
     param_names: list[str],
     invalid_candidate_keys: set[CandidateKey],
     extractors: Mapping[str, ExtractorSpec],

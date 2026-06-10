@@ -1,6 +1,6 @@
 """Unit tests for candidate_validity (Invalid rule + classify_candidates).
 
-Invalid rule tests build WideIndicatorPrecompute stores by hand and assert the
+Invalid rule tests build IndicatorPrecompute stores by hand and assert the
 Invalid Candidate keys are detected without a full Run.
 
 Classify-candidates tests exercise the four-way precedence-ordered verdict
@@ -20,7 +20,7 @@ from research.aegis_research.optimization.candidate_validity import (
     invalid_candidates,
 )
 from research.aegis_research.optimization.precompute import (
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     build_candidate_index,
     candidate_keys,
 )
@@ -31,8 +31,8 @@ def _store(
     outputs: dict[str, np.ndarray],
     n_symbols: int,
     param_lists: dict[str, list],
-) -> WideIndicatorPrecompute:
-    return WideIndicatorPrecompute(
+) -> IndicatorPrecompute:
+    return IndicatorPrecompute(
         outputs=outputs,
         candidate_index=build_candidate_index(param_lists),
         n_symbols=n_symbols,
@@ -176,7 +176,7 @@ def test_respects_output_candidate_index_dedup() -> None:
     output_index = {
         "sig": {(1, 10): 0, (2, 10): 0, (3, 10): 1}  # (1,10) and (2,10) share block 0
     }
-    store = WideIndicatorPrecompute(
+    store = IndicatorPrecompute(
         outputs={"sig": outputs},
         candidate_index=full_index,
         n_symbols=n_symbols,

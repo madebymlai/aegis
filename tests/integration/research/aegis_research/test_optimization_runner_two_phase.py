@@ -17,7 +17,7 @@ from vectorbtpro import vbt
 from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     build_candidate_index,
     empty_precompute,
 )
@@ -51,7 +51,7 @@ def _exposure_simulate(close: pd.DataFrame, indicator_window, n_combos: int, **p
 
     This is a strategy-only source (no indicators), so it ignores the windowed
     indicator outputs and computes allocations directly from the price window.
-    Returns wide filled allocations with candidate-major MultiIndex columns
+    Returns filled allocations with candidate-major MultiIndex columns
     ``[alpha, symbol]`` — higher alpha means higher exposure, so in an uptrend
     total_return is strictly monotonic in alpha.
     """
@@ -258,7 +258,7 @@ def test_runner_preserves_total_candidates_through_held_out(monkeypatch) -> None
 
 def _warmup_precompute(
     close: pd.DataFrame, n_candidates: int, **param_lists
-) -> WideIndicatorPrecompute:
+) -> IndicatorPrecompute:
     """Causal momentum (close[t]/close[t-window]-1); a window >= history is all-NaN."""
     windows = param_lists["window"]
     prices = close.to_numpy()
@@ -269,7 +269,7 @@ def _warmup_precompute(
         if window < n_rows:
             block[window:] = prices[window:] / prices[:-window] - 1.0
         outputs[:, candidate * n_symbols : (candidate + 1) * n_symbols] = block
-    return WideIndicatorPrecompute(
+    return IndicatorPrecompute(
         outputs={"mom": outputs},
         candidate_index=build_candidate_index(param_lists),
         n_symbols=n_symbols,

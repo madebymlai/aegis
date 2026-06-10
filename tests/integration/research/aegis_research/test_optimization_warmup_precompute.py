@@ -19,7 +19,7 @@ from vectorbtpro import vbt
 from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     build_candidate_index,
 )
 from research.aegis_research.optimization.ranking import OptimizationResult
@@ -54,7 +54,7 @@ def _downtrend_close() -> pd.DataFrame:
 
 def _warmup_precompute(
     close: pd.DataFrame, n_candidates: int, **param_lists
-) -> WideIndicatorPrecompute:
+) -> IndicatorPrecompute:
     """Causal momentum (close[t]/close[t-window]-1); first ``window`` rows are NaN."""
     windows = param_lists["window"]
     prices = close.to_numpy()
@@ -65,7 +65,7 @@ def _warmup_precompute(
         if window < n_rows:
             block[window:] = prices[window:] / prices[:-window] - 1.0
         outputs[:, candidate * n_symbols : (candidate + 1) * n_symbols] = block
-    return WideIndicatorPrecompute(
+    return IndicatorPrecompute(
         outputs={"mom": outputs},
         candidate_index=build_candidate_index(param_lists),
         n_symbols=n_symbols,
