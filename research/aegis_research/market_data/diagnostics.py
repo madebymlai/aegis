@@ -13,7 +13,7 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data import panels as _panels
 from research.aegis_research.market_data.contracts import (
     QUALITY_PROVIDER_FAILED,

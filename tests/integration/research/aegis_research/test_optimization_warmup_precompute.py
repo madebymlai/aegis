@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.config import OptimizationConfig
+from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,

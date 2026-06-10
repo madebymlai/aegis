@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.configuration.schema import (
+from research.aegis_research.configuration import (
     DataConfig,
     has_data_array_token_shape,
 )

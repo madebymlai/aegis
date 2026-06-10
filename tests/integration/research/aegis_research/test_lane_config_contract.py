@@ -6,7 +6,7 @@ import pytest
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
     load_run_config,

@@ -20,7 +20,7 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.config import ReportConfig
+from research.aegis_research.configuration import ReportConfig
 from research.aegis_research.metrics import (
     SOURCE_TYPE_CUSTOM,
     MetricDefinition,

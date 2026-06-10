@@ -12,8 +12,10 @@ from pydantic import (
     ConfigDict,
     Field,
     TypeAdapter,
-    ValidationError as PydanticValidationError,
     model_validator,
+)
+from pydantic import (
+    ValidationError as PydanticValidationError,
 )
 
 from research.aegis_research.component_registry.contracts import (

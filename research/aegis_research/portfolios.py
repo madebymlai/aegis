@@ -6,7 +6,7 @@ import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
-from research.aegis_research.config import PortfolioConfig
+from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.portfolio_policy import (
     apply_executable_mask_and_terminal_liquidation,
     assert_signed_allocations_within_caps,

@@ -23,7 +23,7 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.configuration.schema import ReportConfig
+from research.aegis_research.configuration import ReportConfig
 from research.aegis_research.metrics.stats import (
     PORTFOLIO_METRIC_CATALOG,
     PORTFOLIO_STATS_METRICS,

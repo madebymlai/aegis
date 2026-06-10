@@ -20,7 +20,7 @@ from research.aegis_research.component_registry import (
     COMPONENT_FAMILIES,
     ComponentFamily,
 )
-from research.aegis_research.configuration.schema import LOCK_ROLES, Lock
+from research.aegis_research.configuration import LOCK_ROLES, Lock
 from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,

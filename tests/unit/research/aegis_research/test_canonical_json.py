@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from research.aegis_research import config as public_config
+from research.aegis_research import configuration as public_config
 from research.aegis_research.canonical_json import canonical_json_bytes, to_builtin
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,

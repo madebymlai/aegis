@@ -5,10 +5,7 @@ from warnings import warn
 
 import pandas as pd
 
-from research.aegis_research.configuration.env_references import (
-    resolve_env_refs,
-)
-from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.configuration import DataConfig, resolve_env_refs
 from research.aegis_research.market_data import native_metadata as _native_metadata
 from research.aegis_research.market_data.adapters._support import (
     index_evidence,

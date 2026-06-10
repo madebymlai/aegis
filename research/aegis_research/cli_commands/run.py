@@ -21,7 +21,7 @@ from research.aegis_research.component_registry import (
     ComponentRegistryError,
     discover_component_registry,
 )
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     ConfigSelectionEvidence,
     ConfigValidationError,
     load_run_config,

@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from research.aegis_research import data as data_module
-from research.aegis_research.config import DataConfig
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
     LOGICAL_FEATURES,
     OHLCV_FEATURES,

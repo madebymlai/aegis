@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data.contracts import (
     QUALITY_DEGRADED_ALLOWED,
     QUALITY_HEALTHY,

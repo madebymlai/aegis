@@ -6,7 +6,7 @@ from typing import Any
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
 )
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     ConfigValidationError,
     ConfigValidationIssue,

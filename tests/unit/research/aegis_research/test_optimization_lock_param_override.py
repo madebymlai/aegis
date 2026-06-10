@@ -9,7 +9,7 @@ Manifest never silently misrepresents what ran.
 
 from __future__ import annotations
 
-from research.aegis_research.config import RunConfig
+from research.aegis_research.configuration import RunConfig
 from research.aegis_research.optimization.lock_param_override import (
     overridden_component_params,
 )

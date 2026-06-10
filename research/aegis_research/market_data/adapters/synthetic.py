@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data.adapters._support import (
     index_evidence,
     local_provider_metadata,

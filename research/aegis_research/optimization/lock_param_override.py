@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from research.aegis_research.component_registry import ComponentFamily
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,

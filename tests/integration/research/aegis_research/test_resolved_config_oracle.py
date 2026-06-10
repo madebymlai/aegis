@@ -19,8 +19,7 @@ import pytest
 
 from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.configuration.resolution import resolve_run_config
-from research.aegis_research.configuration.schema import CONFIG_SCHEMA_VERSION
+from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION, resolve_run_config
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
 
 _SPLIT = {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10}

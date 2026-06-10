@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from research.aegis_research import cli
-from research.aegis_research.config import CONFIG_SCHEMA_VERSION
+from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.candidate_store import CandidateStore, CandidateStoreError
 from research.aegis_research.optimization.param_namespace import (
     ComponentRef,

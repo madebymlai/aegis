@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-from research.aegis_research.configuration.schema import (
+from research.aegis_research.configuration import (
     ConfigValidationError,
     ConfigValidationIssue,
 )

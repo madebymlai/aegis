@@ -8,19 +8,19 @@ public config surface.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from research.aegis_research.component_registry import (
-    ComponentDefinition,
-    ComponentRegistryError,
-    ComponentSelection,
-    FrozenComponentRegistry,
-)
 from research.aegis_research.configuration.schema import (
     ConfigValidationIssue,
     RunConfig,
 )
 from research.aegis_research.metrics import FrozenMetricRegistry
+
+if TYPE_CHECKING:
+    from research.aegis_research.component_registry import (
+        ComponentDefinition,
+        FrozenComponentRegistry,
+    )
 
 
 def cross_check_registries(
@@ -91,6 +91,11 @@ def _check_strategy_membership(
             ConfigValidationIssue("strategy.id", "must select one component id")
         )
         return None
+    from research.aegis_research.component_registry import (
+        ComponentRegistryError,
+        ComponentSelection,
+    )
+
     try:
         return component_registry.get(
             ComponentSelection("strategies", strategy_config.id)
@@ -115,6 +120,11 @@ def _check_indicators_membership(
 
     result: list[tuple[int, ComponentDefinition]] = []
     seen_ids: set[str] = set()
+    from research.aegis_research.component_registry import (
+        ComponentRegistryError,
+        ComponentSelection,
+    )
+
     for i, config in enumerate(indicator_configs):
         if not isinstance(config, RunIndicatorSourceConfig):
             continue
@@ -253,6 +263,11 @@ def _raw_best_effort_checks(
     and lock shape checks need typed data and are skipped.
     """
     issues: list[ConfigValidationIssue] = []
+
+    from research.aegis_research.component_registry import (
+        ComponentRegistryError,
+        ComponentSelection,
+    )
 
     # Strategy
     strategy_raw = raw.get("strategy")
