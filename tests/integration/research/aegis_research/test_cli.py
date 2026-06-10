@@ -1233,3 +1233,300 @@ def test_authoring_story_round_trip(
     assert resolved.config.name == "authoring.story"
     assert resolved.config.strategy.id == "example.ma_cross"
     assert resolved.config.indicators[0].id == "example.ma"
+
+
+# ── Drift tests: contract facts asserted against rendered guide output ──────
+#
+# These tests replace the doc-file string assertions that previously guarded
+# contract facts in docs/components.md and research/configs/README.md.
+# Contract facts (field requiredness, enum members, entry-point names,
+# return shapes) are now asserted against the rendered guide output from
+# aerd show config-schema / indicator-schema / strategy-schema.
+
+
+def _render_guide(subcommand: str) -> str:
+    """Render a schema guide and return the markdown output."""
+    from research.aegis_research.component_registry.indicator_guide import (
+        render_indicator_schema_guide,
+    )
+    from research.aegis_research.component_registry.strategy_guide import (
+        render_strategy_schema_guide,
+    )
+    from research.aegis_research.configuration.config_schema_guide import (
+        render_config_schema_guide,
+    )
+
+    renderers = {
+        "config-schema": render_config_schema_guide,
+        "indicator-schema": render_indicator_schema_guide,
+        "strategy-schema": render_strategy_schema_guide,
+    }
+    return renderers[subcommand]()
+
+
+# ── config-schema drift assertions ────────────────────────────────────────
+
+
+def test_config_schema_guide_states_all_portfolio_directions() -> None:
+    """Drift: portfolio direction enum members are interpolated from code."""
+    guide = _render_guide("config-schema")
+    assert "`longonly`" in guide
+    assert "`shortonly`" in guide
+    assert "`both`" in guide
+
+
+def test_config_schema_guide_states_all_search_policies() -> None:
+    """Drift: optimization search policy enum members are interpolated from code."""
+    guide = _render_guide("config-schema")
+    assert "`grid`" in guide
+    assert "`random`" in guide
+
+
+def test_config_schema_guide_states_all_lock_roles() -> None:
+    """Drift: lock role enum members are interpolated from code."""
+    guide = _render_guide("config-schema")
+    assert "`best`" in guide
+    assert "`median`" in guide
+    assert "`worst`" in guide
+
+
+def test_config_schema_guide_states_all_signal_policies_and_timings() -> None:
+    """Drift: signal policy and timing catalogs are interpolated from code."""
+    guide = _render_guide("config-schema")
+    assert "Signal Policies" in guide
+    assert "Signal Execution Timings" in guide
+
+
+def test_config_schema_guide_states_all_data_array_shortcuts() -> None:
+    """Drift: data-array shortcut catalog is interpolated from code."""
+    guide = _render_guide("config-schema")
+    assert "Data-Array Shortcuts" in guide
+    assert "`OHLCV`" in guide
+
+
+def test_config_schema_guide_states_allowed_degradations() -> None:
+    """Drift: allowed data-quality degradations catalog is interpolated from code."""
+    guide = _render_guide("config-schema")
+    assert "Allowed Data-Quality Degradations" in guide
+
+
+def test_config_schema_guide_states_missing_policies() -> None:
+    """Drift: missing-index/missing-columns policies catalog is interpolated from code."""
+    guide = _render_guide("config-schema")
+    assert "Missing-Index / Missing-Columns Policies" in guide
+
+
+def test_config_schema_guide_states_reserved_execute_keys() -> None:
+    """Drift: reserved optimization.execute keys are interpolated from code."""
+    guide = _render_guide("config-schema")
+    assert "Reserved `optimization.execute` Keys" in guide
+
+
+def test_config_schema_guide_marks_optimization_required() -> None:
+    """Drift: the forward contract requires optimization (not optional)."""
+    guide = _render_guide("config-schema")
+    assert "optimization`** — required" in guide
+    assert "forward contract requires" in guide.lower()
+
+
+def test_config_schema_guide_marks_schema_version_const() -> None:
+    """Drift: schema_version is marked as const 8 (not a model default)."""
+    guide = _render_guide("config-schema")
+    assert "schema_version`** — must be present and exactly `8`" in guide
+
+
+def test_config_schema_guide_states_allowed_data_sources() -> None:
+    """Drift: data source whitelist is interpolated from code."""
+    guide = _render_guide("config-schema")
+    assert "`synthetic`" in guide
+    assert "`csv`" in guide
+
+
+def test_config_schema_guide_states_removed_fields_unknown() -> None:
+    """Drift: labeler/train/model are called out as removed/unknown."""
+    guide = _render_guide("config-schema")
+    assert "`labeler`" in guide
+    assert "`train`" in guide
+    assert "`model`" in guide
+    assert "rejected as unknown" in guide
+
+
+def test_config_schema_guide_documents_lock_syntax() -> None:
+    """Drift: lock scalar and mapping syntax is documented."""
+    guide = _render_guide("config-schema")
+    assert "lock: run_id[:role]" in guide
+    assert "lock:" in guide
+    assert "run_id:" in guide
+    assert "candidate_id:" in guide
+
+
+def test_config_schema_guide_points_at_other_show_commands() -> None:
+    """Drift: the guide points at aerd show splitters and aerd show components."""
+    guide = _render_guide("config-schema")
+    assert "`aerd show splitters <method>`" in guide
+    assert "`aerd show components`" in guide
+
+
+def test_config_schema_guide_sets_not_configurable() -> None:
+    """Drift: set_labels is called out as forbidden/not configurable."""
+    guide = _render_guide("config-schema")
+    assert "set_labels" in guide
+    assert "forbidden" in guide.lower() or "not configurable" in guide.lower()
+
+
+# ── indicator-schema drift assertions ─────────────────────────────────────
+
+
+def test_indicator_schema_guide_states_all_manifest_fields() -> None:
+    """Drift: all manifest fields are in the indicator guide (interpolated)."""
+    guide = _render_guide("indicator-schema")
+    assert "| `family` |" in guide
+    assert "| `id` |" in guide
+    assert "| `version` |" in guide
+    assert "| `input_names` |" in guide
+    assert "| `param_names` |" in guide
+    assert "| `defaults` |" in guide
+    assert "| `output_names` |" in guide
+
+
+def test_indicator_schema_guide_states_entry_point_names_from_code() -> None:
+    """Drift: entry-point names are interpolated from code constants."""
+    from research.aegis_research.component_registry.contracts import (
+        COMPONENT_ENTRYPOINT,
+        COMPONENT_PARAM_SPACE_ENTRYPOINT,
+    )
+
+    guide = _render_guide("indicator-schema")
+    assert f"`{COMPONENT_ENTRYPOINT}` Entry Point" in guide
+    assert f"`{COMPONENT_PARAM_SPACE_ENTRYPOINT}`" in guide
+
+
+def test_indicator_schema_guide_documents_batched_signature() -> None:
+    """Drift: the batched run signature is documented."""
+    guide = _render_guide("indicator-schema")
+    assert "n_candidates" in guide
+    assert "param_lists" in guide
+
+
+def test_indicator_schema_guide_documents_mapping_return() -> None:
+    """Drift: the mapping-of-outputs return contract is documented."""
+    guide = _render_guide("indicator-schema")
+    assert "mapping" in guide.lower()
+    assert "output name to candidate-major" in guide
+
+
+def test_indicator_schema_guide_documents_candidate_major_layout() -> None:
+    """Drift: the candidate-major block layout is documented."""
+    guide = _render_guide("indicator-schema")
+    assert "candidate_index * n_symbols" in guide
+    assert "n_candidates * n_symbols" in guide
+
+
+def test_indicator_schema_guide_documents_batch_invariance() -> None:
+    """Drift: the batch-invariance rule is documented."""
+    guide = _render_guide("indicator-schema")
+    assert "Batch-Invariance" in guide
+    assert "bitwise" in guide
+
+
+def test_indicator_schema_guide_documents_legacy_declarations_as_errors() -> None:
+    """Drift: legacy callable keys are documented as hard errors."""
+    guide = _render_guide("indicator-schema")
+    assert "COMPONENT_CALLABLE" in guide
+    assert "wide_callable" in guide
+    assert "param_space_callable" in guide
+    assert "hard error" in guide.lower()
+
+
+def test_indicator_schema_guide_embeds_packaged_example() -> None:
+    """Drift: the packaged example component is embedded in the guide."""
+    guide = _render_guide("indicator-schema")
+    assert "## Complete Example" in guide
+    assert '"id": "example.ma"' in guide
+    assert "def run(data, *, n_candidates, **param_lists):" in guide
+
+
+# ── strategy-schema drift assertions ──────────────────────────────────────
+
+
+def test_strategy_schema_guide_states_all_manifest_fields() -> None:
+    """Drift: all manifest fields are in the strategy guide."""
+    guide = _render_guide("strategy-schema")
+    assert "| `family` |" in guide
+    assert "| `id` |" in guide
+    assert "| `version` |" in guide
+    assert "| `input_names` |" in guide
+    assert "| `param_names` |" in guide
+    assert "| `defaults` |" in guide
+    assert "| `output_name` |" in guide
+    assert "| `consumes_outputs` |" in guide
+    assert "| `owns_portfolio` |" in guide
+
+
+def test_strategy_schema_guide_states_allocation_outputs_from_code() -> None:
+    """Drift: all registered allocation outputs are interpolated from code."""
+    from research.aegis_research.component_registry.contracts import (
+        STRATEGY_ALLOCATION_OUTPUTS,
+    )
+
+    guide = _render_guide("strategy-schema")
+    for output_name in sorted(STRATEGY_ALLOCATION_OUTPUTS):
+        assert f"`{output_name}`" in guide
+
+
+def test_strategy_schema_guide_documents_inputs_object() -> None:
+    """Drift: the inputs object attributes are documented."""
+    guide = _render_guide("strategy-schema")
+    assert "`inputs.data`" in guide
+    assert "`inputs.indicators`" in guide
+    assert "`inputs.n_symbols`" in guide
+    assert "`inputs.metadata`" in guide
+
+
+def test_strategy_schema_guide_documents_bare_array_return() -> None:
+    """Drift: the bare allocation-array return is documented (not a mapping)."""
+    guide = _render_guide("strategy-schema")
+    assert "bare" in guide.lower()
+    assert "not a mapping" in guide.lower()
+
+
+def test_strategy_schema_guide_documents_nan_selection() -> None:
+    """Drift: the NaN-selection convention is documented."""
+    guide = _render_guide("strategy-schema")
+    assert "NaN-Selection Convention" in guide
+    assert "NaN = excluded" in guide
+
+
+def test_strategy_schema_guide_documents_ownership_boundaries() -> None:
+    """Drift: component vs config/policy ownership boundaries are documented."""
+    guide = _render_guide("strategy-schema")
+    assert "portfolio.gross_cap" in guide
+    assert "portfolio.direction" in guide
+    assert "owns_portfolio" in guide
+
+
+def test_strategy_schema_guide_documents_consumes_outputs_wiring() -> None:
+    """Drift: consumes_outputs wiring contract is documented."""
+    guide = _render_guide("strategy-schema")
+    assert "consumes_outputs" in guide
+    assert "wiring contract" in guide.lower()
+
+
+def test_strategy_schema_guide_states_entry_point_names_from_code() -> None:
+    """Drift: entry-point names are interpolated from code constants."""
+    from research.aegis_research.component_registry.contracts import (
+        COMPONENT_ENTRYPOINT,
+        COMPONENT_PARAM_SPACE_ENTRYPOINT,
+    )
+
+    guide = _render_guide("strategy-schema")
+    assert f"`{COMPONENT_ENTRYPOINT}` Entry Point" in guide
+    assert f"`{COMPONENT_PARAM_SPACE_ENTRYPOINT}`" in guide
+
+
+def test_strategy_schema_guide_embeds_packaged_example() -> None:
+    """Drift: the packaged strategy example is embedded in the guide."""
+    guide = _render_guide("strategy-schema")
+    assert "## Complete Example" in guide
+    assert '"id": "example.ma_cross"' in guide
+    assert "def run(inputs, *, n_candidates, **param_lists):" in guide

@@ -36,8 +36,8 @@ def test_component_roots_ignore_local_files_except_readme_placeholders() -> None
 
 def test_component_readme_placeholders_point_to_examples_and_warn_about_ignored_files() -> None:
     for family, example in {
-        "indicators": "docs/examples/components/indicator_component_example.py",
-        "strategies": "docs/examples/components/strategy_component_example.py",
+        "indicators": "research/aegis_research/component_registry/indicator_example.py",
+        "strategies": "research/aegis_research/component_registry/strategy_example.py",
     }.items():
         readme = Path(f"research/components/{family}/README.md").read_text()
 
