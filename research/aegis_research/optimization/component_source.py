@@ -147,12 +147,10 @@ def build_component_optimization_source(
             output = runtime.wide_callable(
                 data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
             )
-            indicator_manifest = runtime.definition.manifest
-            assert isinstance(indicator_manifest, IndicatorManifest)
-            output_arrays = _indicator_output_arrays(
+            output_arrays = _validated_indicator_output_arrays(
                 runtime,
                 output,
-                expected_shape=(len(close), deduped.n_candidates * n_symbols),
+                expected_shape=_candidate_major_shape(close, deduped.n_candidates),
             )
             for output_name, output_arr in output_arrays.items():
                 if output_name in outputs:
@@ -190,12 +188,12 @@ def build_component_optimization_source(
         strategy_wide_params = _wide_params_for_runtime(
             strategy, param_lists, n_candidates=n_candidates
         )
-        alloc_arr = _component_array(
+        alloc_arr = _validated_component_array(
             strategy,
             strategy.wide_callable(
                 strategy_wide_inputs, n_candidates=n_candidates, **strategy_wide_params
             ),
-            expected_shape=(len(close_window), n_candidates * n_symbols),
+            expected_shape=_candidate_major_shape(close_window, n_candidates),
             output_label="allocation",
         )
         return _build_wide_frame(alloc_arr, close_window, n_candidates, param_lists, params)
@@ -404,7 +402,11 @@ def _deduplicate_runtime_params(
     )
 
 
-def _indicator_output_arrays(
+def _candidate_major_shape(close: pd.DataFrame, n_candidates: int) -> tuple[int, int]:
+    return (len(close), n_candidates * len(close.columns))
+
+
+def _validated_indicator_output_arrays(
     runtime: _ComponentRuntime,
     output: Any,
     *,
@@ -426,7 +428,7 @@ def _indicator_output_arrays(
             f"missing={missing}, unknown={unknown}"
         )
     return {
-        output_name: _component_array(
+        output_name: _validated_component_array(
             runtime,
             output[output_name],
             expected_shape=expected_shape,
@@ -440,7 +442,7 @@ def _sorted_names(names: set[Any]) -> list[Any]:
     return sorted(names, key=repr)
 
 
-def _component_array(
+def _validated_component_array(
     runtime: _ComponentRuntime,
     value: Any,
     *,
