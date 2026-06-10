@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.lock_run import (
     LockRunResolutionError,
     resolve_lock_run,

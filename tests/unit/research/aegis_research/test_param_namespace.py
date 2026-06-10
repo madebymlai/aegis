@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.param_namespace import (
     FIXED_CANDIDATE_PARAM,
     ComponentRef,

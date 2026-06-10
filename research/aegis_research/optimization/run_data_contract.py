@@ -1,23 +1,99 @@
 """Run data contract.
 
-Builds the data array contract, data evidence payload, and candidate
-data identity for orchestrated optimization runs.
+Owns the data array contract — which arrays a Run requires versus what its
+config declares — and builds the data evidence payload and candidate data
+identity for orchestrated optimization runs.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from typing import Any
 
 from research.aegis_research.component_registry import (
     ComponentSelection,
     FrozenComponentRegistry,
 )
-from research.aegis_research.data_arrays import (
-    DataArrayContract,
-    build_data_array_contract,
-    data_array_evidence_payload,
+from research.aegis_research.configuration import (
+    ConfigValidationError,
+    ConfigValidationIssue,
     merge_data_arrays,
 )
+from research.aegis_research.market_data.contracts import MarketDataResult
+
+
+@dataclass(frozen=True)
+class DataArrayContract:
+    configured_arrays: tuple[str, ...]
+    component_required_arrays: tuple[str, ...] = ()
+    pipeline_required_arrays: tuple[str, ...] = ()
+
+    @property
+    def required_arrays(self) -> tuple[str, ...]:
+        return merge_data_arrays(self.component_required_arrays, self.pipeline_required_arrays)
+
+    @property
+    def missing_arrays(self) -> tuple[str, ...]:
+        configured = set(self.configured_arrays)
+        return tuple(feature for feature in self.required_arrays if feature not in configured)
+
+    def assert_configured(self) -> None:
+        if not self.missing_arrays:
+            return
+        raise ConfigValidationError(
+            [
+                ConfigValidationIssue(
+                    "data.arrays",
+                    f"missing required data arrays: {list(self.missing_arrays)}",
+                )
+            ]
+        )
+
+    def metadata(self) -> dict[str, list[str]]:
+        return {
+            "configured_arrays": list(self.configured_arrays),
+            "component_required_arrays": list(self.component_required_arrays),
+            "pipeline_required_arrays": list(self.pipeline_required_arrays),
+            "contract_required_arrays": list(self.required_arrays),
+            "missing_required_arrays": list(self.missing_arrays),
+        }
+
+
+def build_data_array_contract(
+    *,
+    configured_arrays: tuple[str, ...],
+    component_required_arrays: tuple[str, ...] = (),
+    pipeline_required_arrays: tuple[str, ...] = (),
+) -> DataArrayContract:
+    return DataArrayContract(
+        configured_arrays=configured_arrays,
+        component_required_arrays=merge_data_arrays(component_required_arrays),
+        pipeline_required_arrays=merge_data_arrays(pipeline_required_arrays),
+    )
+
+
+def with_data_array_contract_metadata(
+    data_result: MarketDataResult,
+    array_contract: DataArrayContract,
+) -> MarketDataResult:
+    metadata = dict(data_result.metadata)
+    metadata.update(array_contract.metadata())
+    return replace(data_result, metadata=metadata)
+
+
+def data_array_evidence_payload(
+    data_result: MarketDataResult,
+    array_contract: DataArrayContract,
+) -> dict[str, Any]:
+    metadata = data_result.metadata
+    return {
+        **array_contract.metadata(),
+        "authored_arrays": metadata.get("authored_arrays"),
+        "effective_arrays": metadata.get("effective_arrays"),
+        "loaded_arrays": metadata.get("loaded_arrays"),
+        "unavailable_arrays": metadata.get("unavailable_arrays"),
+        "quality_state": data_result.quality.state,
+    }
 
 
 def build_run_data_array_contract(

@@ -10,7 +10,7 @@ from vectorbtpro import vbt
 
 from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.optimization.evidence import CANDIDATE_ROLES
+from research.aegis_research.optimization.candidate_evidence import CANDIDATE_ROLES
 from research.aegis_research.run_splits import RunSplitsResult
 
 PREFLIGHT_SCHEMA_VERSION = "optimization_preflight.v1"

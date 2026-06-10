@@ -18,15 +18,12 @@ from research.aegis_research.configuration import (
 from research.aegis_research.data import (
     MarketDataResult,
 )
-from research.aegis_research.data_arrays import (
-    DataArrayContract,
-)
+from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_publishing import (
     build_candidate_store_provenance,
     candidate_store_namespace,
     publish_candidates,
 )
-from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
     EvidenceSection,
@@ -34,6 +31,7 @@ from research.aegis_research.optimization.evidence_ledger import (
 )
 from research.aegis_research.optimization.pipeline.execution import ExecutionResult
 from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
     build_candidate_data_identity,
 )
 from research.aegis_research.optimization.source import OptimizationSource

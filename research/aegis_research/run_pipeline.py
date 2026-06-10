@@ -19,10 +19,6 @@ from research.aegis_research.data import (
     load_market_data_result,
     market_data_bundle,
 )
-from research.aegis_research.data_arrays import (
-    DataArrayContract,
-    with_data_array_contract_metadata,
-)
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
@@ -36,7 +32,9 @@ from research.aegis_research.optimization.pipeline.execution import run_pipeline
 from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
     build_run_data_array_contract,
+    with_data_array_contract_metadata,
 )
 from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder

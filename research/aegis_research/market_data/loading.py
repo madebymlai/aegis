@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from research.aegis_research.configuration import DataConfig
-from research.aegis_research.data_arrays import merge_data_arrays
+from research.aegis_research.configuration import DataConfig, merge_data_arrays
 from research.aegis_research.market_data import diagnostics as _observe
 from research.aegis_research.market_data import features as _features
 from research.aegis_research.market_data import metadata as _metadata

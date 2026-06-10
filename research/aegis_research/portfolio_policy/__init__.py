@@ -3,11 +3,9 @@ from research.aegis_research.portfolio_policy.masking import (
 )
 from research.aegis_research.portfolio_policy.policy import (
     assert_signed_allocations_within_caps,
-    validate_signed_target_weights,
 )
 
 __all__ = [
     "apply_executable_mask_and_terminal_liquidation",
     "assert_signed_allocations_within_caps",
-    "validate_signed_target_weights",
 ]

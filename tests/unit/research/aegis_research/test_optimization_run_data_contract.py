@@ -4,8 +4,8 @@ from typing import ClassVar
 
 import pytest
 
-from research.aegis_research.data_arrays import DataArrayContract
 from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
     build_candidate_data_identity,
     build_run_data_array_contract,
     build_run_data_evidence_payload,

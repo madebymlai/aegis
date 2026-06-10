@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.atomic_write import hash_file, write_json
-from research.aegis_research.data_arrays import DataArrayContract
 from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
     build_run_data_evidence_payload,
 )
 

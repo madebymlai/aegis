@@ -7,7 +7,7 @@ import pytest
 from vectorbtpro import vbt
 
 from research.aegis_research.canonical_json import canonical_json_bytes
-from research.aegis_research.optimization.evidence import (
+from research.aegis_research.optimization.candidate_evidence import (
     HELD_OUT_GAP_WARNING_THRESHOLD,
     candidate_held_out_headline,
     candidate_rows_from_param_index,

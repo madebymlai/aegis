@@ -17,16 +17,13 @@ from research.aegis_research.configuration import (
 from research.aegis_research.data import (
     MarketDataResult,
 )
-from research.aegis_research.data_arrays import (
-    DataArrayContract,
+from research.aegis_research.optimization.candidate_evidence import (
+    candidate_held_out_headline,
+    held_out_warning,
 )
 from research.aegis_research.optimization.candidate_publishing import (
     activate_candidate_run,
     candidate_store_namespace,
-)
-from research.aegis_research.optimization.evidence import (
-    candidate_held_out_headline,
-    held_out_warning,
 )
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
@@ -38,6 +35,7 @@ from research.aegis_research.optimization.run_artifacts import (
     build_strategy_artifact_payload,
     write_strategy_artifact,
 )
+from research.aegis_research.optimization.run_data_contract import DataArrayContract
 from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.run_splits import RunSplitsResult
 

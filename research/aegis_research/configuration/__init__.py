@@ -48,6 +48,7 @@ from research.aegis_research.configuration.schema import (
     SignalConfig,
     expand_data_arrays,
     has_data_array_token_shape,
+    merge_data_arrays,
 )
 from research.aegis_research.market_data.sources import (
     LOCAL_DATA_SOURCES,
@@ -96,6 +97,7 @@ __all__ = [
     "expand_data_arrays",
     "has_data_array_token_shape",
     "load_run_config",
+    "merge_data_arrays",
     "resolve_env_refs",
     "resolve_run_config",
     "to_builtin",

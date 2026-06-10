@@ -19,10 +19,15 @@ from tests.support.research.aegis_research.run_config_fixtures import (
 
 def test_pipeline_execution_persists_and_raises_on_preflight_failure(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PreflightError triggers persist and raises OptimizationSourceError."""
-    resolved = build_resolved_run_config(tmp_path)
+    """A genuine over-budget preflight persists its evidence and raises
+    OptimizationSourceError."""
+    # The three-candidate public artifact needs ~3 KiB, so a 1-byte budget fails
+    # the real preflight gate — no patched seam required.
+    resolved = build_resolved_run_config(
+        tmp_path,
+        optimization={"split": {"max_public_artifact_bytes": 1}},
+    )
     config = resolved.config
 
     setup = make_setup_result(store_path=tmp_path / "store.sqlite3")
@@ -37,17 +42,7 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
         persist=lambda: persisted.append(True),
     )
 
-    from research.aegis_research.optimization.preflight import PreflightError
-
-    def _fail_preflight(**kwargs: Any) -> Any:
-        raise PreflightError("preflight failed", diagnostics={"error": True})
-
-    monkeypatch.setattr(
-        "research.aegis_research.optimization.pipeline.execution.build_preflight",
-        _fail_preflight,
-    )
-
-    with pytest.raises(OptimizationSourceError, match="preflight failed"):
+    with pytest.raises(OptimizationSourceError, match="max_public_artifact_bytes"):
         run_pipeline_execution(
             config=config,
             setup=setup,
@@ -56,8 +51,9 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
         )
 
     assert len(persisted) == 1
-    assert manifest_evidence["optimization"]["preflight"] == {"error": True}
-    assert manifest_evidence["optimization"]["preflight_failure"] == {
-        "error_type": "PreflightError",
-        "message": "preflight failed",
-    }
+    preflight = manifest_evidence["optimization"]["preflight"]
+    assert preflight["limits"]["max_public_artifact_bytes"] == 1
+    assert preflight["estimated_public_artifact_bytes"] > 1
+    assert manifest_evidence["optimization"]["preflight_failure"]["error_type"] == (
+        "PreflightError"
+    )

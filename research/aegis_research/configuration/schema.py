@@ -27,10 +27,13 @@ OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 DATA_ARRAY_SHORTCUTS = {"OHLCV": OHLCV_ARRAYS}
 
 PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
-SIGNAL_POLICIES = {"long_only_hysteresis"}
-SIGNAL_EXECUTION_TIMINGS = {"next_open", "same_close"}
-# VBT's Data.align_index / align_columns contract — the Literal is the field type,
-# the set is the facade-exported catalog; get_args keeps them one source.
+# For each catalog below the Literal is the field type, the set is the
+# facade-exported catalog; get_args keeps them one source.
+SignalPolicy = Literal["long_only_hysteresis"]
+SIGNAL_POLICIES = set(get_args(SignalPolicy))
+SignalExecutionTiming = Literal["next_open", "same_close"]
+SIGNAL_EXECUTION_TIMINGS = set(get_args(SignalExecutionTiming))
+# VBT's Data.align_index / align_columns contract.
 MissingPolicy = Literal["nan", "drop", "raise"]
 MISSING_POLICIES = set(get_args(MissingPolicy))
 Degradation = Literal[
@@ -153,16 +156,22 @@ class DataConfig:
 
 
 def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    tokens = tuple(arrays)
-    expanded: list[str] = []
+    return merge_data_arrays(
+        *(DATA_ARRAY_SHORTCUTS.get(token, (token,)) for token in arrays)
+    )
+
+
+def merge_data_arrays(*array_groups: tuple[str, ...]) -> tuple[str, ...]:
+    """Merge data-array groups into one duplicate-free tuple, preserving order."""
+    merged: list[str] = []
     seen: set[str] = set()
-    for token in tokens:
-        for feature in DATA_ARRAY_SHORTCUTS.get(token, (token,)):
+    for group in array_groups:
+        for feature in group:
             if feature in seen:
                 continue
-            expanded.append(feature)
+            merged.append(feature)
             seen.add(feature)
-    return tuple(expanded)
+    return tuple(merged)
 
 
 def has_data_array_token_shape(value: str) -> bool:
@@ -187,12 +196,12 @@ class RunSplitConfig:
         return self
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class SignalConfig:
-    policy: str = "long_only_hysteresis"
+    policy: SignalPolicy = "long_only_hysteresis"
     long_entry_threshold: float = 0.55
     long_exit_threshold: float = 0.50
-    execution_timing: str = "next_open"
+    execution_timing: SignalExecutionTiming = "next_open"
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -300,8 +309,8 @@ class OptimizationConfig:
 
 
 # The representative roles a Lock handle may name, in rank order. These mirror the
-# roles evidence emits for every Run (evidence.CANDIDATE_ROLES); the config layer keeps
-# its own copy because it must not depend up on the optimization layer.
+# roles evidence emits for every Run (candidate_evidence.CANDIDATE_ROLES); the config
+# layer keeps its own copy because it must not depend up on the optimization layer.
 LOCK_ROLES: tuple[str, ...] = ("best", "median", "worst")
 DEFAULT_LOCK_ROLE = "best"
 

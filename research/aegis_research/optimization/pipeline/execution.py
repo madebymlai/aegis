@@ -12,7 +12,7 @@ from research.aegis_research.configuration import (
     RunConfig,
 )
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
-from research.aegis_research.optimization.evidence import result_evidence
+from research.aegis_research.optimization.candidate_evidence import result_evidence
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
     EvidenceSection,

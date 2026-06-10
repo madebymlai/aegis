@@ -4,16 +4,22 @@ import pytest
 
 from research.aegis_research.portfolio_policy import (
     apply_executable_mask_and_terminal_liquidation,
-    validate_signed_target_weights,
+    assert_signed_allocations_within_caps,
 )
 
 
-def _close_columns() -> pd.Index:
+def _symbol_columns() -> pd.Index:
     return pd.Index(["A", "B", "C"], name="symbol")
 
 
 def _index(periods: int = 4) -> pd.DatetimeIndex:
     return pd.date_range("2024-01-01", periods=periods)
+
+
+def _book(weights: dict[str, list[float]], periods: int = 1) -> pd.DataFrame:
+    frame = pd.DataFrame(weights, index=_index(periods))
+    frame.columns = _symbol_columns()
+    return frame
 
 
 def test_package_exports_expected_public_symbols() -> None:
@@ -22,7 +28,6 @@ def test_package_exports_expected_public_symbols() -> None:
     assert set(package.__all__) == {
         "apply_executable_mask_and_terminal_liquidation",
         "assert_signed_allocations_within_caps",
-        "validate_signed_target_weights",
     }
 
 
@@ -32,266 +37,181 @@ def test_convert_to_allocations_is_deleted() -> None:
     assert not hasattr(package, "convert_to_allocations")
 
 
-def test_signed_weights_passthrough_returns_identical_frame_after_reindex() -> None:
-    columns = _close_columns()
-    index = _index()
-    frame = pd.DataFrame(
-        {
-            "A": [0.5, np.nan, 0.0, 0.4],
-            "B": [-0.5, np.nan, 0.0, -0.4],
-            "C": [np.nan, np.nan, 0.0, np.nan],
-        },
-        index=index,
-    )
-    frame.columns = columns
+def test_validate_signed_target_weights_is_deleted() -> None:
+    # The aligning validator had zero production callers; the simulation path is
+    # gated by assert_signed_allocations_within_caps alone.
+    import research.aegis_research.portfolio_policy as package
 
-    out = validate_signed_target_weights(
-        frame,
-        close_columns=columns,
-        gross_cap=1.0,
-    )
-
-    assert out.columns.equals(columns)
-    assert out.index.equals(index)
-    pd.testing.assert_frame_equal(out, frame.astype(float))
+    assert not hasattr(package, "validate_signed_target_weights")
 
 
-def test_negative_weights_are_accepted() -> None:
-    columns = _close_columns()
-    index = _index(1)
-    frame = pd.DataFrame({"A": [-0.5], "B": [0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
-
-    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
-
-    assert out.iloc[0].to_dict() == {"A": -0.5, "B": 0.5, "C": 0.0}
-
-
-def test_gross_exposure_uses_absolute_sum_under_cap() -> None:
-    columns = _close_columns()
-    index = _index(1)
+def test_signed_book_within_gross_cap_passes() -> None:
     # Σ|wᵢ| = 1.0 ≤ gross_cap, even though the signed sum (net) is 0.
-    frame = pd.DataFrame({"A": [-0.5], "B": [0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [-0.5], "B": [0.5], "C": [0.0]})
 
-    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
-
-    assert out.iloc[0].to_dict() == {"A": -0.5, "B": 0.5, "C": 0.0}
+    assert_signed_allocations_within_caps(allocations, gross_cap=1.0)
 
 
 def test_gross_exposure_above_cap_is_rejected_fail_closed() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # Σ|wᵢ| = 1.5 > gross_cap 1.0
-    frame = pd.DataFrame({"A": [-0.5], "B": [0.5], "C": [0.5]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [-0.5], "B": [0.5], "C": [0.5]})
 
     with pytest.raises(ValueError, match="gross_cap"):
-        validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
+        assert_signed_allocations_within_caps(allocations, gross_cap=1.0)
 
 
 def test_net_exposure_above_net_cap_is_rejected_fail_closed() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # Σ|wᵢ| = 1.0 ≤ gross_cap, but net Σwᵢ = 1.0 > net_cap 0.2 (drifts net-long).
-    frame = pd.DataFrame({"A": [0.5], "B": [0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [0.5], "B": [0.5], "C": [0.0]})
 
     with pytest.raises(ValueError, match="net_cap"):
-        validate_signed_target_weights(
-            frame, close_columns=columns, gross_cap=1.0, net_cap=0.2
-        )
+        assert_signed_allocations_within_caps(allocations, gross_cap=1.0, net_cap=0.2)
 
 
 def test_market_neutral_book_within_net_cap_passes() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # Σ|wᵢ| = 2.0 ≤ gross_cap 2.0, net Σwᵢ = 0.0 ≤ net_cap (market-neutral).
-    frame = pd.DataFrame({"A": [1.0], "B": [-1.0], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [1.0], "B": [-1.0], "C": [0.0]})
 
-    out = validate_signed_target_weights(
-        frame, close_columns=columns, gross_cap=2.0, net_cap=0.0
-    )
-
-    assert out.iloc[0].to_dict() == pytest.approx({"A": 1.0, "B": -1.0, "C": 0.0})
+    assert_signed_allocations_within_caps(allocations, gross_cap=2.0, net_cap=0.0)
 
 
 def test_negative_net_exposure_below_negative_net_cap_is_rejected() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # net Σwᵢ = -1.0; |net| = 1.0 > net_cap 0.2 (drifts net-short).
-    frame = pd.DataFrame({"A": [-0.5], "B": [-0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [-0.5], "B": [-0.5], "C": [0.0]})
 
     with pytest.raises(ValueError, match="net_cap"):
-        validate_signed_target_weights(
-            frame, close_columns=columns, gross_cap=1.0, net_cap=0.2
-        )
+        assert_signed_allocations_within_caps(allocations, gross_cap=1.0, net_cap=0.2)
 
 
 def test_net_cap_defaults_to_gross_cap_when_omitted() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # net Σwᵢ = 1.0 = gross_cap; with no net_cap it defaults to gross and passes.
-    frame = pd.DataFrame({"A": [0.5], "B": [0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [0.5], "B": [0.5], "C": [0.0]})
 
-    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
-
-    assert out.iloc[0].to_dict() == pytest.approx({"A": 0.5, "B": 0.5, "C": 0.0})
+    assert_signed_allocations_within_caps(allocations, gross_cap=1.0)
 
 
 def test_leveraged_gross_cap_above_one_is_allowed() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # Σ|wᵢ| = 1.6 ≤ gross_cap 2.0 (a leveraged book)
-    frame = pd.DataFrame({"A": [-1.0], "B": [0.6], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [-1.0], "B": [0.6], "C": [0.0]})
 
-    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=2.0)
+    assert_signed_allocations_within_caps(allocations, gross_cap=2.0)
 
-    assert out.iloc[0].to_dict() == pytest.approx({"A": -1.0, "B": 0.6, "C": 0.0})
+
+def test_nonpositive_gross_cap_is_rejected_fail_closed() -> None:
+    allocations = _book({"A": [0.0], "B": [0.0], "C": [0.0]})
+
+    with pytest.raises(ValueError, match="gross_cap"):
+        assert_signed_allocations_within_caps(allocations, gross_cap=0.0)
 
 
 def test_longonly_direction_rejects_negative_weight_fail_closed() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # A long-only Run must not emit a short leg.
-    frame = pd.DataFrame({"A": [0.5], "B": [-0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [0.5], "B": [-0.5], "C": [0.0]})
 
     with pytest.raises(ValueError, match="longonly"):
-        validate_signed_target_weights(
-            frame, close_columns=columns, gross_cap=1.0, direction="longonly"
+        assert_signed_allocations_within_caps(
+            allocations, gross_cap=1.0, direction="longonly"
         )
 
 
 def test_shortonly_direction_rejects_positive_weight_fail_closed() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # A short-only Run must not emit a long leg.
-    frame = pd.DataFrame({"A": [-0.5], "B": [0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [-0.5], "B": [0.5], "C": [0.0]})
 
     with pytest.raises(ValueError, match="shortonly"):
-        validate_signed_target_weights(
-            frame, close_columns=columns, gross_cap=1.0, direction="shortonly"
+        assert_signed_allocations_within_caps(
+            allocations, gross_cap=1.0, direction="shortonly"
         )
 
 
 def test_shortonly_direction_admits_all_negative_book() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # An all-negative book is a valid short-only Run (zeros are allowed).
-    frame = pd.DataFrame({"A": [-0.5], "B": [-0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [-0.5], "B": [-0.5], "C": [0.0]})
 
-    out = validate_signed_target_weights(
-        frame, close_columns=columns, gross_cap=1.0, direction="shortonly"
+    assert_signed_allocations_within_caps(
+        allocations, gross_cap=1.0, direction="shortonly"
     )
-
-    assert out.iloc[0].to_dict() == pytest.approx({"A": -0.5, "B": -0.5, "C": 0.0})
 
 
 def test_both_direction_admits_either_sign() -> None:
-    columns = _close_columns()
-    index = _index(1)
-    frame = pd.DataFrame({"A": [0.5], "B": [-0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [0.5], "B": [-0.5], "C": [0.0]})
 
-    out = validate_signed_target_weights(
-        frame, close_columns=columns, gross_cap=1.0, direction="both"
-    )
-
-    assert out.iloc[0].to_dict() == pytest.approx({"A": 0.5, "B": -0.5, "C": 0.0})
+    assert_signed_allocations_within_caps(allocations, gross_cap=1.0, direction="both")
 
 
 def test_longonly_sign_flip_caught_despite_passing_gross_and_net_caps() -> None:
-    columns = _close_columns()
-    index = _index(1)
     # A sign-flip in a long-only-intended Run: [+.5, +.5] -> [-.5, +.5].
     # Σ|wᵢ| = 1.0 (passes gross_cap) and Σwᵢ = 0.0 (passes net_cap), yet the short
     # leg slips past both caps — only the sign guard catches it.
-    frame = pd.DataFrame({"A": [-0.5], "B": [0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [-0.5], "B": [0.5], "C": [0.0]})
 
     with pytest.raises(ValueError, match="longonly"):
-        validate_signed_target_weights(
-            frame,
-            close_columns=columns,
-            gross_cap=1.0,
-            net_cap=1.0,
-            direction="longonly",
+        assert_signed_allocations_within_caps(
+            allocations, gross_cap=1.0, net_cap=1.0, direction="longonly"
         )
 
 
 def test_unknown_direction_is_rejected_fail_closed() -> None:
-    columns = _close_columns()
-    index = _index(1)
-    frame = pd.DataFrame({"A": [0.5], "B": [0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [0.5], "B": [0.5], "C": [0.0]})
 
     with pytest.raises(ValueError, match="direction"):
-        validate_signed_target_weights(
-            frame, close_columns=columns, gross_cap=1.0, direction="sideways"
+        assert_signed_allocations_within_caps(
+            allocations, gross_cap=1.0, direction="sideways"
         )
 
 
-def test_default_direction_admits_signed_book_unchanged() -> None:
-    columns = _close_columns()
-    index = _index(1)
+def test_default_direction_admits_signed_book() -> None:
     # No direction argument: default admits either sign (long-only callers stay green).
-    frame = pd.DataFrame({"A": [0.5], "B": [-0.5], "C": [0.0]}, index=index)
-    frame.columns = columns
+    allocations = _book({"A": [0.5], "B": [-0.5], "C": [0.0]})
 
-    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
-
-    assert out.iloc[0].to_dict() == pytest.approx({"A": 0.5, "B": -0.5, "C": 0.0})
+    assert_signed_allocations_within_caps(allocations, gross_cap=1.0)
 
 
-def test_all_nan_row_passes_through_as_no_rebalance() -> None:
-    columns = _close_columns()
-    index = _index(2)
-    frame = pd.DataFrame(
-        {"A": [np.nan, 0.6], "B": [np.nan, -0.4], "C": [np.nan, 0.0]},
-        index=index,
+def test_all_nan_row_passes_as_no_rebalance() -> None:
+    allocations = _book(
+        {"A": [np.nan, 0.6], "B": [np.nan, -0.4], "C": [np.nan, 0.0]}, periods=2
     )
-    frame.columns = columns
 
-    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
-
-    assert out.iloc[0].isna().all()
-    assert out.iloc[1].to_dict() == pytest.approx({"A": 0.6, "B": -0.4, "C": 0.0})
+    assert_signed_allocations_within_caps(allocations, gross_cap=1.0)
 
 
-def test_reordered_columns_are_realigned_to_close_columns() -> None:
-    columns = _close_columns()
-    index = _index(1)
-    frame = pd.DataFrame({"C": [0.0], "A": [0.5], "B": [-0.5]}, index=index)
+def test_empty_frame_passes() -> None:
+    allocations = pd.DataFrame(index=_index(0), columns=pd.Index([], name="symbol"))
 
-    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
-
-    assert list(out.columns) == ["A", "B", "C"]
-    assert out.iloc[0].to_dict() == pytest.approx({"A": 0.5, "B": -0.5, "C": 0.0})
+    assert_signed_allocations_within_caps(allocations, gross_cap=1.0)
 
 
-def test_symbol_mismatch_raises_with_named_symbol() -> None:
-    columns = _close_columns()
-    index = _index(1)
-    frame = pd.DataFrame({"A": [0.5], "B": [0.5], "Z": [0.0]}, index=index)
+def _candidate_wide_frame(weights_by_candidate: dict[str, list[float]]) -> pd.DataFrame:
+    columns = pd.MultiIndex.from_tuples(
+        [
+            (candidate, symbol)
+            for candidate, weights in weights_by_candidate.items()
+            for symbol in ("A", "B")[: len(weights)]
+        ],
+        names=["candidate_id", "symbol"],
+    )
+    values = [weight for weights in weights_by_candidate.values() for weight in weights]
+    return pd.DataFrame([values], index=_index(1), columns=columns)
 
-    with pytest.raises(ValueError, match=r"missing|not present"):
-        validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
+
+def test_candidate_wide_frame_gates_each_candidate_independently() -> None:
+    # candidate-a is fully invested both legs (gross 1.0); candidate-b idles.
+    allocations = _candidate_wide_frame(
+        {"candidate-a": [0.5, -0.5], "candidate-b": [0.0, 0.0]}
+    )
+
+    assert_signed_allocations_within_caps(allocations, gross_cap=1.0, net_cap=0.0)
 
 
-def test_empty_frame_passes_through() -> None:
-    columns = pd.Index([], name="symbol")
-    frame = pd.DataFrame(index=_index(0), columns=columns)
+def test_candidate_wide_frame_names_the_breaching_candidate() -> None:
+    # candidate-b breaches gross (Σ|wᵢ| = 1.5) while candidate-a stays within cap;
+    # the error must name the offender, not just report a breach.
+    allocations = _candidate_wide_frame(
+        {"candidate-a": [0.5, 0.5], "candidate-b": [1.0, 0.5]}
+    )
 
-    out = validate_signed_target_weights(frame, close_columns=columns, gross_cap=1.0)
-
-    assert out.empty
+    with pytest.raises(ValueError, match="candidate-b"):
+        assert_signed_allocations_within_caps(allocations, gross_cap=1.0)
 
 
 def test_terminal_row_is_force_liquidated_to_zero_for_every_symbol() -> None:

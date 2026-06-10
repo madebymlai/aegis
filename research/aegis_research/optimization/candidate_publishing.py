@@ -11,13 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.configuration import to_builtin
-from research.aegis_research.data_arrays import DataArrayContract
 from research.aegis_research.optimization.candidate_store import (
     PUBLICATION_PENDING,
     CandidateStore,
     CandidateStoreError,
 )
 from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
     build_candidate_data_identity,
 )
 

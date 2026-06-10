@@ -19,7 +19,7 @@ class ArtifactRegistry:
         manifest: RunManifest,
         run_dir: str | Path,
         *,
-        persist: Callable[[], None] | None = None,
+        persist: Callable[[], None],
     ) -> None:
         self.manifest = manifest
         self.run_dir = Path(run_dir)
@@ -151,5 +151,4 @@ class ArtifactRegistry:
             raise
 
     def _persist(self) -> None:
-        if self._persist_manifest is not None:
-            self._persist_manifest()
+        self._persist_manifest()

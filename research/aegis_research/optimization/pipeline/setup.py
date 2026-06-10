@@ -24,9 +24,6 @@ from research.aegis_research.data import (
     MarketDataBundle,
     MarketDataResult,
 )
-from research.aegis_research.data_arrays import (
-    DataArrayContract,
-)
 from research.aegis_research.optimization.candidate_publishing import (
     candidate_store_path,
 )
@@ -46,6 +43,7 @@ from research.aegis_research.optimization.lock_run import (
     resolve_lock_run,
 )
 from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
     build_run_data_evidence_payload,
 )
 from research.aegis_research.optimization.source import (
