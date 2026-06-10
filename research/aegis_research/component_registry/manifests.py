@@ -222,9 +222,14 @@ class _IndicatorManifestPayload(_BaseManifestPayload):
     bar_aligned: Literal[True] = True
 
     @model_validator(mode="after")
-    def _check_output_names_nonempty(self) -> _IndicatorManifestPayload:
+    def _check_output_names(self) -> _IndicatorManifestPayload:
         if not self.output_names:
             raise ValueError("output_names must not be empty")
+        duplicates = sorted(
+            {name for name in self.output_names if self.output_names.count(name) > 1}
+        )
+        if duplicates:
+            raise ValueError(f"output_names must be unique; duplicates: {duplicates}")
         return self
 
 class _StrategyManifestPayload(_BaseManifestPayload):

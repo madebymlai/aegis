@@ -1,11 +1,11 @@
-"""Component (strategy + indicators) validation — pydantic v2 structural tests.
+"""Component (strategy + indicators) validation — structural + thin coordinator net.
 
 Structural validation is driven through pydantic construction
-(``TypeAdapter.validate_python``) and the coordinator (``resolve_run_config`` for
-membership + output-contract checks). Assertions use pydantic's structural wording.
-
-Structural checks are now owned by the pydantic models, validated in the
-coordinator in ``resolution._build_resolved_run_config``.
+(``TypeAdapter.validate_python``) and through ``resolve_run_config`` for
+coordinator-level wording.  Registry cross-check rules (membership, ``all``,
+duplicates, params, output contract) are covered at their own seam in
+``test_cross_checks.py``; this file keeps only the thin coordinator net —
+a valid config resolves, and structural + registry issues co-report.
 """
 
 from __future__ import annotations
@@ -168,26 +168,12 @@ def test_indicator_construction_rejects_non_mapping_params() -> None:
     assert any(err["loc"] == ("params",) for err in e.value.errors())
 
 
-# ── coordinator: strategy membership ─────────────────────────────────────────
+# ── coordinator net: valid config resolves end-to-end ────────────────────────
 
 
 def test_strategy_accepts_known_id(tmp_path: Path) -> None:
     resolved = _resolve(tmp_path=tmp_path)
     assert resolved.config.strategy.id == "demo.strategy"
-
-
-def test_strategy_rejects_unknown_id(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve(tmp_path=tmp_path, strategy={"id": "missing.one"})
-    issues = {(i.path, i.message) for i in e.value.issues}
-    assert ("strategy.id", "unknown strategy component id") in issues
-
-
-def test_strategy_rejects_all_id(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve(tmp_path=tmp_path, strategy={"id": "all"})
-    issues = {(i.path, i.message) for i in e.value.issues}
-    assert ("strategy.id", "must select one component id") in issues
 
 
 def test_strategy_rejects_per_component_lock_reference_fields(tmp_path: Path) -> None:
@@ -205,39 +191,6 @@ def test_strategy_rejects_per_component_lock_reference_fields(tmp_path: Path) ->
     assert "Unexpected keyword argument" in message
 
 
-# ── coordinator: indicator membership ────────────────────────────────────────
-
-
-def test_indicators_accept_known_id(tmp_path: Path) -> None:
-    resolved = _resolve(tmp_path=tmp_path, indicators=[{"id": "demo.returns"}])
-    assert resolved.config.indicators[0].id == "demo.returns"
-
-
-def test_indicator_rejects_unknown_id(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve(tmp_path=tmp_path, indicators=[{"id": "missing.indicator"}])
-    issues = {(i.path, i.message) for i in e.value.issues}
-    assert ("indicators[0].id", "unknown indicator component id") in issues
-
-
-def test_indicator_rejects_all_id(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve(tmp_path=tmp_path, indicators=[{"id": "all"}])
-    issues = {(i.path, i.message) for i in e.value.issues}
-    assert ("indicators[0].id", "must select one component id") in issues
-
-
-def test_indicators_flag_duplicate_component_id(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve(
-            tmp_path=tmp_path,
-            indicators=[{"id": "demo.returns"}, {"id": "demo.returns"}],
-        )
-    assert any(
-        "duplicates indicator component id" in i.message for i in e.value.issues
-    )
-
-
 def test_indicators_reject_extra_keys_on_item(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(
@@ -248,21 +201,6 @@ def test_indicators_reject_extra_keys_on_item(tmp_path: Path) -> None:
     assert "indicators[0].candidate_id" in message
     assert "indicators[0].run_id" in message
     assert "Unexpected keyword argument" in message
-
-
-# ── coordinator: output-contract cross-check ─────────────────────────────────
-
-
-def test_strategy_rejects_missing_consumed_indicator_output(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve(tmp_path=tmp_path, indicators=[])
-    assert "strategy.consumes_outputs" in str(e.value)
-    assert "not produced" in str(e.value)
-
-
-def test_strategy_accepts_indicators_producing_consumed_outputs(tmp_path: Path) -> None:
-    resolved = _resolve(tmp_path=tmp_path, indicators=[{"id": "demo.returns"}])
-    assert resolved.config.strategy.id == "demo.strategy"
 
 
 # ── coordinator: strategy structural errors reported at coordinator level ────

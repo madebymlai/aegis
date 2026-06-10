@@ -6,8 +6,8 @@ After the ADR-0012 collapse, ~300 of `configuration/validation.py`'s 536 loc wer
 checking that what a Run Config *selects* (strategy id, indicator ids and params, output contract,
 ranking metric) is honored by the registries — written in two hand-paired dialects: typed checks on
 the constructed `RunConfig` and best-effort raw-dict checks that co-report registry errors when
-pydantic fails. We extract the concern into **`configuration/registry_checks.py`** behind a single
-union entry — `run_registry_cross_checks(config_or_raw, *, component_registry, metric_registry)
+pydantic fails. We extract the concern into **`configuration/cross_checks.py`** behind a single
+union entry — `cross_check_registries(config_or_raw, *, component_registry, metric_registry)
 -> list[ConfigValidationIssue]` — that owns both dialects internally. The coordinator's call
 becomes one unconditional line, making the "cross-checks always run, even when pydantic fails"
 invariant visible in the code rather than kept by discipline. The module is package-internal: it
@@ -40,16 +40,16 @@ unknown role keyword) — it was never security.
   fragment across packages.
 - **Keep the swap path with a narrow public metric-membership export:** preserves today's resolve
   contract byte-for-byte. Rejected: the path is dead in production; keeping it would make
-  `registry_checks.py` carry a second public name solely for a test-only affordance.
+  `cross_checks.py` carry a second public name solely for a test-only affordance.
 - **Keep path checks as portability rails (project-relative configs stay reproducible across
   machines):** rejected by the owner — portability is not a valued property here, csv is mostly
   unused, and export-time parity checks will be designed inside the export feature.
 
 ## Consequences
 
-- `validation.py` becomes a genuine thin coordinator (~150 loc): prepass → whole-tree pydantic →
+- `validation.py` becomes a genuine thin coordinator (~200 loc): prepass → whole-tree pydantic →
   error adapter → config-local checks (name, data-source whitelist, lock shape) → one
-  `run_registry_cross_checks` call. A new "does the config select something real?" rule lands in
+  `cross_check_registries` call. A new "does the config select something real?" rule lands in
   exactly one file.
 - The `ConfigValidationIssue(path, message)` all-errors-at-once contract is unchanged. The raw
   dialect remains a deliberate membership-level subset (no params/output-contract checks), now
@@ -59,7 +59,15 @@ unknown role keyword) — it was never security.
   `FrozenComponentRegistry` factory in `tests/support/`. A thin layer of coordinator-level tests
   keeps pinning structural+registry co-reporting. Swap-path and path-security tests are deleted.
 - The vestigial foot-of-file "circular dependency" imports in `validation.py` die — the cycle they
-  guarded no longer exists (verified empirically; `configuration/__init__.py` is empty).
+  guarded no longer existed at decision time (verified empirically; `configuration/__init__.py` was
+  empty). **Amended post-implementation:** the sibling one-import-home slice of the same epic
+  promoted `configuration/__init__.py` to the public surface, which created a *real* cycle
+  (`__init__` → `resolution` → `component_registry` → `manifests` → `configuration.field_types` →
+  `__init__`, introduced when manifest payload models reused the config field types). It is broken
+  by deliberately deferring `component_registry` imports to `TYPE_CHECKING` or function scope inside
+  `resolution`/`validation`/`cross_checks` — load-bearing this time, not vestigial. The cleaner
+  long-term cut, if the deferred imports grate, is hoisting `field_types` out of the
+  `configuration` package.
 - "Registry cross-checks" is architecture vocabulary, not domain language: no CONTEXT.md term.
   CONTEXT.md's existing sentence — "Configs are inert — they select trusted IDs and parameters
   only" — is the domain concept this module enforces.

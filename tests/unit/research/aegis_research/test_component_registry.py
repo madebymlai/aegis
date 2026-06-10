@@ -261,6 +261,21 @@ def test_component_manifest_rejects_defaults_outside_param_names(tmp_path) -> No
         discover_component_registry(root=root, repo_root=tmp_path)
 
 
+def test_component_manifest_rejects_duplicate_output_names(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_component(root / "indicators" / "indicator.py", "indicators", "demo.bad")
+    path = root / "indicators" / "indicator.py"
+    path.write_text(
+        path.read_text().replace(
+            "'output_names': ['value']",
+            "'output_names': ['value', 'value']",
+        )
+    )
+
+    with pytest.raises(ComponentRegistryError, match="output_names must be unique"):
+        discover_component_registry(root=root, repo_root=tmp_path)
+
+
 def test_component_manifest_rejects_malformed_input_names(tmp_path) -> None:
     root = tmp_path / "research" / "components"
     _write_component(root / "indicators" / "indicator.py", "indicators", "demo.bad")
