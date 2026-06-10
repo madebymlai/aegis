@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -60,7 +60,9 @@ class ResolvedRunConfig:
     authored_config: dict[str, Any]
     source_path: str | None = None
     component_registry: FrozenComponentRegistry | None = None
-    metric_registry: FrozenMetricRegistry | None = None
+    # Resolution always installs an effective registry; direct construction
+    # gets the same default rather than admitting None.
+    metric_registry: FrozenMetricRegistry = field(default_factory=make_default_metric_registry)
     selection: ConfigSelectionEvidence | None = None
 
     def authored_config_document(self) -> dict[str, Any]:
@@ -77,9 +79,7 @@ class ResolvedRunConfig:
             "component_registry_fingerprint": (
                 self.component_registry.fingerprint if self.component_registry else None
             ),
-            "metric_registry_fingerprint": (
-                self.metric_registry.fingerprint if self.metric_registry else None
-            ),
+            "metric_registry_fingerprint": self.metric_registry.fingerprint,
             "selection": self.selection.manifest() if self.selection else None,
         }
 

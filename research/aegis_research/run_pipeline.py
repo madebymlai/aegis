@@ -102,9 +102,7 @@ def run_strategy_sweep(
             data_result=data_result,
             data=data_bundle,
             array_contract=array_contract,
-            metric_registry_fingerprint=(
-                metric_registry.fingerprint if metric_registry else None
-            ),
+            metric_registry_fingerprint=metric_registry.fingerprint,
             metric_registry=metric_registry,
             run_evidence=run_evidence,
         )
@@ -137,11 +135,9 @@ def _run_optimization_strategy_sweep(
     data: MarketDataBundle,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
-    metric_registry: FrozenMetricRegistry | None,
+    metric_registry: FrozenMetricRegistry,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
-    assert metric_registry is not None
-
     # Stage 1: Setup — resolve locks, build optimization source and evidence baseline
     try:
         setup = run_pipeline_setup(

@@ -8,6 +8,7 @@ the full data or array stack.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, ClassVar
 
 
@@ -39,3 +40,35 @@ class FakeArrayContract:
 
     def metadata(self) -> dict[str, Any]:
         return {"schema_version": "data_array_contract.v1"}
+
+
+class FakeManifest:
+    """Stand-in for the run manifest surface pipeline stages read and mark."""
+
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+        self.status = "running"
+        self.started_at = "2025-01-01T00:00:00Z"
+        self.finished_at: str | None = None
+        self.evidence: dict[str, Any] = {}
+
+
+class FakeRecorder:
+    """Stand-in for ``RunRecorder``.
+
+    ``run_dir`` is optional: publishing reads only ``manifest``; completion
+    also reads ``run_dir``/``manifest_path`` and marks the run completed.
+    """
+
+    def __init__(self, run_id: str, run_dir: Path | None = None) -> None:
+        self.manifest = FakeManifest(run_id)
+        self.run_dir = run_dir
+        self.manifest_path = run_dir / "manifest.json" if run_dir is not None else None
+
+    def persist(self) -> None:
+        pass
+
+    def mark_run_completed(self) -> None:
+        self.manifest.status = "completed"
+        self.manifest.finished_at = "2025-01-01T01:00:00Z"
+        self.persist()

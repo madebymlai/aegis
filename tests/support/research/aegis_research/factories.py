@@ -15,7 +15,7 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, ClassVar
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -346,8 +346,9 @@ def make_setup_result(**overrides: Any) -> SetupResult:
 
 
 class _FakeOptimizationSource:
-    params: ClassVar[dict[str, Any]] = {}
-    evidence: ClassVar[dict[str, Any]] = {"strategy": {}}
+    def __init__(self) -> None:
+        self.params: dict[str, Any] = {}
+        self.evidence: dict[str, Any] = {"strategy": {}}
 
 
 def _fake_optimization_source() -> Any:
@@ -355,8 +356,9 @@ def _fake_optimization_source() -> Any:
 
 
 class _FakeSplitResult:
-    metadata: ClassVar[dict[str, int]] = {"n_splits": 2}
-    splits: ClassVar[list[Any]] = []
+    def __init__(self) -> None:
+        self.metadata: dict[str, int] = {"n_splits": 2}
+        self.splits: list[Any] = []
 
 
 def _fake_split_result() -> Any:

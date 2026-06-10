@@ -27,32 +27,8 @@ from tests.support.research.aegis_research.factories import (
 from tests.support.research.aegis_research.test_doubles import (
     FakeArrayContract,
     FakeDataResult,
+    FakeRecorder,
 )
-
-
-class _FakeManifest:
-    def __init__(self, run_id: str, run_dir: Path) -> None:
-        self.run_id = run_id
-        self.run_dir = run_dir
-        self.status = "running"
-        self.started_at = "2025-01-01T00:00:00Z"
-        self.finished_at: str | None = None
-        self.evidence: dict[str, Any] = {}
-
-
-class _FakeRecorder:
-    def __init__(self, manifest: _FakeManifest) -> None:
-        self.manifest = manifest
-        self.run_dir = manifest.run_dir
-        self.manifest_path = manifest.run_dir / "manifest.json"
-
-    def persist(self) -> None:
-        pass
-
-    def mark_run_completed(self) -> None:
-        self.manifest.status = "completed"
-        self.manifest.finished_at = "2025-01-01T01:00:00Z"
-        self.persist()
 
 
 def _candidate_rows() -> list[dict[str, Any]]:
@@ -111,7 +87,7 @@ def test_completion_returns_result_and_marks_completed(
 
     candidate_rows = _candidate_rows()
     publishing = PublishingResult(
-        candidate_rows=candidate_rows,
+        candidate_rows=tuple(candidate_rows),
         candidate_store_provenance={"schema_version": "candidate_store_provenance.v1"},
     )
 
@@ -125,10 +101,9 @@ def test_completion_returns_result_and_marks_completed(
             publication_state=PUBLICATION_PENDING,
         )
 
-    manifest = _FakeManifest(run_id, run_dir)
-    recorder = _FakeRecorder(manifest)
+    recorder = FakeRecorder(run_id, run_dir)
     run_evidence = RunEvidence(
-        manifest.evidence,
+        recorder.manifest.evidence,
         component_registry_fingerprint="registry-fp",
         data_arrays={},
         optimization={
@@ -202,8 +177,8 @@ def test_completion_returns_result_and_marks_completed(
     assert best["held_out_headline"]["gap"] == pytest.approx(0.01)
 
     # Assert completion marking
-    assert manifest.status == "completed"
-    assert manifest.finished_at == "2025-01-01T01:00:00Z"
+    assert recorder.manifest.status == "completed"
+    assert recorder.manifest.finished_at == "2025-01-01T01:00:00Z"
 
     # Assert candidate-run activation
     # top_candidates_by_run filters to PUBLICATION_ACTIVE rows only.

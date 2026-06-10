@@ -6,7 +6,7 @@ the candidate run in the store, and returns the final run result.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -102,7 +102,7 @@ def _completion_result(
     config: RunConfig,
     recorder: RunRecorder,
     split_result: RunSplitsResult,
-    candidate_rows: list[dict[str, Any]],
+    candidate_rows: Sequence[dict[str, Any]],
     store_path: Path,
     execution: Mapping[str, Any],
 ) -> dict[str, Any]:

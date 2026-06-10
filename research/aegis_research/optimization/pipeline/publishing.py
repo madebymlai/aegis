@@ -44,7 +44,7 @@ from research.aegis_research.provenance.recorder import RunRecorder
 class PublishingResult:
     """Typed hand-off from the pipeline publishing stage."""
 
-    candidate_rows: list[dict[str, Any]]
+    candidate_rows: tuple[dict[str, Any], ...]
     candidate_store_provenance: Mapping[str, Any]
 
 
@@ -91,6 +91,6 @@ def run_pipeline_publishing(
         raise
 
     return PublishingResult(
-        candidate_rows=candidate_rows,
+        candidate_rows=tuple(candidate_rows),
         candidate_store_provenance=candidate_store_provenance,
     )
