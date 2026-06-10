@@ -10,7 +10,8 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 
-COMPONENTS_ROOT = Path(__file__).resolve().parents[4] / "research" / "components"
+COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components"
+_SYMBOLS = ["SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU"]
 
 
 def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_components(
@@ -23,50 +24,49 @@ def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_componen
     shutil.copytree(COMPONENTS_ROOT, dest)
 
     config_path = tmp_path / "run.yaml"
-    config_path.write_text(yaml.safe_dump({
-        "schema_version": CONFIG_SCHEMA_VERSION,
-        "name": "wide_pipeline_e2e",
-        "output_dir": "runs",
-        "data": {
-            "source": "synthetic",
-            "symbols": ["SPY", "QQQ", "IWM"],
-            "rows": 200,
-            "arrays": ["OHLCV"],
-        },
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
-        "strategy": {
-            "id": "local.e2e.etf_rotation",
-            "params": {
-                "top_n": 2,
-                "rebalance_every": 1,
-                "score_entry": 0.0,
-                "volatility_ceiling": 2.0,
-                "trend_weight": 5.0,
-                "momentum_weight": 1.0,
-                "volatility_weight": 0.25,
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": CONFIG_SCHEMA_VERSION,
+                "name": "wide_pipeline_e2e",
+                "output_dir": "runs",
+                "data": {
+                    "source": "synthetic",
+                    "symbols": _SYMBOLS,
+                    "rows": 300,
+                    "arrays": ["OHLCV"],
+                },
+                "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+                "strategy": {"id": "tests.momentum_rotator"},
+                "indicators": [
+                    {
+                        "id": "tests.momentum_score",
+                        "params": {
+                            "h1": 15,
+                            "h2": 42,
+                            "h3": 63,
+                            "h4": 84,
+                            "w1": 8.0,
+                            "w2": 4.0,
+                            "w3": 3.0,
+                            "w4": 2.0,
+                        },
+                    },
+                    {"id": "tests.realized_vol", "params": {"window": 20}},
+                ],
+                "ranking": {"metric": "total_return"},
+                "optimization": {
+                    "search": "grid",
+                    "split": {
+                        "method": "from_rolling",
+                        "params": {"length": 150, "offset": 0, "split": 0.5},
+                        "max_splits": 3,
+                    },
+                },
             },
-        },
-        "indicators": [
-            {"id": "local.e2e.trend_ma", "params": {
-                "slope_window": 5, "wtype": "exp",
-            }},
-            {"id": "local.e2e.volatility", "params": {
-                "window": 20, "regime_window": 63,
-            }},
-            {"id": "local.e2e.momentum", "params": {
-                "lookback": 63, "smooth_window": 5,
-            }},
-        ],
-        "ranking": {"metric": "total_return"},
-        "optimization": {
-            "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 60, "offset": 60, "split": 0.5},
-                "max_splits": 2,
-            },
-        },
-    }, sort_keys=False))
+            sort_keys=False,
+        )
+    )
 
     exit_code = cli.main(["run", str(config_path), "--json", "--run-id", "wide-e2e"])
 
@@ -80,6 +80,12 @@ def test_wide_pipeline_produces_valid_optimization_artifact_with_intree_componen
     assert artifact_path.exists()
     artifact = json.loads(artifact_path.read_text())
 
+    manifest_path = tmp_path / "runs" / "wide-e2e" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    assert (
+        manifest["evidence"]["optimization"]["source"]["schema_version"]
+        == "component_optimization_source.v2"
+    )
     assert [candidate["role"] for candidate in artifact["candidates"]] == ["best", "median", "worst"]
     assert artifact["candidates"]
     assert len(artifact["candidates"]) > 0

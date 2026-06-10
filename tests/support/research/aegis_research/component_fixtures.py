@@ -30,7 +30,7 @@ def write_indicator_component(path: Path) -> None:
         "    result = np.zeros((T, n_candidates * S))\n"
         "    for i in range(n_candidates):\n"
         "        result[:, i * S:(i + 1) * S] = arr\n"
-        "    return result\n"
+        "    return {'returns': result}\n"
     )
 
 

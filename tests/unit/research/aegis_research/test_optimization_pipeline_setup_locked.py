@@ -117,7 +117,7 @@ def _seed_candidate_store(config: Any) -> str:
 
 def _source_evidence() -> dict[str, Any]:
     return {
-        "schema_version": "component_optimization_source.v1",
+        "schema_version": "component_optimization_source.v2",
         "source": "component",
         "strategy": {
             "family": "strategies",

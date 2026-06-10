@@ -25,8 +25,15 @@ class TestMomentumScoreManifest:
 
         assert COMPONENT_CALLABLE == "run"
         required_keys = {
-            "family", "id", "version", "input_names", "param_names",
-            "output_names", "defaults", "param_space_callable", "wide_callable",
+            "family",
+            "id",
+            "version",
+            "input_names",
+            "param_names",
+            "output_names",
+            "defaults",
+            "param_space_callable",
+            "wide_callable",
         }
         assert required_keys <= set(COMPONENT_MANIFEST.keys())
         assert COMPONENT_MANIFEST["output_names"] == ["momentum_score"]
@@ -75,7 +82,8 @@ class TestMomentumScoreWideParity:
         }
 
         wide_result = run_wide(data, n_candidates=n_candidates, **param_lists)
-        wide_arr = np.asarray(wide_result)
+        assert set(wide_result) == {"momentum_score"}
+        wide_arr = np.asarray(wide_result["momentum_score"])
 
         assert wide_arr.shape == (300, n_candidates * n_symbols)
 
@@ -90,7 +98,16 @@ class TestMomentumScoreWideParity:
         from tests.fixtures.components.indicators.tests_momentum_score import run, run_wide
 
         data = _make_data()
-        params = {"h1": 21, "h2": 63, "h3": 126, "h4": 252, "w1": 12.0, "w2": 4.0, "w3": 2.0, "w4": 1.0}
+        params = {
+            "h1": 21,
+            "h2": 63,
+            "h3": 126,
+            "h4": 252,
+            "w1": 12.0,
+            "w2": 4.0,
+            "w3": 2.0,
+            "w4": 1.0,
+        }
         candidates = [params, params]
         n_candidates = 2
         n_symbols = 5
@@ -101,7 +118,8 @@ class TestMomentumScoreWideParity:
         }
 
         wide_result = run_wide(data, n_candidates=n_candidates, **param_lists)
-        wide_arr = np.asarray(wide_result)
+        assert set(wide_result) == {"momentum_score"}
+        wide_arr = np.asarray(wide_result["momentum_score"])
 
         scalar_result = run(data, **params)
         scalar_arr = scalar_result.values

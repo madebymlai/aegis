@@ -569,7 +569,7 @@ def _write_indicator_component(path: Path) -> None:
         "    for i, w in enumerate(windows):\n"
         "        cols = slice(i * S, (i + 1) * S)\n"
         "        result[:, cols] = pd.DataFrame(close.values).rolling(int(w)).mean().bfill().values\n"
-        "    return result\n"
+        "    return {'ma': result}\n"
     )
 
 
@@ -598,7 +598,7 @@ def _write_misaligned_indicator_component(path: Path) -> None:
         '    """Return wide output for misaligned fixture."""\n'
         "    close = data.feature('Close')\n"
         "    T, S = close.shape\n"
-        "    return np.zeros((T, n_candidates * S))\n"
+        "    return {'ma': np.zeros((T, n_candidates * S))}\n"
     )
 
 
@@ -630,7 +630,7 @@ def _write_named_indicator_component(path: Path, component_id: str) -> None:
         "    for i in range(n_candidates):\n"
         "        cols = slice(i * S, (i + 1) * S)\n"
         "        result[:, cols] = pd.DataFrame(close.values).rolling(2).mean().bfill().values\n"
-        "    return result\n"
+        "    return {'value': result}\n"
     )
 
 

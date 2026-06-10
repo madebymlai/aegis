@@ -97,7 +97,7 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
             provenance={
                 "run_id": "stored-decode-run",
                 "source": {
-                    "schema_version": "component_optimization_source.v1",
+                    "schema_version": "component_optimization_source.v2",
                     "source": "component",
                     "strategy": {
                         "family": "strategies",
