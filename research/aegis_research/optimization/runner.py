@@ -42,7 +42,6 @@ from research.aegis_research.metrics.accessors import (
 )
 from research.aegis_research.metrics.contracts import ExtractorSpec
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
-from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
@@ -86,10 +85,10 @@ def execute_optimization(
     metric_registry: FrozenMetricRegistry,
 ) -> OptimizationResult:
     _validate_source_param_names(source.params)
-    if ranking.metric not in PORTFOLIO_METRIC_VALUE_KEYS:
+    if ranking.metric not in metric_registry:
         raise OptimizationRunnerError(
-            f"optimization ranking metric {ranking.metric!r} is not in the central "
-            f"portfolio metric catalog: {sorted(PORTFOLIO_METRIC_VALUE_KEYS)}"
+            f"optimization ranking metric {ranking.metric!r} is not in the "
+            f"metric registry: {sorted(metric_registry.ids())}"
         )
 
     # The registry record is the single home for each Metric's definition and its
@@ -195,7 +194,7 @@ def _build_precomputed_window_metrics(
         keys = candidate_keys(combo_lists)
         invalid_positions = invalid_candidate_positions(keys, invalid_candidate_keys)
         if len(invalid_positions) == n_combos:
-            return _nan_metric_frame(metric_keys, param_names)
+            return _nan_metric_frame(metric_keys, param_names, list(extractors))
 
         close_window = close.iloc[range_]
         open_window = open_.iloc[range_]
@@ -258,12 +257,15 @@ def _metrics_from_allocations(
     )
 
 
-def _nan_metric_frame(metric_keys: list[tuple], param_names: list[str]) -> pd.DataFrame:
+def _nan_metric_frame(
+    metric_keys: list[tuple], param_names: list[str], metric_ids: list[str]
+) -> pd.DataFrame:
     # float64 by construction — same grid dtype contract as
     # central_metrics_from_grouped_accessors, so vbt's row_stack concat
-    # never has to reconcile divergent dtypes across windows.
+    # never has to reconcile divergent dtypes across windows. Columns mirror
+    # the registry's extractor set so custom metrics stay aligned.
     index = pd.MultiIndex.from_tuples(metric_keys, names=param_names)
-    return pd.DataFrame(np.nan, index=index, columns=list(PORTFOLIO_METRIC_VALUE_KEYS))
+    return pd.DataFrame(np.nan, index=index, columns=metric_ids)
 
 
 def _combo_values(value: Any) -> list[Any]:

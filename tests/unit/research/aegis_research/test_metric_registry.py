@@ -62,14 +62,20 @@ def test_default_registry_extractors_match_definitions() -> None:
 
 
 def test_default_registry_extractors_preserve_catalog_order() -> None:
-    """Extractor iteration order is registration (catalog) order, not sorted id order.
+    """Extractor iteration order is registration order, not sorted id order.
 
-    The extraction loop's column order is this iteration order, so it must match
-    the catalog rather than the fingerprint's sorted definition order.
+    The extraction loop's column order is this iteration order, so it must be
+    the catalog metrics first, then the default custom metrics, rather than
+    the fingerprint's sorted definition order.
     """
+    from research.aegis_research.metrics.custom.ulcer import DEFAULT_CUSTOM_METRICS
+
     frozen = make_default_metric_registry()
 
-    assert tuple(frozen.extractors) == PORTFOLIO_METRIC_VALUE_KEYS
+    expected = PORTFOLIO_METRIC_VALUE_KEYS + tuple(
+        definition.id for definition, _ in DEFAULT_CUSTOM_METRICS
+    )
+    assert tuple(frozen.extractors) == expected
 
 
 def test_metric_registry_rejects_duplicate_ids() -> None:
@@ -135,7 +141,7 @@ def test_default_registry_fingerprint_is_byte_stable() -> None:
     """
     assert (
         make_default_metric_registry().fingerprint
-        == "25995c4bdb5f6c98e4bf62fc60bc38a534e927d2ff469e02102e075d3bdaa3ae"
+        == "5558ead3c5faf04178b8fa3922e59712cf83fb5c7a64eeef09c7809a9ae2d66c"
     )
 
 
