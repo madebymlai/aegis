@@ -58,4 +58,5 @@ __all__ = [
     "empty_metric_registry",
     "freeze_metric_registry",
     "make_default_metric_registry",
+    "make_metric_registry_for",
 ]
