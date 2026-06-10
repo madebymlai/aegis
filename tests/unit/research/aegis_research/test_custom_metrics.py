@@ -145,7 +145,7 @@ def _two_candidate_portfolio():
     simulation = simulate_portfolio_batch(
         close, allocations, make_portfolio_config(fees=0.001, slippage=0, direction="longonly"),
         periods_per_year=252,
-    )
+    )[0]
     return simulation, candidate_ids
 
 

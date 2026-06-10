@@ -64,7 +64,7 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
     simulation = simulate_portfolio_batch(
         close, allocations, make_portfolio_config(fees=0.001, slippage=0, direction="longonly"),
         periods_per_year=252,
-    )
+    )[0]
     config = make_report_config(freq="1D", year_freq="252D")
 
     candidate_keys = [(candidate_id,) for candidate_id in candidate_ids]
@@ -112,7 +112,7 @@ def test_non_finite_values_land_as_nan_in_a_float64_grid() -> None:
     simulation = simulate_portfolio_batch(
         close, allocations, make_portfolio_config(fees=0.0, slippage=0, direction="longonly"),
         periods_per_year=252,
-    )
+    )[0]
     config = make_report_config(freq="1D", year_freq="252D")
 
     candidate_keys = [(c,) for c in candidate_ids]

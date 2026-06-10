@@ -245,7 +245,7 @@ def _metrics_from_allocations(
     n_symbols = len(close_window.columns)
     if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
         return vbt.NoResult
-    pf = simulate_portfolio_batch(
+    pf, _held_count = simulate_portfolio_batch(
         close_window,
         wide_allocations,
         portfolio,

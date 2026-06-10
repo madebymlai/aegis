@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
@@ -13,7 +14,6 @@ SYMBOL_LEVEL = "symbol"
 # Import after SYMBOL_LEVEL to break circular dependency: allocation_policy
 # modules import SYMBOL_LEVEL from here at call time (deferred imports).
 from research.aegis_research.allocation_policy import (  # noqa: E402
-    apply_executable_mask_and_terminal_liquidation,
     assert_signed_allocations_within_caps,
 )
 
@@ -70,12 +70,17 @@ def _build_portfolio(
     market_index: pd.Index | None,
     group_by: Any,
     periods_per_year: int,
-) -> vbt.Portfolio:
-    """Mask allocations, build the PFO, and run ``from_optimizer``."""
-    masked, _ = apply_executable_mask_and_terminal_liquidation(
-        allocations,
-        market_index=market_index,
+) -> tuple[vbt.Portfolio, int]:
+    """Mask allocations, build the PFO, and run ``from_optimizer``.
+
+    Returns the simulated portfolio and the count of held (non-executable) rows.
+    """
+    masked, held_count = _apply_non_executable_mask(
+        allocations, market_index=market_index
     )
+    # Terminal liquidation: zero the final row so runs end in realized cash.
+    if not masked.empty and len(masked.columns) > 0:
+        masked.iloc[-1, :] = 0.0
     pfo = vbt.PFO.from_filled_allocations(
         masked,
         valid_only=True,
@@ -83,7 +88,7 @@ def _build_portfolio(
         unique_only=False,
     )
     exec_kwargs = _execution_settings(open_frame)
-    return vbt.Portfolio.from_optimizer(
+    pf = vbt.Portfolio.from_optimizer(
         price_frame,
         pfo,
         pf_method=VBT_PF_METHOD,
@@ -103,6 +108,8 @@ def _build_portfolio(
         log=True,
         **exec_kwargs,
     )
+    _assert_no_nocash_rejection(pf)
+    return pf, held_count
 
 
 def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
@@ -157,12 +164,14 @@ def simulate_single_book(
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     periods_per_year: int = 252,
-) -> vbt.Portfolio:
+) -> tuple[vbt.Portfolio, int]:
     """Test-support wrapper: simulate one book through the batched path.
 
     Wraps plain-symbol ``allocations`` into a one-candidate MultiIndex, then
     delegates to ``simulate_portfolio_batch``.  Only for carry/mechanics tests
     that need plain symbol columns — not a production interface.
+
+    Returns the simulated portfolio and the count of held (non-executable) rows.
     """
     columns = pd.MultiIndex.from_product(
         [[_SINGLE_CANDIDATE_ID], allocations.columns],
@@ -189,7 +198,11 @@ def simulate_portfolio_batch(
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     periods_per_year: int,
-) -> vbt.Portfolio:
+) -> tuple[vbt.Portfolio, int]:
+    """Simulate a batch of candidate portfolios.
+
+    Returns the simulated portfolio and the count of held (non-executable) rows.
+    """
     _validate_candidate_columns(allocations.columns, field_name="allocations")
     expanded_close = expand_market_frame_to_candidate_columns(
         close,
@@ -210,7 +223,7 @@ def simulate_portfolio_batch(
             open_, allocations.columns, feature_name="Open"
         )
     )
-    pf = _build_portfolio(
+    pf, held_count = _build_portfolio(
         expanded_close,
         allocations,
         config,
@@ -219,8 +232,7 @@ def simulate_portfolio_batch(
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
         periods_per_year=periods_per_year,
     )
-    _assert_no_nocash_rejection(pf)
-    return pf
+    return pf, held_count
 
 
 def expand_market_frame_to_candidate_columns(
@@ -287,3 +299,55 @@ def _assert_numeric_non_null_close(close: pd.DataFrame) -> None:
         raise ValueError(f"portfolio Close input has non-numeric columns {non_numeric}")
     if close.isna().any().any():
         raise ValueError("portfolio Close input contains null prices")
+
+
+# ── Non-executable row mask (private) ───────────────────────────────────────
+
+
+def _apply_non_executable_mask(
+    allocations: pd.DataFrame,
+    *,
+    market_index: pd.Index | None,
+) -> tuple[pd.DataFrame, int]:
+    """Return the masked frame with gap rows NaN'd and the held-row count.
+
+    Rebalance rows whose bar is not the immediate successor of the previous
+    row's bar in the provided market index are NaN'd so the simulator holds
+    instead of trading.  The held-row count is the number of rows that were
+    masked as non-executable.
+    """
+    if allocations.empty or len(allocations.columns) == 0:
+        return allocations.copy(), 0
+    executable = _next_open_executable_mask(allocations.index, market_index)
+    masked = allocations.copy().astype(float)
+    non_executable_rows = ~executable
+    if non_executable_rows.any():
+        masked.iloc[non_executable_rows.to_numpy(), :] = np.nan
+    held_count = int(non_executable_rows.sum())
+    return masked, held_count
+
+
+def _next_open_executable_mask(
+    index: pd.Index,
+    market_index: pd.Index | None,
+) -> pd.Series:
+    """Return a boolean Series marking rows executable under next-open rules.
+
+    A row is executable only if its bar is the immediate successor of the
+    previous row's bar in the market index. The first row is always executable.
+    """
+    executable = pd.Series(True, index=index)
+    if market_index is None or len(index) == 0:
+        return executable
+    market_positions = pd.Series(range(len(market_index)), index=market_index)
+    try:
+        positions = market_positions.loc[index].to_numpy()
+    except KeyError as error:
+        raise ValueError(
+            "portfolio market_index must contain all allocation rows"
+        ) from error
+    if len(index) < 2:
+        return executable
+    contiguous = positions[1:] == positions[:-1] + 1
+    executable.iloc[1:] = contiguous
+    return executable

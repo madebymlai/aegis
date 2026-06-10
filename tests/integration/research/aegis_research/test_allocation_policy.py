@@ -3,7 +3,6 @@ import pandas as pd
 import pytest
 
 from research.aegis_research.allocation_policy import (
-    apply_executable_mask_and_terminal_liquidation,
     assert_signed_allocations_within_caps,
 )
 
@@ -26,7 +25,6 @@ def test_package_exports_expected_public_symbols() -> None:
     import research.aegis_research.allocation_policy as package
 
     assert set(package.__all__) == {
-        "apply_executable_mask_and_terminal_liquidation",
         "assert_signed_allocations_within_caps",
     }
 
@@ -43,6 +41,15 @@ def test_validate_signed_target_weights_is_deleted() -> None:
     import research.aegis_research.allocation_policy as package
 
     assert not hasattr(package, "validate_signed_target_weights")
+
+
+def test_masking_is_deleted() -> None:
+    # Masking dissolved into the simulation boundary (portfolios.py) as private code.
+    # The allocation_policy package is now a single-symbol gate.
+    import research.aegis_research.allocation_policy as package
+
+    assert not hasattr(package, "apply_executable_mask_and_terminal_liquidation")
+    assert "apply_executable_mask_and_terminal_liquidation" not in package.__all__
 
 
 def test_signed_book_within_gross_cap_passes() -> None:
@@ -214,121 +221,4 @@ def test_candidate_wide_frame_names_the_breaching_candidate() -> None:
         assert_signed_allocations_within_caps(allocations, gross_cap=1.0)
 
 
-def test_terminal_row_is_force_liquidated_to_zero_for_every_symbol() -> None:
-    index = _index(4)
-    allocations = pd.DataFrame(
-        {
-            "A": [0.5, np.nan, 0.3, 0.7],
-            "B": [-0.5, np.nan, -0.4, -0.2],
-            "C": [np.nan, np.nan, 0.3, 0.1],
-        },
-        index=index,
-    )
 
-    masked, diag = apply_executable_mask_and_terminal_liquidation(
-        allocations, market_index=index
-    )
-
-    assert masked.iloc[-1].to_dict() == {"A": 0.0, "B": 0.0, "C": 0.0}
-    assert diag["terminal_liquidation"] is True
-
-
-def test_split_gap_row_is_masked_to_nan_and_diagnostic_incremented() -> None:
-    market_index = pd.date_range("2024-01-01", periods=5)
-    split_index = market_index[[0, 1, 3, 4]]
-    allocations = pd.DataFrame(
-        {
-            "A": [0.5, 0.5, 0.5, 0.5],
-            "B": [0.5, 0.5, 0.5, 0.5],
-        },
-        index=split_index,
-    )
-
-    masked, diag = apply_executable_mask_and_terminal_liquidation(
-        allocations, market_index=market_index
-    )
-
-    assert masked.iloc[2].isna().all()
-    assert masked.iloc[0].to_dict() == {"A": 0.5, "B": 0.5}
-    assert masked.iloc[1].to_dict() == {"A": 0.5, "B": 0.5}
-    assert masked.iloc[-1].to_dict() == {"A": 0.0, "B": 0.0}
-    assert diag["non_executable_rows"] == 1
-    assert diag["non_executable_by_symbol"] == {"A": 1, "B": 1}
-
-
-def test_zero_row_in_non_terminal_non_gap_location_passes_through() -> None:
-    index = _index(3)
-    allocations = pd.DataFrame(
-        {"A": [0.5, 0.0, 0.5], "B": [0.5, 0.0, 0.5]},
-        index=index,
-    )
-
-    masked, _ = apply_executable_mask_and_terminal_liquidation(
-        allocations, market_index=index
-    )
-
-    assert masked.iloc[1].to_dict() == {"A": 0.0, "B": 0.0}
-
-
-def test_nan_row_passes_through_unchanged_except_terminal() -> None:
-    index = _index(3)
-    allocations = pd.DataFrame(
-        {"A": [0.5, np.nan, 0.5], "B": [0.5, np.nan, 0.5]},
-        index=index,
-    )
-
-    masked, _ = apply_executable_mask_and_terminal_liquidation(
-        allocations, market_index=index
-    )
-
-    assert masked.iloc[0].to_dict() == {"A": 0.5, "B": 0.5}
-    assert masked.iloc[1].isna().all()
-    assert masked.iloc[-1].to_dict() == {"A": 0.0, "B": 0.0}
-
-
-def test_multi_candidate_wide_frame_is_masked_and_terminally_liquidated() -> None:
-    market_index = pd.date_range("2024-01-01", periods=5)
-    split_index = market_index[[0, 1, 3, 4]]
-    columns = pd.MultiIndex.from_product(
-        [["candidate-a", "candidate-b"], ["A", "B"]],
-        names=["candidate_id", "symbol"],
-    )
-    allocations = pd.DataFrame(0.5, index=split_index, columns=columns)
-
-    masked, diag = apply_executable_mask_and_terminal_liquidation(
-        allocations, market_index=market_index
-    )
-
-    assert masked.iloc[2].isna().all()
-    assert (masked.iloc[-1] == 0.0).all()
-    assert diag["non_executable_rows"] == 1
-    assert diag["non_executable_by_symbol"] == {"A": 1, "B": 1}
-
-
-def test_masking_without_market_index_only_force_liquidates_terminal() -> None:
-    index = _index(4)
-    allocations = pd.DataFrame(
-        {"A": [0.5, 0.5, 0.5, 0.5], "B": [0.5, 0.5, 0.5, 0.5]},
-        index=index,
-    )
-
-    masked, diag = apply_executable_mask_and_terminal_liquidation(
-        allocations, market_index=None
-    )
-
-    assert masked.iloc[:-1].equals(allocations.iloc[:-1].astype(float))
-    assert masked.iloc[-1].to_dict() == {"A": 0.0, "B": 0.0}
-    assert diag["non_executable_rows"] == 0
-
-
-def test_market_index_missing_simulation_row_raises() -> None:
-    index = _index(3)
-    market_index = index[[0, 2]]
-    allocations = pd.DataFrame(
-        {"A": [0.5, 0.5, 0.5], "B": [0.5, 0.5, 0.5]}, index=index
-    )
-
-    with pytest.raises(ValueError, match="market_index"):
-        apply_executable_mask_and_terminal_liquidation(
-            allocations, market_index=market_index
-        )
