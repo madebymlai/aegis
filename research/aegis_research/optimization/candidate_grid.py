@@ -19,7 +19,7 @@ import pandas as pd
 
 from research.aegis_research.optimization.precompute import CandidateKey
 
-_SPLIT_LEVEL = "split"
+SPLIT_LEVEL = "split"
 
 
 @dataclass(frozen=True)
@@ -43,11 +43,11 @@ class CandidateGrid:
         idx = self._spine.index
         if not isinstance(idx, pd.MultiIndex):
             raise TypeError("CandidateGrid index must be a MultiIndex")
-        if _SPLIT_LEVEL not in idx.names:
+        if SPLIT_LEVEL not in idx.names:
             raise ValueError(
-                f"CandidateGrid index must include a {_SPLIT_LEVEL!r} level"
+                f"CandidateGrid index must include a {SPLIT_LEVEL!r} level"
             )
-        param_levels = [n for n in idx.names if n != _SPLIT_LEVEL]
+        param_levels = [n for n in idx.names if n != SPLIT_LEVEL]
         if not param_levels:
             raise ValueError(
                 "CandidateGrid index must carry at least one parameter level"
@@ -81,7 +81,7 @@ class CandidateGrid:
     @property
     def param_levels(self) -> list[str]:
         """Parameter level names (all index levels except the split level)."""
-        return [n for n in self._spine.index.names if n != _SPLIT_LEVEL]
+        return [n for n in self._spine.index.names if n != SPLIT_LEVEL]
 
     @property
     def metric_ids(self) -> list[str]:
@@ -101,7 +101,7 @@ class CandidateGrid:
         metric_cols = self.metric_ids
         for key, sub in self._spine.groupby(level=group_level, sort=True):
             key_tuple: CandidateKey = key if isinstance(key, tuple) else (key,)
-            split_labels = sub.index.get_level_values(_SPLIT_LEVEL)
+            split_labels = sub.index.get_level_values(SPLIT_LEVEL)
             yield (key_tuple, _subframe_to_split_metrics(sub, split_labels, metric_cols))
 
     def split_metrics(
