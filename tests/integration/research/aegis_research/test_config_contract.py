@@ -71,7 +71,7 @@ def test_removed_entry_budget_field_fails_as_unknown_field(tmp_path: Path) -> No
     entry_budget_issue = next(
         issue for issue in error.value.issues if issue.path == "portfolio.entry_budget"
     )
-    assert "renamed to portfolio.gross_cap" in entry_budget_issue.message
+    assert "Unexpected keyword argument" in entry_budget_issue.message
 
 
 def test_removed_target_exposure_cap_field_is_rejected(tmp_path: Path) -> None:
@@ -89,7 +89,7 @@ def test_removed_target_exposure_cap_field_is_rejected(tmp_path: Path) -> None:
         for issue in error.value.issues
         if issue.path == "portfolio.target_exposure_cap"
     )
-    assert "gross_cap" in issue.message
+    assert "Unexpected keyword argument" in issue.message
 
 
 def test_portfolio_gross_cap_validates(tmp_path: Path) -> None:
@@ -145,7 +145,7 @@ def test_run_config_rejects_removed_labeler_field(tmp_path: Path) -> None:
         )
 
     assert "labeler" in str(error.value)
-    assert "training and lane fields are not supported" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_data_arrays_single_ohlcv_resolves_effective_set(tmp_path: Path) -> None:
@@ -267,7 +267,7 @@ def test_legacy_train_shape_is_not_a_run_config(tmp_path: Path) -> None:
 
     assert "labels" in str(error.value)
     assert "model" in str(error.value)
-    assert "single run config contract" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:

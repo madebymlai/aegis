@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Annotated, Any, ClassVar, Literal, get_args
+from typing import Annotated, Any, Literal, get_args
 
 import pandas as pd
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
@@ -26,12 +26,6 @@ OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # Full VBT feature names are source-specific and discovered from native_data.features.
 DATA_ARRAY_SHORTCUTS = {"OHLCV": OHLCV_ARRAYS}
 
-PORTFOLIO_TARGET_SIZE_TYPES = {
-    "targetamount",
-    "targetvalue",
-    "targetpercent",
-    "targetpercent100",
-}
 PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
 SIGNAL_POLICIES = {"long_only_hysteresis"}
 SIGNAL_EXECUTION_TIMINGS = {"next_open", "same_close"}
@@ -217,26 +211,6 @@ class PortfolioConfig:
     gross_cap: PositiveCash = field(kw_only=True)
     # Required (validation rejects a config missing it); no silent long-only default.
     direction: Literal["longonly", "shortonly", "both"] = field(kw_only=True)
-
-    # Tombstone fields rejected by the coordinator prepass (NOT @model_validator —
-    # a validator raising ValueError loses the dotted path and mangles the message).
-    REMOVED_FIELDS: ClassVar[dict[str, str]] = {
-        "entry_budget": "renamed to portfolio.gross_cap",
-        "target_exposure_cap": (
-            "was replaced by portfolio.gross_cap (max Σ|wᵢ|) "
-            "and portfolio.net_cap (max |Σwᵢ|)"
-        ),
-        "size": "was removed; use portfolio.gross_cap for exposure sizing",
-    }
-    _SIZE_TYPE_TOMBSTONES: ClassVar[dict[str, str]] = {
-        "target": (
-            "target allocation sizing is resolved internally; "
-            "size_type is not a config knob"
-        ),
-        "other": (
-            "was removed; the simulator resolves targetpercent sizing internally"
-        ),
-    }
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

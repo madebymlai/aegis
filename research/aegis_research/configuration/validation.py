@@ -5,8 +5,8 @@ With ``RunConfig`` as a whole-tree pydantic dataclass, one
 and accumulates all structural errors natively.
 
 The coordinator owns:
-- Top-level prepass: removed-training-field tombstones, portfolio tombstones,
-  ``schema_version`` presence/version check, ``split.method`` inspection.
+- Top-level prepass: ``schema_version`` presence/version check,
+  ``split.method`` inspection.
 - Whole-tree pydantic ``validate_python`` call + error-to-issue adapter.
 - Post-pydantic residual checks that need runtime state (registry membership,
   ``output_dir`` filesystem safety, data-source whitelist, csv-path security,
@@ -34,11 +34,9 @@ from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     LOCK_ROLES,
-    PORTFOLIO_TARGET_SIZE_TYPES,
     ConfigValidationIssue,
     DataConfig,
     Lock,
-    PortfolioConfig,
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
@@ -113,72 +111,17 @@ def validate_run_config(
 
 # ── prepass ──────────────────────────────────────────────────────────────────
 
-_REMOVED_TRAINING_FIELDS: dict[str, str] = dict.fromkeys(
-    ("lane", "train", "model", "labels", "label", "labeler", "signals"),
-    "training and lane fields are not supported by the single run config contract",
-)
-
-
-def _removed_fields(
-    mapping: dict[str, Any],
-    removed: dict[str, str],
-    issues: list[ConfigValidationIssue],
-    *,
-    prefix: str = "",
-) -> None:
-    """Tombstone prepass: emit each removed field's bespoke message and strip the key.
-
-    Stripping before pydantic runs keeps ``extra="forbid"`` from double-emitting
-    an unknown-key error for the same field.
-    """
-    for key, message in removed.items():
-        if key in mapping:
-            issues.append(ConfigValidationIssue(f"{prefix}{key}", message))
-            del mapping[key]
-
-
 def _prepass_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    """Modify *raw* in place, stripping removed keys and recording custom issues.
+    """Raw-dict checks that must run before (or regardless of) pydantic validation.
 
-    Done BEFORE pydantic validation so ``extra="forbid"`` doesn't double-emit
-    unknown-key errors, and so bespoke messages survive (``@model_validator``
-    loses dotted paths).
+    Removed legacy fields carry no tombstones: they fall through to
+    ``extra="forbid"``'s unknown-key rejection like any field that never existed.
     """
     # schema_version presence + version check
     if "schema_version" not in raw or raw.get("schema_version") != CONFIG_SCHEMA_VERSION:
         issues.append(
             ConfigValidationIssue("schema_version", f"must be {CONFIG_SCHEMA_VERSION}")
         )
-
-    # Removed training/lane fields (custom messages, not "Unexpected keyword argument")
-    _removed_fields(raw, _REMOVED_TRAINING_FIELDS, issues)
-
-    # Portfolio removed fields (bespoke messages per field)
-    portfolio_raw = raw.get("portfolio")
-    if isinstance(portfolio_raw, dict):
-        _removed_fields(
-            portfolio_raw, PortfolioConfig.REMOVED_FIELDS, issues, prefix="portfolio."
-        )
-        if "size_type" in portfolio_raw:
-            st_value = portfolio_raw.pop("size_type")
-            if not isinstance(st_value, str):
-                issues.append(
-                    ConfigValidationIssue("portfolio.size_type", "must be a string")
-                )
-            elif st_value in PORTFOLIO_TARGET_SIZE_TYPES:
-                issues.append(
-                    ConfigValidationIssue(
-                        "portfolio.size_type",
-                        PortfolioConfig._SIZE_TYPE_TOMBSTONES["target"],
-                    )
-                )
-            else:
-                issues.append(
-                    ConfigValidationIssue(
-                        "portfolio.size_type",
-                        PortfolioConfig._SIZE_TYPE_TOMBSTONES["other"],
-                    )
-                )
 
     # Optimization required (forward optimization contract)
     if "optimization" not in raw:

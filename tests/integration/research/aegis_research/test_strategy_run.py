@@ -390,7 +390,7 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
     output = capsys.readouterr()
     assert output.out == ""
     message = json.loads(output.err)["error"]["message"]
-    assert "single run config contract" in message
+    assert "Unexpected keyword argument" in message
     assert "aerd run --train" not in message
     assert not (tmp_path / "runs" / "should-not-exist").exists()
 

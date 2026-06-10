@@ -187,7 +187,7 @@ def test_run_rejects_removed_labeler_without_train_guidance(
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
-    assert "training and lane fields are not supported" in payload["error"]["message"]
+    assert "labeler: Unexpected keyword argument" in payload["error"]["message"]
     assert "aerd run --train" not in payload["error"]["message"]
     assert not (tmp_path / "runs" / "bad-run").exists()
 
@@ -331,7 +331,7 @@ def test_run_rejects_stale_train_shaped_config_before_run_directory(
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
-    assert "single run config contract" in payload["error"]["message"]
+    assert "Unexpected keyword argument" in payload["error"]["message"]
     assert "aerd run --train" not in payload["error"]["message"]
     assert not (tmp_path / "runs" / "bad-mode").exists()
 

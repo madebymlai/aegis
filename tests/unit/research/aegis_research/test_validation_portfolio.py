@@ -210,69 +210,24 @@ def test_report_construction_accepts_defaults() -> None:
     assert config.min_oos_trades == 5
 
 
-# ── tombstone fields (coordinator prepass via resolve_run_config) ─────────────
+# ── removed fields (no tombstones: rejected as fields that never existed) ─────
 
 
-def test_portfolio_rejects_removed_entry_budget_with_exact_message(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"entry_budget": 0.6, "gross_cap": 1.0, "direction": "longonly"}, tmp_path=tmp_path)
-    issues = [(i.path, i.message) for i in e.value.issues]
-    assert ("portfolio.entry_budget", "renamed to portfolio.gross_cap") in issues
-
-
-def test_portfolio_rejects_removed_target_exposure_cap_with_clear_message(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"gross_cap": 1.0, "target_exposure_cap": 1.0, "direction": "longonly"}, tmp_path=tmp_path)
-    messages = [i.message for i in e.value.issues if i.path == "portfolio.target_exposure_cap"]
-    assert messages, "target_exposure_cap must be rejected"
-    assert "gross_cap" in messages[0]
-
-
-def test_portfolio_rejects_removed_size_field(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"gross_cap": 1.0, "size": 100, "direction": "longonly"}, tmp_path=tmp_path)
-    messages = [i.message for i in e.value.issues if i.path == "portfolio.size"]
-    assert messages
-    assert "gross_cap" in messages[0]
-
-
-def test_portfolio_size_type_target_rejected_with_internal_message(tmp_path: Path) -> None:
+@pytest.mark.parametrize("removed", ["entry_budget", "target_exposure_cap", "size", "size_type"])
+def test_portfolio_rejects_removed_field_as_unknown_key(tmp_path: Path, removed: str) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(
-            {"gross_cap": 1.0, "size_type": "targetpercent", "direction": "longonly"},
+            {"gross_cap": 1.0, "direction": "longonly", removed: 1.0},
             tmp_path=tmp_path,
         )
-    messages = [i.message for i in e.value.issues if i.path == "portfolio.size_type"]
-    assert messages
-    assert "internally" in messages[0]
+    messages = [i.message for i in e.value.issues if i.path == f"portfolio.{removed}"]
+    assert messages == ["Unexpected keyword argument"]
 
 
-def test_portfolio_size_type_non_target_rejected_with_generic_message(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve(
-            {"gross_cap": 1.0, "size_type": "bogus_type", "direction": "longonly"},
-            tmp_path=tmp_path,
-        )
-    messages = [i.message for i in e.value.issues if i.path == "portfolio.size_type"]
-    assert messages
-    assert "removed" in messages[0]
+# ── all-errors-at-once (unknown key + structural co-reported) ─────────────────
 
 
-def test_portfolio_size_type_non_string_rejected(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve(
-            {"gross_cap": 1.0, "size_type": 42, "direction": "longonly"},
-            tmp_path=tmp_path,
-        )
-    messages = [i.message for i in e.value.issues if i.path == "portfolio.size_type"]
-    assert messages
-    assert "string" in messages[0]
-
-
-# ── all-errors-at-once (tombstone + structural co-reported) ──────────────────
-
-
-def test_portfolio_co_reports_tombstone_and_structural_error(tmp_path: Path) -> None:
+def test_portfolio_co_reports_unknown_key_and_structural_error(tmp_path: Path) -> None:
     """A removed field *and* a missing gross_cap are both reported."""
     with pytest.raises(ConfigValidationError) as e:
         _resolve({"entry_budget": 0.6, "direction": "longonly"}, tmp_path=tmp_path)

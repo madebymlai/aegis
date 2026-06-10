@@ -143,7 +143,7 @@ def test_run_config_rejects_removed_train_and_lane_fields(
         resolve_run_config(_merge(_run_config(), mutation), component_registry=registry)
 
     assert expected_path in str(error.value)
-    assert "single run config contract" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_indicator_selection_rejects_config_params(tmp_path: Path) -> None:
