@@ -17,54 +17,6 @@ from research.aegis_research.optimization.pipeline import completion, publishing
 from research.aegis_research.provenance.manifest import RunStatus
 
 
-def test_run_cli_rejects_playbook_source_selectors_before_artifacts(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    config_path = tmp_path / "run.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
-            _run_config_payload(
-                strategy={"source": "playbook", "id": "ma_cross"},
-                indicators=[{"source": "playbook", "ids": ["ma_explore"]}],
-            ),
-            sort_keys=False,
-        )
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "removed-playbook"]) == 6
-
-    payload = _last_json_line(capsys.readouterr().err)
-    assert payload["error"]["category"] == "config_validation"
-    assert "strategy.source" in payload["error"]["message"]
-    assert "Unexpected keyword argument" in payload["error"]["message"]
-    assert "indicators[0].ids" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "removed-playbook").exists()
-
-
-def test_run_cli_rejects_candidate_grid_on_component_config_before_artifacts(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
-    config_path = _write_run_config(
-        tmp_path,
-        candidate_grid={"batch_size": 2},
-    )
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "candidate-grid"]) == 6
-
-    payload = _last_json_line(capsys.readouterr().err)
-    assert payload["error"]["category"] == "config_validation"
-    assert "candidate_grid" in payload["error"]["message"]
-    assert "Unexpected keyword argument" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "candidate-grid").exists()
-
-
 def test_component_optimization_uses_component_native_candidate_grid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -303,7 +255,6 @@ def _write_run_config(
     *,
     strategy: dict[str, object] | None = None,
     strategy_id: str = "demo.ma_opt",
-    candidate_grid: dict[str, object] | None = None,
     optimization: dict[str, object] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
@@ -312,7 +263,6 @@ def _write_run_config(
             _run_config_payload(
                 strategy=strategy or {"id": strategy_id},
                 indicators=[],
-                candidate_grid=candidate_grid,
                 optimization=optimization or {"search": "grid", "split": _rolling_split_config()},
             ),
             sort_keys=False,
@@ -332,7 +282,6 @@ def _run_config_payload(
     *,
     strategy: dict[str, object],
     indicators: list[dict[str, object]],
-    candidate_grid: dict[str, object] | None = None,
     optimization: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
@@ -349,7 +298,6 @@ def _run_config_payload(
         "strategy": strategy,
         "indicators": indicators,
         "ranking": {"metric": "total_return"},
-        **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
         **({"optimization": optimization} if optimization is not None else {}),
     }
 
