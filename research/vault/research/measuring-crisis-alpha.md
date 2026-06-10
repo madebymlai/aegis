@@ -40,7 +40,7 @@ The resolution is to rank on a metric that integrates the whole equity curve whi
 
 ## Strategy hypotheses this could seed
 
-- [ ] Ranking candidates on the Ulcer Performance Index instead of full-sample Sharpe selects sleeves with shallower crash-window drawdowns at acceptable full-sample cost - the first custom ranking Metric to register.
+- [x] Ranking candidates on the Ulcer Performance Index instead of full-sample Sharpe selects sleeves with shallower crash-window drawdowns at acceptable full-sample cost - the first custom ranking Metric to register. **Supported 2026-06-10**: on the identical crisis-blend grid, UPI ranking selected a different candidate (heavier trend core, slower vol window) with shallower held-out drawdowns (5.54% vs 5.74% mean max_dd) at zero Sharpe cost (+1.007 vs +1.008) - and, as predicted, traded crash-time gain (2022 +0.47 vs +0.82) for smoothness. Registered as the opt-in `ulcer_performance_index` Metric. See [[runs/aegis/2026-06-10|run diary]].
 - [ ] A CDaR-at-moderate-alpha ranking objective selects similar candidates to UPI (robustness cross-check), while Calmar/MAR selects visibly more overfit ones - confirm the fragile-vs-robust split on our data.
 - [ ] A down-capture or multi-window conditional-return term, regularised across all in-sample stress windows, shifts selection toward sleeves that *gain* in crashes rather than merely lose little - the metric closest to the allocator's true objective.
 - [ ] Optimising directly on a single-window (e.g. 2022-only) crisis return overfits and degrades on held-out crashes - the pre-registered negative control.
