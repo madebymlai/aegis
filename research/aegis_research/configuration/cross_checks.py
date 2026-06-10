@@ -1,22 +1,9 @@
-"""Registry cross-checks — all checks that verify Run Config selections against registries.
+"""Registry cross-checks that verify Run Config component/metric selections.
 
-One public entry: ``cross_check_registries``, taking a union input —
-a validated ``RunConfig`` (full checks) or a raw mapping (best-effort
-membership subset) — plus the frozen component and metric registries,
-returning a fresh ``list[ConfigValidationIssue]``.
-
-Full dialect covers:
-- Strategy membership
-- Indicator membership (duplicate detection, ``id: all``)
-- Component params (undeclared, unsatisfied)
-- Strategy↔Indicator output contract
-- Ranking metric membership
-
-Raw dialect covers best-effort membership only (ids, "all", duplicates, metric
-membership) — no params / output-contract / lock checks. The subset is
-documented as deliberate.
-
-This module is package-internal — it does not join the public config surface.
+One public entry: ``cross_check_registries`` dispatches to full checks
+(validated ``RunConfig``) or best-effort membership checks (raw dict when
+pydantic structural validation failed).  Package-internal — not part of the
+public config surface.
 """
 
 from __future__ import annotations
@@ -79,11 +66,8 @@ def _full_cross_checks(
     _check_output_contract(strategy_def, ind_defs, issues)
     if strategy_def is not None:
         _check_params("strategy", config.strategy, strategy_def, issues)
-    for ind_path, ind_def in ind_defs:
-        for i, config_item in enumerate(config.indicators):
-            if ind_path == f"indicators[{i}]":
-                _check_params(ind_path, config_item, ind_def, issues)
-                break
+    for i, ind_def in ind_defs:
+        _check_params(f"indicators[{i}]", config.indicators[i], ind_def, issues)
 
     _check_metric_membership(
         config.ranking.metric, issues, metric_registry=metric_registry
@@ -123,13 +107,13 @@ def _check_indicators_membership(
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
-) -> list[tuple[str, ComponentDefinition]]:
+) -> list[tuple[int, ComponentDefinition]]:
     from research.aegis_research.configuration.schema import RunIndicatorSourceConfig
 
     if not isinstance(indicator_configs, list):
         return []
 
-    result: list[tuple[str, ComponentDefinition]] = []
+    result: list[tuple[int, ComponentDefinition]] = []
     seen_ids: set[str] = set()
     for i, config in enumerate(indicator_configs):
         if not isinstance(config, RunIndicatorSourceConfig):
@@ -161,19 +145,20 @@ def _check_indicators_membership(
                 )
             )
             continue
-        result.append((item_path, definition))
+        result.append((i, definition))
     return result
 
 
 def _check_output_contract(
     strategy_definition: ComponentDefinition | None,
-    indicator_definitions: list[tuple[str, ComponentDefinition]],
+    indicator_definitions: list[tuple[int, ComponentDefinition]],
     issues: list[ConfigValidationIssue],
 ) -> None:
     if strategy_definition is None:
         return
     produced: dict[str, str] = {}
-    for path, definition in indicator_definitions:
+    for i, definition in indicator_definitions:
+        path = f"indicators[{i}]"
         for output_name in definition.produced_output_names():
             previous = produced.get(output_name)
             if previous is not None:
