@@ -48,7 +48,7 @@ def run_strategy_sweep(
     run_id: str | None = None,
     parent_run_id: str | None = None,
     supersedes_run_id: str | None = None,
-    on_run_started: Callable[[dict[str, Any]], None] | None = None,
+    on_run_refs: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     config = resolved_config.config
     if config.optimization is None:
@@ -80,8 +80,8 @@ def run_strategy_sweep(
     recorder.persist()
 
     try:
-        if on_run_started is not None:
-            on_run_started(recorder.run_refs())
+        if on_run_refs is not None:
+            on_run_refs(recorder.run_refs())
         array_contract.assert_configured()
         data_result = load_market_data_result(
             config.data,
@@ -107,12 +107,21 @@ def run_strategy_sweep(
         recorder.mark_run_interrupted(
             diagnostic={"error_type": "KeyboardInterrupt", "message": "interrupted"}
         )
-        raise
-    except ConfigValidationError as error:
-        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
+        if on_run_refs is not None:
+            try:
+                on_run_refs(recorder.run_refs())
+            except Exception as callback_error:
+                callback_error.__context__ = KeyboardInterrupt()
+                raise callback_error  # noqa: TRY201
         raise
     except Exception as error:
         recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
+        if on_run_refs is not None:
+            try:
+                on_run_refs(recorder.run_refs())
+            except Exception as callback_error:
+                callback_error.__context__ = error
+                raise callback_error  # noqa: TRY201
         raise
 
 

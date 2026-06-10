@@ -152,7 +152,7 @@ def test_strategy_run_initializes_manifest_before_data_loading(
     assert manifest["stages"][0]["status"] == "failed"
 
 
-def test_strategy_run_marks_failed_when_run_started_callback_fails(
+def test_strategy_run_marks_failed_when_on_run_refs_callback_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -167,7 +167,7 @@ def test_strategy_run_marks_failed_when_run_started_callback_fails(
             resolved,
             component_registry=resolved.component_registry,
             run_id="callback-failed-run",
-            on_run_started=fail_callback,
+            on_run_refs=fail_callback,
         )
 
     manifest = json.loads(

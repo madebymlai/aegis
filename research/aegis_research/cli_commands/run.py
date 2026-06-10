@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
@@ -90,23 +89,23 @@ def _handle_strategy_run(
             run_id=args.run_id,
             parent_run_id=args.parent_run_id,
             supersedes_run_id=args.supersedes_run_id,
-            on_run_started=run_refs.update,
+            on_run_refs=run_refs.update,
         )
         run_refs.update(result)
     except KeyboardInterrupt as error:
         raise InterruptedCliError(
             "strategy run interrupted",
-            run_refs=_refreshed_run_refs(run_refs),
+            run_refs=run_refs,
         ) from error
     except ConfigValidationError as error:
         raise ConfigCliError(
             str(error),
-            run_refs=_refreshed_run_refs(run_refs),
+            run_refs=run_refs,
         ) from error
     except Exception as error:
         raise ExecutionFailureError(
             str(error),
-            run_refs=_refreshed_run_refs(run_refs),
+            run_refs=run_refs,
         ) from error
 
     return write_success(
@@ -158,19 +157,3 @@ def _human_run_lines(result: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
-def _refreshed_run_refs(run_refs: dict[str, Any]) -> dict[str, Any]:
-    if not run_refs:
-        return {}
-    refs = dict(run_refs)
-    manifest_path = refs.get("manifest_path")
-    if not manifest_path:
-        return refs
-    try:
-        payload = json.loads(Path(str(manifest_path)).read_text())
-    except (OSError, json.JSONDecodeError):
-        return refs
-    run = payload.get("run", {})
-    if isinstance(run, dict):
-        refs["status"] = run.get("status", refs.get("status"))
-        refs["finished_at"] = run.get("finished_at", refs.get("finished_at"))
-    return refs
