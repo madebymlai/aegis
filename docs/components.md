@@ -12,21 +12,19 @@ indicators:
 
 Each entry carries `id` plus optional values-only `params` that fix declared parameters. Per-component `lock_id`/`candidate_id` references are removed (ADR-0006): the only reference surface is the top-level `lock:` block — `lock: <run_id>[:<best|median|worst>]` or `lock: {run_id: ..., candidate_id: <candidate_key>}` — which reproduces one whole prior Candidate. Source selectors and indicator `ids` batching are removed so each component slot is explicit.
 
-YAML never imports Python, names modules, embeds formulas, or points at arbitrary files. Discovery reads only literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` metadata without executing the component file. Callable code loads only after validation selects a known ID under the fixed component root.
+YAML never imports Python, names modules, embeds formulas, or points at arbitrary files. Discovery reads only the literal `COMPONENT_MANIFEST`, the required module-level `run` entry point, and the optional module-level `param_space` entry point without executing the component file. Callable code loads only after validation selects a known ID under the fixed component root.
 
-Component manifests declare:
+Component manifests declare domain facts only:
 
 - `id` and `version`: the stable selection ID and the component's own version string (both required).
 - `input_names`: exact VBT raw-data features the component reads, such as `Close` or `High`.
-- `wide_callable`: required name of the vectorized callable that computes all candidates in one call.
 - Indicator `output_names`: named outputs available to strategies.
 - Strategy `consumes_outputs`: named indicator outputs required by the strategy.
 - Strategy `output_name`: singular allocation-native output the callable returns; must be one of `{active, scores, ranks, target_weights}` (the registered `STRATEGY_ALLOCATION_OUTPUTS`).
 - `param_names`: lockable/optimizable parameter names.
 - `defaults`: fixed values for one-candidate execution (keys must be declared in `param_names`).
-- `param_space_callable`: optional callable returning a mapping of parameter names to `vbt.Param` axes.
 
-Indicator callables receive a market-data bundle and request declared raw features through `data.feature("FeatureName")`. Strategy callables receive an inputs object with `inputs.data`, `inputs.indicators`, and `inputs.metadata`; they emit exactly one declared allocation-native frame named by the manifest's `output_name`. The optimization path invokes the wide callables: an indicator's `(data, *, n_candidates, **param_lists)` returns one candidate-major `(rows, n_candidates * n_symbols)` array, and a strategy's `(inputs, *, n_candidates, **param_lists)` reads candidate-major indicator arrays plus `inputs.n_symbols` and returns the same layout.
+A component has a searchable parameter space iff it defines `def param_space()`, which returns a mapping of parameter names to `vbt.Param` axes. Indicator callables receive a market-data bundle and request declared raw features through `data.feature("FeatureName")`. Strategy callables receive an inputs object with `inputs.data`, `inputs.indicators`, `inputs.n_symbols`, and `inputs.metadata`; they emit exactly one declared allocation-native output named by the manifest's `output_name`. The optimization path invokes `run` with the batched signature: an indicator's `(data, *, n_candidates, **param_lists)` returns a mapping of output name to candidate-major `(rows, n_candidates * n_symbols)` array, and a strategy's `(inputs, *, n_candidates, **param_lists)` reads candidate-major indicator arrays plus `inputs.n_symbols` and returns one allocation array with the same layout.
 
 Selection convention: non-NaN cells = selected this rebalance row; NaN = excluded. Top-N filtering is owned by the component — the component chooses what to NaN out before returning. The portfolio policy layer owns conversion of the declared shape to a validated allocations frame: it applies the executable mask, gates gross exposure against `portfolio.gross_cap` (with `portfolio.net_cap` and the required `portfolio.direction`), and writes the terminal-liquidation row. The runtime then hands the frame to `vbt.PFO.from_filled_allocations` and `vbt.Portfolio.from_optimizer`. Components do not own portfolios, official metrics, or arbitrary VBT kwargs — those are config-owned and policy-owned.
 

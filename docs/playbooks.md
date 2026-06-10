@@ -1,6 +1,6 @@
 # Playbooks
 
-Playbooks are no longer a supported `aerd run` authoring surface. The active contract is component-only: run configs name strategy and indicator component IDs directly, components declare defaults and optional `param_space_callable`, and all execution goes through native `optimization.search` with `optimization.split`.
+Playbooks are no longer a supported `aerd run` authoring surface. The active contract is component-only: run configs name strategy and indicator component IDs directly, components declare defaults and optional module-level `param_space()`, and all execution goes through native `optimization.search` with `optimization.split`.
 
 Forward component config shape:
 

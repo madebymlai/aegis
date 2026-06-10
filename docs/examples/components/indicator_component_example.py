@@ -15,10 +15,7 @@ COMPONENT_MANIFEST = {
     "param_names": ["window", "wtype"],
     "output_names": ["ma"],
     "defaults": {"window": 20, "wtype": "simple"},
-    "param_space_callable": "param_space",
-    "wide_callable": "run_wide",
 }
-COMPONENT_CALLABLE = "run"
 
 
 # %% parameter space
@@ -31,16 +28,9 @@ def param_space():
     }
 
 
-# %% main compute
-def run(data, window, wtype):
-    """Compute one moving-average frame for a single parameter row."""
-
-    close = data.feature("Close")
-    return _ma(close, int(window), str(wtype))
-
-
+# %% helpers
 def _ma(close, window, wtype):
-    """Shared MA formula for run and run_wide: one (rows, symbols) frame."""
+    """Compute one moving-average frame for a single parameter row."""
 
     ma = vbt.MA.run(close, window=window, wtype=wtype).ma
     # Single param combo: restore plain symbol columns whether or not VBT
@@ -49,13 +39,9 @@ def _ma(close, window, wtype):
     return ma
 
 
-# %% wide compute
-def run_wide(data, *, n_candidates, **param_lists):
-    """Vectorized MA for all candidates in a single call.
-
-    Returns one candidate-major array of shape (rows, n_candidates * n_symbols):
-    candidate ``ci`` owns the column block ``[ci * n_symbols, (ci + 1) * n_symbols)``.
-    """
+# %% main compute
+def run(data, *, n_candidates, **param_lists):
+    """Compute candidate-major moving-average output for all candidates."""
 
     close = data.feature("Close")
     n_symbols = len(close.columns)
@@ -65,7 +51,11 @@ def run_wide(data, *, n_candidates, **param_lists):
     result = np.full((len(close), n_candidates * n_symbols), np.nan)
     for window, wtype in set(zip(windows, wtypes, strict=True)):
         arr = _ma(close, int(window), str(wtype)).values
-        for ci in range(n_candidates):
-            if windows[ci] == window and wtypes[ci] == wtype:
-                result[:, ci * n_symbols : (ci + 1) * n_symbols] = arr
-    return result
+        for candidate_index in range(n_candidates):
+            if windows[candidate_index] == window and wtypes[candidate_index] == wtype:
+                cols = slice(
+                    candidate_index * n_symbols,
+                    (candidate_index + 1) * n_symbols,
+                )
+                result[:, cols] = arr
+    return {"ma": result}
