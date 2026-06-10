@@ -49,6 +49,19 @@ The change lands in three slices:
 
 ## Consequences
 
+- On success the returned result carries the final refs as before; the callback does not fire a
+  third time — the only consumer already holds them.
+- The callback contract is *must not raise*. No guard wraps either firing: a raising callback's
+  error propagates with the Run's real failure as its implicit `__context__`, and the Manifest
+  already holds the real diagnostic either way. A swallow-guard was rejected as reintroducing the
+  silent-failure mode this change deletes.
+- `KeyboardInterrupt` keeps propagating as itself; only the CLI converts it (exit code 130).
+- A pre-Run failure (Run Config rejected before any Run is created) never fires the callback;
+  "no Run was created" stays representable as the absent `run` block in the error envelope.
+- The refs stay a six-field dict — **Manifest** vocabulary projected for reporting, deliberately
+  not a new CONTEXT.md term.
+- The error-path JSON envelope is byte-identical before and after the change: the regression
+  oracle.
 - The refs projection exists in exactly one place — `RunRecorder.run_refs()` — and every call site
   already holds the recorder, so no capability widens (ADR-0004's discipline: optimization stages
   do not see the recorder, is untouched).

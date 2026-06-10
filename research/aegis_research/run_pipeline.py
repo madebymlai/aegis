@@ -108,20 +108,12 @@ def run_strategy_sweep(
             diagnostic={"error_type": "KeyboardInterrupt", "message": "interrupted"}
         )
         if on_run_refs is not None:
-            try:
-                on_run_refs(recorder.run_refs())
-            except Exception as callback_error:
-                callback_error.__context__ = KeyboardInterrupt()
-                raise callback_error  # noqa: TRY201
+            on_run_refs(recorder.run_refs())
         raise
     except Exception as error:
         recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
         if on_run_refs is not None:
-            try:
-                on_run_refs(recorder.run_refs())
-            except Exception as callback_error:
-                callback_error.__context__ = error
-                raise callback_error  # noqa: TRY201
+            on_run_refs(recorder.run_refs())
         raise
 
 
