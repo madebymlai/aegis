@@ -101,13 +101,8 @@ class CandidateGrid:
         metric_cols = self.metric_ids
         for key, sub in self._spine.groupby(level=group_level, sort=True):
             key_tuple: CandidateKey = key if isinstance(key, tuple) else (key,)
-            result: dict[Any, dict[str, float | None]] = {}
-            sub_splits = sub.index.get_level_values(_SPLIT_LEVEL)
-            for split_label, (_, row) in zip(sub_splits, sub.iterrows(), strict=True):
-                result[split_label] = {
-                    col: _nan_to_none(row[col]) for col in metric_cols
-                }
-            yield (key_tuple, result)
+            split_labels = sub.index.get_level_values(_SPLIT_LEVEL)
+            yield (key_tuple, _subframe_to_split_metrics(sub, split_labels, metric_cols))
 
     def split_metrics(
         self, key: CandidateKey
@@ -118,13 +113,21 @@ class CandidateGrid:
             sub = self._spine.xs(key[0], level=param_levels[0])
         else:
             sub = self._spine.xs(key, level=param_levels)
-        result: dict[Any, dict[str, float | None]] = {}
-        metric_cols = self.metric_ids
-        for split_label, (_, row) in zip(sub.index, sub.iterrows(), strict=True):
-            result[split_label] = {
-                col: _nan_to_none(row[col]) for col in metric_cols
-            }
-        return result
+        return _subframe_to_split_metrics(sub, sub.index, self.metric_ids)
+
+
+def _subframe_to_split_metrics(
+    sub: pd.DataFrame,
+    split_labels: pd.Index,
+    metric_cols: list[str],
+) -> dict[Any, dict[str, float | None]]:
+    """Convert a per-candidate DataFrame slice to {split_label: {metric_id: value_or_None}}."""
+    result: dict[Any, dict[str, float | None]] = {}
+    for split_label, (_, row) in zip(split_labels, sub.iterrows(), strict=True):
+        result[split_label] = {
+            col: _nan_to_none(row[col]) for col in metric_cols
+        }
+    return result
 
 
 def _nan_to_none(value: Any) -> float | None:

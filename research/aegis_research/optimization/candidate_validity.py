@@ -102,9 +102,7 @@ def classify_candidates(
         if key_tuple in invalid_keys:
             invalid.add(key_tuple)
         else:
-            metric_values = [
-                split_metrics[s].get(metric) for s in split_metrics
-            ]
+            metric_values = [m.get(metric) for m in split_metrics.values()]
             if all(v is None for v in metric_values):
                 non_trading.add(key_tuple)
             elif not _meets_trade_floor(split_metrics, min_trades, metric_ids):
