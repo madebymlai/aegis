@@ -114,3 +114,63 @@ aegis-rd-ce4.1.
   "persisted Evidence artifact" and nothing else.
 - Touches the shared `runner.py` → `simulate_portfolio_batch` → metrics surface; merge order
   must coordinate with sibling candidates 1 (validity), 2 (metrics), and 3 (param codec).
+
+## Amendment (2026-06-10): a run-level non-executable-row scalar in execution Evidence is in-bounds
+
+This ADR (line 26) classified the **non-executable count** — read directly from the masking
+step's return — as a **test oracle** fact, ported to read its source rather than persisted.
+The `aegis-rd-oh4` epic then deliberately routes a single run-level `non_executable_rows`
+integer into the Run's **execution** Evidence (`candidate_evidence.result_evidence` →
+`optimization_result.v3`, recorded under `EvidenceSection.EXECUTION`). On its face that
+overturns this ADR. It does not: the **facts on the ground changed**, and the new placement
+*honors* this ADR's principle rather than weakening it.
+
+**What changed.** When this ADR was written, the non-executable count was a byproduct of a
+**test-only** path. Masking lived in `portfolio_policy`; the runner discarded the diagnostics
+dict; and the mask was provably inert in production because the runner passed the *window's
+own* index as the market index, so seams could never be detected. The count had no production
+home, so it was correctly a test fact. oh4 **moved masking into the production simulation
+boundary** (oh4.2) and **armed it with the full market calendar** (oh4.3 — a reproduced bug
+fix: purged-split held-out windows were filling across purge seams). The count is now produced
+*on the production path*, where it records the structural execution cost of non-contiguous
+(purged/embargoed) split windows — zero for contiguous methods (an invariant), positive by
+design under purged modes. Its classification changed because its **production status**
+changed, not because this ADR's rule was loosened.
+
+**Why it is not the artifact this ADR rejected.** This ADR killed a *standalone*
+`portfolio_diagnostics.v4` dict that (1) wore its **own** `schema_version`, (2) was recorded
+into **no** Evidence section (the runner discarded it), (3) carried a structurally-fake
+per-symbol breakdown, and (4) had **zero** production consumers. `non_executable_rows` is none
+of these. It is a single integer; it carries **no** `schema_version` of its own (it rides
+under `OPTIMIZATION_RESULT_SCHEMA_VERSION`, an artifact that genuinely *is* persisted and
+read); it is recorded into the real `EXECUTION` section; and it has real consumers — the oh4.4
+run-report line (neutral under purged methods, WARNING-prefixed under contiguous methods where
+a non-zero value flags an upstream invariant breach) and the persisted `strategy_run.json`
+artifact, both of which read it back **from the recorded Evidence ledger**
+(`run_evidence.optimization()["execution"]`), not from a side channel. Option (a)'s specific
+objection — "inventing a new production stage whose only purpose is to feed an artifact nobody
+reads" — therefore does not apply: no new stage was invented, and the artifact is read.
+
+**Parity with already-accepted siblings.** The same `optimization_result.v3` block already
+persists `total`, `excluded_invalid`, and `excluded_degenerate` — run-level accounting
+integers that are *also* deterministically reproducible from the pinned config and that the
+run report already consumes (the researched-ratio line). Those were accepted as Evidence.
+`non_executable_rows` is categorically identical: a run-level integer recording what the sweep
+did. No principled line admits the exclusion counts onto the result deliverable but evicts
+this one.
+
+**The honest counter, and its resolution.** Read literally, this ADR's reproducibility test
+(lines 29-40) — "persist only what reproduction cannot recover" — would evict
+`non_executable_rows`, since re-running the Lock recomputes it exactly (it is a pure function
+of split geometry and the pinned calendar). But that same literal reading would also evict the
+exclusion counts above, which are persisted and accepted. The operative, as-practiced
+principle is therefore narrower than the literal test: **do not mint a standalone
+`schema_version` artifact for a non-persisted, unread observation.** Run-level accounting
+integers that ride on the genuinely-persisted **result deliverable** and have a real reader
+are in-bounds. `non_executable_rows` satisfies that; the rejected diagnostics dict did not. The
+`schema_version`-means-persisted-Evidence vocabulary this ADR protects is **upheld, not
+diluted** — the count never wears the costume on its own; it lives inside an artifact that
+genuinely earns it.
+
+**Verdict:** keep `non_executable_rows` in execution Evidence. No code change. This amendment
+is the paper trail, so the placement is not re-opened as a review finding.
