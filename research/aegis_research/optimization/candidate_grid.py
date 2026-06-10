@@ -125,12 +125,12 @@ def _subframe_to_split_metrics(
     result: dict[Any, dict[str, float | None]] = {}
     for split_label, (_, row) in zip(split_labels, sub.iterrows(), strict=True):
         result[split_label] = {
-            col: optional_float(row[col]) for col in metric_cols
+            col: _optional_float(row[col]) for col in metric_cols
         }
     return result
 
 
-def optional_float(value: Any) -> float | None:
+def _optional_float(value: Any) -> float | None:
     """Normalize a scalar to float or None, converting NaN to None."""
     if value is None:
         return None

@@ -43,11 +43,7 @@ from research.aegis_research.metrics.accessors import (
 from research.aegis_research.metrics.contracts import ExtractorSpec
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.optimization.candidate_grid import (
-    SPLIT_LEVEL,
-    CandidateGrid,
-    optional_float,
-)
+from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
     invalid_candidate_positions,
@@ -128,7 +124,7 @@ def execute_optimization(
         invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,
     )
-    selection_frame = _sweep(
+    selection_grid = _sweep(
         splitter=splitter,
         candidate_metrics=selection_metrics,
         apply_input=vbt.Rep("range_"),
@@ -136,7 +132,6 @@ def execute_optimization(
         set_=SELECTION_SET,
         parallel=True,
     )
-    selection_grid = CandidateGrid.from_sweep(selection_frame)
     verdicts = classify_candidates(
         selection_grid,
         invalid_keys=invalid_candidate_keys,
@@ -290,7 +285,7 @@ def _sweep(
     params: Mapping[str, Any],
     set_: str,
     parallel: bool,
-) -> pd.DataFrame:
+) -> CandidateGrid:
     options: dict[str, Any] = {}
     if parallel:
         # Phase 1 distributes the materialised parameter grid across processes:
@@ -325,7 +320,7 @@ def _sweep(
             "filtered out — return finite metrics from invalid combinations instead so "
             "they remain visible in evidence"
         ) from error
-    return stacked
+    return CandidateGrid.from_sweep(stacked)
 
 
 def _attach_held_out(
@@ -372,9 +367,9 @@ def _attach_held_out(
         parallel=False,
     )
     return OptimizationResult(
-        best=_with_held_out(result.best, held_out_grid, param_names),
-        median=_with_held_out(result.median, held_out_grid, param_names),
-        worst=_with_held_out(result.worst, held_out_grid, param_names),
+        best=_with_held_out(result.best, held_out_grid),
+        median=_with_held_out(result.median, held_out_grid),
+        worst=_with_held_out(result.worst, held_out_grid),
         excluded_degenerate=result.excluded_degenerate,
         excluded_invalid=result.excluded_invalid,
         total_candidates=result.total_candidates,
@@ -383,27 +378,11 @@ def _attach_held_out(
 
 def _with_held_out(
     candidate: EvaluatedCandidate,
-    held_out_grid: pd.DataFrame,
-    param_names: list[str],
+    held_out_grid: CandidateGrid,
 ) -> EvaluatedCandidate:
-    held_out = _candidate_split_metrics(held_out_grid, candidate.params, param_names)
+    key = tuple(candidate.params[name] for name in held_out_grid.param_levels)
+    held_out = held_out_grid.split_metrics(key)
     return dataclasses.replace(candidate, held_out_metrics=held_out)
-
-
-def _candidate_split_metrics(
-    grid: pd.DataFrame,
-    params: Mapping[str, Any],
-    param_names: list[str],
-) -> dict[Any, dict[str, float | None]]:
-    selector = pd.Series(True, index=grid.index)
-    for name in param_names:
-        selector &= grid.index.get_level_values(name) == params[name]
-    rows = grid[selector.to_numpy()]
-    metrics: dict[Any, dict[str, float | None]] = {}
-    split_labels = rows.index.get_level_values(SPLIT_LEVEL)
-    for split_label, (_, row) in zip(split_labels, rows.iterrows(), strict=True):
-        metrics[split_label] = {col: optional_float(row[col]) for col in grid.columns}
-    return metrics
 
 
 def _materialize_candidates(

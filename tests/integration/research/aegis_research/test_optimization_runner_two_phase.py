@@ -169,7 +169,7 @@ def test_runner_preserves_excluded_degenerate_through_held_out(monkeypatch) -> N
     The synthetic pipeline can't produce NaN-scored (degenerate) candidates — a
     zero-allocation candidate still scores a finite 0.0 — so we inject a known
     exclusion count at the ranking boundary and assert the runner threads it
-    through ``_attach_held_out`` unchanged.
+    through the held-out attachment unchanged.
     """
     import dataclasses
 
@@ -193,7 +193,7 @@ def test_runner_preserves_excluded_degenerate_through_held_out(monkeypatch) -> N
 def test_runner_preserves_total_candidates_through_held_out(monkeypatch) -> None:
     """The exact ranked-set size must survive the held-out round-trip too.
 
-    ``_attach_held_out`` rebuilds the frozen OptimizationResult; the exact
+    The held-out attachment rebuilds the frozen OptimizationResult; the exact
     Candidate total (size of the ranked set) the ranking layer computed must be
     carried forward, exactly as the degenerate-exclusion count is.
     """
