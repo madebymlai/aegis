@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 from dataclasses import dataclass
@@ -9,7 +10,6 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration.schema import ConfigValidationIssue, RunSplitConfig
-from research.aegis_research.data_schema import index_identity
 
 SPLITTER_METHOD_PREFIX = "from_"
 SPLITTER_INDEX_PARAM = "index"
@@ -279,7 +279,7 @@ def build_run_splits_result(index: pd.Index, config: RunSplitConfig) -> RunSplit
         "schema_version": "run_splits.v1",
         "method": config.method,
         "params": dict(config.params),
-        "source_index": index_identity(index),
+        "source_index": _index_identity(index),
         "n_splits": len(splits),
         "set_usage_policy": RUN_SCORING_SET_POLICY,
         "resource_estimate": resource_estimate,
@@ -360,11 +360,11 @@ def _split_membership_metadata(source_index: pd.Index, splits: list[RunSplit]) -
     for split in splits:
         sets = {
             "selection": {
-                **index_identity(split.selection_index),
+                **_index_identity(split.selection_index),
                 "membership": _membership_representation(source_index, split.selection_index),
             },
             "held_out": {
-                **index_identity(split.held_out_index),
+                **_index_identity(split.held_out_index),
                 "membership": _membership_representation(source_index, split.held_out_index),
             },
         }
@@ -401,3 +401,25 @@ def _json_safe_default(value: Any) -> Any:
     except (TypeError, ValueError):
         return repr(value)
     return value
+
+
+def _index_identity(index: pd.Index) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    count = 0
+    start = None
+    end = None
+    for value in index:
+        text = str(value)
+        if count:
+            digest.update(b"\n")
+        digest.update(text.encode())
+        if start is None:
+            start = text
+        end = text
+        count += 1
+    return {
+        "count": count,
+        "start": start,
+        "end": end,
+        "hash": digest.hexdigest(),
+    }
