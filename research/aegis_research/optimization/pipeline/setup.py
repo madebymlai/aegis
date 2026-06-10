@@ -59,21 +59,29 @@ from research.aegis_research.run_splits import RunSplitsResult, build_run_splits
 class SetupResult:
     """Typed hand-off from the pipeline setup stage.
 
-    Carries the eight fields consumed by downstream stages: the store path
-    (an identity all stages must agree on), the optimization source and split
-    result (genuine products), the price frames (products of setup's data
-    preparation), and the config builtins (deterministic serialisation of the
-    config sections consumed by publishing/completion).
+    Carries five identity/product fields per ADR-0015 step 2:
+    thread identities, recompute values. The store path (an identity all
+    stages must agree on), the optimization source and split result (genuine
+    products of Lock resolution and source construction), and the close/open
+    price frames (products of setup's data preparation, not derivable
+    downstream). Strategy evidence is a derived property over the
+    optimization source — no separate stored copy.
     """
 
     store_path: Path
     optimization_source: OptimizationSource
-    strategy_evidence: Mapping[str, Any]
     close: pd.DataFrame
     open_: pd.DataFrame
     split_result: RunSplitsResult
-    optimization_builtin: Mapping[str, Any]
-    portfolio_builtin: Mapping[str, Any]
+
+    @property
+    def strategy_evidence(self) -> Mapping[str, Any]:
+        """Strategy evidence derived from the optimization source.
+
+        Divergence between this view and the origin is unrepresentable —
+        there is no separate stored copy.
+        """
+        return self.optimization_source.evidence["strategy"]
 
 
 def run_pipeline_setup(
@@ -109,12 +117,10 @@ def run_pipeline_setup(
         resolved_component_params=resolved_component_params,
         force_locked=force_locked,
     )
-    strategy_evidence = optimization_source.evidence["strategy"]
     close = data.feature("Close")
     open_ = data.feature("Open")
     split_result = build_run_splits_result(close.index, config.optimization.split)
     optimization_builtin = to_builtin(config.optimization)
-    portfolio_builtin = to_builtin(config.portfolio)
     run_evidence.initialize_optimization(
         _optimization_evidence_baseline(
             optimization_source=optimization_source,
@@ -129,12 +135,9 @@ def run_pipeline_setup(
     return SetupResult(
         store_path=store_path,
         optimization_source=optimization_source,
-        strategy_evidence=strategy_evidence,
         close=close,
         open_=open_,
         split_result=split_result,
-        optimization_builtin=optimization_builtin,
-        portfolio_builtin=portfolio_builtin,
     )
 
 

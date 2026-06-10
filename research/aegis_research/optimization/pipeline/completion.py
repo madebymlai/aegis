@@ -22,6 +22,7 @@ from research.aegis_research.data_arrays import (
 )
 from research.aegis_research.optimization.candidate_publishing import (
     activate_candidate_run,
+    candidate_store_namespace,
 )
 from research.aegis_research.optimization.evidence import (
     candidate_held_out_headline,
@@ -50,7 +51,6 @@ def run_pipeline_completion(
     data_result: MarketDataResult,
     array_contract: DataArrayContract,
     run_evidence: RunEvidence,
-    store_namespace: Mapping[str, str],
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     """Write the strategy artifact, complete the run, and activate candidates.
@@ -62,6 +62,7 @@ def run_pipeline_completion(
     try:
         optimization_evidence = run_evidence.optimization()
         execution = dict(optimization_evidence.get("execution", {}))
+        store_namespace = candidate_store_namespace()
         artifact_payload = build_strategy_artifact_payload(
             strategy_evidence=setup.strategy_evidence,
             data_result=data_result,
@@ -70,8 +71,8 @@ def run_pipeline_completion(
                 "metric": config.ranking.metric,
                 "min_weight": config.ranking.min_weight,
             },
-            portfolio=setup.portfolio_builtin,
-            optimization=setup.optimization_builtin,
+            portfolio=to_builtin(config.portfolio),
+            optimization=to_builtin(config.optimization),
             split_metadata=setup.split_result.metadata,
             preflight=optimization_evidence["preflight"],
             execution=execution,

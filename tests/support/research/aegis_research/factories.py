@@ -337,12 +337,9 @@ def make_setup_result(**overrides: Any) -> SetupResult:
     defaults: dict[str, Any] = {
         "store_path": Path("candidates.sqlite3"),
         "optimization_source": _fake_optimization_source(),
-        "strategy_evidence": {},
         "close": pd.DataFrame({0: [1.0, 2.0]}),
         "open_": pd.DataFrame({0: [1.0, 2.0]}),
         "split_result": _fake_split_result(),
-        "optimization_builtin": {},
-        "portfolio_builtin": {},
     }
     defaults.update(overrides)
     return SetupResult(**defaults)

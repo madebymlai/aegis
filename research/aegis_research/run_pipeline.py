@@ -24,9 +24,6 @@ from research.aegis_research.data_arrays import (
     with_data_array_contract_metadata,
 )
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
-from research.aegis_research.optimization.candidate_publishing import (
-    candidate_store_namespace,
-)
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
     RunEvidence,
@@ -176,13 +173,10 @@ def _run_optimization_strategy_sweep(
         array_contract=array_contract,
         optimization_source=setup.optimization_source,
         execution=execution,
-        portfolio_builtin=setup.portfolio_builtin,
         run_evidence=run_evidence,
         store_path=setup.store_path,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
-
-    store_namespace = candidate_store_namespace()
 
     # Stage 4: Completion — artifact, completion, activation, result
     return run_pipeline_completion(
@@ -193,7 +187,6 @@ def _run_optimization_strategy_sweep(
         data_result=data_result,
         array_contract=array_contract,
         run_evidence=run_evidence,
-        store_namespace=store_namespace,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
 
