@@ -19,9 +19,6 @@ from research.aegis_research.configuration.schema import (
     RunConfig,
 )
 from research.aegis_research.configuration.validation import (
-    _post_validate_ranking_metric as _check_ranking_metric_membership,
-)
-from research.aegis_research.configuration.validation import (
     validate_run_config,
 )
 from research.aegis_research.metrics import (
@@ -124,47 +121,23 @@ def load_run_config(
 
 
 def resolve_run_config(
-    value: ResolvedRunConfig | RunConfig | dict[str, Any],
+    value: dict[str, Any],
     *,
     raw_text: str | None = None,
     source_path: str | None = None,
     component_registry: FrozenComponentRegistry | None = None,
     metric_registry: MetricRegistry | FrozenMetricRegistry | None = None,
 ) -> ResolvedRunConfig:
-    frozen_metric_registry = freeze_metric_registry(metric_registry)
-    if isinstance(value, ResolvedRunConfig):
-        effective_metric_registry = (
-            frozen_metric_registry or value.metric_registry or make_default_metric_registry()
-        )
-        if metric_registry is None and value.metric_registry is not None:
-            return value
-        if metric_registry is not None:
-            _assert_resolved_config_registries(
-                value.config,
-                frozen_metric_registry=effective_metric_registry,
-            )
-        return ResolvedRunConfig(
-            config=value.config,
-            raw_config_hash=value.raw_config_hash,
-            authored_config=value.authored_config,
-            source_path=value.source_path,
-            component_registry=value.component_registry,
-            metric_registry=effective_metric_registry,
-            selection=value.selection,
-        )
+    """Resolve a raw-mapping Run Config into a validated ``ResolvedRunConfig``.
+
+    Non-mapping values raise ``ConfigValidationError``.
+    """
+    if not isinstance(value, dict):
+        raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
 
     registry = component_registry or discover_component_registry()
+    frozen_metric_registry = freeze_metric_registry(metric_registry)
     effective_metric_registry = frozen_metric_registry or make_default_metric_registry()
-    if isinstance(value, RunConfig):
-        raw = to_builtin(value)
-        raw_text = yaml.safe_dump(raw, sort_keys=False)
-        return _build_resolved_run_config(
-            raw,
-            raw_text=raw_text,
-            source_path=source_path,
-            component_registry=registry,
-            metric_registry=effective_metric_registry,
-        )
 
     return _build_resolved_run_config(
         value,
@@ -183,9 +156,6 @@ def _build_resolved_run_config(
     component_registry: FrozenComponentRegistry,
     metric_registry: FrozenMetricRegistry,
 ) -> ResolvedRunConfig:
-    if not isinstance(raw, dict):
-        raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
-
     config, issues = validate_run_config(
         raw,
         component_registry=component_registry,
@@ -205,16 +175,4 @@ def _build_resolved_run_config(
     )
 
 
-def _assert_resolved_config_registries(
-    config: RunConfig,
-    *,
-    frozen_metric_registry: FrozenMetricRegistry,
-) -> None:
-    issues: list[ConfigValidationIssue] = []
-    _check_ranking_metric_membership(
-        config.ranking.metric,
-        issues,
-        registry=frozen_metric_registry,
-    )
-    if issues:
-        raise ConfigValidationError(issues)
+

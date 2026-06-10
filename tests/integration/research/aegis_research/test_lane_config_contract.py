@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
@@ -31,7 +32,7 @@ def test_valid_run_config_resolves_without_lane_identity(tmp_path: Path) -> None
     assert "lane" not in resolved.manifest()
 
 
-def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
+def test_run_config_resolves_from_raw_dict(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     config = make_run_config(
         name="typed_strategy_demo",
@@ -48,7 +49,7 @@ def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
         ),
     )
 
-    resolved = resolve_run_config(config, component_registry=registry)
+    resolved = resolve_run_config(to_builtin(config), component_registry=registry)
 
     assert resolved.config.indicators[0].id == "demo.indicator"
 
