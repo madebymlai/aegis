@@ -7,6 +7,7 @@ from research.aegis_research.cli_commands.show import (
     config_schema,
     indicator_schema,
     splitters,
+    strategy_schema,
 )
 
 
@@ -23,3 +24,4 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     config_schema.register(show_subparsers)
     indicator_schema.register(show_subparsers)
     splitters.register(show_subparsers)
+    strategy_schema.register(show_subparsers)

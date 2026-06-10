@@ -965,3 +965,271 @@ def test_show_splitters_catalog_unchanged_after_indicator_schema(
     assert payload["status"] == "success"
     assert payload["schema_version"] == "splitter_catalog.v1"
     assert any(method["method"] == "from_rolling" for method in payload["methods"])
+
+
+# ── strategy-schema ─────────────────────────────────────────────────────────
+
+
+def test_show_strategy_schema_exits_zero_and_prints_markdown(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main(["show", "strategy-schema"]) == 0
+
+    markdown = capsys.readouterr().out
+
+    # Title and key sections
+    assert "# Strategy Component Authoring Guide" in markdown
+    assert "## Percent-Cell Structure" in markdown
+    assert "## Manifest" in markdown
+    assert "## Entry Points" in markdown
+    assert "## The `run` Entry Point" in markdown
+    assert "## Optional `param_space`" in markdown
+    assert "## NaN-Selection Convention" in markdown
+    assert "## Ownership Boundaries" in markdown
+    assert "## Batch-Invariance Rule" in markdown
+    assert "## Legacy Declarations" in markdown
+    assert "## Complete Example" in markdown
+
+    # v2 contract = run entry point (not legacy callable)
+    assert "`run`" in markdown
+    # Batched signature with inputs object
+    assert "n_candidates" in markdown
+    assert "`inputs`" in markdown
+    # Bare allocation-array return
+    assert "bare" in markdown.lower()
+    # consumes_outputs wiring
+    assert "consumes_outputs" in markdown
+    # Allocation-output catalog interpolated
+    assert "`active`" in markdown
+    assert "`target_weights`" in markdown
+    # Ownership boundaries
+    assert "portfolio.gross_cap" in markdown
+    assert "owns_portfolio" in markdown
+    # NaN-selection convention
+    assert "NaN" in markdown
+    assert "np.nan" in markdown
+    # Legacy keys are documented as hard errors
+    assert "COMPONENT_CALLABLE" in markdown
+    assert "wide_callable" in markdown
+    assert "param_space_callable" in markdown
+
+
+def test_show_strategy_schema_json_returns_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main(["show", "strategy-schema", "--json"]) == 0
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["status"] == "success"
+    assert payload["format"] == "markdown"
+    assert payload["schema_version"] == "strategy_schema_guide.v1"
+    assert "# Strategy Component Authoring Guide" in payload["content"]
+
+
+def test_show_strategy_schema_allocation_outputs_interpolated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The allocation-output catalog is interpolated from the registered constant."""
+    from research.aegis_research.component_registry.contracts import (
+        STRATEGY_ALLOCATION_OUTPUTS,
+    )
+
+    assert cli.main(["show", "strategy-schema"]) == 0
+
+    markdown = capsys.readouterr().out
+    for output_name in sorted(STRATEGY_ALLOCATION_OUTPUTS):
+        assert f"`{output_name}`" in markdown
+
+
+def test_show_strategy_schema_manifest_table_is_interpolated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The manifest field table includes strategy-specific fields."""
+    assert cli.main(["show", "strategy-schema"]) == 0
+
+    markdown = capsys.readouterr().out
+
+    # Field table has the Strategy-specific fields
+    assert "| `output_name` |" in markdown
+    assert "| `consumes_outputs` |" in markdown
+    assert "| `owns_portfolio` |" in markdown
+    # Common base fields present
+    assert "| `family` |" in markdown
+    assert "| `id` |" in markdown
+    assert "| `version` |" in markdown
+    assert "| `input_names` |" in markdown
+    assert "| `param_names` |" in markdown
+    assert "| `defaults` |" in markdown
+
+
+def test_show_strategy_schema_entrypoint_names_from_constants(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Entry-point names come from code constants, not hand-written strings."""
+    from research.aegis_research.component_registry.contracts import (
+        COMPONENT_ENTRYPOINT,
+        COMPONENT_PARAM_SPACE_ENTRYPOINT,
+    )
+
+    assert cli.main(["show", "strategy-schema"]) == 0
+
+    markdown = capsys.readouterr().out
+    # The entry point name "run" appears in the guide (from COMPONENT_ENTRYPOINT)
+    assert f"`{COMPONENT_ENTRYPOINT}` Entry Point" in markdown
+    # The param space entry point name appears (from COMPONENT_PARAM_SPACE_ENTRYPOINT)
+    assert f"Optional `{COMPONENT_PARAM_SPACE_ENTRYPOINT}`" in markdown
+
+
+def test_show_strategy_schema_example_round_trips_through_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The packaged strategy example round-trips through the real registry parser/discovery."""
+    import shutil
+
+    from research.aegis_research.component_registry.contracts import (
+        ComponentSelection,
+        StrategyManifest,
+    )
+    from research.aegis_research.component_registry.registry import (
+        discover_component_registry,
+    )
+
+    example_src = Path(
+        "research/aegis_research/component_registry/strategy_example.py"
+    )
+    dest = tmp_path / "research" / "components" / "strategies" / "example_ma_cross.py"
+    dest.parent.mkdir(parents=True)
+    shutil.copy(example_src, dest)
+
+    monkeypatch.chdir(tmp_path)
+    registry = discover_component_registry(
+        root=tmp_path / "research" / "components",
+        repo_root=tmp_path,
+    )
+
+    assert registry.ids("strategies") == ("example.ma_cross",)
+    definition = registry.get(ComponentSelection("strategies", "example.ma_cross"))
+    manifest = definition.manifest
+    assert isinstance(manifest, StrategyManifest)
+    assert manifest.id == "example.ma_cross"
+    assert manifest.version == "1.0.0"
+    assert manifest.input_names == ("Close",)
+    assert manifest.param_names == ("fast_window", "slow_window")
+    assert manifest.output_name == "active"
+    assert manifest.consumes_outputs == ()
+    assert manifest.defaults == {"fast_window": 10, "slow_window": 20}
+    assert manifest.owns_portfolio is False
+    assert definition.has_param_space is True
+
+
+def test_show_strategy_schema_guide_embeds_example_source(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The guide embeds the complete example source under ## Complete Example."""
+    assert cli.main(["show", "strategy-schema"]) == 0
+
+    markdown = capsys.readouterr().out
+    # The example source is embedded as a code block
+    assert "## Complete Example" in markdown
+    # Key lines from the example
+    assert 'COMPONENT_MANIFEST = {' in markdown
+    assert '"family": "strategies"' in markdown
+    assert '"id": "example.ma_cross"' in markdown
+    assert "def run(inputs, *, n_candidates, **param_lists):" in markdown
+
+
+def test_show_components_unchanged_after_strategy_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`aerd show components` behavior is unchanged."""
+    monkeypatch.chdir(tmp_path)
+    write_indicator_component(tmp_path / "research/components/indicators/returns.py")
+    write_strategy_component(tmp_path / "research/components/strategies/strategy.py")
+
+    assert cli.main(["show", "components", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "success"
+    assert payload["schema_version"] == "component_registry_snapshot.v1"
+    assert "fingerprint" in payload
+    assert "families" in payload
+
+
+def test_show_splitters_catalog_unchanged_after_strategy_schema(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`aerd show splitters` behavior is unchanged."""
+    assert cli.main(["show", "splitters", "--json"]) == 0
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["status"] == "success"
+    assert payload["schema_version"] == "splitter_catalog.v1"
+    assert any(method["method"] == "from_rolling" for method in payload["methods"])
+
+
+def test_authoring_story_round_trip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: the example Run Config referencing the packaged example
+    Indicator and Strategy components validates through the real validation
+    coordinator."""
+    import shutil
+
+    from research.aegis_research.configuration import (
+        CONFIG_SCHEMA_VERSION,
+        resolve_run_config,
+    )
+
+    # Copy both packaged examples into the component tree
+    indicator_src = Path(
+        "research/aegis_research/component_registry/indicator_example.py"
+    )
+    strategy_src = Path(
+        "research/aegis_research/component_registry/strategy_example.py"
+    )
+    indicator_dest = tmp_path / "research" / "components" / "indicators" / "example_ma.py"
+    strategy_dest = tmp_path / "research" / "components" / "strategies" / "example_ma_cross.py"
+    indicator_dest.parent.mkdir(parents=True)
+    strategy_dest.parent.mkdir(parents=True)
+    shutil.copy(indicator_src, indicator_dest)
+    shutil.copy(strategy_src, strategy_dest)
+
+    monkeypatch.chdir(tmp_path)
+
+    example_raw = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "authoring.story",
+        "data": {
+            "source": "synthetic",
+            "symbols": ["A", "B", "C"],
+            "rows": 250,
+            "arrays": ["OHLCV"],
+        },
+        "portfolio": {
+            "gross_cap": 1.0,
+            "direction": "longonly",
+        },
+        "strategy": {"id": "example.ma_cross"},
+        "indicators": [{"id": "example.ma"}],
+        "ranking": {"metric": "sharpe_ratio"},
+        "optimization": {
+            "search": "grid",
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 126, "split": 0.5},
+                "max_splits": 2,
+            },
+        },
+    }
+
+    resolved = resolve_run_config(example_raw)
+    assert resolved is not None
+    assert resolved.config.name == "authoring.story"
+    assert resolved.config.strategy.id == "example.ma_cross"
+    assert resolved.config.indicators[0].id == "example.ma"
