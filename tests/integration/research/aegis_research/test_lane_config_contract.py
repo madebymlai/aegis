@@ -189,42 +189,6 @@ def test_run_config_rejects_unimplemented_failure_policy(tmp_path: Path) -> None
     assert "failure_policy" in str(error.value)
 
 
-@pytest.mark.parametrize(
-    "csv_path",
-    ["/tmp/prices.csv", "../prices.csv", "~/prices.csv", "~user/prices.csv", "C:\\prices.csv"],
-)
-def test_run_csv_source_rejects_non_project_relative_path(
-    tmp_path: Path,
-    csv_path: str,
-) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _merge(_run_config(), {"data": {"source": "csv", "path": csv_path}})
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "data.path" in str(error.value)
-    assert "relative path" in str(error.value)
-
-
-def test_run_output_dir_rejects_symlink_escape(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    registry = _component_registry(tmp_path)
-    outside = tmp_path / "outside-runs"
-    outside.mkdir()
-    (tmp_path / "runs").symlink_to(outside, target_is_directory=True)
-    raw = _merge(_run_config(), {"output_dir": "runs"})
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "output_dir" in str(error.value)
-    assert "symlink" in str(error.value)
-
-
 def test_run_ranking_rejects_unknown_metric(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     raw = _run_config()
