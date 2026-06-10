@@ -7,7 +7,7 @@ series into a candidate-major store (stage 1, ``precompute``); candidates with a
 entirely non-finite full-history block for any indicator output are marked invalid;
 then Phase 1 sweeps every split's *selection* set running only stage 2
 (``simulate``), slicing the precomputed store to each window via the splitter's
-``range_`` template — producing a tidy grid (one row per candidate per split, one
+``range_`` template — producing a Candidate Grid (one row per candidate per split, one
 column per metric). Phase 2 ranks candidates globally and returns three
 representative candidates (best / median / worst). Phase 3 re-runs those three on
 every split's *held-out* set and attaches the held-out metrics, again slicing the

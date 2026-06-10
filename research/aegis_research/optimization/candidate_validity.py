@@ -20,7 +20,10 @@ from typing import Any
 
 import numpy as np
 
-from research.aegis_research.optimization.candidate_grid import CandidateGrid
+from research.aegis_research.optimization.candidate_grid import (
+    CandidateGrid,
+    SplitMetrics,
+)
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
     WideIndicatorPrecompute,
@@ -90,8 +93,11 @@ def classify_candidates(
 
     Returns a ``Verdicts`` whose counts satisfy
     ``excluded_invalid <= excluded_degenerate <= total`` by construction.
+    Raises ``KeyError`` when ``metric`` is not a grid column.
     """
     metric_ids = grid.metric_ids
+    if metric not in metric_ids:
+        raise KeyError(f"ranking metric {metric!r} not present in grid columns")
 
     invalid: set[CandidateKey] = set()
     non_trading: set[CandidateKey] = set()
@@ -102,8 +108,7 @@ def classify_candidates(
         if key_tuple in invalid_keys:
             invalid.add(key_tuple)
         else:
-            metric_values = [m.get(metric) for m in split_metrics.values()]
-            if all(v is None for v in metric_values):
+            if all(m[metric] is None for m in split_metrics.values()):
                 non_trading.add(key_tuple)
             elif not _meets_trade_floor(split_metrics, min_trades, metric_ids):
                 under_traded.add(key_tuple)
@@ -119,7 +124,7 @@ def classify_candidates(
 
 
 def _meets_trade_floor(
-    split_metrics: dict[Any, dict[str, float | None]],
+    split_metrics: SplitMetrics,
     min_trades: int,
     metric_ids: list[str],
 ) -> bool:
@@ -151,7 +156,8 @@ def invalid_candidates(
     A Candidate is Invalid when at least one Indicator output block is entirely
     non-finite (all-NaN / all-inf) over the full series. This covers
     misconfigurations where an indicator's lookback exceeds the entire available
-    history.
+    history. A non-numeric output block is a broken Indicator contract and
+    raises TypeError rather than being classified.
     """
     outputs = store.outputs
     if not outputs or store.n_symbols < 1:
@@ -182,7 +188,6 @@ def _candidate_output_is_non_finite(output: Any, position: int, n_symbols: int) 
 
 
 def _has_finite_value(values: Any) -> bool:
-    try:
-        return bool(np.isfinite(values).any())
-    except TypeError:
-        return True
+    # A non-numeric block is a broken Indicator contract: np.isfinite raises
+    # TypeError and the failure propagates instead of being classified.
+    return bool(np.isfinite(values).any())

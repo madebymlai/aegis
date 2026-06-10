@@ -20,7 +20,7 @@ from research.aegis_research.optimization.ranking import (
 from tests.support.research.aegis_research.factories import make_candidate_grid
 
 
-def _cg(
+def _grid(
     values_by_candidate: dict[str, dict[str, float]], *, metric: str = "sharpe"
 ) -> CandidateGrid:
     """Build a CandidateGrid carrying one selection-set metric column."""
@@ -34,7 +34,7 @@ def _all_valid_verdict(
     values_by_candidate: dict[str, dict[str, float]], *, metric: str = "sharpe"
 ) -> Verdicts:
     """Build a verdict where every candidate is valid, using the factory."""
-    grid = _cg(values_by_candidate, metric=metric)
+    grid = _grid(values_by_candidate, metric=metric)
     return classify_candidates(grid, invalid_keys=set(), min_trades=0, metric=metric)
 
 
@@ -45,9 +45,9 @@ def _all_valid_verdict(
 
 def test_worked_example_min_aware_penalty_ranks_steady_candidate_first() -> None:
     # Equal means (0.6) but A has a catastrophic split. Min-aware MUST rank B above A.
-    trial = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.7, "s1": 0.5}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.7, "s1": 0.5}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=0.3)
 
@@ -58,9 +58,9 @@ def test_worked_example_min_aware_penalty_ranks_steady_candidate_first() -> None
 
 
 def test_three_candidates_pick_best_median_worst_by_rank() -> None:
-    trial = {"hi": {"s0": 1.0, "s1": 1.0}, "mid": {"s0": 0.5, "s1": 0.5}, "lo": {"s0": 0.1, "s1": 0.1}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"hi": {"s0": 1.0, "s1": 1.0}, "mid": {"s0": 0.5, "s1": 0.5}, "lo": {"s0": 0.1, "s1": 0.1}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     result = select_representative_candidates(grid, verdict, metric="sharpe")
 
@@ -71,9 +71,9 @@ def test_three_candidates_pick_best_median_worst_by_rank() -> None:
 
 
 def test_single_candidate_is_best_median_and_worst() -> None:
-    trial = {"only": {"s0": 0.3, "s1": 0.9}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"only": {"s0": 0.3, "s1": 0.9}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     result = select_representative_candidates(grid, verdict, metric="sharpe")
 
@@ -82,9 +82,9 @@ def test_single_candidate_is_best_median_and_worst() -> None:
 
 
 def test_two_candidates_median_is_one_of_them() -> None:
-    trial = {"x": {"s0": 1.0, "s1": 1.0}, "y": {"s0": 0.0, "s1": 0.0}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"x": {"s0": 1.0, "s1": 1.0}, "y": {"s0": 0.0, "s1": 0.0}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     result = select_representative_candidates(grid, verdict, metric="sharpe")
 
@@ -95,9 +95,9 @@ def test_two_candidates_median_is_one_of_them() -> None:
 
 def test_min_weight_zero_is_pure_mean_ranking() -> None:
     # A has the higher mean but a catastrophic split; B is steadier.
-    trial = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.5, "s1": 0.5}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.5, "s1": 0.5}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=0.0)
 
@@ -107,9 +107,9 @@ def test_min_weight_zero_is_pure_mean_ranking() -> None:
 
 
 def test_min_weight_one_is_pure_min_ranking() -> None:
-    trial = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.7, "s1": 0.5}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.7, "s1": 0.5}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=1.0)
 
@@ -120,9 +120,9 @@ def test_min_weight_one_is_pure_min_ranking() -> None:
 
 
 def test_nan_split_is_skipped_in_score_and_aggregate() -> None:
-    trial = {"A": {"s0": 1.0, "s1": float("nan")}, "B": {"s0": 0.4, "s1": 0.4}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"A": {"s0": 1.0, "s1": float("nan")}, "B": {"s0": 0.4, "s1": 0.4}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     result = select_representative_candidates(grid, verdict, metric="sharpe")
 
@@ -133,9 +133,9 @@ def test_nan_split_is_skipped_in_score_and_aggregate() -> None:
 
 
 def test_tied_scores_keep_parameter_sorted_order() -> None:
-    trial = {"b": {"s0": 0.5, "s1": 0.5}, "a": {"s0": 0.5, "s1": 0.5}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"b": {"s0": 0.5, "s1": 0.5}, "a": {"s0": 0.5, "s1": 0.5}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     result = select_representative_candidates(grid, verdict, metric="sharpe")
 
@@ -159,9 +159,9 @@ def test_all_registered_metrics_are_carried_per_split_and_aggregated() -> None:
 
 
 def test_held_out_metrics_start_empty() -> None:
-    trial = {"only": {"s0": 0.3, "s1": 0.9}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"only": {"s0": 0.3, "s1": 0.9}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     candidate = select_representative_candidates(grid, verdict, metric="sharpe").best
 
@@ -239,9 +239,9 @@ def test_excluded_degenerate_count_is_reported() -> None:
 
 
 def test_no_degenerate_candidates_reports_zero_excluded() -> None:
-    trial = {"hi": {"s0": 1.0, "s1": 1.0}, "lo": {"s0": 0.1, "s1": 0.1}}
-    grid = _cg(trial)
-    verdict = _all_valid_verdict(trial)
+    candidates = {"hi": {"s0": 1.0, "s1": 1.0}, "lo": {"s0": 0.1, "s1": 0.1}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
 
     result = select_representative_candidates(grid, verdict, metric="sharpe")
 

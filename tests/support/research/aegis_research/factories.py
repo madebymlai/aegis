@@ -31,7 +31,10 @@ from research.aegis_research.config import (
     RunSplitConfig,
     SignalConfig,
 )
-from research.aegis_research.optimization.candidate_grid import CandidateGrid
+from research.aegis_research.optimization.candidate_grid import (
+    SPLIT_LEVEL,
+    CandidateGrid,
+)
 from research.aegis_research.optimization.precompute import CandidateKey
 
 
@@ -211,7 +214,6 @@ def make_candidate_grid(
     spec: Mapping[CandidateKey, Mapping[Any, Mapping[str, float | None]]],
     *,
     param_names: list[str] | None = None,
-    split_level: str = "split",
 ) -> CandidateGrid:
     """Build a CandidateGrid from a boundary-vocabulary spec.
 
@@ -224,14 +226,15 @@ def make_candidate_grid(
     the production construction path.
     """
     if not spec:
-        # Empty grid — still valid by construction.
+        # Empty grid — still valid by construction; carries the default
+        # param level and metric column the non-empty path would produce.
         if param_names is None:
-            param_names = ["dummy_param"]
+            param_names = ["param"]
         index = pd.MultiIndex.from_tuples(
-            [], names=[*param_names, split_level]
+            [], names=[*param_names, SPLIT_LEVEL]
         )
         return CandidateGrid.from_sweep(
-            pd.DataFrame({"dummy_metric": []}, index=index, dtype="float64")
+            pd.DataFrame({"sharpe": []}, index=index, dtype="float64")
         )
 
     # Collect all metric ids across all candidates and splits.
@@ -261,7 +264,7 @@ def make_candidate_grid(
                 mid: (np.nan if v is None else float(v))
                 for mid, v in per_metric.items()
             })
-    index = pd.MultiIndex.from_tuples(tuples, names=[*param_names, split_level])
+    index = pd.MultiIndex.from_tuples(tuples, names=[*param_names, SPLIT_LEVEL])
     # Fill missing metric columns with NaN.
     frame = pd.DataFrame(rows, index=index)
     for mid in metric_ids:

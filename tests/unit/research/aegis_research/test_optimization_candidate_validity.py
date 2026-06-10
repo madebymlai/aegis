@@ -12,6 +12,7 @@ Prior art: test_optimization_precompute.py, test_optimization_ranking.py.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from research.aegis_research.optimization.candidate_validity import (
     Verdicts,
@@ -52,6 +53,19 @@ def test_zero_symbols_returns_empty_set() -> None:
     )
     keys = candidate_keys({"window": [5]})
     assert invalid_candidates(store, keys) == set()
+
+
+def test_non_numeric_output_block_raises_type_error() -> None:
+    """A non-numeric Indicator output block is a broken contract, not a verdict."""
+    store = _store(
+        outputs={"sig": np.array([[None, 1.0]], dtype=object)},
+        n_symbols=2,
+        param_lists={"window": [5]},
+    )
+    keys = candidate_keys({"window": [5]})
+
+    with pytest.raises(TypeError):
+        invalid_candidates(store, keys)
 
 
 def test_no_keys_returns_empty_set() -> None:
@@ -422,6 +436,13 @@ def test_classify_empty_grid() -> None:
     assert verdict.total == 0
     assert verdict.valid == set()
     assert verdict.excluded_degenerate == 0
+
+
+def test_classify_missing_ranking_metric_raises_key_error() -> None:
+    grid = make_candidate_grid({("A",): {"s0": {"sharpe": 1.0}}})
+
+    with pytest.raises(KeyError, match="not present in grid columns"):
+        classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="absent")
 
 
 def test_classify_all_valid_verdict_counts() -> None:

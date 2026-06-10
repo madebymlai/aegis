@@ -21,6 +21,9 @@ from research.aegis_research.optimization.precompute import CandidateKey
 
 SPLIT_LEVEL = "split"
 
+SplitMetrics = dict[Any, dict[str, float | None]]
+"""Per-Candidate read shape: split label → metric id → value (NaN normalized to None)."""
+
 
 @dataclass(frozen=True)
 class CandidateGrid:
@@ -55,7 +58,7 @@ class CandidateGrid:
 
     @classmethod
     def from_sweep(cls, stacked: pd.DataFrame) -> CandidateGrid:
-        """Absorb the runner's tidy step and delegate to the validating constructor.
+        """Normalize a sweep's merge output and delegate to the validating constructor.
 
         ``stacked`` is the raw return value of ``vbt.Splitter.apply(...,
         merge_func="row_stack")`` with a single set selected. The row-stack guard
@@ -72,9 +75,9 @@ class CandidateGrid:
                 "sweep DataFrame must carry a MultiIndex; "
                 f"got {type(stacked.index).__name__}"
             )
-        tidy = stacked.copy()
-        tidy.columns.name = None
-        return cls(tidy)
+        frame = stacked.copy()
+        frame.columns.name = None
+        return cls(frame)
 
     # -- read surface ----------------------------------------------------------
 
@@ -88,9 +91,7 @@ class CandidateGrid:
         """Metric column names in column order."""
         return list(self._spine.columns)
 
-    def by_candidate(
-        self,
-    ) -> Iterator[tuple[CandidateKey, dict[Any, dict[str, float | None]]]]:
+    def by_candidate(self) -> Iterator[tuple[CandidateKey, SplitMetrics]]:
         """Yield (CandidateKey, split → metric_id → float-or-None) in parameter-sorted order.
 
         NaN values are normalized to None. Iteration order is deterministic:
@@ -104,15 +105,19 @@ class CandidateGrid:
             split_labels = sub.index.get_level_values(SPLIT_LEVEL)
             yield (key_tuple, _subframe_to_split_metrics(sub, split_labels, metric_cols))
 
-    def split_metrics(
-        self, key: CandidateKey
-    ) -> dict[Any, dict[str, float | None]]:
-        """Point lookup: return the split→metric_id→float-or-None mapping for one Candidate."""
+    def split_metrics(self, key: CandidateKey) -> SplitMetrics:
+        """Point lookup: return the split→metric_id→float-or-None mapping for one Candidate.
+
+        Raises KeyError for a Candidate key not present in the grid.
+        """
         param_levels = self.param_levels
-        if len(param_levels) == 1:
-            sub = self._spine.xs(key[0], level=param_levels[0])
-        else:
-            sub = self._spine.xs(key, level=param_levels)
+        try:
+            if len(param_levels) == 1:
+                sub = self._spine.xs(key[0], level=param_levels[0])
+            else:
+                sub = self._spine.xs(key, level=param_levels)
+        except KeyError:
+            raise KeyError(f"candidate key {key!r} not present in the grid") from None
         return _subframe_to_split_metrics(sub, sub.index, self.metric_ids)
 
 
@@ -120,9 +125,9 @@ def _subframe_to_split_metrics(
     sub: pd.DataFrame,
     split_labels: pd.Index,
     metric_cols: list[str],
-) -> dict[Any, dict[str, float | None]]:
+) -> SplitMetrics:
     """Convert a per-candidate DataFrame slice to {split_label: {metric_id: value_or_None}}."""
-    result: dict[Any, dict[str, float | None]] = {}
+    result: SplitMetrics = {}
     for split_label, (_, row) in zip(split_labels, sub.iterrows(), strict=True):
         result[split_label] = {
             col: _optional_float(row[col]) for col in metric_cols

@@ -223,7 +223,7 @@ def test_by_candidate_preserves_real_zero() -> None:
     assert metrics["s0"]["sharpe"] == 0.0
 
 
-def test_by_candidate_normalizes_inf() -> None:
+def test_by_candidate_preserves_inf() -> None:
     """Inf is not NaN, so it stays as float inf."""
     grid = CandidateGrid(
         _filled_frame(
@@ -260,7 +260,7 @@ def test_by_candidate_non_rectangular_grid() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_split_metrics_returns_same_shape() -> None:
+def test_split_metrics_returns_one_candidates_split_mapping() -> None:
     grid = CandidateGrid(
         _filled_frame(
             [("A", "s0"), ("A", "s1"), ("B", "s0"), ("B", "s1")],
@@ -268,8 +268,22 @@ def test_split_metrics_returns_same_shape() -> None:
             values={"sharpe": [1.0, 0.5, 0.3, 0.2]},
         )
     )
-    for key, expected in grid.by_candidate():
-        assert grid.split_metrics(key) == expected
+
+    assert grid.split_metrics(("A",)) == {"s0": {"sharpe": 1.0}, "s1": {"sharpe": 0.5}}
+    assert grid.split_metrics(("B",)) == {"s0": {"sharpe": 0.3}, "s1": {"sharpe": 0.2}}
+
+
+def test_split_metrics_unknown_candidate_raises_key_error() -> None:
+    grid = CandidateGrid(
+        _filled_frame(
+            [("A", "s0")],
+            names=["param", "split"],
+            values={"sharpe": [1.0]},
+        )
+    )
+
+    with pytest.raises(KeyError, match="not present in the grid"):
+        grid.split_metrics(("Z",))
 
 
 def test_split_metrics_multi_param_key() -> None:
