@@ -46,6 +46,16 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
     a caller (``make_metric_registry_for``) passes its record through
     ``register_custom_metrics`` because a run requested it.
     """
+    from research.aegis_research.metrics.custom.calmar import (
+        CALMAR_RATIO_DEFINITION,
+        CALMAR_RATIO_EXTRACTOR,
+    )
+    from research.aegis_research.metrics.custom.capture import (
+        CAPTURE_SPREAD_DEFINITION,
+        CAPTURE_SPREAD_EXTRACTOR,
+        NEG_DOWN_CAPTURE_DEFINITION,
+        NEG_DOWN_CAPTURE_EXTRACTOR,
+    )
     from research.aegis_research.metrics.custom.cdar import (
         CDAR_RATIO_DEFINITION,
         CDAR_RATIO_EXTRACTOR,
@@ -58,6 +68,9 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
     available: tuple[tuple[MetricDefinition, ExtractorSpec], ...] = (
         (ULCER_PERFORMANCE_INDEX_DEFINITION, ULCER_PERFORMANCE_INDEX_EXTRACTOR),
         (CDAR_RATIO_DEFINITION, CDAR_RATIO_EXTRACTOR),
+        (NEG_DOWN_CAPTURE_DEFINITION, NEG_DOWN_CAPTURE_EXTRACTOR),
+        (CAPTURE_SPREAD_DEFINITION, CAPTURE_SPREAD_EXTRACTOR),
+        (CALMAR_RATIO_DEFINITION, CALMAR_RATIO_EXTRACTOR),
     )
     return {definition.id: (definition, spec) for definition, spec in available}
 
