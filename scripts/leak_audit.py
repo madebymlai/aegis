@@ -390,31 +390,40 @@ def structural_checks(audit, sr):
 
 
 def masking_check(audit, repo):
-    """C7 -- next-open execution guard: import the masking primitive and prove it
-    (a) marks a post-gap bar non-executable and (b) liquidates the terminal bar."""
+    """C7 -- next-open execution guard: simulate a gapped book and prove the
+    post-gap bar produces no orders (held) and the terminal bar liquidates."""
     sys.path.insert(0, str(repo))
     try:
         import pandas as pd
 
-        from research.aegis_research.allocation_policy.masking import (
-            apply_executable_mask_and_terminal_liquidation,
+        from research.aegis_research.portfolios import simulate_single_book
+        from tests.support.research.aegis_research.factories import (
+            make_portfolio_config,
         )
         market = pd.date_range("2020-01-01", periods=6, freq="D")
         # allocations skip the 3rd market bar -> a gap the mask must catch.
         alloc_idx = market.delete(2)
+        close = pd.DataFrame(100.0, index=alloc_idx, columns=["A", "B"])
         alloc = pd.DataFrame(1.0, index=alloc_idx, columns=["A", "B"])
-        masked, diag = apply_executable_mask_and_terminal_liquidation(
-            alloc, market_index=market)
-        post_gap = masked.loc[alloc_idx[2]]          # bar right after the skipped one
-        terminal = masked.iloc[-1]
-        gap_masked = bool(post_gap.isna().all())
-        terminal_zero = bool((terminal == 0.0).all())
-        ok = gap_masked and terminal_zero and diag.get("terminal_liquidation") is True
+        pf, held_count = simulate_single_book(
+            close,
+            alloc,
+            make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, direction="both"),
+            market_index=market,
+        )
+        # The post-gap bar must produce zero orders; terminal bar liquidates.
+        orders = pf.orders.records_readable
+        order_dates = set(orders["Index"].astype(str))
+        post_gap_date = str(alloc_idx[2].date())
+        terminal_date = str(alloc_idx[-1].date())
+        gap_held = post_gap_date not in order_dates
+        terminal_sold = terminal_date in order_dates
+        ok = gap_held and terminal_sold and held_count > 0
         audit.add("C7.next_open_masking",
                   "Next-open executable mask + terminal liquidation enforced",
                   "hard", "pass" if ok else "fail",
-                  f"post-gap row masked={gap_masked} terminal liquidated={terminal_zero} "
-                  f"non_executable_rows={diag.get('non_executable_rows')}")
+                  f"post-gap row held={gap_held} terminal liquidated={terminal_sold} "
+                  f"held_count={held_count}")
     except Exception as e:  # pragma: no cover - defensive
         audit.add("C7.next_open_masking", "Next-open executable mask",
                   "hard", "fail", f"masking import/behaviour check errored: {e!r}")
