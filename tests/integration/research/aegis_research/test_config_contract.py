@@ -341,7 +341,7 @@ def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
         )
 
     assert "candidate_grid" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
@@ -574,7 +574,7 @@ def test_run_rejects_top_level_split_as_unknown_field(tmp_path: Path) -> None:
         )
 
     assert "split" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> None:
@@ -589,7 +589,7 @@ def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> No
         )
 
     assert "candidate_grid" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_rejects_source_selectors_and_indicator_ids_as_unknown_fields(tmp_path: Path) -> None:

@@ -69,7 +69,7 @@ def test_strategy_run_rejects_candidate_grid_before_split_execution_budget_path(
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
     assert "candidate_grid" in payload["error"]["message"]
-    assert "unknown field" in payload["error"]["message"]
+    assert "Unexpected keyword argument" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "split-over-budget").exists()
 
 

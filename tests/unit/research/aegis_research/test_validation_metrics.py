@@ -167,7 +167,7 @@ def test_ranking_not_a_dict_fails(tmp_path: Path) -> None:
     }
     with pytest.raises(ConfigValidationError) as e:
         resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-    assert any(i.path == "ranking" and "mapping" in i.message for i in e.value.issues)
+    assert any(i.path == "ranking" and "Input should be a dictionary" in i.message for i in e.value.issues)
 
 
 # ── no duplicate issues ──────────────────────────────────────────────────────

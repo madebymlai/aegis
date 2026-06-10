@@ -271,7 +271,7 @@ def test_strategy_accepts_indicators_producing_consumed_outputs(tmp_path: Path) 
 def test_strategy_not_a_mapping_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(tmp_path=tmp_path, strategy="not_a_dict")  # type: ignore[arg-type]
-    assert any(i.path == "strategy" and "must be a mapping" in i.message for i in e.value.issues)
+    assert any(i.path == "strategy" and "Input should be a dictionary" in i.message for i in e.value.issues)
 
 
 def test_strategy_missing_id_reported_with_pydantic_wording(tmp_path: Path) -> None:
@@ -292,7 +292,7 @@ def test_indicators_not_a_list_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(tmp_path=tmp_path, indicators="not_a_list")  # type: ignore[arg-type]
     assert any(
-        i.path == "indicators" and "must be a list" in i.message for i in e.value.issues
+        i.path == "indicators" and "Input should be a valid list" in i.message for i in e.value.issues
     )
 
 
@@ -300,7 +300,7 @@ def test_indicator_item_not_a_mapping_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(tmp_path=tmp_path, indicators=["not_a_dict"])  # type: ignore[list-item]
     assert any(
-        "indicators[0]" in i.path and "must be a mapping" in i.message
+        "indicators[0]" in i.path and "Input should be a dictionary" in i.message
         for i in e.value.issues
     )
 

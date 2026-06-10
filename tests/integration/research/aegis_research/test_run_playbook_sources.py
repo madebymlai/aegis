@@ -61,7 +61,7 @@ def test_run_cli_rejects_candidate_grid_on_component_config_before_artifacts(
     payload = _last_json_line(capsys.readouterr().err)
     assert payload["error"]["category"] == "config_validation"
     assert "candidate_grid" in payload["error"]["message"]
-    assert "unknown field" in payload["error"]["message"]
+    assert "Unexpected keyword argument" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "candidate-grid").exists()
 
 

@@ -209,4 +209,4 @@ def test_optimization_must_be_mapping(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve("not_a_dict", tmp_path=tmp_path)
     issues = [(i.path, i.message) for i in e.value.issues]
-    assert ("optimization", "must be a mapping") in issues
+    assert ("optimization", "Input should be a dictionary or an instance of OptimizationConfig") in issues

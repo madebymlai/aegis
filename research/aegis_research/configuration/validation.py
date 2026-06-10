@@ -204,6 +204,8 @@ def _validation_error_to_issues_whole_tree(
                 else:
                     if parts and not parts[-1].startswith("["):
                         parts.append(".")
+                    elif parts:
+                        parts.append(".")
                     parts.append(str(part))
             path = "".join(parts).lstrip(".")
         issues.append(ConfigValidationIssue(path, entry["msg"]))
