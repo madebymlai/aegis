@@ -13,7 +13,7 @@ def _base_config(execute: dict[str, object] | None = None) -> dict:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "p10",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80, "arrays": ["OHLCV"]},
-        "portfolio": {"target_exposure_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0},
         "strategy": {"id": "demo.strategy"},
         "indicators": [],
         "ranking": {"metric": "total_return", "direction": "desc"},
@@ -46,7 +46,7 @@ def test_optimization_execute_rejects_reserved_merge_func_key(tmp_path) -> None:
 def test_optimization_rejects_removed_evidence_field(tmp_path) -> None:
     raw = _base_config()
     raw["optimization"]["evidence"] = {"return_grid": "off"}
-    with pytest.raises(ConfigValidationError, match="optimization.evidence"):
+    with pytest.raises(ConfigValidationError, match=r"optimization\.evidence"):
         resolve_run_config(
             raw, raw_text="", source_path="run.yaml", component_registry=_registry(tmp_path)
         )

@@ -6,17 +6,16 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration.schema import DataConfig
-from research.aegis_research.market_data import safety as _safety
+from research.aegis_research.market_data import native_metadata as _native_metadata
 
 
-def safe_provider_metadata(native_data: Any, *, source: str) -> dict[str, Any]:
-    """Project safe, public-shareable provider metadata for a local source.
+def local_provider_metadata(native_data: Any, *, source: str) -> dict[str, Any]:
+    """Project the metadata sidecar for a local source.
 
-    Local sources (synthetic, csv) never carry provider credentials, so no
-    allowlist projection of ``fetch_kwargs``/``returned_kwargs`` is applied —
-    only the safe native fields plus ``source``/``class``.
+    Local sources (synthetic, csv) carry no provider mappings, so only the
+    allowlisted native fields plus ``source``/``class`` are projected.
     """
-    return _safety.safe_native_data_metadata(native_data, source=source)
+    return _native_metadata.native_data_metadata(native_data, source=source)
 
 
 def index_evidence(index: pd.Index, *, source: str) -> dict[str, Any]:

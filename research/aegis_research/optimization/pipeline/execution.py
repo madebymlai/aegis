@@ -36,6 +36,7 @@ def run_pipeline_execution(
     close: pd.DataFrame,
     open_: pd.DataFrame,
     split_result: Any,
+    metric_registry: Any,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
     """Execute the preflight gate and two-phase optimization sweep.
@@ -43,6 +44,9 @@ def run_pipeline_execution(
     Returns a dict with key:
         optimization_result.
     """
+    # The public entry point rejects runs without an optimization block, so by the
+    # time execution runs the optimization config is guaranteed present.
+    assert config.optimization is not None
     try:
         preflight = build_preflight(
             params=optimization_source.params,
@@ -66,6 +70,7 @@ def run_pipeline_execution(
             portfolio=config.portfolio,
             report=config.report,
             ranking=config.ranking,
+            metric_registry=metric_registry,
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)

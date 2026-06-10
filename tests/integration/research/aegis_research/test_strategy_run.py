@@ -8,7 +8,7 @@ import yaml
 
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
-from research.aegis_research.optimization.component_source import FIXED_CANDIDATE_PARAM
+from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
 
 
 def test_strategy_run_cli_rejects_component_strategy_without_optimization(
@@ -69,7 +69,7 @@ def test_strategy_run_rejects_candidate_grid_before_split_execution_budget_path(
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
     assert "candidate_grid" in payload["error"]["message"]
-    assert "unknown field" in payload["error"]["message"]
+    assert "Unexpected keyword argument" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "split-over-budget").exists()
 
 
@@ -198,11 +198,38 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 
 
-def test_strategy_run_emits_strategy_and_indicator_locks(
+def test_strategy_run_prints_copy_paste_lock_handles_in_human_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    # aegis-rd-6ie: a successful run hands the user copy-paste lock: handles (best is the
+    # bare run_id; median/worst carry :role) plus a run_id + candidate-store footer.
+    monkeypatch.chdir(tmp_path)
+    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
+    config_path = _write_run_config(
+        tmp_path,
+        optimization={"search": "grid", "split": _rolling_split_config()},
+    )
+
+    assert cli.main(["run", str(config_path), "--run-id", "lock-handle-run"]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.rstrip().endswith("lock: lock-handle-run") for line in lines)
+    assert any(line.rstrip().endswith("lock: lock-handle-run:median") for line in lines)
+    assert any(line.rstrip().endswith("lock: lock-handle-run:worst") for line in lines)
+    assert any(line == "run_id: lock-handle-run" for line in lines)
+    assert any(line.startswith("candidate store:") for line in lines)
+
+
+def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # ADR-0006 (aegis-rd-396.4): publishing no longer mints per-Component lock records;
+    # the LOCKS Evidence section and the artifact "locks" key are retired. Inline
+    # values-only params: still freeze a single Component while the rest optimize.
     monkeypatch.chdir(tmp_path)
     _write_indicator_component(tmp_path / "research/components/indicators/ma.py")
     _write_indicator_strategy_component(tmp_path / "research/components/strategies/uses_ma.py")
@@ -217,14 +244,16 @@ def test_strategy_run_emits_strategy_and_indicator_locks(
 
     capsys.readouterr()
     artifact = json.loads((tmp_path / "runs" / "component-locks" / "strategy_run.json").read_text())
-    locks = {
-        (lock_record["component_family"], lock_record["component_id"]): lock_record
-        for lock_record in artifact["locks"]
-    }
+    manifest = json.loads((tmp_path / "runs" / "component-locks" / "manifest.json").read_text())
+    source = manifest["evidence"]["optimization"]["source"]
 
-    assert set(locks) == {("strategies", "demo.uses_ma"), ("indicators", "demo.ma")}
-    assert locks[("indicators", "demo.ma")]["params"] == {"window": 2}
-    assert locks[("strategies", "demo.uses_ma")]["params"] == {}
+    assert "locks" not in artifact
+    assert "resolved_locks" not in artifact
+    assert "locks" not in manifest["evidence"]["optimization"]
+
+    indicator = next(ind for ind in source["indicators"] if ind["id"] == "demo.ma")
+    assert indicator["fixed_params"] == {"window": 2}
+    assert indicator["param_mode"] == "fixed"
 
 
 def test_strategy_run_rejects_data_quality_side_path_without_optimization(
@@ -253,7 +282,7 @@ def test_strategy_run_rejects_fixed_strategy_side_path_without_optimization(
     _assert_missing_optimization_config_error(capsys, tmp_path, "fixed-run")
 
 
-def test_strategy_run_redacts_known_config_secrets_on_validation_failure(
+def test_strategy_run_reports_config_validation_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -275,10 +304,10 @@ def test_strategy_run_redacts_known_config_secrets_on_validation_failure(
     assert cli.main(["run", str(config_path), "--json", "--run-id", "secret-run"]) == 6
 
     output = capsys.readouterr()
-    assert "hunter2" not in output.err
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
     assert "fixed/non-optimized strategy runs are removed" in payload["error"]["message"]
+    assert "<redacted>" not in output.err
 
 
 def test_strategy_run_maps_component_registry_errors_to_config_errors(
@@ -361,7 +390,7 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
     output = capsys.readouterr()
     assert output.out == ""
     message = json.loads(output.err)["error"]["message"]
-    assert "single run config contract" in message
+    assert "Unexpected keyword argument" in message
     assert "aerd run --train" not in message
     assert not (tmp_path / "runs" / "should-not-exist").exists()
 
@@ -437,7 +466,7 @@ def _write_run_config(
                     "arrays": arrays or ["OHLCV"],
                 }
                 | (data or {}),
-                "portfolio": {"target_exposure_cap": 1.0},
+                "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
                 "strategy": {"id": strategy_id},
                 "indicators": indicators or [],
                 "ranking": {"metric": "total_return"},

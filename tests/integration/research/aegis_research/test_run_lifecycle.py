@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus, hash_file
+from research.aegis_research.atomic_write import hash_file
+from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
 from research.aegis_research.run_pipeline import run_strategy_sweep
@@ -177,7 +178,7 @@ def test_strategy_run_marks_failed_when_run_started_callback_fails(
     assert manifest["stages"][0]["status"] == "failed"
 
 
-def test_failed_run_diagnostic_redacts_config_secret_values(
+def test_failed_run_diagnostic_is_length_clipped_not_redacted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -195,8 +196,10 @@ def test_failed_run_diagnostic_redacts_config_secret_values(
         },
     )
 
+    long_message = "provider returned super-secret-token " + "x" * 2000
+
     def fail_with_secret(_config, **_kwargs):
-        raise RuntimeError("provider returned super-secret-token")
+        raise RuntimeError(long_message)
 
     monkeypatch.setattr("research.aegis_research.run_pipeline.load_market_data_result", fail_with_secret)
 
@@ -209,8 +212,9 @@ def test_failed_run_diagnostic_redacts_config_secret_values(
 
     manifest = json.loads((tmp_path / "runs" / "secret-failed-run" / "manifest.json").read_text())
     diagnostic = manifest["stages"][0]["diagnostic"]
-    assert diagnostic["message"] == "provider returned <redacted>"
-    assert "super-secret-token" not in json.dumps(manifest)
+    assert diagnostic["message"] == long_message[:1000]
+    assert "<redacted>" not in diagnostic["message"]
+    assert diagnostic["message"].startswith("provider returned super-secret-token")
 
 
 def test_artifact_registry_persists_planned_and_writing_transitions(tmp_path: Path) -> None:

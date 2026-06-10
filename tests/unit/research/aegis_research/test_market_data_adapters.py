@@ -6,7 +6,6 @@ from typing import ClassVar
 import pandas as pd
 import pytest
 
-from research.aegis_research.config import DataConfig
 from research.aegis_research.data import load_market_data_result
 from research.aegis_research.market_data.adapters import csv as csv_adapter
 from research.aegis_research.market_data.adapters import remote as remote_adapter
@@ -15,11 +14,12 @@ from research.aegis_research.market_data.contracts import (
     MarketDataAdapterResult,
     RemoteDataPullError,
 )
+from tests.support.research.aegis_research.factories import make_data_config
 
 
 def test_synthetic_adapter_loads_native_data_behind_the_seam() -> None:
     result = synthetic_adapter.load_synthetic_source(
-        DataConfig(source="synthetic", rows=4, symbols=["AAA", "BBB"])
+        make_data_config(source="synthetic", rows=4, symbols=["AAA", "BBB"])
     )
 
     assert isinstance(result, MarketDataAdapterResult)
@@ -37,7 +37,7 @@ def test_csv_adapter_loads_flat_feature_columns(tmp_path: Path) -> None:
     frame.to_csv(path)
 
     result = csv_adapter.load_csv_source(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Open", "Close"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Open", "Close"])
     )
 
     assert isinstance(result, MarketDataAdapterResult)
@@ -49,7 +49,7 @@ def test_describe_consumes_pre_scrubbed_provider_metadata_from_the_adapter() -> 
     native_data = _LeakyProviderData()
 
     result = load_market_data_result(
-        DataConfig(source="prescrubbed", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="prescrubbed", symbols=["SYN"], arrays=["Close"]),
         adapters={
             "prescrubbed": lambda _config: MarketDataAdapterResult(
                 native_data=native_data,
@@ -70,8 +70,8 @@ def test_describe_consumes_pre_scrubbed_provider_metadata_from_the_adapter() -> 
     ]
 
 
-def test_remote_adapter_pre_scrubs_unsafe_provider_mappings() -> None:
-    config = DataConfig(source="fakeremote", symbols=["SYN"], arrays=["Close"])
+def test_remote_adapter_projects_allowlisted_provider_mappings() -> None:
+    config = make_data_config(source="fakeremote", symbols=["SYN"], arrays=["Close"])
 
     result = remote_adapter.load_vbt_remote_source("fakeremote", _FakeRemoteData, config)
 
@@ -84,11 +84,11 @@ def test_remote_adapter_pre_scrubs_unsafe_provider_mappings() -> None:
     }
 
 
-def test_remote_adapter_redacts_resolved_secrets_from_pull_errors(
+def test_remote_adapter_chains_original_pull_failure_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("FAKE_REMOTE_API_KEY", "super-secret-token")
-    config = DataConfig(
+    config = make_data_config(
         source="fakeremote",
         symbols=["SYN"],
         arrays=["Close"],
@@ -98,8 +98,10 @@ def test_remote_adapter_redacts_resolved_secrets_from_pull_errors(
     with pytest.raises(RemoteDataPullError) as error:
         remote_adapter.load_vbt_remote_source("fakeremote", _ExplodingRemoteData, config)
 
-    assert "super-secret-token" not in str(error.value)
-    assert "<redacted>" in str(error.value)
+    assert "super-secret-token" in str(error.value)
+    assert "<redacted>" not in str(error.value)
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert "super-secret-token" in str(error.value.__cause__)
 
 
 class _ExplodingRemoteData:

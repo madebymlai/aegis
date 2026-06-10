@@ -24,10 +24,11 @@ from research.aegis_research.data import (
     required_ohlcv_features,
 )
 from research.aegis_research.market_data.sources import vbt_data_source_classes
+from tests.support.research.aegis_research.factories import make_data_config
 
 
 def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
-    result = load_market_data_result(DataConfig(rows=10, symbols=["AAA", "BBB"]))
+    result = load_market_data_result(make_data_config(rows=10, symbols=["AAA", "BBB"]))
     bundle = market_data_bundle(result)
 
     assert result.native_data.feature_oriented
@@ -42,7 +43,7 @@ def test_result_exposes_typed_diagnostics_and_observes_native_metadata_once() ->
     native_data = _CountingMetadataData()
 
     result = load_market_data_result(
-        DataConfig(source="counting", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="counting", symbols=["SYN"], arrays=["Close"]),
         adapters={"counting": lambda _config: MarketDataAdapterResult(native_data=native_data)},
     )
 
@@ -94,7 +95,7 @@ def test_dynamic_vbt_source_discovery_uses_current_vbt_classes(
 
     source_classes = vbt_data_source_classes()
     result = load_market_data_result(
-        DataConfig(
+        make_data_config(
             source="demo",
             symbols=["SYN"],
             start="2020-01-01",
@@ -113,7 +114,7 @@ def test_provider_shaped_source_loads_dynamic_feature_arrays() -> None:
     native_data = _DemoRemoteData(["SYN"], features=["Close", "FundingRate"])
 
     result = load_market_data_result(
-        DataConfig(source="future", symbols=["SYN"], arrays=["Close", "FundingRate"]),
+        make_data_config(source="future", symbols=["SYN"], arrays=["Close", "FundingRate"]),
         adapters={"future": lambda _config: MarketDataAdapterResult(native_data=native_data)},
     )
     bundle = market_data_bundle(result)
@@ -130,7 +131,7 @@ def test_remote_source_projects_configured_arrays_before_column_alignment(
     monkeypatch.setattr(data_module.vbt, "ProviderExtrasData", _ProviderExtrasData, raising=False)
 
     result = load_market_data_result(
-        DataConfig(
+        make_data_config(
             source="providerextras",
             symbols=["AAA", "BBB"],
             arrays=["OHLCV"],
@@ -155,7 +156,7 @@ def test_bundle_can_serve_dynamic_feature_without_close() -> None:
     native_data = _DemoRemoteData(["SYN"], features=["FundingRate"])
 
     result = load_market_data_result(
-        DataConfig(source="future", symbols=["SYN"], arrays=["FundingRate"]),
+        make_data_config(source="future", symbols=["SYN"], arrays=["FundingRate"]),
         adapters={"future": lambda _config: MarketDataAdapterResult(native_data=native_data)},
     )
     bundle = market_data_bundle(result)
@@ -170,7 +171,7 @@ def test_provider_failure_metadata_preserves_required_arrays() -> None:
         raise RemoteDataPullError("future", "network unavailable")
 
     result = load_market_data_result(
-        DataConfig(source="future", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="future", symbols=["SYN"], arrays=["Close"]),
         required_features=("OpenInterest",),
         adapters={"future": fail},
     )
@@ -193,7 +194,7 @@ def test_csv_flat_vbt_feature_names_load_without_mapping(tmp_path: Path) -> None
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(
+        make_data_config(
             source="csv",
             path=str(path),
             symbols=["SYN"],
@@ -216,7 +217,7 @@ def test_csv_non_standard_flat_columns_fail_without_mapping(tmp_path: Path) -> N
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
     )
 
     assert result.quality.state == "rejected"
@@ -235,7 +236,7 @@ def test_csv_extra_vbt_feature_loads_through_dynamic_access(tmp_path: Path) -> N
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close", "FundingRate"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close", "FundingRate"])
     )
 
     assert result.quality.state == "healthy"
@@ -252,7 +253,7 @@ def test_configured_unused_array_must_still_load(tmp_path: Path) -> None:
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close", "FundingRate"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close", "FundingRate"])
     )
 
     assert result.quality.state == "rejected"
@@ -276,7 +277,7 @@ def test_csv_multiindex_symbol_feature_layout_preserves_symbols(tmp_path: Path) 
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["AAA", "BBB"], arrays=["Close", "High"])
+        make_data_config(source="csv", path=str(path), symbols=["AAA", "BBB"], arrays=["Close", "High"])
     )
 
     assert result.quality.state == "healthy"
@@ -308,7 +309,7 @@ def test_csv_multiindex_layout_uses_one_full_pandas_read(
     monkeypatch.setattr(data_module.pd, "read_csv", spy_read_csv)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["AAA", "BBB"], arrays=["Close"])
+        make_data_config(source="csv", path=str(path), symbols=["AAA", "BBB"], arrays=["Close"])
     )
 
     assert result.quality.state == "healthy"
@@ -324,7 +325,7 @@ def test_missing_required_feature_marks_quality_rejected(tmp_path: Path) -> None
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
     )
 
     assert result.quality.state == "rejected"
@@ -340,7 +341,7 @@ def test_non_numeric_required_feature_marks_quality_rejected(tmp_path: Path) -> 
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
     )
 
     assert result.quality.state == "rejected"
@@ -348,10 +349,10 @@ def test_non_numeric_required_feature_marks_quality_rejected(tmp_path: Path) -> 
 
 
 def test_future_provider_adapter_uses_same_result_contract() -> None:
-    native_data = load_market_data_result(DataConfig(rows=5, symbols=["FUT"])).native_data
+    native_data = load_market_data_result(make_data_config(rows=5, symbols=["FUT"])).native_data
 
     result = load_market_data_result(
-        DataConfig(source="future", symbols=["FUT"]),
+        make_data_config(source="future", symbols=["FUT"]),
         adapters={"future": lambda _config: MarketDataAdapterResult(native_data=native_data)},
     )
 

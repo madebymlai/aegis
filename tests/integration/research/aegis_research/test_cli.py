@@ -187,9 +187,116 @@ def test_run_rejects_removed_labeler_without_train_guidance(
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
-    assert "training and lane fields are not supported" in payload["error"]["message"]
+    assert "labeler: Unexpected keyword argument" in payload["error"]["message"]
     assert "aerd run --train" not in payload["error"]["message"]
     assert not (tmp_path / "runs" / "bad-run").exists()
+
+
+def _signed_book_run_config(direction: str) -> dict[str, object]:
+    return {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "directional_run",
+        "output_dir": "runs",
+        "data": {
+            "source": "synthetic",
+            "symbols": ["SYN"],
+            "rows": 120,
+            "arrays": ["OHLCV"],
+        },
+        "portfolio": {"gross_cap": 1.0, "direction": direction},
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
+        "ranking": {"metric": "total_return"},
+        "optimization": {
+            "search": "grid",
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 40, "offset": 40, "split": 0.5},
+                "max_splits": 2,
+            },
+        },
+    }
+
+
+def test_run_rejects_unknown_portfolio_direction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        yaml.safe_dump(_signed_book_run_config("sideways"), sort_keys=False)
+    )
+
+    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-dir"]) == 6
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "config_validation"
+    assert "portfolio.direction" in payload["error"]["message"]
+
+
+def test_run_accepts_shortonly_portfolio_direction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        yaml.safe_dump(_signed_book_run_config("shortonly"), sort_keys=False)
+    )
+
+    cli.main(["run", str(config_path), "--json", "--run-id", "short-dir"])
+
+    output = capsys.readouterr()
+    combined = output.out + output.err
+    assert "portfolio.direction" not in combined
+
+
+def _carry_run_config(short_borrow_rate: float | None) -> dict[str, object]:
+    config = _signed_book_run_config("both")
+    config["name"] = "carry_run"
+    if short_borrow_rate is not None:
+        config["portfolio"]["short_borrow_rate"] = short_borrow_rate  # type: ignore[index]
+        config["portfolio"]["short_rebate_rate"] = 0.0  # type: ignore[index]
+    return config
+
+
+def _run_candidate_returns(
+    tmp_path: Path, short_borrow_rate: float | None, run_id: str
+) -> list[object]:
+    config_path = tmp_path / f"{run_id}.yaml"
+    config_path.write_text(
+        yaml.safe_dump(_carry_run_config(short_borrow_rate), sort_keys=False)
+    )
+    assert cli.main(["run", str(config_path), "--json", "--run-id", run_id]) == 0
+    artifact = json.loads(
+        (tmp_path / "runs" / run_id / "strategy_run.json").read_text()
+    )
+    return [candidate["metrics"]["total_return"] for candidate in artifact["candidates"]]
+
+
+def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # End-to-end ADR-0007 guarantee: the demo strategy is long-only, so it has no short
+    # legs to charge. Its candidate returns must be identical whether short borrow carry is
+    # on at the non-zero default or explicitly switched off — carry never touches a long book.
+    monkeypatch.chdir(tmp_path)
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+
+    carry_on = _run_candidate_returns(tmp_path, short_borrow_rate=None, run_id="carry-on")
+    carry_off = _run_candidate_returns(tmp_path, short_borrow_rate=0.0, run_id="carry-off")
+    capsys.readouterr()
+
+    assert carry_on == carry_off
 
 
 def test_run_rejects_stale_train_shaped_config_before_run_directory(
@@ -224,7 +331,7 @@ def test_run_rejects_stale_train_shaped_config_before_run_directory(
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
-    assert "single run config contract" in payload["error"]["message"]
+    assert "Unexpected keyword argument" in payload["error"]["message"]
     assert "aerd run --train" not in payload["error"]["message"]
     assert not (tmp_path / "runs" / "bad-mode").exists()
 
@@ -304,6 +411,32 @@ def test_held_out_summary_is_empty_without_candidates() -> None:
     from research.aegis_research.cli_support.output import held_out_summary_lines
 
     assert held_out_summary_lines({"ranking_metric": "sharpe_ratio"}, []) == ()
+
+
+def test_reproduce_lock_lines_emit_copy_paste_handles_and_footer() -> None:
+    # aegis-rd-6ie: post-run output hands the user a copy-paste lock: handle per
+    # representative candidate — best is the default role (bare), others carry :role —
+    # plus a footer naming the run_id and the candidate-store path.
+    from research.aegis_research.cli_support.output import reproduce_lock_lines
+
+    run_id = "20260527T000603791760Z_etf_momentum"
+    candidates = [{"role": "best"}, {"role": "median"}, {"role": "worst"}]
+
+    lines = reproduce_lock_lines(
+        run_id, candidates, store_path="runs/.candidate_store/candidates.sqlite3"
+    )
+
+    assert any(line.rstrip().endswith(f"lock: {run_id}") for line in lines)
+    assert any(line.rstrip().endswith(f"lock: {run_id}:median") for line in lines)
+    assert any(line.rstrip().endswith(f"lock: {run_id}:worst") for line in lines)
+    assert any(line == f"run_id: {run_id}" for line in lines)
+    assert any(line == "candidate store: runs/.candidate_store/candidates.sqlite3" for line in lines)
+
+
+def test_reproduce_lock_lines_empty_without_candidates() -> None:
+    from research.aegis_research.cli_support.output import reproduce_lock_lines
+
+    assert reproduce_lock_lines("run-a", [], store_path="x") == ()
 
 
 def _researched_optimization(

@@ -395,6 +395,7 @@ def masking_check(audit, repo):
     sys.path.insert(0, str(repo))
     try:
         import pandas as pd
+
         from research.aegis_research.portfolio_policy.masking import (
             apply_executable_mask_and_terminal_liquidation,
         )
@@ -537,7 +538,7 @@ def main():
         metric = base_sr["ranking"]["metric"]
         changed = False
         details = []
-        for cb, cp in zip(base_sr["candidates"], pert_sr["candidates"]):
+        for cb, cp in zip(base_sr["candidates"], pert_sr["candidates"], strict=False):
             for s in cb["held_out_metrics"]:
                 hb = cb["held_out_metrics"][s][metric]
                 hp = cp["held_out_metrics"][s][metric]
@@ -596,7 +597,7 @@ def main():
             ok, why = projection_eq(candidate_projection(base_sr), candidate_projection(rep_sr))
             # also compare held-out (same data -> must match exactly)
             if ok:
-                for cb, cr in zip(base_sr["candidates"], rep_sr["candidates"]):
+                for cb, cr in zip(base_sr["candidates"], rep_sr["candidates"], strict=False):
                     eq, w = metrics_eq(cb["held_out_metrics"], cr["held_out_metrics"])
                     if not eq:
                         ok, why = False, f"{cb['role']} held-out: {w}"

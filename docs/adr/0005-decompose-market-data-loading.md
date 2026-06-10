@@ -1,0 +1,27 @@
+# Decompose market-data loading into observe/judge/describe + source adapters
+
+`research/aegis_research/market_data/loading.py` had grown to 1075 lines fusing four jobs — source dispatch, quality evaluation, metadata assembly, and per-symbol diagnostics — around a shared internal `panels` dict, so no concern was testable in isolation. We decomposed it into a pure pipeline — **observe → judge → describe** — behind the existing `MarketDataAdapter` seam, with each concern in its own leaf module. The 2026-05-29 architecture review (candidate 2, `docs/architecture-review-20260529.html`) flagged the split; this records the as-decided shape, which deviates from that review in two deliberate ways.
+
+The source seam was already real, not hypothetical: `MarketDataAdapter` (a `Protocol`), `MarketDataAdapterResult`, `_default_source_loaders()`, and an `adapters=` injection point all shipped before this work. So the prize was never a new interface — it was lifting quality/metadata/diagnostics out of the orchestrator into testable modules. As built:
+
+- **observe** (`diagnostics.py`) makes a single pass over the loaded data and the adapter's index evidence, producing a typed `DataDiagnostics` record (per-symbol × per-feature stats, index facts, symbol presence). It is the one place data is observed.
+- **judge** (`quality.py`) is a **pure verdict function**: `(DataDiagnostics, quality policy) → MarketDataQuality`. It no longer re-walks `panels` — previously quality and `_symbol_diagnostics` observed the data twice — and it reads only the record, never the raw `native_data` or the adapter `evidence` dict.
+- **describe** (`metadata.py`) is the single authority for the schema-versioned (`market_data.v2`) public metadata dict. The provider-failure path routes through this same authority with degenerate inputs, replacing the ~90% duplicate dict that `_provider_failed_result` hand-built.
+- **source adapters** (`adapters/{synthetic,csv,remote}.py`) sit behind the unchanged seam; `panels.py`, `features.py`, and `safety.py` are leaf modules; `loading.py` shrinks to the orchestrator. The facade `research/aegis_research/data.py` re-exports every public name, so nothing outside `market_data/` moves.
+
+Secret handling is localized to the **remote adapter** — the only code path that touches a credential. Synthetic and CSV carry no secret code and are safe by construction. The threat is narrow but real: a VBT remote object retains the `fetch_kwargs` it was pulled with (API key included), and the **Manifest/Evidence** is immutable, persisted, and meant to be shared — so a leaked key is baked in permanently. The remote adapter owns secret resolution, error redaction, and the `fetch_kwargs` allowlist projection; `assert_public_metadata_safe` remains only as a thin fail-closed backstop over the assembled dict (also reused by `provenance`).
+
+## Considered options
+
+- **Introduce a `MarketDataSource` interface and rename the seam** (as the review proposed): rejected. `MarketDataAdapter`/`MarketDataAdapterResult` already ship and are re-exported and consumed; renaming a working seam churns the vocabulary for no behavioural gain and collides with the established term. The seam stays; only the concerns behind it move.
+- **A central / system-wide secret-scrubbing module** (the review bundled "metadata + secret scrubbing" as one job): rejected. There is exactly one secret — the remote provider key — and it exists only on the remote path. Centralizing it contradicts the locality goal ("a new source = one adapter, nothing else") and inflates a 20-line concern into a co-equal module. Secrets live with the adapter that produces them; the backstop stays small.
+- **Type the metadata as a `DataMetadata` dataclass** (symmetry with `DataDiagnostics`): rejected. Metadata is a schema-versioned, serialized Evidence contract read downstream via `.get()`; the dict *is* the wire contract. A wrapper adds dict↔object ceremony at every serialize/read boundary for little gain. Typing is applied to the internal spine (`DataDiagnostics`), not the terminal artifact.
+- **A single `adapters.py` and fewer leaf modules**: rejected in favour of an `adapters/` package and separate `panels`/`features`/`safety` modules, so each file has exactly one reason to change (remote alone is ~200 lines once it absorbs the secret machinery).
+
+## Consequences
+
+- Quality and diagnostics become unit-testable with hand-built inputs — no real source required. The observe/judge double-walk of `panels` collapses to one pass.
+- The refactor is **shape-preserving** for the `market_data.v2` metadata: same keys, ideally byte-identical, so existing Manifest/Evidence hashes do not move. A golden-bytes test on a known metadata output is the regression guard (mirrors ADR-0003's token-byte freeze).
+- The provider-failure metadata can no longer drift from the success shape — both flow through one builder; a failure test asserts "failed shape == success shape minus data."
+- For `quality` to stay pure, observe must absorb the adapter's index facts (`raw_index_has_duplicates`, `raw_index_monotonic_increasing`) and span the full `required ∪ effective` feature set, not just `effective_arrays`.
+- No CONTEXT.md change: no new domain term was minted (the `MarketDataSource` rename was declined; observe/judge/describe are implementation vocabulary). "Data quality diagnostics" remains an example under the existing **Evidence** entry.

@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import hashlib
-import os
-import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from research.aegis_research.canonical_json import canonical_json_bytes, to_builtin
+from research.aegis_research.atomic_write import hash_file
+from research.aegis_research.canonical_json import to_builtin
 
-MANIFEST_SCHEMA_VERSION = 3
+MANIFEST_SCHEMA_VERSION = 4
 
 
 class RunStatus:
@@ -36,11 +34,6 @@ class ArtifactStatus:
     COMPLETED = "completed"
     FAILED = "failed"
     PARTIAL = "partial"
-
-
-class ArtifactVisibility:
-    PUBLIC = "public"
-    PRIVATE = "private"
 
 
 class ManifestValidationError(ValueError):
@@ -113,7 +106,6 @@ class RunManifest:
         size: int | None = None,
         shape: dict[str, Any] | None = None,
         upstream_artifact_ids: list[str] | None = None,
-        visibility: str = ArtifactVisibility.PUBLIC,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_path = normalize_artifact_path(path)
@@ -134,7 +126,6 @@ class RunManifest:
             "size": size,
             "schema_version": schema_version,
             "status": status,
-            "visibility": visibility,
             "shape": to_builtin(shape or {}),
             "upstream_artifact_ids": list(upstream_artifact_ids or []),
             "metadata": to_builtin(metadata or {}),
@@ -224,39 +215,6 @@ def validate_manifest(payload: dict[str, Any], *, run_dir: str | Path | None = N
                 raise ManifestValidationError(f"incomplete upstream artifact: {upstream_id}")
 
 
-def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    json_bytes = canonical_json_bytes(payload, indent=2)
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "wb",
-            dir=target.parent,
-            prefix=f".{target.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temp_path = Path(handle.name)
-            temp_path.chmod(0o600)
-            handle.write(json_bytes)
-            handle.flush()
-            os.fsync(handle.fileno())
-        temp_path.replace(target)
-        _fsync_parent(target)
-    finally:
-        if temp_path is not None and temp_path.exists():
-            temp_path.unlink()
-
-
-def hash_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def normalize_artifact_path(path: str) -> str:
     pure_path = PurePosixPath(path)
     windows_path = PureWindowsPath(path)
@@ -294,11 +252,3 @@ def _validate_file_identity(artifact: dict[str, Any], path: Path) -> None:
         raise ManifestValidationError(f"artifact size mismatch: {artifact.get('id')}")
     if artifact.get("hash") != hash_file(path):
         raise ManifestValidationError(f"artifact hash mismatch: {artifact.get('id')}")
-
-
-def _fsync_parent(path: Path) -> None:
-    directory_fd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)

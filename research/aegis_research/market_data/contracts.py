@@ -58,7 +58,6 @@ class MarketDataQuality:
 @dataclass(frozen=True)
 class MarketDataAdapterResult:
     native_data: Any
-    known_secrets: tuple[str, ...] = ()
     source_metadata: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] = field(default_factory=dict)
     provider_metadata: dict[str, Any] = field(default_factory=dict)
@@ -120,7 +119,6 @@ class MarketDataResult:
     metadata: dict[str, Any]
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
-    known_secrets: tuple[str, ...] = ()
 
     def feature(self, feature: str) -> pd.DataFrame:
         from research.aegis_research.market_data.features import feature_from_ohlcv

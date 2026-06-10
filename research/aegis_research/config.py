@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from research.aegis_research.canonical_json import to_builtin
+from research.aegis_research.configuration.env_references import (
+    resolve_env_refs,
+)
 from research.aegis_research.configuration.resolution import (
     ResolvedRunConfig,
     load_run_config,
@@ -10,17 +14,14 @@ from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     DATA_ARRAY_SHORTCUTS,
     DATA_QUALITY_DEGRADATIONS,
-    DENIED_PASSTHROUGH_KEYS,
-    EXPERIMENT_NAME_RE,
+    DEFAULT_LOCK_ROLE,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
+    IDENTIFIER_RE,
+    LOCK_ROLES,
     MISSING_POLICIES,
     OHLCV_ARRAYS,
     OPTIMIZATION_SEARCH_POLICIES,
     PORTFOLIO_DIRECTIONS,
-    PORTFOLIO_TARGET_SIZE_TYPES,
-    RUN_EXECUTABLE_DENIED_KEYS,
-    SECRET_KEY_RE,
-    SECRET_VALUE_RE,
     SIGNAL_EXECUTION_TIMINGS,
     SIGNAL_POLICIES,
     ConfigSelectionEvidence,
@@ -28,6 +29,7 @@ from research.aegis_research.configuration.schema import (
     ConfigValidationIssue,
     DataConfig,
     DataQualityConfig,
+    Lock,
     OptimizationConfig,
     PortfolioConfig,
     RankingConfig,
@@ -38,13 +40,6 @@ from research.aegis_research.configuration.schema import (
     RunSplitConfig,
     SignalConfig,
     expand_data_arrays,
-)
-from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.configuration.secrets import (
-    known_config_secret_values,
-    redact_config,
-    redact_text,
-    resolve_secret_refs,
 )
 from research.aegis_research.market_data.sources import (
     LOCAL_DATA_SOURCES,
@@ -60,19 +55,16 @@ __all__ = [
     "DATA_ARRAY_SHORTCUTS",
     "DATA_QUALITY_DEGRADATIONS",
     "DATA_SOURCES",
-    "DENIED_PASSTHROUGH_KEYS",
-    "EXPERIMENT_NAME_RE",
+    "DEFAULT_LOCK_ROLE",
     "FORWARD_OPTIMIZATION_REQUIRED_MESSAGE",
+    "IDENTIFIER_RE",
     "LOCAL_DATA_SOURCES",
+    "LOCK_ROLES",
     "MISSING_POLICIES",
     "OHLCV_ARRAYS",
     "OPTIMIZATION_SEARCH_POLICIES",
     "PORTFOLIO_DIRECTIONS",
-    "PORTFOLIO_TARGET_SIZE_TYPES",
     "REMOTE_DATA_SOURCES",
-    "RUN_EXECUTABLE_DENIED_KEYS",
-    "SECRET_KEY_RE",
-    "SECRET_VALUE_RE",
     "SIGNAL_EXECUTION_TIMINGS",
     "SIGNAL_POLICIES",
     "ConfigSelectionEvidence",
@@ -80,6 +72,7 @@ __all__ = [
     "ConfigValidationIssue",
     "DataConfig",
     "DataQualityConfig",
+    "Lock",
     "OptimizationConfig",
     "PortfolioConfig",
     "RankingConfig",
@@ -91,12 +84,9 @@ __all__ = [
     "RunSplitConfig",
     "SignalConfig",
     "expand_data_arrays",
-    "known_config_secret_values",
     "load_run_config",
-    "redact_config",
-    "redact_text",
+    "resolve_env_refs",
     "resolve_run_config",
-    "resolve_secret_refs",
     "to_builtin",
     "with_run_config_selection",
 ]

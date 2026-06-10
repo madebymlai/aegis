@@ -5,12 +5,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.atomic_write import hash_file
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
-    ArtifactVisibility,
     ManifestValidationError,
     RunManifest,
-    hash_file,
 )
 
 
@@ -35,7 +34,6 @@ class ArtifactRegistry:
         producer_stage: str,
         path: str,
         schema_version: str,
-        visibility: str = ArtifactVisibility.PUBLIC,
         upstream_artifact_ids: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -47,7 +45,6 @@ class ArtifactRegistry:
             path=path,
             schema_version=schema_version,
             status=ArtifactStatus.PLANNED,
-            visibility=visibility,
             upstream_artifact_ids=upstream_artifact_ids,
             metadata=metadata,
         )

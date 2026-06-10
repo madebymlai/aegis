@@ -16,19 +16,22 @@ import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.configuration.schema import (
-    OptimizationConfig,
-    PortfolioConfig,
-    RankingConfig,
-    ReportConfig,
-    RunSplitConfig,
-)
+from research.aegis_research.config import OptimizationConfig
+from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,
     build_candidate_index,
 )
+from research.aegis_research.optimization.ranking import OptimizationResult
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
+    make_portfolio_config,
+    make_ranking_config,
+    make_report_config,
+    make_run_split_config,
+)
 
 N_ROWS = 32
 SLICE_LEN = 4  # length=8, split=0.5 -> 4-bar selection slice per split
@@ -38,6 +41,13 @@ WARMUP_WINDOW = 4  # lookback == slice length -> bare-slice is all-NaN (the bug)
 def _uptrend_close() -> pd.DataFrame:
     index = pd.date_range("2024-01-01", periods=N_ROWS, freq="D")
     levels = 100.0 * (1.01 ** np.arange(N_ROWS))
+    return pd.DataFrame({"SYN": levels}, index=index)
+
+
+def _downtrend_close() -> pd.DataFrame:
+    """Close that falls ~0.99^x each day so a buy-and-hold valid candidate loses money."""
+    index = pd.date_range("2024-01-01", periods=N_ROWS, freq="D")
+    levels = 100.0 * (0.99 ** np.arange(N_ROWS))
     return pd.DataFrame({"SYN": levels}, index=index)
 
 
@@ -100,23 +110,24 @@ def _source(windows: list[int]) -> OptimizationSource:
 def _optimization(
     *, search: str = "grid", random_subset: int | None = None, seed: int | None = None
 ) -> OptimizationConfig:
-    return OptimizationConfig(
+    return make_optimization_config(
         search=search,
         random_subset=random_subset,
         seed=seed,
-        split=RunSplitConfig(method="from_rolling", params={"length": 8, "split": 0.5}),
+        split=make_run_split_config(method="from_rolling", params={"length": 8, "split": 0.5}),
     )
 
 
-def _run(windows: list[int], *, optimization: OptimizationConfig | None = None):
+def _run(windows: list[int], *, optimization: OptimizationConfig | None = None) -> OptimizationResult:
     return execute_optimization(
         close=_uptrend_close(),
         open_=_uptrend_close(),
         source=_source(windows),
         optimization=optimization or _optimization(),
-        portfolio=PortfolioConfig(fees=0.0, slippage=0.0),
-        report=ReportConfig(),
-        ranking=RankingConfig(metric="total_return", min_weight=0.3),
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
     )
 
 
@@ -268,3 +279,53 @@ def test_parallel_and_sequential_selection_grids_are_byte_identical(monkeypatch)
             getattr(parallel, slot).selection_metrics
             == getattr(sequential_result, slot).selection_metrics
         )
+
+
+def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> None:
+    """Regression: invalid cash-holder must not outrank a money-losing valid candidate.
+
+    An Invalid Candidate (lookback > full history → all-NaN indicator → strategy
+    holds cash → total_return == 0.0, finite) must never be selected as a
+    representative, even when every valid candidate loses money (total_return < 0).
+
+    Without masking the Invalid cash-holder scores a real 0.0 in the grid, which
+    beats a money-losing valid candidate at, e.g., -0.86 if ranked by total_return.
+    The verdict excludes the Invalid by key, so the cash-holder never reaches the
+    three representative slots.
+
+    Ranking metric MUST be total_return (finite-for-cash). Under Sharpe the
+    cash-holder scores NaN and is excluded as non-trading regardless, so the
+    regression would pass vacuously.
+    """
+    close = _downtrend_close()
+    # window=2 is warmup-complete (buys equal-weight in a downtrend → loses money).
+    # window=N_ROWS+1 is invalid (lookback > full history → all-NaN → cash hold).
+    invalid_window = N_ROWS + 1
+    windows = [2, invalid_window]
+
+    result = execute_optimization(
+        close=close,
+        open_=close,
+        source=_source(windows),
+        optimization=_optimization(),
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
+    )
+
+    invalid_params: dict = {"window": invalid_window}
+    for candidate in (result.best, result.median, result.worst):
+        assert candidate.params != invalid_params, (
+            f"Invalid cash-holder {invalid_params!r} must not appear among "
+            f"representatives; got score={candidate.score}, params={candidate.params}"
+        )
+        assert candidate.score < 0.0, (
+            f"valid candidate {candidate.params} should lose money in a downtrend; "
+            f"got score={candidate.score}"
+        )
+
+    # The Invalid Candidate is counted in the result.
+    assert result.excluded_invalid == 1
+    assert result.excluded_degenerate >= 1
+    assert result.total_candidates == 2

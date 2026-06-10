@@ -10,11 +10,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from research.aegis_research.atomic_write import hash_file, write_json
 from research.aegis_research.data_arrays import DataArrayContract
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_evidence_payload,
 )
-from research.aegis_research.provenance.manifest import atomic_write_json, hash_file
 
 OPTIMIZATION_ARTIFACT_SCHEMA_VERSION = "optimization_artifact.v1"
 
@@ -31,8 +31,6 @@ def build_strategy_artifact_payload(
     preflight: Mapping[str, Any],
     execution: Mapping[str, Any],
     candidates: list[Mapping[str, Any]],
-    resolved_locks: list[Mapping[str, Any]],
-    lock_records: list[Mapping[str, Any]],
     candidate_store_path: str,
     candidate_store_provenance: Mapping[str, Any],
     metric_registry_fingerprint: str | None,
@@ -48,8 +46,6 @@ def build_strategy_artifact_payload(
         "preflight": dict(preflight),
         "execution": dict(execution),
         "candidates": [dict(record) for record in candidates],
-        "resolved_locks": list(resolved_locks),
-        "locks": list(lock_records),
         "candidate_store": {
             "schema_version": "candidate_store_ref.v1",
             "path": candidate_store_path,
@@ -64,7 +60,7 @@ def write_strategy_artifact(recorder: Any, payload: dict[str, Any]) -> None:
     artifact_path = Path("strategy_run.json")
     recorder.artifacts.begin_artifact_write("strategy.run")
     full_path = recorder.run_dir / artifact_path
-    atomic_write_json(full_path, payload)
+    write_json(full_path, payload)
     recorder.artifacts.complete_artifact(
         "strategy.run",
         content_hash=hash_file(full_path),

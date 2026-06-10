@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from research.aegis_research.optimization.run_artifacts import (
     OPTIMIZATION_ARTIFACT_SCHEMA_VERSION,
@@ -44,7 +44,7 @@ def test_find_strategy_artifact_record_finds_matching_artifact() -> None:
 
     class _FakeRecorder:
         class manifest:
-            artifacts = [
+            artifacts: ClassVar = [
                 {"id": "data.metadata"},
                 {"id": "strategy.run", "role": "optimization_evidence"},
                 {"id": "other"},
@@ -61,7 +61,7 @@ def test_find_strategy_artifact_record_returns_none_when_absent() -> None:
 
     class _FakeRecorder:
         class manifest:
-            artifacts = [
+            artifacts: ClassVar = [
                 {"id": "data.metadata"},
                 {"id": "other"},
             ]

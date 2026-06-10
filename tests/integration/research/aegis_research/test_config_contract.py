@@ -11,12 +11,12 @@ from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
     OHLCV_ARRAYS,
     ConfigValidationError,
-    DataConfig,
     load_run_config,
+    resolve_env_refs,
     resolve_run_config,
-    resolve_secret_refs,
 )
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
+from tests.support.research.aegis_research.factories import make_data_config
 
 
 def test_public_config_exports_only_run_config_contract() -> None:
@@ -58,7 +58,7 @@ def test_resolved_run_config_attaches_default_metric_registry(tmp_path: Path) ->
 
 def test_removed_entry_budget_field_fails_as_unknown_field(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["portfolio"] = {"entry_budget": 0.6}
+    raw["portfolio"] = {"entry_budget": 0.6, "gross_cap": 1.0}
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
@@ -71,28 +71,59 @@ def test_removed_entry_budget_field_fails_as_unknown_field(tmp_path: Path) -> No
     entry_budget_issue = next(
         issue for issue in error.value.issues if issue.path == "portfolio.entry_budget"
     )
-    assert "renamed to portfolio.target_exposure_cap" in entry_budget_issue.message
+    assert "Unexpected keyword argument" in entry_budget_issue.message
 
 
-def test_portfolio_target_exposure_cap_validates(tmp_path: Path) -> None:
+def test_removed_target_exposure_cap_field_is_rejected(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["portfolio"] = {"target_exposure_cap": 0.8}
+    raw["portfolio"] = {"target_exposure_cap": 0.8, "gross_cap": 1.0}
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    issue = next(
+        issue
+        for issue in error.value.issues
+        if issue.path == "portfolio.target_exposure_cap"
+    )
+    assert "Unexpected keyword argument" in issue.message
+
+
+def test_portfolio_gross_cap_validates(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["portfolio"] = {"gross_cap": 0.8, "direction": "longonly"}
 
     resolved = resolve_run_config(
         raw,
         component_registry=_component_registry(tmp_path),
     )
 
-    assert resolved.config.portfolio.target_exposure_cap == 0.8
+    assert resolved.config.portfolio.gross_cap == 0.8
 
 
-@pytest.mark.parametrize("value", [0.0, -0.1, 1.5, 2.0])
-def test_portfolio_target_exposure_cap_out_of_range_fails(
+def test_portfolio_gross_cap_above_one_is_accepted_as_leverage(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["portfolio"] = {"gross_cap": 2.0, "direction": "both"}
+
+    resolved = resolve_run_config(
+        raw,
+        component_registry=_component_registry(tmp_path),
+    )
+
+    assert resolved.config.portfolio.gross_cap == 2.0
+    assert resolved.config.portfolio.direction == "both"
+
+
+@pytest.mark.parametrize("value", [0.0, -0.1])
+def test_portfolio_gross_cap_non_positive_fails(
     tmp_path: Path,
     value: float,
 ) -> None:
     raw = _run_config()
-    raw["portfolio"] = {"target_exposure_cap": value}
+    raw["portfolio"] = {"gross_cap": value}
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
@@ -100,26 +131,7 @@ def test_portfolio_target_exposure_cap_out_of_range_fails(
             component_registry=_component_registry(tmp_path),
         )
 
-    assert "portfolio.target_exposure_cap" in str(error.value)
-
-
-def test_portfolio_rejects_entry_budget_when_target_exposure_cap_also_present(
-    tmp_path: Path,
-) -> None:
-    raw = _run_config()
-    raw["portfolio"] = {"entry_budget": 0.6, "target_exposure_cap": 0.8}
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
-
-    portfolio_issues = [
-        issue for issue in error.value.issues if issue.path.startswith("portfolio.")
-    ]
-    assert portfolio_issues[0].path == "portfolio.entry_budget"
-    assert "renamed to portfolio.target_exposure_cap" in portfolio_issues[0].message
+    assert "portfolio.gross_cap" in str(error.value)
 
 
 def test_run_config_rejects_removed_labeler_field(tmp_path: Path) -> None:
@@ -133,7 +145,7 @@ def test_run_config_rejects_removed_labeler_field(tmp_path: Path) -> None:
         )
 
     assert "labeler" in str(error.value)
-    assert "training and lane fields are not supported" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_data_arrays_single_ohlcv_resolves_effective_set(tmp_path: Path) -> None:
@@ -218,7 +230,7 @@ def test_run_config_rejects_removed_feature_map(tmp_path: Path) -> None:
         )
 
     assert "data.feature_map" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 @pytest.mark.parametrize("arrays", ["OHLCV", ["Close "], [""], [1], []])
@@ -248,14 +260,14 @@ def test_legacy_train_shape_is_not_a_run_config(tmp_path: Path) -> None:
                 "name": "legacy_shape",
                 "labels": {"generator": {"kind": "fixlb"}},
                 "model": {"plugin_id": "aegis.sklearn_logistic"},
-                "portfolio": {"target_exposure_cap": 1.0},
+                "portfolio": {"gross_cap": 1.0},
             },
             component_registry=_component_registry(tmp_path),
         )
 
     assert "labels" in str(error.value)
     assert "model" in str(error.value)
-    assert "single run config contract" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
@@ -270,7 +282,7 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
                 "data:",
                 "  source: synthetic",
                 "portfolio:",
-                "  target_exposure_cap: 1.0",
+                "  gross_cap: 1.0",
                 "strategy: {}",
                 "indicators: []",
                 "",
@@ -285,9 +297,9 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
     assert "duplicate mapping key" in str(error.value)
 
 
-def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:
+def test_env_refs_are_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("BINANCE_API_KEY", "super-secret-token")
-    config = DataConfig(
+    config = make_data_config(
         source="binance",
         symbols=["BTCUSDT"],
         start="2020-01-01",
@@ -296,10 +308,26 @@ def test_env_secret_refs_are_redacted_and_resolved_at_runtime(tmp_path: Path, mo
         provider_kwargs={"api_key": {"env": "BINANCE_API_KEY"}},
     )
 
-    resolved_kwargs, secrets = resolve_secret_refs(config.provider_kwargs)
+    resolved_kwargs = resolve_env_refs(config.provider_kwargs)
 
     assert resolved_kwargs == {"api_key": "super-secret-token"}
-    assert secrets == ["super-secret-token"]
+
+
+def test_run_config_accepts_inline_credential_under_secret_like_key(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "yf",
+        "symbols": ["BTC-USD"],
+        "start": "2020-01-01",
+        "end": "2020-02-01",
+        "timeframe": "1D",
+        "arrays": ["OHLCV"],
+        "provider_kwargs": {"api_key": "literal-secret-value"},
+    }
+
+    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert resolved.config.data.provider_kwargs == {"api_key": "literal-secret-value"}
 
 
 def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
@@ -313,7 +341,7 @@ def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
         )
 
     assert "candidate_grid" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
@@ -369,77 +397,27 @@ def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
     assert resolved.config.optimization.execute == {"engine": "threadpool", "chunk_len": "auto"}
 
 
-def test_run_accepts_component_lock_and_candidate_refs(tmp_path: Path) -> None:
+def test_run_rejects_per_component_lock_reference_fields(tmp_path: Path) -> None:
+    # ADR-0006 (aegis-rd-396.4): per-Component lock_id/candidate_id/run_id are gone;
+    # whole-Candidate reproduction lives on the top-level lock:. These are now unknown
+    # fields on a component ref.
     raw = _run_config()
     raw["strategy"] = {"id": "demo.strategy", "lock_id": "lock_strategy_best"}
     raw["indicators"] = [
         {"id": "demo.returns", "candidate_id": "cand_indicator_row", "run_id": "source-run"}
     ]
 
-    resolved = resolve_run_config(
-        raw,
-        component_registry=_component_registry(tmp_path),
-    )
-
-    assert resolved.config.strategy.lock_id == "lock_strategy_best"
-    assert resolved.config.strategy.candidate_id is None
-    assert resolved.config.indicators[0].candidate_id == "cand_indicator_row"
-    assert resolved.config.indicators[0].run_id == "source-run"
-
-
-def test_run_rejects_params_on_locked_component_refs(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["strategy"] = {"id": "demo.strategy", "lock_id": "lock_strategy_best", "params": {}}
-    raw["indicators"] = [
-        {
-            "id": "demo.returns",
-            "candidate_id": "cand_indicator_row",
-            "run_id": "source-run",
-            "params": {"window": 5},
-        }
-    ]
-
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
             raw,
             component_registry=_component_registry(tmp_path),
         )
 
-    assert "strategy.params" in str(error.value)
-    assert "indicators[0].params" in str(error.value)
-    assert "must not be set when lock_id or candidate_id is set" in str(error.value)
-
-
-def test_run_rejects_component_lock_and_candidate_together(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["strategy"] = {
-        "id": "demo.strategy",
-        "lock_id": "lock_strategy_best",
-        "candidate_id": "cand_strategy_row",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
-
-    assert "strategy" in str(error.value)
-    assert "mutually exclusive" in str(error.value)
-
-
-def test_run_rejects_candidate_ref_without_source_run_id(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["strategy"] = {"id": "demo.strategy", "candidate_id": "cand_strategy_row"}
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
-
-    assert "strategy.run_id" in str(error.value)
-    assert "required when candidate_id is set" in str(error.value)
+    message = str(error.value)
+    assert "strategy.lock_id" in message
+    assert "indicators[0].candidate_id" in message
+    assert "indicators[0].run_id" in message
+    assert "Unexpected keyword argument" in message
 
 
 def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) -> None:
@@ -472,7 +450,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 "engine": "custom",
             },
             "optimization.engine",
-            "unknown field",
+            "Unexpected keyword argument",
         ),
         (
             {
@@ -487,7 +465,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 "mode": "native",
             },
             "optimization.mode",
-            "unknown field",
+            "Unexpected keyword argument",
         ),
         (
             {
@@ -500,8 +478,8 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                     },
                 },
             },
-            "optimization.random_subset",
-            "is required",
+            "optimization",
+            "Value error, random_subset is required when optimization.search is 'random'",
         ),
         (
             {
@@ -515,8 +493,8 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 },
                 "random_subset": 5,
             },
-            "optimization.seed",
-            "is required",
+            "optimization",
+            "Value error, seed is required when optimization.search is 'random' so sampled evidence is deterministic",
         ),
         (
             {
@@ -530,13 +508,13 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 },
                 "random_subset": 5,
             },
-            "optimization.random_subset",
-            "only valid when optimization.search is 'random'",
+            "optimization",
+            "Value error, random_subset is only valid when optimization.search is 'random'",
         ),
         (
             {"search": "grid"},
             "optimization.split",
-            "is required",
+            "Field required",
         ),
     ],
 )
@@ -580,7 +558,7 @@ def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> 
             component_registry=_component_registry(tmp_path),
         )
 
-    assert "optimization.split.params.set_labels" in str(error.value)
+    assert "optimization.split" in str(error.value)
     assert "owned by Aegis" in str(error.value)
 
 
@@ -596,7 +574,7 @@ def test_run_rejects_top_level_split_as_unknown_field(tmp_path: Path) -> None:
         )
 
     assert "split" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> None:
@@ -611,7 +589,7 @@ def test_run_rejects_candidate_grid_on_optimization_config(tmp_path: Path) -> No
         )
 
     assert "candidate_grid" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_rejects_source_selectors_and_indicator_ids_as_unknown_fields(tmp_path: Path) -> None:
@@ -627,7 +605,7 @@ def test_run_rejects_source_selectors_and_indicator_ids_as_unknown_fields(tmp_pa
 
     assert "strategy.source" in str(error.value)
     assert "indicators[0].ids" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_rejects_playbook_source_selectors(tmp_path: Path) -> None:
@@ -643,7 +621,7 @@ def test_run_rejects_playbook_source_selectors(tmp_path: Path) -> None:
 
     assert "strategy.source" in str(error.value)
     assert "indicators[0].source" in str(error.value)
-    assert "unknown field" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def _run_config() -> dict[str, object]:
@@ -651,7 +629,7 @@ def _run_config() -> dict[str, object]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "canonical_run",
         "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
-        "portfolio": {"target_exposure_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},

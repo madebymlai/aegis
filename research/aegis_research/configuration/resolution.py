@@ -12,17 +12,17 @@ from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
     discover_component_registry,
 )
-from research.aegis_research.configuration.builders import _build_run_config
 from research.aegis_research.configuration.schema import (
     ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
     RunConfig,
 )
-from research.aegis_research.configuration.secrets import redact_config
 from research.aegis_research.configuration.validation import (
-    _validate_ranking,
-    _validate_raw_run_config,
+    _post_validate_ranking_metric as _check_ranking_metric_membership,
+)
+from research.aegis_research.configuration.validation import (
+    validate_run_config,
 )
 from research.aegis_research.metrics import (
     FrozenMetricRegistry,
@@ -67,11 +67,11 @@ class ResolvedRunConfig:
     metric_registry: FrozenMetricRegistry | None = None
     selection: ConfigSelectionEvidence | None = None
 
-    def redacted_authored_config(self) -> dict[str, Any]:
-        return redact_config(self.authored_config)
+    def authored_config_document(self) -> dict[str, Any]:
+        return self.authored_config
 
-    def redacted_resolved_config(self) -> dict[str, Any]:
-        return redact_config(to_builtin(self.config))
+    def resolved_config_document(self) -> dict[str, Any]:
+        return to_builtin(self.config)
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -186,10 +186,8 @@ def _build_resolved_run_config(
     if not isinstance(raw, dict):
         raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
 
-    issues: list[ConfigValidationIssue] = []
-    _validate_raw_run_config(
+    config, issues = validate_run_config(
         raw,
-        issues,
         component_registry=component_registry,
         metric_registry=metric_registry,
     )
@@ -198,7 +196,7 @@ def _build_resolved_run_config(
 
     text_for_hash = raw_text if raw_text is not None else yaml.safe_dump(raw, sort_keys=False)
     return ResolvedRunConfig(
-        config=_build_run_config(raw),
+        config=config,  # type: ignore[arg-type]  # guaranteed non-None when issues is empty
         raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
         authored_config=to_builtin(raw),
         source_path=source_path,
@@ -213,9 +211,8 @@ def _assert_resolved_config_registries(
     frozen_metric_registry: FrozenMetricRegistry,
 ) -> None:
     issues: list[ConfigValidationIssue] = []
-    _validate_ranking(
-        "ranking",
-        to_builtin(config.ranking),
+    _check_ranking_metric_membership(
+        config.ranking.metric,
         issues,
         registry=frozen_metric_registry,
     )

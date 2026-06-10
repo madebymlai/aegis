@@ -8,15 +8,17 @@ from research.aegis_research.component_registry import discover_component_regist
 from research.aegis_research.config import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
-    OptimizationConfig,
-    PortfolioConfig,
-    RankingConfig,
-    RunConfig,
-    RunIndicatorSourceConfig,
-    RunSourceRefConfig,
-    RunSplitConfig,
     load_run_config,
     resolve_run_config,
+)
+from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
+    make_portfolio_config,
+    make_ranking_config,
+    make_run_config,
+    make_run_indicator_source_config,
+    make_run_source_ref_config,
+    make_run_split_config,
 )
 
 
@@ -31,15 +33,15 @@ def test_valid_run_config_resolves_without_lane_identity(tmp_path: Path) -> None
 
 def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    config = RunConfig(
+    config = make_run_config(
         name="typed_strategy_demo",
-        strategy=RunSourceRefConfig(id="demo.strategy"),
-        indicators=[RunIndicatorSourceConfig(id="demo.indicator")],
-        ranking=RankingConfig(metric="sharpe_ratio"),
-        portfolio=PortfolioConfig(target_exposure_cap=1.0),
-        optimization=OptimizationConfig(
+        strategy=make_run_source_ref_config(id="demo.strategy"),
+        indicators=[make_run_indicator_source_config(id="demo.indicator")],
+        ranking=make_ranking_config(metric="sharpe_ratio"),
+        portfolio=make_portfolio_config(gross_cap=1.0, direction="longonly"),
+        optimization=make_optimization_config(
             search="grid",
-            split=RunSplitConfig(
+            split=make_run_split_config(
                 method="from_rolling",
                 params={"length": 20, "offset": 20, "split": 0.5},
             ),
@@ -61,7 +63,7 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
                 "strategy: {}",
                 "strategy: {}",
                 "portfolio:",
-                "  target_exposure_cap: 1.0",
+                "  gross_cap: 1.0",
             ]
         )
     )
@@ -113,6 +115,7 @@ def test_run_configs_reject_inline_code_and_arbitrary_paths(
     assert (
         "not allowed" in str(error.value)
         or "unknown field" in str(error.value)
+        or "Unexpected keyword argument" in str(error.value)
         or "params must be declared by the component manifest" in str(error.value)
     )
 
@@ -140,7 +143,7 @@ def test_run_config_rejects_removed_train_and_lane_fields(
         resolve_run_config(_merge(_run_config(), mutation), component_registry=registry)
 
     assert expected_path in str(error.value)
-    assert "single run config contract" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_indicator_selection_rejects_config_params(tmp_path: Path) -> None:
@@ -154,7 +157,7 @@ def test_run_indicator_selection_rejects_config_params(tmp_path: Path) -> None:
         resolve_run_config(raw, component_registry=registry)
 
     assert "indicators[0].params" in str(error.value)
-    assert "not allowed" in str(error.value)
+    assert "params must be declared by the component manifest" in str(error.value)
 
 
 def test_run_indicator_ref_rejects_duplicate_component_ids(tmp_path: Path) -> None:
@@ -428,7 +431,7 @@ def _run_config() -> dict[str, object]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "strategy_demo",
         "data": {"source": "synthetic", "rows": 50, "arrays": ["OHLCV"]},
-        "portfolio": {"target_exposure_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.indicator"}],
         "ranking": {"metric": "sharpe_ratio"},

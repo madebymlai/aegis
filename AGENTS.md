@@ -27,7 +27,7 @@ Use bd (beads) for issue tracking.
 - Use `bd ready`, `bd show <id>`, `bd update <id> --claim`, and `bd close <id>`.
 - Use `bd remember "insight"` for persistent project memory; do not create MEMORY.md files.
 - Do not use markdown TODO lists for task tracking.
-- See `docs/agents/issue-tracker.md`.
+- The issue PRD of `/to-prd` must be made with `type=epic`.
 
 ## Triage labels
 

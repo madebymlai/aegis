@@ -50,6 +50,30 @@ def test_candidate_store_persists_three_candidates_and_queries_by_run(tmp_path: 
         assert store_path.parent.stat().st_mode & 0o077 == 0
 
 
+def test_candidate_key_for_role_resolves_each_representative(tmp_path: Path) -> None:
+    # aegis-rd-6ie: roles are the storage-free handle — (run_id, role) maps to the same
+    # candidate_key the ranked table exposes; an unknown role raises.
+    store_path = tmp_path / "candidates.sqlite3"
+    candidates = _candidate_rows(values=(0.30, 0.20, 0.10))
+
+    with CandidateStore(store_path) as store:
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=candidates,
+            ranking_metric="total_return",
+            provenance={"run_id": "run-a"},
+        )
+        by_role = {
+            row["role"]: row["candidate"]["candidate_key"]
+            for row in store.top_candidates_by_run("run-a")
+        }
+
+        for role in ("best", "median", "worst"):
+            assert store.candidate_key_for_role("run-a", role) == by_role[role]
+        with pytest.raises(CandidateStoreError, match="unknown role"):
+            store.candidate_key_for_role("run-a", "nonesuch")
+
+
 def test_candidate_store_deduplicates_single_candidate_into_three_roles(tmp_path: Path) -> None:
     store_path = tmp_path / "candidates.sqlite3"
     only = _candidate({"fast_window": 7, "slow_window": 14}, 0.5, total_return=0.5)
@@ -97,90 +121,32 @@ def test_candidate_store_pending_run_is_not_queryable_until_activation(tmp_path:
             provenance={"run_id": "run-a"},
             publication_state=PUBLICATION_PENDING,
         )
-        store.insert_lock(
-            token="lock_pending",
-            run_id="run-a",
-            component_family="strategies",
-            component_id="demo.ma_cross",
-            component_slot="strategy:demo.ma_cross",
-            candidate_key=candidate["candidate_key"],
-            params=candidate["params"],
-            provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
-            publication_state=PUBLICATION_PENDING,
-        )
 
         assert store.top_candidates_by_run("run-a", limit=1) == []
         with pytest.raises(CandidateStoreError, match="unknown candidate key"):
             store.params_by_candidate_key(candidate["candidate_key"], run_id="run-a")
-        with pytest.raises(CandidateStoreError, match="unknown lock token"):
-            store.params_by_lock_token("lock_pending")
 
         store.activate_run("run-a")
 
         assert store.top_candidates_by_run("run-a", limit=1)
-        assert store.params_by_lock_token("lock_pending") == candidate["params"]
+        assert store.params_by_candidate_key(
+            candidate["candidate_key"], run_id="run-a"
+        ) == candidate["params"]
 
 
-def test_candidate_store_active_lock_requires_active_candidate(tmp_path: Path) -> None:
-    store_path = tmp_path / "candidates.sqlite3"
-    candidates = _candidate_rows()
-    candidate = candidates[0]
-
-    with CandidateStore(store_path) as store:
-        store.insert_completed_run(
-            run_id="run-a",
-            candidate_rows=candidates,
-            ranking_metric="total_return",
-            provenance={"run_id": "run-a"},
-            publication_state=PUBLICATION_PENDING,
-        )
-        store.insert_lock(
-            token="lock_active_lock_pending_candidate",
-            run_id="run-a",
-            component_family="strategies",
-            component_id="demo.ma_cross",
-            component_slot="strategy:demo.ma_cross",
-            candidate_key=candidate["candidate_key"],
-            params=candidate["params"],
-            provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
-        )
-
-        with pytest.raises(CandidateStoreError, match="unknown lock token"):
-            store.params_by_lock_token("lock_active_lock_pending_candidate")
-
-        store.activate_run("run-a")
-
-        assert (
-            store.params_by_lock_token("lock_active_lock_pending_candidate")
-            == candidate["params"]
-        )
-
-
-def test_candidate_store_resolves_lock_token_params(tmp_path: Path) -> None:
-    candidates = _candidate_rows()
-    candidate = candidates[0]
-
+def test_candidate_store_has_no_per_component_lock_surface(tmp_path: Path) -> None:
+    # ADR-0006 teardown: the per-Component lock model is gone. A Lock is now the
+    # transparent top-level (run_id, candidate_id) — no lock table, no lock methods.
     with CandidateStore(tmp_path / "candidates.sqlite3") as store:
-        store.insert_completed_run(
-            run_id="run-a",
-            candidate_rows=candidates,
-            ranking_metric="total_return",
-            provenance={"run_id": "run-a"},
-        )
-        store.insert_lock(
-            token="lock_run-a_strategy_demo_ma_cross_rank1",
-            run_id="run-a",
-            component_family="strategies",
-            component_id="demo.ma_cross",
-            component_slot="strategy:demo.ma_cross",
-            candidate_key=candidate["candidate_key"],
-            params=candidate["params"],
-            provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
-        )
-
-        params = store.params_by_lock_token("lock_run-a_strategy_demo_ma_cross_rank1")
-
-    assert params == candidate["params"]
+        for removed in ("insert_lock", "lock_by_token", "params_by_lock_token"):
+            assert not hasattr(store, removed)
+        tables = {
+            row[0]
+            for row in store._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        assert "candidate_locks" not in tables
 
 
 def test_candidate_store_json_columns_use_canonical_json_serializer(
@@ -219,23 +185,23 @@ def test_candidate_store_rejects_incompatible_schema_version(tmp_path: Path) -> 
 
 
 def test_candidate_store_rejects_superseded_schema_version(tmp_path: Path) -> None:
-    # Forward-first: a store from the previous (leaderboard) schema fails the version
-    # check and must be recreated — there is no migration path.
+    # Forward-first: a store from the previous (per-Component lock) schema fails the
+    # version check and must be recreated — there is no migration path.
     store_path = tmp_path / "candidates.sqlite3"
     connection = sqlite3.connect(store_path)
     connection.execute(
         "CREATE TABLE candidate_store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
     )
     connection.execute(
-        "INSERT INTO candidate_store_meta (key, value) VALUES ('schema_version', '3')"
+        "INSERT INTO candidate_store_meta (key, value) VALUES ('schema_version', '4')"
     )
     connection.commit()
     connection.close()
     if os.name == "posix":
         store_path.chmod(0o600)
 
-    assert SCHEMA_VERSION == 4
-    with pytest.raises(CandidateStoreError, match="schema version 3"):
+    assert SCHEMA_VERSION == 5
+    with pytest.raises(CandidateStoreError, match="schema version 4"):
         CandidateStore(store_path)
 
 
@@ -258,67 +224,6 @@ def test_candidate_store_rejects_conflicting_duplicate_candidate_payload(tmp_pat
                 candidate_rows=changed,
                 ranking_metric="total_return",
                 provenance={"run_id": "run-a"},
-            )
-
-
-def test_candidate_store_reinserting_same_lock_token_is_idempotent(tmp_path: Path) -> None:
-    candidates = _candidate_rows()
-    candidate = candidates[0]
-
-    with CandidateStore(tmp_path / "candidates.sqlite3") as store:
-        store.insert_completed_run(
-            run_id="run-a",
-            candidate_rows=candidates,
-            ranking_metric="total_return",
-            provenance={"run_id": "run-a"},
-        )
-        for _ in range(2):
-            store.insert_lock(
-                token="lock_duplicate",
-                run_id="run-a",
-                component_family="strategies",
-                component_id="demo.ma_cross",
-                component_slot="strategy:demo.ma_cross",
-                candidate_key=candidate["candidate_key"],
-                params=candidate["params"],
-                provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
-            )
-
-        assert store.params_by_lock_token("lock_duplicate") == candidate["params"]
-
-
-def test_candidate_store_rejects_conflicting_duplicate_lock_payload(tmp_path: Path) -> None:
-    candidates = _candidate_rows()
-    candidate = candidates[0]
-
-    with CandidateStore(tmp_path / "candidates.sqlite3") as store:
-        store.insert_completed_run(
-            run_id="run-a",
-            candidate_rows=candidates,
-            ranking_metric="total_return",
-            provenance={"run_id": "run-a"},
-        )
-        store.insert_lock(
-            token="lock_conflict",
-            run_id="run-a",
-            component_family="strategies",
-            component_id="demo.ma_cross",
-            component_slot="strategy:demo.ma_cross",
-            candidate_key=candidate["candidate_key"],
-            params=candidate["params"],
-            provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
-        )
-
-        with pytest.raises(CandidateStoreError, match="different payload"):
-            store.insert_lock(
-                token="lock_conflict",
-                run_id="run-a",
-                component_family="strategies",
-                component_id="demo.ma_cross",
-                component_slot="strategy:demo.ma_cross",
-                candidate_key=candidate["candidate_key"],
-                params={"fast_window": 99},
-                provenance={"run_id": "run-a", "candidate_key": candidate["candidate_key"]},
             )
 
 

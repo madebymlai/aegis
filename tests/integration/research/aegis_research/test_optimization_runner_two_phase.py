@@ -12,13 +12,8 @@ import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.configuration.schema import (
-    OptimizationConfig,
-    PortfolioConfig,
-    RankingConfig,
-    ReportConfig,
-    RunSplitConfig,
-)
+from research.aegis_research.config import OptimizationConfig
+from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,
     build_candidate_index,
@@ -30,6 +25,13 @@ from research.aegis_research.optimization.ranking import (
 )
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
+    make_portfolio_config,
+    make_ranking_config,
+    make_report_config,
+    make_run_split_config,
+)
 
 N_ROWS = 24
 IS_LENGTH = 8  # length=8, split=0.5 -> 4-row selection + 4-row held_out per split
@@ -76,9 +78,9 @@ def _source(alphas: list[float]) -> OptimizationSource:
 
 
 def _optimization() -> OptimizationConfig:
-    return OptimizationConfig(
+    return make_optimization_config(
         search="grid",
-        split=RunSplitConfig(method="from_rolling", params={"length": IS_LENGTH, "split": 0.5}),
+        split=make_run_split_config(method="from_rolling", params={"length": IS_LENGTH, "split": 0.5}),
     )
 
 
@@ -88,9 +90,10 @@ def _run(alphas: list[float], *, min_weight: float = 0.3) -> OptimizationResult:
         open_=_uptrend_close(),
         source=_source(alphas),
         optimization=_optimization(),
-        portfolio=PortfolioConfig(fees=0.0, slippage=0.0),
-        report=ReportConfig(),
-        ranking=RankingConfig(metric="total_return", min_weight=min_weight),
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=min_weight),
+        metric_registry=make_default_metric_registry(),
     )
 
 
@@ -174,8 +177,8 @@ def test_runner_preserves_excluded_degenerate_through_held_out(monkeypatch) -> N
 
     real_select = runner.select_representative_candidates
 
-    def select_with_injected_exclusions(grid, **kwargs):
-        result = real_select(grid, **kwargs)
+    def select_with_injected_exclusions(grid, verdicts, **kwargs):
+        result = real_select(grid, verdicts, **kwargs)
         return dataclasses.replace(result, excluded_degenerate=7)
 
     monkeypatch.setattr(runner, "select_representative_candidates", select_with_injected_exclusions)
@@ -200,8 +203,8 @@ def test_runner_preserves_total_candidates_through_held_out(monkeypatch) -> None
 
     real_select = runner.select_representative_candidates
 
-    def select_with_injected_total(grid, **kwargs):
-        result = real_select(grid, **kwargs)
+    def select_with_injected_total(grid, verdicts, **kwargs):
+        result = real_select(grid, verdicts, **kwargs)
         return dataclasses.replace(result, total_candidates=11)
 
     monkeypatch.setattr(runner, "select_representative_candidates", select_with_injected_total)
@@ -275,16 +278,17 @@ def _run_warmup(windows: list[int]) -> OptimizationResult:
         open_=_uptrend_close(),
         source=_warmup_source(windows),
         optimization=_optimization(),
-        portfolio=PortfolioConfig(fees=0.0, slippage=0.0),
-        report=ReportConfig(),
-        ranking=RankingConfig(metric="total_return", min_weight=0.3),
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
     )
 
 
 def test_held_out_and_selection_builds_receive_the_same_invalid_candidate_set(
     monkeypatch,
 ) -> None:
-    """Both sweeps must mask the same Invalid Candidates so they cannot drift.
+    """Both sweeps must receive the same Invalid-Candidate set so they cannot drift.
 
     A genuine Invalid Candidate (lookback exceeding full history) makes the
     Selection build's Invalid-Candidate set non-empty. The held-out build must
@@ -306,7 +310,7 @@ def test_held_out_and_selection_builds_receive_the_same_invalid_candidate_set(
 
     assert len(captured) == 2, "expected one selection build then one held-out build"
     selection_keys, held_out_keys = captured
-    assert selection_keys, "selection build should mask a non-empty Invalid-Candidate set"
+    assert selection_keys, "selection build should carry a non-empty Invalid-Candidate set"
     assert held_out_keys == selection_keys, (
         "held-out build must receive the SAME Invalid-Candidate set as selection"
     )
@@ -336,7 +340,7 @@ def test_phase1_sweeps_in_parallel_with_pathos_and_phase3_runs_sequentially(monk
 
     # Phase 1: full grid distributed across cores under pathos.
     assert phase1["mono_n_chunks"] == "auto"
-    assert phase1["execute_kwargs"] == {"engine": "pathos"}
+    assert phase1["execute_kwargs"] == {"engine": "pathos", "join_pool": True}
 
     # Phase 3: one sequential mono-chunk, no parallel engine.
     assert phase3["mono_n_chunks"] == 1

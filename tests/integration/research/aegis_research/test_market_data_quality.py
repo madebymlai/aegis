@@ -4,28 +4,27 @@ from pathlib import Path
 from typing import ClassVar
 
 import pandas as pd
-import pytest
 
-from research.aegis_research.config import (
-    DataConfig,
-    DataQualityConfig,
-    SignalConfig,
-)
-from research.aegis_research.market_data import quality as data_quality
+from research.aegis_research.config import DataConfig
 from research.aegis_research.data import (
     DataDiagnostics,
     DataFeatureDiagnostics,
     MarketDataAdapterResult,
     RemoteDataPullError,
-    assert_public_metadata_safe,
     load_market_data_result,
     required_experiment_ohlcv_features,
+)
+from research.aegis_research.market_data import quality as data_quality
+from tests.support.research.aegis_research.factories import (
+    make_data_config,
+    make_data_quality_config,
+    make_signal_config,
 )
 
 
 def test_quality_verdict_is_derived_from_typed_diagnostics_without_panels() -> None:
     quality = data_quality.evaluate(
-        DataConfig(source="diagnostic", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="diagnostic", symbols=["SYN"], arrays=["Close"]),
         (
             DataDiagnostics(
                 symbol="SYN",
@@ -65,7 +64,7 @@ def test_duplicate_csv_index_is_rejected_before_vectorbt_normalizes(tmp_path: Pa
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
     )
 
     assert result.quality.state == "rejected"
@@ -82,7 +81,7 @@ def test_non_monotonic_csv_index_is_rejected_before_vectorbt_sorts(tmp_path: Pat
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
     )
 
     assert result.quality.state == "rejected"
@@ -98,7 +97,7 @@ def test_missing_required_rows_are_rejected_by_default(tmp_path: Path) -> None:
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
     )
 
     assert result.quality.state == "rejected"
@@ -114,12 +113,12 @@ def test_allowed_missing_rows_are_degraded_allowed(tmp_path: Path) -> None:
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(
+        make_data_config(
             source="csv",
             path=str(path),
             symbols=["SYN"],
             arrays=["Close"],
-            quality=DataQualityConfig(allowed_degradations=["missing_rows"]),
+            quality=make_data_quality_config(allowed_degradations=["missing_rows"]),
         )
     )
 
@@ -136,7 +135,7 @@ def test_close_only_array_does_not_require_unconfigured_ohlcv_features(tmp_path:
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"])
     )
 
     assert result.quality.state == "healthy"
@@ -145,12 +144,12 @@ def test_close_only_array_does_not_require_unconfigured_ohlcv_features(tmp_path:
 
 def test_next_open_signal_timing_requires_open_feature() -> None:
     assert required_experiment_ohlcv_features() == ("Close", "Open")
-    assert required_experiment_ohlcv_features(signal_config=SignalConfig()) == ("Close", "Open")
+    assert required_experiment_ohlcv_features(signal_config=make_signal_config()) == ("Close", "Open")
 
 
 def test_same_close_signal_timing_does_not_require_open_feature() -> None:
     assert required_experiment_ohlcv_features(
-        signal_config=SignalConfig(execution_timing="same_close")
+        signal_config=make_signal_config(execution_timing="same_close")
     ) == ("Close",)
 
 
@@ -163,8 +162,8 @@ def test_next_open_feature_requirement_rejects_close_only_data(tmp_path: Path) -
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
-        required_features=required_experiment_ohlcv_features(signal_config=SignalConfig()),
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
+        required_features=required_experiment_ohlcv_features(signal_config=make_signal_config()),
     )
 
     assert result.quality.state == "rejected"
@@ -180,9 +179,9 @@ def test_same_close_feature_requirement_allows_close_only_data(tmp_path: Path) -
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
         required_features=required_experiment_ohlcv_features(
-            signal_config=SignalConfig(execution_timing="same_close")
+            signal_config=make_signal_config(execution_timing="same_close")
         ),
     )
 
@@ -198,7 +197,7 @@ def test_explicit_high_low_requirement_rejects_close_only_data(tmp_path: Path) -
     frame.to_csv(path)
 
     result = load_market_data_result(
-        DataConfig(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
         required_features=("Close", "High", "Low"),
     )
 
@@ -208,10 +207,10 @@ def test_explicit_high_low_requirement_rejects_close_only_data(tmp_path: Path) -
 
 
 def test_skipped_symbol_requires_skip_policy_opt_in() -> None:
-    native_data = load_market_data_result(DataConfig(rows=5, symbols=["AAA"])).native_data
+    native_data = load_market_data_result(make_data_config(rows=5, symbols=["AAA"])).native_data
 
     result = load_market_data_result(
-        DataConfig(source="fake", symbols=["AAA", "BBB"]),
+        make_data_config(source="fake", symbols=["AAA", "BBB"]),
         adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=native_data)},
     )
 
@@ -220,14 +219,14 @@ def test_skipped_symbol_requires_skip_policy_opt_in() -> None:
 
 
 def test_skipped_symbol_with_explicit_policy_is_degraded_allowed() -> None:
-    native_data = load_market_data_result(DataConfig(rows=5, symbols=["AAA"])).native_data
+    native_data = load_market_data_result(make_data_config(rows=5, symbols=["AAA"])).native_data
 
     result = load_market_data_result(
-        DataConfig(
+        make_data_config(
             source="fake",
             symbols=["AAA", "BBB"],
             skip_on_error=True,
-            quality=DataQualityConfig(allowed_degradations=["skipped_symbols"]),
+            quality=make_data_quality_config(allowed_degradations=["skipped_symbols"]),
         ),
         adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=native_data)},
     )
@@ -237,10 +236,10 @@ def test_skipped_symbol_with_explicit_policy_is_degraded_allowed() -> None:
 
 
 def test_remote_post_alignment_evidence_is_explicit() -> None:
-    native_data = load_market_data_result(DataConfig(rows=5, symbols=["AAA"])).native_data
+    native_data = load_market_data_result(make_data_config(rows=5, symbols=["AAA"])).native_data
 
     result = load_market_data_result(
-        DataConfig(source="fake", symbols=["AAA"]),
+        make_data_config(source="fake", symbols=["AAA"]),
         adapters={
             "fake": lambda _config: MarketDataAdapterResult(
                 native_data=native_data,
@@ -257,7 +256,7 @@ def test_provider_failure_returns_safe_non_usable_result() -> None:
         raise RemoteDataPullError("fake", "network unavailable")
 
     result = load_market_data_result(
-        DataConfig(source="fake", symbols=["AAA"]),
+        make_data_config(source="fake", symbols=["AAA"]),
         adapters={"fake": fail},
     )
 
@@ -270,7 +269,7 @@ def test_provider_failure_returns_safe_non_usable_result() -> None:
 
 def test_provider_update_support_uses_symbol_update_capability() -> None:
     result = load_market_data_result(
-        DataConfig(source="fake", symbols=["SYN"]),
+        make_data_config(source="fake", symbols=["SYN"]),
         adapters={
             "fake": lambda _config: MarketDataAdapterResult(
                 native_data=_UpdateCapableProviderData()
@@ -283,7 +282,7 @@ def test_provider_update_support_uses_symbol_update_capability() -> None:
 
 def test_provider_update_support_uses_feature_update_capability() -> None:
     result = load_market_data_result(
-        DataConfig(source="fake", symbols=["SYN"]),
+        make_data_config(source="fake", symbols=["SYN"]),
         adapters={
             "fake": lambda _config: MarketDataAdapterResult(
                 native_data=_FeatureUpdateProviderData()
@@ -292,22 +291,6 @@ def test_provider_update_support_uses_feature_update_capability() -> None:
     )
 
     assert result.metadata["update_supported"] is True
-
-
-@pytest.mark.parametrize(
-    "path_value",
-    [
-        "/home/alice/cache.db",
-        "C:\\Users\\alice\\cache.db",
-        "\\\\server\\share\\cache.db",
-        "~",
-        "~/.cache/provider",
-        "~alice/.cache/provider",
-    ],
-)
-def test_public_metadata_rejects_nonportable_paths(path_value: str) -> None:
-    with pytest.raises(ValueError, match="non-portable path"):
-        assert_public_metadata_safe({"path": path_value})
 
 
 class _ProviderMetadataData:

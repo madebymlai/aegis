@@ -12,6 +12,7 @@ dependencies = [
   "numpy",
   "pandas",
   "pathos>=0.3.5",
+  "pydantic>=2.0",
   "pyyaml",
   "tomlkit",
   "vectorbtpro",
@@ -27,14 +28,30 @@ include = ["research*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+filterwarnings = [
+  # vectorbtpro's pathos parallel engine forks worker processes; on Python 3.13 the
+  # multiprocess backend warns that forking a multi-threaded process is risky. This is
+  # intrinsic to how pathos spawns workers and is not actionable from our code.
+  "ignore:.*use of fork\\(\\) may lead to deadlocks.*:DeprecationWarning",
+]
 
 [tool.uv.sources]
 vectorbtpro = { git = "https://github.com/polakowo/vectorbt.pro.git", branch = "develop" }
 
+[tool.mypy]
+python_version = "3.12"
+files = ["research"]
+
+# These third-party libraries ship no type stubs; suppress the missing-import
+# noise without weakening checks on our own code.
+[[tool.mypy.overrides]]
+module = ["vectorbtpro.*", "pandas", "pandas.*", "yaml"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["docs/**"]
+extend-exclude = ["docs/**", "research/components/**"]
 
 [tool.ruff.lint]
 select = [

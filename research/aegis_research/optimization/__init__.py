@@ -7,33 +7,11 @@ from research.aegis_research.optimization.candidate_store import (
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
     build_component_optimization_source,
-    component_param_key,
-    component_param_slices,
-    component_ref_key,
-    parse_component_param_key,
-)
-from research.aegis_research.optimization.lock_resolution import (
-    ComponentLockRef,
-    LockResolutionError,
-    ResolvedLock,
-    build_component_lock_records,
-    resolve_component_lock,
-    resolve_component_locks,
 )
 
 __all__ = [
     "CandidateStore",
     "CandidateStoreError",
-    "ComponentLockRef",
     "ComponentSourceError",
-    "LockResolutionError",
-    "ResolvedLock",
-    "build_component_lock_records",
     "build_component_optimization_source",
-    "component_param_key",
-    "component_param_slices",
-    "component_ref_key",
-    "parse_component_param_key",
-    "resolve_component_lock",
-    "resolve_component_locks",
 ]

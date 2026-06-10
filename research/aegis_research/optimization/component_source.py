@@ -9,11 +9,12 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry import (
-    COMPONENT_FAMILIES,
     ComponentDefinition,
     ComponentFamily,
     ComponentSelection,
     FrozenComponentRegistry,
+    IndicatorManifest,
+    StrategyManifest,
 )
 from research.aegis_research.config import (
     RunConfig,
@@ -22,6 +23,12 @@ from research.aegis_research.config import (
     to_builtin,
 )
 from research.aegis_research.data import MarketDataBundle
+from research.aegis_research.optimization.param_namespace import (
+    FIXED_CANDIDATE_PARAM,
+    PARAM_KEY_PREFIX,
+    ComponentRef,
+    encode,
+)
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
     WideIndicatorPrecompute,
@@ -31,11 +38,8 @@ from research.aegis_research.optimization.precompute import (
 from research.aegis_research.optimization.source import OptimizationSource
 
 COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION = "component_optimization_source.v1"
-FIXED_CANDIDATE_PARAM = "__aegis_fixed_candidate__"
-PARAM_KEY_PREFIX = "component"
-PARAM_KEY_SEPARATOR = "__"
 
-ResolvedComponentParams = Mapping[tuple[ComponentFamily, str, str], Mapping[str, Any]]
+ResolvedComponentParams = Mapping[ComponentRef, Mapping[str, Any]]
 
 
 class ComponentSourceError(ValueError):
@@ -69,6 +73,7 @@ class _ComponentRuntime:
     fixed_params: dict[str, Any]
     param_space: dict[str, vbt.Param]
     param_keys: dict[str, str]
+    locked: bool
 
 
 @dataclass(frozen=True)
@@ -78,99 +83,13 @@ class _RuntimeParamDeduplication:
     n_candidates: int
 
 
-def component_ref_key(
-    family: ComponentFamily,
-    component_id: str,
-    slot: str,
-) -> tuple[ComponentFamily, str, str]:
-    return (family, component_id, slot)
-
-
-def component_param_key(
-    family: ComponentFamily,
-    component_id: str,
-    slot: str,
-    param_name: str,
-) -> str:
-    parts = (PARAM_KEY_PREFIX, family, component_id, slot, param_name)
-    for part in parts:
-        if not part:
-            raise ComponentSourceError("component param namespace parts must not be empty")
-    return PARAM_KEY_SEPARATOR.join(
-        (PARAM_KEY_PREFIX, *(_encode_namespace_part(part) for part in parts[1:]))
-    )
-
-
-def parse_component_param_key(key: str) -> dict[str, str]:
-    parts = key.split(PARAM_KEY_SEPARATOR)
-    if len(parts) != 5 or parts[0] != PARAM_KEY_PREFIX:
-        raise ComponentSourceError(f"not a component param key: {key!r}")
-    _, encoded_family, encoded_component_id, encoded_slot, encoded_param_name = parts
-    family = _decode_namespace_part(encoded_family)
-    component_id = _decode_namespace_part(encoded_component_id)
-    slot = _decode_namespace_part(encoded_slot)
-    param_name = _decode_namespace_part(encoded_param_name)
-    if family not in COMPONENT_FAMILIES:
-        raise ComponentSourceError(f"unsupported component param family: {family!r}")
-    return {
-        "family": family,
-        "component_id": component_id,
-        "slot": slot,
-        "param_name": param_name,
-    }
-
-
-def _encode_namespace_part(value: str) -> str:
-    return value.encode("utf-8").hex()
-
-
-def _decode_namespace_part(value: str) -> str:
-    try:
-        return bytes.fromhex(value).decode("utf-8")
-    except ValueError as error:
-        raise ComponentSourceError(f"invalid component param namespace part: {value!r}") from error
-
-
-def component_param_slices(
-    param_row: Mapping[str, Any],
-) -> dict[tuple[str, str, str], dict[str, Any]]:
-    slices: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for key, value in param_row.items():
-        if key == FIXED_CANDIDATE_PARAM:
-            continue
-        parsed = parse_component_param_key(key)
-        slice_key = (parsed["family"], parsed["component_id"], parsed["slot"])
-        slices.setdefault(slice_key, {})[parsed["param_name"]] = value
-    return slices
-
-
-def component_params_from_slices(
-    *,
-    component_family: ComponentFamily,
-    component_id: str,
-    component_slot: str,
-    component_slices: Mapping[tuple[str, str, str], Mapping[str, Any]],
-    runtime: Mapping[str, Any],
-    candidate_key: str,
-) -> dict[str, Any]:
-    params = dict(runtime.get("fixed_params", {}))
-    slice_key = (component_family, component_id, component_slot)
-    params.update(component_slices.get(slice_key, {}))
-    missing = sorted(set(runtime.get("param_keys", {})) - set(params))
-    if missing:
-        raise ComponentSourceError(
-            f"candidate {candidate_key} is missing params for component "
-            f"{component_family}/{component_id} slot {component_slot!r}: {missing}"
-        )
-    return params
-
-
 def build_component_optimization_source(
     config: RunConfig,
     *,
     component_registry: FrozenComponentRegistry,
     data: MarketDataBundle,
     resolved_component_params: ResolvedComponentParams | None = None,
+    force_locked: bool = False,
 ) -> OptimizationSource:
     resolved_params = resolved_component_params or {}
     strategy = _build_runtime(
@@ -179,6 +98,7 @@ def build_component_optimization_source(
         config.strategy,
         component_registry=component_registry,
         resolved_component_params=resolved_params,
+        force_locked=force_locked,
     )
     indicators = tuple(
         _build_runtime(
@@ -187,6 +107,7 @@ def build_component_optimization_source(
             ref,
             component_registry=component_registry,
             resolved_component_params=resolved_params,
+            force_locked=force_locked,
         )
         for ref in config.indicators
     )
@@ -227,7 +148,9 @@ def build_component_optimization_source(
                 data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
             )
             output_arr = np.asarray(output)
-            for output_name in runtime.definition.manifest.output_names:
+            indicator_manifest = runtime.definition.manifest
+            assert isinstance(indicator_manifest, IndicatorManifest)
+            for output_name in indicator_manifest.output_names:
                 if output_name in outputs:
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
                 outputs[output_name] = output_arr
@@ -273,11 +196,13 @@ def build_component_optimization_source(
         )
 
     evidence = _source_evidence(strategy, indicators, params)
+    strategy_manifest = strategy.definition.manifest
+    assert isinstance(strategy_manifest, StrategyManifest)
     return OptimizationSource(
         precompute=precompute,
         simulate=simulate,
         params=params,
-        output_name=strategy.definition.manifest.output_name,
+        output_name=strategy_manifest.output_name,
         evidence=evidence,
         diagnostics={
             "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
@@ -298,10 +223,12 @@ def _build_runtime(
     *,
     component_registry: FrozenComponentRegistry,
     resolved_component_params: ResolvedComponentParams,
+    force_locked: bool = False,
 ) -> _ComponentRuntime:
     definition = component_registry.get(ComponentSelection(family, ref.id))
+    locked = force_locked
     param_space_callable_name = (
-        None if _is_locked(ref) else getattr(definition.manifest, "param_space_callable", None)
+        None if locked else getattr(definition.manifest, "param_space_callable", None)
     )
     wide_callable_name = definition.manifest.wide_callable
     attribute_names = [definition.callable_name, wide_callable_name]
@@ -320,10 +247,11 @@ def _build_runtime(
         definition,
         resolved_component_params,
         param_space=param_space,
+        force_locked=force_locked,
     )
     _validate_component_param_sources(definition, fixed_params, param_space)
     param_keys = {
-        param_name: component_param_key(family, definition.id, slot, param_name)
+        param_name: encode(ComponentRef(family, definition.id, slot), param_name)
         for param_name in param_space
         if param_name not in fixed_params
     }
@@ -337,6 +265,7 @@ def _build_runtime(
         fixed_params=fixed_params,
         param_space=dict(param_space),
         param_keys=param_keys,
+        locked=locked,
     )
 
 
@@ -348,15 +277,16 @@ def _fixed_params_for_ref(
     resolved_component_params: ResolvedComponentParams,
     *,
     param_space: Mapping[str, vbt.Param],
+    force_locked: bool = False,
 ) -> dict[str, Any]:
-    if _is_locked(ref):
-        key = component_ref_key(family, definition.id, slot)
+    if force_locked:
+        key = ComponentRef(family, definition.id, slot)
         try:
             fixed = dict(resolved_component_params[key])
         except KeyError as error:
             raise ComponentSourceError(
                 f"component {family}/{definition.id} slot {slot!r} requires resolved "
-                "lock_id/candidate_id params before execution"
+                "lock params before execution"
             ) from error
     else:
         fixed = {
@@ -371,10 +301,6 @@ def _fixed_params_for_ref(
             f"component {family}/{definition.id} fixed params are not declared: {unknown}"
         )
     return fixed
-
-
-def _is_locked(ref: RunSourceRefConfig | RunIndicatorSourceConfig) -> bool:
-    return ref.lock_id is not None or ref.candidate_id is not None
 
 
 def _load_param_space(
@@ -483,7 +409,6 @@ def _build_wide_frame(
     param_defs: Mapping[str, Any],
 ) -> pd.DataFrame:
     symbols = close_slice.columns
-    n_symbols = len(symbols)
     param_keys = [k for k in param_defs if k != FIXED_CANDIDATE_PARAM]
     if not param_keys:
         param_keys = [FIXED_CANDIDATE_PARAM]
@@ -491,9 +416,9 @@ def _build_wide_frame(
     for i in range(n_candidates):
         for sym in symbols:
             col_tuples.append(
-                tuple(param_lists[k][i] for k in param_keys) + (sym,)
+                (*(param_lists[k][i] for k in param_keys), sym)
             )
-    col_names = param_keys + ["symbol"]
+    col_names = [*param_keys, "symbol"]
     col_mi = pd.MultiIndex.from_tuples(col_tuples, names=col_names)
     return pd.DataFrame(alloc_arr, index=close_slice.index, columns=col_mi)
 
@@ -619,8 +544,6 @@ def _runtime_evidence(runtime: _ComponentRuntime) -> dict[str, Any]:
         "id": runtime.definition.id,
         "version": runtime.definition.manifest.version,
         **runtime.definition.identity.public(),
-        "lock_id": runtime.ref.lock_id,
-        "candidate_id": runtime.ref.candidate_id,
         "fixed_params": to_builtin(runtime.fixed_params),
         "param_keys": dict(runtime.param_keys),
         "param_mode": _param_mode(runtime),
@@ -628,7 +551,7 @@ def _runtime_evidence(runtime: _ComponentRuntime) -> dict[str, Any]:
 
 
 def _param_mode(runtime: _ComponentRuntime) -> str:
-    if _is_locked(runtime.ref):
+    if runtime.locked:
         return "locked"
     if runtime.param_keys:
         return "parameterized"

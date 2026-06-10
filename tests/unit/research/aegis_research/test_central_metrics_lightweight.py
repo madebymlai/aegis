@@ -5,46 +5,20 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
-from vectorbtpro import vbt
 
-from research.aegis_research.config import PortfolioConfig
-from research.aegis_research.configuration.schema import ReportConfig
+from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.metrics.accessors import (
-    METRIC_INDEX_NAME,
-    central_metrics_from_accessors,
     central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.portfolios import simulate_portfolio_batch
+from tests.support.research.aegis_research.factories import (
+    make_portfolio_config,
+    make_report_config,
+)
 from tests.support.research.aegis_research.metric_oracle import (
-    report_grade_metrics,
     report_grade_metrics_by_candidate,
 )
-
-
-def _build_portfolio() -> Any:
-    """Build a minimal VBT portfolio with known trades for testing."""
-    index = pd.date_range("2024-01-01", periods=30, freq="D")
-    close = pd.DataFrame(
-        {"A": 100 + np.cumsum(np.random.default_rng(42).normal(0, 1, 30))},
-        index=index,
-    )
-    entries = pd.DataFrame({"A": False}, index=index)
-    exits = pd.DataFrame({"A": False}, index=index)
-    entries.iloc[0] = True
-    exits.iloc[5] = True
-    entries.iloc[10] = True
-    exits.iloc[15] = True
-    entries.iloc[20] = True
-    exits.iloc[25] = True
-    pf = vbt.Portfolio.from_signals(
-        close,
-        entries=entries,
-        exits=exits,
-        fees=0.001,
-        init_cash=10_000,
-    )
-    return pf
 
 
 def _assert_metric_parity(actual: Any, expected: float | None, *, metric_name: str) -> None:
@@ -55,31 +29,6 @@ def _assert_metric_parity(actual: Any, expected: float | None, *, metric_name: s
     else:
         assert actual == pytest.approx(expected, rel=1e-6), (
             f"{metric_name}: production={actual} vs oracle={expected}"
-        )
-
-
-def test_returns_series_with_all_central_metric_keys() -> None:
-    pf = _build_portfolio()
-    config = ReportConfig()
-
-    result = central_metrics_from_accessors(pf, config)
-
-    assert isinstance(result, pd.Series)
-    assert result.name == "value"
-    assert result.index.name == METRIC_INDEX_NAME
-    assert set(result.index) == set(PORTFOLIO_METRIC_VALUE_KEYS)
-
-
-def test_parity_with_report_grade_oracle_for_finite_portfolio() -> None:
-    pf = _build_portfolio()
-    config = ReportConfig()
-
-    lightweight = central_metrics_from_accessors(pf, config)
-    oracle = report_grade_metrics(pf, config)
-
-    for metric_name in PORTFOLIO_METRIC_VALUE_KEYS:
-        _assert_metric_parity(
-            lightweight[metric_name], oracle[metric_name], metric_name=metric_name
         )
 
 
@@ -109,17 +58,24 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
     )
     allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
     allocations.loc[index[0], ("candidate-a", slice(None))] = 0.3
-    allocations.loc[index[0], ("candidate-b", slice(None))] = 0.6
+    # candidate-b at 0.5 each is gross 1.0 — distinct from candidate-a yet within the default
+    # exposure caps, so the gate admits this metrics-parity fixture at leverage 1.0.
+    allocations.loc[index[0], ("candidate-b", slice(None))] = 0.5
     simulation = simulate_portfolio_batch(
-        close, allocations, PortfolioConfig(fees=0.001, slippage=0)
+        close, allocations, make_portfolio_config(fees=0.001, slippage=0, direction="longonly"),
+        periods_per_year=252,
     )
-    config = ReportConfig(freq="1D", year_freq="252D")
+    config = make_report_config(freq="1D", year_freq="252D")
 
     candidate_keys = [(candidate_id,) for candidate_id in candidate_ids]
     production = central_metrics_from_grouped_accessors(
-        simulation.portfolio, config, candidate_keys, ["candidate_id"]
+        simulation,
+        config,
+        candidate_keys,
+        ["candidate_id"],
+        make_default_metric_registry().extractors,
     )
-    oracle = report_grade_metrics_by_candidate(simulation.portfolio, config, candidate_ids)
+    oracle = report_grade_metrics_by_candidate(simulation, config, candidate_ids)
 
     assert list(production.index) == candidate_keys
     for candidate_id in candidate_ids:
@@ -132,23 +88,50 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
             )
 
 
-def test_non_finite_values_normalize_to_none() -> None:
-    index = pd.date_range("2024-01-01", periods=10, freq="D")
+def test_non_finite_values_land_as_nan_in_a_float64_grid() -> None:
+    """Non-finite metric values land as NaN inside a uniformly float64 grid.
+
+    A flat-price candidate with no closed trades has an undefined win rate and
+    Sharpe. The grid carries those as NaN in float64 columns — never as None in
+    an object column — so vbt's row_stack concat across windows is dtype-stable
+    (an all-None column would trip pandas' deprecated all-NA dtype
+    reconciliation, FutureWarning). The None contract lives downstream at the
+    optional_float seam (ranking/Evidence), not inside the grid.
+    """
+    index = pd.date_range("2024-01-01", periods=10)
     close = pd.DataFrame({"A": [100.0] * 10}, index=index)
-    pf = vbt.Portfolio.from_signals(
-        close,
-        entries=pd.DataFrame({"A": [False] * 10}, index=index),
-        exits=pd.DataFrame({"A": [False] * 10}, index=index),
-        fees=0.0,
-        init_cash=10_000,
+    candidate_ids = ["flat"]
+    columns = pd.MultiIndex.from_product(
+        [candidate_ids, ["A"]],
+        names=["candidate_id", "symbol"],
     )
-    config = ReportConfig()
+    # Hold cash the whole time (target weight 0 → zero trades), so win rate and
+    # Sharpe are genuinely undefined (NaN) while the other metrics are finite 0.0.
+    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
+    allocations.loc[index[0], ("flat", "A")] = 0.0
+    simulation = simulate_portfolio_batch(
+        close, allocations, make_portfolio_config(fees=0.0, slippage=0, direction="longonly"),
+        periods_per_year=252,
+    )
+    config = make_report_config(freq="1D", year_freq="252D")
 
-    result = central_metrics_from_accessors(pf, config)
+    candidate_keys = [(c,) for c in candidate_ids]
+    result = central_metrics_from_grouped_accessors(
+        simulation,
+        config,
+        candidate_keys,
+        ["candidate_id"],
+        make_default_metric_registry().extractors,
+    )
+    row = result.loc[("flat",)]
 
-    assert result["total_return"] == pytest.approx(0.0)
-    assert result["max_dd"] == pytest.approx(0.0)
-    assert result["total_trades"] == pytest.approx(0.0)
-    assert pd.isna(result["win_rate"]), "win_rate should be NaN when no trades"
-    assert result["total_fees_paid"] == pytest.approx(0.0)
-    assert pd.isna(result["sharpe_ratio"]), "sharpe_ratio should be NaN for flat returns"
+    assert row["total_return"] == pytest.approx(0.0)
+    assert row["max_dd"] == pytest.approx(0.0)
+    assert row["total_trades"] == pytest.approx(0.0)
+    assert row["total_fees_paid"] == pytest.approx(0.0)
+    assert np.isnan(row["win_rate"]), "win_rate should be NaN when no trades"
+    assert np.isnan(row["sharpe_ratio"]), "sharpe_ratio should be NaN for flat returns"
+    assert result.dtypes.eq("float64").all(), (
+        "metric grid must be uniformly float64 — object columns break vbt "
+        "row_stack dtype stability"
+    )

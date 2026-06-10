@@ -6,16 +6,14 @@ beyond the multi-period momentum score's sign?
 Run: python research/prototypes/rm_vs_momentum_score.py
 """
 
-import numpy as np
 import pandas as pd
+import vectorbtpro as vbt
 
 SYMBOLS = ["SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU"]
 START = "2015-01-01"
 END = "2025-12-31"
 
 # --- fetch ---
-import vectorbtpro as vbt
-
 data = vbt.YFData.pull(SYMBOLS, start=START, end=END, timeframe="1D", silence_warnings=True)
 close = data.get("Close")
 

@@ -9,9 +9,9 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.config import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.candidate_store import CandidateStore, CandidateStoreError
-from research.aegis_research.optimization.component_source import (
-    FIXED_CANDIDATE_PARAM,
-    component_param_key,
+from research.aegis_research.optimization.param_namespace import (
+    ComponentRef,
+    encode,
 )
 from research.aegis_research.optimization.pipeline import completion, publishing
 from research.aegis_research.provenance.manifest import RunStatus
@@ -39,7 +39,7 @@ def test_run_cli_rejects_playbook_source_selectors_before_artifacts(
     payload = _last_json_line(capsys.readouterr().err)
     assert payload["error"]["category"] == "config_validation"
     assert "strategy.source" in payload["error"]["message"]
-    assert "unknown field" in payload["error"]["message"]
+    assert "Unexpected keyword argument" in payload["error"]["message"]
     assert "indicators[0].ids" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "removed-playbook").exists()
 
@@ -61,7 +61,7 @@ def test_run_cli_rejects_candidate_grid_on_component_config_before_artifacts(
     payload = _last_json_line(capsys.readouterr().err)
     assert payload["error"]["category"] == "config_validation"
     assert "candidate_grid" in payload["error"]["message"]
-    assert "unknown field" in payload["error"]["message"]
+    assert "Unexpected keyword argument" in payload["error"]["message"]
     assert not (tmp_path / "runs" / "candidate-grid").exists()
 
 
@@ -85,8 +85,8 @@ def test_component_optimization_uses_component_native_candidate_grid(
         record for record in manifest["artifacts"] if record["id"] == "strategy.run"
     )
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
-    fast_key = component_param_key("strategies", "demo.ma_opt", "strategy", "fast_window")
-    slow_key = component_param_key("strategies", "demo.ma_opt", "strategy", "slow_window")
+    fast_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "fast_window")
+    slow_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "slow_window")
 
     assert payload["status"] == "success"
     assert (
@@ -117,10 +117,9 @@ def test_component_optimization_uses_component_native_candidate_grid(
         top = store.top_candidates_by_run("component-boundary", limit=1)
     assert top[0]["role"] == "best"
     assert top[0]["candidate"]["candidate_key"] == artifact["candidates"][0]["candidate_key"]
-    assert artifact["locks"][0]["component_family"] == "strategies"
-    assert artifact["locks"][0]["component_id"] == "demo.ma_opt"
-    assert artifact["locks"][0]["token"].startswith("lock_")
-    assert payload["locks"][0]["token"] == artifact["locks"][0]["token"]
+    # ADR-0006 (aegis-rd-396.4): per-Component lock records are retired.
+    assert "locks" not in artifact
+    assert "locks" not in payload
 
 
 def test_component_optimization_candidate_publish_failure_preserves_run_evidence(
@@ -151,7 +150,7 @@ def test_component_optimization_candidate_publish_failure_preserves_run_evidence
         "worst",
     ]
     assert optimization_evidence["candidate_count"] == 3
-    assert optimization_evidence["locks"][0]["component_id"] == "demo.ma_opt"
+    assert "locks" not in optimization_evidence
     assert optimization_evidence["publishing_failure"] == {
         "error_type": "OSError",
         "message": "candidate store write failed",
@@ -184,7 +183,7 @@ def test_component_optimization_artifact_write_failure_leaves_candidates_pending
         assert store.top_candidates_by_run("artifact-failure", limit=1) == []
 
 
-def test_component_optimization_completion_failure_leaves_lock_pending(
+def test_component_optimization_completion_failure_leaves_candidates_pending(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -203,18 +202,13 @@ def test_component_optimization_completion_failure_leaves_lock_pending(
     assert cli.main(["run", str(config_path), "--json", "--run-id", "completion-failure"]) == 10
 
     capsys.readouterr()
-    artifact = json.loads(
-        (tmp_path / "runs" / "completion-failure" / "strategy_run.json").read_text()
-    )
     manifest = json.loads((tmp_path / "runs" / "completion-failure" / "manifest.json").read_text())
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
 
+    # The run never activated, so its candidates stay pending and unqueryable.
     assert manifest["run"]["status"] == RunStatus.FAILED
-    with (
-        CandidateStore(store_path) as store,
-        pytest.raises(CandidateStoreError, match="unknown lock token"),
-    ):
-        store.params_by_lock_token(artifact["locks"][0]["token"])
+    with CandidateStore(store_path) as store:
+        assert store.top_candidates_by_run("completion-failure", limit=1) == []
 
 
 def test_component_optimization_activation_failure_fails_closed(
@@ -242,91 +236,10 @@ def test_component_optimization_activation_failure_fails_closed(
 
     assert "candidate_store_activation_failed" in payload["error"]["message"]
     assert manifest["run"]["status"] == RunStatus.FAILED
-    with (
-        CandidateStore(store_path) as store,
-        pytest.raises(CandidateStoreError, match="unknown lock token"),
-    ):
-        store.params_by_lock_token(artifact["locks"][0]["token"])
-
-
-def test_component_optimization_resolves_lock_id_as_fixed_params(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
-    config_path = _write_run_config(tmp_path)
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "source-run"]) == 0
-    source_artifact = json.loads(
-        (tmp_path / "runs" / "source-run" / "strategy_run.json").read_text()
-    )
-    lock_id = source_artifact["locks"][0]["token"]
-
-    locked_config_path = _write_run_config(
-        tmp_path,
-        strategy={"id": "demo.ma_opt", "lock_id": lock_id},
-    )
-
-    assert cli.main(["run", str(locked_config_path), "--json", "--run-id", "locked-run"]) == 0
-
-    capsys.readouterr()
-    locked_artifact = json.loads(
-        (tmp_path / "runs" / "locked-run" / "strategy_run.json").read_text()
-    )
-
-    assert locked_artifact["strategy"]["param_mode"] == "locked"
-    assert locked_artifact["strategy"]["fixed_params"] == source_artifact["locks"][0]["params"]
-    assert locked_artifact["resolved_locks"][0]["reference_kind"] == "lock_id"
-    assert [shape["name"] for shape in locked_artifact["preflight"]["param_shapes"]] == [
-        FIXED_CANDIDATE_PARAM
-    ]
-    assert len(locked_artifact["candidates"]) == 3
-    assert len({candidate["candidate_key"] for candidate in locked_artifact["candidates"]}) == 1
-
-
-def test_component_optimization_resolves_candidate_id_pin_as_fixed_params(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
-    config_path = _write_run_config(tmp_path)
-
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "candidate-source"]) == 0
-    source_artifact = json.loads(
-        (tmp_path / "runs" / "candidate-source" / "strategy_run.json").read_text()
-    )
-    pinned_row = source_artifact["candidates"][1]
-    fast_key = component_param_key("strategies", "demo.ma_opt", "strategy", "fast_window")
-    slow_key = component_param_key("strategies", "demo.ma_opt", "strategy", "slow_window")
-    expected_params = {
-        "fast_window": pinned_row["params"][fast_key],
-        "slow_window": pinned_row["params"][slow_key],
-    }
-
-    pinned_config_path = _write_run_config(
-        tmp_path,
-        strategy={
-            "id": "demo.ma_opt",
-            "candidate_id": pinned_row["candidate_key"],
-            "run_id": "candidate-source",
-        },
-    )
-
-    assert cli.main(["run", str(pinned_config_path), "--json", "--run-id", "candidate-pin"]) == 0
-
-    capsys.readouterr()
-    pinned_artifact = json.loads(
-        (tmp_path / "runs" / "candidate-pin" / "strategy_run.json").read_text()
-    )
-
-    assert pinned_artifact["strategy"]["param_mode"] == "locked"
-    assert pinned_artifact["strategy"]["fixed_params"] == expected_params
-    assert pinned_artifact["resolved_locks"][0]["reference_kind"] == "candidate_id"
-    assert pinned_artifact["resolved_locks"][0]["candidate_key"] == pinned_row["candidate_key"]
+    # Activation failed closed: the run's candidates remain pending and unqueryable.
+    assert "locks" not in artifact
+    with CandidateStore(store_path) as store:
+        assert store.top_candidates_by_run("activation-failure", limit=1) == []
 
 
 def test_component_optimization_runtime_error_records_failure_diagnostics(
@@ -432,7 +345,7 @@ def _run_config_payload(
             "rows": 80,
             "arrays": ["OHLCV"],
         },
-        "portfolio": {"target_exposure_cap": 1.0},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": strategy,
         "indicators": indicators,
         "ranking": {"metric": "total_return"},

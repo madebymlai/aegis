@@ -9,6 +9,7 @@ from typing import Any
 
 from research.aegis_research.metrics.contracts import (
     METRIC_SOURCE_TYPES,
+    ExtractorSpec,
     MetricDefinition,
     MetricRegistryError,
 )
@@ -18,6 +19,7 @@ from research.aegis_research.metrics.contracts import (
 class FrozenMetricRegistry:
     definitions: Mapping[str, MetricDefinition]
     fingerprint: str
+    extractors: Mapping[str, ExtractorSpec]
 
     def get(self, metric_id: str) -> MetricDefinition:
         try:
@@ -49,18 +51,29 @@ class FrozenMetricRegistry:
 class MetricRegistry:
     def __init__(self) -> None:
         self._definitions: dict[str, MetricDefinition] = {}
+        self._extractors: dict[str, ExtractorSpec] = {}
 
-    def register(self, definition: MetricDefinition) -> None:
+    def register(self, definition: MetricDefinition, extractor: ExtractorSpec) -> None:
+        """Register a Metric as one record: its definition and its extractor.
+
+        ``extractor`` is required, so a definition can never enter the registry
+        without a way to compute it (catalog-only drift is a missing argument at
+        the call) and an extractor can never exist without a definition (it has
+        no other registration path). Registration order is preserved for
+        extraction; ``freeze`` sorts independently for the fingerprint.
+        """
         _validate_definition(definition)
         if definition.id in self._definitions:
             raise MetricRegistryError(f"duplicate metric id: {definition.id}")
         self._definitions[definition.id] = definition
+        self._extractors[definition.id] = extractor
 
     def freeze(self) -> FrozenMetricRegistry:
         definitions = dict(sorted(self._definitions.items()))
         return FrozenMetricRegistry(
             definitions=MappingProxyType(definitions),
             fingerprint=_registry_fingerprint(definitions),
+            extractors=MappingProxyType(dict(self._extractors)),
         )
 
 

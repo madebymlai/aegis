@@ -16,6 +16,7 @@ from research.aegis_research.component_registry.contracts import (
     ComponentFamily,
     ComponentRegistryError,
     ComponentSelection,
+    IndicatorManifest,
 )
 from research.aegis_research.component_registry.manifests import parse_component_file
 
@@ -108,7 +109,7 @@ def _definition_public_snapshot(definition: ComponentDefinition) -> dict[str, An
             },
         },
     }
-    if definition.family == "indicators":
+    if isinstance(manifest, IndicatorManifest):
         payload["outputs"] = list(manifest.output_names)
         payload["bar_aligned"] = manifest.bar_aligned
     else:

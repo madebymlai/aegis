@@ -13,6 +13,7 @@ from research.aegis_research.cli_support.errors import (
 from research.aegis_research.cli_support.output import (
     CommandResult,
     held_out_summary_lines,
+    reproduce_lock_lines,
     safe_path,
     write_success,
 )
@@ -23,9 +24,7 @@ from research.aegis_research.component_registry import (
 from research.aegis_research.config import (
     ConfigSelectionEvidence,
     ConfigValidationError,
-    known_config_secret_values,
     load_run_config,
-    redact_text,
     with_run_config_selection,
 )
 from research.aegis_research.provenance.recorder import RerunMode
@@ -83,7 +82,6 @@ def _handle_strategy_run(
     except OSError as error:
         raise ConfigCliError(str(error)) from error
 
-    known_secrets = known_config_secret_values(resolved.authored_config)
     try:
         result = run_strategy_sweep(
             resolved,
@@ -102,12 +100,12 @@ def _handle_strategy_run(
         ) from error
     except ConfigValidationError as error:
         raise ConfigCliError(
-            redact_text(str(error), known_secrets),
+            str(error),
             run_refs=_refreshed_run_refs(run_refs),
         ) from error
     except Exception as error:
         raise ExecutionFailureError(
-            redact_text(str(error), known_secrets),
+            str(error),
             run_refs=_refreshed_run_refs(run_refs),
         ) from error
 
@@ -142,7 +140,6 @@ def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[s
         "candidate_store": {
             "path": safe_path(result.get("candidate_store_path")),
         },
-        "locks": result.get("locks", []),
         "optimization": result.get("optimization", {}),
         "candidates": result.get("candidates", []),
     }
@@ -153,6 +150,11 @@ def _human_run_lines(result: dict[str, Any]) -> tuple[str, ...]:
         f"Run: {safe_path(result.get('run_dir'))}",
         f"Status: {result.get('status')}",
         *held_out_summary_lines(result.get("optimization", {}), result.get("candidates", [])),
+        *reproduce_lock_lines(
+            result.get("run_id"),
+            result.get("candidates", []),
+            store_path=safe_path(result.get("candidate_store_path")),
+        ),
     )
 
 

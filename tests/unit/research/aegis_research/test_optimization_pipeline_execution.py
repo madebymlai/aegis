@@ -60,6 +60,7 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
             close=pd.DataFrame({0: [1.0, 2.0]}),
             open_=pd.DataFrame({0: [1.0, 2.0]}),
             split_result=_FakeSplitResult(),
+            metric_registry=None,
             run_evidence=run_evidence,
         )
 

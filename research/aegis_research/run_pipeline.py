@@ -12,8 +12,6 @@ from research.aegis_research.config import (
     ConfigValidationIssue,
     ResolvedRunConfig,
     RunConfig,
-    known_config_secret_values,
-    redact_text,
 )
 from research.aegis_research.data import (
     MarketDataBundle,
@@ -42,7 +40,7 @@ from research.aegis_research.optimization.pipeline.setup import run_pipeline_set
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
 )
-from research.aegis_research.provenance.experiment_artifacts import ExperimentArtifactWriter
+from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunStore
 
@@ -71,7 +69,7 @@ def run_strategy_sweep(
 
     recorder = RunStore(config.output_dir).start_run(
         run_label=config.name,
-        config=resolved_config.redacted_resolved_config(),
+        config=resolved_config.resolved_config_document(),
         mode=rerun_mode,
         run_id=run_id,
         parent_run_id=parent_run_id,
@@ -85,7 +83,6 @@ def run_strategy_sweep(
         persist=recorder.persist,
     )
     recorder.persist()
-    known_secrets = known_config_secret_values(resolved_config.authored_config)
 
     try:
         if on_run_started is not None:
@@ -96,7 +93,7 @@ def run_strategy_sweep(
             required_features=array_contract.required_arrays,
         )
         data_result = with_data_array_contract_metadata(data_result, array_contract)
-        ExperimentArtifactWriter(recorder).write_data_metadata_artifact(data_result)
+        write_data_metadata_artifact(recorder, data_result)
         data_result.assert_usable()
         data_bundle = market_data_bundle(data_result)
         return _run_optimization_strategy_sweep(
@@ -111,6 +108,7 @@ def run_strategy_sweep(
                 if resolved_config.metric_registry
                 else None
             ),
+            metric_registry=resolved_config.metric_registry,
             run_evidence=run_evidence,
         )
     except KeyboardInterrupt:
@@ -119,17 +117,17 @@ def run_strategy_sweep(
         )
         raise
     except ConfigValidationError as error:
-        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error, known_secrets=known_secrets))
+        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
         raise
     except Exception as error:
-        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error, known_secrets=known_secrets))
+        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
         raise
 
 
-def _failure_diagnostic(error: Exception, *, known_secrets: tuple[str, ...]) -> dict[str, str]:
+def _failure_diagnostic(error: Exception) -> dict[str, str]:
     return {
         "error_type": type(error).__name__,
-        "message": redact_text(str(error), known_secrets)[:1000],
+        "message": str(error)[:1000],
     }
 
 
@@ -142,6 +140,7 @@ def _run_optimization_strategy_sweep(
     data: MarketDataBundle,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
+    metric_registry: Any,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
     # Stage 1: Setup — resolve locks, build optimization source and evidence baseline
@@ -166,10 +165,11 @@ def _run_optimization_strategy_sweep(
         close=setup["close"],
         open_=setup["open_"],
         split_result=setup["split_result"],
+        metric_registry=metric_registry,
         run_evidence=run_evidence,
     )
 
-    # Stage 3: Publishing — three representative candidates, locks, candidate store
+    # Stage 3: Publishing — three representative candidates, candidate store
     publishing = run_pipeline_publishing(
         config=config,
         recorder=recorder,
@@ -197,8 +197,6 @@ def _run_optimization_strategy_sweep(
         split_result=setup["split_result"],
         run_evidence=run_evidence,
         candidate_rows=publishing["candidate_rows"],
-        resolved_locks=setup["resolved_locks"],
-        lock_records=publishing["lock_records"],
         candidate_store_provenance=publishing["candidate_store_provenance"],
         store_path=setup["store_path"],
         store_namespace=store_namespace,

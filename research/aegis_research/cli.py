@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from typing import TextIO
+from typing import NoReturn, TextIO
 
 from research.aegis_research.cli_commands import run, show
 from research.aegis_research.cli_support.errors import (
@@ -17,10 +17,10 @@ from research.aegis_research.cli_support.output import json_requested, write_err
 
 
 class AerdArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         raise InvocationError(message)
 
-    def exit(self, status: int = 0, message: str | None = None) -> None:
+    def exit(self, status: int = 0, message: str | None = None) -> NoReturn:
         if message:
             self._print_message(message, sys.stderr)
         raise ParserExit(status, message)
@@ -68,7 +68,7 @@ def _main(argv: Sequence[str], *, stdout: TextIO, stderr: TextIO) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = AerdArgumentParser(prog="aerd")
+    parser: argparse.ArgumentParser = AerdArgumentParser(prog="aerd")
     parser.add_argument(
         "--json",
         action="store_true",

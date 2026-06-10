@@ -23,8 +23,7 @@ splitter is built with explicit ``set_labels=["selection", "held_out"]`` so that
 from __future__ import annotations
 
 import dataclasses
-import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
@@ -41,7 +40,14 @@ from research.aegis_research.configuration.schema import (
 from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
+from research.aegis_research.metrics.contracts import ExtractorSpec
+from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
+from research.aegis_research.optimization.candidate_validity import (
+    classify_candidates,
+    invalid_candidate_positions,
+    invalid_candidates,
+)
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
     WideIndicatorPrecompute,
@@ -51,6 +57,7 @@ from research.aegis_research.optimization.ranking import (
     SPLIT_LEVEL,
     EvaluatedCandidate,
     OptimizationResult,
+    optional_float,
     select_representative_candidates,
 )
 from research.aegis_research.optimization.source import (
@@ -77,6 +84,7 @@ def execute_optimization(
     portfolio: PortfolioConfig,
     report: ReportConfig,
     ranking: RankingConfig,
+    metric_registry: FrozenMetricRegistry,
 ) -> OptimizationResult:
     _validate_source_param_names(source.params)
     if ranking.metric not in PORTFOLIO_METRIC_VALUE_KEYS:
@@ -85,6 +93,10 @@ def execute_optimization(
             f"portfolio metric catalog: {sorted(PORTFOLIO_METRIC_VALUE_KEYS)}"
         )
 
+    # The registry record is the single home for each Metric's definition and its
+    # extractor; the sweep is handed a plain extractor mapping (catalog order) so
+    # the dill-serialised Phase-1 closure carries no registry/proxy machinery.
+    extractors = dict(metric_registry.extractors)
     splitter = _build_splitter(close.index, optimization)
 
     # Stage 0: materialise the sampled candidate set once, deterministically, and
@@ -98,7 +110,7 @@ def execute_optimization(
     # Stage 1: run each indicator's wide callable once over the full series.
     sampled_candidate_keys = candidate_keys(sampled_lists)
     store = source.precompute(close, n_candidates, **sampled_lists)
-    invalid_candidate_keys = _invalid_full_history_candidate_keys(
+    invalid_candidate_keys = invalid_candidates(
         store, sampled_candidate_keys
     )
 
@@ -111,6 +123,7 @@ def execute_optimization(
         open_=open_,
         store=store,
         invalid_candidate_keys=invalid_candidate_keys,
+        extractors=extractors,
     )
     selection_grid = _sweep(
         splitter=splitter,
@@ -120,16 +133,18 @@ def execute_optimization(
         set_=SELECTION_SET,
         parallel=True,
     )
+    verdicts = classify_candidates(
+        selection_grid,
+        invalid_keys=invalid_candidate_keys,
+        min_trades=ranking.min_trades,
+        metric=ranking.metric,
+    )
     result = select_representative_candidates(
         selection_grid,
+        verdicts,
         metric=ranking.metric,
         min_weight=ranking.min_weight,
-        min_trades=ranking.min_trades,
     )
-    # Distinguish *misconfigured* (lookback > full history) from merely *degenerate*:
-    # the ranking layer only sees NaN scores, so the runner — which knows which keys
-    # were full-history-invalid — surfaces that subset count.
-    result = dataclasses.replace(result, excluded_invalid=len(invalid_candidate_keys))
 
     param_names = [name for name in selection_grid.index.names if name != SPLIT_LEVEL]
     return _attach_held_out(
@@ -143,6 +158,7 @@ def execute_optimization(
         store=store,
         param_names=param_names,
         invalid_candidate_keys=invalid_candidate_keys,
+        extractors=extractors,
     )
 
 
@@ -163,6 +179,7 @@ def _build_precomputed_window_metrics(
     open_: pd.DataFrame,
     store: WideIndicatorPrecompute,
     invalid_candidate_keys: set[CandidateKey],
+    extractors: Mapping[str, ExtractorSpec],
 ) -> Callable[..., Any]:
     """Build a split callback that slices the full-series store before simulation.
 
@@ -177,7 +194,7 @@ def _build_precomputed_window_metrics(
     def window_metrics(range_: slice, **params: Any) -> Any:
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
         keys = candidate_keys(combo_lists)
-        invalid_positions = _invalid_candidate_positions(keys, invalid_candidate_keys)
+        invalid_positions = invalid_candidate_positions(keys, invalid_candidate_keys)
         if len(invalid_positions) == n_combos:
             return _nan_metric_frame(metric_keys, param_names)
 
@@ -187,15 +204,13 @@ def _build_precomputed_window_metrics(
         wide_allocations = source.simulate(
             close_window, indicator_window, n_combos, **combo_lists
         )
-        metrics = _metrics_from_allocations(
-            close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names
+        # Invalid Candidates are excluded by-key via classify_candidates;
+        # their real simulated values (e.g. a finite cash-holding 0.0)
+        # stay in the grid without masking. The all-invalid short-circuit
+        # above is a pure performance guard.
+        return _metrics_from_allocations(
+            close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names, extractors
         )
-        # Masking is EXPLICIT here rather than relying on store-level NaN propagation:
-        # an all-NaN indicator block can still simulate to a finite 0.0 (the strategy
-        # holds cash and takes zero trades, not NaN), so an unmasked Invalid Candidate
-        # would surface a real 0.0 metric and pollute the global ranking instead of
-        # being excluded. We overwrite its metric rows with NaN at the source.
-        return _mask_invalid_metrics(metrics, invalid_positions)
 
     return window_metrics
 
@@ -224,81 +239,32 @@ def _metrics_from_allocations(
     report: ReportConfig,
     metric_keys: list[tuple],
     param_names: list[str],
+    extractors: Mapping[str, ExtractorSpec],
 ) -> Any:
     if wide_allocations is vbt.NoResult:
         return vbt.NoResult
     n_symbols = len(close_window.columns)
     if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
         return vbt.NoResult
-    result = simulate_portfolio_batch(
+    pf = simulate_portfolio_batch(
         close_window,
         wide_allocations,
         portfolio,
         open_=open_window,
         market_index=close_window.index,
-        compute_diagnostics=False,
+        periods_per_year=report.periods_per_year,
     )
     return central_metrics_from_grouped_accessors(
-        result.portfolio, report, metric_keys, param_names
+        pf, report, metric_keys, param_names, extractors
     )
 
 
 def _nan_metric_frame(metric_keys: list[tuple], param_names: list[str]) -> pd.DataFrame:
+    # float64 by construction — same grid dtype contract as
+    # central_metrics_from_grouped_accessors, so vbt's row_stack concat
+    # never has to reconcile divergent dtypes across windows.
     index = pd.MultiIndex.from_tuples(metric_keys, names=param_names)
     return pd.DataFrame(np.nan, index=index, columns=list(PORTFOLIO_METRIC_VALUE_KEYS))
-
-
-def _mask_invalid_metrics(metrics: Any, invalid_positions: list[int]) -> Any:
-    if not invalid_positions or metrics is vbt.NoResult:
-        return metrics
-    masked = metrics.copy()
-    masked.iloc[invalid_positions, :] = np.nan
-    return masked
-
-
-def _invalid_candidate_positions(
-    keys: Sequence[CandidateKey], invalid_keys: set[CandidateKey]
-) -> list[int]:
-    return [position for position, key in enumerate(keys) if key in invalid_keys]
-
-
-def _invalid_full_history_candidate_keys(
-    store: WideIndicatorPrecompute, keys: Sequence[CandidateKey]
-) -> set[CandidateKey]:
-    outputs = store.outputs
-    if not outputs or store.n_symbols < 1:
-        return set()
-
-    invalid: set[CandidateKey] = set()
-    for key in keys:
-        for output_name, output in outputs.items():
-            position = _candidate_index_for_output(store, output_name)[key]
-            if _candidate_output_is_non_finite(output, position, store.n_symbols):
-                invalid.add(key)
-                break
-    return invalid
-
-
-def _candidate_index_for_output(
-    store: WideIndicatorPrecompute, output_name: str
-) -> Mapping[CandidateKey, int]:
-    if store.output_candidate_index is None:
-        return store.candidate_index
-    return store.output_candidate_index.get(output_name, store.candidate_index)
-
-
-def _candidate_output_is_non_finite(output: Any, position: int, n_symbols: int) -> bool:
-    start = position * n_symbols
-    stop = start + n_symbols
-    block = np.asarray(output)[:, start:stop]
-    return block.size == 0 or not _has_finite_value(block)
-
-
-def _has_finite_value(values: Any) -> bool:
-    try:
-        return bool(np.isfinite(values).any())
-    except TypeError:
-        return bool(pd.notna(values).any())
 
 
 def _combo_values(value: Any) -> list[Any]:
@@ -329,7 +295,12 @@ def _sweep(
         # closure and precomputed store serialize cleanly), while within each chunk
         # the wide strategy vectorizes its candidates through numpy.
         options["mono_n_chunks"] = "auto"
-        options["execute_kwargs"] = {"engine": "pathos"}
+        # ``join_pool=True`` closes/joins/clears the pathos worker pool after the sweep.
+        # vbt defaults this off to reuse a warm pool across repeated sweeps, but a run
+        # performs exactly one parallel sweep and the CLI runs one optimization per
+        # process, so reuse never applies here; joining tears down the workers
+        # deterministically instead of leaking the pool until interpreter exit.
+        options["execute_kwargs"] = {"engine": "pathos", "join_pool": True}
     else:
         # Phase 3 (3 candidates x S splits) is too small to amortize per-process
         # serialization, so its single mono-chunk sweeps sequentially in-process.
@@ -379,6 +350,7 @@ def _attach_held_out(
     store: WideIndicatorPrecompute,
     param_names: list[str],
     invalid_candidate_keys: set[CandidateKey],
+    extractors: Mapping[str, ExtractorSpec],
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
     unique_params: list[dict[str, Any]] = []
@@ -399,6 +371,7 @@ def _attach_held_out(
         open_=open_,
         store=store,
         invalid_candidate_keys=invalid_candidate_keys,
+        extractors=extractors,
     )
     held_out_grid = _sweep(
         splitter=splitter,
@@ -439,7 +412,7 @@ def _candidate_split_metrics(
     metrics: dict[Any, dict[str, float | None]] = {}
     split_labels = rows.index.get_level_values(SPLIT_LEVEL)
     for split_label, (_, row) in zip(split_labels, rows.iterrows(), strict=True):
-        metrics[split_label] = {col: _optional_float(row[col]) for col in grid.columns}
+        metrics[split_label] = {col: optional_float(row[col]) for col in grid.columns}
     return metrics
 
 
@@ -476,9 +449,3 @@ def _validate_source_param_names(params: Mapping[str, vbt.Param]) -> None:
             "coordinates; choose distinct parameter names"
         )
 
-
-def _optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    number = float(value)
-    return None if math.isnan(number) else number

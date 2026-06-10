@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from research.aegis_research.atomic_write import hash_file
 from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.evidence import (
@@ -16,13 +17,10 @@ from research.aegis_research.provenance.evidence import (
 )
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
-    ArtifactVisibility,
     ManifestValidationError,
     RunManifest,
     RunStatus,
     StageStatus,
-    atomic_write_json,
-    hash_file,
     validate_manifest,
 )
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
@@ -52,12 +50,11 @@ def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
         schema_version="prices.v1",
         status=ArtifactStatus.COMPLETED,
         upstream_artifact_ids=[],
-        visibility=ArtifactVisibility.PUBLIC,
     )
 
     payload = manifest.to_dict()
 
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["run"]["id"] == "run-1"
     assert payload["run"]["run_dir"] == "run-1"
     assert str(tmp_path) not in json.dumps(payload)
@@ -177,18 +174,8 @@ def test_manifest_rejects_unsafe_artifact_paths(tmp_path: Path, path: str) -> No
         )
 
 
-def test_atomic_write_json_keeps_manifest_pretty_but_hashes_compact_bytes(
-    tmp_path: Path,
-) -> None:
-    target = tmp_path / "manifest.json"
-    payload = {"b": 2, "a": 1}
-
-    atomic_write_json(target, payload)
-    written_bytes = target.read_bytes()
-
-    assert written_bytes == canonical_json_bytes(payload, indent=2)
-    assert written_bytes == b'{\n  "a": 1,\n  "b": 2\n}'
-    assert canonical_hash(payload) == (
+def test_canonical_hash_is_deterministic_for_normal_payload() -> None:
+    assert canonical_hash({"b": 2, "a": 1}) == (
         "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
     )
 
@@ -200,19 +187,6 @@ def test_canonical_hash_serializes_non_finite_values_as_null() -> None:
     assert canonical_hash(payload) == (
         "1c197daef20de3f47eec5e2f735ec6669869d3180cc29f35be4788511e0af0f8"
     )
-
-
-def test_atomic_write_json_preserves_previous_file_on_serialization_failure(
-    tmp_path: Path,
-) -> None:
-    target = tmp_path / "manifest.json"
-    atomic_write_json(target, {"valid": True})
-
-    with pytest.raises(TypeError):
-        atomic_write_json(target, {"invalid": {object()}})
-
-    assert json.loads(target.read_text()) == {"valid": True}
-    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_artifact_registry_completes_only_after_hash_and_manifest_update(
@@ -346,14 +320,16 @@ def test_git_evidence_includes_staged_and_untracked_content_identity(tmp_path: P
     assert second_untracked["diff_hash"] != first_untracked["diff_hash"]
 
 
-def test_run_start_evidence_uses_public_redacted_config_hashes(tmp_path: Path) -> None:
+def test_run_start_evidence_hashes_raw_config(tmp_path: Path) -> None:
+    from research.aegis_research.canonical_json import to_builtin
+
     config = build_resolved_run_config(tmp_path)
 
     evidence = capture_run_start_evidence(config, repo_path=Path.cwd())
 
-    assert evidence["config"]["authored_config_hash"]
-    assert evidence["config"]["resolved_config_hash"]
-    assert evidence["config"]["raw_config_identity"]["visibility"] == ArtifactVisibility.PRIVATE
+    assert evidence["config"]["authored_config_hash"] == canonical_hash(config.authored_config)
+    assert evidence["config"]["resolved_config_hash"] == canonical_hash(to_builtin(config.config))
+    assert "visibility" not in evidence["config"]["raw_config_identity"]
     assert evidence["environment"]["variables"] == capture_environment_evidence()["variables"]
 
 

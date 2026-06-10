@@ -8,22 +8,28 @@ import pytest
 
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.config import (
-    RankingConfig,
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
 )
 from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import (
-    FIXED_CANDIDATE_PARAM,
     ComponentSourceError,
     build_component_optimization_source,
-    component_param_key,
-    component_param_slices,
-    component_ref_key,
-    parse_component_param_key,
+)
+from research.aegis_research.optimization.param_namespace import (
+    FIXED_CANDIDATE_PARAM,
+    ComponentRef,
+    encode,
 )
 from research.aegis_research.optimization.precompute import candidate_keys
+from tests.support.research.aegis_research.factories import (
+    make_portfolio_config,
+    make_ranking_config,
+    make_run_config,
+    make_run_indicator_source_config,
+    make_run_source_ref_config,
+)
 
 
 def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path: Path) -> None:
@@ -33,8 +39,8 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
 
     source = build_component_optimization_source(config, component_registry=registry, data=data)
 
-    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
-    strategy_key = component_param_key("strategies", "demo.strategy", "strategy", "threshold")
+    indicator_key = encode(ComponentRef("indicators", "demo.trend", "demo.trend"), "window")
+    strategy_key = encode(ComponentRef("strategies", "demo.strategy", "strategy"), "threshold")
     assert set(source.params) == {indicator_key, strategy_key}
     assert source.output_name == "active"
     assert source.evidence["produced_outputs"] == ["trend"]
@@ -56,8 +62,8 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
 def test_component_source_fixed_params_override_param_space_axes(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     config = _config(
-        strategy=RunSourceRefConfig(id="demo.strategy", params={"threshold": 0.95}),
-        indicators=[RunIndicatorSourceConfig(id="demo.trend", params={"window": 3})],
+        strategy=make_run_source_ref_config(id="demo.strategy", params={"threshold": 0.95}),
+        indicators=[make_run_indicator_source_config(id="demo.trend", params={"window": 3})],
     )
 
     source = build_component_optimization_source(
@@ -73,12 +79,15 @@ def test_component_source_fixed_params_override_param_space_axes(tmp_path: Path)
 
 
 def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Path) -> None:
+    # ADR-0006: a top-level Lock drives force_locked, fixing every Component's params from
+    # the reproduced Candidate. There is no per-Component lock reference any more.
     registry = _registry(tmp_path)
     config = _config(
-        indicators=[RunIndicatorSourceConfig(id="demo.trend", lock_id="lock_trend_best")],
+        indicators=[make_run_indicator_source_config(id="demo.trend")],
     )
     resolved = {
-        component_ref_key("indicators", "demo.trend", "demo.trend"): {"window": 3},
+        ComponentRef("strategies", "demo.strategy", "strategy"): {"threshold": 0.95},
+        ComponentRef("indicators", "demo.trend", "demo.trend"): {"window": 3},
     }
 
     source = build_component_optimization_source(
@@ -86,24 +95,26 @@ def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Pat
         component_registry=registry,
         data=_data_bundle(),
         resolved_component_params=resolved,
+        force_locked=True,
     )
 
-    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
+    indicator_key = encode(ComponentRef("indicators", "demo.trend", "demo.trend"), "window")
 
     assert indicator_key not in source.params
     assert source.evidence["indicators"][0]["param_mode"] == "locked"
     assert source.evidence["indicators"][0]["fixed_params"] == {"window": 3}
+    assert source.evidence["strategy"]["param_mode"] == "locked"
 
 
 def test_component_source_rejects_unresolved_lock_refs(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     config = _config(
-        indicators=[RunIndicatorSourceConfig(id="demo.trend", lock_id="lock_trend_best")],
+        indicators=[make_run_indicator_source_config(id="demo.trend")],
     )
 
     with pytest.raises(ComponentSourceError, match="requires resolved"):
         build_component_optimization_source(
-            config, component_registry=registry, data=_data_bundle()
+            config, component_registry=registry, data=_data_bundle(), force_locked=True
         )
 
 
@@ -112,7 +123,7 @@ def test_component_source_rejects_hidden_param_space_axes(tmp_path: Path) -> Non
     _write_hidden_strategy(root / "strategies" / "hidden_strategy.py")
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     config = _config(
-        strategy=RunSourceRefConfig(id="demo.hidden_strategy"),
+        strategy=make_run_source_ref_config(id="demo.hidden_strategy"),
         indicators=[],
     )
 
@@ -128,8 +139,8 @@ def test_component_source_rejects_duplicate_produced_outputs(tmp_path: Path) -> 
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     config = _config(
         indicators=[
-            RunIndicatorSourceConfig(id="demo.trend"),
-            RunIndicatorSourceConfig(id="demo.trend_copy"),
+            make_run_indicator_source_config(id="demo.trend"),
+            make_run_indicator_source_config(id="demo.trend_copy"),
         ],
     )
 
@@ -139,32 +150,19 @@ def test_component_source_rejects_duplicate_produced_outputs(tmp_path: Path) -> 
         )
 
 
-def test_component_param_keys_round_trip_to_component_slices() -> None:
-    key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
-
-    assert parse_component_param_key(key) == {
-        "family": "indicators",
-        "component_id": "demo.trend",
-        "slot": "demo.trend",
-        "param_name": "window",
-    }
-    assert component_param_slices({key: 5, FIXED_CANDIDATE_PARAM: 0}) == {
-        ("indicators", "demo.trend", "demo.trend"): {"window": 5}
-    }
-
-
 def _config(
     *,
     strategy: RunSourceRefConfig | None = None,
     indicators: list[RunIndicatorSourceConfig] | None = None,
 ) -> RunConfig:
-    return RunConfig(
+    return make_run_config(
         name="component_source",
-        strategy=strategy or RunSourceRefConfig(id="demo.strategy"),
+        strategy=strategy or make_run_source_ref_config(id="demo.strategy"),
         indicators=indicators
         if indicators is not None
-        else [RunIndicatorSourceConfig(id="demo.trend")],
-        ranking=RankingConfig(metric="total_return"),
+        else [make_run_indicator_source_config(id="demo.trend")],
+        ranking=make_ranking_config(metric="total_return"),
+        portfolio=make_portfolio_config(direction="longonly"),
     )
 
 
@@ -320,8 +318,8 @@ def test_component_source_wide_pipeline_returns_multiindex_frame(tmp_path: Path)
     n_candidates = 2
     n_symbols = len(close.columns)
 
-    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
-    strategy_key = component_param_key("strategies", "demo.strategy", "strategy", "threshold")
+    indicator_key = encode(ComponentRef("indicators", "demo.trend", "demo.trend"), "window")
+    strategy_key = encode(ComponentRef("strategies", "demo.strategy", "strategy"), "threshold")
     result = source.pipeline(
         close,
         n_candidates,
@@ -346,8 +344,8 @@ def test_component_precompute_deduplicates_indicator_params_with_window_parity(
     source = build_component_optimization_source(_config(), component_registry=registry, data=data)
     close = data.feature("Close")
 
-    indicator_key = component_param_key("indicators", "demo.trend", "demo.trend", "window")
-    strategy_key = component_param_key("strategies", "demo.strategy", "strategy", "threshold")
+    indicator_key = encode(ComponentRef("indicators", "demo.trend", "demo.trend"), "window")
+    strategy_key = encode(ComponentRef("strategies", "demo.strategy", "strategy"), "threshold")
     param_lists = {
         indicator_key: [2, 2, 3, 3],
         strategy_key: [0.95, 1.0, 0.95, 1.0],

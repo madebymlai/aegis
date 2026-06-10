@@ -1,17 +1,33 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 SOURCE_TYPE_VBT_STATS = "vbt_stats"
 SOURCE_TYPE_CUSTOM = "custom"
-SOURCE_TYPE_ADAPTER = "adapter"
-METRIC_SOURCE_TYPES = (SOURCE_TYPE_VBT_STATS, SOURCE_TYPE_CUSTOM, SOURCE_TYPE_ADAPTER)
+METRIC_SOURCE_TYPES = (SOURCE_TYPE_VBT_STATS, SOURCE_TYPE_CUSTOM)
 
 
 class MetricRegistryError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class ExtractorSpec:
+    """Declarative spec for a single Metric's vectorised batch read.
+
+    ``read`` makes exactly one VBT accessor call over the whole grouped batch
+    and returns a per-group value (a Series, or a scalar for a one-group batch);
+    ``scale``/``abs_`` are transform flags the extraction loop applies — they are
+    deliberately NOT baked into the read. An ``ExtractorSpec`` is the value half
+    of a Metric's registry record (``MetricDefinition`` is the identity half);
+    it carries a callable and so is never part of the fingerprint payload.
+    """
+
+    read: Callable[..., Any]
+    scale: Literal["percent", "identity"] = "identity"
+    abs_: bool = False
 
 
 @dataclass(frozen=True)
