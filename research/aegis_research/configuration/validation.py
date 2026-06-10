@@ -9,8 +9,7 @@ The coordinator owns:
   ``split.method`` inspection.
 - Whole-tree pydantic ``validate_python`` call + error-to-issue adapter.
 - Post-pydantic residual checks that need runtime state (registry membership,
-  ``output_dir`` filesystem safety, data-source whitelist, csv-path security,
-  ranking-metric membership, lock coordinator rules).
+  data-source whitelist, ranking-metric membership, lock coordinator rules).
 
 Returns ``(RunConfig | None, list[ConfigValidationIssue])`` so the caller
 can inspect whether pydantic construction succeeded while still seeing all
@@ -19,12 +18,12 @@ accumulated issues.
 
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
 from research.aegis_research.component_registry import (
+    ComponentDefinition,
     ComponentRegistryError,
     ComponentSelection,
     FrozenComponentRegistry,
@@ -41,27 +40,11 @@ from research.aegis_research.configuration.schema import (
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
 )
+from research.aegis_research.metrics import FrozenMetricRegistry
 
 # Built once at import: TypeAdapter construction compiles the whole-tree core
 # schema, which is too expensive to repeat per validation call.
 _RUN_CONFIG_ADAPTER = TypeAdapter(RunConfig)
-
-
-def _is_absolute_or_user_path(value: str) -> bool:
-    """Predicate: is *value* an absolute or user-home path?
-
-    Re-exported for the public API surface (used by external path-security checks).
-    """
-    if value.startswith("~"):
-        return True
-    try:
-        return (
-            Path(value).is_absolute()
-            or PurePosixPath(value).is_absolute()
-            or PureWindowsPath(value).is_absolute()
-        )
-    except ValueError:
-        return False
 
 
 def validate_run_config(
@@ -94,13 +77,12 @@ def validate_run_config(
     if config is not None:
         _post_validate_name(config.name, issues)
         _post_validate_data_source(config.data, issues)
-        _post_validate_output_dir(config.output_dir, issues)
         _post_validate_components(
             config.strategy, config.indicators, issues,
             component_registry=component_registry,
         )
         _post_validate_ranking_metric(config.ranking.metric, issues, registry=metric_registry)
-        _post_validate_lock(config.lock, raw.get("lock"), issues)
+        _check_lock_shape(config.lock, raw.get("lock"), issues)
     else:
         # Best-effort registry checks from raw so structural + registry
         # errors are co-reported.
@@ -191,7 +173,7 @@ def _post_validate_data_source(
     data: DataConfig,
     issues: list[ConfigValidationIssue],
 ) -> None:
-    """Source whitelist + csv path security (post-pydantic: needs runtime state)."""
+    """Source whitelist (post-pydantic: needs runtime state)."""
     from research.aegis_research.market_data.sources import (
         LOCAL_DATA_SOURCES,
         remote_data_sources,
@@ -202,60 +184,6 @@ def _post_validate_data_source(
         issues.append(
             ConfigValidationIssue(
                 "data.source", f"must be one of {sorted(supported)}"
-            )
-        )
-    if data.source == "csv" and data.path:
-        _validate_csv_path_security(data.path, issues)
-
-
-def _validate_csv_path_security(
-    path: str,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    """Reject absolute, user-home, and parent-traversal csv paths."""
-    parts = (
-        set(Path(path).parts)
-        | set(PurePosixPath(path).parts)
-        | set(PureWindowsPath(path).parts)
-    )
-    if _is_absolute_or_user_path(path) or ".." in parts:
-        issues.append(
-            ConfigValidationIssue(
-                "data.path",
-                "must be a relative path under the project root",
-            )
-        )
-
-
-def _post_validate_output_dir(
-    output_dir: str,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    """Filesystem safety for output_dir: no absolute, no .., no symlink, under project root."""
-    path = Path(output_dir)
-    if path.is_absolute() or ".." in path.parts:
-        issues.append(
-            ConfigValidationIssue(
-                "output_dir", "must be a relative path under the project root"
-            )
-        )
-        return
-    current = Path.cwd()
-    for part in path.parts:
-        current = current / part
-        if current.is_symlink():
-            issues.append(
-                ConfigValidationIssue(
-                    "output_dir", "must not contain symlinked path components"
-                )
-            )
-            return
-    project_root = Path.cwd().resolve(strict=False)
-    resolved = (Path.cwd() / path).resolve(strict=False)
-    if resolved != project_root and project_root not in resolved.parents:
-        issues.append(
-            ConfigValidationIssue(
-                "output_dir", "must resolve under the project root"
             )
         )
 
@@ -438,11 +366,12 @@ def _post_validate_ranking_metric(
         )
 
 
-def _post_validate_lock(
+def _check_lock_shape(
     lock: Lock | None,
     lock_raw: Any,
     issues: list[ConfigValidationIssue],
 ) -> None:
+    """Typo-catcher: reject empty run_id and unknown role keywords."""
     if lock is None:
         return
     was_handle = isinstance(lock_raw, str)
@@ -531,6 +460,4 @@ def _best_effort_registry_checks(
             )
 
 
-# Late import to avoid circular dependency at module level.
-from research.aegis_research.component_registry import ComponentDefinition  # noqa: E402
-from research.aegis_research.metrics import FrozenMetricRegistry  # noqa: E402
+

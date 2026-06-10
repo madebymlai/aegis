@@ -2,9 +2,6 @@
 
 Tests are driven through ``resolve_run_config`` and the pydantic
 ``TypeAdapter`` for structural validation. Assertions use pydantic's wording.
-
-The ``_is_absolute_or_user_path`` predicate is rehomed in
-``configuration.validation`` and still tested here.
 """
 
 from __future__ import annotations
@@ -21,9 +18,6 @@ from research.aegis_research.config import (
     ConfigValidationError,
     DataConfig,
     resolve_run_config,
-)
-from research.aegis_research.configuration.validation import (
-    _is_absolute_or_user_path,
 )
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
@@ -247,15 +241,6 @@ def test_resolve_accepts_skip_on_error_with_skipped_symbols(tmp_path: Path) -> N
     )
     assert resolved.config.data.skip_on_error is True
     assert "skipped_symbols" in resolved.config.data.quality.allowed_degradations
-
-
-# ── path predicate (rehomed from deleted data validator) ──────────────────────
-
-
-def test_is_absolute_or_user_path_classifies_paths() -> None:
-    assert _is_absolute_or_user_path("/etc/passwd") is True
-    assert _is_absolute_or_user_path("~/secrets") is True
-    assert _is_absolute_or_user_path("data/prices.csv") is False
 
 
 # ── data section requiredness (no silent OHLCV default at the YAML seam) ─────
