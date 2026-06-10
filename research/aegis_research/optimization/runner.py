@@ -43,7 +43,11 @@ from research.aegis_research.metrics.accessors import (
 from research.aegis_research.metrics.contracts import ExtractorSpec
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.optimization.candidate_grid import SPLIT_LEVEL, CandidateGrid
+from research.aegis_research.optimization.candidate_grid import (
+    SPLIT_LEVEL,
+    CandidateGrid,
+    optional_float,
+)
 from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
     invalid_candidate_positions,
@@ -57,7 +61,6 @@ from research.aegis_research.optimization.precompute import (
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
-    optional_float,
     select_representative_candidates,
 )
 from research.aegis_research.optimization.source import (

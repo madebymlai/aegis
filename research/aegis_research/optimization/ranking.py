@@ -172,14 +172,3 @@ def _mean(values: Iterable[float | None]) -> float | None:
     valid = [v for v in values if v is not None]
     return sum(valid) / len(valid) if valid else None
 
-
-def optional_float(value: Any) -> float | None:
-    """Normalize a scalar to float or None, converting NaN to None.
-
-    Kept here as a utility for the runner's held-out attachment path, which
-    processes a raw DataFrame for held-out scores.
-    """
-    if value is None:
-        return None
-    number = float(value)
-    return None if isnan(number) else number
