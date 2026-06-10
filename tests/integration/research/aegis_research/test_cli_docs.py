@@ -117,15 +117,18 @@ def test_docs_describe_composed_strategy_candidates_and_manual_lock() -> None:
 
 
 def test_component_placeholders_point_to_examples() -> None:
-    paths = [
-        "research/components/indicators/README.md",
-        "research/components/strategies/README.md",
-    ]
+    expected = {
+        "research/components/indicators/README.md": (
+            "research/aegis_research/component_registry/indicator_example.py"
+        ),
+        "research/components/strategies/README.md": (
+            "research/aegis_research/component_registry/strategy_example.py"
+        ),
+    }
 
-    for path in paths:
+    for path, example_ref in expected.items():
         readme = Path(path).read_text()
-        assert "component_registry/indicator_example.py" in readme or \
-               "component_registry/strategy_example.py" in readme
+        assert example_ref in readme
         assert "ignored by git" in readme
         assert "not secret management" in readme
 
