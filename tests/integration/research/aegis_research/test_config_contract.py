@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -43,17 +42,15 @@ def test_public_config_exports_only_run_config_contract() -> None:
     assert hasattr(config_module, "resolve_run_config")
 
 
-def test_resolved_run_config_attaches_default_metric_registry(tmp_path: Path) -> None:
-    resolved = resolve_run_config(
-        _run_config(),
-        component_registry=_component_registry(tmp_path),
-    )
+def test_resolve_rejects_non_mapping_input(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            ["not", "a", "mapping"],  # type: ignore[arg-type]
+            component_registry=_component_registry(tmp_path),
+        )
 
-    resolved_without_metric_registry = replace(resolved, metric_registry=None)
-
-    reresolved = resolve_run_config(resolved_without_metric_registry)
-
-    assert reresolved.metric_registry is not None
+    issues = error.value.issues
+    assert any(issue.path == "$" and "must be a mapping" in issue.message for issue in issues)
 
 
 def test_removed_entry_budget_field_fails_as_unknown_field(tmp_path: Path) -> None:
