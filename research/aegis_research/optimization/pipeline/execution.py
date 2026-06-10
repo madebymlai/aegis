@@ -44,6 +44,9 @@ def run_pipeline_execution(
     Returns a dict with key:
         optimization_result.
     """
+    # The public entry point rejects runs without an optimization block, so by the
+    # time execution runs the optimization config is guaranteed present.
+    assert config.optimization is not None
     try:
         preflight = build_preflight(
             params=optimization_source.params,

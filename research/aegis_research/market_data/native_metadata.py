@@ -132,12 +132,12 @@ def _serializable_value(value: Any, *, omitted: list[dict[str, str]], path: str)
                 projected[key_text] = serializable
         return projected
     if isinstance(value, list | tuple):
-        projected = []
+        projected_items = []
         for index, item in enumerate(value):
             serializable = _serializable_value(item, omitted=omitted, path=f"{path}[{index}]")
             if serializable is not _OMITTED:
-                projected.append(serializable)
-        return projected
+                projected_items.append(serializable)
+        return projected_items
     omitted.append({"path": path, "reason": f"unsupported type {type(value).__name__}"})
     return _OMITTED
 

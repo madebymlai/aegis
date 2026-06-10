@@ -67,6 +67,9 @@ def run_pipeline_setup(
         optimization_source, strategy_evidence, close, split_result,
         optimization_builtin, portfolio_builtin.
     """
+    # The public entry point rejects runs without an optimization block, so by the
+    # time setup executes the optimization config is guaranteed present.
+    assert config.optimization is not None
     store_path = candidate_store_path(config)
     lock_run = _resolve_lock_run(config, store_path=store_path)
     if lock_run is not None:

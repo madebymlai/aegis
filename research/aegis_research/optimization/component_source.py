@@ -13,6 +13,8 @@ from research.aegis_research.component_registry import (
     ComponentFamily,
     ComponentSelection,
     FrozenComponentRegistry,
+    IndicatorManifest,
+    StrategyManifest,
 )
 from research.aegis_research.config import (
     RunConfig,
@@ -146,7 +148,9 @@ def build_component_optimization_source(
                 data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
             )
             output_arr = np.asarray(output)
-            for output_name in runtime.definition.manifest.output_names:
+            indicator_manifest = runtime.definition.manifest
+            assert isinstance(indicator_manifest, IndicatorManifest)
+            for output_name in indicator_manifest.output_names:
                 if output_name in outputs:
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
                 outputs[output_name] = output_arr
@@ -192,11 +196,13 @@ def build_component_optimization_source(
         )
 
     evidence = _source_evidence(strategy, indicators, params)
+    strategy_manifest = strategy.definition.manifest
+    assert isinstance(strategy_manifest, StrategyManifest)
     return OptimizationSource(
         precompute=precompute,
         simulate=simulate,
         params=params,
-        output_name=strategy.definition.manifest.output_name,
+        output_name=strategy_manifest.output_name,
         evidence=evidence,
         diagnostics={
             "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,

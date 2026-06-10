@@ -86,6 +86,7 @@ def write_error(
             payload["run"] = safe_run_refs(error.run_refs)
         document = _json_document(payload)
         if document is None:
+            fallback_message = "CLI error could not be serialized as JSON"
             fallback = {
                 "schema_version": CLI_JSON_SCHEMA_VERSION,
                 "command": command or "unknown",
@@ -93,12 +94,12 @@ def write_error(
                 "ok": False,
                 "error": {
                     "category": ErrorCategory.INTERNAL,
-                    "message": "CLI error could not be serialized as JSON",
+                    "message": fallback_message,
                     "details": {},
                 },
             }
             document = json.dumps(fallback, allow_nan=False, sort_keys=True) + "\n"
-            exit_code = exit_code_for(InternalCliError(fallback["error"]["message"]))
+            exit_code = exit_code_for(InternalCliError(fallback_message))
         stderr.write(document)
         return exit_code
 
