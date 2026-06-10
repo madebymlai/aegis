@@ -72,6 +72,7 @@ def run_pipeline_execution(
             report=config.report,
             ranking=config.ranking,
             metric_registry=metric_registry,
+            split_result=setup.split_result,
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)

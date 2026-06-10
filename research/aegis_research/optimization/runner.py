@@ -14,10 +14,10 @@ every split's *held-out* set and attaches the held-out metrics, again slicing th
 full-series indicator store instead of recomputing indicators on bare held-out
 slices.
 
-A single ``Splitter`` instance is constructed from the run config and reused for
-both phases so selection and held-out share identical split boundaries. The
-splitter is built with explicit ``set_labels=["selection", "held_out"]`` so that
-``set_=`` resolves by role rather than VBT's generic positional labels.
+The runner constructs no ``Splitter`` of its own: it consumes the single one
+built by run_splits from ``RunSplitsResult.splitter`` (ADR-0018) and reuses it
+for both phases, so selection and held-out share identical split boundaries and
+``set_=`` resolves by the role labels run_splits imposed at construction.
 """
 
 from __future__ import annotations
@@ -64,10 +64,11 @@ from research.aegis_research.optimization.source import (
     OptimizationSource,
 )
 from research.aegis_research.portfolios import simulate_portfolio_batch
-
-SELECTION_SET = "selection"
-HELD_OUT_SET = "held_out"
-SET_LABELS = [SELECTION_SET, HELD_OUT_SET]
+from research.aegis_research.run_splits import (
+    HELD_OUT_SET,
+    SELECTION_SET,
+    RunSplitsResult,
+)
 
 
 class OptimizationRunnerError(ValueError):
@@ -84,6 +85,7 @@ def execute_optimization(
     report: ReportConfig,
     ranking: RankingConfig,
     metric_registry: FrozenMetricRegistry,
+    split_result: RunSplitsResult,
 ) -> OptimizationResult:
     _validate_source_param_names(source.params)
     if ranking.metric not in metric_registry:
@@ -96,7 +98,7 @@ def execute_optimization(
     # extractor; the sweep is handed a plain extractor mapping (catalog order) so
     # the dill-serialised Phase-1 closure carries no registry/proxy machinery.
     extractors = dict(metric_registry.extractors)
-    splitter = _build_splitter(close.index, optimization)
+    splitter = split_result.splitter
 
     # Stage 0: materialise the sampled candidate set once, deterministically, and
     # feed the same set to BOTH the precompute and the selection sweep.
@@ -162,14 +164,6 @@ def execute_optimization(
         extractors=extractors,
         selection_held_counts=selection_held_counts,
     )
-
-
-def _build_splitter(index: pd.Index, optimization: OptimizationConfig) -> vbt.Splitter:
-    method = optimization.split.method
-    factory = getattr(vbt.Splitter, method, None)
-    if not callable(factory):
-        raise OptimizationRunnerError(f"unknown VBT splitter method: {method!r}")
-    return factory(index, set_labels=SET_LABELS, **dict(optimization.split.params))
 
 
 def _build_precomputed_window_metrics(

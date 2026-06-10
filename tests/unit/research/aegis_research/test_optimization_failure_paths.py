@@ -13,6 +13,7 @@ from research.aegis_research.optimization.runner import (
     execute_optimization,
 )
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
@@ -52,16 +53,18 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
         metadata={},
     )
 
+    optimization = _optimization_config()
     with pytest.raises(OptimizationRunnerError, match="no usable results"):
         execute_optimization(
             close=close,
             open_=close,
             source=source,
-            optimization=_optimization_config(),
+            optimization=optimization,
             portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
             report=make_report_config(),
             ranking=make_ranking_config(metric="total_return"),
             metric_registry=make_default_metric_registry(),
+            split_result=build_run_splits_result(close.index, optimization.split),
         )
 
 
@@ -81,14 +84,16 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
         metadata={},
     )
 
+    optimization = _optimization_config()
     with pytest.raises(RuntimeError, match="pipeline blew up"):
         execute_optimization(
             close=close,
             open_=close,
             source=source,
-            optimization=_optimization_config(),
+            optimization=optimization,
             portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
             report=make_report_config(),
             ranking=make_ranking_config(metric="total_return"),
             metric_registry=make_default_metric_registry(),
+            split_result=build_run_splits_result(close.index, optimization.split),
         )

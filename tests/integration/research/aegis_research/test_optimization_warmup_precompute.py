@@ -25,6 +25,7 @@ from research.aegis_research.optimization.precompute import (
 from research.aegis_research.optimization.ranking import OptimizationResult
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
@@ -119,15 +120,17 @@ def _optimization(
 
 
 def _run(windows: list[int], *, optimization: OptimizationConfig | None = None) -> OptimizationResult:
+    optimization = optimization or _optimization()
     return execute_optimization(
         close=_uptrend_close(),
         open_=_uptrend_close(),
         source=_source(windows),
-        optimization=optimization or _optimization(),
+        optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return", min_weight=0.3),
         metric_registry=make_default_metric_registry(),
+        split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
 
 
@@ -303,15 +306,17 @@ def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> No
     invalid_window = N_ROWS + 1
     windows = [2, invalid_window]
 
+    optimization = _optimization()
     result = execute_optimization(
         close=close,
         open_=close,
         source=_source(windows),
-        optimization=_optimization(),
+        optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return", min_weight=0.3),
         metric_registry=make_default_metric_registry(),
+        split_result=build_run_splits_result(close.index, optimization.split),
     )
 
     invalid_params: dict = {"window": invalid_window}

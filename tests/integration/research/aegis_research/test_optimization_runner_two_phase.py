@@ -8,6 +8,8 @@ metrics.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
@@ -25,6 +27,7 @@ from research.aegis_research.optimization.ranking import (
 )
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
@@ -85,16 +88,53 @@ def _optimization() -> OptimizationConfig:
 
 
 def _run(alphas: list[float], *, min_weight: float = 0.3) -> OptimizationResult:
+    optimization = _optimization()
     return execute_optimization(
         close=_uptrend_close(),
         open_=_uptrend_close(),
         source=_source(alphas),
-        optimization=_optimization(),
+        optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return", min_weight=min_weight),
         metric_registry=make_default_metric_registry(),
+        split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
+
+
+class _RecordingSplitter:
+    """Delegates to the real built Splitter while recording each ``set_`` role."""
+
+    def __init__(self, inner: vbt.Splitter) -> None:
+        self._inner = inner
+        self.applied_sets: list[str] = []
+
+    def apply(self, *args, set_: str, **kwargs):
+        self.applied_sets.append(set_)
+        return self._inner.apply(*args, set_=set_, **kwargs)
+
+
+def test_runner_consumes_the_injected_splitter_and_addresses_sets_by_role() -> None:
+    """The runner must run its selection sweep on the selection set and its
+    held-out sweep on the held-out set through the injected Splitter — proving
+    role assignment lives in run_splits and the runner performs no rebuild."""
+    optimization = _optimization()
+    split_result = build_run_splits_result(_uptrend_close().index, optimization.split)
+    recorder = _RecordingSplitter(split_result.splitter)
+
+    execute_optimization(
+        close=_uptrend_close(),
+        open_=_uptrend_close(),
+        source=_source([0.2, 0.5, 1.0]),
+        optimization=optimization,
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
+        split_result=dataclasses.replace(split_result, splitter=recorder),
+    )
+
+    assert recorder.applied_sets == ["selection", "held_out"]
 
 
 def _expected_split_labels() -> list[int]:
@@ -273,15 +313,17 @@ def _warmup_source(windows: list[int]) -> OptimizationSource:
 
 
 def _run_warmup(windows: list[int]) -> OptimizationResult:
+    optimization = _optimization()
     return execute_optimization(
         close=_uptrend_close(),
         open_=_uptrend_close(),
         source=_warmup_source(windows),
-        optimization=_optimization(),
+        optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return", min_weight=0.3),
         metric_registry=make_default_metric_registry(),
+        split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
 
 
@@ -374,6 +416,7 @@ def test_runner_records_positive_non_executable_rows_for_purged_kfold_split() ->
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return", min_weight=0.3),
         metric_registry=make_default_metric_registry(),
+        split_result=build_run_splits_result(close.index, purged_opt.split),
     )
     assert result.non_executable_rows > 0, (
         f"purged k-fold split must record positive non_executable_rows; got {result.non_executable_rows}"
