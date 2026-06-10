@@ -128,11 +128,9 @@ def resolve_run_config(
     component_registry: FrozenComponentRegistry | None = None,
     metric_registry: MetricRegistry | FrozenMetricRegistry | None = None,
 ) -> ResolvedRunConfig:
-    """Resolve a raw-dict Run Config into a validated ``ResolvedRunConfig``.
+    """Resolve a raw-mapping Run Config into a validated ``ResolvedRunConfig``.
 
-    Accepts only a raw mapping (``dict[str, Any]``) — the CLI path loads YAML
-    and passes the parsed mapping.  Non-mapping input raises
-    ``ConfigValidationError`` with the established root-path issue.
+    Non-mapping values raise ``ConfigValidationError``.
     """
     if not isinstance(value, dict):
         raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
@@ -158,9 +156,6 @@ def _build_resolved_run_config(
     component_registry: FrozenComponentRegistry,
     metric_registry: FrozenMetricRegistry,
 ) -> ResolvedRunConfig:
-    if not isinstance(raw, dict):
-        raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
-
     config, issues = validate_run_config(
         raw,
         component_registry=component_registry,
