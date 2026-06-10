@@ -36,8 +36,6 @@ from research.aegis_research.configuration.field_types import (
 from research.aegis_research.configuration.schema import has_data_array_token_shape
 
 COMPONENT_MANIFEST_NAME = "COMPONENT_MANIFEST"
-LEGACY_COMPONENT_CALLABLE_NAME = "COMPONENT_CALLABLE"
-LEGACY_MANIFEST_CALLABLE_KEYS = frozenset({"wide_callable", "param_space_callable"})
 COMPONENT_PERCENT_CELL_MARKER = "# %%"
 COMPONENT_PERCENT_CELL_RE = re.compile(r"^# %%.*$", re.MULTILINE)
 COMPONENT_MAIN_CELL_RE = re.compile(r"^# %%\s+main\b", re.MULTILINE)
@@ -113,11 +111,6 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], b
                 continue
             if target.id == COMPONENT_MANIFEST_NAME:
                 manifest = _literal_value(path, COMPONENT_MANIFEST_NAME, node.value)
-            elif target.id == LEGACY_COMPONENT_CALLABLE_NAME:
-                raise ComponentRegistryError(
-                    f"{path}: legacy {LEGACY_COMPONENT_CALLABLE_NAME} declaration is not supported; "
-                    f"define module-level {COMPONENT_ENTRYPOINT!r} instead"
-                )
 
     if manifest is None:
         raise ComponentRegistryError(f"{path}: missing {COMPONENT_MANIFEST_NAME}")
@@ -130,11 +123,6 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], b
     if not ast.get_docstring(run_node):
         raise ComponentRegistryError(
             f"{path}: component entry point {COMPONENT_ENTRYPOINT!r} must have a docstring"
-        )
-    legacy_manifest_keys = sorted(LEGACY_MANIFEST_CALLABLE_KEYS & set(manifest))
-    if legacy_manifest_keys:
-        raise ComponentRegistryError(
-            f"{path}: legacy manifest callable keys are not supported: {legacy_manifest_keys}"
         )
     return manifest, has_param_space
 

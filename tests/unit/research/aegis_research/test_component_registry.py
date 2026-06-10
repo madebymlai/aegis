@@ -564,75 +564,59 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
     raise AssertionError(f"unknown family {family}")
 
 
+# Pre-v2 component files declared the callable entry points through manifest keys
+# (wide_callable / param_space_callable) or a module-level COMPONENT_CALLABLE
+# assignment. ADR-0017 deletes that plumbing forward-first: the v2 contract is the
+# manifest dict plus a module-level `run`, so these keys are no longer special-cased.
+# A manifest carrying one is just an unknown field rejected by the schema gate, and a
+# stray module-level assignment is inert.
 @pytest.mark.parametrize("family", ["indicators", "strategies"])
-def test_manifest_rejects_legacy_callable_name_key(tmp_path, family) -> None:
+@pytest.mark.parametrize("plumbing_key", ["wide_callable", "param_space_callable"])
+def test_manifest_rejects_unknown_callable_plumbing_key(
+    tmp_path, family, plumbing_key
+) -> None:
     root = tmp_path / "research" / "components"
-    manifest = _manifest_for(family, "demo.legacy")
-    manifest["wide_callable"] = "run_wide"
-    path = root / family / "legacy.py"
+    manifest = _manifest_for(family, "demo.unknown_key")
+    manifest[plumbing_key] = "custom"
+    path = root / family / "unknown_key.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "# %% component overview\n"
-        "# Fixture with legacy callable-name manifest plumbing.\n"
+        "# Fixture carrying a manifest callable-plumbing key from the pre-v2 contract.\n"
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return fixture value."""\n'
-        "    return 'legacy'\n"
+        "    return 'value'\n"
     )
 
     with pytest.raises(ComponentRegistryError) as excinfo:
         discover_component_registry(root=root, repo_root=tmp_path)
     message = str(excinfo.value)
-    assert "legacy manifest callable keys" in message
-    assert "wide_callable" in message
+    assert plumbing_key in message
+    assert "Extra inputs are not permitted" in message
 
 
-def test_manifest_rejects_legacy_component_callable_declaration(tmp_path) -> None:
+def test_stray_module_level_callable_assignment_is_inert(tmp_path) -> None:
     root = tmp_path / "research" / "components"
-    path = root / "indicators" / "legacy_callable.py"
+    path = root / "indicators" / "stray_assignment.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "# %% component overview\n"
-        "# Fixture with legacy top-level callable declaration.\n"
+        "# Fixture with a stray module-level callable-name assignment.\n"
         "\n"
         "# %% define component metadata\n"
-        f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'demo.legacy_callable')!r}\n"
-        "COMPONENT_CALLABLE = 'run_wide'\n"
+        f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'demo.stray_assignment')!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return fixture value."""\n'
-        "    return 'legacy'\n"
+        "    return 'value'\n"
     )
 
-    with pytest.raises(ComponentRegistryError) as excinfo:
-        discover_component_registry(root=root, repo_root=tmp_path)
-    message = str(excinfo.value)
-    assert "legacy COMPONENT_CALLABLE declaration is not supported" in message
-
-
-def test_manifest_rejects_legacy_param_space_callable_key(tmp_path) -> None:
-    root = tmp_path / "research" / "components"
-    manifest = _manifest_for("indicators", "demo.legacy_param_space")
-    manifest["param_space_callable"] = "custom_param_space"
-    path = root / "indicators" / "legacy_param_space.py"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "# %% component overview\n"
-        "# Fixture with legacy param-space manifest plumbing.\n"
-        "\n"
-        "# %% define component metadata\n"
-        f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "\n# %% main compute\n"
-        "def run():\n"
-        '    """Return fixture value."""\n'
-        "    return 'legacy'\n"
-    )
-
-    with pytest.raises(ComponentRegistryError) as excinfo:
-        discover_component_registry(root=root, repo_root=tmp_path)
-    message = str(excinfo.value)
-    assert "legacy manifest callable keys" in message
-    assert "param_space_callable" in message
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    assert registry.get(
+        ComponentSelection("indicators", "demo.stray_assignment")
+    ).identity.source_hash

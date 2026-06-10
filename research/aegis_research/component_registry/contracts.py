@@ -16,7 +16,7 @@ STRATEGY_ALLOCATION_OUTPUTS: frozenset[str] = frozenset(
     {"active", "scores", "ranks", "target_weights"}
 )
 
-# The MultiIndex level naming the symbol axis of a candidate-wide allocation frame.
+# The MultiIndex level naming the symbol axis of a candidate-batched allocation frame.
 # Candidate-frame vocabulary, like STRATEGY_ALLOCATION_OUTPUTS: it lives here so the
 # simulation boundary and the Allocation Policy gate import it from one stdlib-only
 # owner instead of cycling through each other.
