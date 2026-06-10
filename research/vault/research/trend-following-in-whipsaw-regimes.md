@@ -46,7 +46,7 @@ Two weaker levers round out the menu. Cross-asset *breadth or dispersion* gates 
 
 ## Strategy hypotheses this could seed
 
-- [ ] A two-speed barbell (one short, one well-separated long lookback) blended in the trend core reduces turning-point/whipsaw bleed in trendless years without flattening crash-time convexity - the best-evidenced fix.
+- [x] A two-speed barbell (one short, one well-separated long lookback) blended in the trend core reduces turning-point/whipsaw bleed in trendless years without flattening crash-time convexity - the best-evidenced fix. **Killed 2026-06-10** (in our book): the fast leg added whipsaw rather than dampening it - 2023 worsened to -0.99 from the champion's -0.50 and overall held-out Sharpe fell to +0.731 from +1.008. The article's own thin-book caveat cut the other way; the broad-futures magnitude did not transfer to ten correlated ETFs. See [[runs/aegis/2026-06-10|run diary]] and the graveyard.
 - [ ] Throttling gross exposure by trend breadth (count of instruments past the entry band) cuts the chop bleed - test, but pre-register as research-grade given thin evidence.
 - [ ] A cross-sectional or vol-regime gross throttle reduces drawdown in chop but does *not* improve Sharpe - confirm vol-scaling is a drawdown tool, not a chop-alpha tool.
 - [ ] No standalone regime filter (efficiency ratio / strength threshold) beats simply diversifying trend speed - the AQR null, worth confirming directly since the campaign already killed one trend-gate.
