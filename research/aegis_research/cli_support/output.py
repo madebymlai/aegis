@@ -154,9 +154,9 @@ def held_out_summary_lines(
     warning = optimization.get("held_out_warning")
     if warning:
         lines.append(f"WARNING: {warning}")
-    held_line = _held_rows_line(optimization)
-    if held_line:
-        lines.append(held_line)
+    non_exec_line = _non_executable_rows_line(optimization)
+    if non_exec_line:
+        lines.append(non_exec_line)
     lines.append(_researched_ratio_line(optimization))
     return tuple(lines)
 
@@ -190,8 +190,8 @@ def reproduce_lock_lines(
 _PURGED_METHOD_SUBSTRINGS = ("purged", "embargo")
 
 
-def _held_rows_line(optimization: Mapping[str, Any]) -> str | None:
-    """Conditional held-rebalance-rows report line, or None.
+def _non_executable_rows_line(optimization: Mapping[str, Any]) -> str | None:
+    """Report line for non-executable rebalance rows, or None.
 
     Renders only when non_executable_rows is non-zero. Under a
     purged/embargoed split method the line is neutral (the count is
