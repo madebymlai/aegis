@@ -63,6 +63,8 @@ def _per_symbol_non_executable(
     allocations: pd.DataFrame,
     executable: pd.Series,
 ) -> dict[str, int]:
+    # Deferred import to break circular dependency: portfolios.py imports
+    # allocation_policy at module level, so we import portfolios inside the call.
     from research.aegis_research.portfolios import SYMBOL_LEVEL
 
     columns = allocations.columns

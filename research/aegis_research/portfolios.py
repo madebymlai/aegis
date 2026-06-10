@@ -10,6 +10,8 @@ from research.aegis_research.configuration import PortfolioConfig
 
 SYMBOL_LEVEL = "symbol"
 
+# Import after SYMBOL_LEVEL to break circular dependency: allocation_policy
+# modules import SYMBOL_LEVEL from here at call time (deferred imports).
 from research.aegis_research.allocation_policy import (  # noqa: E402
     apply_executable_mask_and_terminal_liquidation,
     assert_signed_allocations_within_caps,

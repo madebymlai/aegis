@@ -49,6 +49,8 @@ def assert_signed_allocations_within_caps(
         net_cap = gross_cap
     if allocations.empty or len(allocations.columns) == 0:
         return
+    # Deferred import to break circular dependency: portfolios.py imports
+    # allocation_policy at module level, so we import portfolios inside the call.
     from research.aegis_research.portfolios import SYMBOL_LEVEL
 
     _assert_sign_consistent(allocations.to_numpy(dtype=float, copy=False), direction)

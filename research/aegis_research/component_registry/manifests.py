@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from research.aegis_research.component_registry.contracts import (
+    STRATEGY_ALLOCATION_OUTPUTS,
     ComponentDefinition,
     ComponentFamily,
     ComponentRegistryError,
@@ -37,7 +38,6 @@ COMPONENT_CALLABLE_NAME = "COMPONENT_CALLABLE"
 COMPONENT_PERCENT_CELL_MARKER = "# %%"
 COMPONENT_PERCENT_CELL_RE = re.compile(r"^# %%.*$", re.MULTILINE)
 COMPONENT_MAIN_CELL_RE = re.compile(r"^# %%\s+main\b", re.MULTILINE)
-STRATEGY_ALLOCATION_OUTPUTS = {"active", "scores", "ranks", "target_weights"}
 
 def parse_component_file(
     path: Path,
@@ -245,7 +245,7 @@ class _StrategyManifestPayload(_BaseManifestPayload):
         if self.output_name not in STRATEGY_ALLOCATION_OUTPUTS:
             raise ValueError(
                 f"unsupported allocation output {self.output_name!r}; "
-                f"registered shapes are {STRATEGY_ALLOCATION_OUTPUTS}"
+                f"registered shapes are {sorted(STRATEGY_ALLOCATION_OUTPUTS)}"
             )
         return self
 

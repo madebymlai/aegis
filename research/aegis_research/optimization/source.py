@@ -46,6 +46,9 @@ from typing import Any
 
 from vectorbtpro import vbt
 
+from research.aegis_research.component_registry.contracts import (
+    STRATEGY_ALLOCATION_OUTPUTS,
+)
 from research.aegis_research.optimization.precompute import (
     WideIndicatorPrecompute,
     candidate_keys,
@@ -53,9 +56,6 @@ from research.aegis_research.optimization.precompute import (
 
 OPTIMIZATION_SOURCE_CONTRACT = "aegis.optimization_source.v1"
 
-STRATEGY_ALLOCATION_OUTPUTS: frozenset[str] = frozenset(
-    {"active", "scores", "ranks", "target_weights"}
-)
 OPTIMIZATION_SOURCE_KIND = "optimization_source"
 
 OPTIMIZATION_SOURCE_ALLOWED_KEYS = {

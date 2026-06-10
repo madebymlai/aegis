@@ -8,6 +8,12 @@ from typing import Any, Literal
 ComponentFamily = Literal["indicators", "strategies"]
 COMPONENT_FAMILIES: tuple[ComponentFamily, ...] = ("indicators", "strategies")
 
+# The four allocation-native channels a Strategy may emit; every strategy must
+# declare exactly one as its ``output_name`` (see `StrategyManifest`).
+STRATEGY_ALLOCATION_OUTPUTS: frozenset[str] = frozenset(
+    {"active", "scores", "ranks", "target_weights"}
+)
+
 
 class ComponentRegistryError(ValueError):
     pass
