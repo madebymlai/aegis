@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import argparse
 
-from research.aegis_research.cli_commands.show import components, config_schema, indicator_schema, splitters
+from research.aegis_research.cli_commands.show import (
+    components,
+    config_schema,
+    indicator_schema,
+    splitters,
+)
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
