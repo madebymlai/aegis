@@ -375,8 +375,11 @@ def test_strategy_manifest_rejects_legacy_signal_outputs_field(tmp_path) -> None
         "    return 'legacy'\n"
     )
 
-    with pytest.raises(ComponentRegistryError, match="output_name must be a non-empty string"):
+    with pytest.raises(ComponentRegistryError) as excinfo:
         discover_component_registry(root=root, repo_root=tmp_path)
+    message = str(excinfo.value)
+    assert "Extra inputs are not permitted" in message
+    assert "signal_outputs" in message
 
 
 def test_strategy_manifest_rejects_forbidden_gross_cap_key(tmp_path) -> None:
@@ -407,10 +410,56 @@ def test_strategy_manifest_rejects_forbidden_gross_cap_key(tmp_path) -> None:
         "    return 'forbidden'\n"
     )
 
-    with pytest.raises(
-        ComponentRegistryError, match="'gross_cap' is forbidden"
-    ):
+    with pytest.raises(ComponentRegistryError) as excinfo:
         discover_component_registry(root=root, repo_root=tmp_path)
+    message = str(excinfo.value)
+    assert "Extra inputs are not permitted" in message
+    assert "gross_cap" in message
+
+
+def test_manifest_payload_errors_accumulate_per_file(tmp_path) -> None:
+    """Multiple pydantic field-level errors for one manifest surface together.
+
+    When field-level errors are present, pydantic accumulates all of them before
+    raising.  Model-validator errors (e.g. ``output_names must not be empty``)
+    fire only when every field passes its individual type check, so they are
+    tested separately.
+    """
+    root = tmp_path / "research" / "components"
+    path = root / "indicators" / "broken.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "family": "indicators",
+        "id": "bad id",
+        "version": "",
+        "input_names": ["Close", "  bad  "],
+        "param_names": [""],
+        "output_names": ["ma"],
+        "unknown_field": "surprise",
+    }
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture with multiple payload errors.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {manifest!r}\n"
+        "COMPONENT_CALLABLE = 'run'\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return fixture value."""\n'
+        "    return 'broken'\n"
+    )
+
+    with pytest.raises(ComponentRegistryError) as excinfo:
+        discover_component_registry(root=root, repo_root=tmp_path)
+    message = str(excinfo.value)
+    # pydantic-worded errors, multiple errors accumulated in one message
+    assert "String should match pattern" in message
+    assert "String should have at least 1 character" in message
+    assert "must be a VBT feature name without surrounding whitespace" in message
+    assert "Extra inputs are not permitted" in message
+    # All errors for one file in one message (separated by "; ")
+    assert message.count("; ") >= 3
 
 
 def _write_strategy_component(path, *, component_id: str, output_name: str) -> None:
