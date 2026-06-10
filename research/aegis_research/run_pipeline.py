@@ -25,7 +25,6 @@ from research.aegis_research.optimization.evidence_ledger import (
     RunEvidence,
 )
 from research.aegis_research.optimization.pipeline.completion import (
-    build_run_refs,
     run_pipeline_completion,
 )
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
@@ -82,7 +81,7 @@ def run_strategy_sweep(
 
     try:
         if on_run_started is not None:
-            on_run_started(build_run_refs(recorder))
+            on_run_started(recorder.run_refs())
         array_contract.assert_configured()
         data_result = load_market_data_result(
             config.data,

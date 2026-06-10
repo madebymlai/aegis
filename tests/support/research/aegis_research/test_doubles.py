@@ -72,3 +72,13 @@ class FakeRecorder:
         self.manifest.status = "completed"
         self.manifest.finished_at = "2025-01-01T01:00:00Z"
         self.persist()
+
+    def run_refs(self) -> dict[str, Any]:
+        return {
+            "run_id": self.manifest.run_id,
+            "run_dir": str(self.run_dir) if self.run_dir is not None else "",
+            "manifest_path": str(self.manifest_path) if self.manifest_path is not None else "",
+            "status": self.manifest.status,
+            "started_at": self.manifest.started_at,
+            "finished_at": self.manifest.finished_at,
+        }

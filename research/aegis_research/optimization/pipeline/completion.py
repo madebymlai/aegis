@@ -107,7 +107,7 @@ def _completion_result(
     ranking_metric = config.ranking.metric
     best_row = next(row for row in candidate_rows if row["role"] == "best")
     return {
-        **build_run_refs(recorder),
+        **recorder.run_refs(),
         "strategy_artifact_id": "strategy.run",
         "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
         "candidate_store_path": str(store_path),
@@ -144,12 +144,3 @@ def _candidate_summary(row: Mapping[str, Any], *, ranking_metric: str) -> dict[s
     }
 
 
-def build_run_refs(recorder: RunRecorder) -> dict[str, Any]:
-    return {
-        "run_id": recorder.manifest.run_id,
-        "run_dir": str(recorder.run_dir),
-        "manifest_path": str(recorder.manifest_path),
-        "status": recorder.manifest.status,
-        "started_at": recorder.manifest.started_at,
-        "finished_at": recorder.manifest.finished_at,
-    }

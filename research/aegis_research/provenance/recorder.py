@@ -86,5 +86,16 @@ class RunRecorder:
         self.manifest.finished_at = self._now_from_manifest()
         self.persist()
 
+    def run_refs(self) -> dict[str, Any]:
+        """Return a six-field snapshot of current Manifest state."""
+        return {
+            "run_id": self.manifest.run_id,
+            "run_dir": str(self.run_dir),
+            "manifest_path": str(self.manifest_path),
+            "status": self.manifest.status,
+            "started_at": self.manifest.started_at,
+            "finished_at": self.manifest.finished_at,
+        }
+
     def _now_from_manifest(self) -> str:
         return datetime.now(UTC).isoformat().replace("+00:00", "Z")
