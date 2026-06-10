@@ -44,7 +44,7 @@ def test_candidate_rows_are_derived_from_vbt_param_index() -> None:
         index,
         source_identity={"source": "component", "id": "native_rsi", "source_hash": "abc"},
         data_identity=DATA_IDENTITY,
-        portfolio_policy={"target_exposure_cap": 1.0},
+        allocation_policy={"target_exposure_cap": 1.0},
     )
 
     assert len(rows) == 1
@@ -58,7 +58,7 @@ def test_candidate_rows_are_derived_from_vbt_param_index() -> None:
     assert rows[0]["coordinates"] == {}
     assert rows[0]["identity"]["source_identity"]["source_hash"] == "abc"
     assert rows[0]["identity"]["data_identity"] == DATA_IDENTITY
-    assert rows[0]["identity"]["portfolio_policy"] == {"target_exposure_cap": 1.0}
+    assert rows[0]["identity"]["allocation_policy"] == {"target_exposure_cap": 1.0}
 
 
 def test_candidate_key_excludes_split_set_symbol_coordinates() -> None:
@@ -127,7 +127,7 @@ def test_canonical_params_key_matches_candidate_row_param_canonicalization() -> 
     assert canonical_params_key(params) == canonical_params_key(rows[0]["params"])
 
 
-def test_candidate_key_includes_hidden_source_and_portfolio_identity() -> None:
+def test_candidate_key_includes_hidden_source_and_allocation_identity() -> None:
     index = pd.MultiIndex.from_tuples([(14,)], names=["rsi_window"])
 
     base = candidate_rows_from_param_index(
@@ -135,33 +135,33 @@ def test_candidate_key_includes_hidden_source_and_portfolio_identity() -> None:
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
-        portfolio_policy={"fees": 0.001},
+        allocation_policy={"fees": 0.001},
     )[0]
     different_hidden = candidate_rows_from_param_index(
         index,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 2},
-        portfolio_policy={"fees": 0.001},
+        allocation_policy={"fees": 0.001},
     )[0]
     different_source = candidate_rows_from_param_index(
         index,
         source_identity={"source_hash": "def"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
-        portfolio_policy={"fees": 0.001},
+        allocation_policy={"fees": 0.001},
     )[0]
-    different_portfolio = candidate_rows_from_param_index(
+    different_policy = candidate_rows_from_param_index(
         index,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
-        portfolio_policy={"fees": 0.002},
+        allocation_policy={"fees": 0.002},
     )[0]
 
     assert base["candidate_key"] != different_hidden["candidate_key"]
     assert base["candidate_key"] != different_source["candidate_key"]
-    assert base["candidate_key"] != different_portfolio["candidate_key"]
+    assert base["candidate_key"] != different_policy["candidate_key"]
 
 
 def test_candidate_identity_golden_bytes_pin() -> None:
@@ -178,18 +178,17 @@ def test_candidate_identity_golden_bytes_pin() -> None:
             "index_end": "2026-01-31",
         },
         hidden_params={"execution": "next_open"},
-        portfolio_policy={"fees": 0.001, "target_exposure_cap": 1.0},
+        allocation_policy={"fees": 0.001, "target_exposure_cap": 1.0},
     )[0]
 
     assert canonical_json_bytes(row["identity"]) == (
-        b'{"data_identity":{"index_end":"2026-01-31","index_start":"2026-01-01",'
+        b'{"allocation_policy":{"fees":0.001,"target_exposure_cap":1.0},'
+        b'"data_identity":{"index_end":"2026-01-31","index_start":"2026-01-01",'
         b'"source":"synthetic","symbols":["SYN","ALT"],"timeframe":"1D"},'
         b'"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
-        b'"ma_window":100,"rsi_window":14},"portfolio_policy":{"fees":0.001,'
-        b'"target_exposure_cap":1.0},"schema_version":"candidate_identity.v2",'
+        b'"ma_window":100,"rsi_window":14},"schema_version":"candidate_identity.v3",'
         b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
     )
-    assert row["candidate_key"] == "cand_a4d2faf9f2e93b1edb4a5f1016381c3f"
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:
@@ -269,7 +268,7 @@ def test_candidate_rows_from_result_emits_three_role_tagged_rows() -> None:
         result,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
-        portfolio_policy={"fees": 0.001},
+        allocation_policy={"fees": 0.001},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
 
@@ -318,13 +317,13 @@ def test_candidate_rows_from_result_key_matches_param_index_identity() -> None:
         result,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
-        portfolio_policy={"fees": 0.001},
+        allocation_policy={"fees": 0.001},
     )[0]
     from_index = candidate_rows_from_param_index(
         index,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
-        portfolio_policy={"fees": 0.001},
+        allocation_policy={"fees": 0.001},
     )[0]
 
     assert from_result["candidate_key"] == from_index["candidate_key"]

@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "d9f35e5bd4c6187ff20bb20d0bd490a15686061f448248ccddf7550afc995426",
+      "hash": "b55432fe23d58a91b5571505a0011aeb4de6cef2c556f7d873349a24fdadc26b",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 49374,
+      "size": 49377,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -169,7 +169,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_8ec87df5843478a6c4f63317381b17a0",
+          "candidate_key": "cand_fb574333419bb1a629cc60e5d6aecd71",
           "held_out_metrics": {
             "0": {
               "max_dd": 19.259731031899552,
@@ -205,6 +205,16 @@
             "win_rate": 56.515137401024695
           },
           "identity": {
+            "allocation_policy": {
+              "direction": "longonly",
+              "fees": 0.0005,
+              "gross_cap": 1.0,
+              "init_cash": 10000.0,
+              "net_cap": 1.0,
+              "short_borrow_rate": 0.005,
+              "short_rebate_rate": 0.0,
+              "slippage": 0.0005
+            },
             "data_identity": {
               "array_contract": {
                 "component_required_arrays": [
@@ -297,17 +307,7 @@
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
             },
-            "portfolio_policy": {
-              "direction": "longonly",
-              "fees": 0.0005,
-              "gross_cap": 1.0,
-              "init_cash": 10000.0,
-              "net_cap": 1.0,
-              "short_borrow_rate": 0.005,
-              "short_rebate_rate": 0.0,
-              "slippage": 0.0005
-            },
-            "schema_version": "candidate_identity.v2",
+            "schema_version": "candidate_identity.v3",
             "source_identity": {
               "consumed_outputs": [
                 "momentum_score",
@@ -427,7 +427,7 @@
           }
         },
         {
-          "candidate_key": "cand_aed19136d5109d24c7ca0282a714b8d8",
+          "candidate_key": "cand_7b99b5e65f8696448b3422773202fd08",
           "held_out_metrics": {
             "0": {
               "max_dd": 18.118116158313768,
@@ -463,6 +463,16 @@
             "win_rate": 53.571818786224526
           },
           "identity": {
+            "allocation_policy": {
+              "direction": "longonly",
+              "fees": 0.0005,
+              "gross_cap": 1.0,
+              "init_cash": 10000.0,
+              "net_cap": 1.0,
+              "short_borrow_rate": 0.005,
+              "short_rebate_rate": 0.0,
+              "slippage": 0.0005
+            },
             "data_identity": {
               "array_contract": {
                 "component_required_arrays": [
@@ -555,17 +565,7 @@
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
             },
-            "portfolio_policy": {
-              "direction": "longonly",
-              "fees": 0.0005,
-              "gross_cap": 1.0,
-              "init_cash": 10000.0,
-              "net_cap": 1.0,
-              "short_borrow_rate": 0.005,
-              "short_rebate_rate": 0.0,
-              "slippage": 0.0005
-            },
-            "schema_version": "candidate_identity.v2",
+            "schema_version": "candidate_identity.v3",
             "source_identity": {
               "consumed_outputs": [
                 "momentum_score",
@@ -685,7 +685,7 @@
           }
         },
         {
-          "candidate_key": "cand_9da91e3674dc698b54f2ea05e5828326",
+          "candidate_key": "cand_b9e3653ea7f75ac1801da0b974dcaed4",
           "held_out_metrics": {
             "0": {
               "max_dd": 27.841344065208496,
@@ -721,6 +721,16 @@
             "win_rate": 51.35775756085567
           },
           "identity": {
+            "allocation_policy": {
+              "direction": "longonly",
+              "fees": 0.0005,
+              "gross_cap": 1.0,
+              "init_cash": 10000.0,
+              "net_cap": 1.0,
+              "short_borrow_rate": 0.005,
+              "short_rebate_rate": 0.0,
+              "slippage": 0.0005
+            },
             "data_identity": {
               "array_contract": {
                 "component_required_arrays": [
@@ -813,17 +823,7 @@
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
             },
-            "portfolio_policy": {
-              "direction": "longonly",
-              "fees": 0.0005,
-              "gross_cap": 1.0,
-              "init_cash": 10000.0,
-              "net_cap": 1.0,
-              "short_borrow_rate": 0.005,
-              "short_rebate_rate": 0.0,
-              "slippage": 0.0005
-            },
-            "schema_version": "candidate_identity.v2",
+            "schema_version": "candidate_identity.v3",
             "source_identity": {
               "consumed_outputs": [
                 "momentum_score",
