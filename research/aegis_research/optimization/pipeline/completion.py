@@ -122,6 +122,8 @@ def _completion_result(
             "held_out_warning": held_out_warning(
                 candidate_held_out_headline(best_row, metric=ranking_metric)
             ),
+            "non_executable_rows": execution.get("non_executable_rows", 0),
+            "split_method": config.optimization.split.method if config.optimization else None,
         },
         "candidates": [
             _candidate_summary(row, ranking_metric=ranking_metric) for row in candidate_rows

@@ -154,6 +154,9 @@ def held_out_summary_lines(
     warning = optimization.get("held_out_warning")
     if warning:
         lines.append(f"WARNING: {warning}")
+    held_line = _held_rows_line(optimization)
+    if held_line:
+        lines.append(held_line)
     lines.append(_researched_ratio_line(optimization))
     return tuple(lines)
 
@@ -182,6 +185,27 @@ def reproduce_lock_lines(
     if store_path:
         lines.append(f"candidate store: {store_path}")
     return tuple(lines)
+
+
+_PURGED_METHOD_SUBSTRINGS = ("purged", "embargo")
+
+
+def _held_rows_line(optimization: Mapping[str, Any]) -> str | None:
+    """Conditional held-rebalance-rows report line, or None.
+
+    Renders only when non_executable_rows is non-zero. Under a
+    purged/embargoed split method the line is neutral (the count is
+    expected); under a contiguous split method it is WARNING-prefixed
+    (the count should have been zero — upstream invariant breach).
+    """
+    count = optimization.get("non_executable_rows", 0)
+    if not count:
+        return None
+    split_method = str(optimization.get("split_method", ""))
+    is_purged = any(marker in split_method for marker in _PURGED_METHOD_SUBSTRINGS)
+    if is_purged:
+        return f"non-executable rebalance rows: {count} (held at split seams)"
+    return f"WARNING: non-executable rebalance rows: {count} (should be zero — invariant breach)"
 
 
 def _researched_ratio_line(optimization: Mapping[str, Any]) -> str:

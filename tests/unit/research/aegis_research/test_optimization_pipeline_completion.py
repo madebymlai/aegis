@@ -162,6 +162,10 @@ def test_completion_returns_result_and_marks_completed(
     assert opt["excluded_degenerate"] == 3
     # held-out gap 0.01 < threshold 0.10, so no warning
     assert opt["held_out_warning"] is None
+    # non_executable_rows defaults to 0 when absent from execution evidence
+    assert opt["non_executable_rows"] == 0
+    # split method flows from config into the report's optimization summary
+    assert opt["split_method"] == config.optimization.split.method
 
     candidates = result["candidates"]
     assert [c["role"] for c in candidates] == ["best", "median", "worst"]

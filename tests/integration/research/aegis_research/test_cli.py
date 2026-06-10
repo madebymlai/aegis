@@ -500,6 +500,69 @@ def test_held_out_summary_appends_misconfigured_clause_when_invalid_present() ->
     assert "researched candidates: 111/323 (2 misconfigured)" in lines
 
 
+def test_held_out_summary_no_held_rows_line_when_zero() -> None:
+    """No non-executable rebalance rows line is rendered when the count is zero."""
+    from research.aegis_research.cli_support.output import held_out_summary_lines
+
+    lines = held_out_summary_lines(
+        {**_researched_optimization(total=30, excluded_invalid=0, excluded_degenerate=0),
+         "non_executable_rows": 0},
+        [_researched_candidate()],
+    )
+
+    assert not any("non-executable rebalance rows" in line for line in lines)
+
+
+def test_held_out_summary_neutral_held_rows_line_for_purged_split() -> None:
+    """A purged-split run with a positive count renders the neutral line."""
+    from research.aegis_research.cli_support.output import held_out_summary_lines
+
+    lines = held_out_summary_lines(
+        {**_researched_optimization(total=30, excluded_invalid=0, excluded_degenerate=0),
+         "non_executable_rows": 7,
+         "split_method": "from_purged_kfold"},
+        [_researched_candidate()],
+    )
+
+    held_line = next(line for line in lines if "non-executable rebalance rows" in line)
+    assert "non-executable rebalance rows: 7" in held_line
+    assert "held at split seams" in held_line
+    assert not held_line.startswith("WARNING")
+
+
+def test_held_out_summary_warning_held_rows_line_for_contiguous_split() -> None:
+    """A contiguous-split run with a positive count renders the WARNING-prefixed line."""
+    from research.aegis_research.cli_support.output import held_out_summary_lines
+
+    lines = held_out_summary_lines(
+        {**_researched_optimization(total=30, excluded_invalid=0, excluded_degenerate=0),
+         "non_executable_rows": 3,
+         "split_method": "from_rolling"},
+        [_researched_candidate()],
+    )
+
+    held_line = next(line for line in lines if "non-executable rebalance rows" in line)
+    assert held_line.startswith("WARNING:")
+    assert "non-executable rebalance rows: 3" in held_line
+    assert "should be zero" in held_line
+
+
+def test_held_out_summary_held_rows_line_says_rebalance_rows_not_candidates() -> None:
+    """The line wording references rebalance rows, not candidates."""
+    from research.aegis_research.cli_support.output import held_out_summary_lines
+
+    lines = held_out_summary_lines(
+        {**_researched_optimization(total=30, excluded_invalid=0, excluded_degenerate=0),
+         "non_executable_rows": 5,
+         "split_method": "from_purged_kfold"},
+        [_researched_candidate()],
+    )
+
+    held_line = next(line for line in lines if "non-executable rebalance rows" in line)
+    assert "rebalance rows" in held_line
+    assert "candidates" not in held_line.lower()
+
+
 def test_safe_path_hides_relative_paths_that_escape_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
