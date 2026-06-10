@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from research.aegis_research.config import DataConfig
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
     DataDiagnostics,
     DataFeatureDiagnostics,

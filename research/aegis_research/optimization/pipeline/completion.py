@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     RunConfig,
     to_builtin,
 )

@@ -4,7 +4,7 @@ import pytest
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
-from research.aegis_research.config import PortfolioConfig
+from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.portfolios import (
     _SINGLE_CANDIDATE_ID,
     expand_market_frame_to_candidate_columns,

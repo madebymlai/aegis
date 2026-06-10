@@ -13,7 +13,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from research.aegis_research.config import resolve_run_config
+from research.aegis_research.configuration import resolve_run_config
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.evidence import candidate_rows_from_result
@@ -69,7 +69,7 @@ def _run_evidence() -> RunEvidence:
 
 
 def _locked_raw_config(candidate_key: str) -> dict[str, Any]:
-    from research.aegis_research.config import CONFIG_SCHEMA_VERSION
+    from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,

@@ -25,7 +25,7 @@ from research.aegis_research.component_registry.contracts import (
     ComponentFamily,
 )
 from research.aegis_research.component_registry.registry import FrozenComponentRegistry
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     DataConfig,
     DataQualityConfig,

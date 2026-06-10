@@ -16,7 +16,7 @@ from research.aegis_research.component_registry import (
     IndicatorManifest,
     StrategyManifest,
 )
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,

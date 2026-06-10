@@ -18,7 +18,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
     OptimizationConfig,

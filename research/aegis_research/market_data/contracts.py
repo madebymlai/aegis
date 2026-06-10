@@ -7,7 +7,7 @@ from typing import Any, Protocol
 import pandas as pd
 
 from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.configuration.schema import OHLCV_ARRAYS, DataConfig
+from research.aegis_research.configuration import OHLCV_ARRAYS, DataConfig
 
 OHLCV_FEATURES = OHLCV_ARRAYS
 LOGICAL_FEATURES = {

@@ -15,7 +15,7 @@ from research.aegis_research.cli_support.errors import (
     InternalCliError,
     exit_code_for,
 )
-from research.aegis_research.config import DEFAULT_LOCK_ROLE, to_builtin
+from research.aegis_research.configuration import DEFAULT_LOCK_ROLE, to_builtin
 
 CLI_JSON_SCHEMA_VERSION = 1
 MAX_ERROR_MESSAGE_CHARS = 1000

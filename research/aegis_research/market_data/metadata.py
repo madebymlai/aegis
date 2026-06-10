@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data.contracts import (
     OHLCV_FEATURES,
     DataDiagnostics,

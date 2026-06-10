@@ -13,7 +13,7 @@ from typing import Any
 
 from research.aegis_research.atomic_write import hash_file
 from research.aegis_research.canonical_json import canonical_json_bytes
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     ResolvedRunConfig,
     to_builtin,
 )

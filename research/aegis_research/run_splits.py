@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.configuration.schema import ConfigValidationIssue, RunSplitConfig
+from research.aegis_research.configuration import ConfigValidationIssue, RunSplitConfig
 
 SPLITTER_METHOD_PREFIX = "from_"
 SPLITTER_INDEX_PARAM = "index"

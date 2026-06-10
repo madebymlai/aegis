@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.config import OptimizationConfig
+from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,

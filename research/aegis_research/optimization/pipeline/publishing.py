@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     RunConfig,
 )
 from research.aegis_research.data import (

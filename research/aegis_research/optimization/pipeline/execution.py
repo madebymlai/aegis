@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     RunConfig,
 )
 from research.aegis_research.optimization.evidence import result_evidence

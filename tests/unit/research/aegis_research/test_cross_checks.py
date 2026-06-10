@@ -18,8 +18,8 @@ from research.aegis_research.component_registry.contracts import (
     StrategyManifest,
 )
 from research.aegis_research.component_registry.registry import FrozenComponentRegistry
+from research.aegis_research.configuration import ConfigValidationIssue
 from research.aegis_research.configuration.cross_checks import cross_check_registries
-from research.aegis_research.configuration.schema import ConfigValidationIssue
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from tests.support.research.aegis_research.factories import (
     make_component_registry,

@@ -31,7 +31,7 @@ import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
 
-from research.aegis_research.configuration.schema import (
+from research.aegis_research.configuration import (
     OptimizationConfig,
     PortfolioConfig,
     RankingConfig,
