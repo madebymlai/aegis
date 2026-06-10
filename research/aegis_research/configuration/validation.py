@@ -202,9 +202,7 @@ def _validation_error_to_issues_whole_tree(
                 if isinstance(part, int):
                     parts.append(f"[{part}]")
                 else:
-                    if parts and not parts[-1].startswith("["):
-                        parts.append(".")
-                    elif parts:
+                    if parts:
                         parts.append(".")
                     parts.append(str(part))
             path = "".join(parts).lstrip(".")
