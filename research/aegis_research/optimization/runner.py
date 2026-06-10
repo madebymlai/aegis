@@ -23,6 +23,7 @@ splitter is built with explicit ``set_labels=["selection", "held_out"]`` so that
 from __future__ import annotations
 
 import dataclasses
+import multiprocessing
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -145,6 +146,8 @@ def execute_optimization(
     )
 
     param_names = selection_grid.param_levels
+    # Collect non-executable-row counts from the selection sweep.
+    selection_held_counts: list[int] = getattr(selection_metrics, "held_counts", [])
     return _attach_held_out(
         result,
         splitter=splitter,
@@ -157,6 +160,7 @@ def execute_optimization(
         param_names=param_names,
         invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,
+        selection_held_counts=selection_held_counts,
     )
 
 
@@ -183,11 +187,19 @@ def _build_precomputed_window_metrics(
 
     ``close``, ``open_`` and ``store`` are closure-captured (passed through
     ``apply`` unchanged); only the per-(split,set) ``range_`` template arrives
-    positionally. ``open_`` is sliced to the same window so next-open execution
-    fills each window's targets at that window's open prices. Selection and
-    held-out sweeps use the same callback shape — and are handed the same
-    ``invalid_candidate_keys`` (a required argument) — so they cannot drift.
+    positionally. ``close.index`` (the full loaded-data calendar) is passed as
+    the market index so the seam mask can detect gaps in purged/embargoed
+    split windows. Selection and held-out sweeps use the same callback shape —
+    and are handed the same ``invalid_candidate_keys`` (a required argument) —
+    so they cannot drift.
+
+    Returns a callable whose ``held_counts`` attribute is a shared
+    ``multiprocessing.Manager.list`` of per-call non-executable-row counts
+    accumulated during the sweep (parallel-safe via proxy serialization).
     """
+    manager = multiprocessing.Manager()
+    held_counts = manager.list()  # type: ignore[var-annotated]
+    full_index = close.index
 
     def window_metrics(range_: slice, **params: Any) -> Any:
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
@@ -207,9 +219,19 @@ def _build_precomputed_window_metrics(
         # stay in the grid without masking. The all-invalid short-circuit
         # above is a pure performance guard.
         return _metrics_from_allocations(
-            close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names, extractors
+            close_window,
+            open_window,
+            wide_allocations,
+            portfolio,
+            report,
+            metric_keys,
+            param_names,
+            extractors,
+            market_index=full_index,
+            held_counts_out=held_counts,
         )
 
+    window_metrics.held_counts = held_counts  # type: ignore[attr-defined]
     return window_metrics
 
 
@@ -238,20 +260,25 @@ def _metrics_from_allocations(
     metric_keys: list[tuple],
     param_names: list[str],
     extractors: Mapping[str, ExtractorSpec],
+    *,
+    market_index: pd.Index,
+    held_counts_out: Any = None,
 ) -> Any:
     if wide_allocations is vbt.NoResult:
         return vbt.NoResult
     n_symbols = len(close_window.columns)
     if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
         return vbt.NoResult
-    pf, _held_count = simulate_portfolio_batch(
+    pf, held_count = simulate_portfolio_batch(
         close_window,
         wide_allocations,
         portfolio,
         open_=open_window,
-        market_index=close_window.index,
+        market_index=market_index,
         periods_per_year=report.periods_per_year,
     )
+    if held_counts_out is not None:
+        held_counts_out.append(held_count)
     return central_metrics_from_grouped_accessors(
         pf, report, metric_keys, param_names, extractors
     )
@@ -338,6 +365,7 @@ def _attach_held_out(
     param_names: list[str],
     invalid_candidate_keys: set[CandidateKey],
     extractors: Mapping[str, ExtractorSpec],
+    selection_held_counts: list[int] | None = None,
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
     unique_params: list[dict[str, Any]] = []
@@ -368,6 +396,9 @@ def _attach_held_out(
         set_=HELD_OUT_SET,
         parallel=False,
     )
+    # Aggregate non-executable-row counts from both sweeps.
+    held_out_held_counts: list[int] = getattr(held_out_metrics, "held_counts", [])
+    non_executable_rows = sum(selection_held_counts or []) + sum(held_out_held_counts)
     return OptimizationResult(
         best=_with_held_out(result.best, held_out_grid),
         median=_with_held_out(result.median, held_out_grid),
@@ -375,6 +406,7 @@ def _attach_held_out(
         excluded_degenerate=result.excluded_degenerate,
         excluded_invalid=result.excluded_invalid,
         total_candidates=result.total_candidates,
+        non_executable_rows=non_executable_rows,
     )
 
 

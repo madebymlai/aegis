@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "b55432fe23d58a91b5571505a0011aeb4de6cef2c556f7d873349a24fdadc26b",
+      "hash": "491e1df145d22159f78f9d00f4efa550ac71654a76a392b4ca0e3c20c133ffda",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 49377,
+      "size": 49407,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -1141,6 +1141,7 @@
             }
           }
         },
+        "non_executable_rows": 0,
         "schema_version": "optimization_result.v3",
         "total": 30,
         "worst": {

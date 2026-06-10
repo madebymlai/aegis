@@ -66,6 +66,7 @@ class OptimizationResult:
     excluded_degenerate: int = 0
     excluded_invalid: int = 0
     total_candidates: int = 0
+    non_executable_rows: int = 0
 
 
 def select_representative_candidates(

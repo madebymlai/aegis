@@ -152,6 +152,7 @@ def result_evidence(result: OptimizationResult) -> dict[str, Any]:
         "total": result.total_candidates,
         "excluded_invalid": result.excluded_invalid,
         "excluded_degenerate": result.excluded_degenerate,
+        "non_executable_rows": result.non_executable_rows,
     }
 
 
