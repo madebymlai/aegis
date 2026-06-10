@@ -12,10 +12,8 @@ from pydantic import (
     ConfigDict,
     Field,
     TypeAdapter,
-    model_validator,
-)
-from pydantic import (
     ValidationError as PydanticValidationError,
+    model_validator,
 )
 
 from research.aegis_research.component_registry.contracts import (
@@ -152,7 +150,7 @@ def _validate_manifest_input_name(token: str) -> str:
 
 def _validate_manifest_output_name(token: str) -> str:
     """Pydantic item-validator: output_names must be VBT feature names."""
-    if not token or not has_data_array_token_shape(token):
+    if not has_data_array_token_shape(token):
         raise ValueError(
             "must be a VBT feature name without surrounding whitespace or control characters"
         )
@@ -195,12 +193,22 @@ class _BaseManifestPayload(BaseModel):
     version: NonEmptyStr
     input_names: list[_ManifestInputName]
     wide_callable: NonEmptyStr
+    param_names: list[NonEmptyStr] = []
+    defaults: dict[str, Any] = {}
+    param_space_callable: NonEmptyStr | None = None
 
     @model_validator(mode="after")
     def _reject_dot_ids(self) -> _BaseManifestPayload:
         if self.id in {".", ".."}:
+            raise ValueError("component id must not be '.' or '..'")
+        return self
+
+    @model_validator(mode="after")
+    def _check_defaults_in_params(self) -> _BaseManifestPayload:
+        unknown = sorted(set(self.defaults) - set(self.param_names))
+        if unknown:
             raise ValueError(
-                "component id must contain only letters, numbers, dots, underscores, and hyphens"
+                f"defaults keys must be declared in param_names; unknown: {unknown}"
             )
         return self
 
@@ -208,10 +216,7 @@ class _IndicatorManifestPayload(_BaseManifestPayload):
     """Pydantic model for indicator manifest payload validation."""
 
     family: Literal["indicators"]
-    param_names: list[NonEmptyStr] = []
     output_names: list[_ManifestOutputName]
-    defaults: dict[str, Any] = {}
-    param_space_callable: NonEmptyStr | None = None
     bar_aligned: Literal[True] = True
 
     @model_validator(mode="after")
@@ -220,24 +225,12 @@ class _IndicatorManifestPayload(_BaseManifestPayload):
             raise ValueError("output_names must not be empty")
         return self
 
-    @model_validator(mode="after")
-    def _check_defaults_in_params(self) -> _IndicatorManifestPayload:
-        unknown = sorted(set(self.defaults) - set(self.param_names))
-        if unknown:
-            raise ValueError(
-                f"defaults keys must be declared in param_names; unknown: {unknown}"
-            )
-        return self
-
 class _StrategyManifestPayload(_BaseManifestPayload):
     """Pydantic model for strategy manifest payload validation."""
 
     family: Literal["strategies"]
-    param_names: list[NonEmptyStr] = []
     output_name: NonEmptyStr
     consumes_outputs: list[NonEmptyStr] = []
-    defaults: dict[str, Any] = {}
-    param_space_callable: NonEmptyStr | None = None
     owns_portfolio: Literal[False] = False
 
     @model_validator(mode="after")
@@ -246,15 +239,6 @@ class _StrategyManifestPayload(_BaseManifestPayload):
             raise ValueError(
                 f"unsupported allocation output {self.output_name!r}; "
                 f"registered shapes are {STRATEGY_ALLOCATION_OUTPUTS}"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _check_defaults_in_params(self) -> _StrategyManifestPayload:
-        unknown = sorted(set(self.defaults) - set(self.param_names))
-        if unknown:
-            raise ValueError(
-                f"defaults keys must be declared in param_names; unknown: {unknown}"
             )
         return self
 
