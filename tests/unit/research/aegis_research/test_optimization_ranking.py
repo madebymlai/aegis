@@ -325,6 +325,7 @@ def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
         "excluded_degenerate",
         "excluded_invalid",
         "total_candidates",
+        "non_executable_rows",
     ]
 
 

@@ -58,6 +58,14 @@ class OptimizationResult:
     estimate. By the time ranking runs the verdict is materialised, so the count
     is authoritative by construction. It lets consumers report the
     researched/total terminal ratio.
+
+    ``non_executable_rows`` is the total number of index rows the portfolio
+    engine could not execute because of gaps in the market calendar (purge
+    embargoes, held-out non-contiguity). It is the sum of the held-count
+    accumulated across every selection and held-out sweep window. A value of
+    zero means the split method produced contiguous windows; a positive value
+    records the combined execution-footprint cost of non-contiguous splits
+    (e.g. purged k-fold).
     """
 
     best: EvaluatedCandidate
@@ -66,6 +74,7 @@ class OptimizationResult:
     excluded_degenerate: int = 0
     excluded_invalid: int = 0
     total_candidates: int = 0
+    non_executable_rows: int = 0
 
 
 def select_representative_candidates(

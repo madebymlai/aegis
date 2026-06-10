@@ -373,11 +373,13 @@ def test_result_evidence_serializes_three_candidates() -> None:
         "total",
         "excluded_invalid",
         "excluded_degenerate",
+        "non_executable_rows",
     }
     assert evidence["schema_version"] == "optimization_result.v3"
     assert evidence["total"] == 12
     assert evidence["excluded_invalid"] == 1
     assert evidence["excluded_degenerate"] == 4
+    assert evidence["non_executable_rows"] == 0
     assert evidence["best"]["params"] == {"rsi_window": 14}
     assert evidence["best"]["score"] == 0.9
     assert evidence["best"]["held_out_metrics_mean"] == pytest.approx({"total_return": 0.885})

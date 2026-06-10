@@ -316,6 +316,70 @@ def test_held_out_and_selection_builds_receive_the_same_invalid_candidate_set(
     )
 
 
+def test_runner_passes_full_market_index_to_simulate_not_window_index(monkeypatch) -> None:
+    """The runner must pass the full loaded-data index as market_index,
+    not the window's own index. With a contiguous split method both are
+    effectively the same, but with a purged split the difference is that the
+    full index has gaps the window index doesn't."""
+    from research.aegis_research.optimization import runner
+
+    real_metrics = runner._metrics_from_allocations
+    captured_indices: list[pd.Index] = []
+
+    def spy(*args, market_index, **kwargs):
+        captured_indices.append(market_index)
+        return real_metrics(*args, market_index=market_index, **kwargs)
+
+    monkeypatch.setattr(runner, "_metrics_from_allocations", spy)
+
+    _run([0.2, 0.5, 1.0])
+
+    full_index = _uptrend_close().index
+    assert len(captured_indices) > 0, (
+        "expected at least one simulate call through _metrics_from_allocations"
+    )
+    for idx in captured_indices:
+        assert idx.equals(full_index), (
+            f"market_index must be the full loaded-data index ({len(full_index)} rows); "
+            f"got an index with {len(idx)} rows"
+        )
+
+
+def test_runner_records_zero_non_executable_rows_for_contiguous_split() -> None:
+    """A contiguous walk-forward split has no gaps, so the seam mask never fires
+    and non_executable_rows must be zero — this is an invariant monitor."""
+    result = _run([0.2, 0.5, 1.0])
+    assert result.non_executable_rows == 0, (
+        f"contiguous split must record zero non_executable_rows; got {result.non_executable_rows}"
+    )
+
+
+def test_runner_records_positive_non_executable_rows_for_purged_kfold_split() -> None:
+    """A purged k-fold split has purge gaps between folds; the complement
+    (held-out) set is non-contiguous, so the seam mask fires and
+    non_executable_rows must be positive."""
+    close = _uptrend_close()
+    purged_opt = make_optimization_config(
+        search="grid",
+        split=make_run_split_config(
+            method="from_purged_kfold", params={"n_folds": 3, "n_test_folds": 1}
+        ),
+    )
+    result = execute_optimization(
+        close=close,
+        open_=close,
+        source=_source([0.2, 0.5, 1.0]),
+        optimization=purged_opt,
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
+    )
+    assert result.non_executable_rows > 0, (
+        f"purged k-fold split must record positive non_executable_rows; got {result.non_executable_rows}"
+    )
+
+
 def test_phase1_sweeps_in_parallel_with_pathos_and_phase3_runs_sequentially(monkeypatch) -> None:
     """Phase 1 distributes mono-chunks across processes via pathos; Phase 3 (the
     three held-out candidates) sweeps a single mono-chunk sequentially in-process."""
