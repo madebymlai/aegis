@@ -189,6 +189,7 @@ def test_candidate_identity_golden_bytes_pin() -> None:
         b'"ma_window":100,"rsi_window":14},"schema_version":"candidate_identity.v3",'
         b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
     )
+    assert row["candidate_key"] == "cand_e1dec236b80331986059744bf9f79913"
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:

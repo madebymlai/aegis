@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from enum import Enum
@@ -9,7 +10,6 @@ import numpy as np
 import pandas as pd
 
 from research.aegis_research.canonical_json import canonical_json_bytes as _canonical_json_bytes
-from research.aegis_research.optimization.canonical import mint_canonical_token
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -21,6 +21,7 @@ CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v2"
 OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v3"
 CANDIDATE_ROLES = ("best", "median", "worst")
 DEFAULT_COORDINATE_LEVELS = frozenset({"split", "set", "symbol"})
+_CANDIDATE_KEY_DIGEST_CHARS = 32
 
 # Selection->held-out gap (ranking-metric units) above which the best candidate is
 # flagged for selection-set optimism. Calibrated for Sharpe-scale ranking metrics
@@ -346,4 +347,5 @@ def canonical_value(value: Any) -> Any:
 
 
 def _candidate_key(identity: Mapping[str, Any]) -> str:
-    return mint_canonical_token("cand", identity)
+    digest = hashlib.sha256(_canonical_json_bytes(identity)).hexdigest()
+    return f"cand_{digest[:_CANDIDATE_KEY_DIGEST_CHARS]}"

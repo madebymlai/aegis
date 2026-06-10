@@ -7,7 +7,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.optimization.canonical import canonical_json_bytes
+from research.aegis_research.canonical_json import canonical_json_bytes
 
 SCHEMA_VERSION = 5
 PUBLICATION_PENDING = "pending"

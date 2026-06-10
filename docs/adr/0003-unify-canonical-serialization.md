@@ -23,3 +23,7 @@ The single forced byte change is placed on the **Manifest**/**Evidence** content
 - Golden-bytes tests pin the current `lock_…`/`cand_…` token bytes as the regression guard that proves the refactor froze identities.
 - Introduces the **Canonical Form** term (added to `CONTEXT.md`).
 - Structural divergence from this ADR's original draft, recorded here as the as-built shape: the leaf is `canonical_json.py` (not `canonical.py`), and the stable-ID primitive shipped as `mint_canonical_token` / `canonical_digest` in `optimization/canonical.py` (not as `stable_id(prefix, payload)` in the leaf) so the leaf stays free of any `sha256` concern and `optimization` owns its token vocabulary. Thin re-export shims (`optimization/canonical_json.py`, the `optimization/canonical.py` re-exports) keep optimization-local import paths stable.
+
+## Amendment (2026-06-11)
+
+The `lock_` token and `lock_resolution` were later retired (a **Lock** now resolves through `candidate_rankings`; see CONTEXT.md ¶**Lock**). That left `mint_canonical_token` with a single consumer — the **Candidate Key** in `candidate_evidence` — so the token recipe was inlined into `_candidate_key` there and the `optimization/canonical.py` shim was deleted. The one-rule byte recipe in `canonical_json.py` is unchanged; Candidate Keys still reproduce byte-for-byte (golden pin in `test_optimization_candidate_evidence.py::test_candidate_identity_golden_bytes_pin`).

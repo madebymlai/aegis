@@ -44,8 +44,12 @@ _Avoid_: tidy grid, metrics frame, results table, parameter grid
 The durable, cross-**Run** store of published **Candidates** and their **Provenance**. Publishing a **Run's** three representative Candidates into it is what makes them referenceable by later Runs: a **Lock** resolves against the Candidate Store. It is the boundary between results internal to one Run and results visible to all Runs.
 _Avoid_: database, candidate cache, results table
 
+**Candidate Key**:
+The content-derived identifier that names a **Candidate** across **Runs**, computed from the **Canonical Form** of the Candidate's identity — identical parameters, data, and policy always yield the same key. It is what the **Candidate Store** keys rows by and what a **Lock** role resolves to.
+_Avoid_: candidate token, token, candidate hash, candidate_id
+
 **Lock**:
-A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run**. Written as a human-friendly scalar `run_id[:role]`: a bare `run_id` locks the **best** **Candidate** (the default), and `:median`/`:worst` pick the other representatives — the **Run** folder name *is* the `run_id`, so the common case is copy-the-directory-name-and-paste. The precise mapping form `{run_id, candidate_id}` also resolves, where `candidate_id` is a `role` keyword or a raw `candidate_key` hash; `run_id` + a resolved `candidate_key` together *are* the `candidates` primary key, so a Lock needs no separate storage. A `role` resolves to its `candidate_key` through the storage-free `candidate_rankings` table, and **Lock** provenance always records the resolved hash. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body (the overridden values are recorded in **Evidence**, never silently dropped).
+A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run**. Written as a human-friendly scalar `run_id[:role]`: a bare `run_id` locks the **best** **Candidate** (the default), and `:median`/`:worst` pick the other representatives — the **Run** folder name *is* the `run_id`, so the common case is copy-the-directory-name-and-paste. The precise mapping form `{run_id, candidate_id}` also resolves, where `candidate_id` is a `role` keyword or a raw **Candidate Key**; `run_id` + a resolved **Candidate Key** together *are* the `candidates` primary key, so a Lock needs no separate storage. A `role` resolves to its **Candidate Key** through the storage-free `candidate_rankings` table, and **Lock** provenance always records the resolved hash. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body (the overridden values are recorded in **Evidence**, never silently dropped).
 _Avoid_: promotion, lock token, per-component lock, lock_id
 
 **Manifest**:
@@ -57,7 +61,7 @@ A structured, schema-versioned artifact written by a **Run** stage that records 
 _Avoid_: output, result, log
 
 **Canonical Form**:
-The deterministic, hash-stable byte representation of a value — sorted keys, strict (no NaN/Inf literals), one encoding rule — that makes a **Manifest** hash, an **Evidence** content hash, and a **Candidate** token reproducible across processes and machines. **Candidate** identity is a richer, schema-versioned canonicalization layered on top of it.
+The deterministic, hash-stable byte representation of a value — sorted keys, strict (no NaN/Inf literals), one encoding rule — that makes a **Manifest** hash, an **Evidence** content hash, and a **Candidate Key** reproducible across processes and machines. **Candidate** identity is a richer, schema-versioned canonicalization layered on top of it.
 _Avoid_: serialization, JSON dump, to_builtin
 
 **Metric**:
