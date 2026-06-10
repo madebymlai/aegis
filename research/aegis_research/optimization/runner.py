@@ -23,8 +23,7 @@ for both phases, so selection and held-out share identical split boundaries and
 from __future__ import annotations
 
 import dataclasses
-import multiprocessing
-from collections.abc import Callable, Mapping, MutableSequence
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
@@ -63,7 +62,10 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
-from research.aegis_research.portfolios import simulate_portfolio_batch
+from research.aegis_research.portfolios import (
+    count_non_executable_rows,
+    simulate_portfolio_batch,
+)
 from research.aegis_research.run_splits import (
     HELD_OUT_SET,
     SELECTION_SET,
@@ -148,8 +150,14 @@ def execute_optimization(
     )
 
     param_names = selection_grid.param_levels
-    # Collect non-executable-row counts from the selection sweep.
-    selection_held_counts: list[int] = getattr(selection_metrics, "held_counts", [])
+    # The seam cost of the Split structure: a pure function of window geometry
+    # and the loaded-data calendar, independent of which candidates ran and of
+    # how the sweep was chunked.
+    non_executable_rows = sum(
+        count_non_executable_rows(window_index, close.index)
+        for split in split_result.splits
+        for window_index in (split.selection_index, split.held_out_index)
+    )
     return _attach_held_out(
         result,
         splitter=splitter,
@@ -162,7 +170,7 @@ def execute_optimization(
         param_names=param_names,
         invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,
-        selection_held_counts=selection_held_counts,
+        non_executable_rows=non_executable_rows,
     )
 
 
@@ -186,12 +194,7 @@ def _build_precomputed_window_metrics(
     split windows. Selection and held-out sweeps use the same callback shape —
     and are handed the same ``invalid_candidate_keys`` (a required argument) —
     so they cannot drift.
-
-    Returns a callable whose ``held_counts`` attribute is a shared
-    ``multiprocessing.Manager.list`` of per-call non-executable-row counts
-    accumulated during the sweep (parallel-safe via proxy serialization).
     """
-    held_counts = multiprocessing.Manager().list()  # type: ignore[var-annotated]
     full_index = close.index
 
     def window_metrics(range_: slice, **params: Any) -> Any:
@@ -221,10 +224,8 @@ def _build_precomputed_window_metrics(
             param_names,
             extractors,
             market_index=full_index,
-            held_counts_out=held_counts,
         )
 
-    window_metrics.held_counts = held_counts  # type: ignore[attr-defined]
     return window_metrics
 
 
@@ -255,14 +256,13 @@ def _metrics_from_allocations(
     extractors: Mapping[str, ExtractorSpec],
     *,
     market_index: pd.Index,
-    held_counts_out: MutableSequence[int] | None = None,
 ) -> Any:
     if wide_allocations is vbt.NoResult:
         return vbt.NoResult
     n_symbols = len(close_window.columns)
     if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
         return vbt.NoResult
-    pf, held_count = simulate_portfolio_batch(
+    pf = simulate_portfolio_batch(
         close_window,
         wide_allocations,
         portfolio,
@@ -270,8 +270,6 @@ def _metrics_from_allocations(
         market_index=market_index,
         periods_per_year=report.periods_per_year,
     )
-    if held_counts_out is not None:
-        held_counts_out.append(held_count)
     return central_metrics_from_grouped_accessors(
         pf, report, metric_keys, param_names, extractors
     )
@@ -358,7 +356,7 @@ def _attach_held_out(
     param_names: list[str],
     invalid_candidate_keys: set[CandidateKey],
     extractors: Mapping[str, ExtractorSpec],
-    selection_held_counts: list[int] | None = None,
+    non_executable_rows: int,
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
     unique_params: list[dict[str, Any]] = []
@@ -389,9 +387,6 @@ def _attach_held_out(
         set_=HELD_OUT_SET,
         parallel=False,
     )
-    # Aggregate non-executable-row counts from both sweeps.
-    held_out_held_counts: list[int] = getattr(held_out_metrics, "held_counts", [])
-    non_executable_rows = sum(selection_held_counts or []) + sum(held_out_held_counts)
     return OptimizationResult(
         best=_with_held_out(result.best, held_out_grid),
         median=_with_held_out(result.median, held_out_grid),
