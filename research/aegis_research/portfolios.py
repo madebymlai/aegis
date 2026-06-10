@@ -71,7 +71,11 @@ def _build_portfolio(
     group_by: Any,
     periods_per_year: int,
 ) -> tuple[vbt.Portfolio, int]:
-    """Mask allocations, build the PFO, and run ``from_optimizer``.
+    """Build a simulated portfolio from allocations.
+
+    Masks gap rows as non-executable, force-liquidates the terminal row to
+    cash, builds the PFO, runs ``from_optimizer``, and asserts no NoCash
+    rejection occurred.
 
     Returns the simulated portfolio and the count of held (non-executable) rows.
     """
@@ -79,7 +83,7 @@ def _build_portfolio(
         allocations, market_index=market_index
     )
     # Terminal liquidation: zero the final row so runs end in realized cash.
-    if not masked.empty and len(masked.columns) > 0:
+    if not masked.empty:
         masked.iloc[-1, :] = 0.0
     pfo = vbt.PFO.from_filled_allocations(
         masked,
@@ -299,9 +303,6 @@ def _assert_numeric_non_null_close(close: pd.DataFrame) -> None:
         raise ValueError(f"portfolio Close input has non-numeric columns {non_numeric}")
     if close.isna().any().any():
         raise ValueError("portfolio Close input contains null prices")
-
-
-# ── Non-executable row mask (private) ───────────────────────────────────────
 
 
 def _apply_non_executable_mask(
