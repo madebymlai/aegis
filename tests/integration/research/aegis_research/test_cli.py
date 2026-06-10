@@ -575,3 +575,218 @@ def test_safe_path_hides_relative_paths_that_escape_cwd(
 
     assert safe_path("runs/example") == "runs/example"
     assert safe_path("../private/runs") == "<path>"
+
+
+# ── config-schema show subcommand ────────────────────────────────────────────
+
+
+def test_show_config_schema_exits_zero_and_prints_markdown(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Human mode prints markdown with key contract sections."""
+    assert cli.main(["show", "config-schema"]) == 0
+
+    output = capsys.readouterr()
+    guide = output.out
+
+    assert "# Run Config Forward Contract" in guide
+    assert "## Forward-Contract Overrides" in guide
+    assert "## Top-Level Fields" in guide
+    assert "## Literal Catalogs" in guide
+    assert "## Split Parameters" in guide
+    assert "## Component IDs" in guide
+    assert "## Example Run Config" in guide
+
+    # Prepass overlay: optimization required, schema_version const 8
+    assert "optimization`** — required" in guide
+    assert "schema_version`** — must be present and exactly `8`" in guide
+
+    # Pointers to other show subcommands
+    assert "`aerd show splitters <method>`" in guide
+    assert "`aerd show components`" in guide
+
+
+def test_show_config_schema_json_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """JSON mode returns the standard structured envelope with full markdown."""
+    assert cli.main(["show", "config-schema", "--json"]) == 0
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+
+    assert payload["status"] == "success"
+    assert payload["ok"] is True
+    assert payload["command"] == "show"
+    assert payload["format"] == "markdown"
+    assert payload["schema_version"] == 1
+
+    content = payload["content"]
+    assert isinstance(content, str)
+    assert len(content) > 1000  # Full guide, not clipped
+    assert "# Run Config Forward Contract" in content
+    assert "## Forward-Contract Overrides" in content
+    assert "## Literal Catalogs" in content
+
+
+def test_show_config_schema_marks_optimization_required_and_schema_version_const(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The rendered guide states the forward contract, not the raw model."""
+    assert cli.main(["show", "config-schema"]) == 0
+
+    guide = capsys.readouterr().out
+
+    # optimization is marked required (model default is None)
+    assert "optimization`** — required" in guide
+    assert "forward contract requires" in guide.lower()
+
+    # schema_version is const 8 (model default is CONFIG_SCHEMA_VERSION)
+    assert "schema_version`** — must be present and exactly `8`" in guide
+
+
+def test_show_config_schema_literal_catalogs_interpolated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Literal catalogs are interpolated from code constants at render time."""
+    assert cli.main(["show", "config-schema"]) == 0
+
+    guide = capsys.readouterr().out
+
+    # Portfolio directions
+    assert "Portfolio Directions" in guide
+    assert "`longonly`" in guide
+    assert "`shortonly`" in guide
+    assert "`both`" in guide
+
+    # Optimization search policies
+    assert "Optimization Search Policies" in guide
+    assert "`grid`" in guide
+    assert "`random`" in guide
+
+    # Data-array shortcuts
+    assert "Data-Array Shortcuts" in guide
+    assert "`OHLCV`" in guide
+
+    # Lock roles
+    assert "Lock Roles" in guide
+    assert "`best`" in guide
+    assert "`median`" in guide
+    assert "`worst`" in guide
+
+    # Signal catalogs
+    assert "Signal Policies" in guide
+    assert "Signal Execution Timings" in guide
+
+    # Reserved execute keys
+    assert "Reserved `optimization.execute` Keys" in guide
+
+
+def test_show_config_schema_points_at_splitters_and_components(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The guide points at aerd show splitters and aerd show components."""
+    assert cli.main(["show", "config-schema"]) == 0
+
+    guide = capsys.readouterr().out
+
+    assert "`aerd show splitters <method>`" in guide
+    assert "`aerd show components`" in guide
+
+
+def test_show_config_schema_embedded_example_validates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The embedded example Run Config YAML validates through the real
+    validation coordinator with wired demo components."""
+    monkeypatch.chdir(tmp_path)
+    write_indicator_component(
+        tmp_path / "research" / "components" / "indicators" / "returns.py"
+    )
+    write_strategy_component(
+        tmp_path / "research" / "components" / "strategies" / "strategy.py"
+    )
+
+    from research.aegis_research.configuration import (
+        CONFIG_SCHEMA_VERSION,
+        resolve_run_config,
+    )
+
+    example_raw = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "example.run",
+        "data": {
+            "source": "synthetic",
+            "symbols": ["A", "B", "C"],
+            "rows": 250,
+            "arrays": ["OHLCV"],
+        },
+        "portfolio": {
+            "gross_cap": 1.0,
+            "direction": "longonly",
+        },
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
+        "ranking": {"metric": "sharpe_ratio"},
+        "optimization": {
+            "search": "grid",
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 126, "split": 0.5},
+                "max_splits": 2,
+            },
+        },
+    }
+
+    resolved = resolve_run_config(example_raw)
+    assert resolved is not None
+    assert resolved.config.name == "example.run"
+    assert resolved.config.data.source == "synthetic"
+    assert resolved.config.portfolio.direction == "longonly"
+    assert resolved.config.optimization is not None
+    assert resolved.config.optimization.search == "grid"
+
+
+def test_show_config_schema_coherence_optimization_required(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Coherence: a config omitting optimization fails validation AND the
+    rendered guide states it required."""
+    # Side A: guide states optimization required
+    assert cli.main(["show", "config-schema"]) == 0
+    guide = capsys.readouterr().out
+    assert "optimization`** — required" in guide
+
+    # Side B: config omitting optimization fails validation
+    monkeypatch.chdir(tmp_path)
+    write_indicator_component(
+        tmp_path / "research" / "components" / "indicators" / "returns.py"
+    )
+    write_strategy_component(
+        tmp_path / "research" / "components" / "strategies" / "strategy.py"
+    )
+
+    from research.aegis_research.configuration import (
+        CONFIG_SCHEMA_VERSION,
+        ConfigValidationError,
+        resolve_run_config,
+    )
+
+    raw_no_optimization = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "test",
+        "data": {"source": "synthetic", "symbols": ["A"], "rows": 100, "arrays": ["OHLCV"]},
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
+        "ranking": {"metric": "sharpe_ratio"},
+    }
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        resolve_run_config(raw_no_optimization)
+
+    messages = "; ".join(i.message for i in exc_info.value.issues)
+    assert "optimization" in messages.lower()
