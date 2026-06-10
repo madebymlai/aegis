@@ -6,6 +6,7 @@ invoked per single-candidate batch.  Bitwise NaN-aware equality — no tolerance
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -184,10 +185,9 @@ def _assert_strategy_batch_equals_stitched(
 
     run = definition.load_callable()
 
-    # ── Batch ─────────────────────────────────────────────────────────
     batch_inputs = ComponentStrategyInputs(
         data=data,
-        indicators=dict(indicator_outputs),
+        indicators=indicator_outputs,
         n_candidates=n_candidates,
         n_symbols=S,
         metadata={},
@@ -196,7 +196,6 @@ def _assert_strategy_batch_equals_stitched(
         run(batch_inputs, n_candidates=n_candidates, **param_lists)
     )
 
-    # ── Stitch single-candidate ───────────────────────────────────────
     stitched = np.full((T, n_candidates * S), np.nan)
     for i in range(n_candidates):
         single_indicators = {
@@ -241,38 +240,52 @@ def test_fixture_component_is_batch_self_consistent(definition: Any) -> None:
         )
 
 
-# ── Batch-dependent toy component (must fail oracle) ──────────────────────
+# ── Batch-dependent toy component (contract enforcement proof) ─────────────
 
-def _write_toy_batch_dependent(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "# %% component overview\n"
-        "# Deliberately batch-dependent indicator -- divides by n_candidates.\n"
-        "# %% imports\n"
-        "import numpy as np\n"
-        "# %% define component metadata\n"
-        "COMPONENT_MANIFEST = {\n"
-        '    "family": "indicators",\n'
-        '    "id": "toy.batch_dependent",\n'
-        '    "version": "1.0.0",\n'
-        '    "input_names": ["Close"],\n'
-        '    "param_names": [],\n'
-        '    "output_names": ["batch_norm"],\n'
-        '    "defaults": {},\n'
-        "}\n"
-        "# %% main compute\n"
-        "def run(data, *, n_candidates, **param_lists):\n"
-        '    """Return batch-dependent normalized close, dividing by n_candidates."""\n'
-        '    close = data.feature("Close")\n'
-        "    T, S = close.shape\n"
-        "    values = close.values\n"
-        "    result = np.full((T, n_candidates * S), np.nan)\n"
-        "    for ci in range(n_candidates):\n"
-        "        cols = slice(ci * S, (ci + 1) * S)\n"
-        "        # BATCH-DEPENDENT: divides by n_candidates\n"
-        "        result[:, cols] = values / n_candidates\n"
-        '    return {"batch_norm": result}\n'
+_TOY_BATCH_DEPENDENT_SOURCE = textwrap.dedent('''\
+    # %% component overview
+    # Deliberately batch-dependent indicator -- divides by n_candidates.
+    # %% imports
+    import numpy as np
+    # %% define component metadata
+    COMPONENT_MANIFEST = {
+        "family": "indicators",
+        "id": "toy.batch_dependent",
+        "version": "1.0.0",
+        "input_names": ["Close"],
+        "param_names": [],
+        "output_names": ["batch_norm"],
+        "defaults": {},
+    }
+    # %% main compute
+    def run(data, *, n_candidates, **param_lists):
+        """Return batch-dependent normalized close, dividing by n_candidates."""
+        close = data.feature("Close")
+        T, S = close.shape
+        values = close.values
+        result = np.full((T, n_candidates * S), np.nan)
+        for ci in range(n_candidates):
+            cols = slice(ci * S, (ci + 1) * S)
+            # BATCH-DEPENDENT: divides by n_candidates
+            result[:, cols] = values / n_candidates
+        return {"batch_norm": result}
+    ''')
+
+
+def _setup_batch_dependent(
+    tmp_path: Path,
+) -> tuple[Any, MarketDataBundle]:
+    """Write toy batch-dependent Component to *tmp_path* and return (definition, data)."""
+    comp_path = tmp_path / "components" / "indicators" / "toy_batch_dependent.py"
+    comp_path.parent.mkdir(parents=True, exist_ok=True)
+    comp_path.write_text(_TOY_BATCH_DEPENDENT_SOURCE)
+
+    registry = discover_component_registry(
+        root=tmp_path / "components", repo_root=tmp_path
     )
+    defin = registry.definitions["indicators"]["toy.batch_dependent"]
+    data = _make_data(n_dates=20, symbols=["A", "B"], seed=1)
+    return defin, data
 
 
 def test_batch_dependent_component_fails_oracle(tmp_path: Path) -> None:
@@ -280,32 +293,16 @@ def test_batch_dependent_component_fails_oracle(tmp_path: Path) -> None:
 
     This proves the contract is enforceable, not vacuous.
     """
-    _write_toy_batch_dependent(tmp_path / "components" / "indicators" / "toy_batch_dependent.py")
-
-    registry = discover_component_registry(root=tmp_path / "components", repo_root=tmp_path)
-    defin = registry.definitions["indicators"]["toy.batch_dependent"]
-
-    data = _make_data(n_dates=20, symbols=["A", "B"], seed=1)
-    n_candidates = 3
-    param_lists: dict[str, list[Any]] = {}
-
+    defin, data = _setup_batch_dependent(tmp_path)
     with pytest.raises(AssertionError, match="batch != stitched"):
         _assert_indicator_batch_equals_stitched(
-            defin, data, n_candidates, param_lists
+            defin, data, n_candidates=3, param_lists={}
         )
 
 
 def test_batch_dependent_component_single_candidate_passes_trivially(
     tmp_path: Path,
 ) -> None:
-    """n_candidates=1 is the degenerate case -- must always pass."""
-    _write_toy_batch_dependent(tmp_path / "components" / "indicators" / "toy_batch_dependent.py")
-
-    registry = discover_component_registry(root=tmp_path / "components", repo_root=tmp_path)
-    defin = registry.definitions["indicators"]["toy.batch_dependent"]
-
-    data = _make_data(n_dates=20, symbols=["A", "B"], seed=1)
-    param_lists: dict[str, list[Any]] = {}
-
-    # n_candidates=1: batch and stitch are trivially identical.
-    _assert_indicator_batch_equals_stitched(defin, data, 1, param_lists)
+    """n_candidates=1 is the degenerate case — must always pass."""
+    defin, data = _setup_batch_dependent(tmp_path)
+    _assert_indicator_batch_equals_stitched(defin, data, n_candidates=1, param_lists={})
