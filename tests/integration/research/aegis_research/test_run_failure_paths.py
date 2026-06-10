@@ -255,7 +255,6 @@ def _write_run_config(
     *,
     strategy: dict[str, object] | None = None,
     strategy_id: str = "demo.ma_opt",
-    candidate_grid: dict[str, object] | None = None,
     optimization: dict[str, object] | None = None,
 ) -> Path:
     path = tmp_path / "run.yaml"
@@ -264,7 +263,6 @@ def _write_run_config(
             _run_config_payload(
                 strategy=strategy or {"id": strategy_id},
                 indicators=[],
-                candidate_grid=candidate_grid,
                 optimization=optimization or {"search": "grid", "split": _rolling_split_config()},
             ),
             sort_keys=False,
@@ -284,7 +282,6 @@ def _run_config_payload(
     *,
     strategy: dict[str, object],
     indicators: list[dict[str, object]],
-    candidate_grid: dict[str, object] | None = None,
     optimization: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
@@ -301,7 +298,6 @@ def _run_config_payload(
         "strategy": strategy,
         "indicators": indicators,
         "ranking": {"metric": "total_return"},
-        **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
         **({"optimization": optimization} if optimization is not None else {}),
     }
 
