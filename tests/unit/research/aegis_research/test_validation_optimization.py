@@ -210,3 +210,31 @@ def test_optimization_must_be_mapping(tmp_path: Path) -> None:
         _resolve("not_a_dict", tmp_path=tmp_path)
     issues = [(i.path, i.message) for i in e.value.issues]
     assert ("optimization", "Input should be a dictionary or an instance of OptimizationConfig") in issues
+
+
+# ── numeric ranges (reproducibility and split budget knobs) ───────────────────
+
+
+def test_optimization_rejects_non_positive_random_subset() -> None:
+    with pytest.raises(ValidationError) as e:
+        _OPTIMIZATION_ADAPTER.validate_python(
+            {"search": "random", "split": _SPLIT, "random_subset": 0, "seed": 7}
+        )
+    assert [x for x in e.value.errors() if x["loc"] == ("random_subset",)]
+
+
+def test_optimization_rejects_negative_seed() -> None:
+    with pytest.raises(ValidationError) as e:
+        _OPTIMIZATION_ADAPTER.validate_python(
+            {"search": "random", "split": _SPLIT, "random_subset": 16, "seed": -1}
+        )
+    assert [x for x in e.value.errors() if x["loc"] == ("seed",)]
+
+
+@pytest.mark.parametrize(
+    "knob", ["max_splits", "max_estimated_output_cells", "max_public_artifact_bytes"]
+)
+def test_split_rejects_non_positive_budget_knobs(knob: str) -> None:
+    with pytest.raises(ValidationError) as e:
+        _SPLIT_ADAPTER.validate_python({"method": "from_rolling", knob: 0})
+    assert [x for x in e.value.errors() if x["loc"] == (knob,)]

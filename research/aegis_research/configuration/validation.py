@@ -29,7 +29,7 @@ from research.aegis_research.component_registry import (
     ComponentSelection,
     FrozenComponentRegistry,
 )
-from research.aegis_research.configuration.field_types import EXPERIMENT_NAME_RE
+from research.aegis_research.configuration.field_types import IDENTIFIER_RE
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
@@ -43,6 +43,10 @@ from research.aegis_research.configuration.schema import (
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
 )
+
+# Built once at import: TypeAdapter construction compiles the whole-tree core
+# schema, which is too expensive to repeat per validation call.
+_RUN_CONFIG_ADAPTER = TypeAdapter(RunConfig)
 
 
 def _is_absolute_or_user_path(value: str) -> bool:
@@ -84,7 +88,7 @@ def validate_run_config(
     # ── Whole-tree pydantic validation ────────────────────────────────────
     config = None
     try:
-        config = TypeAdapter(RunConfig).validate_python(raw)
+        config = _RUN_CONFIG_ADAPTER.validate_python(raw)
     except ValidationError as e:
         issues.extend(_validation_error_to_issues_whole_tree(e))
 
@@ -109,6 +113,30 @@ def validate_run_config(
 
 # ── prepass ──────────────────────────────────────────────────────────────────
 
+_REMOVED_TRAINING_FIELDS: dict[str, str] = dict.fromkeys(
+    ("lane", "train", "model", "labels", "label", "labeler", "signals"),
+    "training and lane fields are not supported by the single run config contract",
+)
+
+
+def _removed_fields(
+    mapping: dict[str, Any],
+    removed: dict[str, str],
+    issues: list[ConfigValidationIssue],
+    *,
+    prefix: str = "",
+) -> None:
+    """Tombstone prepass: emit each removed field's bespoke message and strip the key.
+
+    Stripping before pydantic runs keeps ``extra="forbid"`` from double-emitting
+    an unknown-key error for the same field.
+    """
+    for key, message in removed.items():
+        if key in mapping:
+            issues.append(ConfigValidationIssue(f"{prefix}{key}", message))
+            del mapping[key]
+
+
 def _prepass_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
     """Modify *raw* in place, stripping removed keys and recording custom issues.
 
@@ -123,23 +151,14 @@ def _prepass_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]
         )
 
     # Removed training/lane fields (custom messages, not "Unexpected keyword argument")
-    for key in ("lane", "train", "model", "labels", "label", "labeler", "signals"):
-        if key in raw:
-            issues.append(
-                ConfigValidationIssue(
-                    key,
-                    "training and lane fields are not supported by the single run config contract",
-                )
-            )
-            del raw[key]
+    _removed_fields(raw, _REMOVED_TRAINING_FIELDS, issues)
 
     # Portfolio removed fields (bespoke messages per field)
     portfolio_raw = raw.get("portfolio")
     if isinstance(portfolio_raw, dict):
-        for key, message in PortfolioConfig.REMOVED_FIELDS.items():
-            if key in portfolio_raw:
-                issues.append(ConfigValidationIssue(f"portfolio.{key}", message))
-                del portfolio_raw[key]
+        _removed_fields(
+            portfolio_raw, PortfolioConfig.REMOVED_FIELDS, issues, prefix="portfolio."
+        )
         if "size_type" in portfolio_raw:
             st_value = portfolio_raw.pop("size_type")
             if not isinstance(st_value, str):
@@ -205,7 +224,7 @@ def _validation_error_to_issues_whole_tree(
                     if parts:
                         parts.append(".")
                     parts.append(str(part))
-            path = "".join(parts).lstrip(".")
+            path = "".join(parts)
         issues.append(ConfigValidationIssue(path, entry["msg"]))
     return issues
 
@@ -216,7 +235,7 @@ def _post_validate_name(
     name: str,
     issues: list[ConfigValidationIssue],
 ) -> None:
-    if not EXPERIMENT_NAME_RE.fullmatch(name) or name in {".", ".."}:
+    if not IDENTIFIER_RE.fullmatch(name) or name in {".", ".."}:
         issues.append(
             ConfigValidationIssue(
                 "name",

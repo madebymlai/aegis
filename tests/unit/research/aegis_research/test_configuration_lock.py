@@ -204,3 +204,13 @@ def test_lock_with_component_params_still_enforces_values_only(registry) -> None
             component_registry=registry,
         )
     assert any(issue.path == "strategy.params" for issue in excinfo.value.issues)
+
+
+def test_mapping_lock_empty_candidate_id_fails_validation(registry) -> None:
+    with pytest.raises(ConfigValidationError) as excinfo:
+        resolve_run_config(
+            _raw_config(lock={"run_id": "run-a", "candidate_id": ""}),
+            component_registry=registry,
+        )
+    paths = {issue.path for issue in excinfo.value.issues}
+    assert "lock.candidate_id" in paths

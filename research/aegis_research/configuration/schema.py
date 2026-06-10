@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, get_args
 
 import pandas as pd
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration.field_types import (
-    EXPERIMENT_NAME_RE,  # noqa: F401 — re-exported for config.py
+    IDENTIFIER_RE,  # noqa: F401 — re-exported for config.py
     ComponentIdStr,
+    NonEmptyStr,
     NonNegativeInt,
     NonNegativeRate,
     PositiveCash,
+    PositiveInt,
     StrictFloat,
+    TimedeltaStr,
     UnitInterval,
 )
 
@@ -32,13 +35,17 @@ PORTFOLIO_TARGET_SIZE_TYPES = {
 PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
 SIGNAL_POLICIES = {"long_only_hysteresis"}
 SIGNAL_EXECUTION_TIMINGS = {"next_open", "same_close"}
-MISSING_POLICIES = {"nan", "drop", "raise"}
-DATA_QUALITY_DEGRADATIONS = {
+# VBT's Data.align_index / align_columns contract — the Literal is the field type,
+# the set is the facade-exported catalog; get_args keeps them one source.
+MissingPolicy = Literal["nan", "drop", "raise"]
+MISSING_POLICIES = set(get_args(MissingPolicy))
+Degradation = Literal[
     "duplicate_index",
     "missing_rows",
     "non_monotonic_index",
     "skipped_symbols",
-}
+]
+DATA_QUALITY_DEGRADATIONS = set(get_args(Degradation))
 FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
     "is required; fixed/non-optimized strategy runs are removed from the forward "
     "run contract; use optimization.search and optimization.split"
@@ -61,7 +68,7 @@ class ConfigValidationError(ValueError):
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DataQualityConfig:
-    allowed_degradations: list[str] = field(default_factory=list)
+    allowed_degradations: list[Degradation] = field(default_factory=list)
 
 
 def _validate_array_token(token: str) -> str:
@@ -90,9 +97,9 @@ class DataConfig:
     timeframe: str = "1D"
     path: str | None = None
     seed: int = 42
-    rows: int = 750
-    missing_index: str = "raise"
-    missing_columns: str = "raise"
+    rows: PositiveInt = 750
+    missing_index: MissingPolicy = "raise"
+    missing_columns: MissingPolicy = "raise"
     tz_localize: str | bool | None = None
     tz_convert: str | bool | None = None
     skip_on_error: bool = False
@@ -172,9 +179,9 @@ def has_data_array_token_shape(value: str) -> bool:
 class RunSplitConfig:
     method: str
     params: dict[str, Any] = field(default_factory=dict)
-    max_splits: int = 100
-    max_estimated_output_cells: int = 25_000_000
-    max_public_artifact_bytes: int = 10_000_000
+    max_splits: PositiveInt = 100
+    max_estimated_output_cells: PositiveInt = 25_000_000
+    max_public_artifact_bytes: PositiveInt = 10_000_000
 
     @model_validator(mode="after")
     def _no_set_labels(self):
@@ -236,9 +243,9 @@ class PortfolioConfig:
 class ReportConfig:
     min_oos_sharpe: StrictFloat = 0.5
     max_oos_drawdown: UnitInterval = 0.35
-    min_oos_trades: int = 5
-    freq: str = "1D"
-    year_freq: str = "252D"
+    min_oos_trades: NonNegativeInt = 5
+    freq: TimedeltaStr = "1D"
+    year_freq: TimedeltaStr = "252D"
 
     @property
     def periods_per_year(self) -> int:
@@ -284,8 +291,8 @@ OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
 class OptimizationConfig:
     search: Literal["grid", "random"]
     split: RunSplitConfig
-    random_subset: int | None = None
-    seed: int | None = None
+    random_subset: PositiveInt | None = None
+    seed: NonNegativeInt | None = None
     execute: dict[str, Any] = field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -341,7 +348,7 @@ class Lock:
     """
 
     run_id: str
-    candidate_id: str
+    candidate_id: NonEmptyStr
 
     @model_validator(mode="before")
     @classmethod
@@ -368,9 +375,10 @@ class RunConfig:
     indicators: list[RunIndicatorSourceConfig]
     ranking: RankingConfig
     schema_version: int = CONFIG_SCHEMA_VERSION
-    data: DataConfig = field(default_factory=lambda: DataConfig(arrays=["OHLCV"]))
-    # Required (keyword-only so it can sit among defaulted fields): a run must declare its
-    # portfolio, which in turn requires an explicit direction — no silently long-only default.
+    # Required (keyword-only so they can sit among defaulted fields): a run must declare
+    # its data (which requires explicit arrays — no silent OHLCV default) and its
+    # portfolio (which requires an explicit direction — no silently long-only default).
+    data: DataConfig = field(kw_only=True)
     portfolio: PortfolioConfig = field(kw_only=True)
     report: ReportConfig = field(default_factory=ReportConfig)
     optimization: OptimizationConfig | None = None

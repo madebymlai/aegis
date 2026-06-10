@@ -279,3 +279,30 @@ def test_portfolio_co_reports_tombstone_and_structural_error(tmp_path: Path) -> 
     paths = {i.path for i in e.value.issues}
     assert "portfolio.entry_budget" in paths
     assert "portfolio.gross_cap" in paths
+
+
+# ── report annualization calendar (Timedelta-string frequencies) ─────────────
+
+
+def test_report_construction_rejects_non_timedelta_freq() -> None:
+    with pytest.raises(ValidationError) as e:
+        _REPORT_ADAPTER.validate_python({"freq": "banana"})
+    assert _get_issues("freq", e.value)
+
+
+def test_report_construction_rejects_non_timedelta_year_freq() -> None:
+    with pytest.raises(ValidationError) as e:
+        _REPORT_ADAPTER.validate_python({"year_freq": "twelve parsecs"})
+    assert _get_issues("year_freq", e.value)
+
+
+def test_report_construction_rejects_negative_min_oos_trades() -> None:
+    with pytest.raises(ValidationError) as e:
+        _REPORT_ADAPTER.validate_python({"min_oos_trades": -3})
+    assert _get_issues("min_oos_trades", e.value)
+
+
+def test_report_construction_rejects_string_min_oos_trades() -> None:
+    with pytest.raises(ValidationError) as e:
+        _REPORT_ADAPTER.validate_python({"min_oos_trades": "5"})
+    assert _get_issues("min_oos_trades", e.value)

@@ -256,3 +256,60 @@ def test_is_absolute_or_user_path_classifies_paths() -> None:
     assert _is_absolute_or_user_path("/etc/passwd") is True
     assert _is_absolute_or_user_path("~/secrets") is True
     assert _is_absolute_or_user_path("data/prices.csv") is False
+
+
+# ── data section requiredness (no silent OHLCV default at the YAML seam) ─────
+
+
+def test_omitting_data_section_is_rejected(tmp_path: Path) -> None:
+    """A YAML that omits ``data:`` entirely must fail — arrays must be declared
+    explicitly, not silently defaulted (the gross_cap/data.arrays drift class)."""
+    raw: dict[str, Any] = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "val-test",
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
+        "ranking": {"metric": "total_return"},
+        "optimization": {
+            "search": "grid",
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 20, "split": 0.5},
+                "max_splits": 10,
+            },
+        },
+    }
+    with pytest.raises(ConfigValidationError) as e:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+    assert "data" in {i.path for i in e.value.issues}
+
+
+# ── VBT-facing enums and ranges ───────────────────────────────────────────────
+
+
+def test_data_construction_rejects_unknown_missing_index_policy() -> None:
+    with pytest.raises(ValidationError) as e:
+        _DATA_ADAPTER.validate_python({"arrays": ["OHLCV"], "missing_index": "explode"})
+    assert _get_issues("missing_index", e.value)
+
+
+def test_data_construction_rejects_unknown_missing_columns_policy() -> None:
+    with pytest.raises(ValidationError) as e:
+        _DATA_ADAPTER.validate_python({"arrays": ["OHLCV"], "missing_columns": "Drop"})
+    assert _get_issues("missing_columns", e.value)
+
+
+def test_data_construction_rejects_unknown_quality_degradation() -> None:
+    """A typo'd degradation must error, not silently fail to un-gate quality."""
+    with pytest.raises(ValidationError) as e:
+        _DATA_ADAPTER.validate_python(
+            {"arrays": ["OHLCV"], "quality": {"allowed_degradations": ["skiped_symbols"]}}
+        )
+    assert [x for x in e.value.errors() if x["loc"][:2] == ("quality", "allowed_degradations")]
+
+
+def test_data_construction_rejects_non_positive_rows() -> None:
+    with pytest.raises(ValidationError) as e:
+        _DATA_ADAPTER.validate_python({"arrays": ["OHLCV"], "rows": 0})
+    assert _get_issues("rows", e.value)

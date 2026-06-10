@@ -9,14 +9,27 @@ from __future__ import annotations
 import re
 from typing import Annotated
 
-from pydantic import Field
+import pandas as pd
+from pydantic import AfterValidator, Field
 
-EXPERIMENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-EXPERIMENT_NAME_PATTERN = r"^[A-Za-z0-9_.-]+$"
+IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.-]+$"
+IDENTIFIER_RE = re.compile(IDENTIFIER_PATTERN)
+
+
+def _validate_timedelta_str(value: str) -> str:
+    """Pydantic item-validator: the value must parse as a pandas Timedelta."""
+    try:
+        pd.Timedelta(value)
+    except ValueError:
+        raise ValueError("must be a pandas Timedelta string (e.g. '1D')") from None
+    return value
 
 StrictFloat = Annotated[float, Field(strict=True)]
 PositiveCash = Annotated[float, Field(strict=True, gt=0)]
 NonNegativeRate = Annotated[float, Field(strict=True, ge=0)]
 UnitInterval = Annotated[float, Field(strict=True, ge=0, le=1)]
-ComponentIdStr = Annotated[str, Field(min_length=1, pattern=EXPERIMENT_NAME_PATTERN)]
+ComponentIdStr = Annotated[str, Field(min_length=1, pattern=IDENTIFIER_PATTERN)]
+NonEmptyStr = Annotated[str, Field(min_length=1)]
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
+PositiveInt = Annotated[int, Field(strict=True, gt=0)]
+TimedeltaStr = Annotated[str, AfterValidator(_validate_timedelta_str)]  # annualization calendar
