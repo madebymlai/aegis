@@ -52,7 +52,7 @@ def run_pipeline_execution(
         preflight = build_preflight(
             params=setup.optimization_source.params,
             optimization=config.optimization,
-            split_result=setup.split_result,
+            splits=setup.split_result.splits,
             symbol_count=len(setup.close.columns),
             has_open_prices=True,
         )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,7 +11,7 @@ from vectorbtpro import vbt
 from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
 from research.aegis_research.optimization.candidate_evidence import CANDIDATE_ROLES
-from research.aegis_research.run_splits import RunSplitsResult
+from research.aegis_research.run_splits import RunSplit
 
 PREFLIGHT_SCHEMA_VERSION = "optimization_preflight.v1"
 PREFLIGHT_PUBLIC_BYTES_PER_ROW = 1024
@@ -43,7 +43,7 @@ def build_preflight(
     *,
     params: Mapping[str, vbt.Param],
     optimization: OptimizationConfig,
-    split_result: RunSplitsResult,
+    splits: Sequence[RunSplit],
     symbol_count: int,
     has_open_prices: bool,
 ) -> dict[str, Any]:
@@ -72,10 +72,10 @@ def build_preflight(
         sampled_combinations=sampled_combinations,
         executable_combinations=param_sampled_combinations,
     )
-    selection_rows = sum(len(split.selection_index) for split in split_result.splits)
-    held_out_rows = sum(len(split.held_out_index) for split in split_result.splits)
+    selection_rows = sum(len(split.selection_index) for split in splits)
+    held_out_rows = sum(len(split.held_out_index) for split in splits)
     total_window_rows = selection_rows + held_out_rows
-    split_count = len(split_result.splits)
+    split_count = len(splits)
     set_count = 2
     metric_count = len(PORTFOLIO_METRIC_VALUE_KEYS)
     materialized_frame_count = 4 + int(has_open_prices)

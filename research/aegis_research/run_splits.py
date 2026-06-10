@@ -14,6 +14,12 @@ from research.aegis_research.configuration import ConfigValidationIssue, RunSpli
 SPLITTER_METHOD_PREFIX = "from_"
 SPLITTER_INDEX_PARAM = "index"
 RUN_SCORING_SET_POLICY = "exactly_two_sets_first_selection_second_held_out"
+# The single home of the Split's role vocabulary (ADR-0018). The Splitter is
+# built once with these labels imposed over vbt's native set names, and every
+# consumer addresses sets by role name — never by position.
+SELECTION_SET = "selection"
+HELD_OUT_SET = "held_out"
+SET_LABELS = [SELECTION_SET, HELD_OUT_SET]
 DENIED_SPLITTER_PARAMS = {
     "eval_times",
     "length_choice_func",
@@ -72,7 +78,7 @@ class RunSplit:
 class RunSplitsResult:
     splits: list[RunSplit]
     metadata: dict[str, Any]
-    native_object: Any | None = None
+    splitter: vbt.Splitter
 
 
 @dataclass(frozen=True)
@@ -286,12 +292,21 @@ def build_run_splits_result(index: pd.Index, config: RunSplitConfig) -> RunSplit
         "sets": _set_summary(),
         "splits": _split_membership_metadata(index, splits),
     }
-    return RunSplitsResult(splits=splits, metadata=metadata, native_object=splitter)
+    return RunSplitsResult(splits=splits, metadata=metadata, splitter=splitter)
 
 
 def _call_vbt_splitter(index: pd.Index, config: RunSplitConfig) -> vbt.Splitter:
     method = getattr(vbt.Splitter, config.method)
-    return method(index, **config.params)
+    try:
+        return method(index, set_labels=SET_LABELS, **config.params)
+    except ValueError as error:
+        if "number of sets" in str(error).lower():
+            raise ValueError(
+                f"{config.method} did not produce exactly two sets per split; "
+                "run split scoring requires exactly two sets "
+                f"({SELECTION_SET}, {HELD_OUT_SET})"
+            ) from error
+        raise
 
 
 def _run_splits_from_index_slices(index_slices: Any) -> list[RunSplit]:
@@ -303,27 +318,28 @@ def _run_splits_from_index_slices(index_slices: Any) -> list[RunSplit]:
     splits: list[RunSplit] = []
     for split_label in index_slices.index.get_level_values("split").unique():
         set_indices: dict[str, pd.Index] = {}
-        set_labels = list(index_slices.loc[split_label].index.get_level_values("set").unique())
-        if len(set_labels) != 2:
+        set_labels = [
+            str(label)
+            for label in index_slices.loc[split_label].index.get_level_values("set").unique()
+        ]
+        if set(set_labels) != set(SET_LABELS):
             raise ValueError(
-                f"Split {split_label} produced {len(set_labels)} sets; "
-                "run split scoring requires exactly two sets"
+                f"Split {split_label} produced sets {set_labels}; "
+                f"run split scoring requires exactly two sets {SET_LABELS}"
             )
         for set_label in set_labels:
             member_index = index_slices.loc[(split_label, set_label)]
             if len(member_index) == 0:
                 raise ValueError(f"Split {split_label} set {set_label!r} is empty")
-            set_indices[str(set_label)] = member_index
-        selection_set = str(set_labels[0])
-        held_out_set = str(set_labels[1])
-        if not set_indices[selection_set].intersection(set_indices[held_out_set]).empty:
+            set_indices[set_label] = member_index
+        if not set_indices[SELECTION_SET].intersection(set_indices[HELD_OUT_SET]).empty:
             raise ValueError(f"Split {split_label} selection and held-out sets overlap")
         splits.append(
             RunSplit(
                 label=f"split_{split_label}",
                 set_indices=set_indices,
-                selection_set=selection_set,
-                held_out_set=held_out_set,
+                selection_set=SELECTION_SET,
+                held_out_set=HELD_OUT_SET,
             )
         )
     return splits

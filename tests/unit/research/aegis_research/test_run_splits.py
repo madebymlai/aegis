@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+from vectorbtpro import vbt
 
 from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import make_run_split_config
@@ -22,8 +23,8 @@ def test_build_run_splits_result_invokes_from_rolling_with_public_evidence() -> 
     assert result.metadata["params"]["length"] == 6
     assert result.metadata["set_usage_policy"] == "exactly_two_sets_first_selection_second_held_out"
     assert result.metadata["n_splits"] > 0
-    assert result.splits[0].selection_set == "set_0"
-    assert result.splits[0].held_out_set == "set_1"
+    assert result.splits[0].selection_set == "selection"
+    assert result.splits[0].held_out_set == "held_out"
     assert result.splits[0].selection_index.intersection(result.splits[0].held_out_index).empty
     first_split = result.metadata["splits"][0]
     assert "membership" in first_split["sets"]["selection"]
@@ -32,6 +33,8 @@ def test_build_run_splits_result_invokes_from_rolling_with_public_evidence() -> 
         {"role": "selection", "position": 0},
         {"role": "held_out", "position": 1},
     ]
+    assert isinstance(result.splitter, vbt.Splitter)
+    assert list(result.splitter.set_labels) == ["selection", "held_out"]
 
 
 def test_build_run_splits_result_invokes_purged_kfold_generically() -> None:
@@ -44,8 +47,8 @@ def test_build_run_splits_result_invokes_purged_kfold_generically() -> None:
 
     assert result.metadata["method"] == "from_purged_kfold"
     assert result.metadata["n_splits"] == 3
-    assert result.splits[0].selection_set == "train"
-    assert result.splits[0].held_out_set == "test"
+    assert result.splits[0].selection_set == "selection"
+    assert result.splits[0].held_out_set == "held_out"
     assert result.metadata["sets"] == [
         {"role": "selection", "position": 0},
         {"role": "held_out", "position": 1},
@@ -64,8 +67,8 @@ def test_build_run_splits_result_preserves_single_split_two_set_output() -> None
     )
 
     assert result.metadata["n_splits"] == 1
-    assert result.splits[0].selection_set == "set_0"
-    assert result.splits[0].held_out_set == "set_1"
+    assert result.splits[0].selection_set == "selection"
+    assert result.splits[0].held_out_set == "held_out"
 
 
 def test_build_run_splits_result_rejects_one_set_output() -> None:

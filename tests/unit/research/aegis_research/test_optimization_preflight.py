@@ -9,7 +9,7 @@ from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
 )
-from research.aegis_research.run_splits import RunSplit, RunSplitsResult
+from research.aegis_research.run_splits import RunSplit
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_run_split_config,
@@ -24,7 +24,7 @@ def test_preflight_reports_two_phase_shape_and_execution_policy() -> None:
             "exit_threshold": vbt.Param([0.6, 0.55], level=1),
         },
         optimization=_optimization(execute={"chunk_len": "auto"}),
-        split_result=_split_result(split_count=2, selection_rows=3, held_out_rows=2),
+        splits=_splits(split_count=2, selection_rows=3, held_out_rows=2),
         symbol_count=2,
         has_open_prices=True,
     )
@@ -64,7 +64,7 @@ def test_preflight_public_rows_reflect_three_candidate_publish() -> None:
     diagnostics = build_preflight(
         params={"window": vbt.Param(range(500))},
         optimization=_optimization(),
-        split_result=_split_result(split_count=2, selection_rows=3, held_out_rows=2),
+        splits=_splits(split_count=2, selection_rows=3, held_out_rows=2),
         symbol_count=1,
         has_open_prices=False,
     )
@@ -78,7 +78,7 @@ def test_preflight_held_out_phase_scales_with_three_candidates_not_the_grid() ->
     diagnostics = build_preflight(
         params={"window": vbt.Param([5, 10, 20, 40])},
         optimization=_optimization(),
-        split_result=_split_result(split_count=2, selection_rows=10, held_out_rows=4),
+        splits=_splits(split_count=2, selection_rows=10, held_out_rows=4),
         symbol_count=1,
         has_open_prices=False,
     )
@@ -98,7 +98,7 @@ def test_preflight_held_out_candidates_clamp_to_a_small_grid() -> None:
     diagnostics = build_preflight(
         params={"window": vbt.Param([5])},
         optimization=_optimization(),
-        split_result=_split_result(split_count=1, selection_rows=4, held_out_rows=2),
+        splits=_splits(split_count=1, selection_rows=4, held_out_rows=2),
         symbol_count=1,
         has_open_prices=False,
     )
@@ -117,7 +117,7 @@ def test_preflight_allows_random_subset_when_sampled_shape_fits() -> None:
             "slow_window": vbt.Param(range(1_000)),
         },
         optimization=_optimization(search="random", random_subset=10, seed=42),
-        split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+        splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
         symbol_count=1,
         has_open_prices=False,
     )
@@ -136,7 +136,7 @@ def test_preflight_rejects_random_subset_above_executable_combinations() -> None
                 "slow_window": vbt.Param([10, 20]),
             },
             optimization=_optimization(search="random", random_subset=100, seed=42),
-            split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+            splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
             symbol_count=1,
             has_open_prices=False,
         )
@@ -153,7 +153,7 @@ def test_preflight_rejects_oversized_exhaustive_grid_before_execution() -> None:
                 "slow_window": vbt.Param(range(1_000)),
             },
             optimization=_optimization(max_estimated_output_cells=100),
-            split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+            splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
             symbol_count=1,
             has_open_prices=False,
         )
@@ -176,7 +176,7 @@ def test_preflight_rejects_random_sample_above_evidence_budget() -> None:
                 seed=42,
                 max_public_artifact_bytes=10_000,
             ),
-            split_result=_split_result(split_count=2, selection_rows=5, held_out_rows=5),
+            splits=_splits(split_count=2, selection_rows=5, held_out_rows=5),
             symbol_count=1,
             has_open_prices=False,
         )
@@ -194,7 +194,7 @@ def test_preflight_conditioned_grid_uses_vbt_executable_combinations() -> None:
             "slow_window": vbt.Param([3, 8]),
         },
         optimization=_optimization(),
-        split_result=_split_result(split_count=1, selection_rows=3, held_out_rows=2),
+        splits=_splits(split_count=1, selection_rows=3, held_out_rows=2),
         symbol_count=1,
         has_open_prices=False,
     )
@@ -209,7 +209,7 @@ def test_search_mode_is_exhaustive_for_non_random_search() -> None:
     diagnostics = build_preflight(
         params={"window": vbt.Param([5, 10, 20])},
         optimization=_optimization(),
-        split_result=_split_result(split_count=1, selection_rows=3, held_out_rows=2),
+        splits=_splits(split_count=1, selection_rows=3, held_out_rows=2),
         symbol_count=1,
         has_open_prices=False,
     )
@@ -224,7 +224,7 @@ def test_search_mode_is_random_when_subset_reduces_the_grid() -> None:
             "slow_window": vbt.Param(range(1_000)),
         },
         optimization=_optimization(search="random", random_subset=10, seed=42),
-        split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+        splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
         symbol_count=1,
         has_open_prices=False,
     )
@@ -237,7 +237,7 @@ def test_search_mode_is_exhaustive_auto_when_subset_matches_total_combos() -> No
     diagnostics = build_preflight(
         params={"fast_window": vbt.Param([2, 5]), "slow_window": vbt.Param([10, 20])},
         optimization=_optimization(search="random", random_subset=4, seed=42),
-        split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+        splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
         symbol_count=1,
         has_open_prices=False,
     )
@@ -254,7 +254,7 @@ def test_search_mode_exhaustive_auto_surfaced_when_subset_exceeds_combos() -> No
         build_preflight(
             params={"fast_window": vbt.Param([2, 5]), "slow_window": vbt.Param([10, 20])},
             optimization=_optimization(search="random", random_subset=100, seed=42),
-            split_result=_split_result(split_count=1, selection_rows=5, held_out_rows=5),
+            splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
             symbol_count=1,
             has_open_prices=False,
         )
@@ -286,12 +286,12 @@ def _optimization(
     )
 
 
-def _split_result(
+def _splits(
     *,
     split_count: int,
     selection_rows: int,
     held_out_rows: int,
-) -> RunSplitsResult:
+) -> list[RunSplit]:
     splits = []
     for split_number in range(split_count):
         offset = split_number * (selection_rows + held_out_rows)
@@ -307,7 +307,4 @@ def _split_result(
                 held_out_set="held_out",
             )
         )
-    return RunSplitsResult(
-        splits=splits,
-        metadata={"schema_version": "run_splits.v1", "n_splits": split_count},
-    )
+    return splits
