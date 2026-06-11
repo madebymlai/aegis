@@ -73,7 +73,7 @@ def _make_data(
     returns = rng.normal(0.0003, 0.012, size=(n_dates, len(symbols)))
     prices = 100.0 * np.exp(np.cumsum(returns, axis=0))
     close = pd.DataFrame(prices, index=dates, columns=pd.Index(symbols, name="symbol"))
-    return MarketDataBundle(features={"Close": close}, loaded_features=("Close",))
+    return MarketDataBundle(features={"Close": close})
 
 
 # ── Parameter generators per component ────────────────────────────────────

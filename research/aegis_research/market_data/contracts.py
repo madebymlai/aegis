@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -120,11 +119,6 @@ class MarketDataResult:
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
 
-    def feature(self, feature: str) -> pd.DataFrame:
-        from research.aegis_research.market_data.features import feature_from_ohlcv
-
-        return feature_from_ohlcv(self, feature)
-
     def assert_usable(self) -> None:
         if not self.quality.usable:
             raise MarketDataQualityError(self.quality)
@@ -132,32 +126,17 @@ class MarketDataResult:
 
 @dataclass(frozen=True)
 class MarketDataBundle:
-    features: dict[str, pd.DataFrame] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    native_data: Any | None = None
-    loaded_features: tuple[str, ...] = ()
-    feature_getter: Callable[[str], pd.DataFrame] | None = field(
-        default=None,
-        repr=False,
-        compare=False,
-    )
+    """Eager value object of materialised Array panels.
+
+    Dict membership is the sole guard — a feature is loaded iff it is a key.
+    """
+
+    features: dict[str, pd.DataFrame]
 
     def feature(self, feature: str) -> pd.DataFrame:
-        if self.loaded_features and feature not in self.loaded_features:
-            raise ValueError(f"market data feature {feature!r} was not loaded for this run")
-        panel = self.features.get(feature)
-        if panel is not None:
-            return panel
-        if self.feature_getter is not None:
-            return self.feature_getter(feature)
-        raise ValueError(f"market data feature {feature!r} is not available")
-
-
-def market_data_bundle(result: MarketDataResult) -> MarketDataBundle:
-    result.assert_usable()
-    return MarketDataBundle(
-        metadata=result.metadata,
-        native_data=result.native_data,
-        loaded_features=tuple(result.metadata.get("loaded_arrays", ())),
-        feature_getter=result.feature,
-    )
+        try:
+            return self.features[feature]
+        except KeyError:
+            raise ValueError(
+                f"market data feature {feature!r} was not loaded for this run"
+            ) from None

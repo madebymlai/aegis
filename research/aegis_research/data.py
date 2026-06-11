@@ -24,8 +24,8 @@ from research.aegis_research.market_data.contracts import (
     MarketDataQualityError,
     MarketDataResult,
     RemoteDataPullError,
-    market_data_bundle,
 )
+from research.aegis_research.market_data.panels import market_data_bundle
 from research.aegis_research.market_data.features import (
     close_from_ohlcv,
     feature_from_ohlcv,

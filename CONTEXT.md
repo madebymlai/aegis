@@ -13,12 +13,16 @@ A versioned, registered Python module that declares inputs, parameters, and outp
 _Avoid_: plugin, module, block
 
 **Indicator**:
-A **Component** that transforms market data features into named numeric outputs consumed by **Strategies**.
+A **Component** that transforms market data **Arrays** into named numeric outputs consumed by **Strategies**.
 _Avoid_: feature, signal, transform
 
 **Strategy**:
 A **Component** that consumes **Indicator** outputs and emits a single signed **target-weight** allocation frame — one weight per symbol per rebalance, where the sign is the **Direction** (positive = long, negative = short) and the magnitude is the intended share of capital.
 _Avoid_: model, algorithm, alpha
+
+**Array**:
+A named market-data input series a **Run** loads — the OHLCV set (Open, High, Low, Close, Volume) plus any adjacent series a **Component** declares (e.g. Adj Close, Funding Rate). A Run's array contract declares which Arrays it requires; **Components** read them by name, distinct from an **Indicator** output computed from them.
+_Avoid_: feature, panel, column, field
 
 **Candidate**:
 A scored parameter combination produced by an optimization **Run**. Each Candidate carries its fixed parameters, per-split metrics on both **Selection** and **Held-out** sets, and provenance. Every Run produces exactly three representative Candidates: best, median, and worst, selected by a min-aware ranking score across **Splits**.
