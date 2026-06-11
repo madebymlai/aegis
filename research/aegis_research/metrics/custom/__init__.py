@@ -55,8 +55,8 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         CDAR_RATIO_DEFINITION,
         CDAR_RATIO_EXTRACTOR,
     )
-    from research.aegis_research.metrics.custom.family_signatures import (
-        family_signature_metrics,
+    from research.aegis_research.metrics.custom.convexity import (
+        convexity_metrics,
     )
     from research.aegis_research.metrics.custom.ulcer import (
         ULCER_PERFORMANCE_INDEX_DEFINITION,
@@ -69,7 +69,7 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         (CALMAR_RATIO_DEFINITION, CALMAR_RATIO_EXTRACTOR),
         # Benchmark-relative metrics vs the universe's macro benchmark (SPY default).
         *capture_metrics(),
-        *family_signature_metrics(),
+        *convexity_metrics(),
     )
     return {definition.id: (definition, spec) for definition, spec in available}
 

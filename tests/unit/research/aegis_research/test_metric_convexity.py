@@ -17,11 +17,11 @@ import pytest
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import ReportConfig
 from research.aegis_research.metrics.custom.convexity import (
-    BEAR_REGIME_BETA_ID,
-    CRISIS_CONDITIONAL_RETURN_ID,
-    QUARTERLY_SKEW_ID,
-    TM_CONVEXITY_ID,
-    TM_LINEAR_BETA_ID,
+    BEAR_MARKET_BETA_ID,
+    CRASH_DAY_RETURN_ID,
+    MARKET_BETA_ID,
+    MARKET_CONVEXITY_ID,
+    QUARTERLY_RETURN_SKEW_ID,
     convexity_metrics,
 )
 
@@ -76,26 +76,26 @@ def _read_all() -> dict[str, pd.Series]:
 def test_mirror_is_the_concave_long_pole() -> None:
     vals = _read_all()
     # Returns equal the benchmark: raw market beta 1, no convexity, full bear beta.
-    assert vals[TM_LINEAR_BETA_ID]["mirror"] == pytest.approx(1.0, abs=1e-6)
-    assert vals[TM_CONVEXITY_ID]["mirror"] == pytest.approx(0.0, abs=1e-6)
-    assert vals[BEAR_REGIME_BETA_ID]["mirror"] == pytest.approx(1.0, abs=1e-6)
+    assert vals[MARKET_BETA_ID]["mirror"] == pytest.approx(1.0, abs=1e-6)
+    assert vals[MARKET_CONVEXITY_ID]["mirror"] == pytest.approx(0.0, abs=1e-6)
+    assert vals[BEAR_MARKET_BETA_ID]["mirror"] == pytest.approx(1.0, abs=1e-6)
     # It loses with the benchmark on its worst days.
-    assert vals[CRISIS_CONDITIONAL_RETURN_ID]["mirror"] < 0.0
+    assert vals[CRASH_DAY_RETURN_ID]["mirror"] < 0.0
 
 
 def test_convex_is_the_long_gamma_pole() -> None:
     vals = _read_all()
     # Pure quadratic stream: positive convexity, ~zero linear beta.
-    assert vals[TM_CONVEXITY_ID]["convex"] > 0.0
-    assert vals[TM_LINEAR_BETA_ID]["convex"] == pytest.approx(0.0, abs=1e-6)
+    assert vals[MARKET_CONVEXITY_ID]["convex"] > 0.0
+    assert vals[MARKET_BETA_ID]["convex"] == pytest.approx(0.0, abs=1e-6)
     # Gains on the benchmark's worst days, and de-risks the bear regime (beta < 0).
-    assert vals[CRISIS_CONDITIONAL_RETURN_ID]["convex"] > 0.0
-    assert vals[BEAR_REGIME_BETA_ID]["convex"] < 0.0
+    assert vals[CRASH_DAY_RETURN_ID]["convex"] > 0.0
+    assert vals[BEAR_MARKET_BETA_ID]["convex"] < 0.0
 
 
 def test_quarterly_skew_separates_the_poles() -> None:
     vals = _read_all()
-    skew = vals[QUARTERLY_SKEW_ID]
+    skew = vals[QUARTERLY_RETURN_SKEW_ID]
     # The all-positive convex stream is right-skewed and more so than the mirror.
     assert skew["convex"] > 0.0
     assert skew["convex"] > skew["mirror"]

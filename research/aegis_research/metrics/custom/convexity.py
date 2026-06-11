@@ -49,11 +49,14 @@ _WORST_DECILE = 0.10
 _BEAR_PCTILE = 0.16
 _QUARTER = "QE"
 
-QUARTERLY_SKEW_ID = "quarterly_skew"
-TM_CONVEXITY_ID = "tm_convexity_beta2"
-TM_LINEAR_BETA_ID = "tm_linear_beta1"
-CRISIS_CONDITIONAL_RETURN_ID = "crisis_conditional_return"
-BEAR_REGIME_BETA_ID = "bear_regime_beta"
+# Metric ids name the behaviour each measures, not the estimator that computes it
+# (a Treynor-Mazuy regression yields market_convexity + market_beta; the regression
+# is an implementation detail, not the name).
+QUARTERLY_RETURN_SKEW_ID = "quarterly_return_skew"
+MARKET_CONVEXITY_ID = "market_convexity"
+MARKET_BETA_ID = "market_beta"
+CRASH_DAY_RETURN_ID = "crash_day_return"
+BEAR_MARKET_BETA_ID = "bear_market_beta"
 
 
 # ── Shared read of (stream returns, benchmark returns) per group ──────────────
@@ -187,40 +190,40 @@ def convexity_metrics(
     """The convexity-axis verification metrics as (definition, extractor) pairs for one benchmark."""
     return [
         (
-            _definition(QUARTERLY_SKEW_ID, "Quarterly Own-Return Skew", "skew",
-                        "quarterly_return_skewness", benchmark),
+            _definition(QUARTERLY_RETURN_SKEW_ID, "Quarterly Return Skew", "skew",
+                        "are the big quarters gains (right tail) or losses (left)?", benchmark),
             ExtractorSpec(_make_quarterly_skew_read(benchmark)),
         ),
         (
-            _definition(TM_CONVEXITY_ID, f"Treynor-Mazuy Convexity beta_2 vs {benchmark}",
-                        "coefficient", "standardized_quadratic_convexity", benchmark),
+            _definition(MARKET_CONVEXITY_ID, f"Market Convexity vs {benchmark}",
+                        "coefficient", "does it gain more on big moves either way? (Treynor-Mazuy beta_2)", benchmark),
             ExtractorSpec(_make_tm_read(benchmark, which=1)),
         ),
         (
-            _definition(TM_LINEAR_BETA_ID, f"Treynor-Mazuy Linear beta_1 vs {benchmark}",
-                        "coefficient", "standardized_linear_beta", benchmark),
+            _definition(MARKET_BETA_ID, f"Market Beta vs {benchmark}",
+                        "coefficient", "net directional exposure to the market (Treynor-Mazuy beta_1)", benchmark),
             ExtractorSpec(_make_tm_read(benchmark, which=0)),
         ),
         (
-            _definition(CRISIS_CONDITIONAL_RETURN_ID,
-                        f"Crisis-Conditional Return ({benchmark} worst decile)",
-                        "return", "crisis_conditional_mean_return", benchmark),
+            _definition(CRASH_DAY_RETURN_ID,
+                        f"Crash-Day Return ({benchmark} worst decile)",
+                        "return", "average return on the market's worst days", benchmark),
             ExtractorSpec(_make_crisis_conditional_read(benchmark)),
         ),
         (
-            _definition(BEAR_REGIME_BETA_ID, f"Bear-Regime Beta vs {benchmark}",
-                        "beta", "bear_regime_conditional_beta", benchmark),
+            _definition(BEAR_MARKET_BETA_ID, f"Bear-Market Beta vs {benchmark}",
+                        "beta", "exposure specifically in down regimes", benchmark),
             ExtractorSpec(_make_bear_regime_beta_read(benchmark)),
         ),
     ]
 
 
 __all__ = [
-    "BEAR_REGIME_BETA_ID",
-    "CRISIS_CONDITIONAL_RETURN_ID",
+    "BEAR_MARKET_BETA_ID",
+    "CRASH_DAY_RETURN_ID",
     "DEFAULT_BENCHMARK",
-    "QUARTERLY_SKEW_ID",
-    "TM_CONVEXITY_ID",
-    "TM_LINEAR_BETA_ID",
+    "MARKET_BETA_ID",
+    "MARKET_CONVEXITY_ID",
+    "QUARTERLY_RETURN_SKEW_ID",
     "convexity_metrics",
 ]
