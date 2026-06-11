@@ -16,7 +16,10 @@ import pytest
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
+    DEFAULT_LOCK_ROLE,
+    LOCK_ROLES,
     ConfigValidationError,
+    lock_handle,
     resolve_run_config,
 )
 from tests.support.research.aegis_research.component_fixtures import (
@@ -213,3 +216,30 @@ def test_mapping_lock_empty_candidate_id_fails_validation(registry) -> None:
         )
     paths = {issue.path for issue in excinfo.value.issues}
     assert "lock.candidate_id" in paths
+
+
+def test_lock_handle_best_role_is_bare_run_id() -> None:
+    assert lock_handle("run-abc", DEFAULT_LOCK_ROLE) == "run-abc"
+
+
+def test_lock_handle_median_role_carries_colon_role() -> None:
+    assert lock_handle("run-abc", "median") == "run-abc:median"
+
+
+def test_lock_handle_worst_role_carries_colon_role() -> None:
+    assert lock_handle("run-abc", "worst") == "run-abc:worst"
+
+
+def test_lock_handle_round_trip_for_every_lock_role(registry) -> None:
+    """Every LOCK_ROLE round-trips: compose a handle with lock_handle,
+    then validate it back through the Lock model's scalar coercion to the
+    same run_id and role. The bare run_id (best) resolves to the default
+    role via the Lock parser."""
+    run_id = "20260601T000000000Z_test_run"
+    for role in LOCK_ROLES:
+        handle = lock_handle(run_id, role)
+        raw = _raw_config(lock=handle)
+        resolved = resolve_run_config(raw, component_registry=registry)
+        assert resolved.config.lock is not None
+        assert resolved.config.lock.run_id == run_id
+        assert resolved.config.lock.candidate_id == role

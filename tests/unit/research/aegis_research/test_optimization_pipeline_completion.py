@@ -180,6 +180,11 @@ def test_completion_returns_result_and_marks_completed(
     assert best["held_out_headline"]["held_out"] == pytest.approx(0.29)
     assert best["held_out_headline"]["gap"] == pytest.approx(0.01)
 
+    # aegis-rd-gg3.2: lock handles are payload data
+    assert candidates[0]["lock"] == run_id  # best = bare run_id
+    assert candidates[1]["lock"] == f"{run_id}:median"
+    assert candidates[2]["lock"] == f"{run_id}:worst"
+
     # Assert completion marking
     assert recorder.manifest.status == "completed"
     assert recorder.manifest.finished_at == "2025-01-01T01:00:00Z"

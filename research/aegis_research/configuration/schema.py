@@ -335,6 +335,16 @@ LOCK_ROLES: tuple[str, ...] = ("best", "median", "worst")
 DEFAULT_LOCK_ROLE = "best"
 
 
+def lock_handle(run_id: str, role: str) -> str:
+    """Compose a ``run_id[:role]`` handle for a Lock reference.
+
+    Bare ``run_id`` means the default (best) role.
+    Lives beside the Lock parser so the grammar is read and written by
+    exactly one module (ADR-0021).
+    """
+    return run_id if role == DEFAULT_LOCK_ROLE else f"{run_id}:{role}"
+
+
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Lock:
     """A top-level Run Config reference that reproduces one prior Candidate.
