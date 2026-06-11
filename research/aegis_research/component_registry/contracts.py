@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from research.aegis_research.canonical_json import to_builtin
+
 ComponentFamily = Literal["indicators", "strategies"]
 COMPONENT_FAMILIES: tuple[ComponentFamily, ...] = ("indicators", "strategies")
 COMPONENT_ENTRYPOINT = "run"
@@ -190,7 +192,7 @@ class ComponentDefinition:
             payload["output_name"] = manifest.output_name
             payload["consumes_outputs"] = list(manifest.consumes_outputs)
             payload["owns_portfolio"] = manifest.owns_portfolio
-        return payload
+        return to_builtin(payload)
 
     def load_attribute(self, attribute_name: str) -> Any:
         from research.aegis_research.component_registry.registry import load_component_attribute
