@@ -74,9 +74,9 @@ def build_manifest(
     try:
         if expected_family == "indicators":
             indicator = _INDICATOR_ADAPTER.validate_python(payload, strict=True)
-            return _build_indicator_manifest(indicator, payload)
+            return _build_indicator_manifest(indicator)
         strategy = _STRATEGY_ADAPTER.validate_python(payload, strict=True)
-        return _build_strategy_manifest(strategy, payload)
+        return _build_strategy_manifest(strategy)
     except PydanticValidationError as e:
         raise ComponentRegistryError(
             _format_manifest_errors(e, path)
@@ -244,13 +244,11 @@ _STRATEGY_ADAPTER = TypeAdapter(_StrategyManifestPayload)
 
 def _build_indicator_manifest(
     validated: _IndicatorManifestPayload,
-    payload: dict[str, Any],
 ) -> IndicatorManifest:
     return IndicatorManifest(
         family="indicators",
         id=validated.id,
         version=validated.version,
-        payload=payload,
         input_names=tuple(validated.input_names),
         param_names=tuple(validated.param_names),
         output_names=tuple(validated.output_names),
@@ -260,13 +258,11 @@ def _build_indicator_manifest(
 
 def _build_strategy_manifest(
     validated: _StrategyManifestPayload,
-    payload: dict[str, Any],
 ) -> StrategyManifest:
     return StrategyManifest(
         family="strategies",
         id=validated.id,
         version=validated.version,
-        payload=payload,
         input_names=tuple(validated.input_names),
         param_names=tuple(validated.param_names),
         output_name=validated.output_name,
