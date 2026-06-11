@@ -42,6 +42,14 @@ def masked_canonical_manifest(payload: dict[str, Any]) -> bytes:
     evidence = doc.get("evidence", {})
     if "environment" in evidence:
         evidence["environment"] = _MASKED
+    # The config Evidence records the resolved absolute config path (ADR-0021);
+    # absolute paths vary per run directory, so they mask like timestamps.
+    config_evidence = evidence.get("config", {})
+    if "source_path" in config_evidence:
+        config_evidence["source_path"] = _MASKED
+    selection = config_evidence.get("selection")
+    if selection and "config_path" in selection:
+        selection["config_path"] = _MASKED
     return canonical_json_bytes(doc, indent=2)
 
 

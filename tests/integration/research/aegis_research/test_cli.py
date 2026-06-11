@@ -436,8 +436,8 @@ def test_safe_path_hides_relative_paths_that_escape_cwd(
     assert safe_path("../private/runs") == "<path>"
 
 
-def test_run_refs_passes_real_paths_through_unscrubbed() -> None:
-    """The run-refs projection preserves caller-supplied paths — no scrubbing."""
+def test_run_refs_emits_absolute_paths_unscrubbed() -> None:
+    """The run-refs projection emits real absolute paths — no scrubbing."""
     from research.aegis_research.cli_support.output import run_refs
 
     refs: dict[str, object] = {
@@ -450,21 +450,41 @@ def test_run_refs_passes_real_paths_through_unscrubbed() -> None:
     }
     block = run_refs(refs)
     assert block["id"] == "abc123"
-    # Paths are passed through exactly as supplied — no scrubbing.
     assert block["run_dir"] == "/data/runs/abc123"
     assert block["manifest_path"] == "/data/runs/abc123/manifest.json"
-    # Also works with relative paths (the real-path contract accepts them).
-    rel_block = run_refs({"run_id": "x", "run_dir": "runs/x", "manifest_path": "runs/x/manifest.json"})
-    assert rel_block["run_dir"] == "runs/x"
-    assert rel_block["manifest_path"] == "runs/x/manifest.json"
 
 
-def test_safe_run_refs_is_deleted() -> None:
-    """The scrubbing variant safe_run_refs has been retired — only run_refs survives."""
-    from research.aegis_research.cli_support import output
+def test_run_refs_resolves_relative_paths_against_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relative pipeline paths resolve to real absolute paths (ADR-0021)."""
+    from research.aegis_research.cli_support.output import run_refs
 
-    assert hasattr(output, "run_refs")
-    assert not hasattr(output, "safe_run_refs")
+    monkeypatch.chdir(tmp_path)
+    block = run_refs(
+        {"run_id": "x", "run_dir": "runs/x", "manifest_path": "runs/x/manifest.json"}
+    )
+    assert block["run_dir"] == str(tmp_path / "runs" / "x")
+    assert block["manifest_path"] == str(tmp_path / "runs" / "x" / "manifest.json")
+
+
+def test_run_refs_stringifies_path_values() -> None:
+    """Path-typed refs become strings in the projection, so the success
+    envelope's JSON sanitizer (whose Path branch scrubs) never sees a Path."""
+    from pathlib import Path
+
+    from research.aegis_research.cli_support.output import run_refs
+
+    block = run_refs(
+        {
+            "run_id": "abc123",
+            "run_dir": Path("/data/runs/abc123"),
+            "manifest_path": Path("/data/runs/abc123/manifest.json"),
+        }
+    )
+    assert block["run_dir"] == "/data/runs/abc123"
+    assert block["manifest_path"] == "/data/runs/abc123/manifest.json"
 
 
 # ── config-schema show subcommand ────────────────────────────────────────────

@@ -163,15 +163,22 @@ def run_aerd(aerd, repo, config_path):
         cwd=str(repo), capture_output=True, text=True, timeout=900,
     )
     out = proc.stdout + proc.stderr
-    run_dir = None
-    status = None
-    for line in out.splitlines():
-        line = line.strip()
-        if line.startswith("Run:"):
-            run_dir = line.split("Run:", 1)[1].strip()
-        elif line.startswith("Status:"):
-            status = line.split("Status:", 1)[1].strip()
-    return proc.returncode, run_dir, status, out
+    # aerd run emits one JSON envelope (ADR-0021): success on stdout, error on
+    # stderr, both carrying the run block with the resolved absolute run_dir.
+    envelope = None
+    for stream in (proc.stdout, proc.stderr):
+        for line in reversed(stream.splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    envelope = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                break
+        if envelope is not None:
+            break
+    run_block = (envelope or {}).get("run") or {}
+    return proc.returncode, run_block.get("run_dir"), run_block.get("status"), out
 
 
 def load_run(repo, run_dir):

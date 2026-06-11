@@ -144,6 +144,19 @@
   },
   "evidence": {
     "component_registry_fingerprint": "1ed363838a71dec50a06186661e806d6f462d76f06040b5476c8e913c26d6084",
+    "config": {
+      "authored_config_hash": "0fe5a40cec07b70e0b470d787e4ce8838a4d2461aa2e5274bf48cbfe0363682c",
+      "raw_config_identity": {
+        "hash": "947a3dda8b3c83f7ab267475716cfb463a6618583a6252272539150f1f28f5fa"
+      },
+      "resolved_config_hash": "790f6a3e70b3d55d547b0cc0d25dce84e87903f80d6b03f9c9e32cca74e670b0",
+      "schema_version": 8,
+      "selection": {
+        "config_path": "<masked>",
+        "source": "explicit"
+      },
+      "source_path": "<masked>"
+    },
     "data_arrays": {
       "component_required_arrays": [
         "Close"

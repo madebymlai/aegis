@@ -230,16 +230,13 @@ def test_lock_handle_worst_role_carries_colon_role() -> None:
     assert lock_handle("run-abc", "worst") == "run-abc:worst"
 
 
-def test_lock_handle_round_trip_for_every_lock_role(registry) -> None:
-    """Every LOCK_ROLE round-trips: compose a handle with lock_handle,
-    then validate it back through the Lock model's scalar coercion to the
-    same run_id and role. The bare run_id (best) resolves to the default
-    role via the Lock parser."""
-    run_id = "20260601T000000000Z_test_run"
-    for role in LOCK_ROLES:
-        handle = lock_handle(run_id, role)
-        raw = _raw_config(lock=handle)
-        resolved = resolve_run_config(raw, component_registry=registry)
-        assert resolved.config.lock is not None
-        assert resolved.config.lock.run_id == run_id
-        assert resolved.config.lock.candidate_id == role
+@pytest.mark.parametrize("role", sorted(LOCK_ROLES))
+def test_lock_handle_round_trips_through_lock_parser(registry, role: str) -> None:
+    """Every LOCK_ROLE round-trips: a handle composed by lock_handle validates
+    back through the Lock model's scalar coercion to the same run_id and role.
+    The bare run_id (best) resolves to the default role via the Lock parser."""
+    handle = lock_handle("20260601T000000000Z_test_run", role)
+    resolved = resolve_run_config(_raw_config(lock=handle), component_registry=registry)
+    assert resolved.config.lock is not None
+    assert resolved.config.lock.run_id == "20260601T000000000Z_test_run"
+    assert resolved.config.lock.candidate_id == role

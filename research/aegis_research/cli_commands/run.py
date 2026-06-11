@@ -56,7 +56,7 @@ def _handle_strategy_run(
     config_path: Path,
     **streams: Any,
 ) -> int:
-    run_refs: dict[str, Any] = {}
+    failure_refs: dict[str, Any] = {}
     selection_evidence = ConfigSelectionEvidence(
         source="explicit", config_path=str(config_path.resolve())
     )
@@ -83,23 +83,23 @@ def _handle_strategy_run(
             run_id=args.run_id,
             parent_run_id=args.parent_run_id,
             supersedes_run_id=args.supersedes_run_id,
-            on_run_refs=run_refs.update,
+            on_run_refs=failure_refs.update,
         )
-        run_refs.update(result)
+        failure_refs.update(result)
     except KeyboardInterrupt as error:
         raise InterruptedCliError(
             "strategy run interrupted",
-            run_refs=run_refs,
+            run_refs=failure_refs,
         ) from error
     except ConfigValidationError as error:
         raise ConfigCliError(
             str(error),
-            run_refs=run_refs,
+            run_refs=failure_refs,
         ) from error
     except Exception as error:
         raise ExecutionFailureError(
             str(error),
-            run_refs=run_refs,
+            run_refs=failure_refs,
         ) from error
 
     return write_success(
@@ -110,5 +110,3 @@ def _handle_strategy_run(
         json_mode=True,
         **streams,
     )
-
-

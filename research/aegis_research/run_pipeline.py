@@ -34,6 +34,7 @@ from research.aegis_research.optimization.run_data_contract import (
     DataArrayContract,
     build_run_data_array_contract,
 )
+from research.aegis_research.provenance.capture import capture_config_evidence
 from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunStore
@@ -86,6 +87,12 @@ def run_strategy_sweep(
         optimization={},
         persist=recorder.persist,
     )
+    # The Manifest's config Evidence carries the config-selection record with
+    # the resolved absolute config path (ADR-0021). Runs started without a
+    # selection (direct pipeline callers) record no config Evidence — existing
+    # Runs and goldens are unaffected.
+    if resolved_config.selection is not None:
+        recorder.manifest.evidence["config"] = capture_config_evidence(resolved_config)
     recorder.persist()
 
     try:

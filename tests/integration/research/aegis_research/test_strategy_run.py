@@ -194,14 +194,6 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
         assert headline["selection"] == candidate["metrics"].get(ranking_metric)
         if headline["held_out"] is not None and headline["selection"] is not None:
             assert headline["gap"] == pytest.approx(headline["selection"] - headline["held_out"])
-        # aegis-rd-gg3.2: lock handles are payload data — bare run_id for best,
-        # run_id:role otherwise, composed by the same module that parses the grammar.
-        expected_lock = (
-            "component-opt"
-            if summary["role"] == "best"
-            else f"component-opt:{summary['role']}"
-        )
-        assert summary["lock"] == expected_lock
     assert len(artifact["candidates"]) == 3
     assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 
@@ -235,16 +227,20 @@ def test_strategy_run_always_emits_json_with_lock_handles(
         "source": "explicit",
         "config_path": str(config_path.resolve()),
     }
-    # aegis-rd-gg3.4: run block carries real paths — no scrubbing
+    # aegis-rd-gg3.4: run block carries real, resolved absolute paths — no scrubbing
     run_block = payload["run"]
     assert run_block["id"] == "lock-handle-run"
-    assert run_block["run_dir"] == "runs/lock-handle-run"
-    assert run_block["manifest_path"] == "runs/lock-handle-run/manifest.json"
-    # Paths are real (not the <path> fallback, not ~-ized, not <tmp>-ized)
-    for field in ("run_dir", "manifest_path"):
-        assert "<path>" not in run_block[field]
-        assert not run_block[field].startswith("~")
-        assert not run_block[field].startswith("<tmp>")
+    assert run_block["run_dir"] == str(tmp_path / "runs" / "lock-handle-run")
+    assert run_block["manifest_path"] == str(tmp_path / "runs" / "lock-handle-run" / "manifest.json")
+    # aegis-rd-gg3.4: the Manifest's config-selection Evidence records the
+    # resolved absolute config path (asserted at the Manifest seam).
+    manifest = json.loads(
+        (tmp_path / "runs" / "lock-handle-run" / "manifest.json").read_text()
+    )
+    assert manifest["evidence"]["config"]["selection"] == {
+        "source": "explicit",
+        "config_path": str(config_path.resolve()),
+    }
 
 
 def test_strategy_run_retires_the_locks_section_and_honors_inline_params(

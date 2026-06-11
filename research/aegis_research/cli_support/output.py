@@ -136,20 +136,30 @@ def write_error(
 
 
 def run_refs(refs: Mapping[str, Any]) -> dict[str, Any]:
-    """Project a run-identity block with real paths — no path scrubbing.
+    """Project a run-identity block with real, resolved absolute paths — no
+    path scrubbing (ADR-0021).
 
     Consumed by both the success payload and the error envelope so the
-    two run blocks cannot drift.  Paths are passed through as-is; the
-    caller is responsible for providing real, resolved paths.
+    two run blocks cannot drift.
     """
     return {
         "id": refs.get("run_id") or refs.get("id"),
         "status": refs.get("status"),
-        "run_dir": refs.get("run_dir"),
-        "manifest_path": refs.get("manifest_path"),
+        "run_dir": real_path_text(refs.get("run_dir")),
+        "manifest_path": real_path_text(refs.get("manifest_path")),
         "started_at": refs.get("started_at"),
         "finished_at": refs.get("finished_at"),
     }
+
+
+def real_path_text(value: Any) -> str | None:
+    """The run contract's path shape: a real, resolved absolute path as text
+    (ADR-0021). Stringified here so the JSON sanitizer's ``Path`` branch
+    (which scrubs) never sees a ``Path`` value.
+    """
+    if value is None:
+        return None
+    return str(Path(value).resolve(strict=False))
 
 
 def safe_path(value: Any) -> str | None:
