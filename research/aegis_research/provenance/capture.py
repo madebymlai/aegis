@@ -133,7 +133,7 @@ def capture_vectorbt_settings() -> dict[str, Any]:
     settings = {}
     for section in VBT_SETTINGS_SECTIONS:
         try:
-            settings[section] = _safe_json_value(to_builtin(vbt.settings[section]))
+            settings[section] = _jsonable_value(to_builtin(vbt.settings[section]))
         except Exception:
             settings[section] = {"available": False}
     return {"available": True, "sections": settings}
@@ -172,15 +172,15 @@ def canonical_hash(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(json_safe_value)).hexdigest()
 
 
-def _safe_json_value(value: Any) -> Any:
+def _jsonable_value(value: Any) -> Any:
     if value is None or isinstance(value, int | float | bool):
         return value
     if isinstance(value, str):
         return value
     if isinstance(value, Mapping):
-        return {str(key): _safe_json_value(item) for key, item in value.items()}
+        return {str(key): _jsonable_value(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
-        return [_safe_json_value(item) for item in value]
+        return [_jsonable_value(item) for item in value]
     return {"available": False, "type": type(value).__name__}
 
 

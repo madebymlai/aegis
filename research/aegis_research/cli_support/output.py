@@ -63,7 +63,7 @@ def write_markdown_guide(
 
     Human mode prints the markdown; ``--json`` wraps it in the standard
     envelope as ``{"format": "markdown", "content": ...}``. Unlike
-    ``write_success``, the ``content`` is not passed through ``safe_json_value``
+    ``write_success``, the ``content`` is not passed through ``jsonable_value``
     (which clips every string to ``MAX_REASON_CHARS``), so the full guide
     survives JSON serialization.
     """
@@ -105,7 +105,7 @@ def write_error(
             "error": {
                 "category": error.category,
                 "message": clip_message(error.message),
-                "details": safe_json_value(error.details),
+                "details": jsonable_value(error.details),
             }
         },
     )
@@ -158,7 +158,7 @@ def clip_message(text: str, *, max_chars: int = MAX_ERROR_MESSAGE_CHARS) -> str:
     return str(text)[:max_chars]
 
 
-def safe_json_value(value: Any) -> Any:
+def jsonable_value(value: Any) -> Any:
     value = to_builtin(value)
     if value is None or isinstance(value, bool | int):
         return value
@@ -169,9 +169,9 @@ def safe_json_value(value: Any) -> Any:
     if isinstance(value, Path):
         return real_path_text(value)
     if isinstance(value, Mapping):
-        return {str(key): safe_json_value(item) for key, item in value.items()}
+        return {str(key): jsonable_value(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
-        return [safe_json_value(item) for item in value]
+        return [jsonable_value(item) for item in value]
     return clip_message(repr(value), max_chars=MAX_REASON_CHARS)
 
 
@@ -197,7 +197,7 @@ def _envelope_header(
 def _envelope(command: str, status: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **_envelope_header(command, status),
-        **safe_json_value(payload),
+        **jsonable_value(payload),
     }
 
 

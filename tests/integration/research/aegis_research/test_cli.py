@@ -425,12 +425,12 @@ def test_error_details_paths_emit_real_resolved_paths(
 ) -> None:
     """The JSON sanitizer's Path branch emits real absolute paths — the
     scrubbing rewrite (ADR-0009's retired threat model) is gone (ADR-0021)."""
-    from research.aegis_research.cli_support.output import safe_json_value
+    from research.aegis_research.cli_support.output import jsonable_value
 
     monkeypatch.chdir(tmp_path)
 
-    assert safe_json_value(Path("runs/example")) == str(tmp_path / "runs" / "example")
-    assert safe_json_value(Path("/data/runs/abc")) == "/data/runs/abc"
+    assert jsonable_value(Path("runs/example")) == str(tmp_path / "runs" / "example")
+    assert jsonable_value(Path("/data/runs/abc")) == "/data/runs/abc"
 
 
 def test_run_refs_emits_absolute_paths_unscrubbed() -> None:
