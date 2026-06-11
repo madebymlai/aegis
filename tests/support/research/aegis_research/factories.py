@@ -10,11 +10,8 @@ These are test-support only — no production code changes.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 import numpy as np
@@ -25,7 +22,10 @@ from research.aegis_research.component_registry.contracts import (
     ComponentDefinition,
     ComponentFamily,
 )
-from research.aegis_research.component_registry.registry import FrozenComponentRegistry
+from research.aegis_research.component_registry.registry import (
+    FrozenComponentRegistry,
+    freeze_component_registry,
+)
 from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     DataConfig,
@@ -294,38 +294,14 @@ def make_component_registry(
     """Build a FrozenComponentRegistry in memory — no tmp dirs, no file writing.
 
     Accepts fully-constructed ``ComponentDefinition`` objects keyed by family
-    and id.  The definitions are sorted, frozen (``MappingProxyType``), and
-    fingerprinted using the production ``FrozenComponentRegistry`` fingerprint
-    hash so the public snapshot is byte-identical to a file-discovered
-    registry with the same definitions.
+    and id.  Delegates to ``freeze_component_registry`` so the factory stops
+    re-deriving the freeze loop and fingerprint recipe.
     """
-    # Sort and freeze within each family (mirrors registry._freeze).
-    sorted_defs: dict[ComponentFamily, Mapping[str, ComponentDefinition]] = {}
-    for family in COMPONENT_FAMILIES:
-        family_defs = definitions.get(family, {})
-        sorted_defs[family] = MappingProxyType(dict(sorted(family_defs.items())))
-    frozen = MappingProxyType(sorted_defs)
-
-    # Fingerprint (mirrors registry._registry_fingerprint).
-    fingerprint_payload: dict[str, dict[str, dict[str, Any]]] = {}
-    for family in COMPONENT_FAMILIES:
-        family_payload: dict[str, dict[str, Any]] = {}
-        for component_id, definition in frozen[family].items():
-            family_payload[component_id] = {
-                "manifest": definition.manifest.fingerprint_payload(),
-                "entrypoint": definition.callable_name,
-                "has_param_space": definition.has_param_space,
-                "source": definition.identity.public(),
-            }
-        fingerprint_payload[family] = family_payload
-    data = json.dumps(
-        fingerprint_payload, sort_keys=True, default=str, separators=(",", ":")
-    ).encode()
-
-    return FrozenComponentRegistry(
-        definitions=frozen,
-        fingerprint=hashlib.sha256(data).hexdigest(),
-    )
+    mutable: dict[ComponentFamily, dict[str, ComponentDefinition]] = {
+        family: dict(definitions.get(family, {}))
+        for family in COMPONENT_FAMILIES
+    }
+    return freeze_component_registry(mutable)
 
 
 def make_setup_result(**overrides: Any) -> SetupResult:

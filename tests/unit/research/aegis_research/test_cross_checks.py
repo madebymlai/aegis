@@ -50,20 +50,10 @@ def _indicator(
     defaults: dict[str, object] | None = None,
     has_param_space: bool = False,
 ) -> ComponentDefinition:
-    payload: dict[str, Any] = {
-        "family": "indicators",
-        "id": id,
-        "version": "1.0.0",
-        "input_names": list(input_names),
-        "param_names": list(param_names),
-        "output_names": list(output_names),
-        "defaults": defaults or {},
-    }
     manifest = IndicatorManifest(
         family="indicators",
         id=id,
         version="1.0.0",
-        payload=payload,
         input_names=input_names,
         param_names=param_names,
         output_names=output_names,
@@ -87,21 +77,10 @@ def _strategy(
     defaults: dict[str, object] | None = None,
     has_param_space: bool = False,
 ) -> ComponentDefinition:
-    payload: dict[str, Any] = {
-        "family": "strategies",
-        "id": id,
-        "version": "1.0.0",
-        "input_names": list(input_names),
-        "param_names": list(param_names),
-        "output_name": output_name,
-        "consumes_outputs": list(consumes_outputs),
-        "defaults": defaults or {},
-    }
     manifest = StrategyManifest(
         family="strategies",
         id=id,
         version="1.0.0",
-        payload=payload,
         input_names=input_names,
         param_names=param_names,
         output_name=output_name,

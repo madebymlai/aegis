@@ -13,6 +13,7 @@ from research.aegis_research.component_registry.registry import (
     DEFAULT_COMPONENT_ROOT,
     FrozenComponentRegistry,
     discover_component_registry,
+    freeze_component_registry,
     load_component_attribute,
     load_component_attributes,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "IndicatorManifest",
     "StrategyManifest",
     "discover_component_registry",
+    "freeze_component_registry",
     "load_component_attribute",
     "load_component_attributes",
 ]

@@ -50,10 +50,6 @@ class ComponentManifest:
     family: ComponentFamily
     id: str
     version: str
-    payload: Mapping[str, Any]
-
-    def fingerprint_payload(self) -> Mapping[str, Any]:
-        return self.payload
 
 
 @dataclass(frozen=True)
@@ -163,6 +159,38 @@ class ComponentDefinition:
         from research.aegis_research.component_registry.registry import load_component_callable
 
         return load_component_callable(self)
+
+    def public_snapshot(self) -> dict[str, Any]:
+        """The one projection of a component's public facts.
+
+        Emitted into the registry snapshot and hashed for the registry fingerprint.
+        """
+        manifest = self.manifest
+        payload: dict[str, Any] = {
+            "family": self.family,
+            "id": self.id,
+            "version": manifest.version,
+            "callable": self.callable_name,
+            "source_hash": self.identity.source_hash,
+            "source": self.identity.public(),
+            "inputs": list(manifest.input_names),
+            "params": {
+                "names": list(manifest.param_names),
+                "defaults": dict(manifest.defaults),
+                "param_space": {
+                    "available": self.has_param_space,
+                    "entrypoint": self.param_space_entrypoint_name,
+                },
+            },
+        }
+        if isinstance(manifest, IndicatorManifest):
+            payload["outputs"] = list(manifest.output_names)
+            payload["bar_aligned"] = manifest.bar_aligned
+        else:
+            payload["output_name"] = manifest.output_name
+            payload["consumes_outputs"] = list(manifest.consumes_outputs)
+            payload["owns_portfolio"] = manifest.owns_portfolio
+        return payload
 
     def load_attribute(self, attribute_name: str) -> Any:
         from research.aegis_research.component_registry.registry import load_component_attribute
