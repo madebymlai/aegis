@@ -5,13 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.market_data.contracts import (
-    ArrayDescriptor,
-    CoverageFacet,
-    MarketDataMetadataV3,
-    ProvenanceFacet,
-    RequestFacet,
-)
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.setup import (
@@ -24,6 +17,14 @@ from research.aegis_research.optimization.run_data_contract import (
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
+from tests.support.research.aegis_research.test_doubles import (
+    FakeDataResult,
+    _default_metadata,
+)
+
+_OHLCV_METADATA = _default_metadata(
+    effective_arrays=["OHLCV"], start=None, end=None
+)
 
 
 class _FakeData:
@@ -31,45 +32,6 @@ class _FakeData:
         import pandas as pd
 
         return pd.DataFrame({0: [float(i) for i in range(120)]})
-
-
-class _FakeDataResult:
-    class quality:
-        state = "ok"
-
-    metadata = MarketDataMetadataV3(
-        schema_version="market_data.v3",
-        request=RequestFacet(
-            source="synthetic",
-            requested_symbols=["SYN"],
-            timeframe="1D",
-            authored_arrays=["OHLCV"],
-            effective_arrays=["OHLCV"],
-        ),
-        arrays=[
-            ArrayDescriptor(name="Close", required=True, loaded=True, observed=True, ohlc=True),
-            ArrayDescriptor(name="Open", required=True, loaded=True, observed=True, ohlc=True),
-        ],
-        coverage=CoverageFacet(
-            symbols=["SYN"], rows=120, start=None, end=None
-        ),
-        quality={"state": "healthy"},
-        diagnostics=[],
-        provenance=ProvenanceFacet(
-            provider_class=None,
-            source_metadata={},
-            index_evidence={},
-            provider_metadata={},
-            omitted_metadata_fields=[],
-            update_supported=False,
-            missing_index="raise",
-            missing_columns="raise",
-            tz_localize=None,
-            tz_convert=None,
-            skip_on_error=False,
-            silence_warnings=False,
-        ),
-    )
 
 
 def _run_evidence() -> RunEvidence:
@@ -94,7 +56,7 @@ def test_pipeline_setup_returns_setup_result(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
-        data_result=_FakeDataResult(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
         run_evidence=_run_evidence(),
@@ -123,7 +85,7 @@ def test_pipeline_setup_evidence_baseline_shape(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
-        data_result=_FakeDataResult(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
         run_evidence=run_evidence,
@@ -152,7 +114,7 @@ def test_pipeline_setup_store_path_matches_candidate_store(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
-        data_result=_FakeDataResult(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
         run_evidence=_run_evidence(),

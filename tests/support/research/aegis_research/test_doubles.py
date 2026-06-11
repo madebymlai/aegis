@@ -20,31 +20,36 @@ from research.aegis_research.market_data.contracts import (
 )
 
 
-class FakeDataResult:
-    """Lightweight stand-in for ``MarketDataResult``.
+def _default_metadata(
+    *,
+    source: str = "synthetic",
+    symbols: list[str] | None = None,
+    effective_arrays: list[str] | None = None,
+    rows: int = 120,
+    start: str | None = "2020-01-01",
+    end: str | None = "2020-06-01",
+) -> MarketDataMetadataV3:
+    """Build a minimal ``MarketDataMetadataV3`` for test doubles.
 
-    ``metadata`` is a class attribute so every instance surfaces identical
-    metadata — tests never mutate it during a stage invocation.
-    ``quality`` is an instance attribute so it can hold a simple
-    stand-in without pulling in the real quality model.
+    Callers that need a specific facet shape can pass keyword overrides;
+    the defaults represent the simplest healthy synthetic-data fixture.
     """
-
-    metadata = MarketDataMetadataV3(
+    syms = symbols or ["SYN"]
+    arrays = effective_arrays or ["Close", "Open"]
+    return MarketDataMetadataV3(
         schema_version="market_data.v3",
         request=RequestFacet(
-            source="synthetic",
-            requested_symbols=["SYN"],
+            source=source,
+            requested_symbols=syms,
             timeframe="1D",
-            authored_arrays=["Close", "Open"],
-            effective_arrays=["Close", "Open"],
+            authored_arrays=arrays,
+            effective_arrays=arrays,
         ),
         arrays=[
-            ArrayDescriptor(name="Close", required=True, loaded=True, observed=True, ohlc=True),
-            ArrayDescriptor(name="Open", required=True, loaded=True, observed=True, ohlc=True),
+            ArrayDescriptor(name=name, required=True, loaded=True, observed=True, ohlc=name in {"Close", "Open", "High", "Low", "Volume"})
+            for name in arrays
         ],
-        coverage=CoverageFacet(
-            symbols=["SYN"], rows=120, start="2020-01-01", end="2020-06-01"
-        ),
+        coverage=CoverageFacet(symbols=syms, rows=rows, start=start, end=end),
         quality={"state": "healthy"},
         diagnostics=[],
         provenance=ProvenanceFacet(
@@ -63,8 +68,29 @@ class FakeDataResult:
         ),
     )
 
-    def __init__(self, *, quality_state: str = "healthy") -> None:
+
+class FakeDataResult:
+    """Lightweight stand-in for ``MarketDataResult``.
+
+    ``metadata`` is a class attribute so every instance surfaces identical
+    metadata — tests never mutate it during a stage invocation.
+    Pass ``metadata`` to override it for specialised fixtures; otherwise
+    :func:`_default_metadata` supplies the common healthy-synthetic shape.
+    ``quality`` is an instance attribute so it can hold a simple
+    stand-in without pulling in the real quality model.
+    """
+
+    metadata = _default_metadata()
+
+    def __init__(
+        self,
+        *,
+        quality_state: str = "healthy",
+        metadata: MarketDataMetadataV3 | None = None,
+    ) -> None:
         self.quality = type("_Quality", (), {"state": quality_state})()
+        if metadata is not None:
+            self.metadata = metadata
 
 
 class FakeArrayContract:
