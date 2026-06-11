@@ -51,3 +51,15 @@ parse hardest); scrubbing paths in Evidence while emitting real ones in the CLI 
 retired threat model would survive in one layer). Amends the human-mode expectation for
 `run` and for every command's *error* output; ADR-0019's guide-command human success
 mode is untouched.
+
+**Amendment (2026-06-12).** The structured `show` subcommands (`components`,
+`splitters`) drop their dual-mode toggle too: `write_success` emits the JSON envelope
+unconditionally and has no mode parameter, `CommandResult.human_lines` and the
+human-line formatters are deleted, and `--json` is removed from those parsers (failing
+loudly, per Forward-First). The "plausibly a human at a terminal" carve-out proved not
+worth a second output mode for data that is a JSON document either way — `aerd show
+components | jq` serves the terminal reader. The carve-out now applies only to the
+guide commands (`*-schema`), whose content is authored markdown, not data; ADR-0019
+stands. In the same change `safe_path` is deleted outright: the generic JSON
+sanitizer's `Path` branch emits real resolved absolute paths, so the scrub-vs-real
+decision has one answer everywhere, including error `details`.

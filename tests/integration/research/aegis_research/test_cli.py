@@ -36,7 +36,7 @@ def test_run_help_does_not_list_train_flag(capsys: pytest.CaptureFixture[str]) -
 
 
 def test_show_splitters_from_rolling_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["show", "splitters", "from_rolling", "--json"]) == 0
+    assert cli.main(["show", "splitters", "from_rolling"]) == 0
 
     output = capsys.readouterr()
     payload = json.loads(output.out)
@@ -50,7 +50,7 @@ def test_show_splitters_from_rolling_json(capsys: pytest.CaptureFixture[str]) ->
 def test_show_splitters_marks_runtime_object_methods_unsupported(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert cli.main(["show", "splitters", "from_split_func", "--json"]) == 0
+    assert cli.main(["show", "splitters", "from_split_func"]) == 0
 
     output = capsys.readouterr()
     payload = json.loads(output.out)
@@ -60,7 +60,7 @@ def test_show_splitters_marks_runtime_object_methods_unsupported(
 
 
 def test_show_splitters_lists_catalog_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["show", "splitters", "--json"]) == 0
+    assert cli.main(["show", "splitters"]) == 0
 
     output = capsys.readouterr()
     payload = json.loads(output.out)
@@ -79,7 +79,7 @@ def test_show_components_lists_registry_json(
     write_indicator_component(tmp_path / "research/components/indicators/returns.py")
     write_strategy_component(tmp_path / "research/components/strategies/strategy.py")
 
-    assert cli.main(["show", "components", "--json"]) == 0
+    assert cli.main(["show", "components"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     strategy = payload["families"]["strategies"]["demo.strategy"]
@@ -93,7 +93,7 @@ def test_show_components_lists_registry_json(
 
 
 def test_show_splitters_unknown_method_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["show", "splitters", "missing_method", "--json"]) == 6
+    assert cli.main(["show", "splitters", "missing_method"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -862,7 +862,7 @@ def test_show_components_unchanged_after_indicator_schema(
     write_indicator_component(tmp_path / "research/components/indicators/returns.py")
     write_strategy_component(tmp_path / "research/components/strategies/strategy.py")
 
-    assert cli.main(["show", "components", "--json"]) == 0
+    assert cli.main(["show", "components"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "success"
@@ -875,7 +875,7 @@ def test_show_splitters_catalog_unchanged_after_indicator_schema(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """`aerd show splitters` behavior is unchanged."""
-    assert cli.main(["show", "splitters", "--json"]) == 0
+    assert cli.main(["show", "splitters"]) == 0
 
     output = capsys.readouterr()
     payload = json.loads(output.out)
@@ -1073,7 +1073,7 @@ def test_show_components_unchanged_after_strategy_schema(
     write_indicator_component(tmp_path / "research/components/indicators/returns.py")
     write_strategy_component(tmp_path / "research/components/strategies/strategy.py")
 
-    assert cli.main(["show", "components", "--json"]) == 0
+    assert cli.main(["show", "components"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "success"
@@ -1086,7 +1086,7 @@ def test_show_splitters_catalog_unchanged_after_strategy_schema(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """`aerd show splitters` behavior is unchanged."""
-    assert cli.main(["show", "splitters", "--json"]) == 0
+    assert cli.main(["show", "splitters"]) == 0
 
     output = capsys.readouterr()
     payload = json.loads(output.out)

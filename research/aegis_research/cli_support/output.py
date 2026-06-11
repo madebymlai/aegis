@@ -35,8 +35,7 @@ def write_success(
     stderr: TextIO | None = None,
 ) -> int:
     """Emit the JSON success envelope on stdout — the CLI's one success
-    contract (ADR-0021). Commands with a human success mode render it
-    themselves via ``write_human_lines``."""
+    contract (ADR-0021)."""
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
     payload = _envelope(result.command, "success", result.payload)
@@ -48,17 +47,6 @@ def write_success(
             stderr=stderr,
         )
     stdout.write(document)
-    return 0
-
-
-def write_human_lines(
-    lines: tuple[str, ...],
-    *,
-    stdout: TextIO | None = None,
-    stderr: TextIO | None = None,
-) -> int:
-    stdout = stdout or sys.stdout
-    stdout.write("\n".join(lines) + "\n")
     return 0
 
 

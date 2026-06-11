@@ -4,65 +4,26 @@ import argparse
 from typing import Any
 
 from research.aegis_research.cli_support.errors import ConfigCliError
-from research.aegis_research.cli_support.output import (
-    CommandResult,
-    write_human_lines,
-    write_success,
-)
+from research.aegis_research.cli_support.output import CommandResult, write_success
 from research.aegis_research.run_splits import (
     splitter_catalog_payload,
     splitter_method_info,
-    splitter_method_names,
 )
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("splitters", help="Inspect VBT splitter methods")
     parser.add_argument("method", nargs="?", help="VBT Splitter method such as from_rolling")
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        default=False,
-        help="Emit a structured JSON result",
-    )
     parser.set_defaults(handler=handle_show_splitters, command_name="show")
 
 
 def handle_show_splitters(args: argparse.Namespace, **streams: Any) -> int:
-    json_mode = args.json
     method = args.method
-    if not method:
-        return _write_splitter_catalog(json_mode=json_mode, **streams)
-    try:
-        payload = splitter_method_info(method).payload()
-    except ValueError as error:
-        raise ConfigCliError(str(error)) from error
-
-    if not json_mode:
-        return write_human_lines(_human_method_lines(payload), **streams)
+    if method:
+        try:
+            payload = splitter_method_info(method).payload()
+        except ValueError as error:
+            raise ConfigCliError(str(error)) from error
+    else:
+        payload = splitter_catalog_payload()
     return write_success(CommandResult(command="show", payload=payload), **streams)
-
-
-def _write_splitter_catalog(*, json_mode: bool, **streams: Any) -> int:
-    payload = splitter_catalog_payload()
-    if not json_mode:
-        return write_human_lines(splitter_method_names(), **streams)
-    return write_success(CommandResult(command="show", payload=payload), **streams)
-
-
-def _human_method_lines(payload: dict[str, Any]) -> tuple[str, ...]:
-    lines = [f"method: {payload['method']}"]
-    lines.append(f"run_scoring_set_policy: {payload['run_scoring_set_policy']}")
-    required = payload.get("required_params", [])
-    if required:
-        lines.append(f"required_params: {', '.join(required)}")
-    denied = payload.get("denied_internal_params", [])
-    if denied:
-        lines.append(f"denied_internal_params: {', '.join(denied)}")
-    lines.append("params:")
-    for param in payload.get("params", []):
-        suffix = "required" if param["required"] else f"default={param.get('default')!r}"
-        if param.get("denied"):
-            suffix = f"{suffix}, denied"
-        lines.append(f"  - {param['name']}: {suffix}")
-    return tuple(lines)
