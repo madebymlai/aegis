@@ -61,11 +61,11 @@ def test_describe_consumes_pre_scrubbed_provider_metadata_from_the_adapter() -> 
         },
     )
 
-    assert result.metadata["provider_metadata"] == {
+    assert result.metadata.provenance.provider_metadata == {
         "source": "prescrubbed",
         "fetch_kwargs": {"period": "1mo"},
     }
-    assert result.metadata["omitted_metadata_fields"] == [
+    assert result.metadata.provenance.omitted_metadata_fields == [
         {"path": "fetch_kwargs.api_key", "reason": "secret-like or denied key"}
     ]
 

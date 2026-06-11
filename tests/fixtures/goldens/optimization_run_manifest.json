@@ -1,0 +1,1521 @@
+{
+  "artifacts": [
+    {
+      "hash": "1e1aca91ed6cae21a4f89497c0fbf8415e8be36e32228f60652b93048d7c23f5",
+      "hash_algorithm": "sha256",
+      "id": "data.metadata",
+      "metadata": {},
+      "path": "data_metadata.json",
+      "producer_stage": "data",
+      "role": "data_metadata",
+      "schema_version": "data_metadata.v3",
+      "shape": {},
+      "size": 18121,
+      "status": "completed",
+      "type": "json",
+      "updated_at": "<masked>",
+      "upstream_artifact_ids": []
+    },
+    {
+      "hash": "ccb887e4c31cf918e11776447c0a4acec23052ec1e3ec511bedfc3718ce44e25",
+      "hash_algorithm": "sha256",
+      "id": "strategy.run",
+      "metadata": {},
+      "path": "strategy_run.json",
+      "producer_stage": "strategy_run",
+      "role": "optimization_evidence",
+      "schema_version": "optimization_artifact.v1",
+      "shape": {
+        "candidate_count": 3,
+        "split_count": 3
+      },
+      "size": 48953,
+      "status": "completed",
+      "type": "json",
+      "updated_at": "<masked>",
+      "upstream_artifact_ids": []
+    }
+  ],
+  "config": {
+    "data": {
+      "arrays": [
+        "OHLCV"
+      ],
+      "end": null,
+      "execution_kwargs": {},
+      "missing_columns": "raise",
+      "missing_index": "raise",
+      "path": null,
+      "provider_kwargs": {},
+      "quality": {
+        "allowed_degradations": []
+      },
+      "rows": 1008,
+      "seed": 42,
+      "silence_warnings": false,
+      "skip_on_error": false,
+      "source": "synthetic",
+      "start": null,
+      "symbols": [
+        "SPY",
+        "IWM",
+        "EEM",
+        "TLT",
+        "GLD",
+        "DBC",
+        "VNQ",
+        "UUP",
+        "XLE",
+        "XLU"
+      ],
+      "timeframe": "1D",
+      "tz_convert": null,
+      "tz_localize": null,
+      "wrapper_kwargs": {}
+    },
+    "indicators": [
+      {
+        "id": "tests.momentum_score",
+        "params": {
+          "h1": 15,
+          "h2": 42,
+          "h3": 100,
+          "h4": 200,
+          "w1": 8.0,
+          "w2": 4.0,
+          "w3": 3.0,
+          "w4": 2.0
+        }
+      },
+      {
+        "id": "tests.realized_vol",
+        "params": {
+          "window": 20
+        }
+      }
+    ],
+    "lock": null,
+    "name": "golden_bytes_oracle",
+    "optimization": {
+      "execute": {},
+      "random_subset": null,
+      "search": "grid",
+      "seed": null,
+      "split": {
+        "max_estimated_output_cells": 1000000000,
+        "max_public_artifact_bytes": 20000000,
+        "max_splits": 10,
+        "method": "from_rolling",
+        "params": {
+          "length": 504,
+          "offset": 0,
+          "split": 0.5
+        }
+      }
+    },
+    "output_dir": "runs",
+    "portfolio": {
+      "direction": "longonly",
+      "fees": 0.0005,
+      "gross_cap": 1.0,
+      "init_cash": 10000.0,
+      "net_cap": 1.0,
+      "short_borrow_rate": 0.005,
+      "short_rebate_rate": 0.0,
+      "slippage": 0.0005
+    },
+    "ranking": {
+      "metric": "sharpe_ratio",
+      "min_trades": 0,
+      "min_weight": 0.3
+    },
+    "report": {
+      "freq": "1D",
+      "max_oos_drawdown": 0.35,
+      "min_oos_sharpe": 0.5,
+      "min_oos_trades": 5,
+      "year_freq": "252D"
+    },
+    "schema_version": 8,
+    "strategy": {
+      "id": "tests.momentum_rotator",
+      "params": {}
+    }
+  },
+  "evidence": {
+    "component_registry_fingerprint": "1ed363838a71dec50a06186661e806d6f462d76f06040b5476c8e913c26d6084",
+    "config": {
+      "authored_config_hash": "0fe5a40cec07b70e0b470d787e4ce8838a4d2461aa2e5274bf48cbfe0363682c",
+      "raw_config_identity": {
+        "hash": "947a3dda8b3c83f7ab267475716cfb463a6618583a6252272539150f1f28f5fa"
+      },
+      "resolved_config_hash": "790f6a3e70b3d55d547b0cc0d25dce84e87903f80d6b03f9c9e32cca74e670b0",
+      "schema_version": 8,
+      "selection": {
+        "config_path": "<masked>",
+        "source": "explicit"
+      },
+      "source_path": "<masked>"
+    },
+    "data_arrays": {
+      "component_required_arrays": [
+        "Close"
+      ],
+      "configured_arrays": [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume"
+      ],
+      "contract_required_arrays": [
+        "Close",
+        "Open"
+      ],
+      "missing_required_arrays": [],
+      "pipeline_required_arrays": [
+        "Close",
+        "Open"
+      ]
+    },
+    "optimization": {
+      "candidate_count": 3,
+      "candidates": [
+        {
+          "candidate_key": "cand_0180a43319818556010d780a643f3163",
+          "held_out_metrics": {
+            "0": {
+              "max_dd": 19.259731031899552,
+              "sharpe_ratio": 0.25704638593720874,
+              "total_fees_paid": 472.87016684089275,
+              "total_return": 3.3729563695052756,
+              "total_trades": 226.0,
+              "win_rate": 60.17699115044248
+            },
+            "1": {
+              "max_dd": 38.19034366748685,
+              "sharpe_ratio": -0.7037900589419994,
+              "total_fees_paid": 382.03582984576957,
+              "total_return": -19.81416143561923,
+              "total_trades": 200.0,
+              "win_rate": 52.0
+            },
+            "2": {
+              "max_dd": 28.783314825404695,
+              "sharpe_ratio": 1.4617420612613803,
+              "total_fees_paid": 575.4331292707328,
+              "total_return": 47.108636231217275,
+              "total_trades": 190.0,
+              "win_rate": 57.36842105263158
+            }
+          },
+          "held_out_metrics_mean": {
+            "max_dd": 28.744463174930363,
+            "sharpe_ratio": 0.33833279608552985,
+            "total_fees_paid": 476.779708652465,
+            "total_return": 10.22247705503444,
+            "total_trades": 205.33333333333334,
+            "win_rate": 56.515137401024695
+          },
+          "identity": {
+            "allocation_policy": {
+              "direction": "longonly",
+              "fees": 0.0005,
+              "gross_cap": 1.0,
+              "init_cash": 10000.0,
+              "net_cap": 1.0,
+              "short_borrow_rate": 0.005,
+              "short_rebate_rate": 0.0,
+              "slippage": 0.0005
+            },
+            "data_identity": {
+              "array_contract": {
+                "component_required_arrays": [
+                  "Close"
+                ],
+                "configured_arrays": [
+                  "Open",
+                  "High",
+                  "Low",
+                  "Close",
+                  "Volume"
+                ],
+                "contract_required_arrays": [
+                  "Close",
+                  "Open"
+                ],
+                "missing_required_arrays": [],
+                "pipeline_required_arrays": [
+                  "Close",
+                  "Open"
+                ]
+              },
+              "effective_arrays": [
+                "Open",
+                "High",
+                "Low",
+                "Close",
+                "Volume"
+              ],
+              "index_end": "2022-10-04 00:00:00+00:00",
+              "index_evidence": {
+                "raw_index_end": "2022-10-04 00:00:00+00:00",
+                "raw_index_has_duplicates": false,
+                "raw_index_monotonic_increasing": true,
+                "raw_index_start": "2020-01-01 00:00:00+00:00",
+                "raw_index_timezone": "UTC",
+                "raw_rows": 1008,
+                "source": "generated"
+              },
+              "index_start": "2020-01-01 00:00:00+00:00",
+              "loaded_arrays": [
+                "Close",
+                "High",
+                "Low",
+                "Open",
+                "Volume"
+              ],
+              "requested_symbols": [
+                "SPY",
+                "IWM",
+                "EEM",
+                "TLT",
+                "GLD",
+                "DBC",
+                "VNQ",
+                "UUP",
+                "XLE",
+                "XLU"
+              ],
+              "rows": 1008,
+              "schema_version": "candidate_data_identity.v2",
+              "source": "synthetic",
+              "source_metadata": {
+                "generated": true,
+                "rows": 1008,
+                "seed": 42
+              },
+              "symbols": [
+                "SPY",
+                "IWM",
+                "EEM",
+                "TLT",
+                "GLD",
+                "DBC",
+                "VNQ",
+                "UUP",
+                "XLE",
+                "XLU"
+              ],
+              "timeframe": "1D"
+            },
+            "hidden_params": {},
+            "params": {
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+            },
+            "schema_version": "candidate_identity.v3",
+            "source_identity": {
+              "consumed_outputs": [
+                "momentum_score",
+                "realized_vol"
+              ],
+              "fixed_candidate_param": null,
+              "indicators": [
+                {
+                  "family": "indicators",
+                  "fixed_params": {
+                    "h1": 15,
+                    "h2": 42,
+                    "h3": 100,
+                    "h4": 200,
+                    "w1": 8.0,
+                    "w2": 4.0,
+                    "w3": 3.0,
+                    "w4": 2.0
+                  },
+                  "id": "tests.momentum_score",
+                  "param_keys": {},
+                  "param_mode": "fixed",
+                  "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
+                  "slot": "tests.momentum_score",
+                  "source_hash": "e7ee06dc51c8528306fb119f51af043e8d7ba95f485fe500edc7e3dec6b59c7d",
+                  "version": "1.0.0"
+                },
+                {
+                  "family": "indicators",
+                  "fixed_params": {
+                    "window": 20
+                  },
+                  "id": "tests.realized_vol",
+                  "param_keys": {},
+                  "param_mode": "fixed",
+                  "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
+                  "slot": "tests.realized_vol",
+                  "source_hash": "903a525bf9e45dfacfeb2cc0be7a5a315e37348bb1dd6d559044a08f1f86c821",
+                  "version": "1.0.0"
+                }
+              ],
+              "kind": "component_composition",
+              "param_names": [
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e",
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175"
+              ],
+              "produced_outputs": [
+                "momentum_score",
+                "realized_vol"
+              ],
+              "schema_version": "component_optimization_source.v2",
+              "source": "component",
+              "strategy": {
+                "family": "strategies",
+                "fixed_params": {},
+                "id": "tests.momentum_rotator",
+                "param_keys": {
+                  "tau": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175",
+                  "top_k_defensive": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+                  "top_n": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e"
+                },
+                "param_mode": "parameterized",
+                "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
+                "slot": "strategy",
+                "source_hash": "ac8b23af5b03520abb7314e40376c6d48d576f85e6b9c6d257d3ff36999e0b76",
+                "version": "1.0.0"
+              }
+            }
+          },
+          "metrics": {
+            "max_dd": 22.422989855989638,
+            "sharpe_ratio": 0.17819743681681585,
+            "total_fees_paid": 322.3354208800294,
+            "total_return": -1.4782323858154973,
+            "total_trades": 164.0,
+            "win_rate": 57.594350585501026
+          },
+          "params": {
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+          },
+          "rank": 1,
+          "role": "best",
+          "schema_version": "candidate_eval_row.v2",
+          "score": -0.08639881191082874,
+          "selection_metrics": {
+            "0": {
+              "max_dd": 9.818894868582506,
+              "sharpe_ratio": 0.9813359834552382,
+              "total_fees_paid": 112.10026595342593,
+              "total_return": 12.006507908667462,
+              "total_trades": 66.0,
+              "win_rate": 60.60606060606061
+            },
+            "1": {
+              "max_dd": 19.259731031899552,
+              "sharpe_ratio": 0.25704638593720874,
+              "total_fees_paid": 472.87016684089275,
+              "total_return": 3.3729563695052756,
+              "total_trades": 226.0,
+              "win_rate": 60.17699115044248
+            },
+            "2": {
+              "max_dd": 38.19034366748685,
+              "sharpe_ratio": -0.7037900589419994,
+              "total_fees_paid": 382.03582984576957,
+              "total_return": -19.81416143561923,
+              "total_trades": 200.0,
+              "win_rate": 52.0
+            }
+          },
+          "store_namespace": {
+            "kind": "local_sqlite",
+            "path": ".candidate_store/candidates.sqlite3"
+          }
+        },
+        {
+          "candidate_key": "cand_5f6ca0cffb6a5cc717ebb17b1f7cae4b",
+          "held_out_metrics": {
+            "0": {
+              "max_dd": 18.118116158313768,
+              "sharpe_ratio": 0.07944827633710533,
+              "total_fees_paid": 422.3688181318641,
+              "total_return": -1.1506608411979005,
+              "total_trades": 266.0,
+              "win_rate": 54.51127819548872
+            },
+            "1": {
+              "max_dd": 35.192796602809516,
+              "sharpe_ratio": -1.0278131601009484,
+              "total_fees_paid": 401.8596931487011,
+              "total_return": -24.268147501967096,
+              "total_trades": 295.0,
+              "win_rate": 54.57627118644067
+            },
+            "2": {
+              "max_dd": 29.057624917738757,
+              "sharpe_ratio": 1.045335732896797,
+              "total_fees_paid": 484.1866837695087,
+              "total_return": 28.012033108859658,
+              "total_trades": 215.0,
+              "win_rate": 51.627906976744185
+            }
+          },
+          "held_out_metrics_mean": {
+            "max_dd": 27.456179226287347,
+            "sharpe_ratio": 0.0323236163776513,
+            "total_fees_paid": 436.1383983500246,
+            "total_return": 0.8644082552315537,
+            "total_trades": 258.6666666666667,
+            "win_rate": 53.571818786224526
+          },
+          "identity": {
+            "allocation_policy": {
+              "direction": "longonly",
+              "fees": 0.0005,
+              "gross_cap": 1.0,
+              "init_cash": 10000.0,
+              "net_cap": 1.0,
+              "short_borrow_rate": 0.005,
+              "short_rebate_rate": 0.0,
+              "slippage": 0.0005
+            },
+            "data_identity": {
+              "array_contract": {
+                "component_required_arrays": [
+                  "Close"
+                ],
+                "configured_arrays": [
+                  "Open",
+                  "High",
+                  "Low",
+                  "Close",
+                  "Volume"
+                ],
+                "contract_required_arrays": [
+                  "Close",
+                  "Open"
+                ],
+                "missing_required_arrays": [],
+                "pipeline_required_arrays": [
+                  "Close",
+                  "Open"
+                ]
+              },
+              "effective_arrays": [
+                "Open",
+                "High",
+                "Low",
+                "Close",
+                "Volume"
+              ],
+              "index_end": "2022-10-04 00:00:00+00:00",
+              "index_evidence": {
+                "raw_index_end": "2022-10-04 00:00:00+00:00",
+                "raw_index_has_duplicates": false,
+                "raw_index_monotonic_increasing": true,
+                "raw_index_start": "2020-01-01 00:00:00+00:00",
+                "raw_index_timezone": "UTC",
+                "raw_rows": 1008,
+                "source": "generated"
+              },
+              "index_start": "2020-01-01 00:00:00+00:00",
+              "loaded_arrays": [
+                "Close",
+                "High",
+                "Low",
+                "Open",
+                "Volume"
+              ],
+              "requested_symbols": [
+                "SPY",
+                "IWM",
+                "EEM",
+                "TLT",
+                "GLD",
+                "DBC",
+                "VNQ",
+                "UUP",
+                "XLE",
+                "XLU"
+              ],
+              "rows": 1008,
+              "schema_version": "candidate_data_identity.v2",
+              "source": "synthetic",
+              "source_metadata": {
+                "generated": true,
+                "rows": 1008,
+                "seed": 42
+              },
+              "symbols": [
+                "SPY",
+                "IWM",
+                "EEM",
+                "TLT",
+                "GLD",
+                "DBC",
+                "VNQ",
+                "UUP",
+                "XLE",
+                "XLU"
+              ],
+              "timeframe": "1D"
+            },
+            "hidden_params": {},
+            "params": {
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+            },
+            "schema_version": "candidate_identity.v3",
+            "source_identity": {
+              "consumed_outputs": [
+                "momentum_score",
+                "realized_vol"
+              ],
+              "fixed_candidate_param": null,
+              "indicators": [
+                {
+                  "family": "indicators",
+                  "fixed_params": {
+                    "h1": 15,
+                    "h2": 42,
+                    "h3": 100,
+                    "h4": 200,
+                    "w1": 8.0,
+                    "w2": 4.0,
+                    "w3": 3.0,
+                    "w4": 2.0
+                  },
+                  "id": "tests.momentum_score",
+                  "param_keys": {},
+                  "param_mode": "fixed",
+                  "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
+                  "slot": "tests.momentum_score",
+                  "source_hash": "e7ee06dc51c8528306fb119f51af043e8d7ba95f485fe500edc7e3dec6b59c7d",
+                  "version": "1.0.0"
+                },
+                {
+                  "family": "indicators",
+                  "fixed_params": {
+                    "window": 20
+                  },
+                  "id": "tests.realized_vol",
+                  "param_keys": {},
+                  "param_mode": "fixed",
+                  "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
+                  "slot": "tests.realized_vol",
+                  "source_hash": "903a525bf9e45dfacfeb2cc0be7a5a315e37348bb1dd6d559044a08f1f86c821",
+                  "version": "1.0.0"
+                }
+              ],
+              "kind": "component_composition",
+              "param_names": [
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e",
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175"
+              ],
+              "produced_outputs": [
+                "momentum_score",
+                "realized_vol"
+              ],
+              "schema_version": "component_optimization_source.v2",
+              "source": "component",
+              "strategy": {
+                "family": "strategies",
+                "fixed_params": {},
+                "id": "tests.momentum_rotator",
+                "param_keys": {
+                  "tau": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175",
+                  "top_k_defensive": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+                  "top_n": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e"
+                },
+                "param_mode": "parameterized",
+                "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
+                "slot": "strategy",
+                "source_hash": "ac8b23af5b03520abb7314e40376c6d48d576f85e6b9c6d257d3ff36999e0b76",
+                "version": "1.0.0"
+              }
+            }
+          },
+          "metrics": {
+            "max_dd": 20.5181673187116,
+            "sharpe_ratio": 0.04473801558193211,
+            "total_fees_paid": 321.5834682507712,
+            "total_return": -5.14921129631593,
+            "total_trades": 214.33333333333334,
+            "win_rate": 57.0942237777163
+          },
+          "params": {
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+          },
+          "rank": 2,
+          "role": "median",
+          "schema_version": "candidate_eval_row.v2",
+          "score": -0.277027337122932,
+          "selection_metrics": {
+            "0": {
+              "max_dd": 8.243589195011513,
+              "sharpe_ratio": 1.0825789305096394,
+              "total_fees_paid": 140.5218934717484,
+              "total_return": 9.971174454217206,
+              "total_trades": 82.0,
+              "win_rate": 62.19512195121951
+            },
+            "1": {
+              "max_dd": 18.118116158313768,
+              "sharpe_ratio": 0.07944827633710533,
+              "total_fees_paid": 422.3688181318641,
+              "total_return": -1.1506608411979005,
+              "total_trades": 266.0,
+              "win_rate": 54.51127819548872
+            },
+            "2": {
+              "max_dd": 35.192796602809516,
+              "sharpe_ratio": -1.0278131601009484,
+              "total_fees_paid": 401.8596931487011,
+              "total_return": -24.268147501967096,
+              "total_trades": 295.0,
+              "win_rate": 54.57627118644067
+            }
+          },
+          "store_namespace": {
+            "kind": "local_sqlite",
+            "path": ".candidate_store/candidates.sqlite3"
+          }
+        },
+        {
+          "candidate_key": "cand_c2f04e50c7da384ff0d1ce56dbb0582d",
+          "held_out_metrics": {
+            "0": {
+              "max_dd": 27.841344065208496,
+              "sharpe_ratio": -0.27636804546851584,
+              "total_fees_paid": 419.0968270199723,
+              "total_return": -10.638052466283279,
+              "total_trades": 249.0,
+              "win_rate": 53.01204819277109
+            },
+            "1": {
+              "max_dd": 42.24917159459765,
+              "sharpe_ratio": -1.4605734517738627,
+              "total_fees_paid": 461.88094946013024,
+              "total_return": -35.8603973997995,
+              "total_trades": 275.0,
+              "win_rate": 48.0
+            },
+            "2": {
+              "max_dd": 25.345662452747362,
+              "sharpe_ratio": 1.6416091074361683,
+              "total_fees_paid": 555.1662138023486,
+              "total_return": 54.77853033557337,
+              "total_trades": 196.0,
+              "win_rate": 53.06122448979592
+            }
+          },
+          "held_out_metrics_mean": {
+            "max_dd": 31.81205937085117,
+            "sharpe_ratio": -0.03177746326873674,
+            "total_fees_paid": 478.7146634274837,
+            "total_return": 2.76002682316353,
+            "total_trades": 240.0,
+            "win_rate": 51.35775756085567
+          },
+          "identity": {
+            "allocation_policy": {
+              "direction": "longonly",
+              "fees": 0.0005,
+              "gross_cap": 1.0,
+              "init_cash": 10000.0,
+              "net_cap": 1.0,
+              "short_borrow_rate": 0.005,
+              "short_rebate_rate": 0.0,
+              "slippage": 0.0005
+            },
+            "data_identity": {
+              "array_contract": {
+                "component_required_arrays": [
+                  "Close"
+                ],
+                "configured_arrays": [
+                  "Open",
+                  "High",
+                  "Low",
+                  "Close",
+                  "Volume"
+                ],
+                "contract_required_arrays": [
+                  "Close",
+                  "Open"
+                ],
+                "missing_required_arrays": [],
+                "pipeline_required_arrays": [
+                  "Close",
+                  "Open"
+                ]
+              },
+              "effective_arrays": [
+                "Open",
+                "High",
+                "Low",
+                "Close",
+                "Volume"
+              ],
+              "index_end": "2022-10-04 00:00:00+00:00",
+              "index_evidence": {
+                "raw_index_end": "2022-10-04 00:00:00+00:00",
+                "raw_index_has_duplicates": false,
+                "raw_index_monotonic_increasing": true,
+                "raw_index_start": "2020-01-01 00:00:00+00:00",
+                "raw_index_timezone": "UTC",
+                "raw_rows": 1008,
+                "source": "generated"
+              },
+              "index_start": "2020-01-01 00:00:00+00:00",
+              "loaded_arrays": [
+                "Close",
+                "High",
+                "Low",
+                "Open",
+                "Volume"
+              ],
+              "requested_symbols": [
+                "SPY",
+                "IWM",
+                "EEM",
+                "TLT",
+                "GLD",
+                "DBC",
+                "VNQ",
+                "UUP",
+                "XLE",
+                "XLU"
+              ],
+              "rows": 1008,
+              "schema_version": "candidate_data_identity.v2",
+              "source": "synthetic",
+              "source_metadata": {
+                "generated": true,
+                "rows": 1008,
+                "seed": 42
+              },
+              "symbols": [
+                "SPY",
+                "IWM",
+                "EEM",
+                "TLT",
+                "GLD",
+                "DBC",
+                "VNQ",
+                "UUP",
+                "XLE",
+                "XLU"
+              ],
+              "timeframe": "1D"
+            },
+            "hidden_params": {},
+            "params": {
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+            },
+            "schema_version": "candidate_identity.v3",
+            "source_identity": {
+              "consumed_outputs": [
+                "momentum_score",
+                "realized_vol"
+              ],
+              "fixed_candidate_param": null,
+              "indicators": [
+                {
+                  "family": "indicators",
+                  "fixed_params": {
+                    "h1": 15,
+                    "h2": 42,
+                    "h3": 100,
+                    "h4": 200,
+                    "w1": 8.0,
+                    "w2": 4.0,
+                    "w3": 3.0,
+                    "w4": 2.0
+                  },
+                  "id": "tests.momentum_score",
+                  "param_keys": {},
+                  "param_mode": "fixed",
+                  "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
+                  "slot": "tests.momentum_score",
+                  "source_hash": "e7ee06dc51c8528306fb119f51af043e8d7ba95f485fe500edc7e3dec6b59c7d",
+                  "version": "1.0.0"
+                },
+                {
+                  "family": "indicators",
+                  "fixed_params": {
+                    "window": 20
+                  },
+                  "id": "tests.realized_vol",
+                  "param_keys": {},
+                  "param_mode": "fixed",
+                  "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
+                  "slot": "tests.realized_vol",
+                  "source_hash": "903a525bf9e45dfacfeb2cc0be7a5a315e37348bb1dd6d559044a08f1f86c821",
+                  "version": "1.0.0"
+                }
+              ],
+              "kind": "component_composition",
+              "param_names": [
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e",
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175"
+              ],
+              "produced_outputs": [
+                "momentum_score",
+                "realized_vol"
+              ],
+              "schema_version": "component_optimization_source.v2",
+              "source": "component",
+              "strategy": {
+                "family": "strategies",
+                "fixed_params": {},
+                "id": "tests.momentum_rotator",
+                "param_keys": {
+                  "tau": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175",
+                  "top_k_defensive": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+                  "top_n": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e"
+                },
+                "param_mode": "parameterized",
+                "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
+                "slot": "strategy",
+                "source_hash": "ac8b23af5b03520abb7314e40376c6d48d576f85e6b9c6d257d3ff36999e0b76",
+                "version": "1.0.0"
+              }
+            }
+          },
+          "metrics": {
+            "max_dd": 26.148418012753776,
+            "sharpe_ratio": -0.1661537477904825,
+            "total_fees_paid": 353.1943209403859,
+            "total_return": -11.215683813871308,
+            "total_trades": 200.33333333333334,
+            "win_rate": 53.15120221144318
+          },
+          "params": {
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+          },
+          "rank": 3,
+          "role": "worst",
+          "schema_version": "candidate_eval_row.v2",
+          "score": -0.5544796589854966,
+          "selection_metrics": {
+            "0": {
+              "max_dd": 8.354738378455185,
+              "sharpe_ratio": 1.238480253870931,
+              "total_fees_paid": 178.6051863410552,
+              "total_return": 12.851398424468858,
+              "total_trades": 77.0,
+              "win_rate": 58.44155844155844
+            },
+            "1": {
+              "max_dd": 27.841344065208496,
+              "sharpe_ratio": -0.27636804546851584,
+              "total_fees_paid": 419.0968270199723,
+              "total_return": -10.638052466283279,
+              "total_trades": 249.0,
+              "win_rate": 53.01204819277109
+            },
+            "2": {
+              "max_dd": 42.24917159459765,
+              "sharpe_ratio": -1.4605734517738627,
+              "total_fees_paid": 461.88094946013024,
+              "total_return": -35.8603973997995,
+              "total_trades": 275.0,
+              "win_rate": 48.0
+            }
+          },
+          "store_namespace": {
+            "kind": "local_sqlite",
+            "path": ".candidate_store/candidates.sqlite3"
+          }
+        }
+      ],
+      "contract": "aegis.optimization_source.v1",
+      "data": {
+        "authored_arrays": [
+          "OHLCV"
+        ],
+        "component_required_arrays": [
+          "Close"
+        ],
+        "configured_arrays": [
+          "Open",
+          "High",
+          "Low",
+          "Close",
+          "Volume"
+        ],
+        "contract_required_arrays": [
+          "Close",
+          "Open"
+        ],
+        "effective_arrays": [
+          "Open",
+          "High",
+          "Low",
+          "Close",
+          "Volume"
+        ],
+        "loaded_arrays": [
+          "Close",
+          "High",
+          "Low",
+          "Open",
+          "Volume"
+        ],
+        "missing_required_arrays": [],
+        "pipeline_required_arrays": [
+          "Close",
+          "Open"
+        ],
+        "quality_state": "healthy",
+        "strategy_consumed_runner_data": true,
+        "strategy_data_binding": "runner_data_bundle",
+        "unavailable_arrays": []
+      },
+      "execution": {
+        "best": {
+          "held_out_metrics": {
+            "0": {
+              "max_dd": 19.259731031899552,
+              "sharpe_ratio": 0.25704638593720874,
+              "total_fees_paid": 472.87016684089275,
+              "total_return": 3.3729563695052756,
+              "total_trades": 226.0,
+              "win_rate": 60.17699115044248
+            },
+            "1": {
+              "max_dd": 38.19034366748685,
+              "sharpe_ratio": -0.7037900589419994,
+              "total_fees_paid": 382.03582984576957,
+              "total_return": -19.81416143561923,
+              "total_trades": 200.0,
+              "win_rate": 52.0
+            },
+            "2": {
+              "max_dd": 28.783314825404695,
+              "sharpe_ratio": 1.4617420612613803,
+              "total_fees_paid": 575.4331292707328,
+              "total_return": 47.108636231217275,
+              "total_trades": 190.0,
+              "win_rate": 57.36842105263158
+            }
+          },
+          "held_out_metrics_mean": {
+            "max_dd": 28.744463174930363,
+            "sharpe_ratio": 0.33833279608552985,
+            "total_fees_paid": 476.779708652465,
+            "total_return": 10.22247705503444,
+            "total_trades": 205.33333333333334,
+            "win_rate": 56.515137401024695
+          },
+          "metrics": {
+            "max_dd": 22.422989855989638,
+            "sharpe_ratio": 0.17819743681681585,
+            "total_fees_paid": 322.3354208800294,
+            "total_return": -1.4782323858154973,
+            "total_trades": 164.0,
+            "win_rate": 57.594350585501026
+          },
+          "params": {
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+          },
+          "score": -0.08639881191082874,
+          "selection_metrics": {
+            "0": {
+              "max_dd": 9.818894868582506,
+              "sharpe_ratio": 0.9813359834552382,
+              "total_fees_paid": 112.10026595342593,
+              "total_return": 12.006507908667462,
+              "total_trades": 66.0,
+              "win_rate": 60.60606060606061
+            },
+            "1": {
+              "max_dd": 19.259731031899552,
+              "sharpe_ratio": 0.25704638593720874,
+              "total_fees_paid": 472.87016684089275,
+              "total_return": 3.3729563695052756,
+              "total_trades": 226.0,
+              "win_rate": 60.17699115044248
+            },
+            "2": {
+              "max_dd": 38.19034366748685,
+              "sharpe_ratio": -0.7037900589419994,
+              "total_fees_paid": 382.03582984576957,
+              "total_return": -19.81416143561923,
+              "total_trades": 200.0,
+              "win_rate": 52.0
+            }
+          }
+        },
+        "excluded_degenerate": 0,
+        "excluded_invalid": 0,
+        "median": {
+          "held_out_metrics": {
+            "0": {
+              "max_dd": 18.118116158313768,
+              "sharpe_ratio": 0.07944827633710533,
+              "total_fees_paid": 422.3688181318641,
+              "total_return": -1.1506608411979005,
+              "total_trades": 266.0,
+              "win_rate": 54.51127819548872
+            },
+            "1": {
+              "max_dd": 35.192796602809516,
+              "sharpe_ratio": -1.0278131601009484,
+              "total_fees_paid": 401.8596931487011,
+              "total_return": -24.268147501967096,
+              "total_trades": 295.0,
+              "win_rate": 54.57627118644067
+            },
+            "2": {
+              "max_dd": 29.057624917738757,
+              "sharpe_ratio": 1.045335732896797,
+              "total_fees_paid": 484.1866837695087,
+              "total_return": 28.012033108859658,
+              "total_trades": 215.0,
+              "win_rate": 51.627906976744185
+            }
+          },
+          "held_out_metrics_mean": {
+            "max_dd": 27.456179226287347,
+            "sharpe_ratio": 0.0323236163776513,
+            "total_fees_paid": 436.1383983500246,
+            "total_return": 0.8644082552315537,
+            "total_trades": 258.6666666666667,
+            "win_rate": 53.571818786224526
+          },
+          "metrics": {
+            "max_dd": 20.5181673187116,
+            "sharpe_ratio": 0.04473801558193211,
+            "total_fees_paid": 321.5834682507712,
+            "total_return": -5.14921129631593,
+            "total_trades": 214.33333333333334,
+            "win_rate": 57.0942237777163
+          },
+          "params": {
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+          },
+          "score": -0.277027337122932,
+          "selection_metrics": {
+            "0": {
+              "max_dd": 8.243589195011513,
+              "sharpe_ratio": 1.0825789305096394,
+              "total_fees_paid": 140.5218934717484,
+              "total_return": 9.971174454217206,
+              "total_trades": 82.0,
+              "win_rate": 62.19512195121951
+            },
+            "1": {
+              "max_dd": 18.118116158313768,
+              "sharpe_ratio": 0.07944827633710533,
+              "total_fees_paid": 422.3688181318641,
+              "total_return": -1.1506608411979005,
+              "total_trades": 266.0,
+              "win_rate": 54.51127819548872
+            },
+            "2": {
+              "max_dd": 35.192796602809516,
+              "sharpe_ratio": -1.0278131601009484,
+              "total_fees_paid": 401.8596931487011,
+              "total_return": -24.268147501967096,
+              "total_trades": 295.0,
+              "win_rate": 54.57627118644067
+            }
+          }
+        },
+        "non_executable_rows": 0,
+        "schema_version": "optimization_result.v3",
+        "total": 30,
+        "worst": {
+          "held_out_metrics": {
+            "0": {
+              "max_dd": 27.841344065208496,
+              "sharpe_ratio": -0.27636804546851584,
+              "total_fees_paid": 419.0968270199723,
+              "total_return": -10.638052466283279,
+              "total_trades": 249.0,
+              "win_rate": 53.01204819277109
+            },
+            "1": {
+              "max_dd": 42.24917159459765,
+              "sharpe_ratio": -1.4605734517738627,
+              "total_fees_paid": 461.88094946013024,
+              "total_return": -35.8603973997995,
+              "total_trades": 275.0,
+              "win_rate": 48.0
+            },
+            "2": {
+              "max_dd": 25.345662452747362,
+              "sharpe_ratio": 1.6416091074361683,
+              "total_fees_paid": 555.1662138023486,
+              "total_return": 54.77853033557337,
+              "total_trades": 196.0,
+              "win_rate": 53.06122448979592
+            }
+          },
+          "held_out_metrics_mean": {
+            "max_dd": 31.81205937085117,
+            "sharpe_ratio": -0.03177746326873674,
+            "total_fees_paid": 478.7146634274837,
+            "total_return": 2.76002682316353,
+            "total_trades": 240.0,
+            "win_rate": 51.35775756085567
+          },
+          "metrics": {
+            "max_dd": 26.148418012753776,
+            "sharpe_ratio": -0.1661537477904825,
+            "total_fees_paid": 353.1943209403859,
+            "total_return": -11.215683813871308,
+            "total_trades": 200.33333333333334,
+            "win_rate": 53.15120221144318
+          },
+          "params": {
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+          },
+          "score": -0.5544796589854966,
+          "selection_metrics": {
+            "0": {
+              "max_dd": 8.354738378455185,
+              "sharpe_ratio": 1.238480253870931,
+              "total_fees_paid": 178.6051863410552,
+              "total_return": 12.851398424468858,
+              "total_trades": 77.0,
+              "win_rate": 58.44155844155844
+            },
+            "1": {
+              "max_dd": 27.841344065208496,
+              "sharpe_ratio": -0.27636804546851584,
+              "total_fees_paid": 419.0968270199723,
+              "total_return": -10.638052466283279,
+              "total_trades": 249.0,
+              "win_rate": 53.01204819277109
+            },
+            "2": {
+              "max_dd": 42.24917159459765,
+              "sharpe_ratio": -1.4605734517738627,
+              "total_fees_paid": 461.88094946013024,
+              "total_return": -35.8603973997995,
+              "total_trades": 275.0,
+              "win_rate": 48.0
+            }
+          }
+        }
+      },
+      "lock": null,
+      "metric_registry_fingerprint": "25995c4bdb5f6c98e4bf62fc60bc38a534e927d2ff469e02102e075d3bdaa3ae",
+      "open_prices_available": true,
+      "optimization": {
+        "execute": {},
+        "random_subset": null,
+        "search": "grid",
+        "seed": null,
+        "split": {
+          "max_estimated_output_cells": 1000000000,
+          "max_public_artifact_bytes": 20000000,
+          "max_splits": 10,
+          "method": "from_rolling",
+          "params": {
+            "length": 504,
+            "offset": 0,
+            "split": 0.5
+          }
+        }
+      },
+      "param_names": [
+        "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e",
+        "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+        "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175"
+      ],
+      "preflight": {
+        "candidate_row_count": 3,
+        "conditioned_combinations": 30,
+        "estimated_output_cells": 1247400,
+        "estimated_portfolio_broadcast_cells": 1247400,
+        "estimated_public_artifact_bytes": 21504,
+        "estimated_public_rows": 21,
+        "estimated_result_cells": 594,
+        "execute": {},
+        "has_open_prices": true,
+        "held_out_broadcast_cells": 113400,
+        "held_out_candidates": 3,
+        "held_out_result_cells": 54,
+        "held_out_rows": 756,
+        "limits": {
+          "max_estimated_output_cells": 1000000000,
+          "max_public_artifact_bytes": 20000000
+        },
+        "materialized_frame_count": 5,
+        "metric_count": 6,
+        "param_sampled_combinations": 30,
+        "param_sampled_count_error": null,
+        "param_sampled_count_source": "vbt.combine_params",
+        "param_shapes": [
+          {
+            "conditioned": false,
+            "effective_level": 0,
+            "hidden": false,
+            "level": null,
+            "name": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e",
+            "random_subset": null,
+            "sampled_value_count": 3,
+            "value_count": 3
+          },
+          {
+            "conditioned": false,
+            "effective_level": 1,
+            "hidden": false,
+            "level": null,
+            "name": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+            "random_subset": null,
+            "sampled_value_count": 2,
+            "value_count": 2
+          },
+          {
+            "conditioned": false,
+            "effective_level": 2,
+            "hidden": false,
+            "level": null,
+            "name": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175",
+            "random_subset": null,
+            "sampled_value_count": 5,
+            "value_count": 5
+          }
+        ],
+        "random_subset": null,
+        "sampled_combinations": 30,
+        "sampled_count_error": null,
+        "sampled_count_source": "vbt.combine_params",
+        "schema_version": "optimization_preflight.v1",
+        "search": "grid",
+        "search_mode": "exhaustive",
+        "seed": null,
+        "selection_broadcast_cells": 1134000,
+        "selection_result_cells": 540,
+        "selection_rows": 756,
+        "set_count": 2,
+        "split_count": 3,
+        "symbol_count": 10,
+        "theoretical_combinations": 30,
+        "total_window_rows": 1512
+      },
+      "schema_version": "optimization_route.v1",
+      "source": {
+        "consumed_outputs": [
+          "momentum_score",
+          "realized_vol"
+        ],
+        "fixed_candidate_param": null,
+        "indicators": [
+          {
+            "family": "indicators",
+            "fixed_params": {
+              "h1": 15,
+              "h2": 42,
+              "h3": 100,
+              "h4": 200,
+              "w1": 8.0,
+              "w2": 4.0,
+              "w3": 3.0,
+              "w4": 2.0
+            },
+            "id": "tests.momentum_score",
+            "param_keys": {},
+            "param_mode": "fixed",
+            "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
+            "slot": "tests.momentum_score",
+            "source_hash": "e7ee06dc51c8528306fb119f51af043e8d7ba95f485fe500edc7e3dec6b59c7d",
+            "version": "1.0.0"
+          },
+          {
+            "family": "indicators",
+            "fixed_params": {
+              "window": 20
+            },
+            "id": "tests.realized_vol",
+            "param_keys": {},
+            "param_mode": "fixed",
+            "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
+            "slot": "tests.realized_vol",
+            "source_hash": "903a525bf9e45dfacfeb2cc0be7a5a315e37348bb1dd6d559044a08f1f86c821",
+            "version": "1.0.0"
+          }
+        ],
+        "kind": "component_composition",
+        "param_names": [
+          "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e",
+          "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+          "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175"
+        ],
+        "produced_outputs": [
+          "momentum_score",
+          "realized_vol"
+        ],
+        "schema_version": "component_optimization_source.v2",
+        "source": "component",
+        "strategy": {
+          "family": "strategies",
+          "fixed_params": {},
+          "id": "tests.momentum_rotator",
+          "param_keys": {
+            "tau": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175",
+            "top_k_defensive": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+            "top_n": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e"
+          },
+          "param_mode": "parameterized",
+          "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
+          "slot": "strategy",
+          "source_hash": "ac8b23af5b03520abb7314e40376c6d48d576f85e6b9c6d257d3ff36999e0b76",
+          "version": "1.0.0"
+        }
+      },
+      "split": {
+        "method": "from_rolling",
+        "n_splits": 3,
+        "params": {
+          "length": 504,
+          "offset": 0,
+          "split": 0.5
+        },
+        "resource_estimate": {
+          "estimated_output_cells": 1512,
+          "estimated_public_artifact_bytes": 24192,
+          "max_public_artifact_bytes": 20000000,
+          "source_rows": 1008,
+          "split_count": 3,
+          "total_membership_entries": 1512
+        },
+        "schema_version": "run_splits.v1",
+        "set_usage_policy": "exactly_two_sets_first_selection_second_held_out",
+        "sets": [
+          {
+            "position": 0,
+            "role": "selection"
+          },
+          {
+            "position": 1,
+            "role": "held_out"
+          }
+        ],
+        "source_index": {
+          "count": 1008,
+          "end": "2022-10-04 00:00:00+00:00",
+          "hash": "7065545292abd0cadbee30dbe98d87dded3e9d10dd5d48a209012e4a3ae6b21e",
+          "start": "2020-01-01 00:00:00+00:00"
+        },
+        "splits": [
+          {
+            "label": "split_0",
+            "sets": {
+              "held_out": {
+                "count": 252,
+                "end": "2021-05-18 00:00:00+00:00",
+                "hash": "08520cf494d2d1aec04fb064f8485170284e16eb0e1f5cd39475fd8df1c452bb",
+                "membership": {
+                  "kind": "range",
+                  "start": 252,
+                  "stop": 504
+                },
+                "start": "2020-09-09 00:00:00+00:00"
+              },
+              "selection": {
+                "count": 252,
+                "end": "2020-09-08 00:00:00+00:00",
+                "hash": "763add7bf9e62ea46ab9efc8caae39f9f55b5c8d04af454659a14256432b2b88",
+                "membership": {
+                  "kind": "range",
+                  "start": 0,
+                  "stop": 252
+                },
+                "start": "2020-01-01 00:00:00+00:00"
+              }
+            }
+          },
+          {
+            "label": "split_1",
+            "sets": {
+              "held_out": {
+                "count": 252,
+                "end": "2022-01-25 00:00:00+00:00",
+                "hash": "7020a21663d5bafcf567de387f2151d67f5bc2d762ab7fb2c9d759c38c7088e7",
+                "membership": {
+                  "kind": "range",
+                  "start": 504,
+                  "stop": 756
+                },
+                "start": "2021-05-19 00:00:00+00:00"
+              },
+              "selection": {
+                "count": 252,
+                "end": "2021-05-18 00:00:00+00:00",
+                "hash": "08520cf494d2d1aec04fb064f8485170284e16eb0e1f5cd39475fd8df1c452bb",
+                "membership": {
+                  "kind": "range",
+                  "start": 252,
+                  "stop": 504
+                },
+                "start": "2020-09-09 00:00:00+00:00"
+              }
+            }
+          },
+          {
+            "label": "split_2",
+            "sets": {
+              "held_out": {
+                "count": 252,
+                "end": "2022-10-04 00:00:00+00:00",
+                "hash": "f3950eebcf782705a430393fe8b3d5951b78115bb9148a3c940db5b8cac517e9",
+                "membership": {
+                  "kind": "range",
+                  "start": 756,
+                  "stop": 1008
+                },
+                "start": "2022-01-26 00:00:00+00:00"
+              },
+              "selection": {
+                "count": 252,
+                "end": "2022-01-25 00:00:00+00:00",
+                "hash": "7020a21663d5bafcf567de387f2151d67f5bc2d762ab7fb2c9d759c38c7088e7",
+                "membership": {
+                  "kind": "range",
+                  "start": 504,
+                  "stop": 756
+                },
+                "start": "2021-05-19 00:00:00+00:00"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "lineage": {},
+  "run": {
+    "finished_at": "<masked>",
+    "id": "golden-bytes-oracle",
+    "label": "golden_bytes_oracle",
+    "mode": "new",
+    "run_dir": "golden-bytes-oracle",
+    "started_at": "<masked>",
+    "status": "completed"
+  },
+  "schema_version": 4,
+  "stages": []
+}

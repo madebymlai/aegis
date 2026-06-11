@@ -6,7 +6,6 @@
 
 # %% imports
 import numpy as np
-import pandas as pd
 from vectorbtpro import vbt
 
 # %% define component metadata
@@ -23,11 +22,8 @@ COMPONENT_MANIFEST = {
         "top_k_defensive": 1,
         "tau": 0.08,
     },
-    "param_space_callable": "param_space",
     "owns_portfolio": False,
-    "wide_callable": "run_wide",
 }
-COMPONENT_CALLABLE = "run"
 
 # %% symbol sleeves
 _CANARY_SYMBOLS = ("SPY", "TLT")
@@ -185,63 +181,10 @@ def _compute_target_weights(
 
 
 # %% main compute
-def run(inputs, top_n, top_k_defensive, tau):
-    """Regime-aware canary rotation with execution-layer turnover gate."""
-
-    close = inputs.data.feature("Close")
-    momentum = inputs.indicators["momentum_score"]
-    vol = inputs.indicators["realized_vol"]
-
-    top_n = int(top_n)
-    top_k_defensive = int(top_k_defensive)
-    tau = float(tau)
-    columns = close.columns
-    n_symbols = len(columns)
-    T = len(close)
-
-    mom_arr = np.asarray(momentum, dtype=np.float64)
-    vol_arr = np.asarray(vol, dtype=np.float64)
-
-    canary_idx = _find_indices(columns, _CANARY_SYMBOLS)
-    offensive_idx = _find_indices(columns, _OFFENSIVE_SYMBOLS)
-    defensive_idx = _find_indices(columns, _DEFENSIVE_SYMBOLS)
-
-    result = np.full((T, n_symbols), np.nan)
-    prev_regime = None
-    last_weights = np.zeros(n_symbols)
-
-    for t in range(T):
-        canary_mom = mom_arr[t, canary_idx]
-        if np.any(np.isnan(canary_mom)):
-            continue
-
-        regime = _detect_regime(canary_mom)
-        regime_changed = prev_regime is not None and regime != prev_regime
-
-        weights = _compute_target_weights(
-            mom_arr[t], vol_arr[t], regime,
-            offensive_idx, defensive_idx,
-            top_n, top_k_defensive,
-        )
-
-        first_bar = prev_regime is None
-        turnover = np.abs(weights - last_weights).sum()
-        if not first_bar and not regime_changed and turnover < tau:
-            prev_regime = regime
-            continue
-
-        result[t] = weights
-        last_weights = weights
-        prev_regime = regime
-
-    return pd.DataFrame(result, index=close.index, columns=columns)
-
-
-# %% wide compute
-def run_wide(inputs, *, n_candidates, **param_lists):
+def run(inputs, *, n_candidates, **param_lists):
     """Vectorized regime rotation for all candidates in a single call."""
 
-    close = inputs.data.feature("Close")
+    close = inputs.data.array("Close")
     n_symbols = inputs.n_symbols
     T = len(close)
     columns = close.columns

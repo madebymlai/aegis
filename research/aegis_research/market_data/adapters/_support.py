@@ -5,7 +5,7 @@ from typing import Any
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data import native_metadata as _native_metadata
 
 
@@ -32,9 +32,9 @@ def index_evidence(index: pd.Index, *, source: str) -> dict[str, Any]:
     }
 
 
-def native_from_feature_data(feature_data: dict[str, pd.DataFrame], config: DataConfig) -> Any:
+def native_from_array_dict(arrays: dict[str, pd.DataFrame], config: DataConfig) -> Any:
     return vbt.Data.from_data(
-        vbt.feature_dict(feature_data),
+        vbt.feature_dict(arrays),
         columns_are_symbols=True,
         missing_index=config.missing_index,
         missing_columns=config.missing_columns,

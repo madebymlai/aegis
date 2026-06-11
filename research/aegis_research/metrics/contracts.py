@@ -4,6 +4,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from research.aegis_research.canonical_json import to_builtin
+
 SOURCE_TYPE_VBT_STATS = "vbt_stats"
 SOURCE_TYPE_CUSTOM = "custom"
 METRIC_SOURCE_TYPES = (SOURCE_TYPE_VBT_STATS, SOURCE_TYPE_CUSTOM)
@@ -51,7 +53,7 @@ class MetricDefinition:
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def public_snapshot(self) -> dict[str, Any]:
-        return {
+        return to_builtin({
             "id": self.id,
             "title": self.title,
             "source_type": self.source_type,
@@ -65,7 +67,7 @@ class MetricDefinition:
             "required_report_output": self.required_report_output,
             "required_gate_input": self.required_gate_input,
             "metadata": dict(self.metadata),
-        }
+        })
 
     def fingerprint_payload(self) -> dict[str, Any]:
         return self.public_snapshot()

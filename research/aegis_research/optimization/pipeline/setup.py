@@ -7,21 +7,22 @@ evidence baseline for the strategy sweep.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+import pandas as pd
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
 )
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     RunConfig,
     to_builtin,
 )
 from research.aegis_research.data import (
     MarketDataBundle,
     MarketDataResult,
-)
-from research.aegis_research.data_arrays import (
-    DataArrayContract,
 )
 from research.aegis_research.optimization.candidate_publishing import (
     candidate_store_path,
@@ -42,12 +43,43 @@ from research.aegis_research.optimization.lock_run import (
     resolve_lock_run,
 )
 from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
     build_run_data_evidence_payload,
 )
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_SOURCE_CONTRACT,
+    OptimizationSource,
 )
-from research.aegis_research.run_splits import build_run_splits_result
+from research.aegis_research.run_splits import RunSplitsResult, build_run_splits_result
+
+
+@dataclass(frozen=True)
+class SetupResult:
+    """Typed hand-off from the pipeline setup stage.
+
+    Carries five identity/product fields per ADR-0015 step 2:
+    thread identities, recompute values. The store path (an identity all
+    stages must agree on), the optimization source and split result (genuine
+    products of Lock resolution and source construction), and the close/open
+    price frames (products of setup's data preparation, not derivable
+    downstream). Strategy evidence is a derived property over the
+    optimization source — no separate stored copy.
+    """
+
+    store_path: Path
+    optimization_source: OptimizationSource
+    close: pd.DataFrame
+    open_: pd.DataFrame
+    split_result: RunSplitsResult
+
+    @property
+    def strategy_evidence(self) -> Mapping[str, Any]:
+        """Strategy evidence derived from the optimization source.
+
+        Divergence between this view and the origin is unrepresentable —
+        there is no separate stored copy.
+        """
+        return self.optimization_source.evidence["strategy"]
 
 
 def run_pipeline_setup(
@@ -59,14 +91,8 @@ def run_pipeline_setup(
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
     run_evidence: RunEvidence,
-) -> dict[str, Any]:
-    """Resolve the Lock, build the optimization source, and construct the evidence baseline.
-
-    Returns a dict with keys:
-        store_path, resolved_component_params, locked,
-        optimization_source, strategy_evidence, close, split_result,
-        optimization_builtin, portfolio_builtin.
-    """
+) -> SetupResult:
+    """Resolve the Lock, build the optimization source, and construct the evidence baseline."""
     # The public entry point rejects runs without an optimization block, so by the
     # time setup executes the optimization config is guaranteed present.
     assert config.optimization is not None
@@ -89,12 +115,10 @@ def run_pipeline_setup(
         resolved_component_params=resolved_component_params,
         force_locked=force_locked,
     )
-    strategy_evidence = optimization_source.evidence["strategy"]
-    close = data.feature("Close")
-    open_ = data.feature("Open")
+    close = data.array("Close")
+    open_ = data.array("Open")
     split_result = build_run_splits_result(close.index, config.optimization.split)
     optimization_builtin = to_builtin(config.optimization)
-    portfolio_builtin = to_builtin(config.portfolio)
     run_evidence.initialize_optimization(
         _optimization_evidence_baseline(
             optimization_source=optimization_source,
@@ -106,18 +130,13 @@ def run_pipeline_setup(
             lock_evidence=lock_evidence,
         )
     )
-    return {
-        "store_path": store_path,
-        "resolved_component_params": resolved_component_params,
-        "locked": lock_run is not None,
-        "optimization_source": optimization_source,
-        "strategy_evidence": strategy_evidence,
-        "close": close,
-        "open_": open_,
-        "split_result": split_result,
-        "optimization_builtin": optimization_builtin,
-        "portfolio_builtin": portfolio_builtin,
-    }
+    return SetupResult(
+        store_path=store_path,
+        optimization_source=optimization_source,
+        close=close,
+        open_=open_,
+        split_result=split_result,
+    )
 
 
 def _resolve_lock_run(config: RunConfig, *, store_path: Any) -> ResolvedLockRun | None:

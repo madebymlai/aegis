@@ -7,14 +7,13 @@ from typing import Any
 
 import pytest
 
-import research.aegis_research.optimization.candidate_store as candidate_store_module
+from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_store import (
     PUBLICATION_PENDING,
     SCHEMA_VERSION,
     CandidateStore,
     CandidateStoreError,
 )
-from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -35,16 +34,13 @@ def test_candidate_store_persists_three_candidates_and_queries_by_run(tmp_path: 
         )
 
         top = store.top_candidates_by_run("run-a")
-        params = store.params_by_candidate_key(top[0]["candidate"]["candidate_key"], run_id="run-a")
-        stored_provenance = store.provenance_by_candidate(
-            top[0]["candidate"]["candidate_key"], run_id="run-a"
-        )
+        stored = store.candidate_by_key(top[0]["candidate"]["candidate_key"], run_id="run-a")
 
     assert [row["role"] for row in top] == ["best", "median", "worst"]
     assert [row["rank"] for row in top] == [1, 2, 3]
     assert [row["ranking_metric_value"] for row in top] == [0.30, 0.20, 0.10]
-    assert params == {"fast_window": 5, "slow_window": 10}
-    assert stored_provenance == provenance
+    assert stored["params"] == {"fast_window": 5, "slow_window": 10}
+    assert stored["provenance"] == provenance
     if os.name == "posix":
         assert store_path.stat().st_mode & 0o077 == 0
         assert store_path.parent.stat().st_mode & 0o077 == 0
@@ -124,14 +120,14 @@ def test_candidate_store_pending_run_is_not_queryable_until_activation(tmp_path:
 
         assert store.top_candidates_by_run("run-a", limit=1) == []
         with pytest.raises(CandidateStoreError, match="unknown candidate key"):
-            store.params_by_candidate_key(candidate["candidate_key"], run_id="run-a")
+            store.candidate_by_key(candidate["candidate_key"], run_id="run-a")
 
         store.activate_run("run-a")
 
         assert store.top_candidates_by_run("run-a", limit=1)
-        assert store.params_by_candidate_key(
+        assert store.candidate_by_key(
             candidate["candidate_key"], run_id="run-a"
-        ) == candidate["params"]
+        )["params"] == candidate["params"]
 
 
 def test_candidate_store_has_no_per_component_lock_surface(tmp_path: Path) -> None:
@@ -149,21 +145,36 @@ def test_candidate_store_has_no_per_component_lock_surface(tmp_path: Path) -> No
         assert "candidate_locks" not in tables
 
 
-def test_candidate_store_json_columns_use_canonical_json_serializer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    serialized_values: list[object] = []
+def test_candidate_store_persists_json_columns_in_canonical_form(tmp_path: Path) -> None:
+    # The durable bytes are the contract: Canonical Form (sorted keys, compact
+    # separators) keeps stored candidate rows hash-stable across processes, so the
+    # raw column must not depend on the insertion order of the params mapping.
+    store_path = tmp_path / "candidates.sqlite3"
+    scrambled_params = {"slow_window": 10, "fast_window": 5}
+    only = _candidate(scrambled_params, 0.5, total_return=0.5)
+    candidates = candidate_rows_from_result(
+        OptimizationResult(best=only, median=only, worst=only),
+        source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
+        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+    )
 
-    def serialize_canonical_json(value: object) -> bytes:
-        serialized_values.append(value)
-        return b'{"serialized":"through-canonical-json"}'
+    with CandidateStore(store_path) as store:
+        store.insert_completed_run(
+            run_id="run-a",
+            candidate_rows=candidates,
+            ranking_metric="total_return",
+            provenance={"run_id": "run-a"},
+        )
 
-    monkeypatch.setattr(candidate_store_module, "canonical_json_bytes", serialize_canonical_json)
+    connection = sqlite3.connect(store_path)
+    try:
+        rows = connection.execute(
+            "SELECT DISTINCT params_json FROM candidates WHERE run_id = 'run-a'"
+        ).fetchall()
+    finally:
+        connection.close()
 
-    payload = {"z": 1, "a": 2}
-
-    assert candidate_store_module._json_dumps(payload) == '{"serialized":"through-canonical-json"}'
-    assert serialized_values == [payload]
+    assert rows == [('{"fast_window":5,"slow_window":10}',)]
 
 
 def test_candidate_store_rejects_incompatible_schema_version(tmp_path: Path) -> None:
@@ -290,6 +301,6 @@ def _candidate_rows(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": [data_symbol], "timeframe": "1D"},
-        portfolio_policy={"target_exposure_cap": 1.0},
+        allocation_policy={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )

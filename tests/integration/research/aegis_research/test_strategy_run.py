@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from research.aegis_research import cli
-from research.aegis_research.config import CONFIG_SCHEMA_VERSION
+from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
 
 
@@ -20,7 +20,7 @@ def test_strategy_run_cli_rejects_component_strategy_without_optimization(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "strategy-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "strategy-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "strategy-run")
 
 
@@ -33,7 +33,7 @@ def test_strategy_run_cli_rejects_component_strategy_with_top_level_rolling_spli
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, split=_rolling_split_config())
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-rolling"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "component-rolling"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "component-rolling")
 
 
@@ -46,7 +46,7 @@ def test_strategy_run_cli_rejects_component_strategy_with_top_level_purged_split
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, split=_purged_kfold_split_config())
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-purged"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "component-purged"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "component-purged")
 
 
@@ -64,7 +64,7 @@ def test_strategy_run_rejects_candidate_grid_before_split_execution_budget_path(
         candidate_grid={"max_estimated_cells": 1},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "split-over-budget"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "split-over-budget"]) == 6
     output = capsys.readouterr()
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
@@ -83,7 +83,7 @@ def test_strategy_run_rejects_component_split_failure_side_path_without_optimiza
 
     config_path = _write_run_config(tmp_path, split=_rolling_split_config())
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-split-fails"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "component-split-fails"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "component-split-fails")
 
 
@@ -101,7 +101,7 @@ def test_strategy_run_rejects_component_indicator_side_path_without_optimization
         indicators=[{"id": "demo.ma", "params": {"window": 2}}],
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "indicator-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "indicator-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "indicator-run")
 
 
@@ -120,7 +120,7 @@ def test_strategy_run_rejects_all_component_indicator_expansion_without_optimiza
     _write_two_indicator_strategy_component(tmp_path / "research/components/strategies/uses_all.py")
     config_path = _write_run_config(tmp_path, strategy_id="demo.uses_all")
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "all-indicators-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "all-indicators-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "all-indicators-run")
 
 
@@ -135,7 +135,7 @@ def test_strategy_run_rejects_component_input_array_side_path_without_optimizati
     strategy_path.write_text(strategy_path.read_text().replace("['Close']", "['FundingRate']"))
     config_path = _write_run_config(tmp_path, arrays=["Close", "Open"])
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-strategy-arrays"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-strategy-arrays"]) == 6
 
     _assert_missing_optimization_config_error(capsys, tmp_path, "bad-strategy-arrays")
 
@@ -152,7 +152,7 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
         optimization={"search": "grid", "split": _rolling_split_config()},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-opt"]) == 0
+    assert cli.main(["run", str(config_path), "--run-id", "component-opt"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     artifact = json.loads((tmp_path / "runs" / "component-opt" / "strategy_run.json").read_text())
@@ -198,13 +198,13 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 
 
-def test_strategy_run_prints_copy_paste_lock_handles_in_human_output(
+def test_strategy_run_always_emits_json_with_lock_handles(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # aegis-rd-6ie: a successful run hands the user copy-paste lock: handles (best is the
-    # bare run_id; median/worst carry :role) plus a run_id + candidate-store footer.
+    # aegis-rd-gg3.3: aerd run always emits JSON without --json flag;
+    # lock handles are payload data (best = bare run_id, others carry :role).
     monkeypatch.chdir(tmp_path)
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(
@@ -214,12 +214,33 @@ def test_strategy_run_prints_copy_paste_lock_handles_in_human_output(
 
     assert cli.main(["run", str(config_path), "--run-id", "lock-handle-run"]) == 0
 
-    lines = capsys.readouterr().out.splitlines()
-    assert any(line.rstrip().endswith("lock: lock-handle-run") for line in lines)
-    assert any(line.rstrip().endswith("lock: lock-handle-run:median") for line in lines)
-    assert any(line.rstrip().endswith("lock: lock-handle-run:worst") for line in lines)
-    assert any(line == "run_id: lock-handle-run" for line in lines)
-    assert any(line.startswith("candidate store:") for line in lines)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "success"
+    assert payload["command"] == "run"
+    # Lock handles in the JSON payload
+    locks = {c["role"]: c["lock"] for c in payload["candidates"]}
+    assert locks["best"] == "lock-handle-run"
+    assert locks["median"] == "lock-handle-run:median"
+    assert locks["worst"] == "lock-handle-run:worst"
+    # Selection projected from ConfigSelectionEvidence
+    assert payload["selection"] == {
+        "source": "explicit",
+        "config_path": str(config_path.resolve()),
+    }
+    # aegis-rd-gg3.4: run block carries real, resolved absolute paths — no scrubbing
+    run_block = payload["run"]
+    assert run_block["id"] == "lock-handle-run"
+    assert run_block["run_dir"] == str(tmp_path / "runs" / "lock-handle-run")
+    assert run_block["manifest_path"] == str(tmp_path / "runs" / "lock-handle-run" / "manifest.json")
+    # aegis-rd-gg3.4: the Manifest's config-selection Evidence records the
+    # resolved absolute config path (asserted at the Manifest seam).
+    manifest = json.loads(
+        (tmp_path / "runs" / "lock-handle-run" / "manifest.json").read_text()
+    )
+    assert manifest["evidence"]["config"]["selection"] == {
+        "source": "explicit",
+        "config_path": str(config_path.resolve()),
+    }
 
 
 def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
@@ -240,7 +261,7 @@ def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
         optimization={"search": "grid", "split": _rolling_split_config()},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-locks"]) == 0
+    assert cli.main(["run", str(config_path), "--run-id", "component-locks"]) == 0
 
     capsys.readouterr()
     artifact = json.loads((tmp_path / "runs" / "component-locks" / "strategy_run.json").read_text())
@@ -265,7 +286,7 @@ def test_strategy_run_rejects_data_quality_side_path_without_optimization(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-data"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-data"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "bad-data")
 
 
@@ -278,7 +299,7 @@ def test_strategy_run_rejects_fixed_strategy_side_path_without_optimization(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "fixed-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "fixed-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "fixed-run")
 
 
@@ -301,7 +322,7 @@ def test_strategy_run_reports_config_validation_failure(
         },
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "secret-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "secret-run"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -320,7 +341,7 @@ def test_strategy_run_maps_component_registry_errors_to_config_errors(
     _write_strategy_component(tmp_path / "research/components/strategies/two.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-registry"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-registry"]) == 6
 
     payload = json.loads(capsys.readouterr().err)
     assert payload["error"]["category"] == "config_validation"
@@ -342,7 +363,7 @@ def test_strategy_run_rejects_indicator_symbol_mismatch_side_path_without_optimi
         indicators=[{"id": "demo.ma", "params": {"window": 2}}],
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-indicator"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-indicator"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "bad-indicator")
 
 
@@ -355,7 +376,7 @@ def test_strategy_run_rejects_interrupt_side_path_without_optimization(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "interrupted-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "interrupted-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "interrupted-run")
 
 
@@ -385,7 +406,7 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
         )
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "should-not-exist"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "should-not-exist"]) == 6
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -404,7 +425,7 @@ def test_run_rejects_optimization_without_nested_split_before_run_creation(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, optimization={"search": "grid"})
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "no-optimization-split"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "no-optimization-split"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -420,7 +441,7 @@ def test_run_missing_config_is_config_error(
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
-    assert cli.main(["run", "missing.yaml", "--json"]) == 6
+    assert cli.main(["run", "missing.yaml"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -513,20 +534,19 @@ def _write_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.cross', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'output_name': 'active', 'owns_portfolio': False, 'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'output_name': 'active', 'owns_portfolio': False}\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
         '    """Emit a deterministic active allocation frame from a fixed MA crossover."""\n'
-        "    close = bundle.data.feature('Close')\n"
+        "    close = bundle.data.array('Close')\n"
         "    selected = close.gt(close.rolling(3).mean()).fillna(False)\n"
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from a fixed MA crossover."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    close_arr = close.values\n"
         "    alloc = np.full((T, n_candidates * S), np.nan)\n"
@@ -553,23 +573,22 @@ def _write_indicator_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['window'], 'output_names': ['ma'], "
-        "'defaults': {'window': 2}, 'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'defaults': {'window': 2}}\n"
         "\n# %% main compute\n"
         "def run(data, window=2):\n"
         '    """Compute the fixed moving-average indicator."""\n'
-        "    return data.feature('Close').rolling(int(window)).mean().bfill()\n"
+        "    return data.array('Close').rolling(int(window)).mean().bfill()\n"
         "\n# %% wide compute\n"
-        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide indicator output."""\n'
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    T, S = close.shape\n"
         "    windows = param_lists.get('window', [2] * n_candidates)\n"
         "    result = np.zeros((T, n_candidates * S))\n"
         "    for i, w in enumerate(windows):\n"
         "        cols = slice(i * S, (i + 1) * S)\n"
         "        result[:, cols] = pd.DataFrame(close.values).rolling(int(w)).mean().bfill().values\n"
-        "    return result\n"
+        "    return {'ma': result}\n"
     )
 
 
@@ -585,20 +604,19 @@ def _write_misaligned_indicator_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'indicators', 'id': 'demo.ma', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': [], 'output_names': ['ma'], "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "}\n"
         "\n# %% main compute\n"
         "def run(data):\n"
         '    """Return a deliberately misaligned indicator fixture."""\n'
-        "    result = data.feature('Close').copy()\n"
+        "    result = data.array('Close').copy()\n"
         "    result.columns = ['OTHER']\n"
         "    return result\n"
         "\n# %% wide compute\n"
-        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide output for misaligned fixture."""\n'
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    T, S = close.shape\n"
-        "    return np.zeros((T, n_candidates * S))\n"
+        "    return {'ma': np.zeros((T, n_candidates * S))}\n"
     )
 
 
@@ -615,22 +633,21 @@ def _write_named_indicator_component(path: Path, component_id: str) -> None:
         "COMPONENT_MANIFEST = {"
         f"'family': 'indicators', 'id': {component_id!r}, 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': [], 'output_names': ['value'], "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "}\n"
         "\n# %% main compute\n"
         "def run(data):\n"
         '    """Compute a fixed moving-average indicator fixture."""\n'
-        "    return data.feature('Close').rolling(2).mean().bfill()\n"
+        "    return data.array('Close').rolling(2).mean().bfill()\n"
         "\n# %% wide compute\n"
-        "def run_wide(data, *, n_candidates, **param_lists):\n"
+        "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide indicator output."""\n'
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    T, S = close.shape\n"
         "    result = np.zeros((T, n_candidates * S))\n"
         "    for i in range(n_candidates):\n"
         "        cols = slice(i * S, (i + 1) * S)\n"
         "        result[:, cols] = pd.DataFrame(close.values).rolling(2).mean().bfill().values\n"
-        "    return result\n"
+        "    return {'value': result}\n"
     )
 
 
@@ -648,21 +665,20 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "'family': 'strategies', 'id': 'demo.uses_ma', 'version': '1.0.0', "
         "'input_names': ['Close'], "
         "'output_name': 'active', 'consumes_outputs': ['ma'], "
-        "'owns_portfolio': False, 'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'owns_portfolio': False}\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
         '    """Emit an active allocation frame from the selected MA indicator."""\n'
         "    ma = bundle.indicators['ma']\n"
-        "    close = bundle.data.feature('Close')\n"
+        "    close = bundle.data.array('Close')\n"
         "    selected = close.gt(ma).fillna(False)\n"
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from MA indicator."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    ma_arr = inputs.indicators['ma']\n"
         "    close_arr = close.values\n"
@@ -689,22 +705,21 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         "COMPONENT_MANIFEST = {"
         "'family': 'strategies', 'id': 'demo.uses_all', 'version': '1.0.0', "
         "'input_names': ['Close'], "
-        "'output_name': 'active', 'owns_portfolio': False, 'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'output_name': 'active', 'owns_portfolio': False}\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
         '    """Emit an active allocation frame from fast and slow indicator outputs."""\n'
         "    fast = bundle.indicators['demo.fast']\n"
         "    slow = bundle.indicators['demo.slow']\n"
-        "    close = bundle.data.feature('Close')\n"
+        "    close = bundle.data.array('Close')\n"
         "    selected = fast.ge(slow).fillna(False)\n"
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
         "    return active\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from fast and slow indicators."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    alloc = np.full((T, n_candidates * S), np.nan)\n"
         "    for i in range(n_candidates):\n"

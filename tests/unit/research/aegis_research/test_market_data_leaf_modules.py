@@ -15,9 +15,9 @@ def test_market_data_panel_and_metadata_helpers_live_in_leaf_modules() -> None:
     )
     frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["symbol", "feature"])
 
-    close = features.feature_from_ohlcv(frame, "Close")
+    close = features.array_from_ohlcv(frame, "Close")
 
     assert list(close.columns) == ["AAA", "BBB"]
-    assert panels.feature_from_frame(frame, "Close").equals(close)
-    assert loading.feature_from_ohlcv is features.feature_from_ohlcv
+    assert panels.array_from_frame(frame, "Close").equals(close)
+    assert loading.array_from_ohlcv is features.array_from_ohlcv
     assert callable(native_metadata.native_data_metadata)

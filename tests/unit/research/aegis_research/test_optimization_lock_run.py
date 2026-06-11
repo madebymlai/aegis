@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.lock_run import (
     LockRunResolutionError,
     resolve_lock_run,
@@ -143,7 +143,7 @@ def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        portfolio_policy={"target_exposure_cap": 1.0},
+        allocation_policy={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     store.insert_completed_run(
@@ -175,7 +175,7 @@ def _candidate_rows() -> list[dict[str, object]]:
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        portfolio_policy={"target_exposure_cap": 1.0},
+        allocation_policy={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
 
@@ -196,7 +196,7 @@ def _source_evidence(*, drop_indicator_runtime: bool = False) -> dict[str, objec
             }
         )
     return {
-        "schema_version": "component_optimization_source.v1",
+        "schema_version": "component_optimization_source.v2",
         "source": "component",
         "strategy": {
             "family": "strategies",

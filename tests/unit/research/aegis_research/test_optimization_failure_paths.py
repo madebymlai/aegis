@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.config import OptimizationConfig
+from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.runner import (
@@ -13,6 +13,7 @@ from research.aegis_research.optimization.runner import (
     execute_optimization,
 )
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
@@ -52,16 +53,18 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
         metadata={},
     )
 
+    optimization = _optimization_config()
     with pytest.raises(OptimizationRunnerError, match="no usable results"):
         execute_optimization(
             close=close,
             open_=close,
             source=source,
-            optimization=_optimization_config(),
+            optimization=optimization,
             portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
             report=make_report_config(),
             ranking=make_ranking_config(metric="total_return"),
             metric_registry=make_default_metric_registry(),
+            split_result=build_run_splits_result(close.index, optimization.split),
         )
 
 
@@ -81,14 +84,50 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
         metadata={},
     )
 
+    optimization = _optimization_config()
     with pytest.raises(RuntimeError, match="pipeline blew up"):
         execute_optimization(
             close=close,
             open_=close,
             source=source,
-            optimization=_optimization_config(),
+            optimization=optimization,
             portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
             report=make_report_config(),
             ranking=make_ranking_config(metric="total_return"),
             metric_registry=make_default_metric_registry(),
+            split_result=build_run_splits_result(close.index, optimization.split),
+        )
+
+
+@pytest.mark.parametrize("reserved_name", ["split", "set", "symbol", "metric_name"])
+def test_runner_rejects_param_names_reserved_for_result_coordinates(
+    reserved_name: str,
+) -> None:
+    close = _close_frame()
+
+    def passthrough(close_window, indicator_window, n_candidates, **param_lists):
+        return close_window
+
+    source = OptimizationSource(
+        precompute=empty_precompute,
+        simulate=passthrough,
+        params={reserved_name: vbt.Param([1, 2])},
+        output_name="active",
+        evidence={"source": "reserved_name"},
+        diagnostics={},
+        metadata={},
+    )
+
+    optimization = _optimization_config()
+    with pytest.raises(OptimizationRunnerError, match="reserved"):
+        execute_optimization(
+            close=close,
+            open_=close,
+            source=source,
+            optimization=optimization,
+            portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+            report=make_report_config(),
+            ranking=make_ranking_config(metric="total_return"),
+            metric_registry=make_default_metric_registry(),
+            split_result=build_run_splits_result(close.index, optimization.split),
         )

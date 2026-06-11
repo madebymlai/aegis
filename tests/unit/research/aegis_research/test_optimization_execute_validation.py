@@ -3,8 +3,11 @@ from __future__ import annotations
 import pytest
 
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import CONFIG_SCHEMA_VERSION, resolve_run_config
-from research.aegis_research.configuration.schema import ConfigValidationError
+from research.aegis_research.configuration import (
+    CONFIG_SCHEMA_VERSION,
+    ConfigValidationError,
+    resolve_run_config,
+)
 from tests.support.research.aegis_research.component_fixtures import write_strategy_component
 
 

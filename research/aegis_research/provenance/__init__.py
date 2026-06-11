@@ -1,7 +1,7 @@
 """Experiment provenance primitives."""
 
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
-from research.aegis_research.provenance.evidence import capture_run_start_evidence
+from research.aegis_research.provenance.capture import capture_run_start_evidence
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
     ManifestValidationError,

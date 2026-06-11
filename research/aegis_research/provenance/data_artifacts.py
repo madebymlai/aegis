@@ -9,16 +9,22 @@ from __future__ import annotations
 from pathlib import Path
 
 from research.aegis_research.atomic_write import write_json
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.market_data.contracts import MarketDataResult
+from research.aegis_research.optimization.run_data_contract import DataArrayContract
 from research.aegis_research.provenance.recorder import RunRecorder
 
 
-def write_data_metadata_artifact(recorder: RunRecorder, data_result: MarketDataResult) -> None:
+def write_data_metadata_artifact(
+    recorder: RunRecorder,
+    data_result: MarketDataResult,
+    array_contract: DataArrayContract,
+) -> None:
     artifact_id = "data.metadata"
     role = "data_metadata"
     producer_stage = "data"
     path = "data_metadata.json"
-    schema_version = "data_metadata.v2"
+    schema_version = "data_metadata.v3"
 
     recorder.artifacts.plan_artifact(
         artifact_id=artifact_id,
@@ -31,7 +37,7 @@ def write_data_metadata_artifact(recorder: RunRecorder, data_result: MarketDataR
     target = recorder.run_dir / path
     recorder.artifacts.begin_artifact_write(artifact_id)
     try:
-        write_json(target, data_result.metadata)
+        write_json(target, to_builtin(data_result.metadata) | array_contract.metadata())
         recorder.artifacts.complete_existing_file(artifact_id)
     except Exception as error:
         try:

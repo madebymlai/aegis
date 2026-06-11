@@ -1,9 +1,11 @@
 """Observe: a single pass over loaded data producing typed diagnostics.
 
 The one place market data is observed. ``observe`` shapes the native source
-object into a :class:`MarketDataObservation` (index, features, symbols, panels);
-``diagnose`` turns that observation plus the adapter's index evidence into the
-typed per-symbol, per-feature :class:`DataDiagnostics` records the judge reads.
+object into a :class:`MarketDataObservation` (index, arrays, symbols, panels);
+``diagnose`` turns that observation into the typed per-symbol, per-Array
+:class:`DataDiagnostics` records the judge reads. The adapter's index
+evidence is observation-level and goes to the judge and the ``provenance``
+facet directly — it is not threaded through the per-symbol records.
 """
 
 from __future__ import annotations
@@ -13,12 +15,12 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data import panels as _panels
 from research.aegis_research.market_data.contracts import (
     QUALITY_PROVIDER_FAILED,
+    DataArrayDiagnostics,
     DataDiagnostics,
-    DataFeatureDiagnostics,
 )
 
 _MISSING = object()
@@ -27,13 +29,13 @@ _MISSING = object()
 @dataclass(frozen=True)
 class MarketDataObservation:
     index: pd.Index
-    features: tuple[str, ...]
+    arrays: tuple[str, ...]
     symbols: tuple[str, ...]
     panels: dict[str, pd.DataFrame]
 
 
 def empty_observation() -> MarketDataObservation:
-    return MarketDataObservation(index=pd.Index([]), features=(), symbols=(), panels={})
+    return MarketDataObservation(index=pd.Index([]), arrays=(), symbols=(), panels={})
 
 
 def provider_failed_diagnostics(config: DataConfig) -> tuple[DataDiagnostics, ...]:
@@ -41,8 +43,7 @@ def provider_failed_diagnostics(config: DataConfig) -> tuple[DataDiagnostics, ..
         DataDiagnostics(
             symbol=symbol,
             configured=True,
-            features={},
-            index_evidence={"source": "provider_failed"},
+            arrays={},
             provider_status=QUALITY_PROVIDER_FAILED,
         )
         for symbol in config.symbols
@@ -53,7 +54,7 @@ def observe(
     config: DataConfig,
     *,
     native_data: Any,
-    requested_features: tuple[str, ...],
+    requested_arrays: tuple[str, ...],
 ) -> MarketDataObservation:
     index = _optional_attr(native_data, "index")
     features = _optional_attr(native_data, "features")
@@ -63,17 +64,15 @@ def observe(
         values = _native_values(native_data)
     return MarketDataObservation(
         index=_observed_index(index, values),
-        features=tuple(_observed_features(features, values)),
+        arrays=tuple(_observed_arrays(features, values)),
         symbols=tuple(_observed_symbols(symbols, values, fallback=config.symbols)),
-        panels=_observed_feature_panels(native_data, requested_features, values=values),
+        panels=_observed_array_panels(native_data, requested_arrays, values=values),
     )
 
 
 def diagnose(
     config: DataConfig,
     observation: MarketDataObservation,
-    *,
-    evidence: dict[str, Any],
 ) -> tuple[DataDiagnostics, ...]:
     diagnostics: list[DataDiagnostics] = []
     panels = observation.panels
@@ -83,12 +82,11 @@ def diagnose(
             DataDiagnostics(
                 symbol=str(symbol),
                 configured=symbol in config.symbols,
-                features=_feature_diagnostics(
+                arrays=_array_diagnostics(
                     panels,
                     symbol=symbol,
-                    features=config.effective_arrays,
+                    arrays=config.effective_arrays,
                 ),
-                index_evidence=evidence,
                 provider_status="loaded",
             )
         )
@@ -98,34 +96,33 @@ def diagnose(
                 DataDiagnostics(
                     symbol=symbol,
                     configured=True,
-                    features={},
-                    index_evidence=evidence,
+                    arrays={},
                     provider_status="skipped",
                 )
             )
     return tuple(diagnostics)
 
 
-def _feature_diagnostics(
+def _array_diagnostics(
     panels: dict[str, pd.DataFrame],
     *,
     symbol: str,
-    features: tuple[str, ...],
-) -> dict[str, DataFeatureDiagnostics]:
-    diagnostics: dict[str, DataFeatureDiagnostics] = {}
-    for feature in features:
-        panel = panels.get(feature)
+    arrays: tuple[str, ...],
+) -> dict[str, DataArrayDiagnostics]:
+    diagnostics: dict[str, DataArrayDiagnostics] = {}
+    for name in arrays:
+        panel = panels.get(name)
         if panel is None or symbol not in panel.columns:
-            diagnostics[feature] = DataFeatureDiagnostics(available=False)
+            diagnostics[name] = DataArrayDiagnostics(available=False)
             continue
-        diagnostics[feature] = _available_feature_diagnostics(panel[symbol])
+        diagnostics[name] = _available_array_diagnostics(panel[symbol])
     return diagnostics
 
 
-def _available_feature_diagnostics(series: pd.Series) -> DataFeatureDiagnostics:
+def _available_array_diagnostics(series: pd.Series) -> DataArrayDiagnostics:
     missing_count = int(series.isna().sum())
     row_count = len(series)
-    return DataFeatureDiagnostics(
+    return DataArrayDiagnostics(
         available=True,
         rows=row_count,
         missing=missing_count,
@@ -160,11 +157,11 @@ def _observed_index(index: Any, values: Any) -> pd.Index:
     return pd.Index([])
 
 
-def _observed_features(features: Any, values: Any) -> list[str]:
+def _observed_arrays(features: Any, values: Any) -> list[str]:
     if features is not _MISSING and features is not None:
         return list(map(str, features))
     if isinstance(values, pd.DataFrame):
-        return _frame_features(values)
+        return _frame_arrays(values)
     return []
 
 
@@ -177,42 +174,42 @@ def _observed_symbols(symbols: Any, values: Any, *, fallback: list[str]) -> list
     return list(fallback)
 
 
-def _observed_feature_panels(
+def _observed_array_panels(
     native_data: Any,
-    requested_features: tuple[str, ...],
+    requested_arrays: tuple[str, ...],
     *,
     values: Any,
 ) -> dict[str, pd.DataFrame]:
     if isinstance(values, pd.DataFrame):
-        return _frame_feature_panels(values, requested_features)
+        return _frame_array_panels(values, requested_arrays)
     if isinstance(values, pd.Series):
-        return _series_feature_panels(values, requested_features)
-    return _panels.available_feature_panels(native_data, requested_features)
+        return _series_array_panels(values, requested_arrays)
+    return _panels.available_array_panels(native_data, requested_arrays)
 
 
-def _frame_feature_panels(
+def _frame_array_panels(
     values: pd.DataFrame,
-    requested_features: tuple[str, ...],
+    requested_arrays: tuple[str, ...],
 ) -> dict[str, pd.DataFrame]:
     panels = {}
-    for feature in requested_features:
+    for name in requested_arrays:
         try:
-            panels[feature] = _panels.feature_from_frame(values, feature)
+            panels[name] = _panels.array_from_frame(values, name)
         except (KeyError, ValueError, TypeError):
             continue
     return panels
 
 
-def _series_feature_panels(
+def _series_array_panels(
     values: pd.Series,
-    requested_features: tuple[str, ...],
+    requested_arrays: tuple[str, ...],
 ) -> dict[str, pd.DataFrame]:
-    if str(values.name) not in requested_features:
+    if str(values.name) not in requested_arrays:
         return {}
     return {str(values.name): _panels.as_panel(values, role=str(values.name))}
 
 
-def _frame_features(frame: pd.DataFrame) -> list[str]:
+def _frame_arrays(frame: pd.DataFrame) -> list[str]:
     if isinstance(frame.columns, pd.MultiIndex):
         values = frame.columns.get_level_values(
             "feature" if "feature" in frame.columns.names else -1

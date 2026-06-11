@@ -1,7 +1,9 @@
-"""Panel mechanics: shaping native source data into per-feature panels.
+"""Panel mechanics: shaping native source data into per-Array panels.
 
 Lower-level building blocks used by :mod:`features` (the caller-facing
-accessors) and the observe pass. Holds no caller-facing surface itself.
+accessors) and the observe pass. Also home to the Result→Bundle builder
+so the frozen-type module (:mod:`contracts`) does not depend on panel
+mechanics.
 """
 
 from __future__ import annotations
@@ -10,44 +12,49 @@ from typing import Any
 
 import pandas as pd
 
+from research.aegis_research.market_data.contracts import (
+    MarketDataBundle,
+    MarketDataResult,
+)
 
-def available_feature_panels(
-    native_data: Any, requested_features: tuple[str, ...]
+
+def available_array_panels(
+    native_data: Any, requested_arrays: tuple[str, ...]
 ) -> dict[str, pd.DataFrame]:
     panels = {}
-    for feature in requested_features:
+    for name in requested_arrays:
         try:
-            panels[feature] = canonical_feature_panel(native_data, feature)
+            panels[name] = canonical_array_panel(native_data, name)
         except (KeyError, ValueError, TypeError):
             continue
     return panels
 
 
-def canonical_feature_panel(
+def canonical_array_panel(
     native_data: Any,
-    feature: str,
+    name: str,
 ) -> pd.DataFrame:
-    return feature_panel(native_data, feature, role=feature)
+    return array_panel(native_data, name, role=name)
 
 
-def feature_panel(data: Any, feature: str, *, role: str) -> pd.DataFrame:
+def array_panel(data: Any, name: str, *, role: str) -> pd.DataFrame:
     values = data.get(
-        feature=feature,
+        feature=name,
         squeeze_features=False,
         squeeze_symbols=False,
     )
     return as_panel(values, role=role)
 
 
-def feature_from_frame(data: pd.DataFrame, feature: str) -> pd.DataFrame:
+def array_from_frame(data: pd.DataFrame, name: str) -> pd.DataFrame:
     if isinstance(data.columns, pd.MultiIndex):
-        if feature in data.columns.get_level_values(-1):
-            return as_panel(data.xs(feature, axis=1, level=-1), role=feature)
-        if feature in data.columns.get_level_values(0):
-            return as_panel(data.xs(feature, axis=1, level=0), role=feature)
-    if feature in data.columns:
-        return as_panel(data[feature], role=feature)
-    raise ValueError(f"Data must contain a {feature} column")
+        if name in data.columns.get_level_values(-1):
+            return as_panel(data.xs(name, axis=1, level=-1), role=name)
+        if name in data.columns.get_level_values(0):
+            return as_panel(data.xs(name, axis=1, level=0), role=name)
+    if name in data.columns:
+        return as_panel(data[name], role=name)
+    raise ValueError(f"Data must contain a {name} column")
 
 
 def as_panel(values: Any, *, role: str) -> pd.DataFrame:
@@ -56,3 +63,14 @@ def as_panel(values: Any, *, role: str) -> pd.DataFrame:
     if not isinstance(values, pd.DataFrame):
         raise TypeError(f"{role} values must be a pandas Series or DataFrame")
     return values
+
+
+def market_data_bundle(result: MarketDataResult) -> MarketDataBundle:
+    """Materialise every declared loaded Array into an eager Bundle."""
+    result.assert_usable()
+    loaded_arrays = [d.name for d in result.metadata.arrays if d.loaded]
+    arrays = {
+        name: canonical_array_panel(result.native_data, name)
+        for name in loaded_arrays
+    }
+    return MarketDataBundle(arrays=arrays)

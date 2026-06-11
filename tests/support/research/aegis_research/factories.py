@@ -10,9 +10,22 @@ These are test-support only — no production code changes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
-from research.aegis_research.config import (
+import numpy as np
+import pandas as pd
+
+from research.aegis_research.component_registry.contracts import (
+    ComponentDefinition,
+    ComponentFamily,
+)
+from research.aegis_research.component_registry.registry import (
+    FrozenComponentRegistry,
+    freeze_component_registry,
+)
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     DataConfig,
     DataQualityConfig,
@@ -27,6 +40,12 @@ from research.aegis_research.config import (
     RunSplitConfig,
     SignalConfig,
 )
+from research.aegis_research.optimization.candidate_grid import (
+    SPLIT_LEVEL,
+    CandidateGrid,
+)
+from research.aegis_research.optimization.pipeline.setup import SetupResult
+from research.aegis_research.optimization.precompute import CandidateKey
 
 
 def make_data_quality_config(**overrides: Any) -> DataQualityConfig:
@@ -199,3 +218,121 @@ def make_run_config(**overrides: Any) -> RunConfig:
     }
     defaults.update(overrides)
     return RunConfig(**defaults)
+
+
+def make_candidate_grid(
+    spec: Mapping[CandidateKey, Mapping[Any, Mapping[str, float | None]]],
+    *,
+    param_names: list[str] | None = None,
+) -> CandidateGrid:
+    """Build a CandidateGrid from a boundary-vocabulary spec.
+
+    ``spec`` maps each CandidateKey to its per-Split per-Metric values. Scalar
+    candidate keys are wrapped as 1-tuples automatically. ``None`` values are
+    converted to NaN for the DataFrame spine so the grid's read surface can
+    normalize them back to None.
+
+    The factory constructs through ``from_sweep`` so every test grid exercises
+    the production construction path.
+    """
+    if not spec:
+        # Empty grid — still valid by construction; carries the default
+        # param level and metric column the non-empty path would produce.
+        if param_names is None:
+            param_names = ["param"]
+        index = pd.MultiIndex.from_tuples(
+            [], names=[*param_names, SPLIT_LEVEL]
+        )
+        return CandidateGrid.from_sweep(
+            pd.DataFrame({"sharpe": []}, index=index, dtype="float64")
+        )
+
+    # Collect all metric ids across all candidates and splits.
+    metric_ids_set: set[str] = set()
+    for per_split in spec.values():
+        for per_metric in per_split.values():
+            metric_ids_set.update(per_metric.keys())
+    metric_ids = sorted(metric_ids_set)
+
+    # Derive param names from the first candidate key if not provided.
+    if param_names is None:
+        first_key = next(iter(spec))
+        if isinstance(first_key, tuple):
+            n = len(first_key)
+            param_names = [f"param_{i}" for i in range(n)] if n > 1 else ["param"]
+        else:
+            param_names = ["param"]
+
+    # Build MultiIndex rows.
+    tuples: list[tuple] = []
+    rows: list[dict[str, float]] = []
+    for key, per_split in spec.items():
+        key_tuple = (key,) if not isinstance(key, tuple) else key
+        for split_label, per_metric in per_split.items():
+            tuples.append((*key_tuple, split_label))
+            rows.append({
+                mid: (np.nan if v is None else float(v))
+                for mid, v in per_metric.items()
+            })
+    index = pd.MultiIndex.from_tuples(tuples, names=[*param_names, SPLIT_LEVEL])
+    # Fill missing metric columns with NaN.
+    frame = pd.DataFrame(rows, index=index)
+    for mid in metric_ids:
+        if mid not in frame.columns:
+            frame[mid] = np.nan
+    frame = frame[metric_ids]
+    return CandidateGrid.from_sweep(frame)
+
+
+def make_component_registry(
+    definitions: Mapping[
+        ComponentFamily,
+        Mapping[str, ComponentDefinition],
+    ],
+) -> FrozenComponentRegistry:
+    """Build a FrozenComponentRegistry in memory — no tmp dirs, no file writing.
+
+    Accepts fully-constructed ``ComponentDefinition`` objects keyed by family
+    and id; families may be omitted.  Delegates to
+    ``freeze_component_registry`` so the factory stops re-deriving the freeze
+    loop and fingerprint recipe.
+    """
+    return freeze_component_registry(definitions)
+
+
+def make_setup_result(**overrides: Any) -> SetupResult:
+    """Return a SetupResult with valid defaults, overridden by any kwargs.
+
+    All fields carry plausible no-op values so tests that only exercise a
+    single field (or a subset) can construct the wrapper directly without
+    reaching into the setup stage internals.
+    """
+    defaults: dict[str, Any] = {
+        "store_path": Path("candidates.sqlite3"),
+        "optimization_source": _fake_optimization_source(),
+        "close": pd.DataFrame({0: [1.0, 2.0]}),
+        "open_": pd.DataFrame({0: [1.0, 2.0]}),
+        "split_result": _fake_split_result(),
+    }
+    defaults.update(overrides)
+    return SetupResult(**defaults)
+
+
+class _FakeOptimizationSource:
+    def __init__(self) -> None:
+        self.params: dict[str, Any] = {}
+        self.evidence: dict[str, Any] = {"strategy": {}}
+
+
+def _fake_optimization_source() -> Any:
+    return _FakeOptimizationSource()
+
+
+class _FakeSplitResult:
+    def __init__(self) -> None:
+        self.metadata: dict[str, int] = {"n_splits": 2}
+        self.splits: list[Any] = []
+
+
+def _fake_split_result() -> Any:
+    return _FakeSplitResult()

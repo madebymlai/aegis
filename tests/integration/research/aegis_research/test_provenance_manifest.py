@@ -9,7 +9,7 @@ import pytest
 from research.aegis_research.atomic_write import hash_file
 from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
-from research.aegis_research.provenance.evidence import (
+from research.aegis_research.provenance.capture import (
     canonical_hash,
     capture_environment_evidence,
     capture_git_evidence,
@@ -189,6 +189,55 @@ def test_canonical_hash_serializes_non_finite_values_as_null() -> None:
     )
 
 
+def test_artifact_registry_requires_the_persist_hook(tmp_path: Path) -> None:
+    # Durability is not optional: a registry that cannot persist the manifest
+    # must be unconstructable, not silently in-memory-only.
+    manifest = RunManifest.new(
+        run_id="run-1",
+        run_dir=tmp_path,
+        run_label="baseline",
+        mode="new",
+        config={},
+    )
+
+    with pytest.raises(TypeError, match="persist"):
+        ArtifactRegistry(manifest, tmp_path)
+
+
+def test_artifact_registry_persists_the_manifest_on_every_mutation(
+    tmp_path: Path,
+) -> None:
+    manifest = RunManifest.new(
+        run_id="run-1",
+        run_dir=tmp_path,
+        run_label="baseline",
+        mode="new",
+        config={},
+    )
+    persist_calls: list[bool] = []
+    registry = ArtifactRegistry(
+        manifest, tmp_path, persist=lambda: persist_calls.append(True)
+    )
+    artifact_path = tmp_path / "report.json"
+
+    registry.plan_artifact(
+        artifact_id="report.survival",
+        role="survival_report",
+        artifact_type="json",
+        producer_stage="report",
+        path="report.json",
+        schema_version="survival_report.v1",
+    )
+    assert len(persist_calls) == 1
+
+    registry.begin_artifact_write("report.survival")
+    assert len(persist_calls) == 2
+
+    artifact_path.write_text("{}\n")
+    registry.complete_artifact("report.survival", content_hash=hash_file(artifact_path))
+    assert len(persist_calls) == 3
+
+
 def test_artifact_registry_completes_only_after_hash_and_manifest_update(
     tmp_path: Path,
 ) -> None:
@@ -199,7 +248,7 @@ def test_artifact_registry_completes_only_after_hash_and_manifest_update(
         mode="new",
         config={},
     )
-    registry = ArtifactRegistry(manifest, tmp_path)
+    registry = ArtifactRegistry(manifest, tmp_path, persist=lambda: None)
     artifact_path = tmp_path / "reports" / "survival_report.json"
 
     registry.plan_artifact(

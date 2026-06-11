@@ -13,7 +13,7 @@ from research.aegis_research.cli_support.errors import (
     InvocationError,
     ParserExit,
 )
-from research.aegis_research.cli_support.output import json_requested, write_error
+from research.aegis_research.cli_support.output import write_error
 
 
 class AerdArgumentParser(argparse.ArgumentParser):
@@ -32,7 +32,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _main(argv: Sequence[str], *, stdout: TextIO, stderr: TextIO) -> int:
-    json_mode = json_requested(argv)
     command_name: str | None = None
     try:
         parser = build_parser()
@@ -43,38 +42,29 @@ def _main(argv: Sequence[str], *, stdout: TextIO, stderr: TextIO) -> int:
             return write_error(
                 InvocationError("missing command"),
                 command=command_name,
-                json_mode=json_mode,
                 stderr=stderr,
             )
-        return handler(parsed, json_mode=json_mode, stdout=stdout, stderr=stderr)
+        return handler(parsed, stdout=stdout, stderr=stderr)
     except ParserExit as exit_error:
         return exit_error.status
     except KeyboardInterrupt:
         return write_error(
             InterruptedCliError("command interrupted"),
             command=command_name,
-            json_mode=json_mode,
             stderr=stderr,
         )
     except CliError as error:
-        return write_error(error, command=command_name, json_mode=json_mode, stderr=stderr)
+        return write_error(error, command=command_name, stderr=stderr)
     except Exception as error:
         return write_error(
             InternalCliError(str(error)),
             command=command_name,
-            json_mode=json_mode,
             stderr=stderr,
         )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser: argparse.ArgumentParser = AerdArgumentParser(prog="aerd")
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="Emit structured JSON where supported",
-    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     run.register(subparsers)
     show.register(subparsers)

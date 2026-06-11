@@ -1,25 +1,18 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.component_registry import (
-    FrozenComponentRegistry,
-    discover_component_registry,
-)
 from research.aegis_research.configuration.schema import (
     ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
     RunConfig,
-)
-from research.aegis_research.configuration.validation import (
-    _post_validate_ranking_metric as _check_ranking_metric_membership,
 )
 from research.aegis_research.configuration.validation import (
     validate_run_config,
@@ -29,7 +22,11 @@ from research.aegis_research.metrics import (
     MetricRegistry,
     freeze_metric_registry,
     make_default_metric_registry,
+    make_metric_registry_for,
 )
+
+if TYPE_CHECKING:
+    from research.aegis_research.component_registry import FrozenComponentRegistry
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -64,7 +61,9 @@ class ResolvedRunConfig:
     authored_config: dict[str, Any]
     source_path: str | None = None
     component_registry: FrozenComponentRegistry | None = None
-    metric_registry: FrozenMetricRegistry | None = None
+    # Resolution always installs an effective registry; direct construction
+    # gets the same default rather than admitting None.
+    metric_registry: FrozenMetricRegistry = field(default_factory=make_default_metric_registry)
     selection: ConfigSelectionEvidence | None = None
 
     def authored_config_document(self) -> dict[str, Any]:
@@ -81,9 +80,7 @@ class ResolvedRunConfig:
             "component_registry_fingerprint": (
                 self.component_registry.fingerprint if self.component_registry else None
             ),
-            "metric_registry_fingerprint": (
-                self.metric_registry.fingerprint if self.metric_registry else None
-            ),
+            "metric_registry_fingerprint": self.metric_registry.fingerprint,
             "selection": self.selection.manifest() if self.selection else None,
         }
 
@@ -124,47 +121,27 @@ def load_run_config(
 
 
 def resolve_run_config(
-    value: ResolvedRunConfig | RunConfig | dict[str, Any],
+    value: dict[str, Any],
     *,
     raw_text: str | None = None,
     source_path: str | None = None,
     component_registry: FrozenComponentRegistry | None = None,
     metric_registry: MetricRegistry | FrozenMetricRegistry | None = None,
 ) -> ResolvedRunConfig:
-    frozen_metric_registry = freeze_metric_registry(metric_registry)
-    if isinstance(value, ResolvedRunConfig):
-        effective_metric_registry = (
-            frozen_metric_registry or value.metric_registry or make_default_metric_registry()
-        )
-        if metric_registry is None and value.metric_registry is not None:
-            return value
-        if metric_registry is not None:
-            _assert_resolved_config_registries(
-                value.config,
-                frozen_metric_registry=effective_metric_registry,
-            )
-        return ResolvedRunConfig(
-            config=value.config,
-            raw_config_hash=value.raw_config_hash,
-            authored_config=value.authored_config,
-            source_path=value.source_path,
-            component_registry=value.component_registry,
-            metric_registry=effective_metric_registry,
-            selection=value.selection,
-        )
+    """Resolve a raw-mapping Run Config into a validated ``ResolvedRunConfig``.
+
+    Non-mapping values raise ``ConfigValidationError``.
+    """
+    if not isinstance(value, dict):
+        raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
+
+    from research.aegis_research.component_registry import discover_component_registry
 
     registry = component_registry or discover_component_registry()
-    effective_metric_registry = frozen_metric_registry or make_default_metric_registry()
-    if isinstance(value, RunConfig):
-        raw = to_builtin(value)
-        raw_text = yaml.safe_dump(raw, sort_keys=False)
-        return _build_resolved_run_config(
-            raw,
-            raw_text=raw_text,
-            source_path=source_path,
-            component_registry=registry,
-            metric_registry=effective_metric_registry,
-        )
+    frozen_metric_registry = freeze_metric_registry(metric_registry)
+    effective_metric_registry = frozen_metric_registry or make_metric_registry_for(
+        _requested_metric_ids(value)
+    )
 
     return _build_resolved_run_config(
         value,
@@ -175,6 +152,20 @@ def resolve_run_config(
     )
 
 
+def _requested_metric_ids(raw: dict[str, Any]) -> tuple[str, ...]:
+    """Metric ids the raw config asks for, before validation has run.
+
+    Custom metrics are opt-in per run: only a requested id can pull its record
+    into the effective registry. Malformed shapes return empty — validation
+    reports them properly later.
+    """
+    ranking = raw.get("ranking")
+    if not isinstance(ranking, dict):
+        return ()
+    metric = ranking.get("metric")
+    return (metric,) if isinstance(metric, str) else ()
+
+
 def _build_resolved_run_config(
     raw: dict[str, Any],
     *,
@@ -183,9 +174,6 @@ def _build_resolved_run_config(
     component_registry: FrozenComponentRegistry,
     metric_registry: FrozenMetricRegistry,
 ) -> ResolvedRunConfig:
-    if not isinstance(raw, dict):
-        raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
-
     config, issues = validate_run_config(
         raw,
         component_registry=component_registry,
@@ -205,16 +193,4 @@ def _build_resolved_run_config(
     )
 
 
-def _assert_resolved_config_registries(
-    config: RunConfig,
-    *,
-    frozen_metric_registry: FrozenMetricRegistry,
-) -> None:
-    issues: list[ConfigValidationIssue] = []
-    _check_ranking_metric_membership(
-        config.ranking.metric,
-        issues,
-        registry=frozen_metric_registry,
-    )
-    if issues:
-        raise ConfigValidationError(issues)
+

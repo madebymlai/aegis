@@ -5,10 +5,7 @@ from warnings import warn
 
 import pandas as pd
 
-from research.aegis_research.configuration.env_references import (
-    resolve_env_refs,
-)
-from research.aegis_research.configuration.schema import DataConfig
+from research.aegis_research.configuration import DataConfig, resolve_env_refs
 from research.aegis_research.market_data import native_metadata as _native_metadata
 from research.aegis_research.market_data.adapters._support import (
     index_evidence,
@@ -183,12 +180,12 @@ def _remote_raw_data_and_metadata(output: Any) -> tuple[Any, dict[str, Any]]:
 
 def _project_remote_symbol_data(
     raw_data: Any,
-    requested_features: tuple[str, ...],
+    requested_arrays: tuple[str, ...],
     *,
     symbol: str,
 ) -> pd.Series | pd.DataFrame:
     if isinstance(raw_data, pd.Series):
-        if raw_data.name in requested_features:
+        if raw_data.name in requested_arrays:
             return raw_data
         return raw_data.iloc[0:0]
     if not isinstance(raw_data, pd.DataFrame):
@@ -196,7 +193,7 @@ def _project_remote_symbol_data(
             f"remote provider returned non-tabular data for symbol {symbol!r}; "
             "configured data arrays require named feature columns"
         )
-    columns = [feature for feature in requested_features if feature in raw_data.columns]
+    columns = [name for name in requested_arrays if name in raw_data.columns]
     return raw_data.loc[:, columns]
 
 

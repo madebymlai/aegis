@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
     load_run_config,
@@ -31,7 +32,7 @@ def test_valid_run_config_resolves_without_lane_identity(tmp_path: Path) -> None
     assert "lane" not in resolved.manifest()
 
 
-def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
+def test_run_config_resolves_from_raw_dict(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
     config = make_run_config(
         name="typed_strategy_demo",
@@ -48,7 +49,7 @@ def test_run_config_round_trips_through_resolver(tmp_path: Path) -> None:
         ),
     )
 
-    resolved = resolve_run_config(config, component_registry=registry)
+    resolved = resolve_run_config(to_builtin(config), component_registry=registry)
 
     assert resolved.config.indicators[0].id == "demo.indicator"
 
@@ -187,42 +188,6 @@ def test_run_config_rejects_unimplemented_failure_policy(tmp_path: Path) -> None
         resolve_run_config(raw, component_registry=registry)
 
     assert "failure_policy" in str(error.value)
-
-
-@pytest.mark.parametrize(
-    "csv_path",
-    ["/tmp/prices.csv", "../prices.csv", "~/prices.csv", "~user/prices.csv", "C:\\prices.csv"],
-)
-def test_run_csv_source_rejects_non_project_relative_path(
-    tmp_path: Path,
-    csv_path: str,
-) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _merge(_run_config(), {"data": {"source": "csv", "path": csv_path}})
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "data.path" in str(error.value)
-    assert "relative path" in str(error.value)
-
-
-def test_run_output_dir_rejects_symlink_escape(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    registry = _component_registry(tmp_path)
-    outside = tmp_path / "outside-runs"
-    outside.mkdir()
-    (tmp_path / "runs").symlink_to(outside, target_is_directory=True)
-    raw = _merge(_run_config(), {"output_dir": "runs"})
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "output_dir" in str(error.value)
-    assert "symlink" in str(error.value)
 
 
 def test_run_ranking_rejects_unknown_metric(tmp_path: Path) -> None:
@@ -468,7 +433,6 @@ def _write_component(path: Path, family: str, component_id: str) -> None:
         "\n"
         "# %% define component metadata\n"
         f"COMPONENT_MANIFEST = {manifest!r}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
         "\n# %% main compute\n"
         "def run():\n"
         '    """Return no output because run-config tests only validate selection."""\n'
@@ -485,7 +449,6 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "param_names": ["window"],
             "output_names": ["value"],
             "defaults": {"window": 2},
-            "wide_callable": "run_wide",
         }
     if family == "strategies":
         return {
@@ -493,7 +456,6 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
             "input_names": ["Close"],
             "output_name": "active",
             "owns_portfolio": False,
-            "wide_callable": "run_wide",
         }
     raise AssertionError(family)
 

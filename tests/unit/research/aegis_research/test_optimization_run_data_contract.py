@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from typing import ClassVar
-
 import pytest
 
-from research.aegis_research.data_arrays import DataArrayContract
 from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
     build_candidate_data_identity,
     build_run_data_array_contract,
     build_run_data_evidence_payload,
@@ -13,6 +11,10 @@ from research.aegis_research.optimization.run_data_contract import (
 )
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
+)
+from tests.support.research.aegis_research.test_doubles import (
+    FakeDataResult,
+    default_metadata,
 )
 
 
@@ -59,18 +61,11 @@ def test_build_run_data_evidence_payload_extends_contract_payload(
     """The run evidence payload includes data array evidence plus runner binding."""
     resolved = build_resolved_run_config(tmp_path)
 
-    # Simplified: use a lightweight mock-like data result
-    class _FakeResult:
-        class quality:
-            state = "ok"
-        metadata: ClassVar = {
-            "source": "synthetic",
-            "symbols": ["SYN"],
-            "loaded_arrays": ["Close", "Open"],
-        }
-
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
-    payload = build_run_data_evidence_payload(_FakeResult(), contract)
+    payload = build_run_data_evidence_payload(
+        FakeDataResult(quality_state="ok", metadata=default_metadata(rows=0, start=None, end=None)),
+        contract,
+    )
 
     assert payload["strategy_consumed_runner_data"] is True
     assert payload["strategy_data_binding"] == "runner_data_bundle"
@@ -84,24 +79,16 @@ def test_build_candidate_data_identity_captures_source_and_contract(
     """Candidate data identity records source/array metadata from the run."""
     resolved = build_resolved_run_config(tmp_path)
 
-    class _FakeResult:
-        metadata: ClassVar = {
-            "source": "synthetic",
-            "symbols": ["SYN"],
-            "timeframe": "1D",
-            "loaded_arrays": ["Close", "Open"],
-            "shape": (120, 1),
-            "index_start": "2020-01-01",
-            "index_end": "2020-06-01",
-        }
-
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
-    identity = build_candidate_data_identity(_FakeResult(), contract)
+    identity = build_candidate_data_identity(FakeDataResult(), contract)
 
-    assert identity["schema_version"] == "candidate_data_identity.v1"
+    assert identity["schema_version"] == "candidate_data_identity.v2"
     assert identity["source"] == "synthetic"
     assert identity["symbols"] == ["SYN"]
     assert identity["timeframe"] == "1D"
-    assert identity["shape"] == (120, 1)
+    assert identity["loaded_arrays"] == ["Close", "Open"]
+    assert identity["rows"] == 120
+    assert identity["index_start"] == "2020-01-01"
+    assert identity["index_end"] == "2020-06-01"
     assert "array_contract" in identity
     assert "configured_arrays" in identity["array_contract"]

@@ -1,17 +1,18 @@
 """Unit tests for candidate_validity (Invalid rule + classify_candidates).
 
-Invalid rule tests build WideIndicatorPrecompute stores by hand and assert the
+Invalid rule tests build IndicatorPrecompute stores by hand and assert the
 Invalid Candidate keys are detected without a full Run.
 
 Classify-candidates tests exercise the four-way precedence-ordered verdict
-partition (invalid > non_trading > under_traded > valid) on tidy grids.
+partition (invalid > non_trading > under_traded > valid) using
+``make_candidate_grid`` — the one factory that speaks the boundary vocabulary.
 Prior art: test_optimization_precompute.py, test_optimization_ranking.py.
 """
 
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
+import pytest
 
 from research.aegis_research.optimization.candidate_validity import (
     Verdicts,
@@ -19,18 +20,19 @@ from research.aegis_research.optimization.candidate_validity import (
     invalid_candidates,
 )
 from research.aegis_research.optimization.precompute import (
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     build_candidate_index,
     candidate_keys,
 )
+from tests.support.research.aegis_research.factories import make_candidate_grid
 
 
 def _store(
     outputs: dict[str, np.ndarray],
     n_symbols: int,
     param_lists: dict[str, list],
-) -> WideIndicatorPrecompute:
-    return WideIndicatorPrecompute(
+) -> IndicatorPrecompute:
+    return IndicatorPrecompute(
         outputs=outputs,
         candidate_index=build_candidate_index(param_lists),
         n_symbols=n_symbols,
@@ -51,6 +53,19 @@ def test_zero_symbols_returns_empty_set() -> None:
     )
     keys = candidate_keys({"window": [5]})
     assert invalid_candidates(store, keys) == set()
+
+
+def test_non_numeric_output_block_raises_type_error() -> None:
+    """A non-numeric Indicator output block is a broken contract, not a verdict."""
+    store = _store(
+        outputs={"sig": np.array([[None, 1.0]], dtype=object)},
+        n_symbols=2,
+        param_lists={"window": [5]},
+    )
+    keys = candidate_keys({"window": [5]})
+
+    with pytest.raises(TypeError):
+        invalid_candidates(store, keys)
 
 
 def test_no_keys_returns_empty_set() -> None:
@@ -161,7 +176,7 @@ def test_respects_output_candidate_index_dedup() -> None:
     output_index = {
         "sig": {(1, 10): 0, (2, 10): 0, (3, 10): 1}  # (1,10) and (2,10) share block 0
     }
-    store = WideIndicatorPrecompute(
+    store = IndicatorPrecompute(
         outputs={"sig": outputs},
         candidate_index=full_index,
         n_symbols=n_symbols,
@@ -173,45 +188,12 @@ def test_respects_output_candidate_index_dedup() -> None:
 
 
 # ---------------------------------------------------------------------------
-# classify_candidates helpers
-# ---------------------------------------------------------------------------
-
-
-def _grid(
-    values_by_candidate: dict[str, dict[str, float]], *, metric: str = "sharpe"
-) -> pd.DataFrame:
-    """Build a tidy (param, split) grid carrying one metric column."""
-    tuples: list[tuple[str, str]] = []
-    rows: list[dict[str, float]] = []
-    for param, by_split in values_by_candidate.items():
-        for split, value in by_split.items():
-            tuples.append((param, split))
-            rows.append({metric: value})
-    index = pd.MultiIndex.from_tuples(tuples, names=["param", "split"])
-    return pd.DataFrame(rows, index=index)
-
-
-def _grid_with_trades(
-    spec: dict[str, dict[str, tuple[float, float]]], *, metric: str = "sharpe"
-) -> pd.DataFrame:
-    """Tidy (param, split) grid carrying ``metric`` and ``total_trades`` columns."""
-    tuples: list[tuple[str, str]] = []
-    rows: list[dict[str, float]] = []
-    for param, by_split in spec.items():
-        for split, (value, trades) in by_split.items():
-            tuples.append((param, split))
-            rows.append({metric: value, "total_trades": trades})
-    index = pd.MultiIndex.from_tuples(tuples, names=["param", "split"])
-    return pd.DataFrame(rows, index=index)
-
-
-# ---------------------------------------------------------------------------
 # classify_candidates — basic classification
 # ---------------------------------------------------------------------------
 
 
 def test_classify_valid_candidate() -> None:
-    grid = _grid({"A": {"s0": 1.0, "s1": 0.5}})
+    grid = make_candidate_grid({("A",): {"s0": {"sharpe": 1.0}, "s1": {"sharpe": 0.5}}})
     verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
     assert verdict.valid == {("A",)}
@@ -227,12 +209,10 @@ def test_classify_invalid_candidate_with_finite_score_reported_invalid_not_non_t
     """An Invalid Candidate with a finite 0.0 row must be reported invalid,
     not non_trading. The Invalid stamp wins by precedence regardless of the
     finite score the cash-holding strategy would simulate to."""
-    grid = _grid(
-        {
-            "good": {"s0": 1.0, "s1": 1.0},
-            "bad_lookback": {"s0": 0.0, "s1": 0.0},  # finite 0.0, but invalid
-        }
-    )
+    grid = make_candidate_grid({
+        ("good",): {"s0": {"sharpe": 1.0}, "s1": {"sharpe": 1.0}},
+        ("bad_lookback",): {"s0": {"sharpe": 0.0}, "s1": {"sharpe": 0.0}},
+    })
     verdict = classify_candidates(
         grid, invalid_keys={("bad_lookback",)}, min_trades=0, metric="sharpe"
     )
@@ -248,12 +228,10 @@ def test_classify_invalid_candidate_with_finite_score_reported_invalid_not_non_t
 
 def test_classify_non_trading_candidate_all_nan_metric() -> None:
     """A Candidate whose ranking metric is all-NaN across every split is non_trading."""
-    grid = _grid(
-        {
-            "good": {"s0": 1.0, "s1": 1.0},
-            "ghost": {"s0": float("nan"), "s1": float("nan")},
-        }
-    )
+    grid = make_candidate_grid({
+        ("good",): {"s0": {"sharpe": 1.0}, "s1": {"sharpe": 1.0}},
+        ("ghost",): {"s0": {"sharpe": None}, "s1": {"sharpe": None}},
+    })
     verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
     assert verdict.valid == {("good",)}
@@ -266,12 +244,10 @@ def test_classify_non_trading_candidate_all_nan_metric() -> None:
 
 def test_classify_under_traded_candidate() -> None:
     """A Candidate below the min_trades floor is under_traded."""
-    grid = _grid_with_trades(
-        {
-            "fat": {"s0": (0.6, 40.0), "s1": (0.6, 38.0)},
-            "thin": {"s0": (2.0, 2.0), "s1": (2.0, 3.0)},
-        }
-    )
+    grid = make_candidate_grid({
+        ("fat",): {"s0": {"sharpe": 0.6, "total_trades": 40.0}, "s1": {"sharpe": 0.6, "total_trades": 38.0}},
+        ("thin",): {"s0": {"sharpe": 2.0, "total_trades": 2.0}, "s1": {"sharpe": 2.0, "total_trades": 3.0}},
+    })
     verdict = classify_candidates(
         grid, invalid_keys=set(), min_trades=10, metric="sharpe"
     )
@@ -286,12 +262,10 @@ def test_classify_under_traded_candidate() -> None:
 
 def test_classify_under_traded_per_split_minimum() -> None:
     """A candidate must clear min_trades on the *thinnest* split it scored."""
-    grid = _grid_with_trades(
-        {
-            "uneven": {"s0": (3.0, 50.0), "s1": (3.0, 4.0)},  # min 4 -> excluded
-            "steady": {"s0": (0.5, 25.0), "s1": (0.5, 30.0)},  # min 25 -> kept
-        }
-    )
+    grid = make_candidate_grid({
+        ("uneven",): {"s0": {"sharpe": 3.0, "total_trades": 50.0}, "s1": {"sharpe": 3.0, "total_trades": 4.0}},
+        ("steady",): {"s0": {"sharpe": 0.5, "total_trades": 25.0}, "s1": {"sharpe": 0.5, "total_trades": 30.0}},
+    })
     verdict = classify_candidates(
         grid, invalid_keys=set(), min_trades=10, metric="sharpe"
     )
@@ -303,7 +277,10 @@ def test_classify_under_traded_per_split_minimum() -> None:
 
 def test_classify_min_trades_zero_disabled_all_valid() -> None:
     """When min_trades=0 the trade floor is disabled; all scored candidates are valid."""
-    grid = _grid({"thin": {"s0": 2.0, "s1": 2.0}, "fat": {"s0": 0.5, "s1": 0.5}})
+    grid = make_candidate_grid({
+        ("thin",): {"s0": {"sharpe": 2.0}, "s1": {"sharpe": 2.0}},
+        ("fat",): {"s0": {"sharpe": 0.5}, "s1": {"sharpe": 0.5}},
+    })
     verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
     assert verdict.valid == {("thin",), ("fat",)}
@@ -313,12 +290,10 @@ def test_classify_min_trades_zero_disabled_all_valid() -> None:
 
 def test_classify_all_under_traded() -> None:
     """When every candidate is under_traded the verdict has no valid keys."""
-    grid = _grid_with_trades(
-        {
-            "a": {"s0": (2.0, 2.0), "s1": (2.0, 3.0)},
-            "b": {"s0": (1.5, 1.0), "s1": (1.5, 4.0)},
-        }
-    )
+    grid = make_candidate_grid({
+        ("a",): {"s0": {"sharpe": 2.0, "total_trades": 2.0}, "s1": {"sharpe": 2.0, "total_trades": 3.0}},
+        ("b",): {"s0": {"sharpe": 1.5, "total_trades": 1.0}, "s1": {"sharpe": 1.5, "total_trades": 4.0}},
+    })
     verdict = classify_candidates(
         grid, invalid_keys=set(), min_trades=10, metric="sharpe"
     )
@@ -331,13 +306,11 @@ def test_classify_all_under_traded() -> None:
 
 def test_classify_combined_exclusion_non_trading_and_under_traded() -> None:
     """Non-trading and under-traded exclusions combine in excluded_degenerate."""
-    grid = _grid_with_trades(
-        {
-            "real": {"s0": (0.6, 40.0), "s1": (0.6, 40.0)},
-            "thin": {"s0": (2.0, 2.0), "s1": (2.0, 2.0)},  # under-traded
-            "dead": {"s0": (float("nan"), 0.0), "s1": (float("nan"), 0.0)},  # NaN score
-        }
-    )
+    grid = make_candidate_grid({
+        ("real",): {"s0": {"sharpe": 0.6, "total_trades": 40.0}, "s1": {"sharpe": 0.6, "total_trades": 40.0}},
+        ("thin",): {"s0": {"sharpe": 2.0, "total_trades": 2.0}, "s1": {"sharpe": 2.0, "total_trades": 2.0}},
+        ("dead",): {"s0": {"sharpe": None, "total_trades": 0.0}, "s1": {"sharpe": None, "total_trades": 0.0}},
+    })
     verdict = classify_candidates(
         grid, invalid_keys=set(), min_trades=10, metric="sharpe"
     )
@@ -356,12 +329,10 @@ def test_classify_combined_exclusion_non_trading_and_under_traded() -> None:
 
 def test_classify_precedence_invalid_over_non_trading() -> None:
     """An Invalid Candidate that is also all-NaN is classified invalid, not non_trading."""
-    grid = _grid(
-        {
-            "good": {"s0": 1.0, "s1": 1.0},
-            "bad": {"s0": float("nan"), "s1": float("nan")},
-        }
-    )
+    grid = make_candidate_grid({
+        ("good",): {"s0": {"sharpe": 1.0}, "s1": {"sharpe": 1.0}},
+        ("bad",): {"s0": {"sharpe": None}, "s1": {"sharpe": None}},
+    })
     verdict = classify_candidates(
         grid, invalid_keys={("bad",)}, min_trades=0, metric="sharpe"
     )
@@ -376,12 +347,10 @@ def test_classify_precedence_invalid_over_non_trading() -> None:
 def test_classify_precedence_non_trading_over_under_traded() -> None:
     """A Candidate that is both all-NaN and under-traded is classified non_trading.
     (Constructed by giving an all-NaN candidate insufficient trades.)"""
-    grid = _grid_with_trades(
-        {
-            "good": {"s0": (1.0, 40.0), "s1": (1.0, 40.0)},
-            "ghost": {"s0": (float("nan"), 2.0), "s1": (float("nan"), 3.0)},
-        }
-    )
+    grid = make_candidate_grid({
+        ("good",): {"s0": {"sharpe": 1.0, "total_trades": 40.0}, "s1": {"sharpe": 1.0, "total_trades": 40.0}},
+        ("ghost",): {"s0": {"sharpe": None, "total_trades": 2.0}, "s1": {"sharpe": None, "total_trades": 3.0}},
+    })
     verdict = classify_candidates(
         grid, invalid_keys=set(), min_trades=10, metric="sharpe"
     )
@@ -395,12 +364,10 @@ def test_classify_precedence_non_trading_over_under_traded() -> None:
 
 def test_classify_precedence_invalid_over_under_traded() -> None:
     """An Invalid Candidate that is also under-traded is classified invalid."""
-    grid = _grid_with_trades(
-        {
-            "good": {"s0": (1.0, 40.0), "s1": (1.0, 40.0)},
-            "bad": {"s0": (2.0, 2.0), "s1": (2.0, 3.0)},
-        }
-    )
+    grid = make_candidate_grid({
+        ("good",): {"s0": {"sharpe": 1.0, "total_trades": 40.0}, "s1": {"sharpe": 1.0, "total_trades": 40.0}},
+        ("bad",): {"s0": {"sharpe": 2.0, "total_trades": 2.0}, "s1": {"sharpe": 2.0, "total_trades": 3.0}},
+    })
     verdict = classify_candidates(
         grid, invalid_keys={("bad",)}, min_trades=10, metric="sharpe"
     )
@@ -416,12 +383,10 @@ def test_classify_precedence_invalid_over_under_traded() -> None:
 def test_classify_precedence_invalid_beats_all() -> None:
     """A Candidate stamped invalid by pre-score is invalid regardless of
     any post-score properties (finite score, enough trades, etc.)."""
-    grid = _grid_with_trades(
-        {
-            "good": {"s0": (0.5, 40.0), "s1": (0.5, 40.0)},
-            "bad": {"s0": (2.0, 50.0), "s1": (2.0, 50.0)},  # great score, plenty of trades
-        }
-    )
+    grid = make_candidate_grid({
+        ("good",): {"s0": {"sharpe": 0.5, "total_trades": 40.0}, "s1": {"sharpe": 0.5, "total_trades": 40.0}},
+        ("bad",): {"s0": {"sharpe": 2.0, "total_trades": 50.0}, "s1": {"sharpe": 2.0, "total_trades": 50.0}},
+    })
     verdict = classify_candidates(
         grid, invalid_keys={("bad",)}, min_trades=10, metric="sharpe"
     )
@@ -465,8 +430,7 @@ def test_verdicts_empty_partition() -> None:
 
 def test_classify_empty_grid() -> None:
     """An empty grid (no candidates) produces an empty Verdicts."""
-    index = pd.MultiIndex.from_tuples([], names=["param", "split"])
-    grid = pd.DataFrame({"sharpe": []}, index=index)
+    grid = make_candidate_grid({})
     verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
     assert verdict.total == 0
@@ -474,11 +438,19 @@ def test_classify_empty_grid() -> None:
     assert verdict.excluded_degenerate == 0
 
 
+def test_classify_missing_ranking_metric_raises_key_error() -> None:
+    grid = make_candidate_grid({("A",): {"s0": {"sharpe": 1.0}}})
+
+    with pytest.raises(KeyError, match="not present in grid columns"):
+        classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="absent")
+
+
 def test_classify_all_valid_verdict_counts() -> None:
     """When all candidates are valid, counts reflect that."""
-    grid = _grid(
-        {"A": {"s0": 1.0, "s1": 1.0}, "B": {"s0": 0.5, "s1": 0.5}}
-    )
+    grid = make_candidate_grid({
+        ("A",): {"s0": {"sharpe": 1.0}, "s1": {"sharpe": 1.0}},
+        ("B",): {"s0": {"sharpe": 0.5}, "s1": {"sharpe": 0.5}},
+    })
     verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="sharpe")
 
     assert verdict.total == 2

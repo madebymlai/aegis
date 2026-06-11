@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import pandas as pd
+from pydantic import ConfigDict
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.configuration.schema import OHLCV_ARRAYS, DataConfig
+from research.aegis_research.configuration import DataConfig
 
-OHLCV_FEATURES = OHLCV_ARRAYS
-LOGICAL_FEATURES = {
+LOGICAL_ARRAYS = {
     "open": "Open",
     "high": "High",
     "low": "Low",
@@ -40,8 +39,10 @@ class MarketDataAdapter(Protocol):
     def __call__(self, config: DataConfig) -> MarketDataAdapterResult: ...
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class MarketDataQuality:
+    """The judge's verdict; serialises field-by-field as the ``quality`` facet."""
+
     state: str
     reasons: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -50,9 +51,6 @@ class MarketDataQuality:
     @property
     def usable(self) -> bool:
         return self.state in {QUALITY_HEALTHY, QUALITY_DEGRADED_ALLOWED}
-
-    def to_metadata(self) -> dict[str, Any]:
-        return to_builtin(self)
 
 
 @dataclass(frozen=True)
@@ -64,8 +62,11 @@ class MarketDataAdapterResult:
     omitted_metadata_fields: list[dict[str, str]] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
-class DataFeatureDiagnostics:
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class DataArrayDiagnostics:
+    """Per-Array column metrics; one uniform shape whether or not the Array
+    was available (an unavailable Array keeps the empty-observation values)."""
+
     available: bool
     rows: int = 0
     missing: int = 0
@@ -74,56 +75,96 @@ class DataFeatureDiagnostics:
     first_timestamp: str | None = None
     last_timestamp: str | None = None
 
-    def to_metadata(self) -> dict[str, Any]:
-        if not self.available:
-            return {"available": False}
-        return to_builtin(
-            {
-                "available": True,
-                "rows": self.rows,
-                "missing": self.missing,
-                "coverage": self.coverage,
-                "numeric": self.numeric,
-                "first_timestamp": self.first_timestamp,
-                "last_timestamp": self.last_timestamp,
-            }
-        )
 
-
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DataDiagnostics:
+    """Per-symbol observation record; serialises field-by-field as one entry
+    of the ``diagnostics`` facet.
+
+    Index evidence is observation-level, not per-symbol — it lives once, in
+    the ``provenance`` facet.
+    """
+
     symbol: str
     configured: bool
-    features: dict[str, DataFeatureDiagnostics] = field(default_factory=dict)
-    index_evidence: dict[str, Any] = field(default_factory=dict)
+    arrays: dict[str, DataArrayDiagnostics] = field(default_factory=dict)
     provider_status: str = "loaded"
 
-    def to_metadata(self) -> dict[str, Any]:
-        return to_builtin(
-            {
-                "symbol": self.symbol,
-                "configured": self.configured,
-                "features": {
-                    feature: diagnostics.to_metadata()
-                    for feature, diagnostics in self.features.items()
-                },
-                "index_evidence": self.index_evidence,
-                "provider_status": self.provider_status,
-            }
-        )
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class ArrayDescriptor:
+    """One row in the ``arrays`` descriptor list."""
+
+    name: str
+    required: bool
+    loaded: bool
+    observed: bool
+    ohlc: bool
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class RequestFacet:
+    """What was asked for: source, symbols, timeframe, array declarations."""
+
+    source: str
+    requested_symbols: list[str]
+    timeframe: str
+    authored_arrays: list[str]
+    effective_arrays: list[str]
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class CoverageFacet:
+    """What was actually observed: symbol set, row count, index span."""
+
+    symbols: list[str]
+    rows: int
+    start: str | None
+    end: str | None
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class ProvenanceFacet:
+    """Provider/source blobs and loader configuration carried forward."""
+
+    provider_class: str | None
+    source_metadata: dict[str, Any]
+    index_evidence: dict[str, Any]
+    provider_metadata: dict[str, Any]
+    omitted_metadata_fields: list[dict[str, str]]
+    update_supported: bool
+    missing_index: str
+    missing_columns: str
+    tz_localize: str | bool | None
+    tz_convert: str | bool | None
+    skip_on_error: bool
+    silence_warnings: bool
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class MarketDataMetadataV3:
+    """Typed ``market_data.v3`` metadata Evidence artifact.
+
+    Facet-shaped model (ADR-0020) replacing the hand-built ``market_data.v2``
+    dict.  One ``arrays`` descriptor list replaces eight parallel Array-name
+    lists; duplicate, derivable, and vestigial keys are dropped.
+    """
+
+    schema_version: Literal["market_data.v3"]
+    request: RequestFacet
+    arrays: list[ArrayDescriptor]
+    coverage: CoverageFacet
+    quality: MarketDataQuality
+    diagnostics: list[DataDiagnostics]
+    provenance: ProvenanceFacet
 
 
 @dataclass(frozen=True)
 class MarketDataResult:
     native_data: Any
-    metadata: dict[str, Any]
+    metadata: MarketDataMetadataV3
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
-
-    def feature(self, feature: str) -> pd.DataFrame:
-        from research.aegis_research.market_data.features import feature_from_ohlcv
-
-        return feature_from_ohlcv(self, feature)
 
     def assert_usable(self) -> None:
         if not self.quality.usable:
@@ -132,32 +173,17 @@ class MarketDataResult:
 
 @dataclass(frozen=True)
 class MarketDataBundle:
-    features: dict[str, pd.DataFrame] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    native_data: Any | None = None
-    loaded_features: tuple[str, ...] = ()
-    feature_getter: Callable[[str], pd.DataFrame] | None = field(
-        default=None,
-        repr=False,
-        compare=False,
-    )
+    """Eager value object of materialised Array panels.
 
-    def feature(self, feature: str) -> pd.DataFrame:
-        if self.loaded_features and feature not in self.loaded_features:
-            raise ValueError(f"market data feature {feature!r} was not loaded for this run")
-        panel = self.features.get(feature)
-        if panel is not None:
-            return panel
-        if self.feature_getter is not None:
-            return self.feature_getter(feature)
-        raise ValueError(f"market data feature {feature!r} is not available")
+    Dict membership is the sole guard — an array is loaded iff it is a key.
+    """
 
+    arrays: dict[str, pd.DataFrame]
 
-def market_data_bundle(result: MarketDataResult) -> MarketDataBundle:
-    result.assert_usable()
-    return MarketDataBundle(
-        metadata=result.metadata,
-        native_data=result.native_data,
-        loaded_features=tuple(result.metadata.get("loaded_arrays", ())),
-        feature_getter=result.feature,
-    )
+    def array(self, array: str) -> pd.DataFrame:
+        try:
+            return self.arrays[array]
+        except KeyError:
+            raise ValueError(
+                f"market data array {array!r} was not loaded for this run"
+            ) from None

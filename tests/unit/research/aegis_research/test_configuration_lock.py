@@ -14,9 +14,12 @@ from typing import Any
 import pytest
 
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
+    DEFAULT_LOCK_ROLE,
+    LOCK_ROLES,
     ConfigValidationError,
+    lock_handle,
     resolve_run_config,
 )
 from tests.support.research.aegis_research.component_fixtures import (
@@ -40,9 +43,8 @@ def _write_parameterized_strategy(path: Path) -> None:
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['threshold'], "
         "'output_name': 'active', 'owns_portfolio': False, "
-        "'defaults': {'threshold': 1.0}, 'param_space_callable': 'param_space', "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'defaults': {'threshold': 1.0}, "
+        "}\n"
         "\n# %% param space\n"
         "def param_space():\n"
         '    """Return the searchable threshold param space."""\n'
@@ -50,12 +52,12 @@ def _write_parameterized_strategy(path: Path) -> None:
         "\n# %% main compute\n"
         "def run(inputs, *, threshold=1.0):\n"
         '    """Emit a deterministic active allocation frame for fixture runs."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    return close.gt(close.shift(1)).fillna(False).astype(object)\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide strategy output."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    return np.full((T, n_candidates * S), np.nan)\n"
     )
@@ -214,3 +216,27 @@ def test_mapping_lock_empty_candidate_id_fails_validation(registry) -> None:
         )
     paths = {issue.path for issue in excinfo.value.issues}
     assert "lock.candidate_id" in paths
+
+
+def test_lock_handle_best_role_is_bare_run_id() -> None:
+    assert lock_handle("run-abc", DEFAULT_LOCK_ROLE) == "run-abc"
+
+
+def test_lock_handle_median_role_carries_colon_role() -> None:
+    assert lock_handle("run-abc", "median") == "run-abc:median"
+
+
+def test_lock_handle_worst_role_carries_colon_role() -> None:
+    assert lock_handle("run-abc", "worst") == "run-abc:worst"
+
+
+@pytest.mark.parametrize("role", sorted(LOCK_ROLES))
+def test_lock_handle_round_trips_through_lock_parser(registry, role: str) -> None:
+    """Every LOCK_ROLE round-trips: a handle composed by lock_handle validates
+    back through the Lock model's scalar coercion to the same run_id and role.
+    The bare run_id (best) resolves to the default role via the Lock parser."""
+    handle = lock_handle("20260601T000000000Z_test_run", role)
+    resolved = resolve_run_config(_raw_config(lock=handle), component_registry=registry)
+    assert resolved.config.lock is not None
+    assert resolved.config.lock.run_id == "20260601T000000000Z_test_run"
+    assert resolved.config.lock.candidate_id == role

@@ -14,10 +14,7 @@ COMPONENT_MANIFEST = {
     "param_names": ["window"],
     "output_names": ["realized_vol"],
     "defaults": {"window": 20},
-    "param_space_callable": "param_space",
-    "wide_callable": "run_wide",
 }
-COMPONENT_CALLABLE = "run"
 
 
 # %% parameter space
@@ -30,20 +27,10 @@ def param_space():
 
 
 # %% main compute
-def run(data, window):
-    """Compute annualized realized volatility from log returns."""
-
-    close = data.feature("Close")
-    window = int(window)
-    log_returns = np.log(close / close.shift(1))
-    return log_returns.rolling(window).std() * np.sqrt(252)
-
-
-# %% wide compute
-def run_wide(data, *, n_candidates, **param_lists):
+def run(data, *, n_candidates, **param_lists):
     """Vectorized realized volatility for all candidates in a single call."""
 
-    close = data.feature("Close")
+    close = data.array("Close")
     n_symbols = len(close.columns)
     T = len(close)
     windows = param_lists["window"]
@@ -52,10 +39,7 @@ def run_wide(data, *, n_candidates, **param_lists):
     result = np.full((T, n_candidates * n_symbols), np.nan)
 
     for w in set(windows):
-        candidate_indices = [
-            i for i in range(n_candidates)
-            if windows[i] == w
-        ]
+        candidate_indices = [i for i in range(n_candidates) if windows[i] == w]
         w = int(w)
         vol = log_returns.rolling(w).std() * np.sqrt(252)
         arr = vol.values
@@ -63,4 +47,4 @@ def run_wide(data, *, n_candidates, **param_lists):
         for ci in candidate_indices:
             result[:, ci * n_symbols : (ci + 1) * n_symbols] = arr
 
-    return result
+    return {"realized_vol": result}

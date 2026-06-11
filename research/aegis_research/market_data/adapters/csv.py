@@ -6,15 +6,15 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.configuration.schema import (
+from research.aegis_research.configuration import (
     DataConfig,
     has_data_array_token_shape,
+    merge_data_arrays,
 )
-from research.aegis_research.data_arrays import merge_data_arrays
 from research.aegis_research.market_data.adapters._support import (
     index_evidence,
     local_provider_metadata,
-    native_from_feature_data,
+    native_from_array_dict,
 )
 from research.aegis_research.market_data.contracts import MarketDataAdapterResult
 
@@ -24,8 +24,8 @@ def load_csv_source(config: DataConfig) -> MarketDataAdapterResult:
         raise ValueError("data.path is required for csv source")
     frame = _read_csv(config)
     evidence = index_evidence(frame.index, source="csv_raw")
-    feature_data = _csv_feature_data(frame, config)
-    native_data = native_from_feature_data(feature_data, config)
+    array_data = _csv_array_data(frame, config)
+    native_data = native_from_array_dict(array_data, config)
     projected = local_provider_metadata(native_data, source=config.source)
     return MarketDataAdapterResult(
         native_data=native_data,
@@ -77,45 +77,45 @@ def _localize_csv_index(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def _csv_feature_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.DataFrame]:
+def _csv_array_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.DataFrame]:
     if isinstance(frame.columns, pd.MultiIndex):
-        return _multiindex_csv_feature_data(frame, config)
-    return _flat_csv_feature_data(frame, config)
+        return _multiindex_csv_array_data(frame, config)
+    return _flat_csv_array_data(frame, config)
 
 
-def _flat_csv_feature_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.DataFrame]:
+def _flat_csv_array_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.DataFrame]:
     if len(config.symbols) != 1:
-        raise ValueError("flat CSV feature input requires exactly one configured symbol")
+        raise ValueError("flat CSV input requires exactly one configured symbol")
     symbol = config.symbols[0]
-    feature_data: dict[str, pd.DataFrame] = {}
-    for feature in _csv_feature_candidates(map(str, frame.columns), config):
-        if feature in frame.columns:
-            panel = frame.loc[:, [feature]].copy()
+    array_data: dict[str, pd.DataFrame] = {}
+    for name in _csv_array_candidates(map(str, frame.columns), config):
+        if name in frame.columns:
+            panel = frame.loc[:, [name]].copy()
             panel.columns = pd.Index([symbol] * len(panel.columns), name=frame.columns.name)
-            feature_data[feature] = panel
-    if not feature_data:
+            array_data[name] = panel
+    if not array_data:
         raise ValueError("CSV data must contain at least one requested VBT feature column")
-    return feature_data
+    return array_data
 
 
-def _multiindex_csv_feature_data(
+def _multiindex_csv_array_data(
     frame: pd.DataFrame, config: DataConfig
 ) -> dict[str, pd.DataFrame]:
     symbol_level, feature_level = _csv_multiindex_levels(frame, config)
-    feature_data = {}
-    feature_values = set(map(str, frame.columns.get_level_values(feature_level)))
-    for feature in _csv_feature_candidates(frame.columns.get_level_values(feature_level), config):
-        if feature not in feature_values:
+    array_data: dict[str, pd.DataFrame] = {}
+    array_values = set(map(str, frame.columns.get_level_values(feature_level)))
+    for name in _csv_array_candidates(frame.columns.get_level_values(feature_level), config):
+        if name not in array_values:
             continue
-        panel = frame.xs(feature, axis=1, level=feature_level)
+        panel = frame.xs(name, axis=1, level=feature_level)
         if isinstance(panel.columns, pd.MultiIndex):
             panel.columns = panel.columns.get_level_values(symbol_level)
         panel = panel.loc[:, [symbol for symbol in config.symbols if symbol in panel.columns]]
         if not panel.empty:
-            feature_data[feature] = panel
-    if not feature_data:
+            array_data[name] = panel
+    if not array_data:
         raise ValueError("CSV MultiIndex data must contain at least one requested VBT feature")
-    return feature_data
+    return array_data
 
 
 def _csv_multiindex_levels(frame: pd.DataFrame, config: DataConfig) -> tuple[int, int]:
@@ -127,15 +127,15 @@ def _csv_multiindex_levels(frame: pd.DataFrame, config: DataConfig) -> tuple[int
     symbol_levels = [
         index for index, values in enumerate(level_values) if configured_symbols & values
     ]
-    source_features = set(config.effective_arrays)
-    source_features.update(
+    source_arrays = set(config.effective_arrays)
+    source_arrays.update(
         value
         for values in level_values
         for value in values
         if value not in configured_symbols and _looks_like_vbt_feature_name(value)
     )
     feature_levels = [
-        index for index, values in enumerate(level_values) if source_features & values
+        index for index, values in enumerate(level_values) if source_arrays & values
     ]
     if not symbol_levels or not feature_levels:
         raise ValueError("CSV MultiIndex columns must include symbol and feature levels")
@@ -148,7 +148,7 @@ def _csv_multiindex_levels(frame: pd.DataFrame, config: DataConfig) -> tuple[int
     return symbol_level, feature_level
 
 
-def _csv_feature_candidates(values: Any, config: DataConfig) -> tuple[str, ...]:
+def _csv_array_candidates(values: Any, config: DataConfig) -> tuple[str, ...]:
     candidates = tuple(
         value
         for value in dict.fromkeys(map(str, values))

@@ -1,43 +1,7 @@
-# %% component overview
-# Parameterized moving-average indicator component.
-# Source: VectorBT PRO MA over the run-provided Close feature.
+# Indicator Component Example
 
-# %% imports
-from vectorbtpro import vbt
+The authorable reference for an Indicator Component now lives in the `component_registry` package:
 
-# %% define component metadata
-COMPONENT_MANIFEST = {
-    "family": "indicators",
-    "id": "example.ma",
-    "version": "1.0.0",
-    "input_names": ["Close"],
-    "param_names": ["window", "wtype"],
-    "output_names": ["ma"],
-    "defaults": {"window": 20, "wtype": "simple"},
-    "param_space_callable": "param_space",
-}
-COMPONENT_CALLABLE = "run"
+- **`research/aegis_research/component_registry/indicator_example.py`**
 
-
-# %% parameter space
-def param_space():
-    """Return VBT-native params for MA exploration."""
-
-    return {
-        "window": vbt.Param([10, 20, 50]),
-        "wtype": vbt.Param(["simple", "exponential"]),
-    }
-
-
-# %% main compute
-def run(data, window, wtype):
-    """Compute one moving-average output for a VBT parameter row."""
-
-    ma = vbt.MA.run(
-        data.feature("Close"),
-        window=window,
-        wtype=wtype,
-        hide_params=None,
-        hide_default=False,
-    )
-    return ma.ma
+This is the file embedded in `aerd show indicator-schema` and round-tripped through the real registry parser. It is the single source of truth for the Indicator authoring example — this location is a pointer.

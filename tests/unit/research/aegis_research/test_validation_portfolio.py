@@ -17,7 +17,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     PORTFOLIO_DIRECTIONS,
     ConfigValidationError,
@@ -50,8 +50,8 @@ def _component_registry(tmp_path: Path):
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'output_name': 'active', 'consumes_outputs': ['returns'], "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n\n# %% main compute\n"
+        "}\n"
+        "\n# %% main compute\n"
         "def run(bundle):\n    \"\"\"Fixture strategy, never executed.\"\"\"\n"
         "    raise RuntimeError('not executed during config tests')\n"
     )

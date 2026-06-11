@@ -6,53 +6,50 @@ the candidate run in the store, and returns the final run result.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     RunConfig,
+    lock_handle,
     to_builtin,
 )
 from research.aegis_research.data import (
     MarketDataResult,
 )
-from research.aegis_research.data_arrays import (
-    DataArrayContract,
+from research.aegis_research.optimization.candidate_evidence import (
+    candidate_held_out_headline,
+    held_out_warning,
 )
 from research.aegis_research.optimization.candidate_publishing import (
     activate_candidate_run,
-)
-from research.aegis_research.optimization.evidence import (
-    candidate_held_out_headline,
-    held_out_warning,
+    candidate_store_namespace,
 )
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
     RunEvidence,
 )
+from research.aegis_research.optimization.pipeline.publishing import PublishingResult
+from research.aegis_research.optimization.pipeline.setup import SetupResult
 from research.aegis_research.optimization.run_artifacts import (
     build_strategy_artifact_payload,
     write_strategy_artifact,
 )
+from research.aegis_research.optimization.run_data_contract import DataArrayContract
 from research.aegis_research.provenance.recorder import RunRecorder
+from research.aegis_research.run_splits import RunSplitsResult
 
 
 def run_pipeline_completion(
     *,
+    setup: SetupResult,
+    publishing: PublishingResult,
     config: RunConfig,
     recorder: RunRecorder,
     data_result: MarketDataResult,
     array_contract: DataArrayContract,
-    strategy_evidence: Mapping[str, Any],
-    optimization_builtin: Mapping[str, Any],
-    portfolio_builtin: Mapping[str, Any],
-    split_result: Any,
     run_evidence: RunEvidence,
-    candidate_rows: list[Mapping[str, Any]],
-    candidate_store_provenance: Mapping[str, Any],
-    store_path: Path,
-    store_namespace: Mapping[str, str],
     metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     """Write the strategy artifact, complete the run, and activate candidates.
@@ -64,33 +61,34 @@ def run_pipeline_completion(
     try:
         optimization_evidence = run_evidence.optimization()
         execution = dict(optimization_evidence.get("execution", {}))
+        store_namespace = candidate_store_namespace()
         artifact_payload = build_strategy_artifact_payload(
-            strategy_evidence=strategy_evidence,
+            strategy_evidence=setup.strategy_evidence,
             data_result=data_result,
             array_contract=array_contract,
             ranking={
                 "metric": config.ranking.metric,
                 "min_weight": config.ranking.min_weight,
             },
-            portfolio=portfolio_builtin,
-            optimization=optimization_builtin,
-            split_metadata=split_result.metadata,
+            portfolio=to_builtin(config.portfolio),
+            optimization=to_builtin(config.optimization),
+            split_metadata=setup.split_result.metadata,
             preflight=optimization_evidence["preflight"],
             execution=execution,
-            candidates=[to_builtin(record) for record in candidate_rows],
+            candidates=[to_builtin(record) for record in publishing.candidate_rows],
             candidate_store_path=store_namespace["path"],
-            candidate_store_provenance=candidate_store_provenance,
+            candidate_store_provenance=publishing.candidate_store_provenance,
             metric_registry_fingerprint=metric_registry_fingerprint,
         )
         write_strategy_artifact(recorder, artifact_payload)
         recorder.mark_run_completed()
-        activate_candidate_run(store_path, recorder.manifest.run_id)
+        activate_candidate_run(setup.store_path, recorder.manifest.run_id)
         return _completion_result(
             config=config,
             recorder=recorder,
-            split_result=split_result,
-            candidate_rows=candidate_rows,
-            store_path=store_path,
+            split_result=setup.split_result,
+            candidate_rows=publishing.candidate_rows,
+            store_path=setup.store_path,
             execution=execution,
         )
     except Exception as error:
@@ -102,15 +100,15 @@ def _completion_result(
     *,
     config: RunConfig,
     recorder: RunRecorder,
-    split_result: Any,
-    candidate_rows: list[Mapping[str, Any]],
+    split_result: RunSplitsResult,
+    candidate_rows: Sequence[dict[str, Any]],
     store_path: Path,
     execution: Mapping[str, Any],
 ) -> dict[str, Any]:
     ranking_metric = config.ranking.metric
     best_row = next(row for row in candidate_rows if row["role"] == "best")
     return {
-        **build_run_refs(recorder),
+        **recorder.run_refs(),
         "strategy_artifact_id": "strategy.run",
         "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
         "candidate_store_path": str(store_path),
@@ -125,14 +123,19 @@ def _completion_result(
             "held_out_warning": held_out_warning(
                 candidate_held_out_headline(best_row, metric=ranking_metric)
             ),
+            "non_executable_rows": execution.get("non_executable_rows", 0),
+            "split_method": config.optimization.split.method if config.optimization else None,
         },
         "candidates": [
-            _candidate_summary(row, ranking_metric=ranking_metric) for row in candidate_rows
+            _candidate_summary(row, ranking_metric=ranking_metric, run_id=recorder.manifest.run_id)
+            for row in candidate_rows
         ],
     }
 
 
-def _candidate_summary(row: Mapping[str, Any], *, ranking_metric: str) -> dict[str, Any]:
+def _candidate_summary(
+    row: Mapping[str, Any], *, ranking_metric: str, run_id: str
+) -> dict[str, Any]:
     return {
         "role": row["role"],
         "rank": row["rank"],
@@ -144,15 +147,7 @@ def _candidate_summary(row: Mapping[str, Any], *, ranking_metric: str) -> dict[s
         "held_out_metrics": row["held_out_metrics"],
         "held_out_metrics_mean": row["held_out_metrics_mean"],
         "held_out_headline": candidate_held_out_headline(row, metric=ranking_metric),
+        "lock": lock_handle(run_id, row["role"]),
     }
 
 
-def build_run_refs(recorder: RunRecorder) -> dict[str, Any]:
-    return {
-        "run_id": recorder.manifest.run_id,
-        "run_dir": str(recorder.run_dir),
-        "manifest_path": str(recorder.manifest_path),
-        "status": recorder.manifest.status,
-        "started_at": recorder.manifest.started_at,
-        "finished_at": recorder.manifest.finished_at,
-    }

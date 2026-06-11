@@ -11,7 +11,11 @@ from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     encode,
 )
-from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
+from research.aegis_research.optimization.pipeline.execution import ExecutionResult
+from research.aegis_research.optimization.pipeline.publishing import (
+    PublishingResult,
+    run_pipeline_publishing,
+)
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -19,35 +23,11 @@ from research.aegis_research.optimization.ranking import (
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
-
-
-class _FakeArrayContract:
-    def metadata(self) -> dict[str, Any]:
-        return {"schema_version": "data_array_contract.v1"}
-
-
-class _FakeDataResult:
-    metadata: ClassVar[dict[str, Any]] = {
-        "source": "synthetic",
-        "symbols": ["SYN"],
-        "timeframe": "1D",
-        "loaded_arrays": ["Close", "Open"],
-        "shape": (120, 1),
-        "index_start": "2020-01-01",
-        "index_end": "2020-06-01",
-    }
-
-
-class _FakeRecorder:
-    def __init__(self, run_id: str) -> None:
-        self.manifest = _FakeManifest(run_id)
-
-
-class _FakeManifest:
-    def __init__(self, run_id: str) -> None:
-        self.run_id = run_id
-        self.evidence: dict[str, Any] = {}
-
+from tests.support.research.aegis_research.test_doubles import (
+    FakeArrayContract,
+    FakeDataResult,
+    FakeRecorder,
+)
 
 _FAMILY = "strategies"
 _COMPONENT_ID = "demo.ma_cross"
@@ -59,7 +39,7 @@ _SLOW_KEY = encode(_STRATEGY_REF, "slow_window")
 
 class _FakeSource:
     evidence: ClassVar[dict[str, Any]] = {
-        "schema_version": "component_optimization_source.v1",
+        "schema_version": "component_optimization_source.v2",
         "source": "component",
         "strategy": {
             "family": _FAMILY,
@@ -91,7 +71,7 @@ def _result() -> OptimizationResult:
     )
 
 
-def _run_evidence(recorder: _FakeRecorder) -> RunEvidence:
+def _run_evidence(recorder: FakeRecorder) -> RunEvidence:
     return RunEvidence(
         recorder.manifest.evidence,
         component_registry_fingerprint="registry-fp",
@@ -103,24 +83,24 @@ def _run_evidence(recorder: _FakeRecorder) -> RunEvidence:
 
 def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) -> None:
     config = build_resolved_run_config(tmp_path).config
-    recorder = _FakeRecorder("run-pub")
+    recorder = FakeRecorder("run-pub")
     store_path = tmp_path / "candidates.sqlite3"
     run_evidence = _run_evidence(recorder)
 
     out = run_pipeline_publishing(
         config=config,
         recorder=recorder,
-        data_result=_FakeDataResult(),
-        array_contract=_FakeArrayContract(),
+        data_result=FakeDataResult(),
+        array_contract=FakeArrayContract(),
         optimization_source=_FakeSource(),
-        optimization_result=_result(),
-        portfolio_builtin={"fees": 0.001},
+        execution=ExecutionResult(optimization_result=_result()),
         run_evidence=run_evidence,
         store_path=store_path,
         metric_registry_fingerprint="fp-test",
     )
 
-    candidate_rows = out["candidate_rows"]
+    assert isinstance(out, PublishingResult)
+    candidate_rows = out.candidate_rows
     assert [row["role"] for row in candidate_rows] == ["best", "median", "worst"]
     assert [row["rank"] for row in candidate_rows] == [1, 2, 3]
 
@@ -135,18 +115,17 @@ def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) ->
 
 def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
     config = build_resolved_run_config(tmp_path).config
-    recorder = _FakeRecorder("run-pub")
+    recorder = FakeRecorder("run-pub")
     store_path = tmp_path / "candidates.sqlite3"
     run_evidence = _run_evidence(recorder)
 
     run_pipeline_publishing(
         config=config,
         recorder=recorder,
-        data_result=_FakeDataResult(),
-        array_contract=_FakeArrayContract(),
+        data_result=FakeDataResult(),
+        array_contract=FakeArrayContract(),
         optimization_source=_FakeSource(),
-        optimization_result=_result(),
-        portfolio_builtin={"fees": 0.001},
+        execution=ExecutionResult(optimization_result=_result()),
         run_evidence=run_evidence,
         store_path=store_path,
         metric_registry_fingerprint=None,

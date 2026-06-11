@@ -2,22 +2,22 @@
 
 The selection phase runs in two stages so indicator warmup can use the full
 available history. The candidate set is materialised once up front (seeded
-``combine_params``); each indicator's wide callable runs once over the **full**
+``combine_params``); each indicator's callable runs once over the **full**
 series into a candidate-major store (stage 1, ``precompute``); candidates with an
 entirely non-finite full-history block for any indicator output are marked invalid;
 then Phase 1 sweeps every split's *selection* set running only stage 2
 (``simulate``), slicing the precomputed store to each window via the splitter's
-``range_`` template — producing a tidy grid (one row per candidate per split, one
+``range_`` template — producing a Candidate Grid (one row per candidate per split, one
 column per metric). Phase 2 ranks candidates globally and returns three
 representative candidates (best / median / worst). Phase 3 re-runs those three on
 every split's *held-out* set and attaches the held-out metrics, again slicing the
 full-series indicator store instead of recomputing indicators on bare held-out
 slices.
 
-A single ``Splitter`` instance is constructed from the run config and reused for
-both phases so selection and held-out share identical split boundaries. The
-splitter is built with explicit ``set_labels=["selection", "held_out"]`` so that
-``set_=`` resolves by role rather than VBT's generic positional labels.
+The runner constructs no ``Splitter`` of its own: it consumes the single one
+built by run_splits from ``RunSplitsResult.splitter`` (ADR-0018) and reuses it
+for both phases, so selection and held-out share identical split boundaries and
+``set_=`` resolves by the role labels run_splits imposed at construction.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
 
-from research.aegis_research.configuration.schema import (
+from research.aegis_research.configuration import (
     OptimizationConfig,
     PortfolioConfig,
     RankingConfig,
@@ -42,7 +42,7 @@ from research.aegis_research.metrics.accessors import (
 )
 from research.aegis_research.metrics.contracts import ExtractorSpec
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
-from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
+from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
     invalid_candidate_positions,
@@ -50,25 +50,27 @@ from research.aegis_research.optimization.candidate_validity import (
 )
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     candidate_keys,
 )
 from research.aegis_research.optimization.ranking import (
-    SPLIT_LEVEL,
     EvaluatedCandidate,
     OptimizationResult,
-    optional_float,
     select_representative_candidates,
 )
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
-from research.aegis_research.portfolios import simulate_portfolio_batch
-
-SELECTION_SET = "selection"
-HELD_OUT_SET = "held_out"
-SET_LABELS = [SELECTION_SET, HELD_OUT_SET]
+from research.aegis_research.portfolios import (
+    count_non_executable_rows,
+    simulate_portfolio_batch,
+)
+from research.aegis_research.run_splits import (
+    HELD_OUT_SET,
+    SELECTION_SET,
+    RunSplitsResult,
+)
 
 
 class OptimizationRunnerError(ValueError):
@@ -85,19 +87,20 @@ def execute_optimization(
     report: ReportConfig,
     ranking: RankingConfig,
     metric_registry: FrozenMetricRegistry,
+    split_result: RunSplitsResult,
 ) -> OptimizationResult:
     _validate_source_param_names(source.params)
-    if ranking.metric not in PORTFOLIO_METRIC_VALUE_KEYS:
+    if ranking.metric not in metric_registry:
         raise OptimizationRunnerError(
-            f"optimization ranking metric {ranking.metric!r} is not in the central "
-            f"portfolio metric catalog: {sorted(PORTFOLIO_METRIC_VALUE_KEYS)}"
+            f"optimization ranking metric {ranking.metric!r} is not in the "
+            f"metric registry: {sorted(metric_registry.ids())}"
         )
 
     # The registry record is the single home for each Metric's definition and its
     # extractor; the sweep is handed a plain extractor mapping (catalog order) so
     # the dill-serialised Phase-1 closure carries no registry/proxy machinery.
     extractors = dict(metric_registry.extractors)
-    splitter = _build_splitter(close.index, optimization)
+    splitter = split_result.splitter
 
     # Stage 0: materialise the sampled candidate set once, deterministically, and
     # feed the same set to BOTH the precompute and the selection sweep.
@@ -107,7 +110,7 @@ def execute_optimization(
         name: vbt.Param(values, level=0) for name, values in sampled_lists.items()
     }
 
-    # Stage 1: run each indicator's wide callable once over the full series.
+    # Stage 1: run each indicator's callable once over the full series.
     sampled_candidate_keys = candidate_keys(sampled_lists)
     store = source.precompute(close, n_candidates, **sampled_lists)
     invalid_candidate_keys = invalid_candidates(
@@ -146,7 +149,15 @@ def execute_optimization(
         min_weight=ranking.min_weight,
     )
 
-    param_names = [name for name in selection_grid.index.names if name != SPLIT_LEVEL]
+    param_names = selection_grid.param_levels
+    # The seam cost of the Split structure: a pure function of window geometry
+    # and the loaded-data calendar, independent of which candidates ran and of
+    # how the sweep was chunked.
+    non_executable_rows = sum(
+        count_non_executable_rows(window_index, close.index)
+        for split in split_result.splits
+        for window_index in (split.selection_index, split.held_out_index)
+    )
     return _attach_held_out(
         result,
         splitter=splitter,
@@ -159,15 +170,8 @@ def execute_optimization(
         param_names=param_names,
         invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,
+        non_executable_rows=non_executable_rows,
     )
-
-
-def _build_splitter(index: pd.Index, optimization: OptimizationConfig) -> vbt.Splitter:
-    method = optimization.split.method
-    factory = getattr(vbt.Splitter, method, None)
-    if not callable(factory):
-        raise OptimizationRunnerError(f"unknown VBT splitter method: {method!r}")
-    return factory(index, set_labels=SET_LABELS, **dict(optimization.split.params))
 
 
 def _build_precomputed_window_metrics(
@@ -177,7 +181,7 @@ def _build_precomputed_window_metrics(
     report: ReportConfig,
     close: pd.DataFrame,
     open_: pd.DataFrame,
-    store: WideIndicatorPrecompute,
+    store: IndicatorPrecompute,
     invalid_candidate_keys: set[CandidateKey],
     extractors: Mapping[str, ExtractorSpec],
 ) -> Callable[..., Any]:
@@ -185,23 +189,25 @@ def _build_precomputed_window_metrics(
 
     ``close``, ``open_`` and ``store`` are closure-captured (passed through
     ``apply`` unchanged); only the per-(split,set) ``range_`` template arrives
-    positionally. ``open_`` is sliced to the same window so next-open execution
-    fills each window's targets at that window's open prices. Selection and
-    held-out sweeps use the same callback shape — and are handed the same
-    ``invalid_candidate_keys`` (a required argument) — so they cannot drift.
+    positionally. ``close.index`` (the full loaded-data calendar) is passed as
+    the market index so the seam mask can detect gaps in purged/embargoed
+    split windows. Selection and held-out sweeps use the same callback shape —
+    and are handed the same ``invalid_candidate_keys`` (a required argument) —
+    so they cannot drift.
     """
+    full_index = close.index
 
     def window_metrics(range_: slice, **params: Any) -> Any:
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
         keys = candidate_keys(combo_lists)
         invalid_positions = invalid_candidate_positions(keys, invalid_candidate_keys)
         if len(invalid_positions) == n_combos:
-            return _nan_metric_frame(metric_keys, param_names)
+            return _nan_metric_frame(metric_keys, param_names, list(extractors))
 
         close_window = close.iloc[range_]
         open_window = open_.iloc[range_]
         indicator_window = store.window(range_, keys)
-        wide_allocations = source.simulate(
+        allocations = source.simulate(
             close_window, indicator_window, n_combos, **combo_lists
         )
         # Invalid Candidates are excluded by-key via classify_candidates;
@@ -209,7 +215,15 @@ def _build_precomputed_window_metrics(
         # stay in the grid without masking. The all-invalid short-circuit
         # above is a pure performance guard.
         return _metrics_from_allocations(
-            close_window, open_window, wide_allocations, portfolio, report, metric_keys, param_names, extractors
+            close_window,
+            open_window,
+            allocations,
+            portfolio,
+            report,
+            metric_keys,
+            param_names,
+            extractors,
+            market_index=full_index,
         )
 
     return window_metrics
@@ -234,24 +248,26 @@ def _extract_combos(
 def _metrics_from_allocations(
     close_window: pd.DataFrame,
     open_window: pd.DataFrame,
-    wide_allocations: Any,
+    allocations: Any,
     portfolio: PortfolioConfig,
     report: ReportConfig,
     metric_keys: list[tuple],
     param_names: list[str],
     extractors: Mapping[str, ExtractorSpec],
+    *,
+    market_index: pd.Index,
 ) -> Any:
-    if wide_allocations is vbt.NoResult:
+    if allocations is vbt.NoResult:
         return vbt.NoResult
     n_symbols = len(close_window.columns)
-    if n_symbols == 0 or len(wide_allocations.columns) // n_symbols < 1:
+    if n_symbols == 0 or len(allocations.columns) // n_symbols < 1:
         return vbt.NoResult
     pf = simulate_portfolio_batch(
         close_window,
-        wide_allocations,
+        allocations,
         portfolio,
         open_=open_window,
-        market_index=close_window.index,
+        market_index=market_index,
         periods_per_year=report.periods_per_year,
     )
     return central_metrics_from_grouped_accessors(
@@ -259,12 +275,15 @@ def _metrics_from_allocations(
     )
 
 
-def _nan_metric_frame(metric_keys: list[tuple], param_names: list[str]) -> pd.DataFrame:
+def _nan_metric_frame(
+    metric_keys: list[tuple], param_names: list[str], metric_ids: list[str]
+) -> pd.DataFrame:
     # float64 by construction — same grid dtype contract as
     # central_metrics_from_grouped_accessors, so vbt's row_stack concat
-    # never has to reconcile divergent dtypes across windows.
+    # never has to reconcile divergent dtypes across windows. Columns mirror
+    # the registry's extractor set so custom metrics stay aligned.
     index = pd.MultiIndex.from_tuples(metric_keys, names=param_names)
-    return pd.DataFrame(np.nan, index=index, columns=list(PORTFOLIO_METRIC_VALUE_KEYS))
+    return pd.DataFrame(np.nan, index=index, columns=metric_ids)
 
 
 def _combo_values(value: Any) -> list[Any]:
@@ -286,14 +305,14 @@ def _sweep(
     params: Mapping[str, Any],
     set_: str,
     parallel: bool,
-) -> pd.DataFrame:
+) -> CandidateGrid:
     options: dict[str, Any] = {}
     if parallel:
         # Phase 1 distributes the materialised parameter grid across processes:
         # ``mono_n_chunks="auto"`` builds one super-chunk per core that
         # ``engine="pathos"`` runs in parallel (pathos uses dill, so the simulate
         # closure and precomputed store serialize cleanly), while within each chunk
-        # the wide strategy vectorizes its candidates through numpy.
+        # the strategy vectorizes its candidates through numpy.
         options["mono_n_chunks"] = "auto"
         # ``join_pool=True`` closes/joins/clears the pathos worker pool after the sweep.
         # vbt defaults this off to reuse a warm pool across repeated sweeps, but a run
@@ -321,21 +340,7 @@ def _sweep(
             "filtered out — return finite metrics from invalid combinations instead so "
             "they remain visible in evidence"
         ) from error
-    return _tidy_grid(stacked)
-
-
-def _tidy_grid(stacked: Any) -> pd.DataFrame:
-    # Mono-chunking row-stacks the per-combo metric rows into a DataFrame indexed
-    # by ``[split, <params>]`` with one column per metric — already the tidy grid
-    # ``select_representative_candidates`` consumes.
-    if not isinstance(stacked, pd.DataFrame) or not isinstance(stacked.index, pd.MultiIndex):
-        raise OptimizationRunnerError(
-            "optimization sweep must row-stack into a DataFrame indexed by split and "
-            f"parameters with one column per metric; got {type(stacked).__name__}"
-        )
-    tidy = stacked.copy()
-    tidy.columns.name = None
-    return tidy
+    return CandidateGrid.from_sweep(stacked)
 
 
 def _attach_held_out(
@@ -347,10 +352,11 @@ def _attach_held_out(
     report: ReportConfig,
     close: pd.DataFrame,
     open_: pd.DataFrame,
-    store: WideIndicatorPrecompute,
+    store: IndicatorPrecompute,
     param_names: list[str],
     invalid_candidate_keys: set[CandidateKey],
     extractors: Mapping[str, ExtractorSpec],
+    non_executable_rows: int,
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
     unique_params: list[dict[str, Any]] = []
@@ -382,38 +388,23 @@ def _attach_held_out(
         parallel=False,
     )
     return OptimizationResult(
-        best=_with_held_out(result.best, held_out_grid, param_names),
-        median=_with_held_out(result.median, held_out_grid, param_names),
-        worst=_with_held_out(result.worst, held_out_grid, param_names),
+        best=_with_held_out(result.best, held_out_grid),
+        median=_with_held_out(result.median, held_out_grid),
+        worst=_with_held_out(result.worst, held_out_grid),
         excluded_degenerate=result.excluded_degenerate,
         excluded_invalid=result.excluded_invalid,
         total_candidates=result.total_candidates,
+        non_executable_rows=non_executable_rows,
     )
 
 
 def _with_held_out(
     candidate: EvaluatedCandidate,
-    held_out_grid: pd.DataFrame,
-    param_names: list[str],
+    held_out_grid: CandidateGrid,
 ) -> EvaluatedCandidate:
-    held_out = _candidate_split_metrics(held_out_grid, candidate.params, param_names)
+    key = tuple(candidate.params[name] for name in held_out_grid.param_levels)
+    held_out = held_out_grid.split_metrics(key)
     return dataclasses.replace(candidate, held_out_metrics=held_out)
-
-
-def _candidate_split_metrics(
-    grid: pd.DataFrame,
-    params: Mapping[str, Any],
-    param_names: list[str],
-) -> dict[Any, dict[str, float | None]]:
-    selector = pd.Series(True, index=grid.index)
-    for name in param_names:
-        selector &= grid.index.get_level_values(name) == params[name]
-    rows = grid[selector.to_numpy()]
-    metrics: dict[Any, dict[str, float | None]] = {}
-    split_labels = rows.index.get_level_values(SPLIT_LEVEL)
-    for split_label, (_, row) in zip(split_labels, rows.iterrows(), strict=True):
-        metrics[split_label] = {col: optional_float(row[col]) for col in grid.columns}
-    return metrics
 
 
 def _materialize_candidates(

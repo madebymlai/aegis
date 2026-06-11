@@ -6,7 +6,7 @@ from typing import Any
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
 )
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     ConfigValidationError,
     ConfigValidationIssue,
@@ -19,27 +19,22 @@ from research.aegis_research.data import (
     load_market_data_result,
     market_data_bundle,
 )
-from research.aegis_research.data_arrays import (
-    DataArrayContract,
-    with_data_array_contract_metadata,
-)
-from research.aegis_research.optimization.candidate_publishing import (
-    candidate_store_namespace,
-)
+from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
     RunEvidence,
 )
 from research.aegis_research.optimization.pipeline.completion import (
-    build_run_refs,
     run_pipeline_completion,
 )
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
 from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
     build_run_data_array_contract,
 )
+from research.aegis_research.provenance.capture import capture_config_evidence
 from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunStore
@@ -53,8 +48,18 @@ def run_strategy_sweep(
     run_id: str | None = None,
     parent_run_id: str | None = None,
     supersedes_run_id: str | None = None,
-    on_run_started: Callable[[dict[str, Any]], None] | None = None,
+    on_run_refs: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    """Run a strategy sweep end-to-end, recording provenance for the Run.
+
+    ``on_run_refs`` receives the Run's refs snapshot (run id, run directory,
+    manifest path, status, started-at, finished-at) when the Run is created,
+    and again with terminal refs after a failure or interruption is recorded,
+    immediately before the exception re-raises. It does not fire on successful
+    completion — the returned result carries the final refs. The callback must
+    not raise: a raising callback's error propagates with the Run's real
+    failure as its ``__context__``. (ADR-0016)
+    """
     config = resolved_config.config
     if config.optimization is None:
         raise ConfigValidationError(
@@ -82,20 +87,26 @@ def run_strategy_sweep(
         optimization={},
         persist=recorder.persist,
     )
+    # The Manifest's config Evidence carries the config-selection record with
+    # the resolved absolute config path (ADR-0021). Runs started without a
+    # selection (direct pipeline callers) record no config Evidence — existing
+    # Runs and goldens are unaffected.
+    if resolved_config.selection is not None:
+        recorder.manifest.evidence["config"] = capture_config_evidence(resolved_config)
     recorder.persist()
 
     try:
-        if on_run_started is not None:
-            on_run_started(build_run_refs(recorder))
+        if on_run_refs is not None:
+            on_run_refs(recorder.run_refs())
         array_contract.assert_configured()
         data_result = load_market_data_result(
             config.data,
-            required_features=array_contract.required_arrays,
+            required_arrays=array_contract.required_arrays,
         )
-        data_result = with_data_array_contract_metadata(data_result, array_contract)
-        write_data_metadata_artifact(recorder, data_result)
+        write_data_metadata_artifact(recorder, data_result, array_contract)
         data_result.assert_usable()
         data_bundle = market_data_bundle(data_result)
+        metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
             config,
             component_registry=component_registry,
@@ -103,24 +114,21 @@ def run_strategy_sweep(
             data_result=data_result,
             data=data_bundle,
             array_contract=array_contract,
-            metric_registry_fingerprint=(
-                resolved_config.metric_registry.fingerprint
-                if resolved_config.metric_registry
-                else None
-            ),
-            metric_registry=resolved_config.metric_registry,
+            metric_registry_fingerprint=metric_registry.fingerprint,
+            metric_registry=metric_registry,
             run_evidence=run_evidence,
         )
     except KeyboardInterrupt:
         recorder.mark_run_interrupted(
             diagnostic={"error_type": "KeyboardInterrupt", "message": "interrupted"}
         )
-        raise
-    except ConfigValidationError as error:
-        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
+        if on_run_refs is not None:
+            on_run_refs(recorder.run_refs())
         raise
     except Exception as error:
         recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
+        if on_run_refs is not None:
+            on_run_refs(recorder.run_refs())
         raise
 
 
@@ -140,7 +148,7 @@ def _run_optimization_strategy_sweep(
     data: MarketDataBundle,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
-    metric_registry: Any,
+    metric_registry: FrozenMetricRegistry,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
     # Stage 1: Setup — resolve locks, build optimization source and evidence baseline
@@ -161,10 +169,7 @@ def _run_optimization_strategy_sweep(
     # Stage 2: Execution — preflight gate, two-phase optimization sweep
     execution = run_pipeline_execution(
         config=config,
-        optimization_source=setup["optimization_source"],
-        close=setup["close"],
-        open_=setup["open_"],
-        split_result=setup["split_result"],
+        setup=setup,
         metric_registry=metric_registry,
         run_evidence=run_evidence,
     )
@@ -175,31 +180,22 @@ def _run_optimization_strategy_sweep(
         recorder=recorder,
         data_result=data_result,
         array_contract=array_contract,
-        optimization_source=setup["optimization_source"],
-        optimization_result=execution["optimization_result"],
-        portfolio_builtin=setup["portfolio_builtin"],
+        optimization_source=setup.optimization_source,
+        execution=execution,
         run_evidence=run_evidence,
-        store_path=setup["store_path"],
+        store_path=setup.store_path,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
 
-    store_namespace = candidate_store_namespace()
-
     # Stage 4: Completion — artifact, completion, activation, result
     return run_pipeline_completion(
+        setup=setup,
+        publishing=publishing,
         config=config,
         recorder=recorder,
         data_result=data_result,
         array_contract=array_contract,
-        strategy_evidence=setup["strategy_evidence"],
-        optimization_builtin=setup["optimization_builtin"],
-        portfolio_builtin=setup["portfolio_builtin"],
-        split_result=setup["split_result"],
         run_evidence=run_evidence,
-        candidate_rows=publishing["candidate_rows"],
-        candidate_store_provenance=publishing["candidate_store_provenance"],
-        store_path=setup["store_path"],
-        store_namespace=store_namespace,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
 

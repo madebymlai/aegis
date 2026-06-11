@@ -2,9 +2,6 @@
 
 Tests are driven through ``resolve_run_config`` and the pydantic
 ``TypeAdapter`` for structural validation. Assertions use pydantic's wording.
-
-The ``_is_absolute_or_user_path`` predicate is rehomed in
-``configuration.validation`` and still tested here.
 """
 
 from __future__ import annotations
@@ -16,14 +13,11 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
     DataConfig,
     resolve_run_config,
-)
-from research.aegis_research.configuration.validation import (
-    _is_absolute_or_user_path,
 )
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
@@ -43,8 +37,8 @@ def _component_registry(tmp_path: Path):
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'output_name': 'active', 'consumes_outputs': ['returns'], "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n\n# %% main compute\n"
+        "}\n"
+        "\n# %% main compute\n"
         "def run(bundle):\n    \"\"\"Fixture strategy, never executed.\"\"\"\n"
         "    raise RuntimeError('not executed during config tests')\n"
     )
@@ -247,15 +241,6 @@ def test_resolve_accepts_skip_on_error_with_skipped_symbols(tmp_path: Path) -> N
     )
     assert resolved.config.data.skip_on_error is True
     assert "skipped_symbols" in resolved.config.data.quality.allowed_degradations
-
-
-# ── path predicate (rehomed from deleted data validator) ──────────────────────
-
-
-def test_is_absolute_or_user_path_classifies_paths() -> None:
-    assert _is_absolute_or_user_path("/etc/passwd") is True
-    assert _is_absolute_or_user_path("~/secrets") is True
-    assert _is_absolute_or_user_path("data/prices.csv") is False
 
 
 # ── data section requiredness (no silent OHLCV default at the YAML seam) ─────

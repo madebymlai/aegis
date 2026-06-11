@@ -9,19 +9,16 @@ Evidence that the Run was not a fresh optimization.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import pytest
 
-from research.aegis_research.config import resolve_run_config
+from research.aegis_research.configuration import resolve_run_config
+from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
-from research.aegis_research.optimization.param_namespace import (
-    FIXED_CANDIDATE_PARAM,
-    ComponentRef,
-)
+from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -36,26 +33,21 @@ from tests.support.research.aegis_research.component_fixtures import (
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
+from tests.support.research.aegis_research.test_doubles import (
+    FakeDataResult,
+    default_metadata,
+)
+
+_OHLCV_METADATA = default_metadata(
+    effective_arrays=["OHLCV"], start=None, end=None
+)
 
 
 class _FakeData:
-    def feature(self, name: str) -> Any:
+    def array(self, name: str) -> Any:
         import pandas as pd
 
         return pd.DataFrame({0: [float(i) for i in range(120)]})
-
-
-class _FakeDataResult:
-    class quality:
-        state = "ok"
-
-    metadata: ClassVar[dict[str, Any]] = {
-        "source": "synthetic",
-        "symbols": ["SYN"],
-        "loaded_arrays": ["Close", "Open"],
-        "effective_arrays": ["OHLCV"],
-        "shape": {"rows": 120},
-    }
 
 
 def _run_evidence() -> RunEvidence:
@@ -69,7 +61,7 @@ def _run_evidence() -> RunEvidence:
 
 
 def _locked_raw_config(candidate_key: str) -> dict[str, Any]:
-    from research.aegis_research.config import CONFIG_SCHEMA_VERSION
+    from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
@@ -104,7 +96,7 @@ def _seed_candidate_store(config: Any) -> str:
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
         source_identity=_source_evidence(),
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        portfolio_policy={"target_exposure_cap": 1.0},
+        allocation_policy={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     candidate_key = rows[0]["candidate_key"]
@@ -120,7 +112,7 @@ def _seed_candidate_store(config: Any) -> str:
 
 def _source_evidence() -> dict[str, Any]:
     return {
-        "schema_version": "component_optimization_source.v1",
+        "schema_version": "component_optimization_source.v2",
         "source": "component",
         "strategy": {
             "family": "strategies",
@@ -154,6 +146,11 @@ def _resolved_locked_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_locked_setup_resolves_every_component_from_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Locked setup resolves every Component's params from the candidate store.
+
+    Observe Lock application through the optimization source's evidence
+    (param_mode == "locked") instead of reading a relayed copy.
+    """
     resolved = _resolved_locked_config(tmp_path, monkeypatch)
     config = resolved.config
     array_contract = build_run_data_array_contract(config, resolved.component_registry)
@@ -162,15 +159,19 @@ def test_locked_setup_resolves_every_component_from_candidate(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
-        data_result=_FakeDataResult(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
         run_evidence=_run_evidence(),
     )
 
-    params = result["resolved_component_params"]
-    assert ComponentRef("strategies", "demo.strategy", "strategy") in params
-    assert ComponentRef("indicators", "demo.returns", "demo.returns") in params
+    evidence = result.optimization_source.evidence
+    assert evidence["strategy"]["param_mode"] == "locked"
+    assert all(
+        indicator["param_mode"] == "locked" for indicator in evidence["indicators"]
+    )
+    assert evidence["strategy"]["id"] == "demo.strategy"
+    assert any(indicator["id"] == "demo.returns" for indicator in evidence["indicators"])
 
 
 def test_locked_setup_performs_no_optimization(
@@ -184,14 +185,14 @@ def test_locked_setup_performs_no_optimization(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
-        data_result=_FakeDataResult(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
         run_evidence=_run_evidence(),
     )
 
     # A locked run pins a single Candidate: no free parameters remain to sweep.
-    assert list(result["optimization_source"].params) == [FIXED_CANDIDATE_PARAM]
+    assert list(result.optimization_source.params) == [FIXED_CANDIDATE_PARAM]
 
 
 def test_locked_setup_records_reproduction_evidence(
@@ -206,7 +207,7 @@ def test_locked_setup_records_reproduction_evidence(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
-        data_result=_FakeDataResult(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
         run_evidence=run_evidence,
@@ -232,7 +233,7 @@ def test_unlocked_setup_has_no_lock_evidence(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
-        data_result=_FakeDataResult(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
         run_evidence=run_evidence,
@@ -256,9 +257,8 @@ def _write_parameterized_strategy(path: Path) -> None:
         "'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'param_names': ['threshold'], "
         "'output_name': 'active', 'owns_portfolio': False, "
-        "'defaults': {'threshold': 1.0}, 'param_space_callable': 'param_space', "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n"
+        "'defaults': {'threshold': 1.0}, "
+        "}\n"
         "\n# %% param space\n"
         "def param_space():\n"
         '    """Return the searchable threshold param space."""\n'
@@ -266,12 +266,12 @@ def _write_parameterized_strategy(path: Path) -> None:
         "\n# %% main compute\n"
         "def run(inputs, *, threshold=1.0):\n"
         '    """Emit a deterministic active allocation frame for fixture runs."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    return close.gt(close.shift(1)).fillna(False).astype(object)\n"
         "\n# %% wide compute\n"
-        "def run_wide(inputs, *, n_candidates, **param_lists):\n"
+        "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide strategy output."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    return np.full((T, n_candidates * S), np.nan)\n"
     )
@@ -297,7 +297,7 @@ def _seed_parameterized_candidate(config: Any) -> str:
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
         source_identity=_parameterized_source_evidence(),
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        portfolio_policy={"target_exposure_cap": 1.0},
+        allocation_policy={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     candidate_key = rows[0]["candidate_key"]
@@ -342,7 +342,7 @@ def test_locked_setup_records_overridden_params_in_evidence(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
-        data_result=_FakeDataResult(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
         run_evidence=run_evidence,
@@ -377,7 +377,7 @@ def test_locked_setup_records_empty_overrides_when_no_params(
         config=config,
         component_registry=resolved.component_registry,
         data=_FakeData(),
-        data_result=_FakeDataResult(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
         run_evidence=run_evidence,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-import json
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -10,13 +9,13 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.component_registry.contracts import (
     COMPONENT_FAMILIES,
     ComponentDefinition,
     ComponentFamily,
     ComponentRegistryError,
     ComponentSelection,
-    IndicatorManifest,
 )
 from research.aegis_research.component_registry.manifests import parse_component_file
 
@@ -45,7 +44,7 @@ class FrozenComponentRegistry:
             "fingerprint": self.fingerprint,
             "families": {
                 family: {
-                    component_id: _definition_public_snapshot(definition)
+                    component_id: definition.public_snapshot()
                     for component_id, definition in definitions.items()
                 }
                 for family, definitions in self.definitions.items()
@@ -64,7 +63,7 @@ def discover_component_registry(
         family: {} for family in COMPONENT_FAMILIES
     }
     if not root_path.exists():
-        return _freeze(definitions)
+        return freeze_component_registry(definitions)
     if root_path.is_symlink():
         raise ComponentRegistryError(f"{root_path}: component root must not be a symlink")
     _assert_inside_root(root_path, root_path)
@@ -83,40 +82,11 @@ def discover_component_registry(
             if definition.id in family_definitions:
                 raise ComponentRegistryError(f"duplicate component id in {family}: {definition.id}")
             family_definitions[definition.id] = definition
-    return _freeze(definitions)
+    return freeze_component_registry(definitions)
 
 
 def load_component_callable(definition: ComponentDefinition) -> Any:
     return load_component_attribute(definition, definition.callable_name)
-
-
-def _definition_public_snapshot(definition: ComponentDefinition) -> dict[str, Any]:
-    manifest = definition.manifest
-    payload: dict[str, Any] = {
-        "family": definition.family,
-        "id": definition.id,
-        "version": manifest.version,
-        "callable": definition.callable_name,
-        "source_hash": definition.identity.source_hash,
-        "source": definition.identity.public(),
-        "inputs": list(manifest.input_names),
-        "params": {
-            "names": list(manifest.param_names),
-            "defaults": dict(manifest.defaults),
-            "param_space": {
-                "available": manifest.param_space_callable is not None,
-                "callable": manifest.param_space_callable,
-            },
-        },
-    }
-    if isinstance(manifest, IndicatorManifest):
-        payload["outputs"] = list(manifest.output_names)
-        payload["bar_aligned"] = manifest.bar_aligned
-    else:
-        payload["output_name"] = manifest.output_name
-        payload["consumes_outputs"] = list(manifest.consumes_outputs)
-        payload["owns_portfolio"] = manifest.owns_portfolio
-    return payload
 
 
 def load_component_attribute(definition: ComponentDefinition, attribute_name: str) -> Any:
@@ -157,6 +127,23 @@ def load_component_attributes(
     return attributes
 
 
+def freeze_component_registry(
+    definitions: Mapping[ComponentFamily, Mapping[str, ComponentDefinition]],
+) -> FrozenComponentRegistry:
+    """Freeze a definitions mapping into a ``FrozenComponentRegistry``.
+
+    Sorts by id within each family, wraps with ``MappingProxyType``, and
+    computes the registry fingerprint from each definition's
+    ``public_snapshot()``. Families absent from *definitions* freeze as empty.
+    """
+    sorted_definitions: dict[ComponentFamily, Mapping[str, ComponentDefinition]] = {}
+    for family in COMPONENT_FAMILIES:
+        family_definitions = definitions.get(family, {})
+        sorted_definitions[family] = MappingProxyType(dict(sorted(family_definitions.items())))
+    frozen = MappingProxyType(sorted_definitions)
+    return FrozenComponentRegistry(definitions=frozen, fingerprint=_registry_fingerprint(frozen))
+
+
 def _resolve_root(root: Path, *, repo_root: Path) -> Path:
     return (
         root.resolve(strict=False)
@@ -194,29 +181,14 @@ def _assert_inside_root(path: Path, root: Path) -> None:
         ) from error
 
 
-def _freeze(
-    definitions: dict[ComponentFamily, dict[str, ComponentDefinition]],
-) -> FrozenComponentRegistry:
-    sorted_definitions: dict[ComponentFamily, Mapping[str, ComponentDefinition]] = {}
-    for family in COMPONENT_FAMILIES:
-        sorted_definitions[family] = MappingProxyType(dict(sorted(definitions[family].items())))
-    frozen = MappingProxyType(sorted_definitions)
-    return FrozenComponentRegistry(definitions=frozen, fingerprint=_registry_fingerprint(frozen))
-
-
 def _registry_fingerprint(
     definitions: Mapping[ComponentFamily, Mapping[str, ComponentDefinition]],
 ) -> str:
     payload = {
         family: {
-            component_id: {
-                "manifest": definition.manifest.fingerprint_payload(),
-                "callable": definition.callable_name,
-                "source": definition.identity.public(),
-            }
+            component_id: definition.public_snapshot()
             for component_id, definition in family_definitions.items()
         }
         for family, family_definitions in definitions.items()
     }
-    data = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode()
-    return hashlib.sha256(data).hexdigest()
+    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()

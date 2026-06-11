@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     ResolvedRunConfig,
     resolve_run_config,
@@ -20,6 +20,7 @@ def build_resolved_run_config(
     *,
     output_dir: str | None = None,
     data: dict[str, Any] | None = None,
+    optimization: dict[str, Any] | None = None,
 ) -> ResolvedRunConfig:
     root = tmp_path / "research" / "components"
     write_indicator_component(root / "indicators" / "returns.py")
@@ -49,6 +50,11 @@ def build_resolved_run_config(
     }
     if data is not None:
         raw["data"] = {**raw["data"], **data}
+    if optimization is not None:
+        merged = {**raw["optimization"], **optimization}
+        if "split" in optimization:
+            merged["split"] = {**raw["optimization"]["split"], **optimization["split"]}
+        raw["optimization"] = merged
     return resolve_run_config(
         raw,
         component_registry=discover_component_registry(root=root, repo_root=tmp_path),

@@ -4,7 +4,7 @@ import pytest
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
-from research.aegis_research.config import PortfolioConfig
+from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.portfolios import (
     _SINGLE_CANDIDATE_ID,
     expand_market_frame_to_candidate_columns,
@@ -617,6 +617,28 @@ def test_batch_of_one_candidate_equals_single_group_by_true() -> None:
     )
 
     pd.testing.assert_series_equal(pf_single.value, pf_batch.value, check_names=False)
+
+
+def test_single_book_market_index_missing_row_raises() -> None:
+    """When the market index does not contain a simulation row, an error propagates."""
+    index = pd.date_range("2024-01-01", periods=3)
+    market_index = index[[0, 2]]
+    close = pd.DataFrame(
+        {"A": [10.0] * 3, "B": [20.0] * 3},
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {"A": [0.5, 0.5, 0.5], "B": [0.5, 0.5, 0.5]},
+        index=index,
+    )
+
+    with pytest.raises(ValueError, match="market_index"):
+        simulate_single_book(
+            close,
+            allocations,
+            make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+            market_index=market_index,
+        )
 
 
 def _two_symbol_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:

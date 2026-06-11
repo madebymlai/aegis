@@ -1,11 +1,10 @@
-"""Ranking validation — pydantic v2 structural tests.
+"""Ranking validation — structural tests + thin coordinator net.
 
 Structural checks (min_weight ∈ 0..1, min_trades non-negative, extra keys)
-live on the ``RankingConfig`` pydantic dataclass. Metric membership is a
-coordinator prepass check driven through ``resolve_run_config``.
-
-Assertions use pydantic's structural wording for construction-level tests
-and ``ConfigValidationIssue`` for coordinator-level tests.
+live on the ``RankingConfig`` pydantic dataclass.  Metric membership is
+covered at the registry cross-check seam in ``test_cross_checks.py``; this
+file keeps the thin coordinator net (structural wording through resolve,
+structural + membership co-reporting).
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from research.aegis_research.component_registry import discover_component_registry
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
     RankingConfig,
@@ -43,8 +42,8 @@ def _component_registry(tmp_path: Path):
         "# %% define component metadata\n"
         "COMPONENT_MANIFEST = {'family': 'strategies', 'id': 'demo.strategy', 'version': '1.0.0', "
         "'input_names': ['Close'], 'output_name': 'active', 'consumes_outputs': ['returns'], "
-        "'wide_callable': 'run_wide'}\n"
-        "COMPONENT_CALLABLE = 'run'\n\n# %% main compute\n"
+        "}\n"
+        "\n# %% main compute\n"
         "def run(bundle):\n    \"\"\"Fixture strategy, never executed.\"\"\"\n"
         "    raise RuntimeError('not executed during config tests')\n"
     )
@@ -134,21 +133,7 @@ def test_ranking_construction_rejects_unknown_key() -> None:
     assert any(err["type"] == "unexpected_keyword_argument" for err in e.value.errors())
 
 
-# ── metric membership (coordinator prepass via resolve_run_config) ────────────
-
-
-def test_ranking_accepts_known_metric(tmp_path: Path) -> None:
-    """``total_return`` is a default metric — must be accepted."""
-    resolved = _resolve({"metric": "total_return"}, tmp_path=tmp_path)
-    assert resolved.config.ranking.metric == "total_return"
-
-
-def test_ranking_flags_unknown_metric(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"metric": "not_a_metric"}, tmp_path=tmp_path)
-    messages = [i.message for i in e.value.issues if i.path == "ranking.metric"]
-    assert messages
-    assert "must be one of" in messages[0]
+# ── coordinator net ───────────────────────────────────────────────────────────
 
 
 def test_ranking_not_a_dict_fails(tmp_path: Path) -> None:

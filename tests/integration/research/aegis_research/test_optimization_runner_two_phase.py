@@ -8,14 +8,16 @@ metrics.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
-from research.aegis_research.config import OptimizationConfig
+from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import (
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     build_candidate_index,
     empty_precompute,
 )
@@ -25,6 +27,7 @@ from research.aegis_research.optimization.ranking import (
 )
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
@@ -48,7 +51,7 @@ def _exposure_simulate(close: pd.DataFrame, indicator_window, n_combos: int, **p
 
     This is a strategy-only source (no indicators), so it ignores the windowed
     indicator outputs and computes allocations directly from the price window.
-    Returns wide filled allocations with candidate-major MultiIndex columns
+    Returns filled allocations with candidate-major MultiIndex columns
     ``[alpha, symbol]`` — higher alpha means higher exposure, so in an uptrend
     total_return is strictly monotonic in alpha.
     """
@@ -85,16 +88,53 @@ def _optimization() -> OptimizationConfig:
 
 
 def _run(alphas: list[float], *, min_weight: float = 0.3) -> OptimizationResult:
+    optimization = _optimization()
     return execute_optimization(
         close=_uptrend_close(),
         open_=_uptrend_close(),
         source=_source(alphas),
-        optimization=_optimization(),
+        optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return", min_weight=min_weight),
         metric_registry=make_default_metric_registry(),
+        split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
+
+
+class _RecordingSplitter:
+    """Delegates to the real built Splitter while recording each ``set_`` role."""
+
+    def __init__(self, inner: vbt.Splitter) -> None:
+        self._inner = inner
+        self.applied_sets: list[str] = []
+
+    def apply(self, *args, set_: str, **kwargs):
+        self.applied_sets.append(set_)
+        return self._inner.apply(*args, set_=set_, **kwargs)
+
+
+def test_runner_consumes_the_injected_splitter_and_addresses_sets_by_role() -> None:
+    """The runner must run its selection sweep on the selection set and its
+    held-out sweep on the held-out set through the injected Splitter — proving
+    role assignment lives in run_splits and the runner performs no rebuild."""
+    optimization = _optimization()
+    split_result = build_run_splits_result(_uptrend_close().index, optimization.split)
+    recorder = _RecordingSplitter(split_result.splitter)
+
+    execute_optimization(
+        close=_uptrend_close(),
+        open_=_uptrend_close(),
+        source=_source([0.2, 0.5, 1.0]),
+        optimization=optimization,
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
+        split_result=dataclasses.replace(split_result, splitter=recorder),
+    )
+
+    assert recorder.applied_sets == ["selection", "held_out"]
 
 
 def _expected_split_labels() -> list[int]:
@@ -169,7 +209,7 @@ def test_runner_preserves_excluded_degenerate_through_held_out(monkeypatch) -> N
     The synthetic pipeline can't produce NaN-scored (degenerate) candidates — a
     zero-allocation candidate still scores a finite 0.0 — so we inject a known
     exclusion count at the ranking boundary and assert the runner threads it
-    through ``_attach_held_out`` unchanged.
+    through the held-out attachment unchanged.
     """
     import dataclasses
 
@@ -193,7 +233,7 @@ def test_runner_preserves_excluded_degenerate_through_held_out(monkeypatch) -> N
 def test_runner_preserves_total_candidates_through_held_out(monkeypatch) -> None:
     """The exact ranked-set size must survive the held-out round-trip too.
 
-    ``_attach_held_out`` rebuilds the frozen OptimizationResult; the exact
+    The held-out attachment rebuilds the frozen OptimizationResult; the exact
     Candidate total (size of the ranked set) the ranking layer computed must be
     carried forward, exactly as the degenerate-exclusion count is.
     """
@@ -218,7 +258,7 @@ def test_runner_preserves_total_candidates_through_held_out(monkeypatch) -> None
 
 def _warmup_precompute(
     close: pd.DataFrame, n_candidates: int, **param_lists
-) -> WideIndicatorPrecompute:
+) -> IndicatorPrecompute:
     """Causal momentum (close[t]/close[t-window]-1); a window >= history is all-NaN."""
     windows = param_lists["window"]
     prices = close.to_numpy()
@@ -229,7 +269,7 @@ def _warmup_precompute(
         if window < n_rows:
             block[window:] = prices[window:] / prices[:-window] - 1.0
         outputs[:, candidate * n_symbols : (candidate + 1) * n_symbols] = block
-    return WideIndicatorPrecompute(
+    return IndicatorPrecompute(
         outputs={"mom": outputs},
         candidate_index=build_candidate_index(param_lists),
         n_symbols=n_symbols,
@@ -273,15 +313,17 @@ def _warmup_source(windows: list[int]) -> OptimizationSource:
 
 
 def _run_warmup(windows: list[int]) -> OptimizationResult:
+    optimization = _optimization()
     return execute_optimization(
         close=_uptrend_close(),
         open_=_uptrend_close(),
         source=_warmup_source(windows),
-        optimization=_optimization(),
+        optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return", min_weight=0.3),
         metric_registry=make_default_metric_registry(),
+        split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
 
 
@@ -313,6 +355,78 @@ def test_held_out_and_selection_builds_receive_the_same_invalid_candidate_set(
     assert selection_keys, "selection build should carry a non-empty Invalid-Candidate set"
     assert held_out_keys == selection_keys, (
         "held-out build must receive the SAME Invalid-Candidate set as selection"
+    )
+
+
+def test_runner_passes_full_market_index_to_simulate_not_window_index(monkeypatch) -> None:
+    """The runner must pass the full loaded-data index as market_index,
+    not the window's own index. With a contiguous split method both are
+    effectively the same, but with a purged split the difference is that the
+    full index has gaps the window index doesn't."""
+    from research.aegis_research.optimization import runner
+
+    real_metrics = runner._metrics_from_allocations
+    captured_indices: list[pd.Index] = []
+
+    def spy(*args, market_index, **kwargs):
+        captured_indices.append(market_index)
+        return real_metrics(*args, market_index=market_index, **kwargs)
+
+    monkeypatch.setattr(runner, "_metrics_from_allocations", spy)
+
+    _run([0.2, 0.5, 1.0])
+
+    full_index = _uptrend_close().index
+    assert len(captured_indices) > 0, (
+        "expected at least one simulate call through _metrics_from_allocations"
+    )
+    for idx in captured_indices:
+        assert idx.equals(full_index), (
+            f"market_index must be the full loaded-data index ({len(full_index)} rows); "
+            f"got an index with {len(idx)} rows"
+        )
+
+
+def test_runner_records_zero_non_executable_rows_for_contiguous_split() -> None:
+    """A contiguous walk-forward split has no gaps, so the seam mask never fires
+    and non_executable_rows must be zero — this is an invariant monitor."""
+    result = _run([0.2, 0.5, 1.0])
+    assert result.non_executable_rows == 0, (
+        f"contiguous split must record zero non_executable_rows; got {result.non_executable_rows}"
+    )
+
+
+def test_runner_records_exact_non_executable_rows_for_purged_kfold_split() -> None:
+    """``non_executable_rows`` is the seam cost of the Split structure — exact,
+    not merely positive, and independent of how the sweep was chunked.
+
+    With 24 rows and 3 folds of 8, each split's *selection* window is the
+    complement of one test fold. Only the middle fold's complement
+    (rows 0-7 + 16-23) has an internal seam: the window jumps from row 7 to
+    row 16, whose bar is not the immediate calendar successor — so exactly
+    one row is non-executable across the whole structure. A chunked sweep
+    that re-counts the same window per candidate chunk would inflate this —
+    asserting the exact value pins the structural semantic."""
+    close = _uptrend_close()
+    purged_opt = make_optimization_config(
+        search="grid",
+        split=make_run_split_config(
+            method="from_purged_kfold", params={"n_folds": 3, "n_test_folds": 1}
+        ),
+    )
+    result = execute_optimization(
+        close=close,
+        open_=close,
+        source=_source([0.2, 0.5, 1.0]),
+        optimization=purged_opt,
+        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        report=make_report_config(),
+        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        metric_registry=make_default_metric_registry(),
+        split_result=build_run_splits_result(close.index, purged_opt.split),
+    )
+    assert result.non_executable_rows == 1, (
+        f"purged k-fold 3x8 structure has exactly one seam row; got {result.non_executable_rows}"
     )
 
 

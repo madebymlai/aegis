@@ -1,4 +1,4 @@
-"""Wide indicator precompute store.
+"""Indicator precompute store.
 
 Indicator outputs computed **once over the full series** for a fixed set of
 sampled candidates, held candidate-major (each candidate owns a contiguous
@@ -56,7 +56,7 @@ class PrecomputeCausalityError(AssertionError):
 
 
 def validate_precompute_no_lookahead(
-    precompute: Callable[..., WideIndicatorPrecompute],
+    precompute: Callable[..., IndicatorPrecompute],
     close,
     *,
     ranges: Sequence[slice],
@@ -138,7 +138,7 @@ def _assert_windows_equal(
 
 
 @dataclass(frozen=True)
-class WideIndicatorPrecompute:
+class IndicatorPrecompute:
     """Full-series indicator outputs addressable by candidate and sliceable by range.
 
     ``candidate_index`` is the default full-candidate block map. Individual outputs
@@ -175,13 +175,13 @@ class WideIndicatorPrecompute:
 
 def empty_precompute(
     close, n_candidates: int, **param_lists: Sequence
-) -> WideIndicatorPrecompute:
+) -> IndicatorPrecompute:
     """Store with no indicator outputs, for strategy-only sources (no indicators).
 
     The simulate stage ignores the (empty) windowed outputs and computes
     allocations directly from the price window.
     """
-    return WideIndicatorPrecompute(
+    return IndicatorPrecompute(
         outputs={},
         candidate_index=build_candidate_index(param_lists),
         n_symbols=len(close.columns),

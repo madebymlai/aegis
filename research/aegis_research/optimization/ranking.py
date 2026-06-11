@@ -1,9 +1,7 @@
 """Global, min-aware ranking of fixed-parameter candidates across splits.
 
-Pure pandas/numpy. Scores only the admissible (valid) candidates from a
-pre-computed Verdicts partition, then returns three real, deployable
-candidates (best / median / worst). Exclusion rules live in
-``candidate_validity``; ranking consumes the verdict without re-deriving
+Consumes the Candidate Grid's mapping read surface directly. Exclusion rules
+live in ``candidate_validity``; ranking consumes the verdict without re-deriving
 any exclusion logic.
 """
 
@@ -14,11 +12,8 @@ from dataclasses import dataclass, field
 from math import ceil, isnan
 from typing import Any
 
-import pandas as pd
-
+from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import Verdicts
-
-SPLIT_LEVEL = "split"
 
 
 @dataclass(frozen=True)
@@ -63,6 +58,14 @@ class OptimizationResult:
     estimate. By the time ranking runs the verdict is materialised, so the count
     is authoritative by construction. It lets consumers report the
     researched/total terminal ratio.
+
+    ``non_executable_rows`` is the seam cost of the Split structure: the
+    number of rebalance rows held at calendar seams across all (split, set)
+    windows, computed from the split geometry and the loaded-data calendar
+    alone — independent of which candidates ran or how the sweep was chunked.
+    A value of zero means the split method produced contiguous windows; a
+    positive value records the structural execution-footprint cost of
+    non-contiguous splits (e.g. purged k-fold).
     """
 
     best: EvaluatedCandidate
@@ -71,10 +74,11 @@ class OptimizationResult:
     excluded_degenerate: int = 0
     excluded_invalid: int = 0
     total_candidates: int = 0
+    non_executable_rows: int = 0
 
 
 def select_representative_candidates(
-    grid: pd.DataFrame,
+    grid: CandidateGrid,
     verdicts: Verdicts,
     *,
     metric: str,
@@ -82,9 +86,10 @@ def select_representative_candidates(
 ) -> OptimizationResult:
     """Rank admissible (valid) candidates globally and return best/median/worst.
 
-    ``grid`` is a tidy frame with one row per (candidate, split): a MultiIndex
-    carrying a ``"split"`` level plus one or more parameter levels that jointly
-    identify a candidate, and one column per Selection-set metric.
+    ``grid`` is a CandidateGrid whose ``by_candidate()`` iterator yields
+    per-Candidate ``(CandidateKey, split → metric_id → float-or-None)`` mappings
+    with NaN already normalized to None. Iteration order is parameter-sorted and
+    deterministic — ranking tie-stability rests on this contract.
 
     ``verdicts`` is a pre-computed ``Verdicts`` partition from
     ``candidate_validity.classify_candidates``. Only ``verdicts.valid``
@@ -105,45 +110,30 @@ def select_representative_candidates(
     ``OptimizationResult`` is constructed exactly once with counts copied
     straight from the verdict: no post-hoc patch is needed.
     """
-    if metric not in grid.columns:
+    metric_ids = grid.metric_ids
+    if metric not in metric_ids:
         raise KeyError(f"ranking metric {metric!r} not present in grid columns")
-    if not isinstance(grid.index, pd.MultiIndex):
-        raise TypeError("grid index must be a MultiIndex with a 'split' level and param levels")
-    if SPLIT_LEVEL not in grid.index.names:
-        raise ValueError(f"grid index must include a {SPLIT_LEVEL!r} level; got {grid.index.names}")
-    param_levels = [name for name in grid.index.names if name != SPLIT_LEVEL]
-    if not param_levels:
-        raise ValueError("grid index must carry at least one parameter level")
 
-    metric_columns = list(grid.columns)
-    group_level = param_levels[0] if len(param_levels) == 1 else param_levels
+    param_levels = grid.param_levels
     admissible = verdicts.admissible
     candidates: list[EvaluatedCandidate] = []
-    for key, sub in grid.groupby(level=group_level, sort=True):
-        key_tuple = key if isinstance(key, tuple) else (key,)
+    for key_tuple, split_metrics in grid.by_candidate():
         if key_tuple not in admissible:
             continue
         params = dict(zip(param_levels, key_tuple, strict=True))
-        split_labels = sub.index.get_level_values(SPLIT_LEVEL)
-
-        selection_metrics: dict[Any, dict[str, float | None]] = {}
-        for split_label, (_, row) in zip(split_labels, sub.iterrows(), strict=True):
-            selection_metrics[split_label] = {
-                col: optional_float(row[col]) for col in metric_columns
-            }
 
         aggregated = {
-            col: _mean([selection_metrics[s][col] for s in selection_metrics])
-            for col in metric_columns
+            col: _mean([split_metrics[s][col] for s in split_metrics])
+            for col in metric_ids
         }
         score = _min_aware_score(
-            (selection_metrics[s][metric] for s in selection_metrics), min_weight
+            (split_metrics[s][metric] for s in split_metrics), min_weight
         )
         candidates.append(
             EvaluatedCandidate(
                 params=params,
                 score=score,
-                selection_metrics=selection_metrics,
+                selection_metrics=split_metrics,
                 metrics=aggregated,
             )
         )
@@ -191,9 +181,3 @@ def _mean(values: Iterable[float | None]) -> float | None:
     valid = [v for v in values if v is not None]
     return sum(valid) / len(valid) if valid else None
 
-
-def optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    number = float(value)
-    return None if isnan(number) else number

@@ -205,7 +205,7 @@ The CLI exposes explicit rerun intent with `--rerun-mode` and optional run linea
 
 ## Components
 
-Components live under `research/components/{indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST` and `COMPONENT_CALLABLE` without importing the Python file; callable code is loaded only after validation selects that ID. Components can declare `defaults`, optional `param_space_callable`, produced indicator outputs, and consumed strategy outputs. See `docs/examples/components/*_component_example.py`.
+Components live under `research/components/{indicators,strategies}/`. Discovery reads a top-level literal `COMPONENT_MANIFEST`, the required module-level `run` entry point, and optional module-level `param_space` without importing the Python file; callable code is loaded only after validation selects that ID. Components can declare defaults, produced indicator outputs, and consumed strategy outputs. See `research/aegis_research/component_registry/indicator_example.py` and `research/aegis_research/component_registry/strategy_example.py` (packaged examples round-tripped through the real registry parser).
 
 Playbooks are no longer a forward authoring path. See `docs/playbooks.md` for the removal boundary.
 

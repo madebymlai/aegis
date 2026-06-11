@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from research.aegis_research.config import DataConfig
+from research.aegis_research.canonical_json import to_builtin
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
+    DataArrayDiagnostics,
     DataDiagnostics,
-    DataFeatureDiagnostics,
     MarketDataAdapterResult,
     MarketDataQuality,
     RemoteDataPullError,
@@ -21,7 +22,7 @@ def _frozen_observation() -> data_loading.MarketDataObservation:
     close = pd.DataFrame({"SYN": [1.0, 2.0, 3.0]}, index=index)
     return data_loading.MarketDataObservation(
         index=index,
-        features=("Close",),
+        arrays=("Close",),
         symbols=("SYN",),
         panels={"Close": close},
     )
@@ -45,15 +46,15 @@ class _FrozenData:
         return frame.xs(feature, axis=1, level="feature")
 
 
-def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
+def test_describe_builds_the_market_data_v3_facet_model() -> None:
     config = make_data_config(source="frozen", symbols=["SYN"], arrays=["Close"])
     observation = _frozen_observation()
     diagnostics = (
         DataDiagnostics(
             symbol="SYN",
             configured=True,
-            features={
-                "Close": DataFeatureDiagnostics(
+            arrays={
+                "Close": DataArrayDiagnostics(
                     available=True,
                     rows=3,
                     missing=0,
@@ -63,7 +64,6 @@ def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
                     last_timestamp="2020-01-03 00:00:00+00:00",
                 )
             },
-            index_evidence={"source": "test_evidence", "raw_rows": 3},
             provider_status="loaded",
         ),
     )
@@ -80,75 +80,72 @@ def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
         provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
         omitted_metadata_fields=[],
         update_supported=False,
-        required_features=("Close",),
+        required_arrays=("Close",),
     )
 
-    assert metadata == {
-        "schema_version": "market_data.v2",
-        "source": "frozen",
-        "provider_class": "_FrozenData",
-        "native_class": "_FrozenData",
-        "requested_symbols": ["SYN"],
-        "symbols": ["SYN"],
-        "features": ["Close"],
-        "canonical_features": ["Close"],
-        "authored_arrays": ["Close"],
-        "effective_arrays": ["Close"],
-        "required_arrays": ["Close"],
-        "loaded_arrays": ["Close"],
-        "unavailable_arrays": [],
-        "timeframe": "1D",
-        "shape": {"rows": 3, "symbols": 1, "features": 1, "columns": 1},
-        "ohlc_available": {
-            "Open": False,
-            "High": False,
-            "Low": False,
-            "Close": True,
-            "Volume": False,
-        },
-        "index_start": "2020-01-01 00:00:00+00:00",
-        "index_end": "2020-01-03 00:00:00+00:00",
-        "missing_index": "raise",
-        "missing_columns": "raise",
-        "tz_localize": None,
-        "tz_convert": None,
-        "skip_on_error": False,
-        "silence_warnings": False,
-        "quality": {
-            "state": "healthy",
-            "reasons": [],
-            "warnings": [],
-            "allowed_degradations": [],
-        },
-        "diagnostics": [
-            {
-                "symbol": "SYN",
-                "configured": True,
-                "features": {
-                    "Close": {
-                        "available": True,
-                        "rows": 3,
-                        "missing": 0,
-                        "coverage": 1.0,
-                        "numeric": True,
-                        "first_timestamp": "2020-01-01 00:00:00+00:00",
-                        "last_timestamp": "2020-01-03 00:00:00+00:00",
-                    }
-                },
-                "index_evidence": {"source": "test_evidence", "raw_rows": 3},
-                "provider_status": "loaded",
-            }
-        ],
-        "source_metadata": {"frozen": True},
-        "index_evidence": {"source": "test_evidence", "raw_rows": 3},
-        "provider_metadata": {
-            "source": "frozen",
-            "class": f"{__name__}._FrozenData",
-        },
-        "omitted_metadata_fields": [],
-        "update_supported": False,
-        "cache_policy": "disabled_in_schema_v2",
+    # v3 facet-shaped model (ADR-0020): assert facets, not a flat dict
+    assert metadata.schema_version == "market_data.v3"
+    assert metadata.request.source == "frozen"
+    assert metadata.request.requested_symbols == ["SYN"]
+    assert metadata.request.timeframe == "1D"
+    assert metadata.request.authored_arrays == ["Close"]
+    assert metadata.request.effective_arrays == ["Close"]
+    # One arrays descriptor list replaces eight parallel lists
+    close_desc = next(d for d in metadata.arrays if d.name == "Close")
+    assert close_desc.required is True
+    assert close_desc.loaded is True
+    assert close_desc.observed is True
+    assert close_desc.ohlc is True
+    # coverage facet
+    assert metadata.coverage.symbols == ["SYN"]
+    assert metadata.coverage.rows == 3
+    assert metadata.coverage.start == "2020-01-01 00:00:00+00:00"
+    assert metadata.coverage.end == "2020-01-03 00:00:00+00:00"
+    # quality and diagnostics are the typed records themselves
+    assert metadata.quality == quality
+    assert metadata.diagnostics == list(diagnostics)
+    # the serialized wire shape speaks Array, with one uniform per-Array shape
+    wire = to_builtin(metadata)
+    assert wire["quality"] == {
+        "state": "healthy",
+        "reasons": [],
+        "warnings": [],
+        "allowed_degradations": [],
     }
+    assert wire["diagnostics"] == [
+        {
+            "symbol": "SYN",
+            "configured": True,
+            "arrays": {
+                "Close": {
+                    "available": True,
+                    "rows": 3,
+                    "missing": 0,
+                    "coverage": 1.0,
+                    "numeric": True,
+                    "first_timestamp": "2020-01-01 00:00:00+00:00",
+                    "last_timestamp": "2020-01-03 00:00:00+00:00",
+                }
+            },
+            "provider_status": "loaded",
+        }
+    ]
+    # provenance facet: deduplicated provider/source blobs
+    assert metadata.provenance.provider_class == "_FrozenData"
+    assert metadata.provenance.source_metadata == {"frozen": True}
+    assert metadata.provenance.index_evidence == {"source": "test_evidence", "raw_rows": 3}
+    assert metadata.provenance.provider_metadata == {
+        "source": "frozen",
+        "class": f"{__name__}._FrozenData",
+    }
+    assert metadata.provenance.omitted_metadata_fields == []
+    assert metadata.provenance.update_supported is False
+    assert metadata.provenance.missing_index == "raise"
+    assert metadata.provenance.missing_columns == "raise"
+    assert metadata.provenance.tz_localize is None
+    assert metadata.provenance.tz_convert is None
+    assert metadata.provenance.skip_on_error is False
+    assert metadata.provenance.silence_warnings is False
 
 
 def test_provider_failure_routes_through_the_same_describe_builder() -> None:
@@ -161,7 +158,6 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
         DataDiagnostics(
             symbol="SYN",
             configured=True,
-            index_evidence={"source": "provider_failed"},
             provider_status="provider_failed",
         ),
     )
@@ -182,7 +178,7 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
         provider_metadata={},
         omitted_metadata_fields=[],
         update_supported=False,
-        required_features=("Close", "OpenInterest"),
+        required_arrays=("Close", "OpenInterest"),
     )
 
     def fail(_config: DataConfig) -> MarketDataAdapterResult:
@@ -190,7 +186,7 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
 
     result = load_market_data_result(
         config,
-        required_features=("OpenInterest",),
+        required_arrays=("OpenInterest",),
         adapters={"future": fail},
     )
 
@@ -217,18 +213,15 @@ def test_failed_shape_equals_success_shape_minus_data() -> None:
         adapters={"frozen": fail},
     )
 
-    assert list(failure.metadata.keys()) == list(success.metadata.keys())
-    assert failure.metadata["symbols"] == []
-    assert failure.metadata["loaded_arrays"] == []
-    assert failure.metadata["shape"] == {
-        "rows": 0,
-        "symbols": 0,
-        "features": 0,
-        "columns": 0,
-    }
-    assert failure.metadata["provider_class"] is None
-    assert failure.metadata["native_class"] is None
-    assert failure.metadata["quality"]["state"] == "provider_failed"
+    assert failure.metadata.schema_version == success.metadata.schema_version
+    assert failure.metadata.coverage.symbols == []
+    loaded = [d.name for d in failure.metadata.arrays if d.loaded]
+    assert loaded == []
+    assert failure.metadata.coverage.rows == 0
+    assert failure.metadata.coverage.start is None
+    assert failure.metadata.coverage.end is None
+    assert failure.metadata.provenance.provider_class is None
+    assert failure.metadata.quality.state == "provider_failed"
     assert failure.native_data is None
 
 
@@ -246,21 +239,23 @@ def test_describe_tolerates_empty_provider_internals() -> None:
         provider_metadata={},
         omitted_metadata_fields=[],
         update_supported=False,
-        required_features=("Close",),
+        required_arrays=("Close",),
     )
 
-    assert metadata["provider_class"] is None
-    assert metadata["native_class"] is None
-    assert metadata["provider_metadata"] == {}
-    assert metadata["omitted_metadata_fields"] == []
-    assert metadata["update_supported"] is False
-    assert metadata["shape"] == {"rows": 0, "symbols": 0, "features": 0, "columns": 0}
+    assert metadata.provenance.provider_class is None
+    assert metadata.provenance.provider_metadata == {}
+    assert metadata.provenance.omitted_metadata_fields == []
+    assert metadata.provenance.update_supported is False
+    assert metadata.coverage.rows == 0
+    assert metadata.coverage.symbols == []
+    assert metadata.coverage.start is None
+    assert metadata.coverage.end is None
 
 
 def MarketDataObservation_empty() -> data_metadata.MarketDataObservation:
     return data_metadata.MarketDataObservation(
         index=pd.Index([]),
-        features=(),
+        arrays=(),
         symbols=(),
         panels={},
     )
@@ -281,6 +276,7 @@ def test_loaded_metadata_round_trips_through_the_public_loader() -> None:
         },
     )
 
-    assert result.metadata["loaded_arrays"] == ["Close"]
-    assert result.metadata["source_metadata"] == {"frozen": True}
-    assert result.metadata["provider_metadata"]["class"] == f"{__name__}._FrozenData"
+    loaded = [d.name for d in result.metadata.arrays if d.loaded]
+    assert loaded == ["Close"]
+    assert result.metadata.provenance.source_metadata == {"frozen": True}
+    assert result.metadata.provenance.provider_metadata["class"] == f"{__name__}._FrozenData"

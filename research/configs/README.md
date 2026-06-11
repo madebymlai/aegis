@@ -1,23 +1,20 @@
 # Local Run Configs
 
-Local `aerd run` configs are ignored by git by default. Keep reviewed strategy/research configs flat in this directory; there is no mode selected from subdirectories or CLI flags.
+Local `aerd run` configs are ignored by git by default. Directory layout carries no semantics: subdirectories are free organization, the config is always selected by the explicit path passed to `aerd run <config>`, and no mode is inferred from folders or CLI flags.
 
 Use `aerd run <config>` for strategy or research sweeps over direct component refs.
 
-Run configs must include an `optimization` block. Put split policy under `optimization.split`; top-level `split` and `candidate_grid` are unknown to the forward schema. `optimization.split.method` is the exact `vbt.Splitter` constructor method, and `optimization.split.params` are kwargs for that method. Inspect available methods and signature-derived params with `aerd show splitters <method>` before authoring YAML.
+## Authoring Contract
 
-```yaml
-optimization:
-  search: grid
-  split:
-    method: from_rolling
-    params:
-      length: 252
-      offset: 252
-      split: 0.8
-    max_splits: 100
-```
+The full Run Config forward contract (field tree with requiredness and defaults, prepass overlay, literal catalogs, lock syntax, split params, component ID selection, embedded validated example) lives in a CLI guide rendered from the validating pydantic models and code constants:
 
-Compatible VBT splitter methods, such as `from_rolling` and `from_purged_kfold`, use the same run scoring pipeline when VBT can build exactly two non-overlapping sets per split from the source index plus params. The first set is always treated as the selection set, the second as the held-out set; `set_labels` is not user-configurable.
+- **`aerd show config-schema`** — Run Config authoring contract: the exact shape `aerd run` accepts, not the raw pydantic model. States the forward contract with the prepass overlay applied (optimization required, schema_version const 8, tombstones, source whitelist).
+
+Run `aerd show config-schema` for the single source of authoring-contract truth. Add `--json` for programmatic consumption.
+
+## Related Catalogs
+
+- **`aerd show splitters <method>`** — Inspect available splitter methods and signature-derived params before authoring YAML.
+- **`aerd show components`** — List available component IDs for `strategy.id` and `indicators[].id`.
 
 Ignored files are not secret management. Do not put API keys, provider tokens, or credentials directly in local YAMLs or notebooks. Use environment-backed secret references, and do not force-add local configs unless they are intentionally reviewed as tracked artifacts.

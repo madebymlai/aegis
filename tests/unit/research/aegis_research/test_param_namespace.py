@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.evidence import candidate_rows_from_result
 from research.aegis_research.optimization.param_namespace import (
     FIXED_CANDIDATE_PARAM,
     ComponentRef,
@@ -86,7 +86,7 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        portfolio_policy={"target_exposure_cap": 1.0},
+        allocation_policy={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     with CandidateStore(tmp_path / "candidates.sqlite3") as store:
@@ -97,7 +97,7 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
             provenance={
                 "run_id": "stored-decode-run",
                 "source": {
-                    "schema_version": "component_optimization_source.v1",
+                    "schema_version": "component_optimization_source.v2",
                     "source": "component",
                     "strategy": {
                         "family": "strategies",

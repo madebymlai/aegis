@@ -16,7 +16,7 @@ from research.aegis_research.component_registry import (
     IndicatorManifest,
     StrategyManifest,
 )
-from research.aegis_research.config import (
+from research.aegis_research.configuration import (
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
@@ -31,13 +31,13 @@ from research.aegis_research.optimization.param_namespace import (
 )
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
-    WideIndicatorPrecompute,
+    IndicatorPrecompute,
     build_candidate_index,
     candidate_keys,
 )
 from research.aegis_research.optimization.source import OptimizationSource
 
-COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION = "component_optimization_source.v1"
+COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION = "component_optimization_source.v2"
 
 ResolvedComponentParams = Mapping[ComponentRef, Mapping[str, Any]]
 
@@ -48,13 +48,6 @@ class ComponentSourceError(ValueError):
 
 @dataclass(frozen=True)
 class ComponentStrategyInputs:
-    data: MarketDataBundle
-    indicators: Mapping[str, Any]
-    metadata: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class WideComponentStrategyInputs:
     data: MarketDataBundle
     indicators: Mapping[str, np.ndarray]
     n_candidates: int
@@ -69,7 +62,6 @@ class _ComponentRuntime:
     ref: RunSourceRefConfig | RunIndicatorSourceConfig
     definition: ComponentDefinition
     callable: Any
-    wide_callable: Any
     fixed_params: dict[str, Any]
     param_space: dict[str, vbt.Param]
     param_keys: dict[str, str]
@@ -127,8 +119,8 @@ def build_component_optimization_source(
 
     def precompute(
         close: pd.DataFrame, n_candidates: int, **param_lists: Any
-    ) -> WideIndicatorPrecompute:
-        # Run each indicator's wide callable once over ``close`` (the full series in
+    ) -> IndicatorPrecompute:
+        # Run each indicator's batched callable once over ``close`` (the full series in
         # the selection phase) and return a candidate-major store sliceable by split
         # range. Candidates whose warmup still exceeds the full series are marked
         # invalid by the runner before ranking.
@@ -144,18 +136,20 @@ def build_component_optimization_source(
                 full_candidate_keys=full_candidate_keys,
                 n_candidates=n_candidates,
             )
-            output = runtime.wide_callable(
+            output = runtime.callable(
                 data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
             )
-            output_arr = np.asarray(output)
-            indicator_manifest = runtime.definition.manifest
-            assert isinstance(indicator_manifest, IndicatorManifest)
-            for output_name in indicator_manifest.output_names:
+            output_arrays = _validated_indicator_output_arrays(
+                runtime,
+                output,
+                expected_shape=_candidate_major_shape(close, deduped.n_candidates),
+            )
+            for output_name, output_arr in output_arrays.items():
                 if output_name in outputs:
                     raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
                 outputs[output_name] = output_arr
                 candidate_index_by_output[output_name] = deduped.candidate_index
-        return WideIndicatorPrecompute(
+        return IndicatorPrecompute(
             outputs=outputs,
             candidate_index=build_candidate_index(param_lists),
             n_symbols=n_symbols,
@@ -172,7 +166,7 @@ def build_component_optimization_source(
         # sliced to that window; the central-metrics step prices the allocations.
         data_slice = _slice_data(data, close_window, input_names)
         n_symbols = len(close_window.columns)
-        strategy_wide_inputs = WideComponentStrategyInputs(
+        strategy_inputs = ComponentStrategyInputs(
             data=data_slice,
             indicators=indicator_window,
             n_candidates=n_candidates,
@@ -183,17 +177,18 @@ def build_component_optimization_source(
                 "component_optimization_source": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
             },
         )
-        strategy_wide_params = _wide_params_for_runtime(
+        strategy_params = _params_for_runtime(
             strategy, param_lists, n_candidates=n_candidates
         )
-        alloc_arr = np.asarray(
-            strategy.wide_callable(
-                strategy_wide_inputs, n_candidates=n_candidates, **strategy_wide_params
-            )
+        alloc_arr = _validated_component_array(
+            strategy,
+            strategy.callable(
+                strategy_inputs, n_candidates=n_candidates, **strategy_params
+            ),
+            expected_shape=_candidate_major_shape(close_window, n_candidates),
+            output_label="allocation",
         )
-        return _build_wide_frame(
-            alloc_arr, close_window, n_candidates, param_lists, params
-        )
+        return _build_frame(alloc_arr, close_window, n_candidates, param_lists, params)
 
     evidence = _source_evidence(strategy, indicators, params)
     strategy_manifest = strategy.definition.manifest
@@ -227,18 +222,15 @@ def _build_runtime(
 ) -> _ComponentRuntime:
     definition = component_registry.get(ComponentSelection(family, ref.id))
     locked = force_locked
-    param_space_callable_name = (
-        None if locked else getattr(definition.manifest, "param_space_callable", None)
-    )
-    wide_callable_name = definition.manifest.wide_callable
-    attribute_names = [definition.callable_name, wide_callable_name]
-    if param_space_callable_name is not None:
-        attribute_names.append(param_space_callable_name)
+    param_space_entrypoint_name = None if locked else definition.param_space_entrypoint_name
+    attribute_names = [definition.callable_name]
+    if param_space_entrypoint_name is not None:
+        attribute_names.append(param_space_entrypoint_name)
     attributes = definition.load_attributes(attribute_names)
     param_space = (
         {}
-        if param_space_callable_name is None
-        else _load_param_space(definition, attributes[param_space_callable_name])
+        if param_space_entrypoint_name is None
+        else _load_param_space(definition, attributes[param_space_entrypoint_name])
     )
     fixed_params = _fixed_params_for_ref(
         family,
@@ -261,7 +253,6 @@ def _build_runtime(
         ref=ref,
         definition=definition,
         callable=attributes[definition.callable_name],
-        wide_callable=attributes[wide_callable_name],
         fixed_params=fixed_params,
         param_space=dict(param_space),
         param_keys=param_keys,
@@ -305,9 +296,9 @@ def _fixed_params_for_ref(
 
 def _load_param_space(
     definition: ComponentDefinition,
-    param_space_callable: Any,
+    param_space_entrypoint: Any,
 ) -> dict[str, vbt.Param]:
-    result = param_space_callable()
+    result = param_space_entrypoint()
     if not isinstance(result, Mapping):
         raise ComponentSourceError(
             f"component {definition.family}/{definition.id} param space must return a mapping"
@@ -355,7 +346,7 @@ def _validate_component_param_sources(
         )
 
 
-def _wide_params_for_runtime(
+def _params_for_runtime(
     runtime: _ComponentRuntime,
     param_lists: Mapping[str, Sequence[Any]],
     *,
@@ -376,9 +367,7 @@ def _deduplicate_runtime_params(
     full_candidate_keys: Sequence[CandidateKey],
     n_candidates: int,
 ) -> _RuntimeParamDeduplication:
-    runtime_param_lists = _wide_params_for_runtime(
-        runtime, param_lists, n_candidates=n_candidates
-    )
+    runtime_param_lists = _params_for_runtime(runtime, param_lists, n_candidates=n_candidates)
     runtime_param_names = sorted(runtime_param_lists)
     unique_positions: dict[tuple[Any, ...], int] = {}
     unique_param_lists: dict[str, list[Any]] = {name: [] for name in runtime_param_names}
@@ -401,7 +390,63 @@ def _deduplicate_runtime_params(
     )
 
 
-def _build_wide_frame(
+def _candidate_major_shape(close: pd.DataFrame, n_candidates: int) -> tuple[int, int]:
+    return (len(close), n_candidates * len(close.columns))
+
+
+def _validated_indicator_output_arrays(
+    runtime: _ComponentRuntime,
+    output: Any,
+    *,
+    expected_shape: tuple[int, int],
+) -> dict[str, np.ndarray]:
+    manifest = runtime.definition.manifest
+    assert isinstance(manifest, IndicatorManifest)
+    output_names = tuple(manifest.output_names)
+    if not isinstance(output, Mapping):
+        raise ComponentSourceError(
+            f"indicator {runtime.definition.id!r} must return a mapping for outputs "
+            f"{list(output_names)}"
+        )
+    missing = _sorted_names(set(output_names) - set(output))
+    unknown = _sorted_names(set(output) - set(output_names))
+    if missing or unknown:
+        raise ComponentSourceError(
+            f"indicator {runtime.definition.id!r} output mismatch; "
+            f"missing={missing}, unknown={unknown}"
+        )
+    return {
+        output_name: _validated_component_array(
+            runtime,
+            output[output_name],
+            expected_shape=expected_shape,
+            output_label=f"output {output_name!r}",
+        )
+        for output_name in output_names
+    }
+
+
+def _sorted_names(names: set[Any]) -> list[Any]:
+    return sorted(names, key=repr)
+
+
+def _validated_component_array(
+    runtime: _ComponentRuntime,
+    value: Any,
+    *,
+    expected_shape: tuple[int, int],
+    output_label: str,
+) -> np.ndarray:
+    arr = np.asarray(value)
+    if arr.shape != expected_shape:
+        raise ComponentSourceError(
+            f"component {runtime.family}/{runtime.definition.id} {output_label} has "
+            f"expected shape {expected_shape}; actual shape {arr.shape}"
+        )
+    return arr
+
+
+def _build_frame(
     alloc_arr: np.ndarray,
     close_slice: pd.DataFrame,
     n_candidates: int,
@@ -415,9 +460,7 @@ def _build_wide_frame(
     col_tuples = []
     for i in range(n_candidates):
         for sym in symbols:
-            col_tuples.append(
-                (*(param_lists[k][i] for k in param_keys), sym)
-            )
+            col_tuples.append((*(param_lists[k][i] for k in param_keys), sym))
     col_names = [*param_keys, "symbol"]
     col_mi = pd.MultiIndex.from_tuples(col_tuples, names=col_names)
     return pd.DataFrame(alloc_arr, index=close_slice.index, columns=col_mi)
@@ -442,52 +485,12 @@ def _slice_data(
     close_slice: pd.DataFrame,
     input_names: tuple[str, ...],
 ) -> MarketDataBundle:
-    features: dict[str, pd.DataFrame] = {}
+    arrays: dict[str, pd.DataFrame] = {}
     for name in input_names:
-        features[name] = (
-            close_slice if name == "Close" else data.feature(name).loc[close_slice.index]
+        arrays[name] = (
+            close_slice if name == "Close" else data.array(name).loc[close_slice.index]
         )
-    return MarketDataBundle(
-        features=features,
-        metadata=dict(data.metadata),
-        native_data=data.native_data,
-        loaded_features=tuple(features),
-    )
-
-
-def _coerce_indicator_outputs(
-    output: Any,
-    definition: ComponentDefinition,
-    close: pd.DataFrame,
-) -> dict[str, pd.DataFrame]:
-    output_names = tuple(getattr(definition.manifest, "output_names", ()))
-    if isinstance(output, Mapping):
-        missing = sorted(set(output_names) - set(output))
-        unknown = sorted(set(output) - set(output_names))
-        if missing or unknown:
-            raise ComponentSourceError(
-                f"indicator {definition.id!r} output mismatch; missing={missing}, unknown={unknown}"
-            )
-        return {
-            output_name: _coerce_indicator_frame(output[output_name], close, definition.id)
-            for output_name in output_names
-        }
-    if len(output_names) != 1:
-        raise ComponentSourceError(
-            f"indicator {definition.id!r} must return a mapping for outputs {list(output_names)}"
-        )
-    return {output_names[0]: _coerce_indicator_frame(output, close, definition.id)}
-
-
-def _coerce_indicator_frame(value: Any, close: pd.DataFrame, component_id: str) -> pd.DataFrame:
-    frame = value.to_frame() if isinstance(value, pd.Series) else value
-    if not isinstance(frame, pd.DataFrame):
-        raise ComponentSourceError(f"indicator {component_id!r} output must be a pandas object")
-    if not frame.index.equals(close.index):
-        raise ComponentSourceError(f"indicator {component_id!r} output has misaligned timestamps")
-    if list(map(str, frame.columns)) != list(map(str, close.columns)):
-        raise ComponentSourceError(f"indicator {component_id!r} output has misaligned symbols")
-    return frame
+    return MarketDataBundle(arrays=arrays)
 
 
 def _assert_output_contract(

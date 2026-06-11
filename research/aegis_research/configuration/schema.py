@@ -8,7 +8,7 @@ from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration.field_types import (
-    IDENTIFIER_RE,  # noqa: F401 — re-exported for config.py
+    IDENTIFIER_RE,  # noqa: F401 — re-exported for configuration
     ComponentIdStr,
     NonEmptyStr,
     NonNegativeInt,
@@ -27,10 +27,13 @@ OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 DATA_ARRAY_SHORTCUTS = {"OHLCV": OHLCV_ARRAYS}
 
 PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
-SIGNAL_POLICIES = {"long_only_hysteresis"}
-SIGNAL_EXECUTION_TIMINGS = {"next_open", "same_close"}
-# VBT's Data.align_index / align_columns contract — the Literal is the field type,
-# the set is the facade-exported catalog; get_args keeps them one source.
+# For each catalog below the Literal is the field type, the set is the
+# facade-exported catalog; get_args keeps them one source.
+SignalPolicy = Literal["long_only_hysteresis"]
+SIGNAL_POLICIES = set(get_args(SignalPolicy))
+SignalExecutionTiming = Literal["next_open", "same_close"]
+SIGNAL_EXECUTION_TIMINGS = set(get_args(SignalExecutionTiming))
+# VBT's Data.align_index / align_columns contract.
 MissingPolicy = Literal["nan", "drop", "raise"]
 MISSING_POLICIES = set(get_args(MissingPolicy))
 Degradation = Literal[
@@ -44,6 +47,25 @@ FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
     "is required; fixed/non-optimized strategy runs are removed from the forward "
     "run contract; use optimization.search and optimization.split"
 )
+
+# ── Forward-contract prepass overlay ──────────────────────────────────────────
+# Rules that amend the raw pydantic model for the forward contract: pydantic
+# alone declares ``optimization`` optional and gives ``schema_version`` a
+# default, but the validation prepass requires both. This is the single home
+# consumed by BOTH the prepass (``validation._prepass_raw_config``) and the
+# config-schema guide renderer, so the documented requiredness cannot fork from
+# the enforced requiredness (ADR-0019).
+PREPASS_REQUIRED_FIELDS: dict[str, str] = {
+    "optimization": FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
+}
+"""Top-level fields the prepass requires regardless of the model default,
+mapped to the validation-issue message emitted when the field is absent."""
+
+PREPASS_CONST_FIELDS: dict[str, object] = {
+    "schema_version": CONFIG_SCHEMA_VERSION,
+}
+"""Top-level fields whose value the prepass fixes (const)."""
+
 OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
 
 
@@ -153,16 +175,22 @@ class DataConfig:
 
 
 def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    tokens = tuple(arrays)
-    expanded: list[str] = []
+    return merge_data_arrays(
+        *(DATA_ARRAY_SHORTCUTS.get(token, (token,)) for token in arrays)
+    )
+
+
+def merge_data_arrays(*array_groups: tuple[str, ...]) -> tuple[str, ...]:
+    """Merge data-array groups into one duplicate-free tuple, preserving order."""
+    merged: list[str] = []
     seen: set[str] = set()
-    for token in tokens:
-        for feature in DATA_ARRAY_SHORTCUTS.get(token, (token,)):
+    for group in array_groups:
+        for feature in group:
             if feature in seen:
                 continue
-            expanded.append(feature)
+            merged.append(feature)
             seen.add(feature)
-    return tuple(expanded)
+    return tuple(merged)
 
 
 def has_data_array_token_shape(value: str) -> bool:
@@ -187,12 +215,12 @@ class RunSplitConfig:
         return self
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class SignalConfig:
-    policy: str = "long_only_hysteresis"
+    policy: SignalPolicy = "long_only_hysteresis"
     long_entry_threshold: float = 0.55
     long_exit_threshold: float = 0.50
-    execution_timing: str = "next_open"
+    execution_timing: SignalExecutionTiming = "next_open"
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -292,18 +320,29 @@ class OptimizationConfig:
         reserved = sorted(set(self.execute) & OPTIMIZATION_EXECUTE_RESERVED_KEYS)
         if reserved:
             raise ValueError(
-                f"reserved keys {reserved} are owned by optimization.search / "
-                "Aegis ranking policy and must not appear "
-                "under optimization.execute"
+                f"reserved keys {reserved} are managed by Aegis's optimization "
+                "layer and must not be passed through optimization.execute, which "
+                "forwards raw vbt.parameterized engine kwargs only "
+                "(e.g. chunking, engine, progress)"
             )
         return self
 
 
 # The representative roles a Lock handle may name, in rank order. These mirror the
-# roles evidence emits for every Run (evidence.CANDIDATE_ROLES); the config layer keeps
-# its own copy because it must not depend up on the optimization layer.
+# roles evidence emits for every Run (candidate_evidence.CANDIDATE_ROLES); the config
+# layer keeps its own copy because it must not depend up on the optimization layer.
 LOCK_ROLES: tuple[str, ...] = ("best", "median", "worst")
 DEFAULT_LOCK_ROLE = "best"
+
+
+def lock_handle(run_id: str, role: str) -> str:
+    """Compose a ``run_id[:role]`` handle for a Lock reference.
+
+    Bare ``run_id`` means the default (best) role.
+    Lives beside the Lock parser so the grammar is read and written by
+    exactly one module (ADR-0021).
+    """
+    return run_id if role == DEFAULT_LOCK_ROLE else f"{run_id}:{role}"
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

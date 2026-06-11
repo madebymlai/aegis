@@ -72,6 +72,36 @@ def test_default_registry_extractors_preserve_catalog_order() -> None:
     assert tuple(frozen.extractors) == PORTFOLIO_METRIC_VALUE_KEYS
 
 
+def test_metric_registry_for_registers_only_requested_custom_metrics() -> None:
+    """Custom metrics are opt-in per run: present only when a requested id names one.
+
+    The no-request registry must be byte-identical to the default one, so runs
+    that never ask for a custom metric keep their Evidence fingerprint.
+    """
+    from research.aegis_research.metrics import make_metric_registry_for
+
+    frozen = make_metric_registry_for(("ulcer_performance_index",))
+
+    assert "ulcer_performance_index" in frozen
+    assert tuple(frozen.extractors) == (
+        *PORTFOLIO_METRIC_VALUE_KEYS, "ulcer_performance_index"
+    )
+    assert frozen.fingerprint != make_default_metric_registry().fingerprint
+    assert (
+        make_metric_registry_for(()).fingerprint
+        == make_default_metric_registry().fingerprint
+    )
+
+
+def test_metric_registry_for_passes_unknown_ids_through_to_validation() -> None:
+    """Unknown ids do not error here; config validation cross-checks fail closed."""
+    from research.aegis_research.metrics import make_metric_registry_for
+
+    frozen = make_metric_registry_for(("sharpe_ratio", "not_a_metric"))
+
+    assert frozen.ids() == make_default_metric_registry().ids()
+
+
 def test_metric_registry_rejects_duplicate_ids() -> None:
     registry = MetricRegistry()
     registry.register(_definition("total_return"), _SPEC)
@@ -233,3 +263,58 @@ def test_builtin_extractors_match_the_portfolio_catalog_exactly() -> None:
     register and never compute — dead code. Exact set equality closes it.
     """
     assert set(BUILTIN_EXTRACTORS) == set(PORTFOLIO_METRIC_VALUE_KEYS)
+
+
+def test_non_finite_metadata_is_normalised_to_null_in_fingerprint() -> None:
+    """A NaN metadata value is normalised to null in the fingerprint payload."""
+    registry = MetricRegistry()
+    definition = MetricDefinition(
+        id="nan_metric",
+        title="NaN Test",
+        source_type=SOURCE_TYPE_VBT_STATS,
+        unit="ratio",
+        value_semantics="larger_is_better",
+        provider="vectorbtpro",
+        target="portfolio",
+        vbt_metric="nan_metric",
+        source_method="stats",
+        metadata={"threshold": float("nan")},
+    )
+    registry.register(definition, _SPEC)
+    frozen = registry.freeze()
+    # Fingerprint must still be a valid 64-char hex string.
+    assert len(frozen.fingerprint) == 64
+    assert all(c in "0123456789abcdef" for c in frozen.fingerprint)
+
+    # The NaN was normalised to null in the fingerprint payload.
+    payload = definition.fingerprint_payload()
+    assert payload["metadata"]["threshold"] is None
+
+
+def test_non_finite_metadata_fingerprint_is_byte_stable() -> None:
+    """Fingerprint is deterministic when NaN metadata is normalised to null."""
+    a = MetricRegistry()
+    a.register(
+        MetricDefinition(
+            id="nan",
+            title="NaN",
+            source_type=SOURCE_TYPE_VBT_STATS,
+            unit="ratio",
+            value_semantics="larger_is_better",
+            metadata={"score": float("nan")},
+        ),
+        _SPEC,
+    )
+    b = MetricRegistry()
+    b.register(
+        MetricDefinition(
+            id="nan",
+            title="NaN",
+            source_type=SOURCE_TYPE_VBT_STATS,
+            unit="ratio",
+            value_semantics="larger_is_better",
+            metadata={"score": float("nan")},
+        ),
+        _SPEC,
+    )
+    assert a.freeze().fingerprint == b.freeze().fingerprint
