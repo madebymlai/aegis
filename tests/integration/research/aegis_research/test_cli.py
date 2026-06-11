@@ -815,10 +815,9 @@ def test_show_indicator_schema_exits_zero_and_prints_markdown(
     assert "## The `run` Entry Point" in markdown
     assert "## Optional `param_space`" in markdown
     assert "## Batch-Invariance Rule" in markdown
-    assert "## Legacy Declarations" in markdown
     assert "## Complete Example" in markdown
 
-    # v2 contract = run entry point (not legacy callable)
+    # v2 contract = run entry point
     assert "`run`" in markdown
     # Batched signature
     assert "n_candidates" in markdown
@@ -826,10 +825,11 @@ def test_show_indicator_schema_exits_zero_and_prints_markdown(
     assert 'return {"ma": result}' in markdown or 'return {"ma":' in markdown
     # Candidate-major layout
     assert "candidate_index * n_symbols" in markdown
-    # Legacy keys are documented as hard errors
-    assert "COMPONENT_CALLABLE" in markdown
-    assert "wide_callable" in markdown
-    assert "param_space_callable" in markdown
+    # Pink-elephant rule: the guide never names the rejected legacy keys
+    assert "## Legacy Declarations" not in markdown
+    assert "COMPONENT_CALLABLE" not in markdown
+    assert "wide_callable" not in markdown
+    assert "param_space_callable" not in markdown
 
 
 def test_show_indicator_schema_json_returns_envelope(
@@ -846,9 +846,9 @@ def test_show_indicator_schema_json_returns_envelope(
     content = payload["content"]
     assert "# Indicator Component Authoring Guide" in content
     assert len(content) > 1000  # Full guide, not clipped to MAX_REASON_CHARS
-    # A marker from the legacy-declarations section near the end of the guide:
-    # proves the whole document survives JSON serialization, not just the title.
-    assert "param_space_callable" in content
+    # A marker from the embedded example at the very end of the guide: proves
+    # the whole document survives JSON serialization, not just the title.
+    assert '"id": "example.ma"' in content
 
 
 def test_show_indicator_schema_manifest_table_is_interpolated(
@@ -997,10 +997,9 @@ def test_show_strategy_schema_exits_zero_and_prints_markdown(
     assert "## NaN-Selection Convention" in markdown
     assert "## Ownership Boundaries" in markdown
     assert "## Batch-Invariance Rule" in markdown
-    assert "## Legacy Declarations" in markdown
     assert "## Complete Example" in markdown
 
-    # v2 contract = run entry point (not legacy callable)
+    # v2 contract = run entry point
     assert "`run`" in markdown
     # Batched signature with inputs object
     assert "n_candidates" in markdown
@@ -1018,10 +1017,11 @@ def test_show_strategy_schema_exits_zero_and_prints_markdown(
     # NaN-selection convention
     assert "NaN" in markdown
     assert "np.nan" in markdown
-    # Legacy keys are documented as hard errors
-    assert "COMPONENT_CALLABLE" in markdown
-    assert "wide_callable" in markdown
-    assert "param_space_callable" in markdown
+    # Pink-elephant rule: the guide never names the rejected legacy keys
+    assert "## Legacy Declarations" not in markdown
+    assert "COMPONENT_CALLABLE" not in markdown
+    assert "wide_callable" not in markdown
+    assert "param_space_callable" not in markdown
 
 
 def test_show_strategy_schema_json_returns_envelope(
@@ -1040,7 +1040,7 @@ def test_show_strategy_schema_json_returns_envelope(
     assert len(content) > 1000  # Full guide, not clipped to MAX_REASON_CHARS
     # A heading near the end of the guide: proves the whole document survives
     # JSON serialization, not just the title in the first MAX_REASON_CHARS.
-    assert "## Legacy Declarations" in content
+    assert "## Complete Example" in content
 
 
 def test_show_strategy_schema_allocation_outputs_interpolated(
@@ -1445,13 +1445,14 @@ def test_indicator_schema_guide_documents_batch_invariance() -> None:
     assert "bitwise" in guide
 
 
-def test_indicator_schema_guide_documents_legacy_declarations_as_errors() -> None:
-    """Drift: legacy callable keys are documented as hard errors."""
+def test_indicator_schema_guide_omits_legacy_declarations() -> None:
+    """Pink-elephant rule: naming the rejected legacy keys would teach the very
+    patterns the v2 contract forbids, so the guide must never mention them."""
     guide = _render_guide("indicator-schema")
-    assert "COMPONENT_CALLABLE" in guide
-    assert "wide_callable" in guide
-    assert "param_space_callable" in guide
-    assert "hard error" in guide.lower()
+    assert "## Legacy Declarations" not in guide
+    assert "COMPONENT_CALLABLE" not in guide
+    assert "wide_callable" not in guide
+    assert "param_space_callable" not in guide
 
 
 def test_indicator_schema_guide_embeds_packaged_example() -> None:
@@ -1546,3 +1547,13 @@ def test_strategy_schema_guide_embeds_packaged_example() -> None:
     assert "## Complete Example" in guide
     assert '"id": "example.ma_cross"' in guide
     assert "def run(inputs, *, n_candidates, **param_lists):" in guide
+
+
+def test_strategy_schema_guide_omits_legacy_declarations() -> None:
+    """Pink-elephant rule: naming the rejected legacy keys would teach the very
+    patterns the v2 contract forbids, so the guide must never mention them."""
+    guide = _render_guide("strategy-schema")
+    assert "## Legacy Declarations" not in guide
+    assert "COMPONENT_CALLABLE" not in guide
+    assert "wide_callable" not in guide
+    assert "param_space_callable" not in guide

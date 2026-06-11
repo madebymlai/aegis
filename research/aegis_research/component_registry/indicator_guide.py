@@ -28,7 +28,7 @@ def render_indicator_schema_guide() -> str:
     The guide covers the v2 component contract (ADR-0017): percent-cell
     structure, domain-fact manifest, batched ``run`` entry point, optional
     ``param_space``, mapping-of-outputs return contract, candidate-major
-    layout, batch-invariance rule, and legacy declaration hard errors.
+    layout, and batch-invariance rule.
 
     The manifest field table and entry-point names are interpolated from code;
     semantic rules are curated prose.
@@ -41,7 +41,6 @@ def render_indicator_schema_guide() -> str:
     _extend_run_entry_point(lines)
     _extend_param_space(lines)
     _extend_batch_invariance(lines)
-    _extend_legacy_declarations(lines)
     _extend_complete_example(lines)
     return "\n".join(lines) + "\n"
 
@@ -196,9 +195,7 @@ def _extend_manifest(lines: list[str]) -> None:
     lines.append("")
     lines.append(
         "Every other key in the manifest dict is **rejected at discovery time** "
-        "(pydantic `extra=\"forbid\"`).  Legacy callable-wiring keys — "
-        "`wide_callable`, `param_space_callable` — are documented below under "
-        "**Legacy Declarations** and are hard errors."
+        "(pydantic `extra=\"forbid\"`) — only the fields above are accepted."
     )
     lines.append("")
 
@@ -368,34 +365,6 @@ def _extend_batch_invariance(lines: list[str]) -> None:
         "stitching-Candidates-together `run` invoked once per single-Candidate "
         "batch, **bitwise** (`np.array_equal(..., equal_nan=True)`).  NaN-aware "
         "equality is strict by design — there is no tolerance threshold."
-    )
-    lines.append("")
-
-
-def _extend_legacy_declarations(lines: list[str]) -> None:
-    lines.append("## Legacy Declarations")
-    lines.append("")
-    lines.append(
-        "The following declarations are **hard errors** at discovery time.  "
-        "They belong to the pre-v2 component contract and must not appear in "
-        "any Indicator Component file."
-    )
-    lines.append("")
-    lines.append(
-        "| Legacy declaration | Where | Error message |")
-    lines.append(
-        "|---------------------|-------|---------------|")
-    lines.append(
-        "| `COMPONENT_CALLABLE = '...'` | Module-level assignment | "
-        "`legacy COMPONENT_CALLABLE declaration is not supported` |"
-    )
-    lines.append(
-        "| `'wide_callable': '...'` | Inside `COMPONENT_MANIFEST` dict | "
-        "`legacy manifest callable keys are not supported: [...]` |"
-    )
-    lines.append(
-        "| `'param_space_callable': '...'` | Inside `COMPONENT_MANIFEST` dict | "
-        "`legacy manifest callable keys are not supported: [...]` |"
     )
     lines.append("")
 
