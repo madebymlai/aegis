@@ -47,6 +47,25 @@ FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
     "is required; fixed/non-optimized strategy runs are removed from the forward "
     "run contract; use optimization.search and optimization.split"
 )
+
+# ── Forward-contract prepass overlay ──────────────────────────────────────────
+# Rules that amend the raw pydantic model for the forward contract: pydantic
+# alone declares ``optimization`` optional and gives ``schema_version`` a
+# default, but the validation prepass requires both. This is the single home
+# consumed by BOTH the prepass (``validation._prepass_raw_config``) and the
+# config-schema guide renderer, so the documented requiredness cannot fork from
+# the enforced requiredness (ADR-0019).
+PREPASS_REQUIRED_FIELDS: dict[str, str] = {
+    "optimization": FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
+}
+"""Top-level fields the prepass requires regardless of the model default,
+mapped to the validation-issue message emitted when the field is absent."""
+
+PREPASS_CONST_FIELDS: dict[str, object] = {
+    "schema_version": CONFIG_SCHEMA_VERSION,
+}
+"""Top-level fields whose value the prepass fixes (const)."""
+
 OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
 
 

@@ -619,7 +619,7 @@ def test_show_config_schema_json_envelope(
     assert payload["ok"] is True
     assert payload["command"] == "show"
     assert payload["format"] == "markdown"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == "config_schema_guide.v1"
 
     content = payload["content"]
     assert isinstance(content, str)
@@ -754,7 +754,15 @@ def test_show_config_schema_coherence_optimization_required(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Coherence: a config omitting optimization fails validation AND the
-    rendered guide states it required."""
+    rendered guide states it required — both driven by the single overlay
+    constant in schema.py, so requiredness cannot fork (ADR-0019)."""
+    from research.aegis_research.configuration import (
+        CONFIG_SCHEMA_VERSION,
+        PREPASS_REQUIRED_FIELDS,
+        ConfigValidationError,
+        resolve_run_config,
+    )
+
     # Side A: guide states optimization required
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
@@ -767,12 +775,6 @@ def test_show_config_schema_coherence_optimization_required(
     )
     write_strategy_component(
         tmp_path / "research" / "components" / "strategies" / "strategy.py"
-    )
-
-    from research.aegis_research.configuration import (
-        CONFIG_SCHEMA_VERSION,
-        ConfigValidationError,
-        resolve_run_config,
     )
 
     raw_no_optimization = {
@@ -788,8 +790,10 @@ def test_show_config_schema_coherence_optimization_required(
     with pytest.raises(ConfigValidationError) as exc_info:
         resolve_run_config(raw_no_optimization)
 
-    messages = "; ".join(i.message for i in exc_info.value.issues)
-    assert "optimization" in messages.lower()
+    # The enforced message is the exact one carried by the shared overlay — the
+    # validator reads schema.PREPASS_REQUIRED_FIELDS, not a private copy.
+    issues = {i.path: i.message for i in exc_info.value.issues}
+    assert issues["optimization"] == PREPASS_REQUIRED_FIELDS["optimization"]
 
 
 # ── indicator-schema ────────────────────────────────────────────────────────
@@ -838,7 +842,13 @@ def test_show_indicator_schema_json_returns_envelope(
     assert payload["status"] == "success"
     assert payload["format"] == "markdown"
     assert payload["schema_version"] == "indicator_schema_guide.v1"
-    assert "# Indicator Component Authoring Guide" in payload["content"]
+
+    content = payload["content"]
+    assert "# Indicator Component Authoring Guide" in content
+    assert len(content) > 1000  # Full guide, not clipped to MAX_REASON_CHARS
+    # A marker from the legacy-declarations section near the end of the guide:
+    # proves the whole document survives JSON serialization, not just the title.
+    assert "param_space_callable" in content
 
 
 def test_show_indicator_schema_manifest_table_is_interpolated(
@@ -1024,7 +1034,13 @@ def test_show_strategy_schema_json_returns_envelope(
     assert payload["status"] == "success"
     assert payload["format"] == "markdown"
     assert payload["schema_version"] == "strategy_schema_guide.v1"
-    assert "# Strategy Component Authoring Guide" in payload["content"]
+
+    content = payload["content"]
+    assert "# Strategy Component Authoring Guide" in content
+    assert len(content) > 1000  # Full guide, not clipped to MAX_REASON_CHARS
+    # A heading near the end of the guide: proves the whole document survives
+    # JSON serialization, not just the title in the first MAX_REASON_CHARS.
+    assert "## Legacy Declarations" in content
 
 
 def test_show_strategy_schema_allocation_outputs_interpolated(

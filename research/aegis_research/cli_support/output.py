@@ -61,6 +61,49 @@ def write_success(
     return 0
 
 
+def write_markdown_guide(
+    markdown: str,
+    *,
+    command: str,
+    schema_version: str,
+    json_mode: bool,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    """Emit a rendered markdown guide for an ``aerd show *-schema`` command.
+
+    Human mode prints the markdown; ``--json`` wraps it in the standard
+    envelope as ``{"format": "markdown", "content": ...}``. Unlike
+    ``write_success``, the ``content`` is not passed through ``safe_json_value``
+    (which clips every string to ``MAX_REASON_CHARS``), so the full guide
+    survives JSON serialization.
+    """
+    stdout = stdout or sys.stdout
+    stderr = stderr or sys.stderr
+    if json_mode:
+        payload = {
+            "schema_version": schema_version,
+            "command": command,
+            "status": "success",
+            "ok": True,
+            "format": "markdown",
+            "content": markdown,
+        }
+        document = _json_document(payload)
+        if document is None:
+            return write_error(
+                InternalCliError("CLI guide could not be serialized as JSON"),
+                command=command,
+                json_mode=True,
+                stderr=stderr,
+            )
+        stdout.write(document)
+        return 0
+
+    stdout.write(markdown.rstrip("\n") + "\n")
+    return 0
+
+
 def write_error(
     error: CliError,
     *,

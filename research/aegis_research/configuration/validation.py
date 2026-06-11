@@ -24,9 +24,9 @@ from pydantic import TypeAdapter, ValidationError
 
 from research.aegis_research.configuration.field_types import IDENTIFIER_RE
 from research.aegis_research.configuration.schema import (
-    CONFIG_SCHEMA_VERSION,
-    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     LOCK_ROLES,
+    PREPASS_CONST_FIELDS,
+    PREPASS_REQUIRED_FIELDS,
     ConfigValidationIssue,
     DataConfig,
     Lock,
@@ -97,19 +97,17 @@ def _prepass_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]
     Removed legacy fields carry no tombstones: they fall through to
     ``extra="forbid"``'s unknown-key rejection like any field that never existed.
     """
-    # schema_version presence + version check
-    if "schema_version" not in raw or raw.get("schema_version") != CONFIG_SCHEMA_VERSION:
-        issues.append(
-            ConfigValidationIssue("schema_version", f"must be {CONFIG_SCHEMA_VERSION}")
-        )
+    # Forward-contract overlay: const + required top-level fields. These checks
+    # read the same PREPASS_* constants that drive the config-schema guide, so
+    # what ``aerd run`` enforces here cannot fork from what the guide documents
+    # (ADR-0019).
+    for field_name, const_value in PREPASS_CONST_FIELDS.items():
+        if raw.get(field_name) != const_value:
+            issues.append(ConfigValidationIssue(field_name, f"must be {const_value}"))
 
-    # Optimization required (forward optimization contract)
-    if "optimization" not in raw:
-        issues.append(
-            ConfigValidationIssue(
-                "optimization", FORWARD_OPTIMIZATION_REQUIRED_MESSAGE
-            )
-        )
+    for field_name, required_message in PREPASS_REQUIRED_FIELDS.items():
+        if field_name not in raw:
+            issues.append(ConfigValidationIssue(field_name, required_message))
 
     # Split-method prepass (VBT introspection, produces dotted paths)
     optimization_raw = raw.get("optimization")

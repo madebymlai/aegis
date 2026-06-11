@@ -18,7 +18,8 @@ from research.aegis_research.component_registry.contracts import (
     COMPONENT_PARAM_SPACE_ENTRYPOINT,
 )
 
-_GUIDE_SCHEMA_VERSION = "indicator_schema_guide.v1"
+GUIDE_SCHEMA_VERSION = "indicator_schema_guide.v1"
+"""Payload schema version for the ``aerd show indicator-schema`` JSON envelope."""
 
 
 def render_indicator_schema_guide() -> str:

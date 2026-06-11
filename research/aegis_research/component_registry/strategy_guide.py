@@ -20,7 +20,8 @@ from research.aegis_research.component_registry.contracts import (
     STRATEGY_ALLOCATION_OUTPUTS,
 )
 
-_GUIDE_SCHEMA_VERSION = "strategy_schema_guide.v1"
+GUIDE_SCHEMA_VERSION = "strategy_schema_guide.v1"
+"""Payload schema version for the ``aerd show strategy-schema`` JSON envelope."""
 
 
 def render_strategy_schema_guide() -> str:

@@ -10,11 +10,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from research.aegis_research.cli_support.output import CommandResult, write_success
-from research.aegis_research.component_registry.strategy_guide import (
-    _GUIDE_SCHEMA_VERSION,
-    render_strategy_schema_guide,
-)
+from research.aegis_research.cli_support.output import write_markdown_guide
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -37,17 +33,15 @@ def handle_show_strategy_schema(
     json_mode: bool,
     **streams: Any,
 ) -> int:
-    markdown = render_strategy_schema_guide()
-    return write_success(
-        CommandResult(
-            command="show",
-            payload={
-                "format": "markdown",
-                "schema_version": _GUIDE_SCHEMA_VERSION,
-                "content": markdown,
-            },
-            human_lines=(markdown.rstrip("\n"),),
-        ),
+    from research.aegis_research.component_registry.strategy_guide import (
+        GUIDE_SCHEMA_VERSION,
+        render_strategy_schema_guide,
+    )
+
+    return write_markdown_guide(
+        render_strategy_schema_guide(),
+        command="show",
+        schema_version=GUIDE_SCHEMA_VERSION,
         json_mode=json_mode,
         **streams,
     )

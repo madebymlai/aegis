@@ -33,6 +33,8 @@ from research.aegis_research.configuration.schema import (
     OPTIMIZATION_EXECUTE_RESERVED_KEYS,
     OPTIMIZATION_SEARCH_POLICIES,
     PORTFOLIO_DIRECTIONS,
+    PREPASS_CONST_FIELDS,
+    PREPASS_REQUIRED_FIELDS,
     SIGNAL_EXECUTION_TIMINGS,
     SIGNAL_POLICIES,
     DataConfig,
@@ -53,17 +55,12 @@ from research.aegis_research.market_data.sources import (
     remote_data_sources,
 )
 
-# ── Forward-contract overlay ──────────────────────────────────────────────────
-#
-# Rules that amend the raw pydantic model for the forward contract. Both the
-# validation coordinator (validation._prepass_raw_config) and this guide
-# renderer consume the same constants — requiredness cannot fork.
+# Forward-contract overlay (PREPASS_REQUIRED_FIELDS / PREPASS_CONST_FIELDS) is
+# owned by schema.py and shared with the validation prepass, so the documented
+# requiredness cannot fork from the enforced requiredness (ADR-0019).
 
-PREPASS_REQUIRED_FIELDS: frozenset[str] = frozenset({"optimization"})
-"""Top-level fields that the prepass requires regardless of the model default."""
-
-PREPASS_CONST_FIELDS: dict[str, object] = {"schema_version": CONFIG_SCHEMA_VERSION}
-"""Top-level fields whose value is fixed by the prepass (const)."""
+GUIDE_SCHEMA_VERSION = "config_schema_guide.v1"
+"""Payload schema version for the ``aerd show config-schema`` JSON envelope."""
 
 
 def _allowed_data_sources() -> set[str]:
