@@ -128,17 +128,18 @@ def load_component_attributes(
 
 
 def freeze_component_registry(
-    definitions: dict[ComponentFamily, dict[str, ComponentDefinition]],
+    definitions: Mapping[ComponentFamily, Mapping[str, ComponentDefinition]],
 ) -> FrozenComponentRegistry:
-    """Freeze a mutable definitions dict into a ``FrozenComponentRegistry``.
+    """Freeze a definitions mapping into a ``FrozenComponentRegistry``.
 
     Sorts by id within each family, wraps with ``MappingProxyType``, and
     computes the registry fingerprint from each definition's
-    ``public_snapshot()``.
+    ``public_snapshot()``. Families absent from *definitions* freeze as empty.
     """
     sorted_definitions: dict[ComponentFamily, Mapping[str, ComponentDefinition]] = {}
     for family in COMPONENT_FAMILIES:
-        sorted_definitions[family] = MappingProxyType(dict(sorted(definitions[family].items())))
+        family_definitions = definitions.get(family, {})
+        sorted_definitions[family] = MappingProxyType(dict(sorted(family_definitions.items())))
     frozen = MappingProxyType(sorted_definitions)
     return FrozenComponentRegistry(definitions=frozen, fingerprint=_registry_fingerprint(frozen))
 

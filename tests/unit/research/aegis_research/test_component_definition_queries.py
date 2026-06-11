@@ -280,6 +280,41 @@ def test_factory_fingerprint_changes_with_different_definitions() -> None:
     assert a.fingerprint != b.fingerprint
 
 
+def test_fingerprint_changes_when_a_default_value_changes() -> None:
+    """A typed component fact moving must move the fingerprint — the snapshot
+    and the fingerprint share one projection, so neither can miss it."""
+    base = make_component_registry(
+        {"indicators": {"demo.signal": _indicator(id="demo.signal", defaults={"window": 20})}}
+    )
+    changed = make_component_registry(
+        {"indicators": {"demo.signal": _indicator(id="demo.signal", defaults={"window": 21})}}
+    )
+    assert base.fingerprint != changed.fingerprint
+
+
+def test_fingerprint_changes_with_param_space_presence() -> None:
+    without = make_component_registry(
+        {"indicators": {"demo.signal": _indicator(id="demo.signal", has_param_space=False)}}
+    )
+    with_space = make_component_registry(
+        {"indicators": {"demo.signal": _indicator(id="demo.signal", has_param_space=True)}}
+    )
+    assert without.fingerprint != with_space.fingerprint
+
+
+def test_component_registry_fingerprint_golden_bytes_pin() -> None:
+    """Golden pin of the re-based component registry fingerprint (ADR-0003,
+    second amendment). A byte move here is a deliberate re-baseline — refresh
+    the pin and record why; do not revert to the raw-payload hash."""
+    registry = make_component_registry({
+        "indicators": {"demo.indicator": _indicator()},
+        "strategies": {"demo.strategy": _strategy()},
+    })
+    assert registry.fingerprint == (
+        "a11ac6a321d333fef87850ad5525463129b0a75db34cdad639209b76e9dc3f1f"
+    )
+
+
 def test_factory_sorts_ids_within_family() -> None:
     registry = make_component_registry({
         "indicators": {

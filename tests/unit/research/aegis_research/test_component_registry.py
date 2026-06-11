@@ -7,6 +7,7 @@ from research.aegis_research.component_registry import (
     ComponentSelection,
     discover_component_registry,
 )
+from tests.support.research.aegis_research.factories import make_component_registry
 
 
 def test_component_discovery_is_deterministic_and_fingerprinted(tmp_path) -> None:
@@ -37,6 +38,20 @@ def test_component_discovery_is_deterministic_and_fingerprinted(tmp_path) -> Non
     assert first.get(
         ComponentSelection("indicators", "demo.first")
     ).identity.repo_relative_path == ("research/components/indicators/a_first.py")
+
+
+def test_factory_built_registry_fingerprint_equals_discovery_built(tmp_path) -> None:
+    """The public freeze seam — not a hand-copied recipe — is what keeps a
+    factory-built registry byte-identical to a file-discovered one."""
+    root = tmp_path / "research" / "components"
+    _write_component(root / "indicators" / "indicator.py", "indicators", "demo.indicator")
+    _write_component(root / "strategies" / "strategy.py", "strategies", "demo.strategy")
+
+    discovered = discover_component_registry(root=root, repo_root=tmp_path)
+    factory_built = make_component_registry(discovered.definitions)
+
+    assert factory_built.fingerprint == discovered.fingerprint
+    assert factory_built.public_snapshot() == discovered.public_snapshot()
 
 
 def test_component_discovery_rejects_duplicate_ids_within_family(tmp_path) -> None:

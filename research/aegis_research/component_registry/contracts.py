@@ -67,6 +67,13 @@ class IndicatorManifest(ComponentManifest):
         """Indicators consume no strategy outputs — uniform query surface."""
         return ()
 
+    def public_fields(self) -> dict[str, Any]:
+        """Family-specific facts contributed to ``ComponentDefinition.public_snapshot()``."""
+        return {
+            "outputs": list(self.output_names),
+            "bar_aligned": self.bar_aligned,
+        }
+
 
 @dataclass(frozen=True)
 class StrategyManifest(ComponentManifest):
@@ -90,6 +97,14 @@ class StrategyManifest(ComponentManifest):
     def output_names(self) -> tuple[str, ...]:
         """Strategies produce no indicator outputs — uniform query surface."""
         return ()
+
+    def public_fields(self) -> dict[str, Any]:
+        """Family-specific facts contributed to ``ComponentDefinition.public_snapshot()``."""
+        return {
+            "output_name": self.output_name,
+            "consumes_outputs": list(self.consumes_outputs),
+            "owns_portfolio": self.owns_portfolio,
+        }
 
 
 @dataclass(frozen=True)
@@ -185,13 +200,7 @@ class ComponentDefinition:
                 },
             },
         }
-        if isinstance(manifest, IndicatorManifest):
-            payload["outputs"] = list(manifest.output_names)
-            payload["bar_aligned"] = manifest.bar_aligned
-        else:
-            payload["output_name"] = manifest.output_name
-            payload["consumes_outputs"] = list(manifest.consumes_outputs)
-            payload["owns_portfolio"] = manifest.owns_portfolio
+        payload.update(manifest.public_fields())
         return to_builtin(payload)
 
     def load_attribute(self, attribute_name: str) -> Any:

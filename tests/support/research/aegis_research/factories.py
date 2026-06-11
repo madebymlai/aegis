@@ -18,7 +18,6 @@ import numpy as np
 import pandas as pd
 
 from research.aegis_research.component_registry.contracts import (
-    COMPONENT_FAMILIES,
     ComponentDefinition,
     ComponentFamily,
 )
@@ -294,14 +293,11 @@ def make_component_registry(
     """Build a FrozenComponentRegistry in memory — no tmp dirs, no file writing.
 
     Accepts fully-constructed ``ComponentDefinition`` objects keyed by family
-    and id.  Delegates to ``freeze_component_registry`` so the factory stops
-    re-deriving the freeze loop and fingerprint recipe.
+    and id; families may be omitted.  Delegates to
+    ``freeze_component_registry`` so the factory stops re-deriving the freeze
+    loop and fingerprint recipe.
     """
-    mutable: dict[ComponentFamily, dict[str, ComponentDefinition]] = {
-        family: dict(definitions.get(family, {}))
-        for family in COMPONENT_FAMILIES
-    }
-    return freeze_component_registry(mutable)
+    return freeze_component_registry(definitions)
 
 
 def make_setup_result(**overrides: Any) -> SetupResult:
