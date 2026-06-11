@@ -320,9 +320,10 @@ class OptimizationConfig:
         reserved = sorted(set(self.execute) & OPTIMIZATION_EXECUTE_RESERVED_KEYS)
         if reserved:
             raise ValueError(
-                f"reserved keys {reserved} are owned by optimization.search / "
-                "Aegis ranking policy and must not appear "
-                "under optimization.execute"
+                f"reserved keys {reserved} are managed by Aegis's optimization "
+                "layer and must not be passed through optimization.execute, which "
+                "forwards raw vbt.parameterized engine kwargs only "
+                "(e.g. chunking, engine, progress)"
             )
         return self
 

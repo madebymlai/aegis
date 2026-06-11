@@ -289,9 +289,9 @@ def _render_optimization_section() -> str:
     )
     lines.append("")
     lines.append(
-        f"**`optimization.execute`** — passthrough kwargs forwarded to "
-        "vbt.parameterized. "
-        f"Reserved keys (owned by `optimization.search` / Aegis ranking policy): "
+        "**`optimization.execute`** forwards raw `vbt.parameterized` engine "
+        "kwargs only (e.g. chunking, engine, progress). The reserved keys below "
+        "are managed by Aegis's optimization layer and must not be set here: "
         f"{', '.join(f'`{k}`' for k in sorted(OPTIMIZATION_EXECUTE_RESERVED_KEYS))}."
     )
 
@@ -384,8 +384,8 @@ def _render_literal_catalogs() -> str:
         (
             "Reserved `optimization.execute` Keys",
             set(OPTIMIZATION_EXECUTE_RESERVED_KEYS),
-            "Keys that must NOT appear under `optimization.execute` "
-            "(owned by `optimization.search` / Aegis ranking policy).",
+            "Keys that must NOT appear under `optimization.execute`; "
+            "managed by Aegis's optimization layer.",
         ),
     ]
 
