@@ -82,10 +82,7 @@ def write_markdown_guide(
     stderr = stderr or sys.stderr
     if json_mode:
         payload = {
-            "schema_version": schema_version,
-            "command": command,
-            "status": "success",
-            "ok": True,
+            **_envelope_header(command, "success", schema_version=schema_version),
             "format": "markdown",
             "content": markdown,
         }
@@ -131,10 +128,7 @@ def write_error(
         if document is None:
             fallback_message = "CLI error could not be serialized as JSON"
             fallback = {
-                "schema_version": CLI_JSON_SCHEMA_VERSION,
-                "command": command or "unknown",
-                "status": "error",
-                "ok": False,
+                **_envelope_header(command or "unknown", "error"),
                 "error": {
                     "category": ErrorCategory.INTERNAL,
                     "message": fallback_message,
@@ -351,12 +345,28 @@ def safe_json_value(value: Any) -> Any:
     return clip_message(repr(value), max_chars=MAX_REASON_CHARS)
 
 
-def _envelope(command: str, status: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+def _envelope_header(
+    command: str,
+    status: str,
+    *,
+    schema_version: Any = CLI_JSON_SCHEMA_VERSION,
+) -> dict[str, Any]:
+    """The one home of the CLI JSON envelope shape.
+
+    Guides carry their own ``schema_version`` in the envelope slot; every
+    other command uses ``CLI_JSON_SCHEMA_VERSION``.
+    """
     return {
-        "schema_version": CLI_JSON_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "command": command,
         "status": status,
         "ok": status == "success",
+    }
+
+
+def _envelope(command: str, status: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        **_envelope_header(command, status),
         **safe_json_value(payload),
     }
 

@@ -320,7 +320,7 @@ def _extend_inputs_object(lines: list[str]) -> None:
     lines.append(
         "|-----------|------|-------------|")
     lines.append(
-        "| `inputs.data` | `MarketDataFacade` | "
+        "| `inputs.data` | `MarketDataBundle` | "
         "Access to the run's price arrays via `.array(name)` |"
     )
     lines.append(

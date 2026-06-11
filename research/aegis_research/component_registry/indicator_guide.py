@@ -255,7 +255,7 @@ def _extend_run_signature(lines: list[str]) -> None:
     lines.append("```")
     lines.append("")
     lines.append(
-        "Where `data` is a `MarketDataFacade` providing `.array(name)` access "
+        "Where `data` is a `MarketDataBundle` providing `.array(name)` access "
         "to the run's price arrays; `n_candidates` is the total number of "
         "Candidates in the batch; and `param_lists` is a mapping of parameter "
         "name to a **list** of per-Candidate values (length `n_candidates`)."
