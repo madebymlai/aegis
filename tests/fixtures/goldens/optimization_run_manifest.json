@@ -143,7 +143,7 @@
     }
   },
   "evidence": {
-    "component_registry_fingerprint": "637c869e16c6976d95618f889ada560cff1264eb8bb8631553969cfe94122e01",
+    "component_registry_fingerprint": "1ed363838a71dec50a06186661e806d6f462d76f06040b5476c8e913c26d6084",
     "data_arrays": {
       "component_required_arrays": [
         "Close"

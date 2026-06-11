@@ -5,8 +5,8 @@ import pandas as pd
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
-    DataDiagnostics,
     DataArrayDiagnostics,
+    DataDiagnostics,
     MarketDataAdapterResult,
     MarketDataQuality,
     RemoteDataPullError,

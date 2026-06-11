@@ -1,8 +1,8 @@
-"""Sign/ordering tests for the strategy-family verification signatures.
+"""Sign/ordering tests for the convexity-axis verification metrics.
 
 A benchmark *mirror* stream (returns equal the benchmark) is the concave,
 long-biased pole; a *convex* stream (returns proportional to the squared
-benchmark move) is the long-gamma pole. The four signatures must separate them
+benchmark move) is the long-gamma pole. The metrics must separate them
 the way the trend gate expects: convexity positive, crisis-conditional positive,
 bear-regime beta negative, quarterly skew positive for the convex stream — and
 the opposite signs for the mirror.
@@ -16,13 +16,13 @@ import pytest
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import ReportConfig
-from research.aegis_research.metrics.custom.family_signatures import (
+from research.aegis_research.metrics.custom.convexity import (
     BEAR_REGIME_BETA_ID,
     CRISIS_CONDITIONAL_RETURN_ID,
     QUARTERLY_SKEW_ID,
     TM_CONVEXITY_ID,
     TM_LINEAR_BETA_ID,
-    family_signature_metrics,
+    convexity_metrics,
 )
 
 _CONVEX_GAIN = 8.0
@@ -70,7 +70,7 @@ def _stub_portfolio() -> _StubPortfolio:
 def _read_all() -> dict[str, pd.Series]:
     pf = _stub_portfolio()
     config = ReportConfig()
-    return {definition.id: spec.read(pf, config) for definition, spec in family_signature_metrics("SPY")}
+    return {definition.id: spec.read(pf, config) for definition, spec in convexity_metrics("SPY")}
 
 
 def test_mirror_is_the_concave_long_pole() -> None:

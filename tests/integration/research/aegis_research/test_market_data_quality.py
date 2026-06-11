@@ -7,8 +7,8 @@ import pandas as pd
 
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
-    DataDiagnostics,
     DataArrayDiagnostics,
+    DataDiagnostics,
     MarketDataAdapterResult,
     RemoteDataPullError,
     load_market_data_result,

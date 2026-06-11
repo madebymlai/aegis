@@ -5,8 +5,8 @@ import pandas as pd
 from research.aegis_research.market_data import diagnostics as observe
 from research.aegis_research.market_data import quality as judge
 from research.aegis_research.market_data.contracts import (
-    DataDiagnostics,
     DataArrayDiagnostics,
+    DataDiagnostics,
 )
 from tests.support.research.aegis_research.factories import make_data_config
 

@@ -84,7 +84,7 @@ def test_metric_registry_for_registers_only_requested_custom_metrics() -> None:
 
     assert "ulcer_performance_index" in frozen
     assert tuple(frozen.extractors) == (
-        PORTFOLIO_METRIC_VALUE_KEYS + ("ulcer_performance_index",)
+        *PORTFOLIO_METRIC_VALUE_KEYS, "ulcer_performance_index"
     )
     assert frozen.fingerprint != make_default_metric_registry().fingerprint
     assert (

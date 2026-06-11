@@ -7,7 +7,7 @@ import pandas as pd
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from research.aegis_research.configuration import OHLCV_ARRAYS, DataConfig
+from research.aegis_research.configuration import DataConfig
 
 LOGICAL_ARRAYS = {
     "open": "Open",

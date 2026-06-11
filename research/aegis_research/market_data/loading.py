@@ -33,8 +33,8 @@ required_experiment_ohlcv_arrays = _features.required_experiment_ohlcv_arrays
 MarketDataObservation = _observe.MarketDataObservation
 
 __all__ = [
-    "close_from_ohlcv",
     "array_from_ohlcv",
+    "close_from_ohlcv",
     "high_from_ohlcv",
     "load_market_data",
     "load_market_data_result",

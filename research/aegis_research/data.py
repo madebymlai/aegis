@@ -3,12 +3,12 @@ from __future__ import annotations
 import pandas as pd
 from vectorbtpro import vbt
 
+from research.aegis_research.configuration import OHLCV_ARRAYS
 from research.aegis_research.market_data.adapters.remote import (
     SAFE_FETCH_KWARG_KEYS,
     SAFE_RETURNED_KWARG_KEYS,
     _pull_remote,
 )
-from research.aegis_research.configuration import OHLCV_ARRAYS
 from research.aegis_research.market_data.contracts import (
     LOGICAL_ARRAYS,
     QUALITY_DEGRADED_ALLOWED,
@@ -25,7 +25,6 @@ from research.aegis_research.market_data.contracts import (
     MarketDataResult,
     RemoteDataPullError,
 )
-from research.aegis_research.market_data.panels import market_data_bundle
 from research.aegis_research.market_data.features import (
     array_from_ohlcv,
     close_from_ohlcv,
@@ -38,6 +37,7 @@ from research.aegis_research.market_data.loading import (
     load_market_data,
     load_market_data_result,
 )
+from research.aegis_research.market_data.panels import market_data_bundle
 from research.aegis_research.market_data.sources import REMOTE_DATA_CLASSES
 
 __all__ = [
