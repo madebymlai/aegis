@@ -12,6 +12,7 @@ from typing import Any
 
 from research.aegis_research.configuration import (
     RunConfig,
+    lock_handle,
     to_builtin,
 )
 from research.aegis_research.data import (
@@ -126,12 +127,15 @@ def _completion_result(
             "split_method": config.optimization.split.method if config.optimization else None,
         },
         "candidates": [
-            _candidate_summary(row, ranking_metric=ranking_metric) for row in candidate_rows
+            _candidate_summary(row, ranking_metric=ranking_metric, run_id=recorder.manifest.run_id)
+            for row in candidate_rows
         ],
     }
 
 
-def _candidate_summary(row: Mapping[str, Any], *, ranking_metric: str) -> dict[str, Any]:
+def _candidate_summary(
+    row: Mapping[str, Any], *, ranking_metric: str, run_id: str
+) -> dict[str, Any]:
     return {
         "role": row["role"],
         "rank": row["rank"],
@@ -143,6 +147,7 @@ def _candidate_summary(row: Mapping[str, Any], *, ranking_metric: str) -> dict[s
         "held_out_metrics": row["held_out_metrics"],
         "held_out_metrics_mean": row["held_out_metrics_mean"],
         "held_out_headline": candidate_held_out_headline(row, metric=ranking_metric),
+        "lock": lock_handle(run_id, row["role"]),
     }
 
 

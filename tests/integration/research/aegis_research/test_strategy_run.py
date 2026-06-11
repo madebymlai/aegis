@@ -194,6 +194,14 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
         assert headline["selection"] == candidate["metrics"].get(ranking_metric)
         if headline["held_out"] is not None and headline["selection"] is not None:
             assert headline["gap"] == pytest.approx(headline["selection"] - headline["held_out"])
+        # aegis-rd-gg3.2: lock handles are payload data — bare run_id for best,
+        # run_id:role otherwise, composed by the same module that parses the grammar.
+        expected_lock = (
+            "component-opt"
+            if summary["role"] == "best"
+            else f"component-opt:{summary['role']}"
+        )
+        assert summary["lock"] == expected_lock
     assert len(artifact["candidates"]) == 3
     assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 
