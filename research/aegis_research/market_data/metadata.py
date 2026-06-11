@@ -76,8 +76,8 @@ def describe(
             start=str(index[0]) if len(index) else None,
             end=str(index[-1]) if len(index) else None,
         ),
-        quality=quality.to_metadata(),
-        diagnostics=_diagnostics_metadata(diagnostics),
+        quality=quality,
+        diagnostics=list(diagnostics),
         provenance=ProvenanceFacet(
             provider_class=native_class,
             source_metadata=source_metadata,
@@ -93,7 +93,3 @@ def describe(
             silence_warnings=config.silence_warnings,
         ),
     )
-
-
-def _diagnostics_metadata(diagnostics: tuple[DataDiagnostics, ...]) -> list[dict[str, Any]]:
-    return [diagnostic.to_metadata() for diagnostic in diagnostics]

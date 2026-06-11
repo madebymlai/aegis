@@ -1,9 +1,9 @@
 """Judge: a pure verdict over typed diagnostics.
 
-``evaluate`` reads only the :class:`DataDiagnostics` records and the config's
-quality policy — never the raw native data or the adapter evidence dict — and
-returns a :class:`MarketDataQuality` verdict. It re-walks nothing the observe
-pass already saw.
+``evaluate`` reads only the :class:`DataDiagnostics` records, the
+observation-level index evidence, and the config's quality policy — never the
+raw native data — and returns a :class:`MarketDataQuality` verdict. It
+re-walks nothing the observe pass already saw.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ def evaluate(
     diagnostics: tuple[DataDiagnostics, ...],
     *,
     required_arrays: tuple[str, ...],
+    index_evidence: dict[str, Any],
 ) -> MarketDataQuality:
     reasons: list[str] = []
     warnings: list[str] = []
@@ -65,7 +66,6 @@ def evaluate(
         else:
             reasons.append(f"configured symbols missing from loaded data: {skipped_symbols}")
 
-    index_evidence = _combined_index_evidence(diagnostics)
     if index_evidence.get("raw_index_has_duplicates"):
         _record_quality_issue(
             "duplicate_index",
@@ -101,10 +101,10 @@ def evaluate(
             if array_diag is not None and array_diag.available
         ]
         if not available:
-            reasons.append(f"required feature {name!r} is unavailable")
+            reasons.append(f"required array {name!r} is unavailable")
             continue
         if all(array_diag.rows == 0 for _, array_diag in available):
-            reasons.append(f"required feature {name!r} is empty")
+            reasons.append(f"required array {name!r} is empty")
             continue
         missing_required_symbols = [
             diagnostic.symbol
@@ -113,12 +113,12 @@ def evaluate(
         ]
         if missing_required_symbols:
             reasons.append(
-                f"required feature {name!r} is missing symbols {missing_required_symbols}"
+                f"required array {name!r} is missing symbols {missing_required_symbols}"
             )
         if any(array_diag.missing > 0 for _, array_diag in available):
             _record_quality_issue(
                 "missing_rows",
-                f"required feature {name!r} contains missing values",
+                f"required array {name!r} contains missing values",
                 allowed,
                 reasons,
                 warnings,
@@ -130,7 +130,7 @@ def evaluate(
             if array_diag.numeric is False
         ]
         if non_numeric:
-            reasons.append(f"required feature {name!r} has non-numeric symbols {non_numeric}")
+            reasons.append(f"required array {name!r} has non-numeric symbols {non_numeric}")
 
     if reasons:
         state = QUALITY_REJECTED
@@ -144,16 +144,6 @@ def evaluate(
         warnings=tuple(warnings),
         allowed_degradations=tuple(config.quality.allowed_degradations),
     )
-
-
-def _combined_index_evidence(diagnostics: tuple[DataDiagnostics, ...]) -> dict[str, Any]:
-    evidence: dict[str, Any] = {}
-    for diagnostic in diagnostics:
-        if diagnostic.index_evidence.get("raw_index_has_duplicates"):
-            evidence["raw_index_has_duplicates"] = True
-        if diagnostic.index_evidence.get("raw_index_monotonic_increasing") is False:
-            evidence["raw_index_monotonic_increasing"] = False
-    return evidence
 
 
 def _record_quality_issue(

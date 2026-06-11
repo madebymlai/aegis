@@ -26,21 +26,21 @@ def test_judge_is_a_pure_verdict_over_typed_diagnostics() -> None:
                         numeric=False,
                     )
                 },
-                index_evidence={
-                    "raw_index_has_duplicates": True,
-                    "raw_index_monotonic_increasing": False,
-                },
             ),
         ),
         required_arrays=("Close",),
+        index_evidence={
+            "raw_index_has_duplicates": True,
+            "raw_index_monotonic_increasing": False,
+        },
     )
 
     assert verdict.state == "rejected"
     assert verdict.reasons == (
         "raw data index contains duplicate timestamps",
         "raw data index is not monotonic increasing",
-        "required feature 'Close' contains missing values",
-        "required feature 'Close' has non-numeric symbols ['SYN']",
+        "required array 'Close' contains missing values",
+        "required array 'Close' has non-numeric symbols ['SYN']",
     )
 
 
@@ -58,7 +58,7 @@ def test_observe_reports_per_symbol_array_diagnostics() -> None:
         native_data=frame,
         requested_arrays=("Close",),
     )
-    diagnostics = observe.diagnose(config, observation, evidence={"source": "frame"})
+    diagnostics = observe.diagnose(config, observation)
 
     assert diagnostics[0].symbol == "SYN"
     assert diagnostics[0].arrays["Close"].available is True

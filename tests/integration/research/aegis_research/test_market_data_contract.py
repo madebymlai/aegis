@@ -35,7 +35,7 @@ def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
     assert result.native_data.feature_oriented
     assert result.quality.state == "healthy"
     assert {row.symbol for row in result.diagnostics} == {"AAA", "BBB"}
-    assert result.metadata.quality["state"] == "healthy"
+    assert result.metadata.quality.state == "healthy"
     assert close_from_ohlcv(result.native_data).shape == (10, 2)
     assert bundle.array("Close").shape == (10, 2)
 
@@ -49,9 +49,7 @@ def test_result_exposes_typed_diagnostics_and_observes_native_metadata_once() ->
     )
 
     assert isinstance(result.diagnostics[0], DataDiagnostics)
-    assert result.metadata.diagnostics == [
-        diagnostic.to_metadata() for diagnostic in result.diagnostics
-    ]
+    assert result.metadata.diagnostics == list(result.diagnostics)
     assert native_data.read_counts == {"index": 1, "features": 1, "symbols": 1}
 
 
@@ -220,7 +218,7 @@ def test_csv_non_standard_flat_columns_fail_without_mapping(tmp_path: Path) -> N
     )
 
     assert result.quality.state == "rejected"
-    assert "required feature 'Close' is unavailable" in result.quality.reasons
+    assert "required array 'Close' is unavailable" in result.quality.reasons
 
 
 def test_csv_extra_vbt_feature_loads_through_dynamic_access(tmp_path: Path) -> None:
@@ -258,7 +256,7 @@ def test_configured_unused_array_must_still_load(tmp_path: Path) -> None:
     )
 
     assert result.quality.state == "rejected"
-    assert "required feature 'FundingRate' is unavailable" in result.quality.reasons
+    assert "required array 'FundingRate' is unavailable" in result.quality.reasons
     unavailable = [d.name for d in result.metadata.arrays if d.required and not d.loaded]
     assert unavailable == ["FundingRate"]
 
@@ -332,7 +330,7 @@ def test_missing_required_feature_marks_quality_rejected(tmp_path: Path) -> None
     )
 
     assert result.quality.state == "rejected"
-    assert "required feature 'Close' is unavailable" in result.quality.reasons
+    assert "required array 'Close' is unavailable" in result.quality.reasons
 
 
 def test_non_numeric_required_feature_marks_quality_rejected(tmp_path: Path) -> None:
@@ -348,7 +346,7 @@ def test_non_numeric_required_feature_marks_quality_rejected(tmp_path: Path) -> 
     )
 
     assert result.quality.state == "rejected"
-    assert "required feature 'Close' has non-numeric symbols ['SYN']" in result.quality.reasons
+    assert "required array 'Close' has non-numeric symbols ['SYN']" in result.quality.reasons
 
 
 def test_future_provider_adapter_uses_same_result_contract() -> None:

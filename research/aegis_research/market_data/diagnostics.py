@@ -2,8 +2,10 @@
 
 The one place market data is observed. ``observe`` shapes the native source
 object into a :class:`MarketDataObservation` (index, arrays, symbols, panels);
-``diagnose`` turns that observation plus the adapter's index evidence into the
-typed per-symbol, per-Array :class:`DataDiagnostics` records the judge reads.
+``diagnose`` turns that observation into the typed per-symbol, per-Array
+:class:`DataDiagnostics` records the judge reads. The adapter's index
+evidence is observation-level and goes to the judge and the ``provenance``
+facet directly — it is not threaded through the per-symbol records.
 """
 
 from __future__ import annotations
@@ -42,7 +44,6 @@ def provider_failed_diagnostics(config: DataConfig) -> tuple[DataDiagnostics, ..
             symbol=symbol,
             configured=True,
             arrays={},
-            index_evidence={"source": "provider_failed"},
             provider_status=QUALITY_PROVIDER_FAILED,
         )
         for symbol in config.symbols
@@ -72,8 +73,6 @@ def observe(
 def diagnose(
     config: DataConfig,
     observation: MarketDataObservation,
-    *,
-    evidence: dict[str, Any],
 ) -> tuple[DataDiagnostics, ...]:
     diagnostics: list[DataDiagnostics] = []
     panels = observation.panels
@@ -88,7 +87,6 @@ def diagnose(
                     symbol=symbol,
                     arrays=config.effective_arrays,
                 ),
-                index_evidence=evidence,
                 provider_status="loaded",
             )
         )
@@ -99,7 +97,6 @@ def diagnose(
                     symbol=symbol,
                     configured=True,
                     arrays={},
-                    index_evidence=evidence,
                     provider_status="skipped",
                 )
             )

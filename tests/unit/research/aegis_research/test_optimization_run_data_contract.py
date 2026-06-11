@@ -14,7 +14,7 @@ from tests.support.research.aegis_research.run_config_fixtures import (
 )
 from tests.support.research.aegis_research.test_doubles import (
     FakeDataResult,
-    _default_metadata,
+    default_metadata,
 )
 
 
@@ -63,7 +63,7 @@ def test_build_run_data_evidence_payload_extends_contract_payload(
 
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
     payload = build_run_data_evidence_payload(
-        FakeDataResult(quality_state="ok", metadata=_default_metadata(rows=0, start=None, end=None)),
+        FakeDataResult(quality_state="ok", metadata=default_metadata(rows=0, start=None, end=None)),
         contract,
     )
 

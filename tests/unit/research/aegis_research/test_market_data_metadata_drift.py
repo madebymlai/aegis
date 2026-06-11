@@ -14,6 +14,7 @@ from research.aegis_research.market_data.contracts import (
     ArrayDescriptor,
     CoverageFacet,
     MarketDataMetadataV3,
+    MarketDataQuality,
     ProvenanceFacet,
     RequestFacet,
 )
@@ -39,8 +40,7 @@ def test_constructing_with_extra_field_is_rejected() -> None:
             coverage=CoverageFacet(
                 symbols=[], rows=0, start=None, end=None
             ),
-            quality={"state": "provider_failed", "reasons": [], "warnings": [],
-                     "allowed_degradations": []},
+            quality=MarketDataQuality(state="provider_failed"),
             diagnostics=[],
             provenance=ProvenanceFacet(
                 provider_class=None,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
     DataDiagnostics,
@@ -45,7 +46,7 @@ class _FrozenData:
         return frame.xs(feature, axis=1, level="feature")
 
 
-def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
+def test_describe_builds_the_market_data_v3_facet_model() -> None:
     config = make_data_config(source="frozen", symbols=["SYN"], arrays=["Close"])
     observation = _frozen_observation()
     diagnostics = (
@@ -63,7 +64,6 @@ def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
                     last_timestamp="2020-01-03 00:00:00+00:00",
                 )
             },
-            index_evidence={"source": "test_evidence", "raw_rows": 3},
             provider_status="loaded",
         ),
     )
@@ -101,18 +101,22 @@ def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
     assert metadata.coverage.rows == 3
     assert metadata.coverage.start == "2020-01-01 00:00:00+00:00"
     assert metadata.coverage.end == "2020-01-03 00:00:00+00:00"
-    # quality and diagnostics unchanged
-    assert metadata.quality == {
+    # quality and diagnostics are the typed records themselves
+    assert metadata.quality == quality
+    assert metadata.diagnostics == list(diagnostics)
+    # the serialized wire shape speaks Array, with one uniform per-Array shape
+    wire = to_builtin(metadata)
+    assert wire["quality"] == {
         "state": "healthy",
         "reasons": [],
         "warnings": [],
         "allowed_degradations": [],
     }
-    assert metadata.diagnostics == [
+    assert wire["diagnostics"] == [
         {
             "symbol": "SYN",
             "configured": True,
-            "features": {
+            "arrays": {
                 "Close": {
                     "available": True,
                     "rows": 3,
@@ -123,7 +127,6 @@ def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
                     "last_timestamp": "2020-01-03 00:00:00+00:00",
                 }
             },
-            "index_evidence": {"source": "test_evidence", "raw_rows": 3},
             "provider_status": "loaded",
         }
     ]
@@ -155,7 +158,6 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
         DataDiagnostics(
             symbol="SYN",
             configured=True,
-            index_evidence={"source": "provider_failed"},
             provider_status="provider_failed",
         ),
     )
@@ -219,7 +221,7 @@ def test_failed_shape_equals_success_shape_minus_data() -> None:
     assert failure.metadata.coverage.start is None
     assert failure.metadata.coverage.end is None
     assert failure.metadata.provenance.provider_class is None
-    assert failure.metadata.quality["state"] == "provider_failed"
+    assert failure.metadata.quality.state == "provider_failed"
     assert failure.native_data is None
 
 

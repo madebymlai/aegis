@@ -35,10 +35,10 @@ from tests.support.research.aegis_research.run_config_fixtures import (
 )
 from tests.support.research.aegis_research.test_doubles import (
     FakeDataResult,
-    _default_metadata,
+    default_metadata,
 )
 
-_OHLCV_METADATA = _default_metadata(
+_OHLCV_METADATA = default_metadata(
     effective_arrays=["OHLCV"], start=None, end=None
 )
 

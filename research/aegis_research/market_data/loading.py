@@ -73,8 +73,13 @@ def load_market_data_result(
     observation = _observe.observe(
         config, native_data=native_data, requested_arrays=requested
     )
-    diagnostics = _observe.diagnose(config, observation, evidence=adapter_result.evidence)
-    quality = _judge.evaluate(config, diagnostics, required_arrays=required)
+    diagnostics = _observe.diagnose(config, observation)
+    quality = _judge.evaluate(
+        config,
+        diagnostics,
+        required_arrays=required,
+        index_evidence=adapter_result.evidence,
+    )
     metadata = _metadata.describe(
         config,
         native_class=_native_class(native_data),
@@ -103,7 +108,12 @@ def _provider_failed_result(
     required_arrays: tuple[str, ...],
 ) -> MarketDataResult:
     diagnostics = _observe.provider_failed_diagnostics(config)
-    quality = _judge.evaluate(config, diagnostics, required_arrays=required_arrays)
+    quality = _judge.evaluate(
+        config,
+        diagnostics,
+        required_arrays=required_arrays,
+        index_evidence={"source": "provider_failed"},
+    )
     reason = quality.reasons[0] if quality.reasons else quality.state
     metadata = _metadata.describe(
         config,

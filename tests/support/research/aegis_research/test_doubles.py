@@ -15,12 +15,13 @@ from research.aegis_research.market_data.contracts import (
     ArrayDescriptor,
     CoverageFacet,
     MarketDataMetadataV3,
+    MarketDataQuality,
     ProvenanceFacet,
     RequestFacet,
 )
 
 
-def _default_metadata(
+def default_metadata(
     *,
     source: str = "synthetic",
     symbols: list[str] | None = None,
@@ -50,7 +51,7 @@ def _default_metadata(
             for name in arrays
         ],
         coverage=CoverageFacet(symbols=syms, rows=rows, start=start, end=end),
-        quality={"state": "healthy"},
+        quality=MarketDataQuality(state="healthy"),
         diagnostics=[],
         provenance=ProvenanceFacet(
             provider_class=None,
@@ -75,12 +76,12 @@ class FakeDataResult:
     ``metadata`` is a class attribute so every instance surfaces identical
     metadata — tests never mutate it during a stage invocation.
     Pass ``metadata`` to override it for specialised fixtures; otherwise
-    :func:`_default_metadata` supplies the common healthy-synthetic shape.
+    :func:`default_metadata` supplies the common healthy-synthetic shape.
     ``quality`` is an instance attribute so it can hold a simple
     stand-in without pulling in the real quality model.
     """
 
-    metadata = _default_metadata()
+    metadata = default_metadata()
 
     def __init__(
         self,
