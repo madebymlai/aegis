@@ -20,13 +20,14 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser.add_argument(
         "--json",
         action="store_true",
-        default=argparse.SUPPRESS,
+        default=False,
         help="Emit a structured JSON result wrapping the markdown",
     )
     parser.set_defaults(handler=handle_show_config_schema, command_name="show")
 
 
-def handle_show_config_schema(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> int:
+def handle_show_config_schema(args: argparse.Namespace, **streams: Any) -> int:
+    json_mode = args.json
     from research.aegis_research.configuration.config_schema_guide import (
         GUIDE_SCHEMA_VERSION,
         render_config_schema_guide,

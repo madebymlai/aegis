@@ -18,13 +18,14 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser.add_argument(
         "--json",
         action="store_true",
-        default=argparse.SUPPRESS,
+        default=False,
         help="Emit a structured JSON result",
     )
     parser.set_defaults(handler=handle_show_splitters, command_name="show")
 
 
-def handle_show_splitters(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> int:
+def handle_show_splitters(args: argparse.Namespace, **streams: Any) -> int:
+    json_mode = args.json
     method = args.method
     if not method:
         return _write_splitter_catalog(json_mode=json_mode, **streams)

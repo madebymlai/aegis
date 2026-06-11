@@ -21,7 +21,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser.add_argument(
         "--json",
         action="store_true",
-        default=argparse.SUPPRESS,
+        default=False,
         help="Emit a structured JSON result",
     )
     parser.set_defaults(handler=handle_show_indicator_schema, command_name="show")
@@ -29,10 +29,9 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 def handle_show_indicator_schema(
     args: argparse.Namespace,
-    *,
-    json_mode: bool,
     **streams: Any,
 ) -> int:
+    json_mode = args.json
     from research.aegis_research.component_registry.indicator_guide import (
         GUIDE_SCHEMA_VERSION,
         render_indicator_schema_guide,

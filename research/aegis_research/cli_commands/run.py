@@ -36,7 +36,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser.add_argument(
         "--json",
         action="store_true",
-        default=argparse.SUPPRESS,
+        default=False,
         help="Emit a structured JSON result",
     )
     parser.add_argument(
@@ -51,7 +51,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser.set_defaults(handler=handle_run, command_name="run")
 
 
-def handle_run(args: argparse.Namespace, *, json_mode: bool, **streams: Any) -> int:
+def handle_run(args: argparse.Namespace, **streams: Any) -> int:
+    json_mode = args.json
     if args.config is None:
         raise ConfigCliError("aerd run requires an explicit config")
     config_path = Path(args.config)

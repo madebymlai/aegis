@@ -30,10 +30,6 @@ class CommandResult:
     human_lines: tuple[str, ...] = ()
 
 
-def json_requested(argv: Sequence[str]) -> bool:
-    return "--json" in argv
-
-
 def write_success(
     result: CommandResult,
     *,
@@ -50,7 +46,6 @@ def write_success(
             return write_error(
                 InternalCliError("CLI result could not be serialized as JSON"),
                 command=result.command,
-                json_mode=True,
                 stderr=stderr,
             )
         stdout.write(document)
@@ -91,7 +86,6 @@ def write_markdown_guide(
             return write_error(
                 InternalCliError("CLI guide could not be serialized as JSON"),
                 command=command,
-                json_mode=True,
                 stderr=stderr,
             )
         stdout.write(document)
@@ -105,42 +99,38 @@ def write_error(
     error: CliError,
     *,
     command: str | None,
-    json_mode: bool,
     stderr: TextIO | None = None,
 ) -> int:
+    """Emit the JSON error envelope unconditionally on stderr for every command."""
     stderr = stderr or sys.stderr
     exit_code = exit_code_for(error)
-    if json_mode:
-        payload = _envelope(
-            command or "unknown",
-            "error",
-            {
-                "error": {
-                    "category": error.category,
-                    "message": clip_message(error.message),
-                    "details": safe_json_value(error.details),
-                }
-            },
-        )
-        if error.run_refs:
-            payload["run"] = safe_run_refs(error.run_refs)
-        document = _json_document(payload)
-        if document is None:
-            fallback_message = "CLI error could not be serialized as JSON"
-            fallback = {
-                **_envelope_header(command or "unknown", "error"),
-                "error": {
-                    "category": ErrorCategory.INTERNAL,
-                    "message": fallback_message,
-                    "details": {},
-                },
+    payload = _envelope(
+        command or "unknown",
+        "error",
+        {
+            "error": {
+                "category": error.category,
+                "message": clip_message(error.message),
+                "details": safe_json_value(error.details),
             }
-            document = json.dumps(fallback, allow_nan=False, sort_keys=True) + "\n"
-            exit_code = exit_code_for(InternalCliError(fallback_message))
-        stderr.write(document)
-        return exit_code
-
-    stderr.write(f"{error.category}: {clip_message(error.message)}\n")
+        },
+    )
+    if error.run_refs:
+        payload["run"] = safe_run_refs(error.run_refs)
+    document = _json_document(payload)
+    if document is None:
+        fallback_message = "CLI error could not be serialized as JSON"
+        fallback = {
+            **_envelope_header(command or "unknown", "error"),
+            "error": {
+                "category": ErrorCategory.INTERNAL,
+                "message": fallback_message,
+                "details": {},
+            },
+        }
+        document = json.dumps(fallback, allow_nan=False, sort_keys=True) + "\n"
+        exit_code = exit_code_for(InternalCliError(fallback_message))
+    stderr.write(document)
     return exit_code
 
 

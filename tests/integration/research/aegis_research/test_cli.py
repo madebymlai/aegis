@@ -102,6 +102,47 @@ def test_show_splitters_unknown_method_json(capsys: pytest.CaptureFixture[str]) 
     assert "missing_method" in payload["error"]["message"]
 
 
+def test_show_error_is_json_without_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    """A failing show invocation emits JSON error envelope on stderr regardless of --json."""
+    assert cli.main(["show", "splitters", "missing_method"]) == 6
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert payload["status"] == "error"
+    assert payload["command"] == "show"
+    assert payload["error"]["category"] == "config_validation"
+    assert "missing_method" in payload["error"]["message"]
+
+
+def test_preparse_error_is_json_without_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    """Pre-parse failures emit JSON error envelope without --json flag."""
+    assert cli.main(["nope"]) == 2
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    payload = json.loads(output.err)
+    assert payload["status"] == "error"
+    assert payload["error"]["category"] == "invocation"
+
+
+def test_interrupted_error_is_json_without_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """KeyboardInterrupt emits JSON error envelope without --json flag."""
+    def interrupt():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "build_parser", interrupt)
+
+    assert cli.main([]) == 130
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "interrupted"
+
+
 def test_package_metadata_exposes_aerd_script() -> None:
     payload = tomllib.loads(Path("pyproject.toml").read_text())
 
