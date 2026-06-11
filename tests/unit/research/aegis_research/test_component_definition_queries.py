@@ -308,12 +308,7 @@ def test_public_snapshot_schema_version() -> None:
 
 
 def test_non_finite_default_is_normalised_to_null_in_fingerprint() -> None:
-    """A NaN default param is normalised to null, not emitted as the non-spec 'NaN'.
-
-    The old local json.dumps(..., default=str) would have emitted the string
-    "NaN".  canonical_json_bytes normalises it to null via to_builtin and
-    rejects any surviving non-finite float via allow_nan=False.
-    """
+    """A NaN default param is normalised to null in the public snapshot."""
     definition = _indicator(
         id="demo.nan_default",
         defaults={"window": float("nan")},
@@ -330,7 +325,7 @@ def test_non_finite_default_is_normalised_to_null_in_fingerprint() -> None:
 
 
 def test_non_finite_default_is_byte_stable() -> None:
-    """Fingerprint is deterministic even with NaN defaults (normalised to null)."""
+    """Fingerprint is deterministic when NaN defaults are normalised to null."""
     a = _indicator(id="demo.nan", defaults={"window": float("nan")})
     b = _indicator(id="demo.nan", defaults={"window": float("nan")})
     r1 = make_component_registry({"indicators": {"demo.nan": a}})

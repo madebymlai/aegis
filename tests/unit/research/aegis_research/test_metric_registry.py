@@ -266,12 +266,7 @@ def test_builtin_extractors_match_the_portfolio_catalog_exactly() -> None:
 
 
 def test_non_finite_metadata_is_normalised_to_null_in_fingerprint() -> None:
-    """A NaN metadata value is normalised to null, not emitted as 'NaN'.
-
-    The old local json.dumps(..., default=str) would have emitted the string
-    "NaN".  canonical_json_bytes normalises it to null via to_builtin and
-    rejects any surviving non-finite float via allow_nan=False.
-    """
+    """A NaN metadata value is normalised to null in the fingerprint payload."""
     registry = MetricRegistry()
     definition = MetricDefinition(
         id="nan_metric",
@@ -297,7 +292,7 @@ def test_non_finite_metadata_is_normalised_to_null_in_fingerprint() -> None:
 
 
 def test_non_finite_metadata_fingerprint_is_byte_stable() -> None:
-    """Fingerprint is deterministic even with NaN metadata (normalised to null)."""
+    """Fingerprint is deterministic when NaN metadata is normalised to null."""
     a = MetricRegistry()
     a.register(
         MetricDefinition(
