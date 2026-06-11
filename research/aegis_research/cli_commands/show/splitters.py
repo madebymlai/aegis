@@ -4,7 +4,11 @@ import argparse
 from typing import Any
 
 from research.aegis_research.cli_support.errors import ConfigCliError
-from research.aegis_research.cli_support.output import CommandResult, write_success
+from research.aegis_research.cli_support.output import (
+    CommandResult,
+    write_human_lines,
+    write_success,
+)
 from research.aegis_research.run_splits import (
     splitter_catalog_payload,
     splitter_method_info,
@@ -34,28 +38,16 @@ def handle_show_splitters(args: argparse.Namespace, **streams: Any) -> int:
     except ValueError as error:
         raise ConfigCliError(str(error)) from error
 
-    return write_success(
-        CommandResult(
-            command="show",
-            payload=payload,
-            human_lines=_human_method_lines(payload),
-        ),
-        json_mode=json_mode,
-        **streams,
-    )
+    if not json_mode:
+        return write_human_lines(_human_method_lines(payload), **streams)
+    return write_success(CommandResult(command="show", payload=payload), **streams)
 
 
 def _write_splitter_catalog(*, json_mode: bool, **streams: Any) -> int:
     payload = splitter_catalog_payload()
-    return write_success(
-        CommandResult(
-            command="show",
-            payload=payload,
-            human_lines=splitter_method_names(),
-        ),
-        json_mode=json_mode,
-        **streams,
-    )
+    if not json_mode:
+        return write_human_lines(splitter_method_names(), **streams)
+    return write_success(CommandResult(command="show", payload=payload), **streams)
 
 
 def _human_method_lines(payload: dict[str, Any]) -> tuple[str, ...]:

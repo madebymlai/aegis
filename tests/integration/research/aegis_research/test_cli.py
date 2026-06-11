@@ -412,28 +412,25 @@ def test_output_helper_normalizes_nonstandard_json_numbers(
     from research.aegis_research.cli_support.output import CommandResult, write_success
 
     assert (
-        write_success(
-            CommandResult(command="test", payload={"value": float("nan")}),
-            json_mode=True,
-        )
+        write_success(CommandResult(command="test", payload={"value": float("nan")}))
         == 0
     )
 
     assert json.loads(capsys.readouterr().out)["value"] is None
 
 
-def test_safe_path_hides_relative_paths_that_escape_cwd(
+def test_error_details_paths_emit_real_resolved_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from research.aegis_research.cli_support.output import safe_path
+    """The JSON sanitizer's Path branch emits real absolute paths — the
+    scrubbing rewrite (ADR-0009's retired threat model) is gone (ADR-0021)."""
+    from research.aegis_research.cli_support.output import safe_json_value
 
-    worktree = tmp_path / "repo"
-    worktree.mkdir()
-    monkeypatch.chdir(worktree)
+    monkeypatch.chdir(tmp_path)
 
-    assert safe_path("runs/example") == "runs/example"
-    assert safe_path("../private/runs") == "<path>"
+    assert safe_json_value(Path("runs/example")) == str(tmp_path / "runs" / "example")
+    assert safe_json_value(Path("/data/runs/abc")) == "/data/runs/abc"
 
 
 def test_run_refs_emits_absolute_paths_unscrubbed() -> None:

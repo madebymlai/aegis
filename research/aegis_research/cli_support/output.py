@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 import sys
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,31 +26,38 @@ MAX_REASON_COUNT = 10
 class CommandResult:
     command: str
     payload: Mapping[str, Any] = field(default_factory=dict)
-    human_lines: tuple[str, ...] = ()
 
 
 def write_success(
     result: CommandResult,
     *,
-    json_mode: bool,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    """Emit the JSON success envelope on stdout — the CLI's one success
+    contract (ADR-0021). Commands with a human success mode render it
+    themselves via ``write_human_lines``."""
+    stdout = stdout or sys.stdout
+    stderr = stderr or sys.stderr
+    payload = _envelope(result.command, "success", result.payload)
+    document = _json_document(payload)
+    if document is None:
+        return write_error(
+            InternalCliError("CLI result could not be serialized as JSON"),
+            command=result.command,
+            stderr=stderr,
+        )
+    stdout.write(document)
+    return 0
+
+
+def write_human_lines(
+    lines: tuple[str, ...],
+    *,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
     stdout = stdout or sys.stdout
-    stderr = stderr or sys.stderr
-    if json_mode:
-        payload = _envelope(result.command, "success", result.payload)
-        document = _json_document(payload)
-        if document is None:
-            return write_error(
-                InternalCliError("CLI result could not be serialized as JSON"),
-                command=result.command,
-                stderr=stderr,
-            )
-        stdout.write(document)
-        return 0
-
-    lines = result.human_lines or ("OK",)
     stdout.write("\n".join(lines) + "\n")
     return 0
 
@@ -153,39 +159,11 @@ def run_refs(refs: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def real_path_text(value: Any) -> str | None:
-    """The run contract's path shape: a real, resolved absolute path as text
-    (ADR-0021). Stringified here so the JSON sanitizer's ``Path`` branch
-    (which scrubs) never sees a ``Path`` value.
-    """
+    """The CLI's one path shape: a real, resolved absolute path as text
+    (ADR-0021)."""
     if value is None:
         return None
     return str(Path(value).resolve(strict=False))
-
-
-def safe_path(value: Any) -> str | None:
-    if value is None:
-        return None
-    path_text = str(value)
-    path = Path(path_text)
-    was_relative = not path.is_absolute()
-    resolved = (
-        (Path.cwd() / path).resolve(strict=False) if was_relative else path.resolve(strict=False)
-    )
-    cwd = Path.cwd().resolve(strict=False)
-    try:
-        return resolved.relative_to(cwd).as_posix()
-    except ValueError:
-        if was_relative:
-            return "<path>"
-
-    for base in (Path.home(), Path(tempfile.gettempdir())):
-        try:
-            relative = resolved.relative_to(base.resolve(strict=False))
-        except ValueError:
-            continue
-        prefix = "~" if base == Path.home() else "<tmp>"
-        return str(Path(prefix) / relative).replace("\\", "/")
-    return "<path>"
 
 
 def clip_message(text: str, *, max_chars: int = MAX_ERROR_MESSAGE_CHARS) -> str:
@@ -201,7 +179,7 @@ def safe_json_value(value: Any) -> Any:
     if isinstance(value, str):
         return clip_message(value, max_chars=MAX_REASON_CHARS)
     if isinstance(value, Path):
-        return safe_path(value)
+        return real_path_text(value)
     if isinstance(value, Mapping):
         return {str(key): safe_json_value(item) for key, item in value.items()}
     if isinstance(value, list | tuple):

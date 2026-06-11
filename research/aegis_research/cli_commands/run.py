@@ -107,6 +107,5 @@ def _handle_strategy_run(
             command="run",
             payload=build_run_payload(result, selection_evidence=selection_evidence),
         ),
-        json_mode=True,
         **streams,
     )
