@@ -485,12 +485,12 @@ def _slice_data(
     close_slice: pd.DataFrame,
     input_names: tuple[str, ...],
 ) -> MarketDataBundle:
-    features: dict[str, pd.DataFrame] = {}
+    arrays: dict[str, pd.DataFrame] = {}
     for name in input_names:
-        features[name] = (
-            close_slice if name == "Close" else data.feature(name).loc[close_slice.index]
+        arrays[name] = (
+            close_slice if name == "Close" else data.array(name).loc[close_slice.index]
         )
-    return MarketDataBundle(features=features)
+    return MarketDataBundle(arrays=arrays)
 
 
 def _assert_output_contract(

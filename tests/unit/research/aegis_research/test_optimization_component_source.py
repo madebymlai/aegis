@@ -61,7 +61,7 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
     assert source.evidence["produced_outputs"] == ["trend"]
     assert source.evidence["consumed_outputs"] == ["trend"]
 
-    close = data.feature("Close")
+    close = data.array("Close")
     n_candidates = 1
     output = _run_pipeline(source, close, n_candidates, **_single_candidate_params())
 
@@ -174,7 +174,7 @@ def test_indicator_batched_callable_must_return_mapping(tmp_path: Path) -> None:
     )
     with pytest.raises(ComponentSourceError, match=r"indicator 'demo.trend'.*mapping"):
         source.precompute(
-            _data_bundle().feature("Close"),
+            _data_bundle().array("Close"),
             1,
             **_single_candidate_params(),
         )
@@ -206,7 +206,7 @@ def test_indicator_mapping_keys_must_match_manifest_outputs(
 
     with pytest.raises(ComponentSourceError, match=match):
         source.precompute(
-            _data_bundle().feature("Close"),
+            _data_bundle().array("Close"),
             1,
             **_single_candidate_params(),
         )
@@ -222,7 +222,7 @@ def test_two_output_indicator_outputs_remain_distinct_for_strategy(tmp_path: Pat
         component_registry=registry,
         data=_data_bundle(),
     )
-    close = _data_bundle().feature("Close")
+    close = _data_bundle().array("Close")
 
     store = source.precompute(close, 1, **_single_candidate_params())
 
@@ -262,7 +262,7 @@ def test_indicator_output_shape_gate_rejects_wrong_rows_and_columns(
 
     with pytest.raises(ComponentSourceError, match=match):
         source.precompute(
-            _data_bundle().feature("Close"),
+            _data_bundle().array("Close"),
             1,
             **_single_candidate_params(),
         )
@@ -291,7 +291,7 @@ def test_strategy_allocation_shape_gate_rejects_wrong_rows_and_columns(
     source = build_component_optimization_source(
         _config(), component_registry=registry, data=_data_bundle()
     )
-    close = _data_bundle().feature("Close")
+    close = _data_bundle().array("Close")
 
     with pytest.raises(ComponentSourceError, match=match):
         _run_pipeline(source, close, 1, **_single_candidate_params())
@@ -363,12 +363,12 @@ def _write_indicator(path: Path, *, component_id: str) -> None:
         "# %% main compute\n"
         "def run(data, window):\n"
         "    '''Return a rolling trend frame.'''\n"
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    return close.rolling(int(window), min_periods=1).mean()\n"
         "# %% batched compute\n"
         "def run(data, *, n_candidates, **param_lists):\n"
         "    '''Return indicator output.'''\n"
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    T, S = close.shape\n"
         "    windows = param_lists['window']\n"
         "    result = np.zeros((T, n_candidates * S))\n"
@@ -400,7 +400,7 @@ def _write_strategy(path: Path) -> None:
         "# %% main compute\n"
         "def run(inputs, threshold):\n"
         "    '''Return active allocation derived from thresholded trend signals.'''\n"
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    trend = inputs.indicators['trend']\n"
         "    selected = trend.ge(close * float(threshold)).fillna(False)\n"
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
@@ -409,7 +409,7 @@ def _write_strategy(path: Path) -> None:
         "# %% batched compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
         "    '''Return strategy output.'''\n"
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    thresholds = param_lists['threshold']\n"
         "    trend_arr = inputs.indicators['trend']\n"
@@ -445,7 +445,7 @@ def _write_hidden_strategy(path: Path) -> None:
         "# %% main compute\n"
         "def run(inputs, threshold):\n"
         "    '''Return active allocation for the hidden-param fixture.'''\n"
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    selected = close.gt(close.shift(1)).fillna(False)\n"
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
@@ -453,7 +453,7 @@ def _write_hidden_strategy(path: Path) -> None:
         "# %% batched compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
         "    '''Return strategy output for the hidden-param fixture.'''\n"
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    close_arr = close.values\n"
         "    alloc = np.full((T, n_candidates * S), np.nan)\n"
@@ -477,7 +477,7 @@ def test_component_source_pipeline_returns_multiindex_frame(tmp_path: Path) -> N
     data = _data_bundle()
 
     source = build_component_optimization_source(config, component_registry=registry, data=data)
-    close = data.feature("Close")
+    close = data.array("Close")
     n_candidates = 2
     n_symbols = len(close.columns)
 
@@ -504,7 +504,7 @@ def test_component_precompute_deduplicates_indicator_params_with_window_parity(
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     data = _data_bundle()
     source = build_component_optimization_source(_config(), component_registry=registry, data=data)
-    close = data.feature("Close")
+    close = data.array("Close")
 
     param_lists = {
         _INDICATOR_WINDOW_KEY: [2, 2, 3, 3],
@@ -550,13 +550,13 @@ def _write_two_output_indicator(path: Path) -> None:
         "# %% main compute\n"
         "def run(data, window):\n"
         "    '''Return trend and inverse trend frames.'''\n"
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    trend = close.rolling(int(window), min_periods=1).mean()\n"
         "    return {'trend': trend, 'inverse_trend': -trend}\n"
         "# %% batched compute\n"
         "def run(data, *, n_candidates, **param_lists):\n"
         "    '''Return two distinct indicator outputs.'''\n"
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    T, S = close.shape\n"
         "    result = np.zeros((T, n_candidates * S))\n"
         "    for i, w in enumerate(param_lists['window']):\n"
@@ -587,7 +587,7 @@ def _write_two_output_strategy(path: Path) -> None:
         "# %% main compute\n"
         "def run(inputs, threshold):\n"
         "    '''Return active allocation when trend exceeds inverse trend.'''\n"
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    return pd.DataFrame(1.0, index=close.index, columns=close.columns)\n"
         "# %% batched compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
@@ -601,7 +601,7 @@ def _write_two_output_strategy(path: Path) -> None:
 def _data_bundle() -> MarketDataBundle:
     index = pd.date_range("2026-01-01", periods=6, freq="1D")
     close = pd.DataFrame({"SYN": [10.0, 11.0, 10.5, 12.0, 11.5, 13.0]}, index=index)
-    return MarketDataBundle(features={"Close": close})
+    return MarketDataBundle(arrays={"Close": close})
 
 
 def _write_indicator_template(
@@ -627,12 +627,12 @@ def _write_indicator_template(
         "# %% main compute\n"
         "def run(data, window):\n"
         "    '''Return a rolling trend frame.'''\n"
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    return close.rolling(int(window), min_periods=1).mean()\n"
         "# %% batched compute\n"
         "def run(data, *, n_candidates, **param_lists):\n"
         "    '''Return indicator output.'''\n"
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    T, S = close.shape\n"
         "    windows = param_lists['window']\n"
         "    result = np.zeros((T, n_candidates * S))\n"
@@ -668,7 +668,7 @@ def _write_strategy_template(
         "# %% main compute\n"
         "def run(inputs, threshold):\n"
         "    '''Return active allocation derived from thresholded trend signals.'''\n"
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    trend = inputs.indicators['trend']\n"
         "    selected = trend.ge(close * float(threshold)).fillna(False)\n"
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
@@ -678,7 +678,7 @@ def _write_strategy_template(
         "def run(inputs, *, n_candidates, **param_lists):\n"
         "    '''Return strategy output.'''\n"
         "    import numpy as np, pandas as pd\n"
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    thresholds = param_lists['threshold']\n"
         "    trend_arr = inputs.indicators['trend']\n"

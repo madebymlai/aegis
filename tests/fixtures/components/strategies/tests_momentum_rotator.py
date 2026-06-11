@@ -184,7 +184,7 @@ def _compute_target_weights(
 def run(inputs, *, n_candidates, **param_lists):
     """Vectorized regime rotation for all candidates in a single call."""
 
-    close = inputs.data.feature("Close")
+    close = inputs.data.array("Close")
     n_symbols = inputs.n_symbols
     T = len(close)
     columns = close.columns

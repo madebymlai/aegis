@@ -352,7 +352,7 @@ def _write_parameterized_strategy_component(
             if fail_if_executed
             else ""
         )
-        + "    close = inputs.data.feature('Close')\n"
+        + "    close = inputs.data.array('Close')\n"
         "    fast = close.rolling(int(fast_window), min_periods=1).mean()\n"
         "    slow = close.rolling(int(slow_window), min_periods=1).mean()\n"
         "    selected = fast.gt(slow).fillna(False)\n"
@@ -362,7 +362,7 @@ def _write_parameterized_strategy_component(
         "\n# %% wide compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from MA crossover params."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    fast_windows = param_lists['fast_window']\n"
         "    slow_windows = param_lists['slow_window']\n"

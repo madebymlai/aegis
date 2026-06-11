@@ -95,7 +95,7 @@ def run_strategy_sweep(
         array_contract.assert_configured()
         data_result = load_market_data_result(
             config.data,
-            required_features=array_contract.required_arrays,
+            required_arrays=array_contract.required_arrays,
         )
         data_result = with_data_array_contract_metadata(data_result, array_contract)
         write_data_metadata_artifact(recorder, data_result)

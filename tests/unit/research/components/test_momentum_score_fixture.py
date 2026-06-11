@@ -13,7 +13,7 @@ def _make_data(n_dates: int = 300, symbols: list[str] | None = None) -> MarketDa
     returns = rng.normal(0.0003, 0.012, size=(n_dates, len(symbols)))
     prices = 100.0 * np.exp(np.cumsum(returns, axis=0))
     close = pd.DataFrame(prices, index=dates, columns=pd.Index(symbols, name="symbol"))
-    return MarketDataBundle(features={"Close": close})
+    return MarketDataBundle(arrays={"Close": close})
 
 
 def test_manifest_is_v2_domain_facts_only() -> None:

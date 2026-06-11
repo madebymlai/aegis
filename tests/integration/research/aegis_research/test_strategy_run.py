@@ -517,7 +517,7 @@ def _write_strategy_component(path: Path) -> None:
         "\n# %% main compute\n"
         "def run(bundle):\n"
         '    """Emit a deterministic active allocation frame from a fixed MA crossover."""\n'
-        "    close = bundle.data.feature('Close')\n"
+        "    close = bundle.data.array('Close')\n"
         "    selected = close.gt(close.rolling(3).mean()).fillna(False)\n"
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
@@ -525,7 +525,7 @@ def _write_strategy_component(path: Path) -> None:
         "\n# %% wide compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from a fixed MA crossover."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    close_arr = close.values\n"
         "    alloc = np.full((T, n_candidates * S), np.nan)\n"
@@ -556,11 +556,11 @@ def _write_indicator_component(path: Path) -> None:
         "\n# %% main compute\n"
         "def run(data, window=2):\n"
         '    """Compute the fixed moving-average indicator."""\n'
-        "    return data.feature('Close').rolling(int(window)).mean().bfill()\n"
+        "    return data.array('Close').rolling(int(window)).mean().bfill()\n"
         "\n# %% wide compute\n"
         "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide indicator output."""\n'
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    T, S = close.shape\n"
         "    windows = param_lists.get('window', [2] * n_candidates)\n"
         "    result = np.zeros((T, n_candidates * S))\n"
@@ -587,13 +587,13 @@ def _write_misaligned_indicator_component(path: Path) -> None:
         "\n# %% main compute\n"
         "def run(data):\n"
         '    """Return a deliberately misaligned indicator fixture."""\n'
-        "    result = data.feature('Close').copy()\n"
+        "    result = data.array('Close').copy()\n"
         "    result.columns = ['OTHER']\n"
         "    return result\n"
         "\n# %% wide compute\n"
         "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide output for misaligned fixture."""\n'
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    T, S = close.shape\n"
         "    return {'ma': np.zeros((T, n_candidates * S))}\n"
     )
@@ -616,11 +616,11 @@ def _write_named_indicator_component(path: Path, component_id: str) -> None:
         "\n# %% main compute\n"
         "def run(data):\n"
         '    """Compute a fixed moving-average indicator fixture."""\n'
-        "    return data.feature('Close').rolling(2).mean().bfill()\n"
+        "    return data.array('Close').rolling(2).mean().bfill()\n"
         "\n# %% wide compute\n"
         "def run(data, *, n_candidates, **param_lists):\n"
         '    """Return wide indicator output."""\n'
-        "    close = data.feature('Close')\n"
+        "    close = data.array('Close')\n"
         "    T, S = close.shape\n"
         "    result = np.zeros((T, n_candidates * S))\n"
         "    for i in range(n_candidates):\n"
@@ -649,7 +649,7 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "def run(bundle):\n"
         '    """Emit an active allocation frame from the selected MA indicator."""\n'
         "    ma = bundle.indicators['ma']\n"
-        "    close = bundle.data.feature('Close')\n"
+        "    close = bundle.data.array('Close')\n"
         "    selected = close.gt(ma).fillna(False)\n"
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
@@ -657,7 +657,7 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "\n# %% wide compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from MA indicator."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    ma_arr = inputs.indicators['ma']\n"
         "    close_arr = close.values\n"
@@ -690,7 +690,7 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         '    """Emit an active allocation frame from fast and slow indicator outputs."""\n'
         "    fast = bundle.indicators['demo.fast']\n"
         "    slow = bundle.indicators['demo.slow']\n"
-        "    close = bundle.data.feature('Close')\n"
+        "    close = bundle.data.array('Close')\n"
         "    selected = fast.ge(slow).fillna(False)\n"
         "    active = pd.DataFrame(np.nan, index=close.index, columns=close.columns, dtype=object)\n"
         "    active.loc[:] = selected.astype(object)\n"
@@ -698,7 +698,7 @@ def _write_two_indicator_strategy_component(path: Path) -> None:
         "\n# %% wide compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide allocation from fast and slow indicators."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    alloc = np.full((T, n_candidates * S), np.nan)\n"
         "    for i in range(n_candidates):\n"

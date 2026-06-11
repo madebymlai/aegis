@@ -8,11 +8,11 @@ import pandas as pd
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
     DataDiagnostics,
-    DataFeatureDiagnostics,
+    DataArrayDiagnostics,
     MarketDataAdapterResult,
     RemoteDataPullError,
     load_market_data_result,
-    required_experiment_ohlcv_features,
+    required_experiment_ohlcv_arrays,
 )
 from research.aegis_research.market_data import quality as data_quality
 from tests.support.research.aegis_research.factories import (
@@ -29,8 +29,8 @@ def test_quality_verdict_is_derived_from_typed_diagnostics_without_panels() -> N
             DataDiagnostics(
                 symbol="SYN",
                 configured=True,
-                features={
-                    "Close": DataFeatureDiagnostics(
+                arrays={
+                    "Close": DataArrayDiagnostics(
                         available=True,
                         rows=3,
                         missing=1,
@@ -43,7 +43,7 @@ def test_quality_verdict_is_derived_from_typed_diagnostics_without_panels() -> N
                 },
             ),
         ),
-        required_features=("Close",),
+        required_arrays=("Close",),
     )
 
     assert quality.state == "rejected"
@@ -126,7 +126,7 @@ def test_allowed_missing_rows_are_degraded_allowed(tmp_path: Path) -> None:
     assert "required feature 'Close' contains missing values" in result.quality.warnings
 
 
-def test_close_only_array_does_not_require_unconfigured_ohlcv_features(tmp_path: Path) -> None:
+def test_close_only_array_does_not_require_unconfigured_ohlcv_arrays(tmp_path: Path) -> None:
     path = tmp_path / "close_only.csv"
     frame = pd.DataFrame(
         {"Close": [1.0, 2.0, 3.0]},
@@ -143,12 +143,12 @@ def test_close_only_array_does_not_require_unconfigured_ohlcv_features(tmp_path:
 
 
 def test_next_open_signal_timing_requires_open_feature() -> None:
-    assert required_experiment_ohlcv_features() == ("Close", "Open")
-    assert required_experiment_ohlcv_features(signal_config=make_signal_config()) == ("Close", "Open")
+    assert required_experiment_ohlcv_arrays() == ("Close", "Open")
+    assert required_experiment_ohlcv_arrays(signal_config=make_signal_config()) == ("Close", "Open")
 
 
 def test_same_close_signal_timing_does_not_require_open_feature() -> None:
-    assert required_experiment_ohlcv_features(
+    assert required_experiment_ohlcv_arrays(
         signal_config=make_signal_config(execution_timing="same_close")
     ) == ("Close",)
 
@@ -163,7 +163,7 @@ def test_next_open_feature_requirement_rejects_close_only_data(tmp_path: Path) -
 
     result = load_market_data_result(
         make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
-        required_features=required_experiment_ohlcv_features(signal_config=make_signal_config()),
+        required_arrays=required_experiment_ohlcv_arrays(signal_config=make_signal_config()),
     )
 
     assert result.quality.state == "rejected"
@@ -180,7 +180,7 @@ def test_same_close_feature_requirement_allows_close_only_data(tmp_path: Path) -
 
     result = load_market_data_result(
         make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
-        required_features=required_experiment_ohlcv_features(
+        required_arrays=required_experiment_ohlcv_arrays(
             signal_config=make_signal_config(execution_timing="same_close")
         ),
     )
@@ -198,7 +198,7 @@ def test_explicit_high_low_requirement_rejects_close_only_data(tmp_path: Path) -
 
     result = load_market_data_result(
         make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close"]),
-        required_features=("Close", "High", "Low"),
+        required_arrays=("Close", "High", "Low"),
     )
 
     assert result.quality.state == "rejected"

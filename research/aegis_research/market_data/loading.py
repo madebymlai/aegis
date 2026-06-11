@@ -24,23 +24,23 @@ from research.aegis_research.market_data.contracts import (
 )
 
 close_from_ohlcv = _features.close_from_ohlcv
-feature_from_ohlcv = _features.feature_from_ohlcv
+array_from_ohlcv = _features.array_from_ohlcv
 high_from_ohlcv = _features.high_from_ohlcv
 low_from_ohlcv = _features.low_from_ohlcv
-required_ohlcv_features = _features.required_ohlcv_features
-required_experiment_ohlcv_features = _features.required_experiment_ohlcv_features
+required_ohlcv_arrays = _features.required_ohlcv_arrays
+required_experiment_ohlcv_arrays = _features.required_experiment_ohlcv_arrays
 
 MarketDataObservation = _observe.MarketDataObservation
 
 __all__ = [
     "close_from_ohlcv",
-    "feature_from_ohlcv",
+    "array_from_ohlcv",
     "high_from_ohlcv",
     "load_market_data",
     "load_market_data_result",
     "low_from_ohlcv",
-    "required_experiment_ohlcv_features",
-    "required_ohlcv_features",
+    "required_experiment_ohlcv_arrays",
+    "required_ohlcv_arrays",
 ]
 
 
@@ -53,7 +53,7 @@ def load_market_data(config: DataConfig) -> Any:
 def load_market_data_result(
     config: DataConfig,
     *,
-    required_features: tuple[str, ...] | None = None,
+    required_arrays: tuple[str, ...] | None = None,
     adapters: dict[str, MarketDataAdapter] | None = None,
 ) -> MarketDataResult:
     """Load data through VBT-backed sources, then apply Aegis evidence/quality contracts."""
@@ -62,19 +62,19 @@ def load_market_data_result(
     if source not in source_loaders:
         raise ValueError(f"Unsupported data source: {config.source}")
     requested = config.effective_arrays
-    required = merge_data_arrays(requested, required_features or ())
+    required = merge_data_arrays(requested, required_arrays or ())
 
     try:
         adapter_result = source_loaders[source](config)
     except RemoteDataPullError as error:
-        return _provider_failed_result(config, error, required_features=required)
+        return _provider_failed_result(config, error, required_arrays=required)
 
     native_data = adapter_result.native_data
     observation = _observe.observe(
-        config, native_data=native_data, requested_features=requested
+        config, native_data=native_data, requested_arrays=requested
     )
     diagnostics = _observe.diagnose(config, observation, evidence=adapter_result.evidence)
-    quality = _judge.evaluate(config, diagnostics, required_features=required)
+    quality = _judge.evaluate(config, diagnostics, required_arrays=required)
     metadata = _metadata.describe(
         config,
         native_class=_native_class(native_data),
@@ -86,7 +86,7 @@ def load_market_data_result(
         provider_metadata=adapter_result.provider_metadata,
         omitted_metadata_fields=adapter_result.omitted_metadata_fields,
         update_supported=_update_supported(native_data),
-        required_features=required,
+        required_arrays=required,
     )
     return MarketDataResult(
         native_data=native_data,
@@ -100,10 +100,10 @@ def _provider_failed_result(
     config: DataConfig,
     error: RemoteDataPullError,
     *,
-    required_features: tuple[str, ...],
+    required_arrays: tuple[str, ...],
 ) -> MarketDataResult:
     diagnostics = _observe.provider_failed_diagnostics(config)
-    quality = _judge.evaluate(config, diagnostics, required_features=required_features)
+    quality = _judge.evaluate(config, diagnostics, required_arrays=required_arrays)
     reason = quality.reasons[0] if quality.reasons else quality.state
     metadata = _metadata.describe(
         config,
@@ -119,7 +119,7 @@ def _provider_failed_result(
         provider_metadata={},
         omitted_metadata_fields=[],
         update_supported=False,
-        required_features=required_features,
+        required_arrays=required_arrays,
     )
     return MarketDataResult(
         native_data=None,

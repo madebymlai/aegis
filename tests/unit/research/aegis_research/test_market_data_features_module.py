@@ -18,4 +18,4 @@ def test_feature_accessors_live_in_features_module() -> None:
     close = features.close_from_ohlcv(frame)
 
     assert list(close.columns) == ["AAA", "BBB"]
-    assert features.feature_from_ohlcv(frame, "Close").equals(close)
+    assert features.array_from_ohlcv(frame, "Close").equals(close)

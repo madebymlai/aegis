@@ -49,12 +49,12 @@ def _write_parameterized_strategy(path: Path) -> None:
         "\n# %% main compute\n"
         "def run(inputs, *, threshold=1.0):\n"
         '    """Emit a deterministic active allocation frame for fixture runs."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    return close.gt(close.shift(1)).fillna(False).astype(object)\n"
         "\n# %% wide compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
         '    """Return wide strategy output."""\n'
-        "    close = inputs.data.feature('Close')\n"
+        "    close = inputs.data.array('Close')\n"
         "    T, S = close.shape\n"
         "    return np.full((T, n_candidates * S), np.nan)\n"
     )

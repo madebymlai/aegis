@@ -32,9 +32,9 @@ def index_evidence(index: pd.Index, *, source: str) -> dict[str, Any]:
     }
 
 
-def native_from_feature_data(feature_data: dict[str, pd.DataFrame], config: DataConfig) -> Any:
+def native_from_array_dict(arrays: dict[str, pd.DataFrame], config: DataConfig) -> Any:
     return vbt.Data.from_data(
-        vbt.feature_dict(feature_data),
+        vbt.feature_dict(arrays),
         columns_are_symbols=True,
         missing_index=config.missing_index,
         missing_columns=config.missing_columns,

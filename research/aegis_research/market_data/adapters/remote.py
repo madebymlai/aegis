@@ -180,12 +180,12 @@ def _remote_raw_data_and_metadata(output: Any) -> tuple[Any, dict[str, Any]]:
 
 def _project_remote_symbol_data(
     raw_data: Any,
-    requested_features: tuple[str, ...],
+    requested_arrays: tuple[str, ...],
     *,
     symbol: str,
 ) -> pd.Series | pd.DataFrame:
     if isinstance(raw_data, pd.Series):
-        if raw_data.name in requested_features:
+        if raw_data.name in requested_arrays:
             return raw_data
         return raw_data.iloc[0:0]
     if not isinstance(raw_data, pd.DataFrame):
@@ -193,7 +193,7 @@ def _project_remote_symbol_data(
             f"remote provider returned non-tabular data for symbol {symbol!r}; "
             "configured data arrays require named feature columns"
         )
-    columns = [feature for feature in requested_features if feature in raw_data.columns]
+    columns = [name for name in requested_arrays if name in raw_data.columns]
     return raw_data.loc[:, columns]
 
 

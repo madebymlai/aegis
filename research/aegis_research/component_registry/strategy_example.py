@@ -52,7 +52,7 @@ def run(inputs, *, n_candidates, **param_lists):
     block ``[ci * n_symbols, (ci + 1) * n_symbols)``.
     """
 
-    close = inputs.data.feature("Close")
+    close = inputs.data.array("Close")
     n_symbols = inputs.n_symbols
     fasts = param_lists["fast_window"]
     slows = param_lists["slow_window"]

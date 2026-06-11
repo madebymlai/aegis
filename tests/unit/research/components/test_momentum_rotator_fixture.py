@@ -22,7 +22,7 @@ def _make_data(n_dates: int = 120) -> MarketDataBundle:
     returns = rng.normal(0.0003, 0.012, size=(n_dates, len(_SYMBOLS)))
     prices = 100.0 * np.exp(np.cumsum(returns, axis=0))
     close = pd.DataFrame(prices, index=dates, columns=pd.Index(_SYMBOLS, name="symbol"))
-    return MarketDataBundle(features={"Close": close})
+    return MarketDataBundle(arrays={"Close": close})
 
 
 def _indicator_array(close: pd.DataFrame, n_candidates: int, value: float) -> np.ndarray:
@@ -53,7 +53,7 @@ def test_run_returns_candidate_major_allocation_array() -> None:
     from tests.fixtures.components.strategies.tests_momentum_rotator import run
 
     data = _make_data()
-    close = data.feature("Close")
+    close = data.array("Close")
     n_candidates = 2
     inputs = FakeComponentInputs(
         data,

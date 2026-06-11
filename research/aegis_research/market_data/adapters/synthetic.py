@@ -5,14 +5,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from research.aegis_research.configuration import DataConfig
+from research.aegis_research.configuration import DataConfig, OHLCV_ARRAYS
 from research.aegis_research.market_data.adapters._support import (
     index_evidence,
     local_provider_metadata,
-    native_from_feature_data,
+    native_from_array_dict,
 )
 from research.aegis_research.market_data.contracts import (
-    OHLCV_FEATURES,
     MarketDataAdapterResult,
 )
 
@@ -38,7 +37,7 @@ def _synthetic_data(config: DataConfig) -> Any:
         tz="UTC",
         name="Open time",
     )
-    feature_values: dict[str, dict[str, np.ndarray]] = {feature: {} for feature in OHLCV_FEATURES}
+    array_values: dict[str, dict[str, np.ndarray]] = {name: {} for name in OHLCV_ARRAYS}
     for symbol_idx, symbol in enumerate(config.symbols):
         drift = 0.00015 + symbol_idx * 0.00003
         volatility = 0.015 + symbol_idx * 0.002
@@ -49,15 +48,15 @@ def _synthetic_data(config: DataConfig) -> Any:
         high = np.maximum(open_, close) * (1 + spread)
         low = np.minimum(open_, close) * (1 - spread)
         volume = rng.lognormal(mean=12, sigma=0.25, size=config.rows)
-        feature_values["Open"][symbol] = open_
-        feature_values["High"][symbol] = high
-        feature_values["Low"][symbol] = low
-        feature_values["Close"][symbol] = close
-        feature_values["Volume"][symbol] = volume
-    return native_from_feature_data(
+        array_values["Open"][symbol] = open_
+        array_values["High"][symbol] = high
+        array_values["Low"][symbol] = low
+        array_values["Close"][symbol] = close
+        array_values["Volume"][symbol] = volume
+    return native_from_array_dict(
         {
-            feature: pd.DataFrame(values, index=index, columns=pd.Index(config.symbols))
-            for feature, values in feature_values.items()
+            name: pd.DataFrame(values, index=index, columns=pd.Index(config.symbols))
+            for name, values in array_values.items()
         },
         config,
     )

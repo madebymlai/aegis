@@ -6,7 +6,7 @@ from research.aegis_research.market_data import diagnostics as observe
 from research.aegis_research.market_data import quality as judge
 from research.aegis_research.market_data.contracts import (
     DataDiagnostics,
-    DataFeatureDiagnostics,
+    DataArrayDiagnostics,
 )
 from tests.support.research.aegis_research.factories import make_data_config
 
@@ -18,8 +18,8 @@ def test_judge_is_a_pure_verdict_over_typed_diagnostics() -> None:
             DataDiagnostics(
                 symbol="SYN",
                 configured=True,
-                features={
-                    "Close": DataFeatureDiagnostics(
+                arrays={
+                    "Close": DataArrayDiagnostics(
                         available=True,
                         rows=3,
                         missing=1,
@@ -32,7 +32,7 @@ def test_judge_is_a_pure_verdict_over_typed_diagnostics() -> None:
                 },
             ),
         ),
-        required_features=("Close",),
+        required_arrays=("Close",),
     )
 
     assert verdict.state == "rejected"
@@ -44,7 +44,7 @@ def test_judge_is_a_pure_verdict_over_typed_diagnostics() -> None:
     )
 
 
-def test_observe_reports_per_symbol_feature_diagnostics() -> None:
+def test_observe_reports_per_symbol_array_diagnostics() -> None:
     index = pd.date_range("2020-01-01", periods=3, tz="UTC")
     frame = pd.DataFrame(
         {("SYN", "Close"): [1.0, 2.0, 3.0]},
@@ -56,10 +56,10 @@ def test_observe_reports_per_symbol_feature_diagnostics() -> None:
     observation = observe.observe(
         config,
         native_data=frame,
-        requested_features=("Close",),
+        requested_arrays=("Close",),
     )
     diagnostics = observe.diagnose(config, observation, evidence={"source": "frame"})
 
     assert diagnostics[0].symbol == "SYN"
-    assert diagnostics[0].features["Close"].available is True
-    assert diagnostics[0].features["Close"].rows == 3
+    assert diagnostics[0].arrays["Close"].available is True
+    assert diagnostics[0].arrays["Close"].rows == 3

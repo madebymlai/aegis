@@ -30,7 +30,7 @@ def param_space():
 def run(data, *, n_candidates, **param_lists):
     """Vectorized realized volatility for all candidates in a single call."""
 
-    close = data.feature("Close")
+    close = data.array("Close")
     n_symbols = len(close.columns)
     T = len(close)
     windows = param_lists["window"]

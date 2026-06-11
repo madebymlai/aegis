@@ -43,7 +43,7 @@ def _ma(close, window, wtype):
 def run(data, *, n_candidates, **param_lists):
     """Compute candidate-major moving-average output for all candidates."""
 
-    close = data.feature("Close")
+    close = data.array("Close")
     n_symbols = len(close.columns)
     windows = param_lists["window"]
     wtypes = param_lists["wtype"]
