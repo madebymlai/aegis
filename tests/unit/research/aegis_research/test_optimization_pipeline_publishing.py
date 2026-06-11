@@ -134,7 +134,11 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
     # publish_candidates writes in the pending state; activate to expose for querying.
     with CandidateStore(store_path) as store:
         store.activate_run("run-pub")
-        top = store.top_candidates_by_run("run-pub")
+        stored = [
+            store.candidate_by_key(
+                store.candidate_key_for_role("run-pub", role), run_id="run-pub"
+            )
+            for role in ("best", "median", "worst")
+        ]
 
-    assert [row["role"] for row in top] == ["best", "median", "worst"]
-    assert [row["ranking_metric_value"] for row in top] == [0.30, 0.20, 0.10]
+    assert [row["candidate"]["metrics"]["total_return"] for row in stored] == [0.30, 0.20, 0.10]

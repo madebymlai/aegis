@@ -62,7 +62,6 @@ def publish_candidates(
     *,
     run_id: str,
     candidate_rows: Sequence[Mapping[str, Any]],
-    ranking_metric: str,
     provenance: Mapping[str, Any],
     publication_state: str = PUBLICATION_PENDING,
 ) -> None:
@@ -70,7 +69,6 @@ def publish_candidates(
         candidate_store.insert_completed_run(
             run_id=run_id,
             candidate_rows=candidate_rows,
-            ranking_metric=ranking_metric,
             provenance=provenance,
             publication_state=publication_state,
         )

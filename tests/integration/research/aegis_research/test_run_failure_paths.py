@@ -76,9 +76,8 @@ def test_component_optimization_uses_component_native_candidate_grid(
     assert artifact["candidate_store"]["path"] == ".candidate_store/candidates.sqlite3"
     assert store_path.exists()
     with CandidateStore(store_path) as store:
-        top = store.top_candidates_by_run("component-boundary", limit=1)
-    assert top[0]["role"] == "best"
-    assert top[0]["candidate"]["candidate_key"] == artifact["candidates"][0]["candidate_key"]
+        best_key = store.candidate_key_for_role("component-boundary", "best")
+    assert best_key == artifact["candidates"][0]["candidate_key"]
     # ADR-0006 (aegis-rd-396.4): per-Component lock records are retired.
     assert "locks" not in artifact
     assert "locks" not in payload
@@ -151,7 +150,8 @@ def test_component_optimization_artifact_write_failure_leaves_candidates_pending
     assert payload["error"]["category"] == "execution_failure"
     assert manifest["run"]["status"] == RunStatus.FAILED
     with CandidateStore(store_path) as store:
-        assert store.top_candidates_by_run("artifact-failure", limit=1) == []
+        with pytest.raises(CandidateStoreError, match="unknown role"):
+            store.candidate_key_for_role("artifact-failure", "best")
 
 
 def test_component_optimization_completion_failure_leaves_candidates_pending(
@@ -179,7 +179,8 @@ def test_component_optimization_completion_failure_leaves_candidates_pending(
     # The run never activated, so its candidates stay pending and unqueryable.
     assert manifest["run"]["status"] == RunStatus.FAILED
     with CandidateStore(store_path) as store:
-        assert store.top_candidates_by_run("completion-failure", limit=1) == []
+        with pytest.raises(CandidateStoreError, match="unknown role"):
+            store.candidate_key_for_role("completion-failure", "best")
 
 
 def test_component_optimization_activation_failure_fails_closed(
@@ -210,7 +211,8 @@ def test_component_optimization_activation_failure_fails_closed(
     # Activation failed closed: the run's candidates remain pending and unqueryable.
     assert "locks" not in artifact
     with CandidateStore(store_path) as store:
-        assert store.top_candidates_by_run("activation-failure", limit=1) == []
+        with pytest.raises(CandidateStoreError, match="unknown role"):
+            store.candidate_key_for_role("activation-failure", "best")
 
 
 def test_component_optimization_runtime_error_records_failure_diagnostics(

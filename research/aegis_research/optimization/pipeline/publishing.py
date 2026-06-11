@@ -81,7 +81,6 @@ def run_pipeline_publishing(
             store_path,
             run_id=recorder.manifest.run_id,
             candidate_rows=candidate_rows,
-            ranking_metric=config.ranking.metric,
             provenance=candidate_store_provenance,
         )
     except Exception as error:

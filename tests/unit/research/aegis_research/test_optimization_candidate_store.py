@@ -29,17 +29,18 @@ def test_candidate_store_persists_three_candidates_and_queries_by_run(tmp_path: 
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            ranking_metric="total_return",
             provenance=provenance,
         )
 
-        top = store.top_candidates_by_run("run-a")
-        stored = store.candidate_by_key(top[0]["candidate"]["candidate_key"], run_id="run-a")
+        resolved = {
+            role: store.candidate_key_for_role("run-a", role)
+            for role in ("best", "median", "worst")
+        }
+        stored = store.candidate_by_key(resolved["best"], run_id="run-a")
 
-    assert [row["role"] for row in top] == ["best", "median", "worst"]
-    assert [row["rank"] for row in top] == [1, 2, 3]
-    assert [row["ranking_metric_value"] for row in top] == [0.30, 0.20, 0.10]
+    assert resolved == {row["role"]: row["candidate_key"] for row in candidates}
     assert stored["params"] == {"fast_window": 5, "slow_window": 10}
+    assert stored["candidate"]["metrics"]["total_return"] == 0.30
     assert stored["provenance"] == provenance
     if os.name == "posix":
         assert store_path.stat().st_mode & 0o077 == 0
@@ -56,13 +57,9 @@ def test_candidate_key_for_role_resolves_each_representative(tmp_path: Path) -> 
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            ranking_metric="total_return",
             provenance={"run_id": "run-a"},
         )
-        by_role = {
-            row["role"]: row["candidate"]["candidate_key"]
-            for row in store.top_candidates_by_run("run-a")
-        }
+        by_role = {row["role"]: row["candidate_key"] for row in candidates}
 
         for role in ("best", "median", "worst"):
             assert store.candidate_key_for_role("run-a", role) == by_role[role]
@@ -83,12 +80,13 @@ def test_candidate_store_deduplicates_single_candidate_into_three_roles(tmp_path
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            ranking_metric="total_return",
             provenance={"run_id": "run-a"},
         )
 
-        top = store.top_candidates_by_run("run-a")
-        distinct_keys = {row["candidate"]["candidate_key"] for row in top}
+        distinct_keys = {
+            store.candidate_key_for_role("run-a", role)
+            for role in ("best", "median", "worst")
+        }
         connection = store._connection
         candidate_count = connection.execute(
             "SELECT COUNT(*) FROM candidates WHERE run_id = ?", ("run-a",)
@@ -98,7 +96,6 @@ def test_candidate_store_deduplicates_single_candidate_into_three_roles(tmp_path
         ).fetchone()[0]
 
     # One deployable candidate fills all three slots: one stored candidate, three roles.
-    assert [row["role"] for row in top] == ["best", "median", "worst"]
     assert len(distinct_keys) == 1
     assert candidate_count == 1
     assert ranking_count == 3
@@ -113,18 +110,18 @@ def test_candidate_store_pending_run_is_not_queryable_until_activation(tmp_path:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            ranking_metric="total_return",
             provenance={"run_id": "run-a"},
             publication_state=PUBLICATION_PENDING,
         )
 
-        assert store.top_candidates_by_run("run-a", limit=1) == []
+        with pytest.raises(CandidateStoreError, match="unknown role"):
+            store.candidate_key_for_role("run-a", "best")
         with pytest.raises(CandidateStoreError, match="unknown candidate key"):
             store.candidate_by_key(candidate["candidate_key"], run_id="run-a")
 
         store.activate_run("run-a")
 
-        assert store.top_candidates_by_run("run-a", limit=1)
+        assert store.candidate_key_for_role("run-a", "best") == candidate["candidate_key"]
         assert store.candidate_by_key(
             candidate["candidate_key"], run_id="run-a"
         )["params"] == candidate["params"]
@@ -162,7 +159,6 @@ def test_candidate_store_persists_json_columns_in_canonical_form(tmp_path: Path)
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            ranking_metric="total_return",
             provenance={"run_id": "run-a"},
         )
 
@@ -196,7 +192,7 @@ def test_candidate_store_rejects_incompatible_schema_version(tmp_path: Path) -> 
 
 
 def test_candidate_store_rejects_superseded_schema_version(tmp_path: Path) -> None:
-    # Forward-first: a store from the previous (per-Component lock) schema fails the
+    # Forward-first: a store from the previous (denormalised rankings) schema fails the
     # version check and must be recreated — there is no migration path.
     store_path = tmp_path / "candidates.sqlite3"
     connection = sqlite3.connect(store_path)
@@ -204,15 +200,15 @@ def test_candidate_store_rejects_superseded_schema_version(tmp_path: Path) -> No
         "CREATE TABLE candidate_store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
     )
     connection.execute(
-        "INSERT INTO candidate_store_meta (key, value) VALUES ('schema_version', '4')"
+        "INSERT INTO candidate_store_meta (key, value) VALUES ('schema_version', '5')"
     )
     connection.commit()
     connection.close()
     if os.name == "posix":
         store_path.chmod(0o600)
 
-    assert SCHEMA_VERSION == 5
-    with pytest.raises(CandidateStoreError, match="schema version 4"):
+    assert SCHEMA_VERSION == 6
+    with pytest.raises(CandidateStoreError, match="schema version 5"):
         CandidateStore(store_path)
 
 
@@ -225,7 +221,6 @@ def test_candidate_store_rejects_conflicting_duplicate_candidate_payload(tmp_pat
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            ranking_metric="total_return",
             provenance={"run_id": "run-a"},
         )
 
@@ -233,7 +228,6 @@ def test_candidate_store_rejects_conflicting_duplicate_candidate_payload(tmp_pat
             store.insert_completed_run(
                 run_id="run-a",
                 candidate_rows=changed,
-                ranking_metric="total_return",
                 provenance={"run_id": "run-a"},
             )
 
@@ -246,7 +240,6 @@ def test_candidate_store_raises_on_empty_candidate_rows(tmp_path: Path) -> None:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=[],
-            ranking_metric="total_return",
             provenance={"run_id": "run-a"},
         )
 

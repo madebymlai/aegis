@@ -9,7 +9,7 @@ from typing import Any
 
 from research.aegis_research.canonical_json import canonical_json_bytes
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 PUBLICATION_PENDING = "pending"
 PUBLICATION_ACTIVE = "active"
 PUBLICATION_STATES = frozenset({PUBLICATION_PENDING, PUBLICATION_ACTIVE})
@@ -52,7 +52,6 @@ class CandidateStore:
         *,
         run_id: str,
         candidate_rows: Sequence[Mapping[str, Any]],
-        ranking_metric: str,
         provenance: Mapping[str, Any],
         publication_state: str = PUBLICATION_ACTIVE,
     ) -> None:
@@ -70,17 +69,7 @@ class CandidateStore:
         ]
         candidate_payloads = [(value[1], value[4]) for value in candidate_values]
         ranking_values = [
-            (
-                run_id,
-                str(row["role"]),
-                int(row["rank"]),
-                str(row["candidate_key"]),
-                ranking_metric,
-                _float_or_none(row.get("metrics", {}).get(ranking_metric)),
-                _float_or_none(row.get("score")),
-                _json_dumps(row.get("metrics", {})),
-                publication_state,
-            )
+            (run_id, str(row["role"]), str(row["candidate_key"]), publication_state)
             for row in candidate_rows
         ]
         with self._connection:
@@ -119,14 +108,9 @@ class CandidateStore:
                 INSERT INTO candidate_rankings (
                     run_id,
                     role,
-                    rank,
                     candidate_key,
-                    ranking_metric,
-                    ranking_metric_value,
-                    score,
-                    metrics_json,
                     publication_state
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?)
                 """,
                 ranking_values,
             )
@@ -147,23 +131,6 @@ class CandidateStore:
                 "UPDATE candidate_rankings SET publication_state = ? WHERE run_id = ?",
                 (PUBLICATION_ACTIVE, run_id),
             )
-
-    def top_candidates_by_run(self, run_id: str, *, limit: int = 5) -> list[dict[str, Any]]:
-        rows = self._connection.execute(
-            """
-            SELECT r.rank, r.role, r.ranking_metric, r.ranking_metric_value, r.score,
-                   r.metrics_json, c.candidate_row_json, c.provenance_json
-            FROM candidate_rankings r
-            JOIN candidates c ON c.run_id = r.run_id AND c.candidate_key = r.candidate_key
-            WHERE r.run_id = ?
-                AND r.publication_state = ?
-                AND c.publication_state = ?
-            ORDER BY r.rank ASC
-            LIMIT ?
-            """,
-            (run_id, PUBLICATION_ACTIVE, PUBLICATION_ACTIVE, limit),
-        ).fetchall()
-        return [_ranked_result(row) for row in rows]
 
     def candidate_key_for_role(self, run_id: str, role: str) -> str:
         """Resolve a representative role (best/median/worst) to its candidate_key.
@@ -238,19 +205,11 @@ class CandidateStore:
             CREATE TABLE IF NOT EXISTS candidate_rankings (
                 run_id TEXT NOT NULL,
                 role TEXT NOT NULL,
-                rank INTEGER NOT NULL,
                 candidate_key TEXT NOT NULL,
-                ranking_metric TEXT NOT NULL,
-                ranking_metric_value REAL,
-                score REAL,
-                metrics_json TEXT NOT NULL,
                 publication_state TEXT NOT NULL,
                 PRIMARY KEY (run_id, role),
-                UNIQUE (run_id, rank),
                 FOREIGN KEY (run_id, candidate_key) REFERENCES candidates(run_id, candidate_key)
             );
-            CREATE INDEX IF NOT EXISTS idx_candidate_rankings_run
-                ON candidate_rankings(run_id, rank);
             """
         )
 
@@ -375,26 +334,6 @@ def _validate_publication_state(value: str) -> None:
 def _chunks(values: Sequence[str], size: int) -> Iterator[tuple[str, ...]]:
     for start in range(0, len(values), size):
         yield tuple(values[start : start + size])
-
-
-def _ranked_result(row: sqlite3.Row) -> dict[str, Any]:
-    return {
-        "rank": row["rank"],
-        "role": row["role"],
-        "ranking_metric": row["ranking_metric"],
-        "ranking_metric_value": row["ranking_metric_value"],
-        "score": row["score"],
-        "metrics": _json_loads(row["metrics_json"]),
-        "candidate": _json_loads(row["candidate_row_json"]),
-        "provenance": _json_loads(row["provenance_json"]),
-    }
-
-
-def _float_or_none(value: Any) -> float | None:
-    if value is None:
-        return None
-    parsed = float(value)
-    return None if parsed != parsed else parsed
 
 
 def _json_dumps(value: Any) -> str:

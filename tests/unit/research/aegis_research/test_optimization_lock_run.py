@@ -30,15 +30,15 @@ from tests.support.research.aegis_research.factories import make_lock
 
 def test_resolves_per_component_params_for_locked_candidate(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
-        candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
+        candidate_key = store.candidate_key_for_role("run-a", "best")
 
         resolved = resolve_lock_run(
-            make_lock(run_id="run-a", candidate_id=candidate["candidate_key"]),
+            make_lock(run_id="run-a", candidate_id=candidate_key),
             store=store,
         )
 
     assert resolved.run_id == "run-a"
-    assert resolved.candidate_key == candidate["candidate_key"]
+    assert resolved.candidate_key == candidate_key
     # Params fan across both the strategy and the indicator slots.
     strategy_ref = ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
     indicator_ref = ComponentRef("indicators", "demo.mom", "demo.mom")
@@ -50,9 +50,7 @@ def test_resolves_role_handle_through_rankings(tmp_path: Path) -> None:
     # aegis-rd-6ie: a role keyword in candidate_id resolves to the ranked candidate_key
     # via candidate_rankings, and provenance still records the *resolved* hash.
     with _store_with_candidate(tmp_path) as store:
-        expected_key = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"][
-            "candidate_key"
-        ]
+        expected_key = store.candidate_key_for_role("run-a", "best")
 
         resolved = resolve_lock_run(
             make_lock(run_id="run-a", candidate_id="best"),
@@ -68,8 +66,8 @@ def test_role_selects_the_matching_ranked_candidate(tmp_path: Path) -> None:
     # median candidate's key and params — never the best's.
     with _store_with_distinct_roles(tmp_path) as store:
         ranked = {
-            row["role"]: row["candidate"]["candidate_key"]
-            for row in store.top_candidates_by_run("run-a", limit=3)
+            role: store.candidate_key_for_role("run-a", role)
+            for role in ("best", "median", "worst")
         }
 
         resolved = resolve_lock_run(
@@ -87,10 +85,10 @@ def test_role_selects_the_matching_ranked_candidate(tmp_path: Path) -> None:
 
 def test_rejects_unknown_run_id(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
-        candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
+        candidate_key = store.candidate_key_for_role("run-a", "best")
         with pytest.raises(LockRunResolutionError, match="unknown candidate"):
             resolve_lock_run(
-                make_lock(run_id="run-missing", candidate_id=candidate["candidate_key"]),
+                make_lock(run_id="run-missing", candidate_id=candidate_key),
                 store=store,
             )
 
@@ -106,10 +104,10 @@ def test_rejects_unknown_candidate_id(tmp_path: Path) -> None:
 
 def test_rejects_candidate_missing_referenced_component(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path, drop_indicator_runtime=True) as store:
-        candidate = store.top_candidates_by_run("run-a", limit=1)[0]["candidate"]
+        candidate_key = store.candidate_key_for_role("run-a", "best")
         with pytest.raises(LockRunResolutionError, match="does not include component"):
             resolve_lock_run(
-                make_lock(run_id="run-a", candidate_id=candidate["candidate_key"]),
+                make_lock(run_id="run-a", candidate_id=candidate_key),
                 store=store,
             )
 
@@ -120,7 +118,6 @@ def _store_with_candidate(tmp_path: Path, *, drop_indicator_runtime: bool = Fals
     store.insert_completed_run(
         run_id="run-a",
         candidate_rows=candidates,
-        ranking_metric="total_return",
         provenance={
             "run_id": "run-a",
             "source": _source_evidence(drop_indicator_runtime=drop_indicator_runtime),
@@ -149,7 +146,6 @@ def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
     store.insert_completed_run(
         run_id="run-a",
         candidate_rows=rows,
-        ranking_metric="total_return",
         provenance={"run_id": "run-a", "source": _source_evidence()},
     )
     return store

@@ -96,7 +96,6 @@ def test_completion_returns_result_and_marks_completed(
         store.insert_completed_run(
             run_id=run_id,
             candidate_rows=candidate_rows,
-            ranking_metric=config.ranking.metric,
             provenance=publishing.candidate_store_provenance,
             publication_state=PUBLICATION_PENDING,
         )
@@ -190,15 +189,16 @@ def test_completion_returns_result_and_marks_completed(
     assert recorder.manifest.finished_at == "2025-01-01T01:00:00Z"
 
     # Assert candidate-run activation
-    # top_candidates_by_run filters to PUBLICATION_ACTIVE rows only.
+    # candidate_key_for_role resolves PUBLICATION_ACTIVE rows only.
     with CandidateStore(store_path) as store:
-        top = store.top_candidates_by_run(run_id)
-    assert len(top) == 3
-    assert [row["role"] for row in top] == ["best", "median", "worst"]
-    assert [row["rank"] for row in top] == [1, 2, 3]
-    assert top[0]["ranking_metric_value"] == pytest.approx(0.30)
-    assert top[1]["ranking_metric_value"] == pytest.approx(0.20)
-    assert top[2]["ranking_metric_value"] == pytest.approx(0.10)
+        stored = [
+            store.candidate_by_key(
+                store.candidate_key_for_role(run_id, role), run_id=run_id
+            )
+            for role in ("best", "median", "worst")
+        ]
+    scores = [row["candidate"]["score"] for row in stored]
+    assert scores == pytest.approx([0.30, 0.20, 0.10])
 
     # Assert artifact payload structure
     assert "schema_version" in captured_artifact

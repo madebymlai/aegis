@@ -93,7 +93,6 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
         store.insert_completed_run(
             run_id="stored-decode-run",
             candidate_rows=rows,
-            ranking_metric="total_return",
             provenance={
                 "run_id": "stored-decode-run",
                 "source": {
@@ -124,7 +123,8 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
             },
         )
 
-        row = store.top_candidates_by_run("stored-decode-run", limit=3)[1]["candidate"]
+        median_key = store.candidate_key_for_role("stored-decode-run", "median")
+        row = store.candidate_by_key(median_key, run_id="stored-decode-run")["candidate"]
     slices = slice_by_component(row["params"])
 
     assert strategy_ref in slices

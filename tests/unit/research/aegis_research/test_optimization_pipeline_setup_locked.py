@@ -104,7 +104,6 @@ def _seed_candidate_store(config: Any) -> str:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=rows,
-            ranking_metric="total_return",
             provenance={"run_id": "run-a", "source": _source_evidence()},
         )
     return candidate_key
@@ -305,7 +304,6 @@ def _seed_parameterized_candidate(config: Any) -> str:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=rows,
-            ranking_metric="total_return",
             provenance={"run_id": "run-a", "source": _parameterized_source_evidence()},
         )
     return candidate_key
