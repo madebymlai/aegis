@@ -126,11 +126,9 @@ class MarketDataResult:
 
 @dataclass(frozen=True)
 class MarketDataBundle:
-    """Eager value object: a dict of materialised Array panels with one guarded accessor.
+    """Eager value object of materialised Array panels.
 
-    The keys are exactly the Arrays loaded for this Run — "loaded iff present
-    in the dict", so dict membership *is* the guard and there is no separate
-    check to keep in sync.
+    Dict membership is the sole guard — a feature is loaded iff it is a key.
     """
 
     features: dict[str, pd.DataFrame]

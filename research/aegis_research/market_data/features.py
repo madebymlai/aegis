@@ -33,11 +33,10 @@ def low_from_ohlcv(data: Any) -> pd.DataFrame:
 
 
 def feature_from_ohlcv(data: Any, feature: str) -> pd.DataFrame:
-    """Pure resolver: extract a named Array panel from native data or a DataFrame.
+    """Extract a named Array panel from native data or a DataFrame.
 
-    No usability guard, no ``assert_usable``, no ``MarketDataResult`` branch.
-    Dispatches on shape: a ``.get()``-bearing object (native VBT data) →
-    ``feature_panel``, a ``pd.DataFrame`` → ``feature_from_frame``.
+    Dispatches on a ``.get()``-bearing object (native VBT data) or
+    ``pd.DataFrame``. No usability guard or ``MarketDataResult`` coupling.
     """
     if hasattr(data, "get") and not isinstance(data, pd.DataFrame):
         return _panels.feature_panel(data, feature, role=feature)

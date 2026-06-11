@@ -66,16 +66,11 @@ def as_panel(values: Any, *, role: str) -> pd.DataFrame:
 
 
 def market_data_bundle(result: MarketDataResult) -> MarketDataBundle:
-    """Build an eager Bundle from a validated Result.
-
-    Materialises every declared loaded Array up front via
-    ``canonical_feature_panel``, failing loud if a declared Array cannot
-    panelise. The Bundle's dict keys are exactly the loaded set — no
-    separate guard to keep in sync.
-    """
+    """Materialise every declared loaded Array into an eager Bundle."""
     result.assert_usable()
-    loaded_arrays: list[str] = list(result.metadata.get("loaded_arrays", ()))
-    features: dict[str, pd.DataFrame] = {}
-    for name in loaded_arrays:
-        features[name] = canonical_feature_panel(result.native_data, name)
+    loaded_arrays = result.metadata.get("loaded_arrays", ())
+    features = {
+        name: canonical_feature_panel(result.native_data, name)
+        for name in loaded_arrays
+    }
     return MarketDataBundle(features=features)
