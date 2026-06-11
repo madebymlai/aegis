@@ -10,9 +10,9 @@ strategy-schema` — as curated markdown for an LLM (or human) author. Each guid
 derivable sections — field tables, literal catalogs such as
 `STRATEGY_ALLOCATION_OUTPUTS` and `DATA_ARRAY_SHORTCUTS` — are interpolated from the
 validating pydantic models and code constants at render time, so they cannot drift;
-semantics prose (wide-callable signature, NaN-selection convention, candidate-major
-layout) is curated by hand; example snippets are complete, working artifacts that tests
-round-trip through the real parser/validator. The prose docs this replaces
+semantics prose (the batched `run` entry-point signature, NaN-selection convention,
+candidate-major layout) is curated by hand; example snippets are complete, working
+artifacts that tests round-trip through the real parser/validator. The prose docs this replaces
 (`docs/components.md`, the schema section of `research/configs/README.md`) shrink to
 pointers, and the drift-assertion tests (`test_cli_docs.py` style) migrate to assert
 against rendered guide output. The driver is the same single-source-of-truth argument as
@@ -32,6 +32,12 @@ Two contract details are part of the decision:
   author* (contracts). `show components` stays — the guides do not replace the
   discovery/verification catalog.
 
+The v2 component contract (ADR-0017) reinforces the hybrid choice: the manifest carries
+domain facts only, while the entry points are fixed-name structural rules (`def run`,
+optional `def param_space`, presence-detected in the AST) — contract knowledge a pydantic
+field table cannot express, only curated prose plus interpolated constants
+(`COMPONENT_ENTRYPOINT`, `COMPONENT_PARAM_SPACE_ENTRYPOINT`) can.
+
 ## Considered options
 
 - **Raw `TypeAdapter(RunConfig).json_schema()` dump:** free and drift-proof, but
@@ -42,8 +48,8 @@ Two contract details are part of the decision:
   only for the exact strings someone remembered to assert; field tables go stale the day
   a model field changes.
 - **Fully generated from `json_schema()`:** zero drift, but the semantics an author
-  actually needs (NaN selection, candidate-major layout, wide signature) have no code
-  source and would be lost.
+  actually needs (NaN selection, candidate-major layout, the batched entry-point
+  signature) have no code source and would be lost.
 - **Docs as templates** (CLI renders `docs/*.md` with interpolation markers): single
   source and browsable on disk, but the markdown grows placeholder syntax that is wrong
   when read raw, and `docs/` becomes a runtime dependency of the CLI.
