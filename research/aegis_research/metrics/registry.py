@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.metrics.contracts import (
     METRIC_SOURCE_TYPES,
     ExtractorSpec,
@@ -111,5 +111,4 @@ def _registry_fingerprint(definitions: Mapping[str, MetricDefinition]) -> str:
         metric_id: definition.fingerprint_payload()
         for metric_id, definition in sorted(definitions.items())
     }
-    data = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode()
-    return hashlib.sha256(data).hexdigest()
+    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()

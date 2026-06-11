@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-import json
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -10,6 +9,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.component_registry.contracts import (
     COMPONENT_FAMILIES,
     ComponentDefinition,
@@ -190,5 +190,4 @@ def _registry_fingerprint(
         }
         for family, family_definitions in definitions.items()
     }
-    data = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode()
-    return hashlib.sha256(data).hexdigest()
+    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()

@@ -305,3 +305,34 @@ def test_public_snapshot_schema_version() -> None:
     assert snapshot["schema_version"] == "component_registry_snapshot.v1"
     assert "fingerprint" in snapshot
     assert "families" in snapshot
+
+
+def test_non_finite_default_is_normalised_to_null_in_fingerprint() -> None:
+    """A NaN default param is normalised to null, not emitted as the non-spec 'NaN'.
+
+    The old local json.dumps(..., default=str) would have emitted the string
+    "NaN".  canonical_json_bytes normalises it to null via to_builtin and
+    rejects any surviving non-finite float via allow_nan=False.
+    """
+    definition = _indicator(
+        id="demo.nan_default",
+        defaults={"window": float("nan")},
+    )
+    snapshot = definition.public_snapshot()
+    assert snapshot["params"]["defaults"]["window"] is None
+
+    registry = make_component_registry(
+        {"indicators": {"demo.nan_default": definition}}
+    )
+    # The fingerprint must still be a valid 64-char hex string.
+    assert len(registry.fingerprint) == 64
+    assert all(c in "0123456789abcdef" for c in registry.fingerprint)
+
+
+def test_non_finite_default_is_byte_stable() -> None:
+    """Fingerprint is deterministic even with NaN defaults (normalised to null)."""
+    a = _indicator(id="demo.nan", defaults={"window": float("nan")})
+    b = _indicator(id="demo.nan", defaults={"window": float("nan")})
+    r1 = make_component_registry({"indicators": {"demo.nan": a}})
+    r2 = make_component_registry({"indicators": {"demo.nan": b}})
+    assert r1.fingerprint == r2.fingerprint

@@ -263,3 +263,63 @@ def test_builtin_extractors_match_the_portfolio_catalog_exactly() -> None:
     register and never compute — dead code. Exact set equality closes it.
     """
     assert set(BUILTIN_EXTRACTORS) == set(PORTFOLIO_METRIC_VALUE_KEYS)
+
+
+def test_non_finite_metadata_is_normalised_to_null_in_fingerprint() -> None:
+    """A NaN metadata value is normalised to null, not emitted as 'NaN'.
+
+    The old local json.dumps(..., default=str) would have emitted the string
+    "NaN".  canonical_json_bytes normalises it to null via to_builtin and
+    rejects any surviving non-finite float via allow_nan=False.
+    """
+    registry = MetricRegistry()
+    definition = MetricDefinition(
+        id="nan_metric",
+        title="NaN Test",
+        source_type=SOURCE_TYPE_VBT_STATS,
+        unit="ratio",
+        value_semantics="larger_is_better",
+        provider="vectorbtpro",
+        target="portfolio",
+        vbt_metric="nan_metric",
+        source_method="stats",
+        metadata={"threshold": float("nan")},
+    )
+    registry.register(definition, _SPEC)
+    frozen = registry.freeze()
+    # Fingerprint must still be a valid 64-char hex string.
+    assert len(frozen.fingerprint) == 64
+    assert all(c in "0123456789abcdef" for c in frozen.fingerprint)
+
+    # The NaN was normalised to null in the fingerprint payload.
+    payload = definition.fingerprint_payload()
+    assert payload["metadata"]["threshold"] is None
+
+
+def test_non_finite_metadata_fingerprint_is_byte_stable() -> None:
+    """Fingerprint is deterministic even with NaN metadata (normalised to null)."""
+    a = MetricRegistry()
+    a.register(
+        MetricDefinition(
+            id="nan",
+            title="NaN",
+            source_type=SOURCE_TYPE_VBT_STATS,
+            unit="ratio",
+            value_semantics="larger_is_better",
+            metadata={"score": float("nan")},
+        ),
+        _SPEC,
+    )
+    b = MetricRegistry()
+    b.register(
+        MetricDefinition(
+            id="nan",
+            title="NaN",
+            source_type=SOURCE_TYPE_VBT_STATS,
+            unit="ratio",
+            value_semantics="larger_is_better",
+            metadata={"score": float("nan")},
+        ),
+        _SPEC,
+    )
+    assert a.freeze().fingerprint == b.freeze().fingerprint
