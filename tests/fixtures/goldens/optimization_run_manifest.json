@@ -1,23 +1,23 @@
 {
   "artifacts": [
     {
-      "hash": "ce0f3560c97c4bf049646f84d6b322f7669c414fa474dcf13fd4e9a65d57bb16",
+      "hash": "f9ac80bea0f10a6d06abaa6278be35310a8e4ec84069a106151031245896a219",
       "hash_algorithm": "sha256",
       "id": "data.metadata",
       "metadata": {},
       "path": "data_metadata.json",
       "producer_stage": "data",
       "role": "data_metadata",
-      "schema_version": "data_metadata.v2",
+      "schema_version": "data_metadata.v3",
       "shape": {},
-      "size": 21205,
+      "size": 21431,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
       "upstream_artifact_ids": []
     },
     {
-      "hash": "ee1483c82563244e742ba2d23cd107f6b022df09a126025af4c31eeaadd69773",
+      "hash": "ccb887e4c31cf918e11776447c0a4acec23052ec1e3ec511bedfc3718ce44e25",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 49407,
+      "size": 48953,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -169,7 +169,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_ef7b1ce648a5ff2b14633d0a0c4394cf",
+          "candidate_key": "cand_0180a43319818556010d780a643f3163",
           "held_out_metrics": {
             "0": {
               "max_dd": 19.259731031899552,
@@ -256,10 +256,10 @@
               },
               "index_start": "2020-01-01 00:00:00+00:00",
               "loaded_arrays": [
-                "Open",
+                "Close",
                 "High",
                 "Low",
-                "Close",
+                "Open",
                 "Volume"
               ],
               "requested_symbols": [
@@ -274,13 +274,8 @@
                 "XLE",
                 "XLU"
               ],
-              "schema_version": "candidate_data_identity.v1",
-              "shape": {
-                "columns": 50,
-                "features": 5,
-                "rows": 1008,
-                "symbols": 10
-              },
+              "rows": 1008,
+              "schema_version": "candidate_data_identity.v2",
               "source": "synthetic",
               "source_metadata": {
                 "generated": true,
@@ -427,7 +422,7 @@
           }
         },
         {
-          "candidate_key": "cand_015d2419356d69662396a2e79ad82cdf",
+          "candidate_key": "cand_5f6ca0cffb6a5cc717ebb17b1f7cae4b",
           "held_out_metrics": {
             "0": {
               "max_dd": 18.118116158313768,
@@ -514,10 +509,10 @@
               },
               "index_start": "2020-01-01 00:00:00+00:00",
               "loaded_arrays": [
-                "Open",
+                "Close",
                 "High",
                 "Low",
-                "Close",
+                "Open",
                 "Volume"
               ],
               "requested_symbols": [
@@ -532,13 +527,8 @@
                 "XLE",
                 "XLU"
               ],
-              "schema_version": "candidate_data_identity.v1",
-              "shape": {
-                "columns": 50,
-                "features": 5,
-                "rows": 1008,
-                "symbols": 10
-              },
+              "rows": 1008,
+              "schema_version": "candidate_data_identity.v2",
               "source": "synthetic",
               "source_metadata": {
                 "generated": true,
@@ -685,7 +675,7 @@
           }
         },
         {
-          "candidate_key": "cand_5b2edcabe5cad94edcd740a03925db5e",
+          "candidate_key": "cand_c2f04e50c7da384ff0d1ce56dbb0582d",
           "held_out_metrics": {
             "0": {
               "max_dd": 27.841344065208496,
@@ -772,10 +762,10 @@
               },
               "index_start": "2020-01-01 00:00:00+00:00",
               "loaded_arrays": [
-                "Open",
+                "Close",
                 "High",
                 "Low",
-                "Close",
+                "Open",
                 "Volume"
               ],
               "requested_symbols": [
@@ -790,13 +780,8 @@
                 "XLE",
                 "XLU"
               ],
-              "schema_version": "candidate_data_identity.v1",
-              "shape": {
-                "columns": 50,
-                "features": 5,
-                "rows": 1008,
-                "symbols": 10
-              },
+              "rows": 1008,
+              "schema_version": "candidate_data_identity.v2",
               "source": "synthetic",
               "source_metadata": {
                 "generated": true,
@@ -970,10 +955,10 @@
           "Volume"
         ],
         "loaded_arrays": [
-          "Open",
+          "Close",
           "High",
           "Low",
-          "Close",
+          "Open",
           "Volume"
         ],
         "missing_required_arrays": [],

@@ -69,7 +69,7 @@ def test_duplicate_csv_index_is_rejected_before_vectorbt_normalizes(tmp_path: Pa
 
     assert result.quality.state == "rejected"
     assert "raw data index contains duplicate timestamps" in result.quality.reasons
-    assert result.metadata["index_evidence"]["raw_index_has_duplicates"] is True
+    assert result.metadata.provenance.index_evidence["raw_index_has_duplicates"] is True
 
 
 def test_non_monotonic_csv_index_is_rejected_before_vectorbt_sorts(tmp_path: Path) -> None:
@@ -248,7 +248,7 @@ def test_remote_post_alignment_evidence_is_explicit() -> None:
         },
     )
 
-    assert result.metadata["index_evidence"]["source"] == "post_vectorbt_alignment"
+    assert result.metadata.provenance.index_evidence["source"] == "post_vectorbt_alignment"
 
 
 def test_provider_failure_returns_safe_non_usable_result() -> None:
@@ -262,8 +262,8 @@ def test_provider_failure_returns_safe_non_usable_result() -> None:
 
     assert result.native_data is None
     assert result.quality.state == "provider_failed"
-    assert result.metadata["quality"]["state"] == "provider_failed"
-    assert result.metadata["diagnostics"][0]["provider_status"] == "provider_failed"
+    assert result.metadata.quality["state"] == "provider_failed"
+    assert result.metadata.diagnostics[0]["provider_status"] == "provider_failed"
     assert "network unavailable" not in str(result.metadata)
 
 
@@ -277,7 +277,7 @@ def test_provider_update_support_uses_symbol_update_capability() -> None:
         },
     )
 
-    assert result.metadata["update_supported"] is True
+    assert result.metadata.provenance.update_supported is True
 
 
 def test_provider_update_support_uses_feature_update_capability() -> None:
@@ -290,7 +290,7 @@ def test_provider_update_support_uses_feature_update_capability() -> None:
         },
     )
 
-    assert result.metadata["update_supported"] is True
+    assert result.metadata.provenance.update_supported is True
 
 
 class _ProviderMetadataData:

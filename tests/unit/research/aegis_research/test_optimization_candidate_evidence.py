@@ -171,11 +171,25 @@ def test_candidate_identity_golden_bytes_pin() -> None:
         index,
         source_identity={"source": "component", "id": "demo.rsi", "source_hash": "abc123"},
         data_identity={
+            "schema_version": "candidate_data_identity.v2",
             "source": "synthetic",
+            "requested_symbols": ["SYN", "ALT"],
             "symbols": ["SYN", "ALT"],
             "timeframe": "1D",
+            "effective_arrays": ["Close", "Open"],
+            "loaded_arrays": ["Close"],
+            "rows": 31,
             "index_start": "2026-01-01",
             "index_end": "2026-01-31",
+            "index_evidence": {},
+            "source_metadata": {},
+            "array_contract": {
+                "configured_arrays": ["Close"],
+                "component_required_arrays": [],
+                "pipeline_required_arrays": ["Close", "Open"],
+                "contract_required_arrays": ["Close", "Open"],
+                "missing_required_arrays": ["Open"],
+            },
         },
         hidden_params={"execution": "next_open"},
         allocation_policy={"fees": 0.001, "target_exposure_cap": 1.0},
@@ -183,13 +197,19 @@ def test_candidate_identity_golden_bytes_pin() -> None:
 
     assert canonical_json_bytes(row["identity"]) == (
         b'{"allocation_policy":{"fees":0.001,"target_exposure_cap":1.0},'
-        b'"data_identity":{"index_end":"2026-01-31","index_start":"2026-01-01",'
-        b'"source":"synthetic","symbols":["SYN","ALT"],"timeframe":"1D"},'
-        b'"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
+        b'"data_identity":{"array_contract":{"component_required_arrays":[],'
+        b'"configured_arrays":["Close"],"contract_required_arrays":["Close","Open"],'
+        b'"missing_required_arrays":["Open"],"pipeline_required_arrays":["Close","Open"]},'
+        b'"effective_arrays":["Close","Open"],"index_end":"2026-01-31",'
+        b'"index_evidence":{},"index_start":"2026-01-01","loaded_arrays":["Close"],'
+        b'"requested_symbols":["SYN","ALT"],"rows":31,'
+        b'"schema_version":"candidate_data_identity.v2",'
+        b'"source":"synthetic","source_metadata":{},"symbols":["SYN","ALT"],'
+        b'"timeframe":"1D"},"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
         b'"ma_window":100,"rsi_window":14},"schema_version":"candidate_identity.v3",'
         b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
     )
-    assert row["candidate_key"] == "cand_e1dec236b80331986059744bf9f79913"
+    assert row["candidate_key"] == "cand_513714c16125b81fe4bf8e878311b840"
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:

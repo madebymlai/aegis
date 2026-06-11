@@ -4,6 +4,13 @@ from typing import ClassVar
 
 import pytest
 
+from research.aegis_research.market_data.contracts import (
+    ArrayDescriptor,
+    CoverageFacet,
+    MarketDataMetadataV3,
+    ProvenanceFacet,
+    RequestFacet,
+)
 from research.aegis_research.optimization.run_data_contract import (
     DataArrayContract,
     build_candidate_data_identity,
@@ -63,11 +70,39 @@ def test_build_run_data_evidence_payload_extends_contract_payload(
     class _FakeResult:
         class quality:
             state = "ok"
-        metadata: ClassVar = {
-            "source": "synthetic",
-            "symbols": ["SYN"],
-            "loaded_arrays": ["Close", "Open"],
-        }
+        metadata = MarketDataMetadataV3(
+            schema_version="market_data.v3",
+            request=RequestFacet(
+                source="synthetic",
+                requested_symbols=["SYN"],
+                timeframe="1D",
+                authored_arrays=["Close", "Open"],
+                effective_arrays=["Close", "Open"],
+            ),
+            arrays=[
+                ArrayDescriptor(name="Close", required=True, loaded=True, observed=True, ohlc=True),
+                ArrayDescriptor(name="Open", required=True, loaded=True, observed=True, ohlc=True),
+            ],
+            coverage=CoverageFacet(
+                symbols=["SYN"], rows=0, start=None, end=None
+            ),
+            quality={"state": "ok"},
+            diagnostics=[],
+            provenance=ProvenanceFacet(
+                provider_class=None,
+                source_metadata={},
+                index_evidence={},
+                provider_metadata={},
+                omitted_metadata_fields=[],
+                update_supported=False,
+                missing_index="raise",
+                missing_columns="raise",
+                tz_localize=None,
+                tz_convert=None,
+                skip_on_error=False,
+                silence_warnings=False,
+            ),
+        )
 
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
     payload = build_run_data_evidence_payload(_FakeResult(), contract)
@@ -85,23 +120,50 @@ def test_build_candidate_data_identity_captures_source_and_contract(
     resolved = build_resolved_run_config(tmp_path)
 
     class _FakeResult:
-        metadata: ClassVar = {
-            "source": "synthetic",
-            "symbols": ["SYN"],
-            "timeframe": "1D",
-            "loaded_arrays": ["Close", "Open"],
-            "shape": (120, 1),
-            "index_start": "2020-01-01",
-            "index_end": "2020-06-01",
-        }
+        metadata = MarketDataMetadataV3(
+            schema_version="market_data.v3",
+            request=RequestFacet(
+                source="synthetic",
+                requested_symbols=["SYN"],
+                timeframe="1D",
+                authored_arrays=["Close", "Open"],
+                effective_arrays=["Close", "Open"],
+            ),
+            arrays=[
+                ArrayDescriptor(name="Close", required=True, loaded=True, observed=True, ohlc=True),
+                ArrayDescriptor(name="Open", required=True, loaded=True, observed=True, ohlc=True),
+            ],
+            coverage=CoverageFacet(
+                symbols=["SYN"], rows=120, start="2020-01-01", end="2020-06-01"
+            ),
+            quality={"state": "healthy"},
+            diagnostics=[],
+            provenance=ProvenanceFacet(
+                provider_class=None,
+                source_metadata={},
+                index_evidence={},
+                provider_metadata={},
+                omitted_metadata_fields=[],
+                update_supported=False,
+                missing_index="raise",
+                missing_columns="raise",
+                tz_localize=None,
+                tz_convert=None,
+                skip_on_error=False,
+                silence_warnings=False,
+            ),
+        )
 
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
     identity = build_candidate_data_identity(_FakeResult(), contract)
 
-    assert identity["schema_version"] == "candidate_data_identity.v1"
+    assert identity["schema_version"] == "candidate_data_identity.v2"
     assert identity["source"] == "synthetic"
     assert identity["symbols"] == ["SYN"]
     assert identity["timeframe"] == "1D"
-    assert identity["shape"] == (120, 1)
+    assert identity["loaded_arrays"] == ["Close", "Open"]
+    assert identity["rows"] == 120
+    assert identity["index_start"] == "2020-01-01"
+    assert identity["index_end"] == "2020-06-01"
     assert "array_contract" in identity
     assert "configured_arrays" in identity["array_contract"]

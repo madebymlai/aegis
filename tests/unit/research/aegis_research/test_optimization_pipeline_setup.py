@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
+from research.aegis_research.market_data.contracts import (
+    ArrayDescriptor,
+    CoverageFacet,
+    MarketDataMetadataV3,
+    ProvenanceFacet,
+    RequestFacet,
+)
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.setup import (
@@ -30,13 +37,39 @@ class _FakeDataResult:
     class quality:
         state = "ok"
 
-    metadata: ClassVar[dict[str, Any]] = {
-        "source": "synthetic",
-        "symbols": ["SYN"],
-        "loaded_arrays": ["Close", "Open"],
-        "effective_arrays": ["OHLCV"],
-        "shape": {"rows": 120},
-    }
+    metadata = MarketDataMetadataV3(
+        schema_version="market_data.v3",
+        request=RequestFacet(
+            source="synthetic",
+            requested_symbols=["SYN"],
+            timeframe="1D",
+            authored_arrays=["OHLCV"],
+            effective_arrays=["OHLCV"],
+        ),
+        arrays=[
+            ArrayDescriptor(name="Close", required=True, loaded=True, observed=True, ohlc=True),
+            ArrayDescriptor(name="Open", required=True, loaded=True, observed=True, ohlc=True),
+        ],
+        coverage=CoverageFacet(
+            symbols=["SYN"], rows=120, start=None, end=None
+        ),
+        quality={"state": "healthy"},
+        diagnostics=[],
+        provenance=ProvenanceFacet(
+            provider_class=None,
+            source_metadata={},
+            index_evidence={},
+            provider_metadata={},
+            omitted_metadata_fields=[],
+            update_supported=False,
+            missing_index="raise",
+            missing_columns="raise",
+            tz_localize=None,
+            tz_convert=None,
+            skip_on_error=False,
+            silence_warnings=False,
+        ),
+    )
 
 
 def _run_evidence() -> RunEvidence:

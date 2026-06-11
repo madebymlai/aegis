@@ -7,7 +7,7 @@ identity for orchestrated optimization runs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from research.aegis_research.component_registry import (
@@ -72,26 +72,19 @@ def build_data_array_contract(
     )
 
 
-def with_data_array_contract_metadata(
-    data_result: MarketDataResult,
-    array_contract: DataArrayContract,
-) -> MarketDataResult:
-    metadata = dict(data_result.metadata)
-    metadata.update(array_contract.metadata())
-    return replace(data_result, metadata=metadata)
-
-
 def data_array_evidence_payload(
     data_result: MarketDataResult,
     array_contract: DataArrayContract,
 ) -> dict[str, Any]:
     metadata = data_result.metadata
+    loaded_arrays = [d.name for d in metadata.arrays if d.loaded]
+    unavailable_arrays = [d.name for d in metadata.arrays if d.required and not d.loaded]
     return {
         **array_contract.metadata(),
-        "authored_arrays": metadata.get("authored_arrays"),
-        "effective_arrays": metadata.get("effective_arrays"),
-        "loaded_arrays": metadata.get("loaded_arrays"),
-        "unavailable_arrays": metadata.get("unavailable_arrays"),
+        "authored_arrays": metadata.request.authored_arrays,
+        "effective_arrays": metadata.request.effective_arrays,
+        "loaded_arrays": loaded_arrays,
+        "unavailable_arrays": unavailable_arrays,
         "quality_state": data_result.quality.state,
     }
 
@@ -136,18 +129,19 @@ def build_candidate_data_identity(
     array_contract: DataArrayContract,
 ) -> dict[str, Any]:
     metadata = data_result.metadata
+    loaded_arrays = [d.name for d in metadata.arrays if d.loaded]
     return {
-        "schema_version": "candidate_data_identity.v1",
-        "source": metadata.get("source"),
-        "requested_symbols": metadata.get("requested_symbols"),
-        "symbols": metadata.get("symbols"),
-        "timeframe": metadata.get("timeframe"),
-        "effective_arrays": metadata.get("effective_arrays"),
-        "loaded_arrays": metadata.get("loaded_arrays"),
-        "shape": metadata.get("shape"),
-        "index_start": metadata.get("index_start"),
-        "index_end": metadata.get("index_end"),
-        "index_evidence": metadata.get("index_evidence"),
-        "source_metadata": metadata.get("source_metadata"),
+        "schema_version": "candidate_data_identity.v2",
+        "source": metadata.request.source,
+        "requested_symbols": metadata.request.requested_symbols,
+        "symbols": metadata.coverage.symbols,
+        "timeframe": metadata.request.timeframe,
+        "effective_arrays": metadata.request.effective_arrays,
+        "loaded_arrays": loaded_arrays,
+        "rows": metadata.coverage.rows,
+        "index_start": metadata.coverage.start,
+        "index_end": metadata.coverage.end,
+        "index_evidence": metadata.provenance.index_evidence,
+        "source_metadata": metadata.provenance.source_metadata,
         "array_contract": array_contract.metadata(),
     }

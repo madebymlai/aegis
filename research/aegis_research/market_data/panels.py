@@ -68,7 +68,7 @@ def as_panel(values: Any, *, role: str) -> pd.DataFrame:
 def market_data_bundle(result: MarketDataResult) -> MarketDataBundle:
     """Materialise every declared loaded Array into an eager Bundle."""
     result.assert_usable()
-    loaded_arrays = result.metadata.get("loaded_arrays", ())
+    loaded_arrays = [d.name for d in result.metadata.arrays if d.loaded]
     arrays = {
         name: canonical_array_panel(result.native_data, name)
         for name in loaded_arrays

@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from research.aegis_research import data as data_module
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
     LOGICAL_ARRAYS,
@@ -34,7 +35,7 @@ def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
     assert result.native_data.feature_oriented
     assert result.quality.state == "healthy"
     assert {row.symbol for row in result.diagnostics} == {"AAA", "BBB"}
-    assert result.metadata["quality"]["state"] == "healthy"
+    assert result.metadata.quality["state"] == "healthy"
     assert close_from_ohlcv(result.native_data).shape == (10, 2)
     assert bundle.array("Close").shape == (10, 2)
 
@@ -48,7 +49,7 @@ def test_result_exposes_typed_diagnostics_and_observes_native_metadata_once() ->
     )
 
     assert isinstance(result.diagnostics[0], DataDiagnostics)
-    assert result.metadata["diagnostics"] == [
+    assert result.metadata.diagnostics == [
         diagnostic.to_metadata() for diagnostic in result.diagnostics
     ]
     assert native_data.read_counts == {"index": 1, "features": 1, "symbols": 1}
@@ -100,7 +101,7 @@ def test_dynamic_vbt_source_discovery_uses_current_vbt_classes(
     assert source_classes["demo"] is _DemoRemoteData
     assert "demonopull" not in source_classes
     assert result.quality.state == "healthy"
-    assert result.metadata["source"] == "demo"
+    assert result.metadata.request.source == "demo"
 
 
 def test_provider_shaped_source_loads_dynamic_feature_arrays() -> None:
@@ -113,7 +114,8 @@ def test_provider_shaped_source_loads_dynamic_feature_arrays() -> None:
     bundle = market_data_bundle(result)
 
     assert result.quality.state == "healthy"
-    assert result.metadata["loaded_arrays"] == ["Close", "FundingRate"]
+    loaded = [d.name for d in result.metadata.arrays if d.loaded]
+    assert loaded == ["Close", "FundingRate"]
     assert bundle.array("FundingRate").iloc[-1, 0] == 0.03
 
 
@@ -141,7 +143,8 @@ def test_remote_source_projects_configured_arrays_before_column_alignment(
     }
     assert _ProviderExtrasData.last_from_data_kwargs["missing_columns"] == "raise"
     assert result.quality.state == "healthy"
-    assert result.metadata["loaded_arrays"] == ["Open", "High", "Low", "Close", "Volume"]
+    loaded = [d.name for d in result.metadata.arrays if d.loaded]
+    assert sorted(loaded) == ["Close", "High", "Low", "Open", "Volume"]
 
 
 def test_bundle_can_serve_dynamic_feature_without_close() -> None:
@@ -169,8 +172,10 @@ def test_provider_failure_metadata_preserves_required_arrays() -> None:
     )
 
     assert result.quality.state == "provider_failed"
-    assert result.metadata["required_arrays"] == ["Close", "OpenInterest"]
-    assert result.metadata["unavailable_arrays"] == ["Close", "OpenInterest"]
+    required = [d.name for d in result.metadata.arrays if d.required]
+    unavailable = [d.name for d in result.metadata.arrays if d.required and not d.loaded]
+    assert sorted(required) == ["Close", "OpenInterest"]
+    assert unavailable == ["Close", "OpenInterest"]
 
 
 def test_csv_flat_vbt_feature_names_load_without_mapping(tmp_path: Path) -> None:
@@ -197,8 +202,9 @@ def test_csv_flat_vbt_feature_names_load_without_mapping(tmp_path: Path) -> None
 
     assert result.quality.state == "healthy"
     assert list(bundle.array("Close").columns) == ["SYN"]
-    assert result.metadata["ohlc_available"]["Close"] is True
-    assert str(path) not in json.dumps(result.metadata)
+    close_desc = next(d for d in result.metadata.arrays if d.name == "Close")
+    assert close_desc.ohlc is True
+    assert str(path) not in json.dumps(to_builtin(result.metadata))
 
 
 def test_csv_non_standard_flat_columns_fail_without_mapping(tmp_path: Path) -> None:
@@ -235,7 +241,8 @@ def test_csv_extra_vbt_feature_loads_through_dynamic_access(tmp_path: Path) -> N
 
     assert result.quality.state == "healthy"
     assert bundle.array("FundingRate").iloc[-1, 0] == 0.03
-    assert result.metadata["loaded_arrays"] == ["Close", "FundingRate"]
+    loaded = [d.name for d in result.metadata.arrays if d.loaded]
+    assert loaded == ["Close", "FundingRate"]
 
 
 def test_configured_unused_array_must_still_load(tmp_path: Path) -> None:
@@ -252,7 +259,8 @@ def test_configured_unused_array_must_still_load(tmp_path: Path) -> None:
 
     assert result.quality.state == "rejected"
     assert "required feature 'FundingRate' is unavailable" in result.quality.reasons
-    assert result.metadata["unavailable_arrays"] == ["FundingRate"]
+    unavailable = [d.name for d in result.metadata.arrays if d.required and not d.loaded]
+    assert unavailable == ["FundingRate"]
 
 
 def test_csv_multiindex_symbol_feature_layout_preserves_symbols(tmp_path: Path) -> None:

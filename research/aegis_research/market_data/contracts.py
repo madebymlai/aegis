@@ -114,53 +114,77 @@ class DataDiagnostics:
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
-class MarketDataMetadataV2:
-    """Typed ``market_data.v2`` metadata Evidence artifact.
+class ArrayDescriptor:
+    """One row in the ``arrays`` descriptor list."""
 
-    Frozen pydantic dataclass with ``extra="forbid"`` — the same idiom as the
-    config schema (ADR-0012).  Every field the hand-built dict has carried.
-    Serialization routes through ``to_builtin``; the keys and values are
-    byte-identical to the pre-typed hand-built dict.
-    """
+    name: str
+    required: bool
+    loaded: bool
+    observed: bool
+    ohlc: bool
 
-    schema_version: str
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class RequestFacet:
+    """What was asked for: source, symbols, timeframe, array declarations."""
+
     source: str
-    provider_class: str | None
-    native_class: str | None
     requested_symbols: list[str]
-    symbols: list[str]
-    features: list[str]
-    canonical_features: list[str]
+    timeframe: str
     authored_arrays: list[str]
     effective_arrays: list[str]
-    required_arrays: list[str]
-    loaded_arrays: list[str]
-    unavailable_arrays: list[str]
-    timeframe: str
-    shape: dict[str, int]
-    ohlc_available: dict[str, bool]
-    index_start: str | None
-    index_end: str | None
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class CoverageFacet:
+    """What was actually observed: symbol set, row count, index span."""
+
+    symbols: list[str]
+    rows: int
+    start: str | None
+    end: str | None
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class ProvenanceFacet:
+    """Provider/source blobs and loader configuration carried forward."""
+
+    provider_class: str | None
+    source_metadata: dict[str, Any]
+    index_evidence: dict[str, Any]
+    provider_metadata: dict[str, Any]
+    omitted_metadata_fields: list[dict[str, str]]
+    update_supported: bool
     missing_index: str
     missing_columns: str
     tz_localize: str | bool | None
     tz_convert: str | bool | None
     skip_on_error: bool
     silence_warnings: bool
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class MarketDataMetadataV3:
+    """Typed ``market_data.v3`` metadata Evidence artifact.
+
+    Facet-shaped model (ADR-0020) replacing the hand-built ``market_data.v2``
+    dict.  One ``arrays`` descriptor list replaces eight parallel Array-name
+    lists; duplicate, derivable, and vestigial keys are dropped.
+    """
+
+    schema_version: str
+    request: RequestFacet
+    arrays: list[ArrayDescriptor]
+    coverage: CoverageFacet
     quality: dict[str, Any]
     diagnostics: list[dict[str, Any]]
-    source_metadata: dict[str, Any]
-    index_evidence: dict[str, Any]
-    provider_metadata: dict[str, Any]
-    omitted_metadata_fields: list[dict[str, str]]
-    update_supported: bool
-    cache_policy: str
+    provenance: ProvenanceFacet
 
 
 @dataclass(frozen=True)
 class MarketDataResult:
     native_data: Any
-    metadata: dict[str, Any]
+    metadata: MarketDataMetadataV3
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
 

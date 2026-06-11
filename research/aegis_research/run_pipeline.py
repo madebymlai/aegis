@@ -33,7 +33,6 @@ from research.aegis_research.optimization.pipeline.setup import run_pipeline_set
 from research.aegis_research.optimization.run_data_contract import (
     DataArrayContract,
     build_run_data_array_contract,
-    with_data_array_contract_metadata,
 )
 from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
@@ -97,8 +96,7 @@ def run_strategy_sweep(
             config.data,
             required_arrays=array_contract.required_arrays,
         )
-        data_result = with_data_array_contract_metadata(data_result, array_contract)
-        write_data_metadata_artifact(recorder, data_result)
+        write_data_metadata_artifact(recorder, data_result, array_contract)
         data_result.assert_usable()
         data_bundle = market_data_bundle(data_result)
         metric_registry = resolved_config.metric_registry
