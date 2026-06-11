@@ -321,7 +321,7 @@ def _extend_inputs_object(lines: list[str]) -> None:
         "|-----------|------|-------------|")
     lines.append(
         "| `inputs.data` | `MarketDataFacade` | "
-        "Access to the run's price arrays via `.feature(name)` |"
+        "Access to the run's price arrays via `.array(name)` |"
     )
     lines.append(
         "| `inputs.indicators` | `Mapping[str, np.ndarray]` | "

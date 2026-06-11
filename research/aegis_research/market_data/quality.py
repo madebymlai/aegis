@@ -25,7 +25,7 @@ def evaluate(
     config: DataConfig,
     diagnostics: tuple[DataDiagnostics, ...],
     *,
-    required_features: tuple[str, ...],
+    required_arrays: tuple[str, ...],
 ) -> MarketDataQuality:
     reasons: list[str] = []
     warnings: list[str] = []
@@ -90,35 +90,35 @@ def evaluate(
         for diagnostic in diagnostics
         if diagnostic.configured and diagnostic.symbol not in allowed_skipped_symbols
     ]
-    for feature in required_features:
-        feature_diagnostics = [
-            (diagnostic, diagnostic.features.get(feature))
+    for name in required_arrays:
+        array_diagnostics = [
+            (diagnostic, diagnostic.arrays.get(name))
             for diagnostic in configured_diagnostics
         ]
         available = [
-            (diagnostic, feature_diagnostic)
-            for diagnostic, feature_diagnostic in feature_diagnostics
-            if feature_diagnostic is not None and feature_diagnostic.available
+            (diagnostic, array_diag)
+            for diagnostic, array_diag in array_diagnostics
+            if array_diag is not None and array_diag.available
         ]
         if not available:
-            reasons.append(f"required feature {feature!r} is unavailable")
+            reasons.append(f"required feature {name!r} is unavailable")
             continue
-        if all(feature_diagnostic.rows == 0 for _, feature_diagnostic in available):
-            reasons.append(f"required feature {feature!r} is empty")
+        if all(array_diag.rows == 0 for _, array_diag in available):
+            reasons.append(f"required feature {name!r} is empty")
             continue
         missing_required_symbols = [
             diagnostic.symbol
-            for diagnostic, feature_diagnostic in feature_diagnostics
-            if feature_diagnostic is None or not feature_diagnostic.available
+            for diagnostic, array_diag in array_diagnostics
+            if array_diag is None or not array_diag.available
         ]
         if missing_required_symbols:
             reasons.append(
-                f"required feature {feature!r} is missing symbols {missing_required_symbols}"
+                f"required feature {name!r} is missing symbols {missing_required_symbols}"
             )
-        if any(feature_diagnostic.missing > 0 for _, feature_diagnostic in available):
+        if any(array_diag.missing > 0 for _, array_diag in available):
             _record_quality_issue(
                 "missing_rows",
-                f"required feature {feature!r} contains missing values",
+                f"required feature {name!r} contains missing values",
                 allowed,
                 reasons,
                 warnings,
@@ -126,11 +126,11 @@ def evaluate(
             )
         non_numeric = [
             diagnostic.symbol
-            for diagnostic, feature_diagnostic in available
-            if feature_diagnostic.numeric is False
+            for diagnostic, array_diag in available
+            if array_diag.numeric is False
         ]
         if non_numeric:
-            reasons.append(f"required feature {feature!r} has non-numeric symbols {non_numeric}")
+            reasons.append(f"required feature {name!r} has non-numeric symbols {non_numeric}")
 
     if reasons:
         state = QUALITY_REJECTED

@@ -115,8 +115,8 @@ def run_pipeline_setup(
         resolved_component_params=resolved_component_params,
         force_locked=force_locked,
     )
-    close = data.feature("Close")
-    open_ = data.feature("Open")
+    close = data.array("Close")
+    open_ = data.array("Open")
     split_result = build_run_splits_result(close.index, config.optimization.split)
     optimization_builtin = to_builtin(config.optimization)
     run_evidence.initialize_optimization(

@@ -8,8 +8,7 @@ import pandas as pd
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration import OHLCV_ARRAYS, DataConfig
 
-OHLCV_FEATURES = OHLCV_ARRAYS
-LOGICAL_FEATURES = {
+LOGICAL_ARRAYS = {
     "open": "Open",
     "high": "High",
     "low": "Low",
@@ -64,7 +63,7 @@ class MarketDataAdapterResult:
 
 
 @dataclass(frozen=True)
-class DataFeatureDiagnostics:
+class DataArrayDiagnostics:
     available: bool
     rows: int = 0
     missing: int = 0
@@ -93,7 +92,7 @@ class DataFeatureDiagnostics:
 class DataDiagnostics:
     symbol: str
     configured: bool
-    features: dict[str, DataFeatureDiagnostics] = field(default_factory=dict)
+    arrays: dict[str, DataArrayDiagnostics] = field(default_factory=dict)
     index_evidence: dict[str, Any] = field(default_factory=dict)
     provider_status: str = "loaded"
 
@@ -104,7 +103,7 @@ class DataDiagnostics:
                 "configured": self.configured,
                 "features": {
                     feature: diagnostics.to_metadata()
-                    for feature, diagnostics in self.features.items()
+                    for feature, diagnostics in self.arrays.items()
                 },
                 "index_evidence": self.index_evidence,
                 "provider_status": self.provider_status,
@@ -128,15 +127,15 @@ class MarketDataResult:
 class MarketDataBundle:
     """Eager value object of materialised Array panels.
 
-    Dict membership is the sole guard — a feature is loaded iff it is a key.
+    Dict membership is the sole guard — an array is loaded iff it is a key.
     """
 
-    features: dict[str, pd.DataFrame]
+    arrays: dict[str, pd.DataFrame]
 
-    def feature(self, feature: str) -> pd.DataFrame:
+    def array(self, array: str) -> pd.DataFrame:
         try:
-            return self.features[feature]
+            return self.arrays[array]
         except KeyError:
             raise ValueError(
-                f"market data feature {feature!r} was not loaded for this run"
+                f"market data array {array!r} was not loaded for this run"
             ) from None

@@ -20,7 +20,7 @@ from tests.support.research.aegis_research.run_config_fixtures import (
 
 
 class _FakeData:
-    def feature(self, name: str) -> Any:
+    def array(self, name: str) -> Any:
         import pandas as pd
 
         return pd.DataFrame({0: [float(i) for i in range(120)]})

@@ -62,8 +62,8 @@ def _market_data_bundle() -> MarketDataBundle:
         index=index,
         columns=columns,
     )
-    features = {name: frame.copy() for name in ("Open", "High", "Low", "Close", "Volume")}
-    return MarketDataBundle(features=features)
+    arrays = {name: frame.copy() for name in ("Open", "High", "Low", "Close", "Volume")}
+    return MarketDataBundle(arrays=arrays)
 
 
 @pytest.fixture(scope="module")

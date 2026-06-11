@@ -5,7 +5,7 @@ import pandas as pd
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
     DataDiagnostics,
-    DataFeatureDiagnostics,
+    DataArrayDiagnostics,
     MarketDataAdapterResult,
     MarketDataQuality,
     RemoteDataPullError,
@@ -21,7 +21,7 @@ def _frozen_observation() -> data_loading.MarketDataObservation:
     close = pd.DataFrame({"SYN": [1.0, 2.0, 3.0]}, index=index)
     return data_loading.MarketDataObservation(
         index=index,
-        features=("Close",),
+        arrays=("Close",),
         symbols=("SYN",),
         panels={"Close": close},
     )
@@ -52,8 +52,8 @@ def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
         DataDiagnostics(
             symbol="SYN",
             configured=True,
-            features={
-                "Close": DataFeatureDiagnostics(
+            arrays={
+                "Close": DataArrayDiagnostics(
                     available=True,
                     rows=3,
                     missing=0,
@@ -80,7 +80,7 @@ def test_describe_builds_the_schema_v2_metadata_dict_byte_identically() -> None:
         provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
         omitted_metadata_fields=[],
         update_supported=False,
-        required_features=("Close",),
+        required_arrays=("Close",),
     )
 
     assert metadata == {
@@ -182,7 +182,7 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
         provider_metadata={},
         omitted_metadata_fields=[],
         update_supported=False,
-        required_features=("Close", "OpenInterest"),
+        required_arrays=("Close", "OpenInterest"),
     )
 
     def fail(_config: DataConfig) -> MarketDataAdapterResult:
@@ -190,7 +190,7 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
 
     result = load_market_data_result(
         config,
-        required_features=("OpenInterest",),
+        required_arrays=("OpenInterest",),
         adapters={"future": fail},
     )
 
@@ -246,7 +246,7 @@ def test_describe_tolerates_empty_provider_internals() -> None:
         provider_metadata={},
         omitted_metadata_fields=[],
         update_supported=False,
-        required_features=("Close",),
+        required_arrays=("Close",),
     )
 
     assert metadata["provider_class"] is None
@@ -260,7 +260,7 @@ def test_describe_tolerates_empty_provider_internals() -> None:
 def MarketDataObservation_empty() -> data_metadata.MarketDataObservation:
     return data_metadata.MarketDataObservation(
         index=pd.Index([]),
-        features=(),
+        arrays=(),
         symbols=(),
         panels={},
     )

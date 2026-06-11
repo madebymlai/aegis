@@ -73,7 +73,7 @@ def _make_data(
     returns = rng.normal(0.0003, 0.012, size=(n_dates, len(symbols)))
     prices = 100.0 * np.exp(np.cumsum(returns, axis=0))
     close = pd.DataFrame(prices, index=dates, columns=pd.Index(symbols, name="symbol"))
-    return MarketDataBundle(features={"Close": close})
+    return MarketDataBundle(arrays={"Close": close})
 
 
 # ── Parameter generators per component ────────────────────────────────────
@@ -114,7 +114,7 @@ def _assert_indicator_batch_equals_stitched(
 ) -> None:
     """Assert an indicator's batched ``run`` equals its stitched single-candidate runs."""
     run = definition.load_callable()
-    close = data.feature("Close")
+    close = data.array("Close")
     T, S = close.shape
 
     batch = run(data, n_candidates=n_candidates, **param_lists)
@@ -168,7 +168,7 @@ def _assert_strategy_batch_equals_stitched(
     manifest = definition.manifest
     assert isinstance(manifest, StrategyManifest)
 
-    close = data.feature("Close")
+    close = data.array("Close")
     S = len(close.columns)
     T = len(close)
 
@@ -260,7 +260,7 @@ _TOY_BATCH_DEPENDENT_SOURCE = textwrap.dedent('''\
     # %% main compute
     def run(data, *, n_candidates, **param_lists):
         """Return batch-dependent normalized close, dividing by n_candidates."""
-        close = data.feature("Close")
+        close = data.array("Close")
         T, S = close.shape
         values = close.values
         result = np.full((T, n_candidates * S), np.nan)

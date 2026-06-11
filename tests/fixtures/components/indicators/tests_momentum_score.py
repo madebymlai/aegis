@@ -67,7 +67,7 @@ def _compute_score(close, h1, h2, h3, h4, w1, w2, w3, w4):
 def run(data, *, n_candidates, **param_lists):
     """Vectorized multi-period momentum score for all candidates in a single call."""
 
-    close = data.feature("Close")
+    close = data.array("Close")
     n_symbols = len(close.columns)
     T = len(close)
 

@@ -10,8 +10,8 @@ import pytest
 from research.aegis_research import data as data_module
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
-    LOGICAL_FEATURES,
-    OHLCV_FEATURES,
+    LOGICAL_ARRAYS,
+    OHLCV_ARRAYS,
     QUALITY_HEALTHY,
     REMOTE_DATA_CLASSES,
     DataDiagnostics,
@@ -21,7 +21,7 @@ from research.aegis_research.data import (
     close_from_ohlcv,
     load_market_data_result,
     market_data_bundle,
-    required_ohlcv_features,
+    required_ohlcv_arrays,
 )
 from research.aegis_research.market_data.sources import vbt_data_source_classes
 from tests.support.research.aegis_research.factories import make_data_config
@@ -36,7 +36,7 @@ def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
     assert {row.symbol for row in result.diagnostics} == {"AAA", "BBB"}
     assert result.metadata["quality"]["state"] == "healthy"
     assert close_from_ohlcv(result.native_data).shape == (10, 2)
-    assert bundle.feature("Close").shape == (10, 2)
+    assert bundle.array("Close").shape == (10, 2)
 
 
 def test_result_exposes_typed_diagnostics_and_observes_native_metadata_once() -> None:
@@ -58,24 +58,24 @@ def test_market_data_bundle_resolves_eager_features() -> None:
     index = pd.date_range("2020-01-01", periods=2, tz="UTC")
     close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
     factor = pd.DataFrame({"SYN": [10.0, 20.0]}, index=index)
-    bundle = MarketDataBundle(features={"Close": close, "Factor": factor})
+    bundle = MarketDataBundle(arrays={"Close": close, "Factor": factor})
 
-    assert bundle.feature("Close").equals(close)
-    assert bundle.feature("Factor").equals(factor)
+    assert bundle.array("Close").equals(close)
+    assert bundle.array("Factor").equals(factor)
 
 
 def test_market_data_bundle_rejects_unloaded_features() -> None:
     index = pd.date_range("2020-01-01", periods=2, tz="UTC")
     close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
-    bundle = MarketDataBundle(features={"Close": close})
+    bundle = MarketDataBundle(arrays={"Close": close})
 
     with pytest.raises(ValueError, match="was not loaded"):
-        bundle.feature("FundingRate")
+        bundle.array("FundingRate")
 
 
 def test_data_facade_preserves_public_market_data_constants() -> None:
-    assert OHLCV_FEATURES == ("Open", "High", "Low", "Close", "Volume")
-    assert LOGICAL_FEATURES["close"] == "Close"
+    assert OHLCV_ARRAYS == ("Open", "High", "Low", "Close", "Volume")
+    assert LOGICAL_ARRAYS["close"] == "Close"
     assert QUALITY_HEALTHY == "healthy"
     assert "yf" in REMOTE_DATA_CLASSES
 
@@ -114,7 +114,7 @@ def test_provider_shaped_source_loads_dynamic_feature_arrays() -> None:
 
     assert result.quality.state == "healthy"
     assert result.metadata["loaded_arrays"] == ["Close", "FundingRate"]
-    assert bundle.feature("FundingRate").iloc[-1, 0] == 0.03
+    assert bundle.array("FundingRate").iloc[-1, 0] == 0.03
 
 
 def test_remote_source_projects_configured_arrays_before_column_alignment(
@@ -154,8 +154,8 @@ def test_bundle_can_serve_dynamic_feature_without_close() -> None:
     bundle = market_data_bundle(result)
 
     with pytest.raises(ValueError, match="was not loaded"):
-        bundle.feature("Close")
-    assert bundle.feature("FundingRate").iloc[-1, 0] == 0.03
+        bundle.array("Close")
+    assert bundle.array("FundingRate").iloc[-1, 0] == 0.03
 
 
 def test_provider_failure_metadata_preserves_required_arrays() -> None:
@@ -164,7 +164,7 @@ def test_provider_failure_metadata_preserves_required_arrays() -> None:
 
     result = load_market_data_result(
         make_data_config(source="future", symbols=["SYN"], arrays=["Close"]),
-        required_features=("OpenInterest",),
+        required_arrays=("OpenInterest",),
         adapters={"future": fail},
     )
 
@@ -196,7 +196,7 @@ def test_csv_flat_vbt_feature_names_load_without_mapping(tmp_path: Path) -> None
     bundle = market_data_bundle(result)
 
     assert result.quality.state == "healthy"
-    assert list(bundle.feature("Close").columns) == ["SYN"]
+    assert list(bundle.array("Close").columns) == ["SYN"]
     assert result.metadata["ohlc_available"]["Close"] is True
     assert str(path) not in json.dumps(result.metadata)
 
@@ -234,7 +234,7 @@ def test_csv_extra_vbt_feature_loads_through_dynamic_access(tmp_path: Path) -> N
     bundle = market_data_bundle(result)
 
     assert result.quality.state == "healthy"
-    assert bundle.feature("FundingRate").iloc[-1, 0] == 0.03
+    assert bundle.array("FundingRate").iloc[-1, 0] == 0.03
     assert result.metadata["loaded_arrays"] == ["Close", "FundingRate"]
 
 
@@ -276,7 +276,7 @@ def test_csv_multiindex_symbol_feature_layout_preserves_symbols(tmp_path: Path) 
     bundle = market_data_bundle(result)
 
     assert result.quality.state == "healthy"
-    assert list(bundle.feature("Close").columns) == ["AAA", "BBB"]
+    assert list(bundle.array("Close").columns) == ["AAA", "BBB"]
 
 
 def test_csv_multiindex_layout_uses_one_full_pandas_read(
@@ -353,11 +353,11 @@ def test_future_provider_adapter_uses_same_result_contract() -> None:
     bundle = market_data_bundle(result)
 
     assert result.quality.state == "healthy"
-    assert bundle.feature("Close").shape == (5, 1)
+    assert bundle.array("Close").shape == (5, 1)
 
 
-def test_required_features_default_to_close() -> None:
-    assert required_ohlcv_features() == ("Close",)
+def test_required_arrays_default_to_close() -> None:
+    assert required_ohlcv_arrays() == ("Close",)
 
 
 class _CountingMetadataData:
