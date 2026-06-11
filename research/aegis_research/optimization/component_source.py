@@ -490,12 +490,7 @@ def _slice_data(
         features[name] = (
             close_slice if name == "Close" else data.feature(name).loc[close_slice.index]
         )
-    return MarketDataBundle(
-        features=features,
-        metadata=dict(data.metadata),
-        native_data=data.native_data,
-        loaded_features=tuple(features),
-    )
+    return MarketDataBundle(features=features)
 
 
 def _assert_output_contract(

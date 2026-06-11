@@ -601,7 +601,7 @@ def _write_two_output_strategy(path: Path) -> None:
 def _data_bundle() -> MarketDataBundle:
     index = pd.date_range("2026-01-01", periods=6, freq="1D")
     close = pd.DataFrame({"SYN": [10.0, 11.0, 10.5, 12.0, 11.5, 13.0]}, index=index)
-    return MarketDataBundle(features={"Close": close}, loaded_features=("Close",))
+    return MarketDataBundle(features={"Close": close})
 
 
 def _write_indicator_template(

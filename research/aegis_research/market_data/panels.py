@@ -1,7 +1,9 @@
 """Panel mechanics: shaping native source data into per-feature panels.
 
 Lower-level building blocks used by :mod:`features` (the caller-facing
-accessors) and the observe pass. Holds no caller-facing surface itself.
+accessors) and the observe pass. Also home to the Result→Bundle builder
+so the frozen-type module (:mod:`contracts`) does not depend on panel
+mechanics.
 """
 
 from __future__ import annotations
@@ -9,6 +11,11 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
+
+from research.aegis_research.market_data.contracts import (
+    MarketDataBundle,
+    MarketDataResult,
+)
 
 
 def available_feature_panels(
@@ -56,3 +63,19 @@ def as_panel(values: Any, *, role: str) -> pd.DataFrame:
     if not isinstance(values, pd.DataFrame):
         raise TypeError(f"{role} values must be a pandas Series or DataFrame")
     return values
+
+
+def market_data_bundle(result: MarketDataResult) -> MarketDataBundle:
+    """Build an eager Bundle from a validated Result.
+
+    Materialises every declared loaded Array up front via
+    ``canonical_feature_panel``, failing loud if a declared Array cannot
+    panelise. The Bundle's dict keys are exactly the loaded set — no
+    separate guard to keep in sync.
+    """
+    result.assert_usable()
+    loaded_arrays: list[str] = list(result.metadata.get("loaded_arrays", ()))
+    features: dict[str, pd.DataFrame] = {}
+    for name in loaded_arrays:
+        features[name] = canonical_feature_panel(result.native_data, name)
+    return MarketDataBundle(features=features)

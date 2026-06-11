@@ -4,6 +4,10 @@ The single home for the OHLCV feature accessors callers reach for
 (`feature_from_ohlcv`, `close/high/low_from_ohlcv`) and the experiment
 feature-requirement helpers. Panel mechanics live in :mod:`panels`; this
 module is the caller-facing surface the facade re-exports.
+
+``feature_from_ohlcv`` is a pure resolver over native data / frames — no
+usability guard, no ``assert_usable``, no ``MarketDataResult`` branch.
+The resolver module is independent of the container types.
 """
 
 from __future__ import annotations
@@ -14,7 +18,6 @@ import pandas as pd
 
 from research.aegis_research.configuration import SignalConfig
 from research.aegis_research.market_data import panels as _panels
-from research.aegis_research.market_data.contracts import MarketDataResult
 
 
 def close_from_ohlcv(data: Any) -> pd.DataFrame:
@@ -30,12 +33,12 @@ def low_from_ohlcv(data: Any) -> pd.DataFrame:
 
 
 def feature_from_ohlcv(data: Any, feature: str) -> pd.DataFrame:
-    if isinstance(data, MarketDataResult):
-        data.assert_usable()
-        loaded = tuple(data.metadata.get("loaded_arrays", ()))
-        if loaded and feature not in loaded:
-            raise ValueError(f"market data feature {feature!r} was not loaded for this run")
-        return _panels.canonical_feature_panel(data.native_data, feature)
+    """Pure resolver: extract a named Array panel from native data or a DataFrame.
+
+    No usability guard, no ``assert_usable``, no ``MarketDataResult`` branch.
+    Dispatches on shape: a ``.get()``-bearing object (native VBT data) →
+    ``feature_panel``, a ``pd.DataFrame`` → ``feature_from_frame``.
+    """
     if hasattr(data, "get") and not isinstance(data, pd.DataFrame):
         return _panels.feature_panel(data, feature, role=feature)
     return _panels.feature_from_frame(data, feature)

@@ -35,8 +35,8 @@ def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
     assert result.quality.state == "healthy"
     assert {row.symbol for row in result.diagnostics} == {"AAA", "BBB"}
     assert result.metadata["quality"]["state"] == "healthy"
-    assert close_from_ohlcv(result).shape == (10, 2)
-    assert bundle.feature("Close").equals(result.feature("Close"))
+    assert close_from_ohlcv(result.native_data).shape == (10, 2)
+    assert bundle.feature("Close").shape == (10, 2)
 
 
 def test_result_exposes_typed_diagnostics_and_observes_native_metadata_once() -> None:
@@ -54,27 +54,20 @@ def test_result_exposes_typed_diagnostics_and_observes_native_metadata_once() ->
     assert native_data.read_counts == {"index": 1, "features": 1, "symbols": 1}
 
 
-def test_market_data_bundle_can_resolve_named_features() -> None:
+def test_market_data_bundle_resolves_eager_features() -> None:
     index = pd.date_range("2020-01-01", periods=2, tz="UTC")
     close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
     factor = pd.DataFrame({"SYN": [10.0, 20.0]}, index=index)
-    bundle = MarketDataBundle(
-        features={"Close": close},
-        loaded_features=("Close", "Factor"),
-        feature_getter=lambda feature: factor,
-    )
+    bundle = MarketDataBundle(features={"Close": close, "Factor": factor})
 
+    assert bundle.feature("Close").equals(close)
     assert bundle.feature("Factor").equals(factor)
 
 
 def test_market_data_bundle_rejects_unloaded_features() -> None:
     index = pd.date_range("2020-01-01", periods=2, tz="UTC")
     close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
-    bundle = MarketDataBundle(
-        features={"Close": close},
-        loaded_features=("Close",),
-        feature_getter=lambda feature: close,
-    )
+    bundle = MarketDataBundle(features={"Close": close})
 
     with pytest.raises(ValueError, match="was not loaded"):
         bundle.feature("FundingRate")
@@ -121,8 +114,7 @@ def test_provider_shaped_source_loads_dynamic_feature_arrays() -> None:
 
     assert result.quality.state == "healthy"
     assert result.metadata["loaded_arrays"] == ["Close", "FundingRate"]
-    assert result.feature("FundingRate").iloc[-1, 0] == 0.03
-    assert bundle.feature("FundingRate").equals(result.feature("FundingRate"))
+    assert bundle.feature("FundingRate").iloc[-1, 0] == 0.03
 
 
 def test_remote_source_projects_configured_arrays_before_column_alignment(
@@ -201,9 +193,10 @@ def test_csv_flat_vbt_feature_names_load_without_mapping(tmp_path: Path) -> None
             arrays=["Open", "Close"],
         )
     )
+    bundle = market_data_bundle(result)
 
     assert result.quality.state == "healthy"
-    assert list(result.feature("Close").columns) == ["SYN"]
+    assert list(bundle.feature("Close").columns) == ["SYN"]
     assert result.metadata["ohlc_available"]["Close"] is True
     assert str(path) not in json.dumps(result.metadata)
 
@@ -238,9 +231,10 @@ def test_csv_extra_vbt_feature_loads_through_dynamic_access(tmp_path: Path) -> N
     result = load_market_data_result(
         make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Close", "FundingRate"])
     )
+    bundle = market_data_bundle(result)
 
     assert result.quality.state == "healthy"
-    assert result.feature("FundingRate").iloc[-1, 0] == 0.03
+    assert bundle.feature("FundingRate").iloc[-1, 0] == 0.03
     assert result.metadata["loaded_arrays"] == ["Close", "FundingRate"]
 
 
@@ -279,9 +273,10 @@ def test_csv_multiindex_symbol_feature_layout_preserves_symbols(tmp_path: Path) 
     result = load_market_data_result(
         make_data_config(source="csv", path=str(path), symbols=["AAA", "BBB"], arrays=["Close", "High"])
     )
+    bundle = market_data_bundle(result)
 
     assert result.quality.state == "healthy"
-    assert list(result.feature("Close").columns) == ["AAA", "BBB"]
+    assert list(bundle.feature("Close").columns) == ["AAA", "BBB"]
 
 
 def test_csv_multiindex_layout_uses_one_full_pandas_read(
@@ -355,9 +350,10 @@ def test_future_provider_adapter_uses_same_result_contract() -> None:
         make_data_config(source="future", symbols=["FUT"]),
         adapters={"future": lambda _config: MarketDataAdapterResult(native_data=native_data)},
     )
+    bundle = market_data_bundle(result)
 
     assert result.quality.state == "healthy"
-    assert result.feature("Close").shape == (5, 1)
+    assert bundle.feature("Close").shape == (5, 1)
 
 
 def test_required_features_default_to_close() -> None:
