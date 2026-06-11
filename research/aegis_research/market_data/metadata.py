@@ -37,11 +37,6 @@ def describe(
     never reaches into the native object. Tolerates the provider-failure path,
     where those inputs collapse to their empty shapes while the dict keeps the
     same keys as the success shape.
-
-    The metadata is *produced* by a typed frozen pydantic dataclass
-    (:class:`MarketDataMetadataV2`) with ``extra="forbid"``, serialised
-    through ``to_builtin`` — the wire shape is byte-identical to the
-    hand-built dict that preceded it.
     """
     index = observation.index
     features = list(observation.features)

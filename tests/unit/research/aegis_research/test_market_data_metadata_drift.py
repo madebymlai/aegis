@@ -1,7 +1,8 @@
 """Drift-detection tests for the market_data.v2 metadata model.
 
 The typed model must reject unexpected fields at construction
-(``extra="forbid"``) and serialize to byte-identical builtins.
+(``extra="forbid"``) so that a new field added to the hand-written dict
+but forgotten in the dataclass is caught immediately.
 """
 
 from __future__ import annotations
