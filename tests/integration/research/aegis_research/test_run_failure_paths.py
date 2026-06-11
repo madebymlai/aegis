@@ -41,11 +41,27 @@ def test_component_optimization_uses_component_native_candidate_grid(
     slow_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "slow_window")
 
     assert payload["status"] == "success"
+    # aegis-rd-gg3.4: success payload's run block carries real paths — no scrubbing
+    run_block = payload["run"]
+    assert run_block["id"] == "component-boundary"
+    assert run_block["status"] == RunStatus.COMPLETED
+    assert run_block["run_dir"] == "runs/component-boundary"
+    assert run_block["manifest_path"] == "runs/component-boundary/manifest.json"
+    assert run_block["started_at"] is not None
+    assert run_block["finished_at"] is not None
+    # Paths are real (not the <path> fallback, not ~-ized, not <tmp>-ized)
+    for field in ("run_dir", "manifest_path"):
+        assert "<path>" not in run_block[field]
+        assert not run_block[field].startswith("~")
+        assert not run_block[field].startswith("<tmp>")
     assert (
         payload["artifacts"]["strategy_artifact_path"]
         == "runs/component-boundary/strategy_run.json"
     )
-    assert payload["candidate_store"]["path"] == "runs/.candidate_store/candidates.sqlite3"
+    assert (
+        payload["candidate_store"]["path"]
+        == "runs/.candidate_store/candidates.sqlite3"
+    )
     assert artifact["schema_version"] == "optimization_artifact.v1"
     assert artifact_record["role"] == "optimization_evidence"
     assert artifact_record["schema_version"] == "optimization_artifact.v1"
@@ -107,6 +123,17 @@ def test_component_optimization_candidate_publish_failure_preserves_run_evidence
         "error_type": "OSError",
         "message": "candidate store write failed",
     }
+    # aegis-rd-gg3.4: error envelope's run block carries real paths — no scrubbing
+    run_block = payload["run"]
+    assert run_block["id"] == "publish-failure"
+    assert run_block["status"] == RunStatus.FAILED
+    assert run_block["run_dir"] == "runs/publish-failure"
+    assert run_block["manifest_path"] == "runs/publish-failure/manifest.json"
+    # Paths are real (not the <path> fallback, not ~-ized, not <tmp>-ized)
+    for field in ("run_dir", "manifest_path"):
+        assert "<path>" not in run_block[field]
+        assert not run_block[field].startswith("~")
+        assert not run_block[field].startswith("<tmp>")
 
 
 def test_component_optimization_artifact_write_failure_leaves_candidates_pending(

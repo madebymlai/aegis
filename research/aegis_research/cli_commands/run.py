@@ -11,7 +11,6 @@ from research.aegis_research.cli_support.errors import (
 )
 from research.aegis_research.cli_support.output import (
     CommandResult,
-    safe_path,
     write_success,
 )
 from research.aegis_research.cli_support.run_output import build_run_payload
@@ -59,7 +58,7 @@ def _handle_strategy_run(
 ) -> int:
     run_refs: dict[str, Any] = {}
     selection_evidence = ConfigSelectionEvidence(
-        source="explicit", config_path=safe_path(config_path)
+        source="explicit", config_path=str(config_path.resolve())
     )
     try:
         component_registry = discover_component_registry()

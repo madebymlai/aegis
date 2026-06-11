@@ -231,7 +231,20 @@ def test_strategy_run_always_emits_json_with_lock_handles(
     assert locks["median"] == "lock-handle-run:median"
     assert locks["worst"] == "lock-handle-run:worst"
     # Selection projected from ConfigSelectionEvidence
-    assert payload["selection"] == {"source": "explicit", "config_path": "run.yaml"}
+    assert payload["selection"] == {
+        "source": "explicit",
+        "config_path": str(config_path.resolve()),
+    }
+    # aegis-rd-gg3.4: run block carries real paths — no scrubbing
+    run_block = payload["run"]
+    assert run_block["id"] == "lock-handle-run"
+    assert run_block["run_dir"] == "runs/lock-handle-run"
+    assert run_block["manifest_path"] == "runs/lock-handle-run/manifest.json"
+    # Paths are real (not the <path> fallback, not ~-ized, not <tmp>-ized)
+    for field in ("run_dir", "manifest_path"):
+        assert "<path>" not in run_block[field]
+        assert not run_block[field].startswith("~")
+        assert not run_block[field].startswith("<tmp>")
 
 
 def test_strategy_run_retires_the_locks_section_and_honors_inline_params(

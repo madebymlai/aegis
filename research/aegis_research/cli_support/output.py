@@ -116,7 +116,7 @@ def write_error(
         },
     )
     if error.run_refs:
-        payload["run"] = safe_run_refs(error.run_refs)
+        payload["run"] = run_refs(error.run_refs)
     document = _json_document(payload)
     if document is None:
         fallback_message = "CLI error could not be serialized as JSON"
@@ -135,12 +135,18 @@ def write_error(
 
 
 
-def safe_run_refs(refs: Mapping[str, Any]) -> dict[str, Any]:
+def run_refs(refs: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a run-identity block with real paths — no path scrubbing.
+
+    Consumed by both the success payload and the error envelope so the
+    two run blocks cannot drift.  Paths are passed through as-is; the
+    caller is responsible for providing real, resolved paths.
+    """
     return {
         "id": refs.get("run_id") or refs.get("id"),
         "status": refs.get("status"),
-        "run_dir": safe_path(refs.get("run_dir")),
-        "manifest_path": safe_path(refs.get("manifest_path")),
+        "run_dir": refs.get("run_dir"),
+        "manifest_path": refs.get("manifest_path"),
         "started_at": refs.get("started_at"),
         "finished_at": refs.get("finished_at"),
     }
