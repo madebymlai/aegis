@@ -37,6 +37,18 @@ _INDICATOR_WINDOW_KEY = encode(_INDICATOR_REF, "window")
 _STRATEGY_THRESHOLD_KEY = encode(_STRATEGY_REF, "threshold")
 
 
+def _run_pipeline(source, close, n_candidates, **param_lists):
+    """Compose the source's two real stages on one slice.
+
+    Precompute on ``close`` then simulate that window — the fused per-slice view
+    the runner does not use for sweeps, exercised here through the production
+    ``precompute`` -> ``simulate`` interface rather than a method on the source.
+    """
+    store = source.precompute(close, n_candidates, **param_lists)
+    indicator_window = store.window(slice(None), candidate_keys(param_lists))
+    return source.simulate(close, indicator_window, n_candidates, **param_lists)
+
+
 def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     config = _config()
@@ -51,7 +63,7 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
 
     close = data.feature("Close")
     n_candidates = 1
-    output = source.pipeline(close, n_candidates, **_single_candidate_params())
+    output = _run_pipeline(source, close, n_candidates, **_single_candidate_params())
 
     assert isinstance(output, pd.DataFrame)
     assert output.shape == (len(close), n_candidates * len(close.columns))
@@ -219,7 +231,7 @@ def test_two_output_indicator_outputs_remain_distinct_for_strategy(tmp_path: Pat
         store.outputs["trend"], store.outputs["inverse_trend"], equal_nan=True
     )
 
-    result = source.pipeline(close, 1, **_single_candidate_params())
+    result = _run_pipeline(source, close, 1, **_single_candidate_params())
 
     np.testing.assert_array_equal(result.to_numpy(), np.ones_like(result.to_numpy()))
 
@@ -282,7 +294,7 @@ def test_strategy_allocation_shape_gate_rejects_wrong_rows_and_columns(
     close = _data_bundle().feature("Close")
 
     with pytest.raises(ComponentSourceError, match=match):
-        source.pipeline(close, 1, **_single_candidate_params())
+        _run_pipeline(source, close, 1, **_single_candidate_params())
 
 
 def test_component_optimization_source_schema_version_is_v2(tmp_path: Path) -> None:
@@ -469,7 +481,8 @@ def test_component_source_pipeline_returns_multiindex_frame(tmp_path: Path) -> N
     n_candidates = 2
     n_symbols = len(close.columns)
 
-    result = source.pipeline(
+    result = _run_pipeline(
+        source,
         close,
         n_candidates,
         **{_INDICATOR_WINDOW_KEY: [2, 3], _STRATEGY_THRESHOLD_KEY: [0.95, 1.0]},

@@ -97,3 +97,37 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
             metric_registry=make_default_metric_registry(),
             split_result=build_run_splits_result(close.index, optimization.split),
         )
+
+
+@pytest.mark.parametrize("reserved_name", ["split", "set", "symbol", "metric_name"])
+def test_runner_rejects_param_names_reserved_for_result_coordinates(
+    reserved_name: str,
+) -> None:
+    close = _close_frame()
+
+    def passthrough(close_window, indicator_window, n_candidates, **param_lists):
+        return close_window
+
+    source = OptimizationSource(
+        precompute=empty_precompute,
+        simulate=passthrough,
+        params={reserved_name: vbt.Param([1, 2])},
+        output_name="active",
+        evidence={"source": "reserved_name"},
+        diagnostics={},
+        metadata={},
+    )
+
+    optimization = _optimization_config()
+    with pytest.raises(OptimizationRunnerError, match="reserved"):
+        execute_optimization(
+            close=close,
+            open_=close,
+            source=source,
+            optimization=optimization,
+            portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+            report=make_report_config(),
+            ranking=make_ranking_config(metric="total_return"),
+            metric_registry=make_default_metric_registry(),
+            split_result=build_run_splits_result(close.index, optimization.split),
+        )
