@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import pandas as pd
+from pydantic import ConfigDict
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration import OHLCV_ARRAYS, DataConfig
@@ -110,6 +112,50 @@ class DataDiagnostics:
                 "provider_status": self.provider_status,
             }
         )
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class MarketDataMetadataV2:
+    """Typed ``market_data.v2`` metadata Evidence artifact.
+
+    Frozen pydantic dataclass with ``extra="forbid"`` — the same idiom as the
+    config schema (ADR-0012).  Every field the hand-built dict has carried.
+    Serialization routes through ``to_builtin``; the keys and values are
+    byte-identical to the pre-typed hand-built dict.
+    """
+
+    schema_version: str
+    source: str
+    provider_class: str | None
+    native_class: str | None
+    requested_symbols: list[str]
+    symbols: list[str]
+    features: list[str]
+    canonical_features: list[str]
+    authored_arrays: list[str]
+    effective_arrays: list[str]
+    required_arrays: list[str]
+    loaded_arrays: list[str]
+    unavailable_arrays: list[str]
+    timeframe: str
+    shape: dict[str, int]
+    ohlc_available: dict[str, bool]
+    index_start: str | None
+    index_end: str | None
+    missing_index: str
+    missing_columns: str
+    tz_localize: str | bool | None
+    tz_convert: str | bool | None
+    skip_on_error: bool
+    silence_warnings: bool
+    quality: dict[str, Any]
+    diagnostics: list[dict[str, Any]]
+    source_metadata: dict[str, Any]
+    index_evidence: dict[str, Any]
+    provider_metadata: dict[str, Any]
+    omitted_metadata_fields: list[dict[str, str]]
+    update_supported: bool
+    cache_policy: str
 
 
 @dataclass(frozen=True)
