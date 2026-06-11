@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping
 from enum import Enum
 from typing import Any
 
@@ -15,72 +15,16 @@ from research.aegis_research.optimization.ranking import (
     OptimizationResult,
 )
 
-CANDIDATE_ROW_SCHEMA_VERSION = "candidate_row.v2"
 CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v3"
 CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v2"
 OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v3"
 CANDIDATE_ROLES = ("best", "median", "worst")
-DEFAULT_COORDINATE_LEVELS = frozenset({"split", "set", "symbol"})
 _CANDIDATE_KEY_DIGEST_CHARS = 32
 
 # Selection->held-out gap (ranking-metric units) above which the best candidate is
 # flagged for selection-set optimism. Calibrated for Sharpe-scale ranking metrics
 # (the production default) and mirrors the leak_audit W1 overfit signal.
 HELD_OUT_GAP_WARNING_THRESHOLD = 0.5
-
-
-def candidate_rows_from_param_index(
-    index: pd.Index,
-    *,
-    source_identity: Mapping[str, Any],
-    data_identity: Mapping[str, Any],
-    hidden_params: Mapping[str, Any] | None = None,
-    allocation_policy: Mapping[str, Any] | None = None,
-    store_namespace: Mapping[str, Any] | None = None,
-    coordinate_levels: Sequence[str] = tuple(DEFAULT_COORDINATE_LEVELS),
-) -> list[dict[str, Any]]:
-    level_names, row_values = _index_rows(index)
-    coordinate_names = set(coordinate_levels)
-    source_identity = _canonical_mapping(source_identity)
-    data_identity = _canonical_mapping(data_identity)
-    hidden_params = _canonical_mapping(hidden_params or {})
-    allocation_policy = _canonical_mapping(allocation_policy or {})
-    store_namespace = _canonical_mapping(store_namespace or {})
-    rows = []
-    for row_index, values in enumerate(row_values):
-        params: dict[str, Any] = {}
-        coordinates: dict[str, Any] = {}
-        raw_values: dict[str, Any] = {}
-        for name, value in zip(level_names, values, strict=True):
-            canonical = canonical_value(value)
-            raw_values[name] = canonical
-            if name in coordinate_names:
-                coordinates[name] = canonical
-            else:
-                params[name] = canonical
-        identity = _candidate_identity(
-            params,
-            source_identity=source_identity,
-            data_identity=data_identity,
-            hidden_params=hidden_params,
-            allocation_policy=allocation_policy,
-        )
-        rows.append(
-            {
-                "schema_version": CANDIDATE_ROW_SCHEMA_VERSION,
-                "row_index": row_index,
-                "candidate_key": _candidate_key(identity),
-                "store_namespace": store_namespace,
-                "params": params,
-                "coordinates": coordinates,
-                "param_index": {
-                    "names": list(level_names),
-                    "values": raw_values,
-                },
-                "identity": identity,
-            }
-        )
-    return rows
 
 
 def candidate_rows_from_result(
@@ -284,27 +228,8 @@ def _optional_float(value: Any) -> float | None:
     return None if math.isnan(number) else number
 
 
-def _index_rows(index: pd.Index) -> tuple[tuple[str, ...], Iterable[tuple[Any, ...]]]:
-    if isinstance(index, pd.MultiIndex):
-        return (
-            tuple(_level_name(name, position) for position, name in enumerate(index.names)),
-            index,
-        )
-    return ((_level_name(index.name, 0),), ((value,) for value in index))
-
-
-def _level_name(name: Any, position: int) -> str:
-    if isinstance(name, str) and name:
-        return name
-    return f"level_{position}"
-
-
 def _canonical_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
     return {str(key): canonical_value(value[key]) for key in sorted(value)}
-
-
-def canonical_params_key(params: Mapping[str, Any]) -> str:
-    return _canonical_json_bytes(_canonical_mapping(params)).decode()
 
 
 def canonical_value(value: Any) -> Any:

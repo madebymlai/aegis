@@ -34,16 +34,13 @@ def test_candidate_store_persists_three_candidates_and_queries_by_run(tmp_path: 
         )
 
         top = store.top_candidates_by_run("run-a")
-        params = store.params_by_candidate_key(top[0]["candidate"]["candidate_key"], run_id="run-a")
-        stored_provenance = store.provenance_by_candidate(
-            top[0]["candidate"]["candidate_key"], run_id="run-a"
-        )
+        stored = store.candidate_by_key(top[0]["candidate"]["candidate_key"], run_id="run-a")
 
     assert [row["role"] for row in top] == ["best", "median", "worst"]
     assert [row["rank"] for row in top] == [1, 2, 3]
     assert [row["ranking_metric_value"] for row in top] == [0.30, 0.20, 0.10]
-    assert params == {"fast_window": 5, "slow_window": 10}
-    assert stored_provenance == provenance
+    assert stored["params"] == {"fast_window": 5, "slow_window": 10}
+    assert stored["provenance"] == provenance
     if os.name == "posix":
         assert store_path.stat().st_mode & 0o077 == 0
         assert store_path.parent.stat().st_mode & 0o077 == 0
@@ -123,14 +120,14 @@ def test_candidate_store_pending_run_is_not_queryable_until_activation(tmp_path:
 
         assert store.top_candidates_by_run("run-a", limit=1) == []
         with pytest.raises(CandidateStoreError, match="unknown candidate key"):
-            store.params_by_candidate_key(candidate["candidate_key"], run_id="run-a")
+            store.candidate_by_key(candidate["candidate_key"], run_id="run-a")
 
         store.activate_run("run-a")
 
         assert store.top_candidates_by_run("run-a", limit=1)
-        assert store.params_by_candidate_key(
+        assert store.candidate_by_key(
             candidate["candidate_key"], run_id="run-a"
-        ) == candidate["params"]
+        )["params"] == candidate["params"]
 
 
 def test_candidate_store_has_no_per_component_lock_surface(tmp_path: Path) -> None:

@@ -14,7 +14,6 @@ from research.aegis_research.data import (
     LOGICAL_ARRAYS,
     OHLCV_ARRAYS,
     QUALITY_HEALTHY,
-    REMOTE_DATA_CLASSES,
     DataDiagnostics,
     MarketDataAdapterResult,
     MarketDataBundle,
@@ -76,7 +75,7 @@ def test_data_facade_preserves_public_market_data_constants() -> None:
     assert OHLCV_ARRAYS == ("Open", "High", "Low", "Close", "Volume")
     assert LOGICAL_ARRAYS["close"] == "Close"
     assert QUALITY_HEALTHY == "healthy"
-    assert "yf" in REMOTE_DATA_CLASSES
+    assert "yf" in vbt_data_source_classes()
 
 
 def test_dynamic_vbt_source_discovery_uses_current_vbt_classes(

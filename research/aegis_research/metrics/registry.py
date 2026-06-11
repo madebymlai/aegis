@@ -39,11 +39,6 @@ class FrozenMetricRegistry:
             },
         }
 
-    def selected_snapshot(self, metric_ids: tuple[str, ...]) -> dict[str, Any]:
-        return {
-            metric_id: self.get(metric_id).public_snapshot() for metric_id in metric_ids
-        }
-
     def __contains__(self, metric_id: str) -> bool:
         return metric_id in self.definitions
 

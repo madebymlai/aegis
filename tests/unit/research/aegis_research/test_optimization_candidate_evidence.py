@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
-import pandas as pd
 import pytest
-from vectorbtpro import vbt
 
 from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.optimization.candidate_evidence import (
     HELD_OUT_GAP_WARNING_THRESHOLD,
     candidate_held_out_headline,
-    candidate_rows_from_param_index,
     candidate_rows_from_result,
-    canonical_params_key,
     held_out_warning,
     result_evidence,
 )
@@ -34,72 +31,30 @@ class StopKind(Enum):
     TRAILING = "trailing"
 
 
-def test_candidate_rows_are_derived_from_vbt_param_index() -> None:
-    index = pd.MultiIndex.from_tuples(
-        [(14, 100, 40.0, 60.0)],
-        names=["rsi_window", "ma_window", "entry_threshold", "exit_threshold"],
-    )
-
-    rows = candidate_rows_from_param_index(
-        index,
-        source_identity={"source": "component", "id": "native_rsi", "source_hash": "abc"},
-        data_identity=DATA_IDENTITY,
-        allocation_policy={"target_exposure_cap": 1.0},
-    )
-
-    assert len(rows) == 1
-    assert rows[0]["candidate_key"].startswith("cand_")
-    assert rows[0]["params"] == {
-        "rsi_window": 14,
-        "ma_window": 100,
-        "entry_threshold": 40.0,
-        "exit_threshold": 60.0,
-    }
-    assert rows[0]["coordinates"] == {}
-    assert rows[0]["identity"]["source_identity"]["source_hash"] == "abc"
-    assert rows[0]["identity"]["data_identity"] == DATA_IDENTITY
-    assert rows[0]["identity"]["allocation_policy"] == {"target_exposure_cap": 1.0}
-
-
-def test_candidate_key_excludes_split_set_symbol_coordinates() -> None:
-    index = pd.MultiIndex.from_tuples(
-        [
-            (0, "selection", "BTC", 14),
-            (0, "held_out", "BTC", 14),
-            (1, "selection", "ETH", 14),
-        ],
-        names=["split", "set", "symbol", "rsi_window"],
-    )
-
-    rows = candidate_rows_from_param_index(
-        index,
-        source_identity={"source_hash": "abc"},
-        data_identity=DATA_IDENTITY,
-    )
-
-    assert {row["candidate_key"] for row in rows} == {rows[0]["candidate_key"]}
-    assert rows[0]["params"] == {"rsi_window": 14}
-    assert rows[0]["coordinates"] == {"split": 0, "set": "selection", "symbol": "BTC"}
-    assert rows[1]["coordinates"] == {"split": 0, "set": "held_out", "symbol": "BTC"}
-    assert rows[2]["coordinates"] == {"split": 1, "set": "selection", "symbol": "ETH"}
+def _single_candidate_row(params: dict[str, Any], **identity_kwargs: Any) -> dict[str, Any]:
+    only = _evaluated(params, 0.7)
+    return candidate_rows_from_result(
+        OptimizationResult(best=only, median=only, worst=only),
+        **identity_kwargs,
+    )[0]
 
 
 def test_candidate_values_are_serialized_deterministically() -> None:
-    index = pd.MultiIndex.from_tuples(
-        [(float("nan"), None, StopKind.TRAILING, (1, 2))],
-        names=["sl_stop", "tp_stop", "stop_kind", "array_param"],
-    )
-
-    rows = candidate_rows_from_param_index(
-        index,
+    row = _single_candidate_row(
+        {
+            "sl_stop": float("nan"),
+            "tp_stop": None,
+            "stop_kind": StopKind.TRAILING,
+            "array_param": (1, 2),
+        },
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"no_stop_value": None},
     )
 
-    assert rows[0]["params"] == {
+    assert row["params"] == {
         "sl_stop": {"kind": "nan"},
-        "tp_stop": {"kind": "nan"},
+        "tp_stop": None,
         "stop_kind": {
             "kind": "enum",
             "type": f"{StopKind.__module__}.{StopKind.__qualname__}",
@@ -108,56 +63,40 @@ def test_candidate_values_are_serialized_deterministically() -> None:
         },
         "array_param": [1, 2],
     }
-    assert rows[0]["identity"]["hidden_params"] == {"no_stop_value": None}
-
-
-def test_canonical_params_key_matches_candidate_row_param_canonicalization() -> None:
-    params = {"sl_stop": float("nan"), "array_param": (1, 2), "stop_kind": StopKind.TRAILING}
-    index = pd.MultiIndex.from_tuples(
-        [(float("nan"), (1, 2), StopKind.TRAILING)],
-        names=["sl_stop", "array_param", "stop_kind"],
-    )
-
-    rows = candidate_rows_from_param_index(
-        index,
-        source_identity={"source_hash": "abc"},
-        data_identity=DATA_IDENTITY,
-    )
-
-    assert canonical_params_key(params) == canonical_params_key(rows[0]["params"])
+    assert row["identity"]["hidden_params"] == {"no_stop_value": None}
 
 
 def test_candidate_key_includes_hidden_source_and_allocation_identity() -> None:
-    index = pd.MultiIndex.from_tuples([(14,)], names=["rsi_window"])
+    params = {"rsi_window": 14}
 
-    base = candidate_rows_from_param_index(
-        index,
+    base = _single_candidate_row(
+        params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
         allocation_policy={"fees": 0.001},
-    )[0]
-    different_hidden = candidate_rows_from_param_index(
-        index,
+    )
+    different_hidden = _single_candidate_row(
+        params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 2},
         allocation_policy={"fees": 0.001},
-    )[0]
-    different_source = candidate_rows_from_param_index(
-        index,
+    )
+    different_source = _single_candidate_row(
+        params,
         source_identity={"source_hash": "def"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
         allocation_policy={"fees": 0.001},
-    )[0]
-    different_policy = candidate_rows_from_param_index(
-        index,
+    )
+    different_policy = _single_candidate_row(
+        params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
         allocation_policy={"fees": 0.002},
-    )[0]
+    )
 
     assert base["candidate_key"] != different_hidden["candidate_key"]
     assert base["candidate_key"] != different_source["candidate_key"]
@@ -165,10 +104,8 @@ def test_candidate_key_includes_hidden_source_and_allocation_identity() -> None:
 
 
 def test_candidate_identity_golden_bytes_pin() -> None:
-    index = pd.MultiIndex.from_tuples([(14, 100, 40.0)], names=["rsi_window", "ma_window", "entry"])
-
-    row = candidate_rows_from_param_index(
-        index,
+    row = _single_candidate_row(
+        {"rsi_window": 14, "ma_window": 100, "entry": 40.0},
         source_identity={"source": "component", "id": "demo.rsi", "source_hash": "abc123"},
         data_identity={
             "schema_version": "candidate_data_identity.v2",
@@ -193,7 +130,7 @@ def test_candidate_identity_golden_bytes_pin() -> None:
         },
         hidden_params={"execution": "next_open"},
         allocation_policy={"fees": 0.001, "target_exposure_cap": 1.0},
-    )[0]
+    )
 
     assert canonical_json_bytes(row["identity"]) == (
         b'{"allocation_policy":{"fees":0.001,"target_exposure_cap":1.0},'
@@ -213,59 +150,31 @@ def test_candidate_identity_golden_bytes_pin() -> None:
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:
-    index = pd.MultiIndex.from_tuples([(14,)], names=["rsi_window"])
+    params = {"rsi_window": 14}
 
-    base = candidate_rows_from_param_index(
-        index,
+    base = _single_candidate_row(
+        params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         store_namespace={"kind": "local_sqlite", "name": "default"},
-    )[0]
-    different_data = candidate_rows_from_param_index(
-        index,
+    )
+    different_data = _single_candidate_row(
+        params,
         source_identity={"source_hash": "abc"},
         data_identity={**DATA_IDENTITY, "symbols": ["ALT"]},
         store_namespace={"kind": "local_sqlite", "name": "default"},
-    )[0]
-    different_store = candidate_rows_from_param_index(
-        index,
+    )
+    different_store = _single_candidate_row(
+        params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         store_namespace={"kind": "local_sqlite", "name": "other"},
-    )[0]
+    )
 
     assert base["candidate_key"] != different_data["candidate_key"]
     assert base["candidate_key"] == different_store["candidate_key"]
     assert base["store_namespace"] == {"kind": "local_sqlite", "name": "default"}
     assert different_store["store_namespace"] == {"kind": "local_sqlite", "name": "other"}
-
-
-def test_random_subset_rows_persist_actual_vbt_sampled_index() -> None:
-    @vbt.parameterized(merge_func="concat")
-    def score(a: int, b: int, c: bool) -> float:
-        return float(a + b + int(c))
-
-    sampled = score(
-        a=vbt.Param([1, 2, 3]),
-        b=vbt.Param([10, 20]),
-        c=vbt.Param([False, True]),
-        _random_subset=5,
-        _seed=42,
-    )
-
-    rows = candidate_rows_from_param_index(
-        sampled.index,
-        source_identity={"source_hash": "abc"},
-        data_identity=DATA_IDENTITY,
-    )
-
-    assert [row["params"] for row in rows] == [
-        {"a": 1, "b": 10, "c": False},
-        {"a": 2, "b": 10, "c": False},
-        {"a": 2, "b": 10, "c": True},
-        {"a": 2, "b": 20, "c": False},
-        {"a": 3, "b": 10, "c": True},
-    ]
 
 
 def _evaluated(params: dict[str, object], score: float) -> EvaluatedCandidate:
@@ -324,30 +233,6 @@ def test_candidate_rows_from_result_shares_key_when_one_candidate_fills_all_role
 
     assert [row["role"] for row in rows] == ["best", "median", "worst"]
     assert len({row["candidate_key"] for row in rows}) == 1
-
-
-def test_candidate_rows_from_result_key_matches_param_index_identity() -> None:
-    result = OptimizationResult(
-        best=_evaluated({"rsi_window": 14}, 0.9),
-        median=_evaluated({"rsi_window": 14}, 0.9),
-        worst=_evaluated({"rsi_window": 14}, 0.9),
-    )
-    index = pd.MultiIndex.from_tuples([(14,)], names=["rsi_window"])
-
-    from_result = candidate_rows_from_result(
-        result,
-        source_identity={"source_hash": "abc"},
-        data_identity=DATA_IDENTITY,
-        allocation_policy={"fees": 0.001},
-    )[0]
-    from_index = candidate_rows_from_param_index(
-        index,
-        source_identity={"source_hash": "abc"},
-        data_identity=DATA_IDENTITY,
-        allocation_policy={"fees": 0.001},
-    )[0]
-
-    assert from_result["candidate_key"] == from_index["candidate_key"]
 
 
 def test_candidate_rows_from_result_nan_score_becomes_none() -> None:

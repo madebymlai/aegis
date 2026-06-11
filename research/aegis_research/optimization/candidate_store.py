@@ -183,15 +183,6 @@ class CandidateStore:
             raise CandidateStoreError(f"unknown role {role!r} for run {run_id!r}")
         return row["candidate_key"]
 
-    def params_by_candidate_key(
-        self,
-        candidate_key: str,
-        *,
-        run_id: str | None = None,
-    ) -> dict[str, Any]:
-        row = self._candidate_lookup(candidate_key, run_id=run_id)
-        return _json_loads(row["params_json"])
-
     def candidate_by_key(
         self,
         candidate_key: str,
@@ -206,15 +197,6 @@ class CandidateStore:
             "params": _json_loads(row["params_json"]),
             "provenance": _json_loads(row["provenance_json"]),
         }
-
-    def provenance_by_candidate(
-        self,
-        candidate_key: str,
-        *,
-        run_id: str | None = None,
-    ) -> dict[str, Any]:
-        row = self._candidate_lookup(candidate_key, run_id=run_id)
-        return _json_loads(row["provenance_json"])
 
     def _ensure_schema(self) -> None:
         self._connection.executescript(
