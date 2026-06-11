@@ -159,7 +159,7 @@ def test_config_error_before_run_creation_omits_run_block_in_envelope(
     envelope with no ``run`` block — exactly as today."""
     monkeypatch.chdir(tmp_path)
 
-    assert cli.main(["run", "missing.yaml", "--json"]) == 6
+    assert cli.main(["run", "missing.yaml"]) == 6
 
     payload = json.loads(capsys.readouterr().err)
     assert payload["status"] == "error"

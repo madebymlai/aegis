@@ -26,7 +26,7 @@ def test_component_optimization_uses_component_native_candidate_grid(
     _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-boundary"]) == 0
+    assert cli.main(["run", str(config_path), "--run-id", "component-boundary"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     artifact = json.loads(
@@ -88,7 +88,7 @@ def test_component_optimization_candidate_publish_failure_preserves_run_evidence
 
     monkeypatch.setattr(publishing, "publish_candidates", fail_publish)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "publish-failure"]) == 10
+    assert cli.main(["run", str(config_path), "--run-id", "publish-failure"]) == 10
 
     payload = _last_json_line(capsys.readouterr().err)
     manifest = json.loads((tmp_path / "runs" / "publish-failure" / "manifest.json").read_text())
@@ -123,7 +123,7 @@ def test_component_optimization_artifact_write_failure_leaves_candidates_pending
 
     monkeypatch.setattr(completion, "write_strategy_artifact", fail_write)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "artifact-failure"]) == 10
+    assert cli.main(["run", str(config_path), "--run-id", "artifact-failure"]) == 10
 
     payload = _last_json_line(capsys.readouterr().err)
     manifest = json.loads((tmp_path / "runs" / "artifact-failure" / "manifest.json").read_text())
@@ -151,7 +151,7 @@ def test_component_optimization_completion_failure_leaves_candidates_pending(
 
     monkeypatch.setattr(RunRecorder, "mark_run_completed", fail_completion)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "completion-failure"]) == 10
+    assert cli.main(["run", str(config_path), "--run-id", "completion-failure"]) == 10
 
     capsys.readouterr()
     manifest = json.loads((tmp_path / "runs" / "completion-failure" / "manifest.json").read_text())
@@ -177,7 +177,7 @@ def test_component_optimization_activation_failure_fails_closed(
 
     monkeypatch.setattr(CandidateStore, "activate_run", fail_activation)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "activation-failure"]) == 10
+    assert cli.main(["run", str(config_path), "--run-id", "activation-failure"]) == 10
 
     payload = _last_json_line(capsys.readouterr().err)
     artifact = json.loads(
@@ -203,7 +203,7 @@ def test_component_optimization_runtime_error_records_failure_diagnostics(
     _write_runtime_error_strategy_component(tmp_path / "research/components/strategies/ma_boom.py")
     config_path = _write_run_config(tmp_path, strategy_id="demo.ma_boom")
 
-    exit_code = cli.main(["run", str(config_path), "--json", "--run-id", "runtime-failure"])
+    exit_code = cli.main(["run", str(config_path), "--run-id", "runtime-failure"])
     assert exit_code != 0
 
     manifest = json.loads((tmp_path / "runs" / "runtime-failure" / "manifest.json").read_text())
@@ -234,7 +234,7 @@ def test_component_optimization_preflight_failure_records_manifest_without_pipel
     split["max_estimated_output_cells"] = 100
     config_path = _write_run_config(tmp_path, optimization={"search": "grid", "split": split})
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "preflight-failure"]) == 10
+    assert cli.main(["run", str(config_path), "--run-id", "preflight-failure"]) == 10
 
     manifest = json.loads((tmp_path / "runs" / "preflight-failure" / "manifest.json").read_text())
     payload = json.loads(capsys.readouterr().err)

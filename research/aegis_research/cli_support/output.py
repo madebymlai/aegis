@@ -4,7 +4,7 @@ import json
 import math
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
@@ -15,7 +15,7 @@ from research.aegis_research.cli_support.errors import (
     InternalCliError,
     exit_code_for,
 )
-from research.aegis_research.configuration import DEFAULT_LOCK_ROLE, to_builtin
+from research.aegis_research.configuration import to_builtin
 
 CLI_JSON_SCHEMA_VERSION = 1
 MAX_ERROR_MESSAGE_CHARS = 1000
@@ -133,148 +133,6 @@ def write_error(
     stderr.write(document)
     return exit_code
 
-
-def run_success_payload(
-    result: Mapping[str, Any],
-    *,
-    selection: Mapping[str, Any],
-) -> dict[str, Any]:
-    report = result.get("report")
-    return {
-        "selection": safe_json_value(selection),
-        "run": safe_run_refs(result),
-        "report": report_summary(report) if isinstance(report, Mapping) else None,
-        "artifacts": {
-            "manifest_path": safe_path(result.get("manifest_path")),
-            "report_artifact_id": result.get("report_artifact_id"),
-        },
-    }
-
-
-def held_out_summary_lines(
-    optimization: Mapping[str, Any],
-    candidates: Sequence[Mapping[str, Any]],
-) -> tuple[str, ...]:
-    """Held-out-first candidate table for human run output.
-
-    Leads with the held-out (out-of-sample) value of the ranking metric — the
-    number to treat as the run's result — with the in-sample (selection-optimistic)
-    value and the selection->held-out gap as secondary columns, plus a one-line
-    warning when the best candidate collapses out-of-sample.
-    """
-    if not candidates:
-        return ()
-    metric = optimization.get("ranking_metric") or "ranking metric"
-    lines = [
-        f"Ranking metric: {metric} — held-out (out-of-sample) is the headline; "
-        "in-sample is selection-optimistic",
-        f"  {'role':<8}{'held-out':>12}{'in-sample':>12}{'gap':>12}",
-    ]
-    for candidate in candidates:
-        headline = candidate.get("held_out_headline") or {}
-        lines.append(
-            f"  {candidate.get('role', '')!s:<8}"
-            f"{_metric_cell(headline.get('held_out')):>12}"
-            f"{_metric_cell(headline.get('selection')):>12}"
-            f"{_metric_cell(headline.get('gap')):>12}"
-        )
-    warning = optimization.get("held_out_warning")
-    if warning:
-        lines.append(f"WARNING: {warning}")
-    non_exec_line = _non_executable_rows_line(optimization)
-    if non_exec_line:
-        lines.append(non_exec_line)
-    lines.append(_researched_ratio_line(optimization))
-    return tuple(lines)
-
-
-def reproduce_lock_lines(
-    run_id: str | None,
-    candidates: Sequence[Mapping[str, Any]],
-    *,
-    store_path: str | None,
-) -> tuple[str, ...]:
-    """Copy-paste ``lock:`` handles for reproducing each representative candidate.
-
-    Each representative role yields the exact scalar a user pastes into a Run Config's
-    ``lock:`` — best is the default role (a bare ``run_id``), the others carry ``:role``.
-    The footer names the run_id and the candidate-store path so the handle is
-    discoverable straight from the terminal — no ``--json`` or raw SQL required.
-    """
-    if not run_id or not candidates:
-        return ()
-    lines = ["Reproduce a representative candidate — paste a lock: line into a Run Config:"]
-    for candidate in candidates:
-        role = str(candidate.get("role", ""))
-        handle = run_id if role == DEFAULT_LOCK_ROLE else f"{run_id}:{role}"
-        lines.append(f"  {role:<8}lock: {handle}")
-    lines.append(f"run_id: {run_id}")
-    if store_path:
-        lines.append(f"candidate store: {store_path}")
-    return tuple(lines)
-
-
-_PURGED_METHOD_SUBSTRINGS = ("purged", "embargo")
-
-
-def _non_executable_rows_line(optimization: Mapping[str, Any]) -> str | None:
-    """Report line for non-executable rebalance rows, or None.
-
-    Renders only when non_executable_rows is non-zero. Under a
-    purged/embargoed split method the line is neutral (the count is
-    expected); under a contiguous split method it is WARNING-prefixed
-    (the count should have been zero — upstream invariant breach).
-    """
-    count = optimization.get("non_executable_rows", 0)
-    if not count:
-        return None
-    split_method = str(optimization.get("split_method", ""))
-    is_purged = any(marker in split_method for marker in _PURGED_METHOD_SUBSTRINGS)
-    if is_purged:
-        return f"non-executable rebalance rows: {count} (held at split seams)"
-    return f"WARNING: non-executable rebalance rows: {count} (should be zero — invariant breach)"
-
-
-def _researched_ratio_line(optimization: Mapping[str, Any]) -> str:
-    """Ratio of Candidates that survived ranking to usable evidence.
-
-    ``researched = total - excluded_degenerate`` (Invalid Candidates are a
-    subset of Degenerate ones, so they are never subtracted twice). The
-    misconfigured clause is appended only when the Invalid count is positive.
-    """
-    total = int(optimization.get("total", 0) or 0)
-    excluded_degenerate = int(optimization.get("excluded_degenerate", 0) or 0)
-    excluded_invalid = int(optimization.get("excluded_invalid", 0) or 0)
-    researched = total - excluded_degenerate
-    line = f"researched candidates: {researched}/{total}"
-    if excluded_invalid > 0:
-        line += f" ({excluded_invalid} misconfigured)"
-    return line
-
-
-def _metric_cell(value: Any) -> str:
-    if value is None:
-        return "n/a"
-    try:
-        return f"{float(value):+.3f}"
-    except (TypeError, ValueError):
-        return "n/a"
-
-
-def report_summary(report: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    if not report:
-        return None
-    reasons = [
-        clip_message(str(reason), max_chars=MAX_REASON_CHARS)
-        for reason in report.get("reasons", [])
-    ]
-    gate_outcomes = report.get("gate_outcomes", [])
-    return {
-        "status": report.get("status"),
-        "reasons": reasons[:MAX_REASON_COUNT],
-        "reason_count": len(reasons),
-        "gate_count": len(gate_outcomes) if isinstance(gate_outcomes, list) else None,
-    }
 
 
 def safe_run_refs(refs: Mapping[str, Any]) -> dict[str, Any]:

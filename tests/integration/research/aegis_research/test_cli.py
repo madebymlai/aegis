@@ -168,7 +168,7 @@ def test_json_invocation_error_is_structured(
 def test_run_requires_explicit_config_without_train_guidance(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert cli.main(["run", "--json"]) == 6
+    assert cli.main(["run"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -177,11 +177,23 @@ def test_run_requires_explicit_config_without_train_guidance(
     assert "--train" not in payload["error"]["message"]
 
 
+def test_run_rejects_removed_json_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """aerd run --json exits with an unrecognized-argument error."""
+    assert cli.main(["run", "config.yaml", "--json"]) == 2
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err)
+    assert payload["error"]["category"] == "invocation"
+    assert "--json" in payload["error"]["message"]
+
+
 @pytest.mark.parametrize(
     "argv",
     [
-        ["run", "--train", "config.yaml", "--json"],
-        ["run", "config.yaml", "--train", "--json"],
+        ["run", "--train", "config.yaml"],
+        ["run", "config.yaml", "--train"],
     ],
 )
 def test_run_rejects_removed_train_flag(
@@ -224,7 +236,7 @@ def test_run_rejects_removed_labeler_without_train_guidance(
         )
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-run"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -270,7 +282,7 @@ def test_run_rejects_unknown_portfolio_direction(
         yaml.safe_dump(_signed_book_run_config("sideways"), sort_keys=False)
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-dir"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-dir"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -291,7 +303,7 @@ def test_run_accepts_shortonly_portfolio_direction(
         yaml.safe_dump(_signed_book_run_config("shortonly"), sort_keys=False)
     )
 
-    cli.main(["run", str(config_path), "--json", "--run-id", "short-dir"])
+    cli.main(["run", str(config_path), "--run-id", "short-dir"])
 
     output = capsys.readouterr()
     combined = output.out + output.err
@@ -314,7 +326,7 @@ def _run_candidate_returns(
     config_path.write_text(
         yaml.safe_dump(_carry_run_config(short_borrow_rate), sort_keys=False)
     )
-    assert cli.main(["run", str(config_path), "--json", "--run-id", run_id]) == 0
+    assert cli.main(["run", str(config_path), "--run-id", run_id]) == 0
     artifact = json.loads(
         (tmp_path / "runs" / run_id / "strategy_run.json").read_text()
     )
@@ -368,7 +380,7 @@ def test_run_rejects_stale_train_shaped_config_before_run_directory(
         )
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-mode"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-mode"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -377,7 +389,7 @@ def test_run_rejects_stale_train_shaped_config_before_run_directory(
     assert not (tmp_path / "runs" / "bad-mode").exists()
 
 
-def test_top_level_keyboard_interrupt_json_is_structured(
+def test_top_level_keyboard_interrupt_is_structured(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -386,7 +398,7 @@ def test_top_level_keyboard_interrupt_json_is_structured(
 
     monkeypatch.setattr(cli, "build_parser", interrupt)
 
-    assert cli.main(["--json"]) == 130
+    assert cli.main([]) == 130
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -408,200 +420,6 @@ def test_output_helper_normalizes_nonstandard_json_numbers(
     )
 
     assert json.loads(capsys.readouterr().out)["value"] is None
-
-
-def test_held_out_summary_leads_with_held_out_and_gap_for_each_role() -> None:
-    from research.aegis_research.cli_support.output import held_out_summary_lines
-
-    def _summary(role: str, held_out: float, selection: float) -> dict[str, object]:
-        return {
-            "role": role,
-            "held_out_headline": {
-                "metric": "sharpe_ratio",
-                "held_out": held_out,
-                "selection": selection,
-                "gap": selection - held_out,
-            },
-        }
-
-    optimization = {
-        "ranking_metric": "sharpe_ratio",
-        "held_out_warning": "best candidate held-out sharpe_ratio +0.020 ...",
-    }
-    candidates = [
-        _summary("best", 0.02, 1.97),
-        _summary("median", -0.10, 1.20),
-        _summary("worst", -0.30, 0.50),
-    ]
-
-    lines = held_out_summary_lines(optimization, candidates)
-
-    text = "\n".join(lines)
-    # Held-out is the headline column and precedes the in-sample column.
-    header = next(line for line in lines if "held-out" in line and "in-sample" in line)
-    assert header.index("held-out") < header.index("in-sample")
-    assert "sharpe_ratio" in lines[0]
-    # best/median/worst each surface held-out, in-sample, and the gap.
-    assert "best" in text and "+0.020" in text and "+1.970" in text and "+1.950" in text
-    assert "median" in text and "-0.100" in text
-    assert "worst" in text and "-0.300" in text
-    assert any(line.startswith("WARNING:") for line in lines)
-
-
-def test_held_out_summary_is_empty_without_candidates() -> None:
-    from research.aegis_research.cli_support.output import held_out_summary_lines
-
-    assert held_out_summary_lines({"ranking_metric": "sharpe_ratio"}, []) == ()
-
-
-def test_reproduce_lock_lines_emit_copy_paste_handles_and_footer() -> None:
-    # aegis-rd-6ie: post-run output hands the user a copy-paste lock: handle per
-    # representative candidate — best is the default role (bare), others carry :role —
-    # plus a footer naming the run_id and the candidate-store path.
-    from research.aegis_research.cli_support.output import reproduce_lock_lines
-
-    run_id = "20260527T000603791760Z_etf_momentum"
-    candidates = [{"role": "best"}, {"role": "median"}, {"role": "worst"}]
-
-    lines = reproduce_lock_lines(
-        run_id, candidates, store_path="runs/.candidate_store/candidates.sqlite3"
-    )
-
-    assert any(line.rstrip().endswith(f"lock: {run_id}") for line in lines)
-    assert any(line.rstrip().endswith(f"lock: {run_id}:median") for line in lines)
-    assert any(line.rstrip().endswith(f"lock: {run_id}:worst") for line in lines)
-    assert any(line == f"run_id: {run_id}" for line in lines)
-    assert any(line == "candidate store: runs/.candidate_store/candidates.sqlite3" for line in lines)
-
-
-def test_reproduce_lock_lines_empty_without_candidates() -> None:
-    from research.aegis_research.cli_support.output import reproduce_lock_lines
-
-    assert reproduce_lock_lines("run-a", [], store_path="x") == ()
-
-
-def _researched_optimization(
-    *, total: int, excluded_invalid: int, excluded_degenerate: int
-) -> dict[str, object]:
-    return {
-        "ranking_metric": "sharpe_ratio",
-        "total": total,
-        "excluded_invalid": excluded_invalid,
-        "excluded_degenerate": excluded_degenerate,
-    }
-
-
-def _researched_candidate() -> dict[str, object]:
-    return {
-        "role": "best",
-        "held_out_headline": {
-            "metric": "sharpe_ratio",
-            "held_out": 0.02,
-            "selection": 1.97,
-            "gap": 1.95,
-        },
-    }
-
-
-def test_held_out_summary_renders_full_researched_ratio_when_nothing_excluded() -> None:
-    from research.aegis_research.cli_support.output import held_out_summary_lines
-
-    lines = held_out_summary_lines(
-        _researched_optimization(total=323, excluded_invalid=0, excluded_degenerate=0),
-        [_researched_candidate()],
-    )
-
-    assert "researched candidates: 323/323" in lines
-    assert not any("misconfigured" in line for line in lines)
-
-
-def test_held_out_summary_subtracts_only_degenerate_from_total() -> None:
-    from research.aegis_research.cli_support.output import held_out_summary_lines
-
-    # researched = total - excluded_degenerate, computed from the exact total
-    # (111 = 323 - 212), never a preflight estimate; invalid is a strict subset
-    # of degenerate so it does not subtract twice.
-    lines = held_out_summary_lines(
-        _researched_optimization(total=323, excluded_invalid=0, excluded_degenerate=212),
-        [_researched_candidate()],
-    )
-
-    assert "researched candidates: 111/323" in lines
-    assert not any("misconfigured" in line for line in lines)
-
-
-def test_held_out_summary_appends_misconfigured_clause_when_invalid_present() -> None:
-    from research.aegis_research.cli_support.output import held_out_summary_lines
-
-    lines = held_out_summary_lines(
-        _researched_optimization(total=323, excluded_invalid=2, excluded_degenerate=212),
-        [_researched_candidate()],
-    )
-
-    assert "researched candidates: 111/323 (2 misconfigured)" in lines
-
-
-def test_held_out_summary_no_held_rows_line_when_zero() -> None:
-    """No non-executable rebalance rows line is rendered when the count is zero."""
-    from research.aegis_research.cli_support.output import held_out_summary_lines
-
-    lines = held_out_summary_lines(
-        {**_researched_optimization(total=30, excluded_invalid=0, excluded_degenerate=0),
-         "non_executable_rows": 0},
-        [_researched_candidate()],
-    )
-
-    assert not any("non-executable rebalance rows" in line for line in lines)
-
-
-def test_held_out_summary_neutral_held_rows_line_for_purged_split() -> None:
-    """A purged-split run with a positive count renders the neutral line."""
-    from research.aegis_research.cli_support.output import held_out_summary_lines
-
-    lines = held_out_summary_lines(
-        {**_researched_optimization(total=30, excluded_invalid=0, excluded_degenerate=0),
-         "non_executable_rows": 7,
-         "split_method": "from_purged_kfold"},
-        [_researched_candidate()],
-    )
-
-    held_line = next(line for line in lines if "non-executable rebalance rows" in line)
-    assert "non-executable rebalance rows: 7" in held_line
-    assert "held at split seams" in held_line
-    assert not held_line.startswith("WARNING")
-
-
-def test_held_out_summary_warning_held_rows_line_for_contiguous_split() -> None:
-    """A contiguous-split run with a positive count renders the WARNING-prefixed line."""
-    from research.aegis_research.cli_support.output import held_out_summary_lines
-
-    lines = held_out_summary_lines(
-        {**_researched_optimization(total=30, excluded_invalid=0, excluded_degenerate=0),
-         "non_executable_rows": 3,
-         "split_method": "from_rolling"},
-        [_researched_candidate()],
-    )
-
-    held_line = next(line for line in lines if "non-executable rebalance rows" in line)
-    assert held_line.startswith("WARNING:")
-    assert "non-executable rebalance rows: 3" in held_line
-    assert "should be zero" in held_line
-
-
-def test_held_out_summary_held_rows_line_says_rebalance_rows_not_candidates() -> None:
-    """The line wording references rebalance rows, not candidates."""
-    from research.aegis_research.cli_support.output import held_out_summary_lines
-
-    lines = held_out_summary_lines(
-        {**_researched_optimization(total=30, excluded_invalid=0, excluded_degenerate=0),
-         "non_executable_rows": 5,
-         "split_method": "from_purged_kfold"},
-        [_researched_candidate()],
-    )
-
-    held_line = next(line for line in lines if "non-executable rebalance rows" in line)
-    assert "rebalance rows" in held_line
-    assert "candidates" not in held_line.lower()
 
 
 def test_safe_path_hides_relative_paths_that_escape_cwd(

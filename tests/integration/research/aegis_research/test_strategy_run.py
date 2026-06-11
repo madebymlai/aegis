@@ -20,7 +20,7 @@ def test_strategy_run_cli_rejects_component_strategy_without_optimization(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "strategy-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "strategy-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "strategy-run")
 
 
@@ -33,7 +33,7 @@ def test_strategy_run_cli_rejects_component_strategy_with_top_level_rolling_spli
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, split=_rolling_split_config())
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-rolling"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "component-rolling"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "component-rolling")
 
 
@@ -46,7 +46,7 @@ def test_strategy_run_cli_rejects_component_strategy_with_top_level_purged_split
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, split=_purged_kfold_split_config())
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-purged"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "component-purged"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "component-purged")
 
 
@@ -64,7 +64,7 @@ def test_strategy_run_rejects_candidate_grid_before_split_execution_budget_path(
         candidate_grid={"max_estimated_cells": 1},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "split-over-budget"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "split-over-budget"]) == 6
     output = capsys.readouterr()
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
@@ -83,7 +83,7 @@ def test_strategy_run_rejects_component_split_failure_side_path_without_optimiza
 
     config_path = _write_run_config(tmp_path, split=_rolling_split_config())
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-split-fails"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "component-split-fails"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "component-split-fails")
 
 
@@ -101,7 +101,7 @@ def test_strategy_run_rejects_component_indicator_side_path_without_optimization
         indicators=[{"id": "demo.ma", "params": {"window": 2}}],
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "indicator-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "indicator-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "indicator-run")
 
 
@@ -120,7 +120,7 @@ def test_strategy_run_rejects_all_component_indicator_expansion_without_optimiza
     _write_two_indicator_strategy_component(tmp_path / "research/components/strategies/uses_all.py")
     config_path = _write_run_config(tmp_path, strategy_id="demo.uses_all")
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "all-indicators-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "all-indicators-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "all-indicators-run")
 
 
@@ -135,7 +135,7 @@ def test_strategy_run_rejects_component_input_array_side_path_without_optimizati
     strategy_path.write_text(strategy_path.read_text().replace("['Close']", "['FundingRate']"))
     config_path = _write_run_config(tmp_path, arrays=["Close", "Open"])
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-strategy-arrays"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-strategy-arrays"]) == 6
 
     _assert_missing_optimization_config_error(capsys, tmp_path, "bad-strategy-arrays")
 
@@ -152,7 +152,7 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
         optimization={"search": "grid", "split": _rolling_split_config()},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-opt"]) == 0
+    assert cli.main(["run", str(config_path), "--run-id", "component-opt"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     artifact = json.loads((tmp_path / "runs" / "component-opt" / "strategy_run.json").read_text())
@@ -206,13 +206,13 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 
 
-def test_strategy_run_prints_copy_paste_lock_handles_in_human_output(
+def test_strategy_run_always_emits_json_with_lock_handles(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # aegis-rd-6ie: a successful run hands the user copy-paste lock: handles (best is the
-    # bare run_id; median/worst carry :role) plus a run_id + candidate-store footer.
+    # aegis-rd-gg3.3: aerd run always emits JSON without --json flag;
+    # lock handles are payload data (best = bare run_id, others carry :role).
     monkeypatch.chdir(tmp_path)
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(
@@ -222,12 +222,16 @@ def test_strategy_run_prints_copy_paste_lock_handles_in_human_output(
 
     assert cli.main(["run", str(config_path), "--run-id", "lock-handle-run"]) == 0
 
-    lines = capsys.readouterr().out.splitlines()
-    assert any(line.rstrip().endswith("lock: lock-handle-run") for line in lines)
-    assert any(line.rstrip().endswith("lock: lock-handle-run:median") for line in lines)
-    assert any(line.rstrip().endswith("lock: lock-handle-run:worst") for line in lines)
-    assert any(line == "run_id: lock-handle-run" for line in lines)
-    assert any(line.startswith("candidate store:") for line in lines)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "success"
+    assert payload["command"] == "run"
+    # Lock handles in the JSON payload
+    locks = {c["role"]: c["lock"] for c in payload["candidates"]}
+    assert locks["best"] == "lock-handle-run"
+    assert locks["median"] == "lock-handle-run:median"
+    assert locks["worst"] == "lock-handle-run:worst"
+    # Selection projected from ConfigSelectionEvidence
+    assert payload["selection"] == {"source": "explicit", "config_path": "run.yaml"}
 
 
 def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
@@ -248,7 +252,7 @@ def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
         optimization={"search": "grid", "split": _rolling_split_config()},
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "component-locks"]) == 0
+    assert cli.main(["run", str(config_path), "--run-id", "component-locks"]) == 0
 
     capsys.readouterr()
     artifact = json.loads((tmp_path / "runs" / "component-locks" / "strategy_run.json").read_text())
@@ -273,7 +277,7 @@ def test_strategy_run_rejects_data_quality_side_path_without_optimization(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-data"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-data"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "bad-data")
 
 
@@ -286,7 +290,7 @@ def test_strategy_run_rejects_fixed_strategy_side_path_without_optimization(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "fixed-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "fixed-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "fixed-run")
 
 
@@ -309,7 +313,7 @@ def test_strategy_run_reports_config_validation_failure(
         },
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "secret-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "secret-run"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -328,7 +332,7 @@ def test_strategy_run_maps_component_registry_errors_to_config_errors(
     _write_strategy_component(tmp_path / "research/components/strategies/two.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-registry"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-registry"]) == 6
 
     payload = json.loads(capsys.readouterr().err)
     assert payload["error"]["category"] == "config_validation"
@@ -350,7 +354,7 @@ def test_strategy_run_rejects_indicator_symbol_mismatch_side_path_without_optimi
         indicators=[{"id": "demo.ma", "params": {"window": 2}}],
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "bad-indicator"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "bad-indicator"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "bad-indicator")
 
 
@@ -363,7 +367,7 @@ def test_strategy_run_rejects_interrupt_side_path_without_optimization(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "interrupted-run"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "interrupted-run"]) == 6
     _assert_missing_optimization_config_error(capsys, tmp_path, "interrupted-run")
 
 
@@ -393,7 +397,7 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
         )
     )
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "should-not-exist"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "should-not-exist"]) == 6
 
     output = capsys.readouterr()
     assert output.out == ""
@@ -412,7 +416,7 @@ def test_run_rejects_optimization_without_nested_split_before_run_creation(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, optimization={"search": "grid"})
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", "no-optimization-split"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "no-optimization-split"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
@@ -428,7 +432,7 @@ def test_run_missing_config_is_config_error(
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
-    assert cli.main(["run", "missing.yaml", "--json"]) == 6
+    assert cli.main(["run", "missing.yaml"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)

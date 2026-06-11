@@ -42,7 +42,7 @@ def test_optimization_run_manifest_matches_golden_bytes(tmp_path, monkeypatch) -
     config_path = _write_oracle_config(tmp_path)
     monkeypatch.chdir(tmp_path)
 
-    assert cli.main(["run", str(config_path), "--json", "--run-id", _RUN_ID]) == 0
+    assert cli.main(["run", str(config_path), "--run-id", _RUN_ID]) == 0
 
     run_dir = tmp_path / "runs" / _RUN_ID
     manifest = json.loads((run_dir / "manifest.json").read_text())

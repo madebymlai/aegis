@@ -11,11 +11,10 @@ from research.aegis_research.cli_support.errors import (
 )
 from research.aegis_research.cli_support.output import (
     CommandResult,
-    held_out_summary_lines,
-    reproduce_lock_lines,
     safe_path,
     write_success,
 )
+from research.aegis_research.cli_support.run_output import build_run_payload
 from research.aegis_research.component_registry import (
     ComponentRegistryError,
     discover_component_registry,
@@ -34,12 +33,6 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser = subparsers.add_parser("run", help="Run a config")
     parser.add_argument("config", nargs="?", help="Path to run YAML")
     parser.add_argument(
-        "--json",
-        action="store_true",
-        default=False,
-        help="Emit a structured JSON result",
-    )
-    parser.add_argument(
         "--rerun-mode",
         choices=[RerunMode.NEW, RerunMode.DUPLICATE, RerunMode.FORK, RerunMode.OVERWRITE],
         default=RerunMode.NEW,
@@ -52,21 +45,22 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 
 def handle_run(args: argparse.Namespace, **streams: Any) -> int:
-    json_mode = args.json
     if args.config is None:
         raise ConfigCliError("aerd run requires an explicit config")
     config_path = Path(args.config)
-    return _handle_strategy_run(args, config_path=config_path, json_mode=json_mode, **streams)
+    return _handle_strategy_run(args, config_path=config_path, **streams)
 
 
 def _handle_strategy_run(
     args: argparse.Namespace,
     *,
     config_path: Path,
-    json_mode: bool,
     **streams: Any,
 ) -> int:
     run_refs: dict[str, Any] = {}
+    selection_evidence = ConfigSelectionEvidence(
+        source="explicit", config_path=safe_path(config_path)
+    )
     try:
         component_registry = discover_component_registry()
         resolved = load_run_config(
@@ -75,7 +69,7 @@ def _handle_strategy_run(
         )
         resolved = with_run_config_selection(
             resolved,
-            ConfigSelectionEvidence(source="explicit", config_path=safe_path(config_path)),
+            selection_evidence,
         )
     except (ConfigValidationError, ComponentRegistryError) as error:
         raise ConfigCliError(str(error)) from error
@@ -112,49 +106,10 @@ def _handle_strategy_run(
     return write_success(
         CommandResult(
             command="run",
-            payload=_run_payload(
-                result, selection={"source": "explicit", "config_path": safe_path(config_path)}
-            ),
-            human_lines=_human_run_lines(result),
+            payload=build_run_payload(result, selection_evidence=selection_evidence),
         ),
-        json_mode=json_mode,
+        json_mode=True,
         **streams,
-    )
-
-
-def _run_payload(result: dict[str, Any], *, selection: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "selection": selection,
-        "run": {
-            "id": result.get("run_id"),
-            "status": result.get("status"),
-            "run_dir": safe_path(result.get("run_dir")),
-            "manifest_path": safe_path(result.get("manifest_path")),
-            "started_at": result.get("started_at"),
-            "finished_at": result.get("finished_at"),
-        },
-        "artifacts": {
-            "strategy_artifact_id": result.get("strategy_artifact_id"),
-            "strategy_artifact_path": safe_path(result.get("strategy_artifact_path")),
-        },
-        "candidate_store": {
-            "path": safe_path(result.get("candidate_store_path")),
-        },
-        "optimization": result.get("optimization", {}),
-        "candidates": result.get("candidates", []),
-    }
-
-
-def _human_run_lines(result: dict[str, Any]) -> tuple[str, ...]:
-    return (
-        f"Run: {safe_path(result.get('run_dir'))}",
-        f"Status: {result.get('status')}",
-        *held_out_summary_lines(result.get("optimization", {}), result.get("candidates", [])),
-        *reproduce_lock_lines(
-            result.get("run_id"),
-            result.get("candidates", []),
-            store_path=safe_path(result.get("candidate_store_path")),
-        ),
     )
 
 

@@ -68,7 +68,7 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
         )
     )
 
-    exit_code = cli.main(["run", str(config_path), "--json", "--run-id", "pipeline-e2e"])
+    exit_code = cli.main(["run", str(config_path), "--run-id", "pipeline-e2e"])
 
     output = capsys.readouterr()
     assert exit_code == 0, f"CLI failed: {output.err}"
