@@ -171,6 +171,6 @@ draw/spec luck and the sector thread closes.
 ## References
 
 - Diary of record: [[2026-06-11]] (v30/v34 priors, this campaign's launch)
-- Articles: [[crash-resistance-in-our-etf-universe]],
+- Articles: crash-resistance-in-our-etf-universe (retired),
   [[when-conditioning-pays]] (the static-benchmark discipline),
   [[measuring-crisis-alpha]] (why floored composite, not Sharpe alone)
