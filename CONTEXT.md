@@ -72,6 +72,10 @@ _Avoid_: serialization, JSON dump, to_builtin
 A registered, named measurement with declared semantics, unit, and ranking eligibility. One Metric is chosen as the primary ranking criterion; all registered Metrics are carried on every **Candidate**.
 _Avoid_: score, stat, KPI
 
+**Equity Curve**:
+The per-**Candidate** portfolio value series a custom **Metric** reads once from a simulated batch (`get_value`), normalized to a frame with one column per Candidate. It is the single read behind every custom Metric's derivations — drawdown curve, annualized return, daily returns, and benchmark-aligned returns — so a reader honours the one-read-per-batch contract by constructing one Equity Curve and asking it, never re-reading the portfolio.
+_Avoid_: NAV, equity, value series, balance
+
 **Allocation Policy**:
 The fail-closed gate that validates a **Strategy's** signed target-weight frame against the **Run's** **Gross Exposure** and **Net Exposure** caps before simulation. It neither sizes nor normalizes allocations: the VBT portfolio simulator sizes the signed weights directly and reads **Direction** from their sign. The policy only rejects books that breach the caps.
 _Avoid_: normalizer, sizing engine, portfolio layer

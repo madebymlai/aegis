@@ -34,13 +34,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import ReportConfig
 from research.aegis_research.metrics.contracts import (
     SOURCE_TYPE_CUSTOM,
     ExtractorSpec,
     MetricDefinition,
 )
+from research.aegis_research.metrics.custom.support import EquityCurve
 
 DEFAULT_BENCHMARK = "SPY"
 
@@ -62,18 +62,9 @@ BEAR_MARKET_BETA_ID = "bear_market_beta"
 # ── Shared read of (stream returns, benchmark returns) per group ──────────────
 
 def _stream_and_benchmark(pf: Any, benchmark: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Per-group daily returns of the stream and of the benchmark.
-
-    Mirrors the capture metrics: the benchmark is the batch's own benchmark
-    close per group (identical content across groups, aligned to the value
-    frame's columns), so the read needs nothing beyond the portfolio.
-    """
-    value = pf.get_value()
-    if isinstance(value, pd.Series):
-        value = value.to_frame()
-    benchmark_close = pf.close.xs(benchmark, level=SYMBOL_LEVEL, axis=1)
-    benchmark_close.columns = value.columns
-    return value.pct_change(), benchmark_close.pct_change()
+    """Per-group daily returns of the stream and of the benchmark, from one read."""
+    curve = EquityCurve.from_portfolio(pf)
+    return curve.returns(), curve.benchmark_returns(benchmark)
 
 
 def _per_column(

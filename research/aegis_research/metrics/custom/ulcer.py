@@ -23,6 +23,7 @@ from research.aegis_research.metrics.contracts import (
     ExtractorSpec,
     MetricDefinition,
 )
+from research.aegis_research.metrics.custom.support import EquityCurve
 
 ULCER_PERFORMANCE_INDEX_ID = "ulcer_performance_index"
 
@@ -49,16 +50,10 @@ def _read_ulcer_performance_index(pf: Any, config: ReportConfig) -> pd.Series:
     (zero Ulcer Index) yields NaN, the same not-rankable signal as an
     all-cash Sharpe.
     """
-    value = pf.get_value()
-    if isinstance(value, pd.Series):
-        value = value.to_frame()
-
-    drawdown = value / value.cummax() - 1.0
+    curve = EquityCurve.from_portfolio(pf)
+    drawdown = curve.drawdown_curve()
     ulcer = np.sqrt((drawdown**2).mean())
-
-    growth = value.iloc[-1] / value.iloc[0]
-    annualized = growth ** (config.periods_per_year / len(value)) - 1.0
-
+    annualized = curve.annualized_return(config.periods_per_year)
     return annualized / ulcer.replace(0.0, np.nan)
 
 

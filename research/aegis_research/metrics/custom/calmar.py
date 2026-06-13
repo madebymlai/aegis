@@ -21,6 +21,7 @@ from research.aegis_research.metrics.contracts import (
     ExtractorSpec,
     MetricDefinition,
 )
+from research.aegis_research.metrics.custom.support import EquityCurve
 
 CALMAR_RATIO_ID = "calmar_ratio"
 
@@ -45,16 +46,9 @@ def _read_calmar_ratio(pf: Any, config: ReportConfig) -> pd.Series:
     A flat curve (zero drawdown) yields NaN — not rankable, the same signal
     as an all-cash Sharpe.
     """
-    value = pf.get_value()
-    if isinstance(value, pd.Series):
-        value = value.to_frame()
-
-    drawdown = value / value.cummax() - 1.0
-    max_drawdown = drawdown.min().abs()
-
-    growth = value.iloc[-1] / value.iloc[0]
-    annualized = growth ** (config.periods_per_year / len(value)) - 1.0
-
+    curve = EquityCurve.from_portfolio(pf)
+    max_drawdown = curve.drawdown_curve().min().abs()
+    annualized = curve.annualized_return(config.periods_per_year)
     return annualized / max_drawdown.replace(0.0, np.nan)
 
 

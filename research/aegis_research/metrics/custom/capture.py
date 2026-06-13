@@ -26,13 +26,13 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import ReportConfig
 from research.aegis_research.metrics.contracts import (
     SOURCE_TYPE_CUSTOM,
     ExtractorSpec,
     MetricDefinition,
 )
+from research.aegis_research.metrics.custom.support import EquityCurve
 
 NEG_DOWN_CAPTURE_ID = "neg_down_capture"
 CAPTURE_SPREAD_ID = "capture_spread"
@@ -50,14 +50,9 @@ def _captures(pf: Any, benchmark: str) -> tuple[pd.Series, pd.Series]:
     an empty up/down day set, or a near-zero compounded benchmark move, yields
     NaN — not rankable, same signal as an all-cash Sharpe.
     """
-    value = pf.get_value()
-    if isinstance(value, pd.Series):
-        value = value.to_frame()
-
-    benchmark_close = pf.close.xs(benchmark, level=SYMBOL_LEVEL, axis=1)
-    benchmark_close.columns = value.columns
-    benchmark_returns = benchmark_close.pct_change()
-    returns = value.pct_change()
+    curve = EquityCurve.from_portfolio(pf)
+    benchmark_returns = curve.benchmark_returns(benchmark)
+    returns = curve.returns()
 
     def _compounded(mask: pd.DataFrame, frame: pd.DataFrame) -> pd.Series:
         return (1.0 + frame.where(mask, 0.0)).prod() - 1.0
