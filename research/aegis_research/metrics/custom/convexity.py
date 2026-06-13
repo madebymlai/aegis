@@ -21,9 +21,15 @@ The benchmark is a **parameter**, not a constant: SPY is the dominant macro
 factor in our ten-ETF universe, but the conditional signatures move with the
 choice (swap SPY for a 60/40 proxy and crisis-conditional + regime-beta change),
 so the benchmark symbol is closed over by a factory and recorded in metadata.
-Each metric reads the benchmark from the batch's own close panel — no input
-beyond what the portfolio already carries — and returns a per-group Series, the
-same record shape the built-in extractors use.
+
+Convexity is benchmark-relative *by definition* (the Treynor-Mazuy beta_2 is the
+loading on the benchmark's square; there is no benchmark-free convexity - the
+intrinsic axis is skew, metric 1). So the benchmark need not be a *traded* symbol:
+if it is in the batch's close panel it is read from there, otherwise it is pulled
+lazily over the portfolio's own date span and aligned (cached per span). That keeps
+the equity reference without forcing SPY into every strategy's universe - none of the
+non-equity sleeves hold it - and degrades to NaN (not an error) if it cannot be
+sourced. The intrinsic skew metric needs no benchmark at all.
 """
 
 from __future__ import annotations
@@ -61,10 +67,46 @@ BEAR_MARKET_BETA_ID = "bear_market_beta"
 
 # ── Shared read of (stream returns, benchmark returns) per group ──────────────
 
+# Benchmark close cached per (symbol, span) so the three benchmark-relative metrics share
+# one lazy pull per batch rather than re-fetching.
+_BENCHMARK_CACHE: dict[tuple[str, str, str], pd.Series] = {}
+
+
+def _lazy_benchmark_close(symbol: str, index: pd.DatetimeIndex) -> pd.Series:
+    """Pull the benchmark close over the portfolio's own span, tz-normalized to its dates.
+
+    Only used when the benchmark is not a traded column: convexity is benchmark-relative by
+    definition, so the reference is sourced on demand rather than required in the universe.
+    """
+    key = (symbol, str(index.min()), str(index.max()))
+    if key not in _BENCHMARK_CACHE:
+        from vectorbtpro import vbt
+
+        close = vbt.YFData.pull(
+            symbol, start=index.min(), end=index.max() + pd.Timedelta(days=1)
+        ).get("Close")
+        if isinstance(close.index, pd.DatetimeIndex) and close.index.tz is not None:
+            close.index = close.index.tz_localize(None)
+        close.index = close.index.normalize()
+        _BENCHMARK_CACHE[key] = close
+    return _BENCHMARK_CACHE[key]
+
+
 def _stream_and_benchmark(pf: Any, benchmark: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Per-group daily returns of the stream and of the benchmark, from one read."""
+    """Per-group daily returns of the stream and of the benchmark, from one read.
+
+    The benchmark is read from the traded close panel when present, else pulled lazily and
+    aligned; an unavailable benchmark yields NaN returns so the benchmark-relative reducers
+    degrade to NaN rather than failing the run.
+    """
     curve = EquityCurve.from_portfolio(pf)
-    return curve.returns(), curve.benchmark_returns(benchmark)
+    if curve.has_symbol(benchmark):
+        return curve.returns(), curve.benchmark_returns(benchmark)
+    try:
+        close = _lazy_benchmark_close(benchmark, curve.value.index)
+    except Exception:
+        close = pd.Series(np.nan, index=curve.value.index)
+    return curve.returns(), curve.aligned_benchmark_returns(close)
 
 
 def _per_column(

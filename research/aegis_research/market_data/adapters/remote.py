@@ -38,6 +38,48 @@ _REMOTE_PROVIDER_MAPPINGS = (
 )
 
 
+# Aligning a cross-timezone universe needs opposite tz operations by bar resolution, so the
+# regime is read from the timeframe (not hidden in a tz trick):
+#   - daily-or-coarser: a bar denotes a CALENDAR DATE. Drop tz to local wall time and floor
+#     to the date, so ^VIX (CBOE/Chicago midnight) and VXX (NYSE/New-York midnight) merge on
+#     the date they denote rather than looking an hour apart.
+#   - intraday (sub-daily): a bar denotes an INSTANT. Convert to a common tz (UTC) preserving
+#     the instant, so 09:30 Chicago and 09:30 New-York stay the distinct moments they are
+#     (and only truly-simultaneous bars align) rather than being collapsed by a naive strip.
+def _is_intraday_timeframe(timeframe: Any) -> bool:
+    """A bar shorter than a day aligns by instant; daily-or-coarser aligns by date.
+
+    Defers to pandas' duration parsing rather than enumerating unit spellings: sub-day
+    durations compare under a day; weekly/monthly/unknown are not fixed durations, raise,
+    and fall to the date regime. pandas reads 'm'/'min' as minutes (the yfinance
+    convention), so '15m' is intraday while '1mo'/'1M' are not.
+    """
+    try:
+        return pd.Timedelta(str(timeframe)) < pd.Timedelta(days=1)
+    except (ValueError, TypeError):
+        return False
+
+
+def _align_remote_index(
+    obj: "pd.Series | pd.DataFrame", *, intraday: bool
+) -> "pd.Series | pd.DataFrame":
+    """Align one symbol's index to the merge regime its timeframe implies (see above)."""
+    index = obj.index
+    if not isinstance(index, pd.DatetimeIndex):
+        return obj
+    if intraday:
+        if index.tz is None:
+            return obj  # naive intraday: no tz to reconcile against, leave the instant as-is
+        aligned = index.tz_convert("UTC")  # unify tz, preserve the instant
+    elif index.tz is None:
+        aligned = index.normalize()  # date regime, already naive: floor to the date
+    else:
+        aligned = index.tz_localize(None).normalize()  # date regime: local wall time -> date
+    obj = obj.copy()
+    obj.index = aligned
+    return obj
+
+
 def remote_source_loaders() -> dict[str, MarketDataAdapter]:
     return {
         source: (
@@ -128,6 +170,7 @@ def _native_from_remote_raw_outputs(
     common_tz_localize = None
     common_tz_convert = None
     common_freq = None
+    intraday = _is_intraday_timeframe(config.timeframe)
 
     for symbol, output in zip(config.symbols, raw_outputs, strict=True):
         if output is None:
@@ -139,6 +182,11 @@ def _native_from_remote_raw_outputs(
                 warn(f"Symbol {symbol!r} returned an empty array. Skipping.", stacklevel=2)
             continue
         symbol_returned_kwargs = dict(raw_returned_kwargs)
+        # Align the index to the timeframe's merge regime (date vs instant) and drop the now-
+        # reconciled exchange-tz metadata so heterogeneous source tzs merge instead of raising.
+        projected = _align_remote_index(projected, intraday=intraday)
+        for _tz_key in ("tz", "tz_localize", "tz_convert"):
+            symbol_returned_kwargs.pop(_tz_key, None)
         common_tz_localize, common_tz_convert, common_freq = _update_common_remote_metadata(
             symbol_returned_kwargs,
             common_tz_localize=common_tz_localize,

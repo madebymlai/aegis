@@ -52,6 +52,10 @@ class EquityCurve:
         """Per-Candidate daily simple returns of the value frame."""
         return self.value.pct_change()
 
+    def has_symbol(self, symbol: str) -> bool:
+        """Whether ``symbol`` is a traded column of the close panel."""
+        return symbol in self.close.columns.get_level_values(SYMBOL_LEVEL)
+
     def benchmark_returns(self, symbol: str) -> pd.DataFrame:
         """Daily returns of ``symbol`` from the close panel, aligned per Candidate.
 
@@ -62,3 +66,17 @@ class EquityCurve:
         benchmark_close = self.close.xs(symbol, level=SYMBOL_LEVEL, axis=1)
         benchmark_close.columns = self.value.columns
         return benchmark_close.pct_change()
+
+    def aligned_benchmark_returns(self, close: pd.Series) -> pd.DataFrame:
+        """Returns of an externally-supplied benchmark close, aligned per Candidate.
+
+        For a benchmark sourced outside the traded panel (see convexity's lazy pull):
+        the close is reindexed to the value frame and broadcast to its Candidate columns,
+        so the (stream, benchmark) pairing lines up exactly as for a traded benchmark.
+        """
+        aligned = close.reindex(self.value.index).ffill()
+        broadcast = pd.DataFrame(
+            {col: aligned.to_numpy() for col in self.value.columns},
+            index=self.value.index,
+        )
+        return broadcast.pct_change(fill_method=None)  # already ffilled; avoid redundant pad

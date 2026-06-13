@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import research.aegis_research.metrics.custom.convexity as cx
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import ReportConfig
 from research.aegis_research.metrics.custom.convexity import (
@@ -99,3 +100,57 @@ def test_quarterly_skew_separates_the_poles() -> None:
     # The all-positive convex stream is right-skewed and more so than the mirror.
     assert skew["convex"] > 0.0
     assert skew["convex"] > skew["mirror"]
+
+
+def _stub_without_benchmark() -> tuple[_StubPortfolio, pd.Series]:
+    """Same two streams, but the benchmark (SPY) is NOT a traded column.
+
+    Returns the portfolio and the SPY close that must be sourced lazily; the close panel
+    carries only TLT, so the metrics have to pull the benchmark to compute anything.
+    """
+    index = pd.bdate_range("2021-01-04", periods=640)
+    rng = np.random.default_rng(0)
+    r_b = rng.normal(0.0003, 0.011, size=len(index))
+    r_b[0] = 0.0
+    spy_close = pd.Series(100.0 * np.cumprod(1.0 + r_b), index=index)
+    mirror = pd.Series(10_000.0 * np.cumprod(1.0 + r_b), index=index)
+    convex = pd.Series(10_000.0 * np.cumprod(1.0 + _CONVEX_GAIN * r_b**2), index=index)
+
+    groups = pd.Index(["mirror", "convex"], name="candidate_id")
+    value = pd.DataFrame({"mirror": mirror, "convex": convex})
+    value.columns = groups
+    close_columns = pd.MultiIndex.from_product(
+        [groups, ["TLT"]], names=["candidate_id", SYMBOL_LEVEL]
+    )
+    close = pd.DataFrame({col: pd.Series(50.0, index=index) for col in close_columns})
+    close.columns = close_columns
+    return _StubPortfolio(value, close), spy_close
+
+
+def test_benchmark_pulled_lazily_when_not_in_book(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A benchmark absent from the traded panel is sourced lazily, giving identical signs."""
+    pf, spy_close = _stub_without_benchmark()
+    monkeypatch.setattr(cx, "_lazy_benchmark_close", lambda symbol, index: spy_close)
+    config = ReportConfig()
+    vals = {d.id: s.read(pf, config) for d, s in convexity_metrics("SPY")}
+    # Same separation as the in-book case: mirror is the linear concave pole, convex the gamma pole.
+    assert vals[MARKET_BETA_ID]["mirror"] == pytest.approx(1.0, abs=1e-6)
+    assert vals[MARKET_CONVEXITY_ID]["mirror"] == pytest.approx(0.0, abs=1e-6)
+    assert vals[MARKET_CONVEXITY_ID]["convex"] > 0.0
+    assert vals[CRASH_DAY_RETURN_ID]["convex"] > 0.0
+
+
+def test_unavailable_benchmark_degrades_to_nan_not_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the benchmark cannot be sourced, benchmark-relative metrics are NaN; skew still computes."""
+    pf, _ = _stub_without_benchmark()
+
+    def _boom(symbol: str, index: pd.DatetimeIndex) -> pd.Series:
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(cx, "_lazy_benchmark_close", _boom)
+    config = ReportConfig()
+    vals = {d.id: s.read(pf, config) for d, s in convexity_metrics("SPY")}
+    assert np.isnan(vals[MARKET_CONVEXITY_ID]["mirror"])
+    assert np.isnan(vals[CRASH_DAY_RETURN_ID]["convex"])
+    # The intrinsic skew metric needs no benchmark and still classifies the poles.
+    assert vals[QUARTERLY_RETURN_SKEW_ID]["convex"] > 0.0
