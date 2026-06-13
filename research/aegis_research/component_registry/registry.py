@@ -158,6 +158,11 @@ def _component_files(path: Path, root: Path) -> tuple[Path, ...]:
     _assert_inside_root(path, root)
     files = []
     for child in path.rglob("*"):
+        # Anything beneath an ``archive/`` directory (at any depth) is provenance,
+        # not a live component: kept on disk for reproducibility of archived configs
+        # but excluded from the registry so it never registers, collides, or runs.
+        if "archive" in child.relative_to(path).parts:
+            continue
         if child.is_symlink():
             try:
                 _assert_inside_root(child.resolve(strict=True), root)

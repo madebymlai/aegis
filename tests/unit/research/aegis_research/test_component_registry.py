@@ -63,6 +63,39 @@ def test_component_discovery_rejects_duplicate_ids_within_family(tmp_path) -> No
         discover_component_registry(root=root, repo_root=tmp_path)
 
 
+def test_component_discovery_ignores_archive_directories_at_any_depth(tmp_path) -> None:
+    """Anything beneath an ``archive/`` directory (any depth) is provenance, not a
+    live component: discovery skips it so it never registers, collides, or runs."""
+    root = tmp_path / "research" / "components"
+    _write_component(root / "indicators" / "active.py", "indicators", "demo.active")
+    # Archived directly under the family root...
+    _write_component(root / "indicators" / "archive" / "retired.py", "indicators", "demo.retired")
+    # ...and archived nested under a component subpackage (deeper than one level).
+    _write_component(
+        root / "strategies" / "family" / "archive" / "old.py", "strategies", "demo.old"
+    )
+    _write_component(root / "strategies" / "live.py", "strategies", "demo.live")
+
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+
+    assert registry.ids("indicators") == ("demo.active",)
+    assert registry.ids("strategies") == ("demo.live",)
+
+
+def test_archived_component_does_not_collide_with_active_same_id(tmp_path) -> None:
+    """An archived predecessor sharing an id with its active replacement must not
+    trip the duplicate-id guard — the archive is invisible to discovery."""
+    root = tmp_path / "research" / "components"
+    _write_component(root / "indicators" / "current.py", "indicators", "demo.signal")
+    _write_component(
+        root / "indicators" / "archive" / "previous.py", "indicators", "demo.signal"
+    )
+
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+
+    assert registry.ids("indicators") == ("demo.signal",)
+
+
 def test_component_discovery_rejects_non_literal_metadata(tmp_path) -> None:
     root = tmp_path / "research" / "components"
     path = root / "indicators" / "computed.py"
