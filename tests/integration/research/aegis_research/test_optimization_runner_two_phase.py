@@ -327,34 +327,37 @@ def _run_warmup(windows: list[int]) -> OptimizationResult:
     )
 
 
-def test_held_out_and_selection_builds_receive_the_same_invalid_candidate_set(
+def test_selection_and_held_out_sweeps_share_one_evaluator_carrying_the_invalid_set(
     monkeypatch,
 ) -> None:
-    """Both sweeps must receive the same Invalid-Candidate set so they cannot drift.
+    """Both sweeps must run through the same WindowEvaluator so they cannot drift.
 
     A genuine Invalid Candidate (lookback exceeding full history) makes the
-    Selection build's Invalid-Candidate set non-empty. The held-out build must
-    receive that *same* set; on the pre-change code it receives nothing (the
-    builder's optional default), so the captured sets differ.
+    evaluator's Invalid-Candidate set non-empty. Selection and held-out are
+    handed the *same* evaluator object, so the set they exclude by is identical
+    by construction — asserted here via the evaluator bound to each sweep.
     """
     from research.aegis_research.optimization import runner
 
-    real_build = runner._build_precomputed_window_metrics
+    real_sweep = runner._sweep
     captured: list[object] = []
 
-    def spy(**kwargs):
-        captured.append(kwargs.get("invalid_candidate_keys"))
-        return real_build(**kwargs)
+    def spy(*, candidate_metrics, **kwargs):
+        captured.append(candidate_metrics)
+        return real_sweep(candidate_metrics=candidate_metrics, **kwargs)
 
-    monkeypatch.setattr(runner, "_build_precomputed_window_metrics", spy)
+    monkeypatch.setattr(runner, "_sweep", spy)
 
     _run_warmup([2, N_ROWS + 1])  # window N_ROWS+1 has no finite full-history block
 
-    assert len(captured) == 2, "expected one selection build then one held-out build"
-    selection_keys, held_out_keys = captured
-    assert selection_keys, "selection build should carry a non-empty Invalid-Candidate set"
-    assert held_out_keys == selection_keys, (
-        "held-out build must receive the SAME Invalid-Candidate set as selection"
+    assert len(captured) == 2, "expected one selection sweep then one held-out sweep"
+    selection_metrics, held_out_metrics = captured
+    # ``evaluator.evaluate`` is a bound method; ``__self__`` is the evaluator itself.
+    assert selection_metrics.__self__ is held_out_metrics.__self__, (
+        "selection and held-out sweeps must share one evaluator"
+    )
+    assert selection_metrics.__self__.invalid_candidate_keys, (
+        "the shared evaluator should carry a non-empty Invalid-Candidate set"
     )
 
 
@@ -363,22 +366,22 @@ def test_runner_passes_full_market_index_to_simulate_not_window_index(monkeypatc
     not the window's own index. With a contiguous split method both are
     effectively the same, but with a purged split the difference is that the
     full index has gaps the window index doesn't."""
-    from research.aegis_research.optimization import runner
+    from research.aegis_research.optimization import window_evaluator
 
-    real_metrics = runner._metrics_from_allocations
+    real_sim = window_evaluator.simulate_portfolio_batch
     captured_indices: list[pd.Index] = []
 
     def spy(*args, market_index, **kwargs):
         captured_indices.append(market_index)
-        return real_metrics(*args, market_index=market_index, **kwargs)
+        return real_sim(*args, market_index=market_index, **kwargs)
 
-    monkeypatch.setattr(runner, "_metrics_from_allocations", spy)
+    monkeypatch.setattr(window_evaluator, "simulate_portfolio_batch", spy)
 
     _run([0.2, 0.5, 1.0])
 
     full_index = _uptrend_close().index
     assert len(captured_indices) > 0, (
-        "expected at least one simulate call through _metrics_from_allocations"
+        "expected at least one portfolio simulation through the window evaluator"
     )
     for idx in captured_indices:
         assert idx.equals(full_index), (

@@ -23,10 +23,9 @@ for both phases, so selection and held-out share identical split boundaries and
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
@@ -37,22 +36,13 @@ from research.aegis_research.configuration import (
     RankingConfig,
     ReportConfig,
 )
-from research.aegis_research.metrics.accessors import (
-    central_metrics_from_grouped_accessors,
-)
-from research.aegis_research.metrics.contracts import ExtractorSpec
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
-    invalid_candidate_positions,
     invalid_candidates,
 )
-from research.aegis_research.optimization.precompute import (
-    CandidateKey,
-    IndicatorPrecompute,
-    candidate_keys,
-)
+from research.aegis_research.optimization.precompute import candidate_keys
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -62,10 +52,8 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
-from research.aegis_research.portfolios import (
-    count_non_executable_rows,
-    simulate_portfolio_batch,
-)
+from research.aegis_research.optimization.window_evaluator import WindowEvaluator
+from research.aegis_research.portfolios import count_non_executable_rows
 from research.aegis_research.run_splits import (
     HELD_OUT_SET,
     SELECTION_SET,
@@ -117,8 +105,11 @@ def execute_optimization(
         store, sampled_candidate_keys
     )
 
-    # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.
-    selection_metrics = _build_precomputed_window_metrics(
+    # One evaluator drives both sweeps — the per-window slicing, the all-Invalid
+    # short-circuit, and the metric extraction. Selection and held-out share this
+    # same object, so they cannot drift in the Invalid-Candidate set or any other
+    # captured input.
+    evaluator = WindowEvaluator(
         source=source,
         portfolio=portfolio,
         report=report,
@@ -128,9 +119,11 @@ def execute_optimization(
         invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,
     )
+
+    # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.
     selection_grid = _sweep(
         splitter=splitter,
-        candidate_metrics=selection_metrics,
+        candidate_metrics=evaluator.evaluate,
         apply_input=vbt.Rep("range_"),
         params=sampled_params,
         set_=SELECTION_SET,
@@ -161,140 +154,10 @@ def execute_optimization(
     return _attach_held_out(
         result,
         splitter=splitter,
-        source=source,
-        portfolio=portfolio,
-        report=report,
-        close=close,
-        open_=open_,
-        store=store,
+        evaluator=evaluator,
         param_names=param_names,
-        invalid_candidate_keys=invalid_candidate_keys,
-        extractors=extractors,
         non_executable_rows=non_executable_rows,
     )
-
-
-def _build_precomputed_window_metrics(
-    *,
-    source: OptimizationSource,
-    portfolio: PortfolioConfig,
-    report: ReportConfig,
-    close: pd.DataFrame,
-    open_: pd.DataFrame,
-    store: IndicatorPrecompute,
-    invalid_candidate_keys: set[CandidateKey],
-    extractors: Mapping[str, ExtractorSpec],
-) -> Callable[..., Any]:
-    """Build a split callback that slices the full-series store before simulation.
-
-    ``close``, ``open_`` and ``store`` are closure-captured (passed through
-    ``apply`` unchanged); only the per-(split,set) ``range_`` template arrives
-    positionally. ``close.index`` (the full loaded-data calendar) is passed as
-    the market index so the seam mask can detect gaps in purged/embargoed
-    split windows. Selection and held-out sweeps use the same callback shape —
-    and are handed the same ``invalid_candidate_keys`` (a required argument) —
-    so they cannot drift.
-    """
-    full_index = close.index
-
-    def window_metrics(range_: slice, **params: Any) -> Any:
-        param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
-        keys = candidate_keys(combo_lists)
-        invalid_positions = invalid_candidate_positions(keys, invalid_candidate_keys)
-        if len(invalid_positions) == n_combos:
-            return _nan_metric_frame(metric_keys, param_names, list(extractors))
-
-        close_window = close.iloc[range_]
-        open_window = open_.iloc[range_]
-        indicator_window = store.window(range_, keys)
-        allocations = source.simulate(
-            close_window, indicator_window, n_combos, **combo_lists
-        )
-        # Invalid Candidates are excluded by-key via classify_candidates;
-        # their real simulated values (e.g. a finite cash-holding 0.0)
-        # stay in the grid without masking. The all-invalid short-circuit
-        # above is a pure performance guard.
-        return _metrics_from_allocations(
-            close_window,
-            open_window,
-            allocations,
-            portfolio,
-            report,
-            metric_keys,
-            param_names,
-            extractors,
-            market_index=full_index,
-        )
-
-    return window_metrics
-
-
-def _extract_combos(
-    params: Mapping[str, Any],
-) -> tuple[list[str], dict[str, list[Any]], int, list[tuple]]:
-    # Under mono-chunking every parameter arrives as a list of the chunk's per-combo
-    # values (a single-element list for a one-combo chunk). The grouped accessor
-    # returns one metric row per combo, owning the parameter MultiIndex that vbt
-    # row-stacks across chunks and splits.
-    param_names = list(params)
-    combo_lists = {name: _combo_values(value) for name, value in params.items()}
-    n_combos = len(combo_lists[param_names[0]]) if param_names else 0
-    metric_keys = [
-        tuple(combo_lists[name][i] for name in param_names) for i in range(n_combos)
-    ]
-    return param_names, combo_lists, n_combos, metric_keys
-
-
-def _metrics_from_allocations(
-    close_window: pd.DataFrame,
-    open_window: pd.DataFrame,
-    allocations: Any,
-    portfolio: PortfolioConfig,
-    report: ReportConfig,
-    metric_keys: list[tuple],
-    param_names: list[str],
-    extractors: Mapping[str, ExtractorSpec],
-    *,
-    market_index: pd.Index,
-) -> Any:
-    if allocations is vbt.NoResult:
-        return vbt.NoResult
-    n_symbols = len(close_window.columns)
-    if n_symbols == 0 or len(allocations.columns) // n_symbols < 1:
-        return vbt.NoResult
-    pf = simulate_portfolio_batch(
-        close_window,
-        allocations,
-        portfolio,
-        open_=open_window,
-        market_index=market_index,
-        periods_per_year=report.periods_per_year,
-    )
-    return central_metrics_from_grouped_accessors(
-        pf, report, metric_keys, param_names, extractors
-    )
-
-
-def _nan_metric_frame(
-    metric_keys: list[tuple], param_names: list[str], metric_ids: list[str]
-) -> pd.DataFrame:
-    # float64 by construction — same grid dtype contract as
-    # central_metrics_from_grouped_accessors, so vbt's row_stack concat
-    # never has to reconcile divergent dtypes across windows. Columns mirror
-    # the registry's extractor set so custom metrics stay aligned.
-    index = pd.MultiIndex.from_tuples(metric_keys, names=param_names)
-    return pd.DataFrame(np.nan, index=index, columns=metric_ids)
-
-
-def _combo_values(value: Any) -> list[Any]:
-    """Normalize a mono-chunk parameter into its list of per-combo values.
-
-    Under mono-chunking vbt passes each parameter as the chunk's list of values;
-    a single-combo chunk (or a ``skip_single_comb`` shortcut) arrives as a scalar.
-    """
-    if pd.api.types.is_list_like(value):
-        return list(value)
-    return [value]
 
 
 def _sweep(
@@ -347,15 +210,8 @@ def _attach_held_out(
     result: OptimizationResult,
     *,
     splitter: vbt.Splitter,
-    source: OptimizationSource,
-    portfolio: PortfolioConfig,
-    report: ReportConfig,
-    close: pd.DataFrame,
-    open_: pd.DataFrame,
-    store: IndicatorPrecompute,
+    evaluator: WindowEvaluator,
     param_names: list[str],
-    invalid_candidate_keys: set[CandidateKey],
-    extractors: Mapping[str, ExtractorSpec],
     non_executable_rows: int,
 ) -> OptimizationResult:
     candidates = [result.best, result.median, result.worst]
@@ -369,19 +225,9 @@ def _attach_held_out(
         name: vbt.Param([params[name] for params in unique_params], level=0)
         for name in param_names
     }
-    held_out_metrics = _build_precomputed_window_metrics(
-        source=source,
-        portfolio=portfolio,
-        report=report,
-        close=close,
-        open_=open_,
-        store=store,
-        invalid_candidate_keys=invalid_candidate_keys,
-        extractors=extractors,
-    )
     held_out_grid = _sweep(
         splitter=splitter,
-        candidate_metrics=held_out_metrics,
+        candidate_metrics=evaluator.evaluate,
         apply_input=vbt.Rep("range_"),
         params=held_out_params,
         set_=HELD_OUT_SET,

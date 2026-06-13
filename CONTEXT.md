@@ -40,6 +40,14 @@ _Avoid_: failed candidate, junk candidate, outlier
 A partition of the data index into exactly two sets: a **Selection** set and a **Held-out** set. The Selection set is used for parameter scoring and global ranking during optimization; the Held-out set is used for unbiased validation of the selected **Candidates**.
 _Avoid_: fold, in-sample/out-of-sample, train/test
 
+**Window**:
+The contiguous row range one **Split** set occupies — a single **Selection** or **Held-out** slice the optimization sweep scores in isolation. A **Run's** full-series price frames and precomputed **Indicator** outputs are sliced to a Window by the splitter's range template; the indicators keep all warmup history before the Window because they were computed over the whole series first.
+_Avoid_: slice, range, period, fold
+
+**Window Evaluation**:
+Scoring one chunk of **Candidates** over one **Window**: slice the price and indicator Windows, short-circuit a chunk whose every Candidate is **Invalid**, run the **Strategy** allocation, and reduce the result to one row of **Metrics** per Candidate. The sweep performs a Window Evaluation per (**Split**, set); their rows stack into the **Candidate Grid**.
+_Avoid_: window callback, sweep step, apply function
+
 **Candidate Grid**:
 The scored table an optimization **Run** produces: every registered **Metric**, per **Split**, for every sampled **Candidate**. Built once from the **Selection** sets — the data validity verdicts and global ranking read — and again from the **Held-out** sets for the three representatives. Internal to the Run; never part of **Evidence**.
 _Avoid_: tidy grid, metrics frame, results table, parameter grid
