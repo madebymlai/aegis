@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "29dea33c01d9681cdfdd62ad4a234cb69b12167a1f5270a6dd787c92ecea8257",
+      "hash": "65c36ef237a70949175ecf755af6abb6386467188b4fd56436ff13aaf2f64eb0",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 49292,
+      "size": 49280,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -214,7 +214,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_ffdc750f29ae95fa4b8b374ddc5ff7bb",
+          "candidate_key": "cand_d6291ae80acade22e506d04bde5dd223",
           "held_out_metrics": {
             "0": {
               "max_dd": 19.259731031899552,
@@ -250,7 +250,7 @@
             "win_rate": 56.515137401024695
           },
           "identity": {
-            "allocation_policy": {
+            "book_settings": {
               "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
@@ -349,7 +349,7 @@
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
             },
-            "schema_version": "candidate_identity.v3",
+            "schema_version": "candidate_identity.v4",
             "source_identity": {
               "consumed_outputs": [
                 "momentum_score",
@@ -469,7 +469,7 @@
           }
         },
         {
-          "candidate_key": "cand_75f516a03841ac7e49f46d8356c93feb",
+          "candidate_key": "cand_6026af5e74ced53526b654186bfc99ad",
           "held_out_metrics": {
             "0": {
               "max_dd": 18.118116158313768,
@@ -505,7 +505,7 @@
             "win_rate": 53.571818786224526
           },
           "identity": {
-            "allocation_policy": {
+            "book_settings": {
               "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
@@ -604,7 +604,7 @@
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
             },
-            "schema_version": "candidate_identity.v3",
+            "schema_version": "candidate_identity.v4",
             "source_identity": {
               "consumed_outputs": [
                 "momentum_score",
@@ -724,7 +724,7 @@
           }
         },
         {
-          "candidate_key": "cand_faa3b795b64f6e7a10532ca56aa28c65",
+          "candidate_key": "cand_863c59b190606b5a2ca1b799f35a50bb",
           "held_out_metrics": {
             "0": {
               "max_dd": 27.841344065208496,
@@ -760,7 +760,7 @@
             "win_rate": 51.35775756085567
           },
           "identity": {
-            "allocation_policy": {
+            "book_settings": {
               "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
@@ -859,7 +859,7 @@
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
             },
-            "schema_version": "candidate_identity.v3",
+            "schema_version": "candidate_identity.v4",
             "source_identity": {
               "consumed_outputs": [
                 "momentum_score",

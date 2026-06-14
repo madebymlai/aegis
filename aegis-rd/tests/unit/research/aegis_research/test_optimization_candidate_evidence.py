@@ -74,28 +74,28 @@ def test_candidate_key_includes_hidden_source_and_allocation_identity() -> None:
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
-        allocation_policy={"fees": 0.001},
+        book_settings={"fees": 0.001},
     )
     different_hidden = _single_candidate_row(
         params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 2},
-        allocation_policy={"fees": 0.001},
+        book_settings={"fees": 0.001},
     )
     different_source = _single_candidate_row(
         params,
         source_identity={"source_hash": "def"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
-        allocation_policy={"fees": 0.001},
+        book_settings={"fees": 0.001},
     )
     different_policy = _single_candidate_row(
         params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
         hidden_params={"hidden_threshold": 1},
-        allocation_policy={"fees": 0.002},
+        book_settings={"fees": 0.002},
     )
 
     assert base["candidate_key"] != different_hidden["candidate_key"]
@@ -129,11 +129,11 @@ def test_candidate_identity_golden_bytes_pin() -> None:
             },
         },
         hidden_params={"execution": "next_open"},
-        allocation_policy={"fees": 0.001, "target_exposure_cap": 1.0},
+        book_settings={"fees": 0.001, "target_exposure_cap": 1.0},
     )
 
     assert canonical_json_bytes(row["identity"]) == (
-        b'{"allocation_policy":{"fees":0.001,"target_exposure_cap":1.0},'
+        b'{"book_settings":{"fees":0.001,"target_exposure_cap":1.0},'
         b'"data_identity":{"array_contract":{"component_required_arrays":[],'
         b'"configured_arrays":["Close"],"contract_required_arrays":["Close","Open"],'
         b'"missing_required_arrays":["Open"],"pipeline_required_arrays":["Close","Open"]},'
@@ -143,10 +143,10 @@ def test_candidate_identity_golden_bytes_pin() -> None:
         b'"schema_version":"candidate_data_identity.v2",'
         b'"source":"synthetic","source_metadata":{},"symbols":["SYN","ALT"],'
         b'"timeframe":"1D"},"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
-        b'"ma_window":100,"rsi_window":14},"schema_version":"candidate_identity.v3",'
+        b'"ma_window":100,"rsi_window":14},"schema_version":"candidate_identity.v4",'
         b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
     )
-    assert row["candidate_key"] == "cand_513714c16125b81fe4bf8e878311b840"
+    assert row["candidate_key"] == "cand_750cdfe832df4bbfcc82e853562ce8e6"
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:
@@ -198,7 +198,7 @@ def test_candidate_rows_from_result_emits_three_role_tagged_rows() -> None:
         result,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
-        allocation_policy={"fees": 0.001},
+        book_settings={"fees": 0.001},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
 

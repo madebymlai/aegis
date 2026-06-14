@@ -86,7 +86,7 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        allocation_policy={"target_exposure_cap": 1.0},
+        book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     with CandidateStore(tmp_path / "candidates.sqlite3") as store:
