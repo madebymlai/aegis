@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 import pandas as pd
 import pytest
@@ -86,113 +86,67 @@ def test_remote_adapter_projects_allowlisted_provider_mappings() -> None:
 
 
 def test_remote_adapter_collapses_cross_venue_daily_indices_to_shared_dates() -> None:
-    """Different-tz daily bars (.L vs .DE) must merge on calendar date, not UTC instant.
+    """The canonical case: ``.L`` (London) and ``.DE`` (Berlin) daily bars merge 1:1 by date.
 
-    Yahoo returns each venue's daily bar at LOCAL-exchange midnight, labelled in the
-    exchange tz. Aligning by UTC instant (vbt's default) shifts non-UTC venues to the
-    prior day at a venue-specific hour, so no two venues ever share an index row -- a
-    full NaN checkerboard. The remote adapter must first collapse each daily index to
-    its calendar date so ``from_data`` merges the venues cleanly.
-
-    Regression for the cross-exchange daily merge (commit 83bc13c): the prior fake
-    returned one shared index for every symbol, so the multi-timezone merge -- the
-    whole point of the alignment -- went unexercised.
+    Each venue's daily bar arrives at LOCAL-exchange midnight in its own tz; aligning by
+    UTC instant (vbt's default) would shift Berlin to the prior day and split every date
+    into two rows -- a NaN checkerboard. The date collapse must land both venues on one
+    UTC-midnight row per shared trade date. Exercises the real ``vbt.Data`` merge.
     """
-    days = pd.bdate_range("2024-01-02", "2024-01-10")
-    london = pd.DataFrame(
-        {"Close": range(len(days))},
-        index=pd.DatetimeIndex([f"{d.date()} 00:00:00" for d in days]).tz_localize(
-            "Europe/London"
-        ),
-    )
-    berlin = pd.DataFrame(
-        {"Close": range(len(days))},
-        index=pd.DatetimeIndex([f"{d.date()} 00:00:00" for d in days]).tz_localize(
-            "Europe/Berlin"
-        ),
-    )
-    raw_outputs = [(london, {"freq": "1D"}), (berlin, {"freq": "1D"})]
-    config = make_data_config(
-        source="fakeremote",
-        symbols=[{"ticker": "VOD.L", "ccy": "GBP"}, {"ticker": "SAP.DE", "ccy": "EUR"}],
-        arrays=["Close"],
+    dates = ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]
+    close = _merge_cross_venue(
+        [
+            (_daily_venue_frame("Europe/London", dates, 0.0), {"freq": "1D"}),
+            (_daily_venue_frame("Europe/Berlin", dates, 100.0), {"freq": "1D"}),
+        ],
+        ["VOD.L", "SAP.DE"],
         timeframe="1D",
-    )
-    captured: dict[str, pd.DataFrame] = {}
-
-    class _CapturingRemoteData:
-        @classmethod
-        def from_data(cls, data, **_kwargs):
-            captured.update(data)
-            return cls()
-
-    remote_adapter._native_from_remote_raw_outputs(
-        _CapturingRemoteData, config, raw_outputs, wrapper_kwargs={}, provider_kwargs={}
+        missing_index="drop",
     )
 
-    london_idx = captured["VOD.L"].index
-    berlin_idx = captured["SAP.DE"].index
-    # Collapsed to tz-naive calendar dates (a daily bar denotes a date, not an instant)...
-    assert london_idx.tz is None and berlin_idx.tz is None
-    assert (london_idx == london_idx.normalize()).all()
-    # ...so the two venues carry identical labels and merge 1:1. Under the UTC-instant
-    # default these would be all-distinct -- the NaN-checkerboard "pollution".
-    assert london_idx.equals(berlin_idx)
+    assert list(close.columns) == ["VOD.L", "SAP.DE"]
+    assert list(close.index.strftime("%Y-%m-%d")) == dates  # one row per shared date
+    assert str(close.index.tz).upper() == "UTC"
+    assert (close.index == close.index.normalize()).all()  # UTC midnight, not split instants
+    assert int(close.isna().sum().sum()) == 0  # no checkerboard
 
 
 def test_remote_adapter_realigns_cross_venue_intraday_onto_one_grid() -> None:
-    """Intraday bars from different venues are distinct instants, so the adapter unions
-    them and realigns onto one regular grid instead of leaving a NaN checkerboard.
+    """Intraday venues are distinct instants; the adapter realigns them onto one grid.
 
-    ``09:30 Europe/London`` (08:30 UTC) and ``09:30 Europe/Berlin`` (07:30 UTC) are
-    different moments and can never share an index row. The adapter must (1) keep the
-    instants tz-aware in UTC, (2) merge with ``missing_index='nan'`` so they union
-    rather than raise/drop, and (3) realign onto the source-timeframe grid so each step
-    carries the last-known value with no look-ahead.
+    ``09:30 Europe/London`` and ``09:30 Europe/Berlin`` are different moments, so a plain
+    merge interleaves them as a NaN checkerboard. After the realign, the panel sits on a
+    regular UTC grid at the source timeframe where each symbol carries its last-known
+    value: NaN appears only as a leading warm-up block (no look-ahead, no interior holes),
+    and both venues are populated once their sessions overlap. Exercises the real
+    ``vbt.Data`` merge + realign (Open via realign_opening, Close via realign_closing).
     """
-    london_open = pd.DatetimeIndex(
-        ["2024-01-02 09:30", "2024-01-02 10:30"]
-    ).tz_localize("Europe/London")
-    berlin_open = pd.DatetimeIndex(
-        ["2024-01-02 09:30", "2024-01-02 10:30"]
-    ).tz_localize("Europe/Berlin")
-    raw_outputs = [
-        (pd.DataFrame({"Close": [1.0, 2.0]}, index=london_open), {"freq": "1h"}),
-        (pd.DataFrame({"Close": [3.0, 4.0]}, index=berlin_open), {"freq": "1h"}),
-    ]
-    config = make_data_config(
-        source="fakeremote",
-        symbols=[{"ticker": "VOD.L", "ccy": "GBP"}, {"ticker": "SAP.DE", "ccy": "EUR"}],
-        arrays=["Close"],
+    stamps = ["2024-01-02 09:30", "2024-01-02 10:30", "2024-01-02 11:30"]
+    london = pd.DataFrame(
+        {"Open": [1.0, 2.0, 3.0], "Close": [1.5, 2.5, 3.5]},
+        index=pd.DatetimeIndex(stamps).tz_localize("Europe/London"),
+    )
+    berlin = pd.DataFrame(
+        {"Open": [4.0, 5.0, 6.0], "Close": [4.5, 5.5, 6.5]},
+        index=pd.DatetimeIndex(stamps).tz_localize("Europe/Berlin"),
+    )
+    close = _merge_cross_venue(
+        [(london, {"freq": "1h"}), (berlin, {"freq": "1h"})],
+        ["VOD.L", "SAP.DE"],
         timeframe="1h",
-        missing_index="raise",  # would explode on distinct instants without the union override
-    )
-    captured: dict[str, Any] = {}
-    realign_rules: list[Any] = []
-
-    class _Recorder:
-        def realign(self, rule, **_kwargs):
-            realign_rules.append(rule)
-            return self
-
-    class _CapturingRemoteData:
-        @classmethod
-        def from_data(cls, data, *, missing_index, **_kwargs):
-            captured["data"] = data
-            captured["missing_index"] = missing_index
-            return _Recorder()
-
-    out = remote_adapter._native_from_remote_raw_outputs(
-        _CapturingRemoteData, config, raw_outputs, wrapper_kwargs={}, provider_kwargs={}
+        missing_index="raise",  # would explode on distinct instants but for the union override
+        arrays=("Open", "Close"),
     )
 
-    # Instants are preserved (tz-aware UTC), NOT collapsed to a date.
-    assert captured["data"]["VOD.L"].index.tz is not None
-    assert str(captured["data"]["VOD.L"].index.tz).upper() == "UTC"
-    # Distinct instants force a NaN union, then a single realign to the source grid.
-    assert captured["missing_index"] == "nan"
-    assert realign_rules == [pd.Timedelta("1h")]
-    assert isinstance(out, _Recorder)
+    # Realigned onto a regular hourly UTC grid, not the interleaved raw instants.
+    assert str(close.index.tz).upper() == "UTC"
+    assert list(close.index.to_series().diff().dropna().unique()) == [pd.Timedelta("1h")]
+    # No checkerboard: per symbol, NaN is only a leading warm-up prefix (no interior holes).
+    for symbol in close.columns:
+        valid = close[symbol].notna().to_numpy()
+        assert valid[valid.argmax():].all()
+    # Once both sessions overlap the panel is fully populated (carried forward, no look-ahead).
+    assert close.iloc[-1].notna().all()
 
 
 def _daily_venue_frame(tz: str, dates: list[str], base: float) -> pd.DataFrame:
@@ -201,15 +155,22 @@ def _daily_venue_frame(tz: str, dates: list[str], base: float) -> pd.DataFrame:
     return pd.DataFrame({"Close": [base + i for i in range(len(dates))]}, index=index)
 
 
-def _merge_daily_cross_venue(raw_outputs, tickers, *, missing_index: str) -> pd.DataFrame:
+def _merge_cross_venue(
+    raw_outputs,
+    tickers,
+    *,
+    timeframe: str,
+    missing_index: str,
+    arrays: tuple[str, ...] = ("Close",),
+) -> pd.DataFrame:
     """Drive the real ``vbt.Data`` merge through the adapter and return the Close panel."""
     config = make_data_config(
         source="yf",
         start="2024-01-01",
         end="2024-02-01",
         symbols=[{"ticker": t, "ccy": "USD"} for t in tickers],
-        arrays=["Close"],
-        timeframe="1D",
+        arrays=list(arrays),
+        timeframe=timeframe,
         missing_index=missing_index,
     )
     merged = remote_adapter._native_from_remote_raw_outputs(
@@ -226,12 +187,13 @@ def test_remote_adapter_daily_merge_keeps_local_date_for_far_from_utc_venue() ->
     date collapse must keep each venue on its own local date so they merge 1:1. Exercises
     the real ``vbt.Data`` merge (not a fake) across a 9-hour offset.
     """
-    close = _merge_daily_cross_venue(
+    close = _merge_cross_venue(
         [
             (_daily_venue_frame("Asia/Tokyo", ["2024-01-04", "2024-01-05"], 1.0), {"freq": "1D"}),
             (_daily_venue_frame("Europe/London", ["2024-01-04", "2024-01-05"], 3.0), {"freq": "1D"}),
         ],
         ["7203.T", "VOD.L"],
+        timeframe="1D",
         missing_index="drop",
     )
 
@@ -252,14 +214,14 @@ def test_remote_adapter_daily_merge_handles_divergent_trading_calendars() -> Non
     ]
     tickers = ["VOD.L", "SAP.DE"]
 
-    dropped = _merge_daily_cross_venue(
-        [(f.copy(), kw) for f, kw in raw], tickers, missing_index="drop"
+    dropped = _merge_cross_venue(
+        [(f.copy(), kw) for f, kw in raw], tickers, timeframe="1D", missing_index="drop"
     )
     assert "2024-01-04" not in dropped.index.strftime("%Y-%m-%d").tolist()
     assert int(dropped.isna().sum().sum()) == 0
 
-    unioned = _merge_daily_cross_venue(
-        [(f.copy(), kw) for f, kw in raw], tickers, missing_index="nan"
+    unioned = _merge_cross_venue(
+        [(f.copy(), kw) for f, kw in raw], tickers, timeframe="1D", missing_index="nan"
     )
     nan_dates = unioned.index[unioned["SAP.DE"].isna()].strftime("%Y-%m-%d").tolist()
     assert nan_dates == ["2024-01-04"]
