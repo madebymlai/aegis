@@ -23,7 +23,7 @@ from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.rebalancer import rebalance
-from aegis_trader.domain.types import OrderIntent, OrderSide
+from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -49,7 +49,7 @@ class RebalanceStrategy(Strategy):
         self._bundle: ExecutionBundle | None = None
         self._contract: DataContract | None = None
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
-        self._pending_target: pd.DataFrame | None = None
+        self._pending_targets: dict[SleeveName, pd.DataFrame] = {}
 
     def on_start(self) -> None:
         sleeve = self._book.sleeves[0]
@@ -75,7 +75,10 @@ class RebalanceStrategy(Strategy):
 
         target = self._compute_target(buf)
         self._submit_pending_orders()
-        self._pending_target = target
+        # Slice 1: single sleeve; store under the sleeve name.
+        if self._bundle is not None and self._contract is not None:
+            sleeve_name = self._book.sleeves[0].name
+            self._pending_targets[sleeve_name] = target
 
     def _buffer_bar(self, bar: Bar) -> list[Bar] | None:
         """Buffer *bar* into its per-instrument window and return the window
@@ -112,13 +115,14 @@ class RebalanceStrategy(Strategy):
         This is the one-bar lag: the target was decided at bar t-1 and is now
         submitted on bar t, filling at bar t's close.
         """
-        if self._pending_target is None:
+        if not self._pending_targets:
             return
         venue = Venue(self._book.default_venue)
         equity_map = self.portfolio.equity(venue=venue)
         base_ccy = Currency.from_str(self._book.base_currency)
         nav = float(equity_map[base_ccy].as_double())
-        orders = rebalance(self._pending_target, nav, self._book)
+        orders = rebalance(self._pending_targets, nav, self._book)
+        self._pending_targets = {}
         for oi in orders:
             self._submit_order_intent(oi)
 
