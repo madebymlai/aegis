@@ -1,6 +1,7 @@
 from aegis_runtime.bundle import (
     BundleManifest,
     ComponentSpec,
+    ComponentStrategyInputs,
     DataContract,
     ExecutionBundle,
     LockedExecutionPlan,
@@ -10,6 +11,7 @@ from aegis_runtime.bundle import (
 __all__ = [
     "BundleManifest",
     "ComponentSpec",
+    "ComponentStrategyInputs",
     "DataContract",
     "ExecutionBundle",
     "LockedExecutionPlan",

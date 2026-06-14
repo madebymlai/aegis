@@ -10,22 +10,41 @@ import shutil
 import tempfile
 import zipfile
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from textwrap import dedent
 from typing import Any
 
 from research.aegis_research.cli_support.errors import ConfigCliError, ExecutionFailureError
 from research.aegis_research.cli_support.output import CommandResult, write_success
 from research.aegis_research.component_registry import (
+    ComponentDefinition,
     ComponentSelection,
+    FrozenComponentRegistry,
     discover_component_registry,
 )
 from research.aegis_research.component_registry.contracts import IndicatorManifest, StrategyManifest
-from research.aegis_research.configuration import LOCK_ROLES, ConfigValidationError, load_run_config
+from research.aegis_research.configuration import (
+    LOCK_ROLES,
+    ConfigValidationError,
+    RunConfig,
+    load_run_config,
+)
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.lock_run import resolve_lock_run
+from research.aegis_research.optimization.lock_run import ResolvedComponentParams, resolve_lock_run
 from research.aegis_research.optimization.param_namespace import ComponentRef
+
+STRATEGY_SLOT = "strategy"
+
+ComponentSpecMap = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ExportedComponents:
+    strategy: ComponentSpecMap
+    indicators: tuple[ComponentSpecMap, ...]
+    source_hashes: Mapping[str, str]
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -64,9 +83,7 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
     with CandidateStore(candidate_store_path(config)) as store:
         lock_run = resolve_lock_run(config.lock, store=store)
     strategy_definition = component_registry.get(ComponentSelection("strategies", config.strategy.id))
-    strategy_manifest = strategy_definition.manifest
-    if not isinstance(strategy_manifest, StrategyManifest):
-        raise TypeError(f"component {config.strategy.id!r} is not a strategy")
+    strategy_manifest = _strategy_manifest(strategy_definition)
     strategy_id = strategy_definition.id
     candidate_key = lock_run.candidate_key
     dist_name = _distribution_name(strategy_id, candidate_key)
@@ -77,7 +94,7 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
         root = Path(tmp)
         package_dir = root / package_name
         package_dir.mkdir()
-        component_specs, component_hashes = _write_component_modules(
+        components = _write_component_modules(
             package_dir=package_dir,
             package_name=package_name,
             config=config,
@@ -88,17 +105,17 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
             "run_id": lock_run.run_id,
             "role": _manifest_role(config.lock.candidate_id),
             "candidate_key": candidate_key,
-            "component_source_hashes": component_hashes,
+            "component_source_hashes": components.source_hashes,
         }
         contract = {
             "symbols": tuple(config.data.tickers),
-            "required_arrays": tuple(_required_arrays(component_specs)),
+            "required_arrays": tuple(_required_arrays(components)),
             "base_currency": config.portfolio.base_currency,
             "timeframe": config.data.timeframe,
         }
         plan = {
-            "strategy": component_specs["strategy"],
-            "indicators": tuple(component_specs["indicators"]),
+            "strategy": components.strategy,
+            "indicators": components.indicators,
             "gross_cap": config.portfolio.gross_cap,
             "net_cap": config.portfolio.net_cap,
             "direction": config.portfolio.direction,
@@ -132,44 +149,85 @@ def _write_component_modules(
     *,
     package_dir: Path,
     package_name: str,
-    config: Any,
-    component_registry: Any,
-    component_params: Mapping[ComponentRef, Mapping[str, Any]],
-) -> tuple[dict[str, Any], dict[str, str]]:
-    specs: dict[str, Any] = {"indicators": []}
+    config: RunConfig,
+    component_registry: FrozenComponentRegistry,
+    component_params: ResolvedComponentParams,
+) -> ExportedComponents:
+    indicator_specs: list[ComponentSpecMap] = []
     hashes: dict[str, str] = {}
+
     for position, ref in enumerate(config.indicators):
-        definition = component_registry.get(ComponentSelection("indicators", ref.id))
-        manifest = definition.manifest
-        if not isinstance(manifest, IndicatorManifest):
-            raise TypeError(f"component {ref.id!r} is not an indicator")
         module_name = f"indicator_{position}"
-        shutil.copyfile(definition.file_path, package_dir / f"{module_name}.py")
-        component_ref = ComponentRef("indicators", definition.id, ref.id)
-        spec = _component_spec(
-            manifest=manifest,
-            module=f"{package_name}.{module_name}",
-            params=component_params[component_ref],
+        definition = _copy_component_module(
+            package_dir=package_dir,
+            filename=f"{module_name}.py",
+            component_registry=component_registry,
+            selection=ComponentSelection("indicators", ref.id),
         )
-        specs["indicators"].append(spec)
+        indicator_manifest = _indicator_manifest(definition)
+        component_ref = ComponentRef("indicators", definition.id, ref.id)
+        indicator_specs.append(
+            _component_spec(
+                manifest=indicator_manifest,
+                module=f"{package_name}.{module_name}",
+                params=component_params[component_ref],
+            )
+        )
         hashes[f"indicators/{definition.id}"] = definition.identity.source_hash
 
-    definition = component_registry.get(ComponentSelection("strategies", config.strategy.id))
-    manifest = definition.manifest
-    if not isinstance(manifest, StrategyManifest):
-        raise TypeError(f"component {config.strategy.id!r} is not a strategy")
-    shutil.copyfile(definition.file_path, package_dir / "strategy.py")
-    component_ref = ComponentRef("strategies", definition.id, "strategy")
-    specs["strategy"] = _component_spec(
-        manifest=manifest,
+    definition = _copy_component_module(
+        package_dir=package_dir,
+        filename="strategy.py",
+        component_registry=component_registry,
+        selection=ComponentSelection("strategies", config.strategy.id),
+    )
+    strategy_manifest = _strategy_manifest(definition)
+    component_ref = ComponentRef("strategies", definition.id, STRATEGY_SLOT)
+    strategy_spec = _component_spec(
+        manifest=strategy_manifest,
         module=f"{package_name}.strategy",
         params=component_params[component_ref],
     )
     hashes[f"strategies/{definition.id}"] = definition.identity.source_hash
-    return specs, hashes
+    return ExportedComponents(
+        strategy=strategy_spec,
+        indicators=tuple(indicator_specs),
+        source_hashes=hashes,
+    )
 
 
-def _component_spec(*, manifest: IndicatorManifest | StrategyManifest, module: str, params: Mapping[str, Any]) -> dict[str, Any]:
+def _copy_component_module(
+    *,
+    package_dir: Path,
+    filename: str,
+    component_registry: FrozenComponentRegistry,
+    selection: ComponentSelection,
+) -> ComponentDefinition:
+    definition = component_registry.get(selection)
+    shutil.copyfile(definition.file_path, package_dir / filename)
+    return definition
+
+
+def _indicator_manifest(definition: ComponentDefinition) -> IndicatorManifest:
+    manifest = definition.manifest
+    if not isinstance(manifest, IndicatorManifest):
+        raise TypeError(f"component {definition.id!r} is not an indicator")
+    return manifest
+
+
+def _strategy_manifest(definition: ComponentDefinition) -> StrategyManifest:
+    manifest = definition.manifest
+    if not isinstance(manifest, StrategyManifest):
+        raise TypeError(f"component {definition.id!r} is not a strategy")
+    return manifest
+
+
+def _component_spec(
+    *,
+    manifest: IndicatorManifest | StrategyManifest,
+    module: str,
+    params: Mapping[str, Any],
+) -> ComponentSpecMap:
     return {
         "family": manifest.family,
         "component_id": manifest.id,
@@ -188,25 +246,38 @@ def _write_bundle_module(
     plan: Mapping[str, Any],
 ) -> None:
     path.write_text(
-        "from aegis_runtime import (\n"
-        "    BundleManifest, ComponentSpec, DataContract, ExecutionBundle, LockedExecutionPlan, MarketDataBundle\n"
-        ")\n\n"
-        f"CONTRACT = {contract!r}\n"
-        f"MANIFEST = {manifest!r}\n"
-        f"PLAN = {plan!r}\n\n"
-        "def _component_spec(value):\n"
-        "    return ComponentSpec(**value)\n\n"
-        "def get_bundle():\n"
-        "    plan = dict(PLAN)\n"
-        "    plan['strategy'] = _component_spec(plan['strategy'])\n"
-        "    plan['indicators'] = tuple(_component_spec(item) for item in plan['indicators'])\n"
-        "    return ExecutionBundle(\n"
-        "        contract=DataContract(**CONTRACT),\n"
-        "        manifest=BundleManifest(**MANIFEST),\n"
-        "        plan=LockedExecutionPlan(**plan),\n"
-        "    )\n\n"
-        "bundle = get_bundle()\n"
-        "__all__ = ['ExecutionBundle', 'MarketDataBundle', 'bundle', 'get_bundle']\n"
+        dedent(
+            f"""
+            from aegis_runtime import (
+                BundleManifest,
+                ComponentSpec,
+                DataContract,
+                ExecutionBundle,
+                LockedExecutionPlan,
+                MarketDataBundle,
+            )
+
+            CONTRACT = {contract!r}
+            MANIFEST = {manifest!r}
+            PLAN = {plan!r}
+
+            def _component_spec(value):
+                return ComponentSpec(**value)
+
+            def get_bundle():
+                plan = dict(PLAN)
+                plan['strategy'] = _component_spec(plan['strategy'])
+                plan['indicators'] = tuple(_component_spec(item) for item in plan['indicators'])
+                return ExecutionBundle(
+                    contract=DataContract(**CONTRACT),
+                    manifest=BundleManifest(**MANIFEST),
+                    plan=LockedExecutionPlan(**plan),
+                )
+
+            bundle = get_bundle()
+            __all__ = ['ExecutionBundle', 'MarketDataBundle', 'bundle', 'get_bundle']
+            """
+        ).lstrip()
     )
 
 
@@ -243,9 +314,9 @@ def _write_wheel(root: Path, wheel_path: Path) -> None:
             zf.write(file_path, file_path.relative_to(root).as_posix())
 
 
-def _required_arrays(component_specs: Mapping[str, Any]) -> tuple[str, ...]:
+def _required_arrays(components: ExportedComponents) -> tuple[str, ...]:
     names: list[str] = []
-    for spec in (*component_specs["indicators"], component_specs["strategy"]):
+    for spec in (*components.indicators, components.strategy):
         for name in spec["input_names"]:
             if name not in names:
                 names.append(name)
