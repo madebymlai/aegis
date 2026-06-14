@@ -73,11 +73,12 @@ def rebalance(
 
     # ── Step 2: build the post-execution book projection ──
     rw = realized_weights or {}
+    all_figis = net_target_by_figi.keys() | rw.keys()
     post_book: dict[str, float] = dict(rw)  # start from realized
 
     orders: list[OrderIntent] = []
 
-    for figi_key in set(list(net_target_by_figi) + list(rw)):
+    for figi_key in all_figis:
         target_w = net_target_by_figi.get(figi_key, 0.0)
         realized_w = rw.get(figi_key, 0.0)
         has_realized = figi_key in rw
@@ -112,7 +113,7 @@ def rebalance(
 
     # ── Step 3: cap gate on the realised book ──
     # Per-name cap: if realised breaches and band suppressed the corrective
-    # trade, widen-toward-compliance (bring to cap boundary).
+    # trade, widen-to-compliance (bring to cap boundary).
     _gate_per_name_caps(rw, targets=net_target_by_figi, post_book=post_book,
                         orders=orders, book=book, nav=nav)
 
@@ -122,7 +123,7 @@ def rebalance(
     # ── Step 5: aggregate drift trip ──
     if rw and book.aggregate_drift_threshold is not None:
         agg_drift = sum(abs(net_target_by_figi.get(f, 0.0) - rw.get(f, 0.0))
-                        for f in set(list(net_target_by_figi) + list(rw)))
+                        for f in all_figis)
         if agg_drift > book.aggregate_drift_threshold:
             raise ValueError(
                 f"Aggregate drift {agg_drift:.6f} exceeds "
@@ -143,7 +144,7 @@ def _gate_per_name_caps(
     """Gate realised positions against per-name cap.
 
     If a realised position breaches the per-name cap and no corrective
-    order was emitted (because the band suppressed it), widen-toward-target:
+    order was emitted (because the band suppressed it), widen-to-compliance:
     insert a corrective order that brings the position to the cap boundary.
     Being at the cap is acceptable in a breach situation — we don't demand
     the full target.
