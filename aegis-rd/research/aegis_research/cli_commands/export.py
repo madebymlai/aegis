@@ -83,13 +83,15 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
         raise ValueError("aerd export requires a locked config")
     with CandidateStore(candidate_store_path(config)) as store:
         lock_run = resolve_lock_run(config.lock, store=store)
-    strategy_definition = component_registry.get(ComponentSelection("strategies", config.strategy.id))
+    strategy_definition = component_registry.get(
+        ComponentSelection("strategies", config.strategy.id)
+    )
     strategy_manifest = _strategy_manifest(strategy_definition)
     strategy_id = strategy_definition.id
     candidate_key = lock_run.candidate_key
     version = strategy_manifest.version
     out_dir.mkdir(parents=True, exist_ok=True)
-    candidate_prefix = _candidate_prefix(
+    candidate_prefix = _unique_candidate_prefix(
         strategy_id=strategy_id, candidate_key=candidate_key, out_dir=out_dir
     )
     dist_name = _distribution_name(strategy_id, candidate_prefix)
@@ -307,12 +309,15 @@ def _write_dist_info(
         "Summary: Aegis locked execution bundle\n"
         "Requires-Dist: aegis-runtime\n"
     )
-    (dist_info / "WHEEL").write_text(
-        "Wheel-Version: 1.0\n"
-        "Generator: aegis-rd-export\n"
-        "Root-Is-Purelib: true\n"
-        "Tag: py3-none-any\n"
+    wheel_metadata = "\n".join(
+        [
+            "Wheel-Version: 1.0",
+            "Generator: aegis-rd-export",
+            "Root-Is-Purelib: true",
+            "Tag: py3-none-any",
+        ]
     )
+    (dist_info / "WHEEL").write_text(f"{wheel_metadata}\n")
     (dist_info / "entry_points.txt").write_text(
         f"[{ENTRY_POINT_GROUP}]\n{entry_point_name} = {entry_point_value}\n"
     )
@@ -325,7 +330,9 @@ def _write_wheel(root: Path, wheel_path: Path) -> None:
     for file_path in files:
         relative = file_path.relative_to(root).as_posix()
         data = file_path.read_bytes()
-        rows.append((relative, f"sha256={_urlsafe_b64(hashlib.sha256(data).digest())}", str(len(data))))
+        rows.append(
+            (relative, f"sha256={_urlsafe_b64(hashlib.sha256(data).digest())}", str(len(data)))
+        )
     rows.append((record_path.relative_to(root).as_posix(), "", ""))
     with record_path.open("w", newline="") as fh:
         writer = csv.writer(fh)
@@ -362,41 +369,41 @@ def _package_name(strategy_id: str, candidate_prefix: str) -> str:
     return f"aegis_exec_{_module_slug(strategy_id)}_{candidate_prefix}"
 
 
-def _candidate_prefix(*, strategy_id: str, candidate_key: str, out_dir: Path) -> str:
-    existing = _existing_bundle_owners(strategy_id=strategy_id, out_dir=out_dir)
+def _unique_candidate_prefix(*, strategy_id: str, candidate_key: str, out_dir: Path) -> str:
+    existing_owners = _existing_bundle_owners(strategy_id=strategy_id, out_dir=out_dir)
     minimum_length = min(8, len(candidate_key))
     for length in range(minimum_length, len(candidate_key) + 1):
         prefix = candidate_key[:length]
-        owner = existing.get(_package_name(strategy_id, prefix))
-        if owner is None or owner == candidate_key:
+        package_name = _package_name(strategy_id, prefix)
+        existing_owner = existing_owners.get(package_name)
+        if existing_owner is None or existing_owner == candidate_key:
             return prefix
     raise ValueError(f"candidate key {candidate_key!r} cannot be uniquely abbreviated")
 
 
 def _existing_bundle_owners(*, strategy_id: str, out_dir: Path) -> dict[str, str]:
     owners: dict[str, str] = {}
-    for wheel_path in sorted(out_dir.glob(f"{_wheel_safe(_distribution_name(strategy_id, ''))}*.whl")):
-        package_name = _bundle_package_name(wheel_path)
-        candidate_key = _bundle_candidate_key(wheel_path)
-        if package_name is not None and candidate_key is not None:
+    wheel_name_prefix = _wheel_safe(_distribution_name(strategy_id, ""))
+    for wheel_path in sorted(out_dir.glob(f"{wheel_name_prefix}*.whl")):
+        owner = _bundle_owner(wheel_path)
+        if owner is not None:
+            package_name, candidate_key = owner
             owners[package_name] = candidate_key
     return owners
 
 
-def _bundle_package_name(wheel_path: Path) -> str | None:
+def _bundle_owner(wheel_path: Path) -> tuple[str, str] | None:
     with zipfile.ZipFile(wheel_path) as zf:
-        packages = sorted(name.split("/")[0] for name in zf.namelist() if name.endswith("__init__.py"))
-    return packages[0] if packages else None
-
-
-def _bundle_candidate_key(wheel_path: Path) -> str | None:
-    with zipfile.ZipFile(wheel_path) as zf:
-        manifest_paths = [name for name in zf.namelist() if name.endswith("bundle_manifest.json")]
-        if not manifest_paths:
+        names = zf.namelist()
+        packages = sorted(name.split("/")[0] for name in names if name.endswith("__init__.py"))
+        manifest_paths = [name for name in names if name.endswith("bundle_manifest.json")]
+        if not packages or not manifest_paths:
             return None
         manifest = json.loads(zf.read(manifest_paths[0]))
-    value = manifest.get("manifest", {}).get("candidate_key")
-    return value if isinstance(value, str) else None
+    candidate_key = manifest.get("manifest", {}).get("candidate_key")
+    if not isinstance(candidate_key, str):
+        return None
+    return packages[0], candidate_key
 
 
 def _slug(value: str) -> str:
