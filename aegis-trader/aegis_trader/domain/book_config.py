@@ -1,9 +1,9 @@
 """Book Config — the Trader-owned, declarative specification that fully defines
 the Commingled Book.
 
-For Slice 1 (tracer) the config is minimal: a single sleeve bound to a
-content-addressed wheel filename with a static budget.  Multi-sleeve netting,
-caps, bands, and per-instrument overrides arrive in later slices.
+Declares one or more sleeves, each bound to a content-addressed wheel filename
+with a static budget.  Caps, bands, and per-instrument overrides arrive in
+later slices.
 """
 
 from __future__ import annotations

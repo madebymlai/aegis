@@ -1,9 +1,10 @@
-"""RebalanceStrategy — the single NautilusTrader Strategy that drives the
+"""RebalanceStrategy — the NautilusTrader Strategy that drives the
 commingling overlay.
 
 Thin adapter: delegates alpha-to-orders to the pure-domain pipeline so the
-core remains broker-free-testable.  For Slice 1 (tracer) this handles a single
-sleeve with no bands, gates, or position diffing.
+core remains broker-free-testable.  Supports multi-sleeve netting: each
+sleeve's bundle computes its target weights, which the rebalancer nets
+across sleeves before submitting orders.
 
 NEXT-CLOSE execution (ADR-0001): the target decided at bar t's close is
 submitted on bar t+1 and fills at bar t+1's close — one-bar lag, no look-ahead.
@@ -34,13 +35,18 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
 
 
 class RebalanceStrategy(Strategy):
-    """Single-sleeve rebalance overlay — submits orders NEXT-CLOSE.
+    """Commingled-book rebalance overlay — submits orders NEXT-CLOSE.
 
     Buffer bars as they arrive; when enough lookback is accumulated, assemble
     a MarketDataBundle each bar, call the bundle's compute_weights, and store
     the latest row as the next-bar target.  On the *following* bar, submit
-    order(s) from the previously-stored target — implementing the one-bar
+    order(s) from the previously-stored targets — implementing the one-bar
     execution lag.
+
+    In single-sleeve mode (Slice 1) the base class handles everything.
+    Multi-sleeve setups (Slice 2+) extend this class and accumulate
+    per-sleeve targets into ``_pending_targets`` before calling
+    ``_submit_pending_orders()``.
     """
 
     def __init__(self, config: RebalanceStrategyConfig) -> None:
@@ -75,10 +81,8 @@ class RebalanceStrategy(Strategy):
 
         target = self._compute_target(buf)
         self._submit_pending_orders()
-        # Slice 1: single sleeve; store under the sleeve name.
-        if self._bundle is not None and self._contract is not None:
-            sleeve_name = self._book.sleeves[0].name
-            self._pending_targets[sleeve_name] = target
+        sleeve_name = self._book.sleeves[0].name
+        self._pending_targets[sleeve_name] = target
 
     def _buffer_bar(self, bar: Bar) -> list[Bar] | None:
         """Buffer *bar* into its per-instrument window and return the window

@@ -20,7 +20,7 @@ import pytest
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
+from nautilus_trader.model.identifiers import TraderId, Venue
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
@@ -36,7 +36,11 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
+from aegis_trader.trader.strategy import (
+    RebalanceStrategy,
+    RebalanceStrategyConfig,
+    _bars_to_close_series,
+)
 
 # ── synthetic bundles ─────────────────────────────────────────────────────────
 
@@ -164,16 +168,6 @@ class TwoSleeveStrategy(RebalanceStrategy):
         # Submit from accumulated targets (one-bar lag via pending_targets).
         self._submit_pending_orders()
 
-
-from aegis_trader.domain.rebalancer import rebalance  # noqa: E402
-
-
-def _bars_to_close_series(
-    bars: list[Bar], figi: str
-) -> pd.DataFrame:
-    index = pd.DatetimeIndex([b.ts_event for b in bars])
-    values = [float(b.close.as_double()) for b in bars]
-    return pd.DataFrame({figi: values}, index=index)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
