@@ -10,8 +10,14 @@ records what the contexts are and how they relate.
   market hypotheses into reproducible, scored evidence and promotes validated
   strategies.
 - [Aegis Trader](./aegis-trader/CONTEXT.md) — live execution context that
-  trades strategies promoted by Aegis RD against real venues. _(stub — design
-  not yet resolved)_
+  trades strategies promoted by Aegis RD against real venues. _(stub — only the
+  handoff contract is designed; see ADR-0001)_
+- **`aegis-runtime`** — shared runtime (shared kernel) that executes one Locked
+  **Candidate**: component loading, the single-candidate (`force_locked`,
+  `n_candidates=1`) orchestration, currency conversion, and the **Allocation
+  Policy** gate. Depended on by both Aegis RD and every **Execution Bundle**, so
+  the research apparatus (optimizer, Candidate Store, preflight, ranking) never
+  crosses into execution. _(planned — not yet carved out of Aegis RD)_
 
 ## Relationships
 
@@ -23,6 +29,10 @@ records what the contexts are and how they relate.
   is the intended downstream consumer: it takes a promoted strategy and
   executes it live rather than re-deriving parameters.
 
-  _The precise handoff contract — what crosses the boundary between research
-  and execution, and in what form — is unresolved. Pin it down with
-  `/grill-with-docs` before building Aegis Trader._
+  The handoff crosses the boundary as an **Execution Bundle** (ADR-0001):
+  `aerd export` resolves a Lock, bakes the Candidate's parameters, and builds a
+  versioned uv wheel carrying the strategy + wired indicators + **Provenance**.
+  Aegis Trader installs the wheel and runs it through **`aegis-runtime`**,
+  supplying native-currency market data and FX series; the bundle converts to
+  base currency, computes, and gates — with no **Candidate Store** access at
+  runtime.
