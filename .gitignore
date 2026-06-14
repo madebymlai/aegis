@@ -1,0 +1,7 @@
+# Local agent/MCP config — may contain secrets (API keys, tokens). Never commit.
+opencode.json
+opencode.jsonc
+.mcp.json
+.env
+.env.*
+!.env.example
