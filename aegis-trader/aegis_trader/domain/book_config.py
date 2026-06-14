@@ -20,6 +20,7 @@ class SleeveConfig:
     name: SleeveName
     wheel_filename: str
     budget: float  # fraction of book NAV notionally allocated (≤ 1.0)
+    venue: str | None = None  # per-sleeve venue override (defaults to BookConfig.default_venue)
 
 
 @dataclass(frozen=True)

@@ -39,7 +39,6 @@ from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.strategy import (
     RebalanceStrategy,
     RebalanceStrategyConfig,
-    _bars_to_close_series,
 )
 
 # ── synthetic bundles ─────────────────────────────────────────────────────────
@@ -106,67 +105,9 @@ class _FixedWeightBundle(ExecutionBundle):
 
 
 class TwoSleeveStrategy(RebalanceStrategy):
-    """Extends RebalanceStrategy to process two sleeves from the same bar
-    stream, accumulating per-sleeve targets and netting via the multi-sleeve
-    rebalancer.
-
-    For Slice 2 e2e testing; Slice 6 (cadence) will replace the
-    per-sleeve timing with a proper timeframe-driven scheduler.
-    """
-
-    def __init__(self, config: RebalanceStrategyConfig) -> None:
-        super().__init__(config)
-        self._sleeve_bundles: dict[SleeveName, ExecutionBundle] = {}
-        self._sleeve_contracts: dict[SleeveName, DataContract] = {}
-
-    def register_sleeve(
-        self, name: SleeveName, bundle: ExecutionBundle
-    ) -> None:
-        self._sleeve_bundles[name] = bundle
-        self._sleeve_contracts[name] = bundle.contract
-
-    def on_start(self) -> None:
-        # Stub parent's expectations so _buffer_bar works.
-        first = next(iter(self._sleeve_contracts.values()))
-        self._contract = first
-        self._bundle = next(iter(self._sleeve_bundles.values()))
-
-        # Subscribe to all unique FIGIs across all sleeves.
-        seen: set[str] = set()
-        for name, bundle in self._sleeve_bundles.items():
-            for figi in bundle.contract.figis:
-                if figi in seen:
-                    continue
-                seen.add(figi)
-                bar_type = BarType.from_str(
-                    f"{self._figi_to_instr_id(figi).value}-1-DAY-LAST-EXTERNAL"
-                )
-                self.subscribe_bars(bar_type)
-            self.log.info(
-                f"Registered sleeve {name.value} figis={bundle.contract.figis}"
-            )
-
-    def on_bar(self, bar: Bar) -> None:
-        """Buffer the bar, compute all sleeve targets, and submit with one-bar lag.
-
-        All sleeves share the same bar stream for simplicity; per-sleeve
-        timeframe arrives in Slice 6.
-        """
-        buf = self._buffer_bar(bar)
-        if buf is None:
-            return  # not enough lookback yet
-
-        # Compute target for every sleeve from the shared bar buffer.
-        for name, bundle in self._sleeve_bundles.items():
-            contract = self._sleeve_contracts[name]
-            figi = contract.figis[0]  # single-FIGI bundles for this test
-            close_series = _bars_to_close_series(buf, figi)
-            bundle_data = MarketDataBundle({"Close": close_series})
-            target = bundle.compute_weights(bundle_data)
-            self._pending_targets[name] = target
-
-        # Submit from accumulated targets (one-bar lag via pending_targets).
-        self._submit_pending_orders()
+    """Thin wrapper that delegates to the base RebalanceStrategy's
+    Slice 6 cadence — both sleeves run off the same bar stream with
+    per-period debounce and NEXT-CLOSE execution lag."""
 
 
 
