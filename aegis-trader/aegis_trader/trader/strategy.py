@@ -8,6 +8,11 @@ across sleeves before submitting orders.
 
 NEXT-CLOSE execution (ADR-0001): the target decided at bar t's close is
 submitted on bar t+1 and fills at bar t+1's close — one-bar lag, no look-ahead.
+
+Slice 3: FIGI→InstrumentId resolution via the Security Master (OpenFIGI +
+bounded exchange-code table).  A FIGI→InstrumentId bimap is built at
+``on_start``; netting stays in FIGI space, resolution to venue-specific
+InstrumentIds only at the execution edge (order submission).
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.rebalancer import rebalance
 from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
+from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -32,6 +38,7 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
 
     book: BookConfig
     bundle_label: str = "synthetic"
+    figi_resolver: FigiInstrumentResolver | None = None
 
 
 class RebalanceStrategy(Strategy):
@@ -56,6 +63,11 @@ class RebalanceStrategy(Strategy):
         self._contract: DataContract | None = None
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
         self._pending_targets: dict[SleeveName, pd.DataFrame] = {}
+        self._figi_bimap: dict[str, InstrumentId] = {}
+        self._figi_resolver: FigiInstrumentResolver = (
+            config.figi_resolver if config.figi_resolver is not None
+            else FigiInstrumentResolver()
+        )
 
     def on_start(self) -> None:
         sleeve = self._book.sleeves[0]
@@ -64,8 +76,12 @@ class RebalanceStrategy(Strategy):
             return
         self._contract = self._bundle.contract
         figis = self._contract.figis
-        # For Slice 1 we resolve FIGI→InstrumentId by convention (FIGI.VENUE).
-        # The Security Master (Slice 3) replaces this.
+
+        # Slice 3: resolve FIGIs via the Security Master bimap.
+        # Skip resolution if a stub bimap was injected (e2e tests).
+        if not self._figi_bimap:
+            self._figi_bimap = self._resolve_bimap(set(figis))
+
         for figi in figis:
             bar_type = BarType.from_str(f"{self._figi_to_instr_id(figi).value}-1-DAY-LAST-EXTERNAL")
             self.subscribe_bars(bar_type)
@@ -133,10 +149,17 @@ class RebalanceStrategy(Strategy):
     def _figi_to_instr_id(self, figi: str) -> InstrumentId:
         """Resolve a FIGI to a venue-specific InstrumentId.
 
-        For Slice 1 resolved by convention (FIGI.VENUE).
-        The Security Master (Slice 3) replaces this.
+        Slice 3: uses the Security Master bimap built at ``on_start``.
         """
-        return InstrumentId.from_str(f"{figi}.{self._book.default_venue}")
+        return self._figi_bimap[figi]
+
+    def _resolve_bimap(self, figis: set[str]) -> dict[str, InstrumentId]:
+        """Resolve *figis* to a bimap via the Security Master.
+
+        Wraps the resolver to allow subclasses (Slice 2 e2e) to extend
+        the FIGI set before resolution.
+        """
+        return self._figi_resolver.resolve(figis)
 
     def _submit_order_intent(self, oi: OrderIntent) -> None:
         """Translate a domain OrderIntent into a Nautilus MARKET order and submit."""

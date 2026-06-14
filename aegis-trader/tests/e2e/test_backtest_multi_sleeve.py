@@ -20,7 +20,7 @@ import pytest
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import TraderId, Venue
+from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
@@ -36,6 +36,7 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
 from aegis_trader.trader.strategy import (
     RebalanceStrategy,
     RebalanceStrategyConfig,
@@ -131,20 +132,25 @@ class TwoSleeveStrategy(RebalanceStrategy):
         self._contract = first
         self._bundle = next(iter(self._sleeve_bundles.values()))
 
-        # Subscribe to all unique FIGIs across all sleeves.
+        # Collect all unique FIGIs across all sleeves.
         seen: set[str] = set()
         for name, bundle in self._sleeve_bundles.items():
             for figi in bundle.contract.figis:
-                if figi in seen:
-                    continue
                 seen.add(figi)
-                bar_type = BarType.from_str(
-                    f"{self._figi_to_instr_id(figi).value}-1-DAY-LAST-EXTERNAL"
-                )
-                self.subscribe_bars(bar_type)
             self.log.info(
                 f"Registered sleeve {name.value} figis={bundle.contract.figis}"
             )
+
+        # Slice 3: resolve FIGIs via the Security Master bimap.
+        # Skip resolution if a stub bimap was injected (e2e tests).
+        if not self._figi_bimap:
+            self._figi_bimap = self._resolve_bimap(seen)
+
+        for figi in seen:
+            bar_type = BarType.from_str(
+                f"{self._figi_to_instr_id(figi).value}-1-DAY-LAST-EXTERNAL"
+            )
+            self.subscribe_bars(bar_type)
 
     def on_bar(self, bar: Bar) -> None:
         """Buffer the bar, compute all sleeve targets, and submit with one-bar lag.
@@ -221,6 +227,11 @@ def _make_book(budgets: tuple[float, float]) -> BookConfig:
     )
 
 
+def _stub_bimap(figis: set[str]) -> dict[str, "InstrumentId"]:
+    """Stub FIGI→InstrumentId bimap for e2e tests."""
+    return {figi: InstrumentId.from_str(f"{figi}.{VENUE.value}") for figi in figis}
+
+
 # ── e2e test ──────────────────────────────────────────────────────────────────
 
 
@@ -243,6 +254,10 @@ def test_multi_sleeve_e2e():
     vusa_instr = _make_instrument(_FIGI_VUSA)
     vusa_bars = _make_bars(_FIGI_VUSA, [100.0, 101.0, 102.0, 103.0, 104.0])
 
+    # Build stub bimap matching test instruments.
+    all_figis = {_FIGI_VUSA}
+    stub_bimap = _stub_bimap(all_figis)
+
     engine = BacktestEngine(BacktestEngineConfig(
         trader_id=TraderId("MULTI-E2E"),
         logging=None,
@@ -262,6 +277,7 @@ def test_multi_sleeve_e2e():
     strategy = TwoSleeveStrategy(config=config)
     strategy.register_sleeve(book.sleeves[0].name, trend_bundle)
     strategy.register_sleeve(book.sleeves[1].name, carry_bundle)
+    strategy._figi_bimap = stub_bimap
     engine.add_strategy(strategy)
 
     engine.run()
