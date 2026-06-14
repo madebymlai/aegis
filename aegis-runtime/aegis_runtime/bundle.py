@@ -133,7 +133,7 @@ class ExecutionBundle:
         )
         weights = pd.DataFrame(arr[:, :n_symbols], index=close.index, columns=close.columns)
         weights.columns.name = SYMBOL_LEVEL
-        _assert_latest_row_finite(weights)
+        _assert_latest_row_not_nan(weights)
         assert_signed_allocations_within_caps(
             weights,
             gross_cap=self._plan.gross_cap,
@@ -259,13 +259,13 @@ def _validated_array(value: Any, *, expected_shape: tuple[int, int], label: str)
     return arr
 
 
-def _assert_latest_row_finite(weights: pd.DataFrame) -> None:
+def _assert_latest_row_not_nan(weights: pd.DataFrame) -> None:
     if len(weights) == 0:
         return
     latest = weights.iloc[-1]
-    if not latest.notna().all():
+    if latest.isna().any():
         raise ValueError(
-            "latest weight row is non-finite; warmup may be insufficient "
+            "latest weight row contains NaN; warmup may be insufficient "
             f"(lookback_bars={weights.shape[0]})"
         )
 

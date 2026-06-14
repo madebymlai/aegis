@@ -272,12 +272,12 @@ def test_compute_weights_raises_when_latest_weight_row_is_non_finite(
         bundle = module.get_bundle()
         lookback = bundle.contract.lookback_bars
 
-        # Supply exactly lookback_bars — latest row should be NaN/finite for warmup
+        # Supply exactly lookback_bars — latest row is NaN due to warmup
         prices = _market_data()
         minimal_prices = MarketDataBundle(
             {"Close": prices.array("Close").iloc[:lookback]}
         )
-        with pytest.raises(ValueError, match=r"non-finite|warmup"):
+        with pytest.raises(ValueError, match=r"NaN|warmup"):
             bundle.compute_weights(RuntimeMarketDataBundle(minimal_prices.arrays))
     finally:
         sys.path.remove(import_path)
