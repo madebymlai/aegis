@@ -206,18 +206,32 @@ def _native_from_remote_raw_outputs(
     if from_data_wrapper_kwargs.get("freq") is None and common_freq is not None:
         from_data_wrapper_kwargs["freq"] = common_freq
 
-    return data_cls.from_data(
+    # A daily bar denotes a calendar DATE, already collapsed to a shared naive date
+    # upstream, so the venues merge 1:1 under the configured policy. An intraday bar
+    # denotes an INSTANT: 09:30 London is not 09:30 Frankfurt, so cross-venue intraday
+    # bars can never share an index row and a plain merge interleaves them as a NaN
+    # checkerboard. Union them as NaN, then realign onto one regular grid below.
+    cross_venue_intraday = intraday and len(data) > 1
+    merged = data_cls.from_data(
         data,
         single_key=False,
         tz_localize=tz_localize,
         tz_convert=tz_convert,
-        missing_index=config.missing_index,
+        missing_index="nan" if cross_venue_intraday else config.missing_index,
         missing_columns=config.missing_columns,
         wrapper_kwargs=from_data_wrapper_kwargs,
         fetch_kwargs=fetch_kwargs,
         returned_kwargs=returned_kwargs,
         silence_warnings=config.silence_warnings,
     )
+    if cross_venue_intraday:
+        # Project every venue onto one regular grid at the source timeframe. Realignment
+        # carries each symbol's last-known value to each step (realign_opening for Open,
+        # realign_closing elsewhere) with no look-ahead, so the venues co-exist instead
+        # of interleaving as NaN. This is vbt's documented cross-timezone alignment; the
+        # explicit Timedelta avoids ambiguous freq-string parsing of the timeframe.
+        merged = merged.realign(pd.Timedelta(config.timeframe))
+    return merged
 
 
 def _remote_raw_data_and_metadata(output: Any) -> tuple[Any, dict[str, Any]]:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pandas as pd
 import pytest
@@ -137,6 +137,61 @@ def test_remote_adapter_collapses_cross_venue_daily_indices_to_shared_dates() ->
     # ...so the two venues carry identical labels and merge 1:1. Under the UTC-instant
     # default these would be all-distinct -- the NaN-checkerboard "pollution".
     assert london_idx.equals(berlin_idx)
+
+
+def test_remote_adapter_realigns_cross_venue_intraday_onto_one_grid() -> None:
+    """Intraday bars from different venues are distinct instants, so the adapter unions
+    them and realigns onto one regular grid instead of leaving a NaN checkerboard.
+
+    ``09:30 Europe/London`` (08:30 UTC) and ``09:30 Europe/Berlin`` (07:30 UTC) are
+    different moments and can never share an index row. The adapter must (1) keep the
+    instants tz-aware in UTC, (2) merge with ``missing_index='nan'`` so they union
+    rather than raise/drop, and (3) realign onto the source-timeframe grid so each step
+    carries the last-known value with no look-ahead.
+    """
+    london_open = pd.DatetimeIndex(
+        ["2024-01-02 09:30", "2024-01-02 10:30"]
+    ).tz_localize("Europe/London")
+    berlin_open = pd.DatetimeIndex(
+        ["2024-01-02 09:30", "2024-01-02 10:30"]
+    ).tz_localize("Europe/Berlin")
+    raw_outputs = [
+        (pd.DataFrame({"Close": [1.0, 2.0]}, index=london_open), {"freq": "1h"}),
+        (pd.DataFrame({"Close": [3.0, 4.0]}, index=berlin_open), {"freq": "1h"}),
+    ]
+    config = make_data_config(
+        source="fakeremote",
+        symbols=[{"ticker": "VOD.L", "ccy": "GBP"}, {"ticker": "SAP.DE", "ccy": "EUR"}],
+        arrays=["Close"],
+        timeframe="1h",
+        missing_index="raise",  # would explode on distinct instants without the union override
+    )
+    captured: dict[str, Any] = {}
+    realign_rules: list[Any] = []
+
+    class _Recorder:
+        def realign(self, rule, **_kwargs):
+            realign_rules.append(rule)
+            return self
+
+    class _CapturingRemoteData:
+        @classmethod
+        def from_data(cls, data, *, missing_index, **_kwargs):
+            captured["data"] = data
+            captured["missing_index"] = missing_index
+            return _Recorder()
+
+    out = remote_adapter._native_from_remote_raw_outputs(
+        _CapturingRemoteData, config, raw_outputs, wrapper_kwargs={}, provider_kwargs={}
+    )
+
+    # Instants are preserved (tz-aware UTC), NOT collapsed to a date.
+    assert captured["data"]["VOD.L"].index.tz is not None
+    assert str(captured["data"]["VOD.L"].index.tz).upper() == "UTC"
+    # Distinct instants force a NaN union, then a single realign to the source grid.
+    assert captured["missing_index"] == "nan"
+    assert realign_rules == [pd.Timedelta("1h")]
+    assert isinstance(out, _Recorder)
 
 
 def test_remote_adapter_chains_original_pull_failure_cause(
