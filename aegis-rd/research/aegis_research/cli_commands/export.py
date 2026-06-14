@@ -108,21 +108,7 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
             "candidate_key": candidate_key,
             "component_source_hashes": components.source_hashes,
         }
-        contract = {
-            "symbols": tuple(config.data.tickers),
-            "required_arrays": tuple(_required_arrays(components)),
-            "base_currency": config.portfolio.base_currency,
-            "required_fx_currencies": tuple(
-                sorted(
-                    required_fx_currencies(
-                        config.data.currency_by_symbol,
-                        config.portfolio.base_currency,
-                    )
-                )
-            ),
-            "currency_by_symbol": dict(config.data.currency_by_symbol),
-            "timeframe": config.data.timeframe,
-        }
+        contract = _bundle_contract(config, components)
         plan = {
             "strategy": components.strategy,
             "indicators": components.indicators,
@@ -245,6 +231,21 @@ def _component_spec(
         "input_names": tuple(manifest.input_names),
         "output_names": tuple(manifest.output_names),
         "params": dict(params),
+    }
+
+
+def _bundle_contract(config: RunConfig, components: ExportedComponents) -> dict[str, Any]:
+    currency_by_symbol = config.data.currency_by_symbol
+    base_currency = config.portfolio.base_currency
+    return {
+        "symbols": tuple(config.data.tickers),
+        "required_arrays": tuple(_required_arrays(components)),
+        "base_currency": base_currency,
+        "required_fx_currencies": tuple(
+            sorted(required_fx_currencies(currency_by_symbol, base_currency))
+        ),
+        "currency_by_symbol": dict(currency_by_symbol),
+        "timeframe": config.data.timeframe,
     }
 
 

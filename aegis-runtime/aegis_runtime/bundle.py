@@ -92,10 +92,11 @@ class ExecutionBundle:
     ) -> pd.DataFrame:
         _validate_market_data(prices, self.contract)
         close = prices.array("Close")
-        base_prices = _convert_to_base_currency(prices, self.contract, fx_series, close.index)
+        index = close.index
+        base_prices = _convert_to_base_currency(prices, self.contract, fx_series, index)
         n_candidates = 1
         n_symbols = len(self.contract.symbols)
-        data = _slice_data(base_prices, close.index, self.contract.required_arrays)
+        data = _slice_data(base_prices, index, self.contract.required_arrays)
         indicator_outputs = _compute_indicators(
             self._plan.indicators,
             data=data,
@@ -182,15 +183,7 @@ def _convert_to_base_currency(
     index: pd.Index,
 ) -> MarketDataBundle:
     supplied_fx = {} if fx_series is None else dict(fx_series)
-    required_fx = set(contract.required_fx_currencies)
-    supplied = set(supplied_fx)
-    missing = sorted(required_fx - supplied)
-    extra = sorted(supplied - required_fx)
-    if missing or extra:
-        raise ValueError(
-            "FX series mismatch against bundle contract: "
-            f"missing={missing}, extra={extra}"
-        )
+    _validate_fx_series_contract(supplied_fx, contract.required_fx_currencies)
     fx_rates = assemble_fx_rates(supplied_fx, index)
     return MarketDataBundle(
         convert_arrays_to_base(
@@ -200,6 +193,21 @@ def _convert_to_base_currency(
             fx_rates,
         )
     )
+
+
+def _validate_fx_series_contract(
+    supplied_fx: Mapping[str, pd.Series],
+    required_fx_currencies: Sequence[str],
+) -> None:
+    required = set(required_fx_currencies)
+    supplied = set(supplied_fx)
+    missing = sorted(required - supplied)
+    extra = sorted(supplied - required)
+    if missing or extra:
+        raise ValueError(
+            "FX series mismatch against bundle contract: "
+            f"missing={missing}, extra={extra}"
+        )
 
 
 def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> None:

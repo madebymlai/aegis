@@ -18,7 +18,7 @@ _MINOR_UNITS: dict[str, tuple[str, float]] = {"GBp": ("GBP", 0.01)}
 
 def requires_conversion(quote_currency: str, base_currency: str) -> bool:
     """Whether a leg quoted in ``quote_currency`` needs FX conversion to base."""
-    major_currency, _ = _MINOR_UNITS.get(quote_currency, (quote_currency, 1.0))
+    major_currency, _ = _major_currency_and_scale(quote_currency)
     return major_currency != base_currency
 
 
@@ -26,7 +26,11 @@ def assemble_fx_rates(
     pair_series_by_currency: Mapping[str, pd.Series],
     index: pd.Index,
 ) -> pd.DataFrame:
-    """Align supplied ``base->ccy`` FX series onto the price ``index``."""
+    """Align supplied ``base->ccy`` FX series onto the price ``index``.
+
+    Calendar gaps are forward-filled; leading gaps remain NaN so the caller's
+    data-quality checks can catch insufficient FX history without backfilling.
+    """
     return pd.DataFrame(
         {
             currency: series.reindex(index).ffill()
@@ -43,7 +47,7 @@ def required_fx_currencies(
     """Major quote currencies that need an FX series to reach ``base_currency``."""
     needed: set[str] = set()
     for quote_currency in currency_by_symbol.values():
-        major_currency, _ = _MINOR_UNITS.get(quote_currency, (quote_currency, 1.0))
+        major_currency, _ = _major_currency_and_scale(quote_currency)
         if major_currency != base_currency:
             needed.add(major_currency)
     return needed
@@ -56,14 +60,15 @@ def convert_arrays_to_base(
     fx_rates: pd.DataFrame,
 ) -> dict[str, pd.DataFrame]:
     """Re-express all price arrays in ``base_currency``; leave non-prices alone."""
-    return {
-        name: (
-            convert_prices_to_base(panel, currency_by_symbol, base_currency, fx_rates)
-            if name in _PRICE_ARRAYS
-            else panel
-        )
-        for name, panel in arrays.items()
-    }
+    converted: dict[str, pd.DataFrame] = {}
+    for name, panel in arrays.items():
+        if name in _PRICE_ARRAYS:
+            converted[name] = convert_prices_to_base(
+                panel, currency_by_symbol, base_currency, fx_rates
+            )
+            continue
+        converted[name] = panel
+    return converted
 
 
 def convert_prices_to_base(
@@ -88,7 +93,7 @@ def _convert_column(
     base_currency: str,
     fx_rates: pd.DataFrame,
 ) -> pd.Series:
-    major_currency, scale = _MINOR_UNITS.get(quote_currency, (quote_currency, 1.0))
+    major_currency, scale = _major_currency_and_scale(quote_currency)
     major = series * scale
     if major_currency == base_currency:
         return major
@@ -98,3 +103,16 @@ def _convert_column(
             f"convert {series.name!r} to base {base_currency!r}"
         )
     return major / fx_rates[major_currency]
+
+
+def _major_currency_and_scale(quote_currency: str) -> tuple[str, float]:
+    return _MINOR_UNITS.get(quote_currency, (quote_currency, 1.0))
+
+
+__all__ = [
+    "assemble_fx_rates",
+    "convert_arrays_to_base",
+    "convert_prices_to_base",
+    "required_fx_currencies",
+    "requires_conversion",
+]
