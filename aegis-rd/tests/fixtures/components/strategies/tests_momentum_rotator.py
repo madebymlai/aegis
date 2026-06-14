@@ -180,6 +180,17 @@ def _compute_target_weights(
     return weights
 
 
+# %% lookback
+def lookback(**params):
+    """Strategy has no additional warmup beyond what its indicators need.
+
+    The bundle will compute lookback_bars as the max over all components;
+    for the strategy itself the warmup is 0 (the strategy's indicators
+    already declare their own lookback).
+    """
+    return 0
+
+
 # %% main compute
 def run(inputs, *, n_candidates, **param_lists):
     """Vectorized regime rotation for all candidates in a single call."""

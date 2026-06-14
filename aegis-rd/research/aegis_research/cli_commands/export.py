@@ -47,6 +47,7 @@ class ExportedComponents:
     strategy: ComponentSpecMap
     indicators: tuple[ComponentSpecMap, ...]
     source_hashes: Mapping[str, str]
+    lookback_bars: int = 0
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -164,6 +165,7 @@ def _write_component_modules(
 ) -> ExportedComponents:
     indicator_specs: list[ComponentSpecMap] = []
     hashes: dict[str, str] = {}
+    lookback_bars: int = 0
 
     for position, ref in enumerate(config.indicators):
         module_name = f"indicator_{position}"
@@ -173,13 +175,21 @@ def _write_component_modules(
             component_registry=component_registry,
             selection=ComponentSelection("indicators", ref.id),
         )
+        if not definition.has_lookback:
+            raise ValueError(
+                f"indicator {definition.id!r} lacks lookback() entrypoint; "
+                f"every bundled component must declare its warmup bars"
+            )
         indicator_manifest = _indicator_manifest(definition)
         component_ref = ComponentRef("indicators", definition.id, ref.id)
+        params = dict(component_params[component_ref])
+        lb = _call_lookback(definition, params)
+        lookback_bars = max(lookback_bars, lb)
         indicator_specs.append(
             _component_spec(
                 manifest=indicator_manifest,
                 module=f"{package_name}.{module_name}",
-                params=component_params[component_ref],
+                params=params,
             )
         )
         hashes[f"indicators/{definition.id}"] = definition.identity.source_hash
@@ -190,18 +200,27 @@ def _write_component_modules(
         component_registry=component_registry,
         selection=ComponentSelection("strategies", config.strategy.id),
     )
+    if not definition.has_lookback:
+        raise ValueError(
+            f"strategy {definition.id!r} lacks lookback() entrypoint; "
+            f"every bundled component must declare its warmup bars"
+        )
     strategy_manifest = _strategy_manifest(definition)
     component_ref = ComponentRef("strategies", definition.id, STRATEGY_SLOT)
+    params = dict(component_params[component_ref])
+    lb = _call_lookback(definition, params)
+    lookback_bars = max(lookback_bars, lb)
     strategy_spec = _component_spec(
         manifest=strategy_manifest,
         module=f"{package_name}.strategy",
-        params=component_params[component_ref],
+        params=params,
     )
     hashes[f"strategies/{definition.id}"] = definition.identity.source_hash
     return ExportedComponents(
         strategy=strategy_spec,
         indicators=tuple(indicator_specs),
         source_hashes=hashes,
+        lookback_bars=lookback_bars,
     )
 
 
@@ -259,7 +278,19 @@ def _bundle_contract(config: RunConfig, components: ExportedComponents) -> dict[
         ),
         "currency_by_symbol": dict(currency_by_symbol),
         "timeframe": config.data.timeframe,
+        "lookback_bars": components.lookback_bars,
     }
+
+
+def _call_lookback(definition: ComponentDefinition, params: Mapping[str, Any]) -> int:
+    lookback_fn = definition.load_lookback()
+    result = lookback_fn(**params)
+    if not isinstance(result, int) or result < 0:
+        raise ValueError(
+            f"component {definition.id!r} lookback() must return a non-negative int; "
+            f"got {result!r}"
+        )
+    return result
 
 
 def _write_bundle_module(

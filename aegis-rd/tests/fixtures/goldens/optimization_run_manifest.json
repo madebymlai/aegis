@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "0d2c6bac4e7d3b3e5c23627167463c8010f8894c2fbdc7d9a8f6fad0a3b6ac9b",
+      "hash": "29dea33c01d9681cdfdd62ad4a234cb69b12167a1f5270a6dd787c92ecea8257",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -175,7 +175,7 @@
     }
   },
   "evidence": {
-    "component_registry_fingerprint": "1ed363838a71dec50a06186661e806d6f462d76f06040b5476c8e913c26d6084",
+    "component_registry_fingerprint": "28cf8066139b5ad7acd24843a5a7083847f1f1e577dd4940be7a7ff1e80c9137",
     "config": {
       "authored_config_hash": "250d536a9a59ddc36b23eb02a999ff1ed6f216b2bf043915d075fe56771a2a67",
       "raw_config_identity": {
@@ -214,7 +214,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_da39e4d17020699df0ec271ec5f0f3fe",
+          "candidate_key": "cand_ffdc750f29ae95fa4b8b374ddc5ff7bb",
           "held_out_metrics": {
             "0": {
               "max_dd": 19.259731031899552,
@@ -374,7 +374,7 @@
                   "param_mode": "fixed",
                   "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
                   "slot": "tests.momentum_score",
-                  "source_hash": "e7ee06dc51c8528306fb119f51af043e8d7ba95f485fe500edc7e3dec6b59c7d",
+                  "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
                   "version": "1.0.0"
                 },
                 {
@@ -387,7 +387,7 @@
                   "param_mode": "fixed",
                   "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
                   "slot": "tests.realized_vol",
-                  "source_hash": "903a525bf9e45dfacfeb2cc0be7a5a315e37348bb1dd6d559044a08f1f86c821",
+                  "source_hash": "f1e612ebfa50dfc44dc3714a77d7afbd7b86156804a4e884adfdc87591a929a1",
                   "version": "1.0.0"
                 }
               ],
@@ -415,7 +415,7 @@
                 "param_mode": "parameterized",
                 "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
                 "slot": "strategy",
-                "source_hash": "ac8b23af5b03520abb7314e40376c6d48d576f85e6b9c6d257d3ff36999e0b76",
+                "source_hash": "22469b7a6a46c76be787bc61a90181ed58d11f8032a73ae1be5f17b5d4cea727",
                 "version": "1.0.0"
               }
             }
@@ -469,7 +469,7 @@
           }
         },
         {
-          "candidate_key": "cand_9c42db32f24f519a10746b35d4a8e958",
+          "candidate_key": "cand_75f516a03841ac7e49f46d8356c93feb",
           "held_out_metrics": {
             "0": {
               "max_dd": 18.118116158313768,
@@ -629,7 +629,7 @@
                   "param_mode": "fixed",
                   "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
                   "slot": "tests.momentum_score",
-                  "source_hash": "e7ee06dc51c8528306fb119f51af043e8d7ba95f485fe500edc7e3dec6b59c7d",
+                  "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
                   "version": "1.0.0"
                 },
                 {
@@ -642,7 +642,7 @@
                   "param_mode": "fixed",
                   "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
                   "slot": "tests.realized_vol",
-                  "source_hash": "903a525bf9e45dfacfeb2cc0be7a5a315e37348bb1dd6d559044a08f1f86c821",
+                  "source_hash": "f1e612ebfa50dfc44dc3714a77d7afbd7b86156804a4e884adfdc87591a929a1",
                   "version": "1.0.0"
                 }
               ],
@@ -670,7 +670,7 @@
                 "param_mode": "parameterized",
                 "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
                 "slot": "strategy",
-                "source_hash": "ac8b23af5b03520abb7314e40376c6d48d576f85e6b9c6d257d3ff36999e0b76",
+                "source_hash": "22469b7a6a46c76be787bc61a90181ed58d11f8032a73ae1be5f17b5d4cea727",
                 "version": "1.0.0"
               }
             }
@@ -724,7 +724,7 @@
           }
         },
         {
-          "candidate_key": "cand_d8b807f3d48b105f091deed8ee3d83e8",
+          "candidate_key": "cand_faa3b795b64f6e7a10532ca56aa28c65",
           "held_out_metrics": {
             "0": {
               "max_dd": 27.841344065208496,
@@ -884,7 +884,7 @@
                   "param_mode": "fixed",
                   "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
                   "slot": "tests.momentum_score",
-                  "source_hash": "e7ee06dc51c8528306fb119f51af043e8d7ba95f485fe500edc7e3dec6b59c7d",
+                  "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
                   "version": "1.0.0"
                 },
                 {
@@ -897,7 +897,7 @@
                   "param_mode": "fixed",
                   "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
                   "slot": "tests.realized_vol",
-                  "source_hash": "903a525bf9e45dfacfeb2cc0be7a5a315e37348bb1dd6d559044a08f1f86c821",
+                  "source_hash": "f1e612ebfa50dfc44dc3714a77d7afbd7b86156804a4e884adfdc87591a929a1",
                   "version": "1.0.0"
                 }
               ],
@@ -925,7 +925,7 @@
                 "param_mode": "parameterized",
                 "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
                 "slot": "strategy",
-                "source_hash": "ac8b23af5b03520abb7314e40376c6d48d576f85e6b9c6d257d3ff36999e0b76",
+                "source_hash": "22469b7a6a46c76be787bc61a90181ed58d11f8032a73ae1be5f17b5d4cea727",
                 "version": "1.0.0"
               }
             }
@@ -1379,7 +1379,7 @@
             "param_mode": "fixed",
             "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
             "slot": "tests.momentum_score",
-            "source_hash": "e7ee06dc51c8528306fb119f51af043e8d7ba95f485fe500edc7e3dec6b59c7d",
+            "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
             "version": "1.0.0"
           },
           {
@@ -1392,7 +1392,7 @@
             "param_mode": "fixed",
             "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
             "slot": "tests.realized_vol",
-            "source_hash": "903a525bf9e45dfacfeb2cc0be7a5a315e37348bb1dd6d559044a08f1f86c821",
+            "source_hash": "f1e612ebfa50dfc44dc3714a77d7afbd7b86156804a4e884adfdc87591a929a1",
             "version": "1.0.0"
           }
         ],
@@ -1420,7 +1420,7 @@
           "param_mode": "parameterized",
           "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
           "slot": "strategy",
-          "source_hash": "ac8b23af5b03520abb7314e40376c6d48d576f85e6b9c6d257d3ff36999e0b76",
+          "source_hash": "22469b7a6a46c76be787bc61a90181ed58d11f8032a73ae1be5f17b5d4cea727",
           "version": "1.0.0"
         }
       },

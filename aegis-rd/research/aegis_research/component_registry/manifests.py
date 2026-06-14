@@ -20,6 +20,7 @@ from pydantic import (
 
 from research.aegis_research.component_registry.contracts import (
     COMPONENT_ENTRYPOINT,
+    COMPONENT_LOOKBACK_ENTRYPOINT,
     COMPONENT_PARAM_SPACE_ENTRYPOINT,
     STRATEGY_ALLOCATION_OUTPUTS,
     ComponentDefinition,
@@ -47,7 +48,7 @@ def parse_component_file(
     repo_root: Path,
 ) -> ComponentDefinition:
     source_bytes = path.read_bytes()
-    manifest_payload, has_param_space = _read_static_declaration(path, source_bytes.decode())
+    manifest_payload, has_param_space, has_lookback = _read_static_declaration(path, source_bytes.decode())
     manifest = build_manifest(manifest_payload, expected_family=family, path=path)
     return ComponentDefinition(
         manifest=manifest,
@@ -58,6 +59,7 @@ def parse_component_file(
             source_hash=hashlib.sha256(source_bytes).hexdigest(),
         ),
         has_param_space=has_param_space,
+        has_lookback=has_lookback,
     )
 
 def build_manifest(
@@ -82,7 +84,7 @@ def build_manifest(
             _format_manifest_errors(e, path)
         ) from e
 
-def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], bool]:
+def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], bool, bool]:
     percent_cell_markers = COMPONENT_PERCENT_CELL_RE.findall(source)
     if not percent_cell_markers:
         raise ComponentRegistryError(f"{path}: component files must use # %% percent cells")
@@ -98,12 +100,15 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], b
     manifest: Any = None
     run_node: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     has_param_space = False
+    has_lookback = False
     for node in tree.body:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             if node.name == COMPONENT_ENTRYPOINT:
                 run_node = node
             elif node.name == COMPONENT_PARAM_SPACE_ENTRYPOINT:
                 has_param_space = True
+            elif node.name == COMPONENT_LOOKBACK_ENTRYPOINT:
+                has_lookback = True
             continue
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
@@ -124,7 +129,7 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], b
         raise ComponentRegistryError(
             f"{path}: component entry point {COMPONENT_ENTRYPOINT!r} must have a docstring"
         )
-    return manifest, has_param_space
+    return manifest, has_param_space, has_lookback
 
 def _literal_value(path: Path, name: str, node: ast.AST) -> Any:
     try:

@@ -11,6 +11,7 @@ ComponentFamily = Literal["indicators", "strategies"]
 COMPONENT_FAMILIES: tuple[ComponentFamily, ...] = ("indicators", "strategies")
 COMPONENT_ENTRYPOINT = "run"
 COMPONENT_PARAM_SPACE_ENTRYPOINT = "param_space"
+COMPONENT_LOOKBACK_ENTRYPOINT = "lookback"
 
 # The four allocation-native channels a Strategy may emit; every strategy must
 # declare exactly one as its ``output_name`` (see `StrategyManifest`).
@@ -113,6 +114,7 @@ class ComponentDefinition:
     file_path: Path
     identity: ComponentSourceIdentity
     has_param_space: bool = False
+    has_lookback: bool = False
 
     @property
     def callable_name(self) -> str:
@@ -121,6 +123,10 @@ class ComponentDefinition:
     @property
     def param_space_entrypoint_name(self) -> str | None:
         return COMPONENT_PARAM_SPACE_ENTRYPOINT if self.has_param_space else None
+
+    @property
+    def lookback_entrypoint_name(self) -> str | None:
+        return COMPONENT_LOOKBACK_ENTRYPOINT if self.has_lookback else None
 
     @property
     def family(self) -> ComponentFamily:
@@ -177,6 +183,13 @@ class ComponentDefinition:
 
         return load_component_callable(self)
 
+    def load_lookback(self) -> Any:
+        if not self.has_lookback:
+            raise ComponentRegistryError(
+                f"component {self.family}/{self.id} has no lookback entrypoint"
+            )
+        return self.load_attribute(COMPONENT_LOOKBACK_ENTRYPOINT)
+
     def public_snapshot(self) -> dict[str, Any]:
         """The one projection of a component's public facts.
 
@@ -198,6 +211,10 @@ class ComponentDefinition:
                     "available": self.has_param_space,
                     "entrypoint": self.param_space_entrypoint_name,
                 },
+            },
+            "lookback": {
+                "available": self.has_lookback,
+                "entrypoint": self.lookback_entrypoint_name,
             },
         }
         payload.update(manifest.public_fields())

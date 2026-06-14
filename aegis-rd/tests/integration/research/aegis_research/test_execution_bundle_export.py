@@ -189,6 +189,102 @@ def test_multiple_exported_bundles_are_discovered_by_entry_points(tmp_path, monk
     )
 
 
+def test_export_rejects_component_without_lookback(tmp_path, monkeypatch) -> None:
+    _install_fixture_components(tmp_path)
+    # Remove lookback from the strategy component
+    strategy_path = tmp_path / "research" / "components" / "strategies" / "tests_momentum_rotator.py"
+    strategy_source = strategy_path.read_text()
+    # Remove the lookback block (everything between "# %% lookback" and "# %% main compute")
+    lookback_start = strategy_source.find("# %% lookback")
+    main_start = strategy_source.find("# %% main compute")
+    if lookback_start >= 0 and main_start > lookback_start:
+        strategy_source_no_lookback = (
+            strategy_source[:lookback_start].rstrip("\n")
+            + "\n\n"
+            + strategy_source[main_start:]
+        )
+    else:
+        strategy_source_no_lookback = strategy_source
+    strategy_path.write_text(strategy_source_no_lookback)
+    config_path = _write_locked_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _seed_candidate_store(config_path)
+
+    from research.aegis_research.cli_commands.export import export_locked_bundle
+
+    with pytest.raises(ValueError, match=r"lookback"):
+        export_locked_bundle(config_path, out_dir=tmp_path / "dist")
+
+
+def test_compute_weights_raises_when_window_shorter_than_lookback_bars(
+    tmp_path, monkeypatch
+) -> None:
+    _install_fixture_components(tmp_path)
+    config_path = _write_locked_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _seed_candidate_store(config_path)
+
+    payload = _export_bundle(config_path, out_dir="dist")
+    wheel_path = Path(payload["wheel"])
+    assert wheel_path.exists()
+
+    # The lookback_bars for momentum_score should be max(h1..h4) = 200
+    # with _MOMENTUM_PARAMS h1=15, h2=42, h3=100, h4=200
+    package_name = _package_name_from_wheel(wheel_path)
+    import_path = str(wheel_path.resolve())
+    sys.path.insert(0, import_path)
+    importlib.invalidate_caches()
+    try:
+        module = importlib.import_module(package_name)
+        bundle = module.get_bundle()
+        # lookback_bars should be at least 200 (max of momentum params h4)
+        assert bundle.contract.lookback_bars >= 200
+
+        # Supply fewer bars than lookback_bars
+        prices = _market_data()
+        short_prices = MarketDataBundle(
+            {"Close": prices.array("Close").iloc[:50]}
+        )
+        with pytest.raises(ValueError, match=r"lookback"):
+            bundle.compute_weights(RuntimeMarketDataBundle(short_prices.arrays))
+    finally:
+        sys.path.remove(import_path)
+        _remove_imported_package(package_name)
+        importlib.invalidate_caches()
+
+
+def test_compute_weights_raises_when_latest_weight_row_is_non_finite(
+    tmp_path, monkeypatch
+) -> None:
+    _install_fixture_components(tmp_path)
+    config_path = _write_locked_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _seed_candidate_store(config_path)
+
+    payload = _export_bundle(config_path, out_dir="dist")
+    wheel_path = Path(payload["wheel"])
+    package_name = _package_name_from_wheel(wheel_path)
+    import_path = str(wheel_path.resolve())
+    sys.path.insert(0, import_path)
+    importlib.invalidate_caches()
+    try:
+        module = importlib.import_module(package_name)
+        bundle = module.get_bundle()
+        lookback = bundle.contract.lookback_bars
+
+        # Supply exactly lookback_bars — latest row should be NaN/finite for warmup
+        prices = _market_data()
+        minimal_prices = MarketDataBundle(
+            {"Close": prices.array("Close").iloc[:lookback]}
+        )
+        with pytest.raises(ValueError, match=r"non-finite|warmup"):
+            bundle.compute_weights(RuntimeMarketDataBundle(minimal_prices.arrays))
+    finally:
+        sys.path.remove(import_path)
+        _remove_imported_package(package_name)
+        importlib.invalidate_caches()
+
+
 def test_export_lengthens_candidate_prefix_when_bundle_name_would_collide(
     tmp_path, monkeypatch
 ) -> None:

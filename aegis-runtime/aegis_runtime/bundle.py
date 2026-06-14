@@ -34,6 +34,7 @@ class DataContract:
     required_fx_currencies: tuple[str, ...]
     currency_by_symbol: Mapping[str, str]
     timeframe: str
+    lookback_bars: int = 0
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,13 @@ class ExecutionBundle:
     ) -> pd.DataFrame:
         _validate_market_data(prices, self.contract)
         close = prices.array("Close")
+        n_bars = len(close)
+        lookback = self.contract.lookback_bars
+        if n_bars < lookback:
+            raise ValueError(
+                f"supplied window has {n_bars} bars, but bundle requires "
+                f"at least {lookback} lookback bars"
+            )
         index = close.index
         base_prices = _convert_to_base_currency(prices, self.contract, fx_series, index)
         n_candidates = 1
@@ -125,6 +133,7 @@ class ExecutionBundle:
         )
         weights = pd.DataFrame(arr[:, :n_symbols], index=close.index, columns=close.columns)
         weights.columns.name = SYMBOL_LEVEL
+        _assert_latest_row_finite(weights)
         assert_signed_allocations_within_caps(
             weights,
             gross_cap=self._plan.gross_cap,
@@ -248,6 +257,17 @@ def _validated_array(value: Any, *, expected_shape: tuple[int, int], label: str)
     if arr.shape != expected_shape:
         raise ValueError(f"{label} has expected shape {expected_shape}; actual shape {arr.shape}")
     return arr
+
+
+def _assert_latest_row_finite(weights: pd.DataFrame) -> None:
+    if len(weights) == 0:
+        return
+    latest = weights.iloc[-1]
+    if not latest.notna().all():
+        raise ValueError(
+            "latest weight row is non-finite; warmup may be insufficient "
+            f"(lookback_bars={weights.shape[0]})"
+        )
 
 
 def assert_signed_allocations_within_caps(

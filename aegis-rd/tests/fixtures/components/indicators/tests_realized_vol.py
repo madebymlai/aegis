@@ -26,6 +26,12 @@ def param_space():
     }
 
 
+# %% lookback
+def lookback(**params):
+    """Warmup bars for realized volatility: the rolling window length."""
+    return int(params["window"])
+
+
 # %% main compute
 def run(data, *, n_candidates, **param_lists):
     """Vectorized realized volatility for all candidates in a single call."""

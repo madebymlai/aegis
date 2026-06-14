@@ -63,6 +63,15 @@ def _compute_score(close, h1, h2, h3, h4, w1, w2, w3, w4):
     return close.__class__(score, index=close.index, columns=close.columns)
 
 
+# %% lookback
+def lookback(**params):
+    """Warmup bars for momentum score: max of the four horizon parameters."""
+    return max(
+        int(params["h1"]), int(params["h2"]),
+        int(params["h3"]), int(params["h4"]),
+    )
+
+
 # %% main compute
 def run(data, *, n_candidates, **param_lists):
     """Vectorized multi-period momentum score for all candidates in a single call."""
