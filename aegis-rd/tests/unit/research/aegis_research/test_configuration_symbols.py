@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from tests.support.research.aegis_research.factories import make_data_config
 
@@ -17,5 +18,5 @@ def test_symbols_are_ticker_ccy_records_exposing_tickers_and_currency_map() -> N
 
 
 def test_a_bare_string_symbol_is_rejected_no_currency_no_entry() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         make_data_config(symbols=["SYN"])

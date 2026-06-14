@@ -5,3 +5,6 @@ opencode.jsonc
 .env
 .env.*
 !.env.example
+
+# Regenerable execution bundle wheels.
+bundles/

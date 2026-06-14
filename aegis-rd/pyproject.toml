@@ -23,7 +23,7 @@ dependencies = [
 aerd = "research.aegis_research.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["research*"]
+include = ["research*", "aegis_runtime*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
