@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 from typing import NoReturn, TextIO
 
-from research.aegis_research.cli_commands import run, show
+from research.aegis_research.cli_commands import export, run, show
 from research.aegis_research.cli_support.errors import (
     CliError,
     InternalCliError,
@@ -67,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser: argparse.ArgumentParser = AerdArgumentParser(prog="aerd")
     subparsers = parser.add_subparsers(dest="command", required=True)
     run.register(subparsers)
+    export.register(subparsers)
     show.register(subparsers)
     return parser
 

@@ -21,10 +21,10 @@ def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
     output = capsys.readouterr()
     assert "usage: aerd" in output.out
     assert "run" in output.out
+    assert "export" in output.out
     assert "show" in output.out
     assert "train" not in output.out
     assert "play" not in output.out
-    assert "exp" not in output.out
 
 
 def test_run_help_does_not_list_train_flag(capsys: pytest.CaptureFixture[str]) -> None:
