@@ -109,16 +109,15 @@ def _size_if_configured(
     """Size to native quantity when all sizing params are available; otherwise
     return the raw EUR notional (backward-compatible with pre-Slice 5 callers)."""
     if instrument_metas is None or fx_rates is None or prices is None:
-        return notional_eur  # backward-compatible: raw EUR notional
+        return notional_eur
 
     meta = instrument_metas.get(figi_key)
     price = prices.get(figi_key)
     if meta is None or price is None:
-        return notional_eur  # unknown instrument → pass through raw notional
+        return notional_eur
 
-    currency = meta.currency
-    fx_rate = fx_rates.get(currency)
+    fx_rate = fx_rates.get(meta.currency)
     if fx_rate is None:
-        return notional_eur  # missing FX rate → pass through raw notional
+        return notional_eur
 
     return size_order(notional_eur, price, fx_rate, meta)

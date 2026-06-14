@@ -167,48 +167,37 @@ class RebalanceStrategy(Strategy):
         """
         instrument_metas: dict[str, InstrumentSizing] = {}
         prices: dict[str, float] = {}
-        fx_rates: dict[str, float] = {}
+        currencies: set[str] = set()
 
-        # Collect unique FIGIs across all pending targets.
-        seen_figis: set[str] = set()
         for target in self._pending_targets.values():
             if target is None or target.empty:
                 continue
-            seen_figis.update(str(c) for c in target.columns)
+            for figi in target.columns:
+                figi_str = str(figi)
+                if figi_str in instrument_metas:
+                    continue
+                instr_id = self._figi_to_instr_id(figi_str)
+                instrument = self.cache.instrument(instr_id)
+                if instrument is None:
+                    continue
 
-        for figi in seen_figis:
-            instr_id = self._figi_to_instr_id(figi)
-            instrument = self.cache.instrument(instr_id)
-            if instrument is None:
-                continue
+                currency = instrument.quote_currency.code
+                instrument_metas[figi_str] = InstrumentSizing(
+                    currency=currency,
+                    size_increment=float(instrument.size_increment),
+                )
 
-            currency = instrument.quote_currency.code
-            instrument_metas[figi] = InstrumentSizing(
-                currency=currency,
-                size_increment=float(instrument.size_increment),
-            )
+                buf = self._bars_buffer.get(instr_id)
+                if buf:
+                    prices[figi_str] = float(buf[-1].close.as_double())
 
-            # Latest close from the bar buffer.
-            buf = self._bars_buffer.get(instr_id)
-            if buf:
-                prices[figi] = float(buf[-1].close.as_double())
+                currencies.add(currency)
 
-            # FX rate: prefer Nautilus cache, fall back to 1.0 for base currency.
-            if currency == self._book.base_currency:
-                fx_rates[currency] = 1.0
-            elif currency not in fx_rates:
-                # For GBp we store under "GBp" key — sizing applies ×100.
-                # We look up the major currency rate and sizing does the pence factor.
-                if currency == "GBp":
-                    # Try to get GBP/EUR from cache/portfolio.
-                    rate = self._get_fx_rate(venue, "GBP")
-                    if rate is not None:
-                        fx_rates[currency] = rate  # stored as GBP/EUR
-                    # else missing → rebalancer falls back to raw notional
-                else:
-                    rate = self._get_fx_rate(venue, currency)
-                    if rate is not None:
-                        fx_rates[currency] = rate
+        fx_rates: dict[str, float] = {}
+        for currency in currencies:
+            rate = self._get_fx_rate(venue, currency)
+            if rate is not None:
+                fx_rates[currency] = rate
 
         return instrument_metas, fx_rates, prices
 
