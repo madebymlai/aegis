@@ -8,7 +8,7 @@ caps, bands, and per-instrument overrides arrive in later slices.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from aegis_trader.domain.types import SleeveName
 

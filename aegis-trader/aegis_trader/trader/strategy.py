@@ -50,7 +50,6 @@ class RebalanceStrategy(Strategy):
         self._contract: DataContract | None = None
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
         self._pending_target: pd.DataFrame | None = None
-        self._bar_type: BarType | None = None
 
     def on_start(self) -> None:
         sleeve = self._book.sleeves[0]
@@ -61,10 +60,8 @@ class RebalanceStrategy(Strategy):
         figis = self._contract.figis
         # For Slice 1 we resolve FIGI→InstrumentId by convention (FIGI.VENUE).
         # The Security Master (Slice 3) replaces this.
-        venue = self._book.default_venue
         for figi in figis:
-            instr_id = InstrumentId.from_str(f"{figi}.{venue}")
-            bar_type = BarType.from_str(f"{instr_id.value}-1-DAY-LAST-EXTERNAL")
+            bar_type = BarType.from_str(f"{self._figi_to_instr_id(figi).value}-1-DAY-LAST-EXTERNAL")
             self.subscribe_bars(bar_type)
         self.log.info(f"RebalanceStrategy starting; sleeve={sleeve.name.value}, figis={figis}")
 
@@ -72,51 +69,66 @@ class RebalanceStrategy(Strategy):
         if self._bundle is None or self._contract is None:
             return
 
-        # Buffer the bar
+        buf = self._buffer_bar(bar)
+        if buf is None:
+            return  # not enough lookback bars yet
+
+        target = self._compute_target(buf)
+        self._submit_pending_orders()
+        self._pending_target = target
+
+    def _buffer_bar(self, bar: Bar) -> list[Bar] | None:
+        """Buffer *bar* into its per-instrument window and return the window
+        if enough lookback bars have accumulated, otherwise None."""
         instr_id = bar.bar_type.instrument_id
         buf = self._bars_buffer.setdefault(instr_id, [])
         buf.append(bar)
 
         lookback = self._contract.lookback_bars
-        total = len(buf)
         needed = lookback + 1  # lookback bars + the current bar
-        if total < needed:
-            return
+        if len(buf) < needed:
+            return None
 
         # Drop excess beyond what we need
-        if total > needed:
+        if len(buf) > needed:
             buf[:] = buf[-needed:]
+        return buf
 
-        # Assemble MarketDataBundle
-        close_series = _bars_to_close_series(buf, self._contract.figis)
+    def _compute_target(self, buf: list[Bar]) -> pd.DataFrame:
+        """Assemble a MarketDataBundle from *buf* and call compute_weights."""
+        # For Slice 1 the buffer is per-instrument with a 1:1 FIGI mapping.
+        close_series = _bars_to_close_series(buf, self._contract.figis[0])
         bundle_data = MarketDataBundle({"Close": close_series})
-        # For Slice 1 we pass no FX series (single-currency EUR)
-        target = self._bundle.compute_weights(bundle_data)
+        # For Slice 1 we pass no FX series (single-currency EUR)
+        return self._bundle.compute_weights(bundle_data)
 
-        # If we have a pending target from a previous bar, submit now.
-        # This is the one-bar lag: the target was computed at bar t-1 and
-        # is now being submitted on bar t, filling at bar t's close.
-        if self._pending_target is not None:
-            venue = Venue(self._book.default_venue)
-            equity_map = self.portfolio.equity(venue=venue)
-            base_ccy = Currency.from_str(self._book.base_currency)
-            nav = float(equity_map[base_ccy].as_double())
-            orders = rebalance(self._pending_target, nav, self._book)
-            for oi in orders:
-                self._submit_order_intent(oi)
+    def _submit_pending_orders(self) -> None:
+        """Submit orders for the target computed on the previous bar.
 
-        # Store current target for next bar
-        self._pending_target = target
+        This is the one-bar lag: the target was decided at bar t-1 and is now
+        submitted on bar t, filling at bar t's close.
+        """
+        if self._pending_target is None:
+            return
+        venue = Venue(self._book.default_venue)
+        equity_map = self.portfolio.equity(venue=venue)
+        base_ccy = Currency.from_str(self._book.base_currency)
+        nav = float(equity_map[base_ccy].as_double())
+        orders = rebalance(self._pending_target, nav, self._book)
+        for oi in orders:
+            self._submit_order_intent(oi)
 
+    def _figi_to_instr_id(self, figi: str) -> InstrumentId:
+        """Resolve a FIGI to a venue-specific InstrumentId.
+
+        For Slice 1 resolved by convention (FIGI.VENUE).
+        The Security Master (Slice 3) replaces this.
+        """
+        return InstrumentId.from_str(f"{figi}.{self._book.default_venue}")
 
     def _submit_order_intent(self, oi: OrderIntent) -> None:
-        """Translate a domain OrderIntent into a Nautilus MARKET order and submit.
-
-        For Slice 1 we resolve FIGI→InstrumentId by convention (FIGI.VENUE).
-        The real Security Master (Slice 3) replaces this.
-        """
-        venue = self._book.default_venue
-        instr_id = InstrumentId.from_str(f"{oi.figi.value}.{venue}")
+        """Translate a domain OrderIntent into a Nautilus MARKET order and submit."""
+        instr_id = self._figi_to_instr_id(oi.figi.value)
         instrument = self.cache.instrument(instr_id)
         if instrument is None:
             self.log.error(f"Instrument not found for FIGI {oi.figi.value}; skipping order")
@@ -133,16 +145,9 @@ class RebalanceStrategy(Strategy):
 
 
 def _bars_to_close_series(
-    bars: list[Bar], figis: tuple[str, ...]
+    bars: list[Bar], figi: str
 ) -> pd.DataFrame:
-    """Convert buffered bars into a close-price DataFrame keyed by FIGI.
-
-    For Slice 1 the buffer is per-instrument and we assume one FIGI per
-    instrument; the mapping is 1:1.
-    """
+    """Convert buffered bars into a single-column close-price DataFrame keyed by *figi*."""
     index = pd.DatetimeIndex([b.ts_event for b in bars])
     values = [float(b.close.as_double()) for b in bars]
-    return pd.DataFrame(
-        {figis[0]: values},
-        index=index,
-    )
+    return pd.DataFrame({figi: values}, index=index)
