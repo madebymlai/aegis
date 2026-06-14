@@ -8,11 +8,11 @@ import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
-from research.aegis_research.allocation_policy import (
-    assert_signed_allocations_within_caps,
-)
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
+from research.aegis_research.exposure_validation import (
+    validate_exposure,
+)
 from research.aegis_research.market_data.currency import requires_conversion
 
 _SINGLE_CANDIDATE_ID = "single"
@@ -27,7 +27,7 @@ VBT_PF_METHOD = "from_orders"
 VBT_RESOLVED_SIZE_TYPE = "targetpercent"
 VBT_LEVERAGE_MODE = "eager"
 # Surplus buying power for the VBT engine, expressed as a multiple of gross_cap.
-# The Allocation Policy gate is the sole gross_cap enforcer (ADR-0007 amended 2026-06-09);
+# Exposure Validation is the sole gross_cap enforcer (ADR-0007 amended 2026-06-09);
 # giving the engine k x gross_cap of headroom (k >= 2) prevents the engine from silently
 # under-filling orders during compliant at-cap rebalance transitions that need >1x cap
 # of temporary buying power (e.g. sell A -> buy B when call_seq="auto" sequences buys
@@ -138,7 +138,7 @@ def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
     """Exact tripwire: any NoCash rejection is a genuine bug.
 
     With surplus buying power (leverage = k x gross_cap, k >= 2) the engine always has
-    headroom to fill every Allocation-Policy-compliant order.  A NoCash rejection under
+    headroom to fill every Exposure-Limits-compliant order.  A NoCash rejection under
     these conditions is not a tolerance-graded under-fill — it is a genuine mis-fill
     that must fail closed so no Candidate is silently scored on a corrupted book.
     """
@@ -148,7 +148,7 @@ def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
     if (records["res_status_info"] == OrderStatusInfo.NoCash).any():
         raise ValueError(
             "portfolio simulation produced an unexpected NoCash order rejection: "
-            "the engine exhausted buying power on an Allocation-Policy-compliant book"
+            "the engine exhausted buying power on an Exposure-Limits-compliant book"
         )
 
 
@@ -255,7 +255,7 @@ def simulate_portfolio_batch(
         feature_name="Close",
     )
     _validate_allocations_frame(expanded_close, allocations)
-    assert_signed_allocations_within_caps(
+    validate_exposure(
         allocations,
         gross_cap=config.gross_cap,
         net_cap=config.net_cap,

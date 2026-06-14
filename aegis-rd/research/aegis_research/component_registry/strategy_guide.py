@@ -134,8 +134,8 @@ def _extend_title(lines: list[str]) -> None:
         "allocation-native array for every Candidate in a batch.  The "
         "framework discovers it via the `COMPONENT_MANIFEST`, loads its "
         "`run` entry point, wires its `consumes_outputs` to Indicator "
-        "outputs, and passes the return value to the Allocation Policy "
-        "layer for portfolio simulation."
+        "outputs, and passes the return value to Exposure Validation "
+        "for portfolio simulation."
     )
     lines.append("")
 
@@ -282,8 +282,8 @@ def _extend_return_contract(lines: list[str]) -> None:
         "A Strategy returns a **bare NumPy array** of shape "
         "`(T, n_candidates * n_symbols)` — not a mapping.  The array is the "
         "allocation signal in the channel declared by the manifest "
-        "`output_name`.  The framework passes this array directly to the "
-        "Allocation Policy layer; it never wraps, renames, or transforms "
+        "`output_name`.  The framework passes this array directly to "
+        "Exposure Validation; it never wraps, renames, or transforms "
         "the return value."
     )
     lines.append("")
@@ -421,8 +421,8 @@ def _extend_nan_selection(lines: list[str]) -> None:
         "symbol columns."
     )
     lines.append(
-        "- Set **`np.nan`** to excluded symbol columns — the Allocation Policy "
-        "layer treats NaN as \"do not allocate to this symbol this rebalance\"."
+        "- Set **`np.nan`** to excluded symbol columns — Exposure Validation "
+        "treats NaN as \"do not allocate to this symbol this rebalance\"."
     )
     lines.append(
         "- The component **owns** top-N filtering and gating logic (e.g. rank "

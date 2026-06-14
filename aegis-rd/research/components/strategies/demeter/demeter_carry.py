@@ -17,7 +17,7 @@
 #     realized vol spikes (the drawdown brake the always-on book lacked); the richness lean
 #     (carry_gain) leans INTO credit when the spread is rich vs its own history and OUT when
 #     thin. carry_gain = 0 recovers a pure vol-target (the no-timing baseline for the A/B).
-# Output gross = exposure ≤ 1.0, all weights ≥ 0, so the Allocation Policy passes it unsized.
+# Output gross = exposure ≤ 1.0, all weights ≥ 0, so Exposure Validation passes it unsized.
 # Simulation runs on total-return Close so the book collects the carry it holds.
 
 # %% imports

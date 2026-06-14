@@ -134,7 +134,7 @@ class ExecutionBundle:
         weights = pd.DataFrame(arr[:, :n_symbols], index=close.index, columns=close.columns)
         weights.columns.name = SYMBOL_LEVEL
         _assert_latest_row_not_nan(weights)
-        assert_signed_allocations_within_caps(
+        validate_exposure(
             weights,
             gross_cap=self._plan.gross_cap,
             net_cap=self._plan.net_cap,
@@ -270,7 +270,7 @@ def _assert_latest_row_not_nan(weights: pd.DataFrame) -> None:
         )
 
 
-def assert_signed_allocations_within_caps(
+def validate_exposure(
     allocations: pd.DataFrame,
     *,
     gross_cap: float,
