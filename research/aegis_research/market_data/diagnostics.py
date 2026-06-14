@@ -46,7 +46,7 @@ def provider_failed_diagnostics(config: DataConfig) -> tuple[DataDiagnostics, ..
             arrays={},
             provider_status=QUALITY_PROVIDER_FAILED,
         )
-        for symbol in config.symbols
+        for symbol in config.tickers
     )
 
 
@@ -65,7 +65,7 @@ def observe(
     return MarketDataObservation(
         index=_observed_index(index, values),
         arrays=tuple(_observed_arrays(features, values)),
-        symbols=tuple(_observed_symbols(symbols, values, fallback=config.symbols)),
+        symbols=tuple(_observed_symbols(symbols, values, fallback=config.tickers)),
         panels=_observed_array_panels(native_data, requested_arrays, values=values),
     )
 
@@ -81,7 +81,7 @@ def diagnose(
         diagnostics.append(
             DataDiagnostics(
                 symbol=str(symbol),
-                configured=symbol in config.symbols,
+                configured=symbol in config.tickers,
                 arrays=_array_diagnostics(
                     panels,
                     symbol=symbol,
@@ -90,7 +90,7 @@ def diagnose(
                 provider_status="loaded",
             )
         )
-    for symbol in config.symbols:
+    for symbol in config.tickers:
         if symbol not in observed_symbols:
             diagnostics.append(
                 DataDiagnostics(

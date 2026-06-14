@@ -38,7 +38,7 @@ def _synthetic_data(config: DataConfig) -> Any:
         name="Open time",
     )
     array_values: dict[str, dict[str, np.ndarray]] = {name: {} for name in OHLCV_ARRAYS}
-    for symbol_idx, symbol in enumerate(config.symbols):
+    for symbol_idx, symbol in enumerate(config.tickers):
         drift = 0.00015 + symbol_idx * 0.00003
         volatility = 0.015 + symbol_idx * 0.002
         returns = rng.normal(drift, volatility, size=config.rows)
@@ -55,7 +55,7 @@ def _synthetic_data(config: DataConfig) -> Any:
         array_values["Volume"][symbol] = volume
     return native_from_array_dict(
         {
-            name: pd.DataFrame(values, index=index, columns=pd.Index(config.symbols))
+            name: pd.DataFrame(values, index=index, columns=pd.Index(config.tickers))
             for name, values in array_values.items()
         },
         config,

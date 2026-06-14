@@ -29,7 +29,7 @@ def _raw(name: str, portfolio: dict[str, object]) -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": name,
-        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
+        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120, "arrays": ["OHLCV"]},
         "portfolio": portfolio,
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
@@ -45,8 +45,8 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 }
 
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "8641caec9ebe4769e6161aecd4bb51ae872c231c8967ac86f0678c5a5e2f7486",
-    "int_valued_caps": "bdacada1cf10e672a922b732d10aa4a9849df9da6e71a2e31bad46a96c6145e1",
+    "canonical_grid": "0dabe87c73c3512b9c26c6277ba7af534dfe9ba40e6823d5ef3320d622dc991e",
+    "int_valued_caps": "d9839af96b5eed6baff87917708e45029c7916de29454121f6d72117bfbf1f99",
 }
 
 

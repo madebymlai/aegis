@@ -66,7 +66,7 @@ def make_data_config(**overrides: Any) -> DataConfig:
     defaults: dict[str, Any] = {
         "source": "synthetic",
         "arrays": ["OHLCV"],
-        "symbols": ["SYN"],
+        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
         "start": None,
         "end": None,
         "timeframe": "1D",

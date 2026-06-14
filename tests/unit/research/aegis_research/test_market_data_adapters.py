@@ -19,7 +19,7 @@ from tests.support.research.aegis_research.factories import make_data_config
 
 def test_synthetic_adapter_loads_native_data_behind_the_seam() -> None:
     result = synthetic_adapter.load_synthetic_source(
-        make_data_config(source="synthetic", rows=4, symbols=["AAA", "BBB"])
+        make_data_config(source="synthetic", rows=4, symbols=[{"ticker": "AAA", "ccy": "EUR"}, {"ticker": "BBB", "ccy": "EUR"}])
     )
 
     assert isinstance(result, MarketDataAdapterResult)
@@ -37,7 +37,7 @@ def test_csv_adapter_loads_flat_feature_columns(tmp_path: Path) -> None:
     frame.to_csv(path)
 
     result = csv_adapter.load_csv_source(
-        make_data_config(source="csv", path=str(path), symbols=["SYN"], arrays=["Open", "Close"])
+        make_data_config(source="csv", path=str(path), symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Open", "Close"])
     )
 
     assert isinstance(result, MarketDataAdapterResult)
@@ -49,7 +49,7 @@ def test_describe_consumes_pre_scrubbed_provider_metadata_from_the_adapter() -> 
     native_data = _LeakyProviderData()
 
     result = load_market_data_result(
-        make_data_config(source="prescrubbed", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="prescrubbed", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
         adapters={
             "prescrubbed": lambda _config: MarketDataAdapterResult(
                 native_data=native_data,
@@ -71,7 +71,7 @@ def test_describe_consumes_pre_scrubbed_provider_metadata_from_the_adapter() -> 
 
 
 def test_remote_adapter_projects_allowlisted_provider_mappings() -> None:
-    config = make_data_config(source="fakeremote", symbols=["SYN"], arrays=["Close"])
+    config = make_data_config(source="fakeremote", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
 
     result = remote_adapter.load_vbt_remote_source("fakeremote", _FakeRemoteData, config)
 
@@ -84,13 +84,68 @@ def test_remote_adapter_projects_allowlisted_provider_mappings() -> None:
     }
 
 
+def test_remote_adapter_collapses_cross_venue_daily_indices_to_shared_dates() -> None:
+    """Different-tz daily bars (.L vs .DE) must merge on calendar date, not UTC instant.
+
+    Yahoo returns each venue's daily bar at LOCAL-exchange midnight, labelled in the
+    exchange tz. Aligning by UTC instant (vbt's default) shifts non-UTC venues to the
+    prior day at a venue-specific hour, so no two venues ever share an index row -- a
+    full NaN checkerboard. The remote adapter must first collapse each daily index to
+    its calendar date so ``from_data`` merges the venues cleanly.
+
+    Regression for the cross-exchange daily merge (commit 83bc13c): the prior fake
+    returned one shared index for every symbol, so the multi-timezone merge -- the
+    whole point of the alignment -- went unexercised.
+    """
+    days = pd.bdate_range("2024-01-02", "2024-01-10")
+    london = pd.DataFrame(
+        {"Close": range(len(days))},
+        index=pd.DatetimeIndex([f"{d.date()} 00:00:00" for d in days]).tz_localize(
+            "Europe/London"
+        ),
+    )
+    berlin = pd.DataFrame(
+        {"Close": range(len(days))},
+        index=pd.DatetimeIndex([f"{d.date()} 00:00:00" for d in days]).tz_localize(
+            "Europe/Berlin"
+        ),
+    )
+    raw_outputs = [(london, {"freq": "1D"}), (berlin, {"freq": "1D"})]
+    config = make_data_config(
+        source="fakeremote",
+        symbols=[{"ticker": "VOD.L", "ccy": "GBP"}, {"ticker": "SAP.DE", "ccy": "EUR"}],
+        arrays=["Close"],
+        timeframe="1D",
+    )
+    captured: dict[str, pd.DataFrame] = {}
+
+    class _CapturingRemoteData:
+        @classmethod
+        def from_data(cls, data, **_kwargs):
+            captured.update(data)
+            return cls()
+
+    remote_adapter._native_from_remote_raw_outputs(
+        _CapturingRemoteData, config, raw_outputs, wrapper_kwargs={}, provider_kwargs={}
+    )
+
+    london_idx = captured["VOD.L"].index
+    berlin_idx = captured["SAP.DE"].index
+    # Collapsed to tz-naive calendar dates (a daily bar denotes a date, not an instant)...
+    assert london_idx.tz is None and berlin_idx.tz is None
+    assert (london_idx == london_idx.normalize()).all()
+    # ...so the two venues carry identical labels and merge 1:1. Under the UTC-instant
+    # default these would be all-distinct -- the NaN-checkerboard "pollution".
+    assert london_idx.equals(berlin_idx)
+
+
 def test_remote_adapter_chains_original_pull_failure_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("FAKE_REMOTE_API_KEY", "super-secret-token")
     config = make_data_config(
         source="fakeremote",
-        symbols=["SYN"],
+        symbols=[{"ticker": "SYN", "ccy": "EUR"}],
         arrays=["Close"],
         provider_kwargs={"api_key": {"env": "FAKE_REMOTE_API_KEY"}},
     )

@@ -284,7 +284,7 @@ def _setup_batch_dependent(
         root=tmp_path / "components", repo_root=tmp_path
     )
     defin = registry.definitions["indicators"]["toy.batch_dependent"]
-    data = _make_data(n_dates=20, symbols=["A", "B"], seed=1)
+    data = _make_data(n_dates=20, symbols=[{"ticker": "A", "ccy": "EUR"}, {"ticker": "B", "ccy": "EUR"}], seed=1)
     return defin, data
 
 

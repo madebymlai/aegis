@@ -63,7 +63,7 @@ def _resolve(portfolio: dict[str, Any], *, tmp_path: Path):
     raw: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "val-test",
-        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
+        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120, "arrays": ["OHLCV"]},
         "portfolio": portfolio,
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],

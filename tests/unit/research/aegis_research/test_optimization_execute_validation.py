@@ -15,7 +15,7 @@ def _base_config(execute: dict[str, object] | None = None) -> dict:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "p10",
-        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 80, "arrays": ["OHLCV"]},
+        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 80, "arrays": ["OHLCV"]},
         "portfolio": {"gross_cap": 1.0},
         "strategy": {"id": "demo.strategy"},
         "indicators": [],

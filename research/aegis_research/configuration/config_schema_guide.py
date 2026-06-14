@@ -49,6 +49,7 @@ from research.aegis_research.configuration.schema import (
     RunSourceRefConfig,
     RunSplitConfig,
     SignalConfig,
+    SymbolSpec,
 )
 from research.aegis_research.market_data.sources import (
     LOCAL_DATA_SOURCES,
@@ -206,6 +207,17 @@ def _render_data_section() -> str:
             f"**arrays shortcuts**: `OHLCV` expands to `{', '.join(OHLCV_ARRAYS)}`. "
             "Any VBT feature name works; no surrounding whitespace or control characters.",
             f"**Allowed sources**: {', '.join(f'`{s}`' for s in sorted(_allowed_data_sources()))}.",
+            "",
+            "**`symbols`** — each entry is a `{ticker, ccy}` record (a bare string ticker is "
+            "rejected). `ccy` is the literal quote token declared inline beside the ticker — "
+            "`EUR`, `USD`, or a minor unit such as `GBp` (pence). Currency is instrument "
+            "identity and is never sniffed from the data provider. Prices are converted to "
+            "`portfolio.base_currency` (default `EUR`) before indicators and the portfolio "
+            "run; a non-base-currency leg additionally pays `portfolio.fx_conversion_cost` "
+            "per trade.",
+            "",
+            _render_field_table(SymbolSpec),
+            "",
             "<br>**`quality.allowed_degradations`**: ",
         ],
     )
@@ -442,13 +454,17 @@ def _render_example() -> str:
 
     data:
       source: synthetic
-      symbols: [A, B, C]
+      symbols:
+        - {{ticker: A, ccy: EUR}}
+        - {{ticker: B, ccy: EUR}}
+        - {{ticker: C, ccy: EUR}}
       rows: 250
       arrays: [OHLCV]
 
     portfolio:
       gross_cap: 1.0
       direction: longonly
+      base_currency: EUR
 
     strategy:
       id: demo.strategy

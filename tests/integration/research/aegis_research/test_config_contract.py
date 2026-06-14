@@ -159,7 +159,7 @@ def test_data_arrays_mixed_shortcut_dedupes_deterministically(tmp_path: Path) ->
     raw = _run_config()
     raw["data"] = {
         "source": "synthetic",
-        "symbols": ["SYN"],
+        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
         "rows": 120,
         "arrays": ["FundingRate", "OHLCV", "Close", "FundingRate"],
     }
@@ -183,7 +183,7 @@ def test_data_arrays_accept_source_specific_vbt_feature_names(tmp_path: Path) ->
     raw = _run_config()
     raw["data"] = {
         "source": "synthetic",
-        "symbols": ["SYN"],
+        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
         "rows": 120,
         "arrays": ["Close", "Stock Splits", "close"],
     }
@@ -198,7 +198,7 @@ def test_data_arrays_accept_source_specific_vbt_feature_names(tmp_path: Path) ->
 
 def test_run_config_requires_explicit_data_arrays(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["data"] = {"source": "synthetic", "symbols": ["SYN"], "rows": 120}
+    raw["data"] = {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120}
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
@@ -214,7 +214,7 @@ def test_run_config_rejects_removed_feature_map(tmp_path: Path) -> None:
     raw = _run_config()
     raw["data"] = {
         "source": "synthetic",
-        "symbols": ["SYN"],
+        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
         "rows": 120,
         "arrays": ["OHLCV"],
         "feature_map": {"close": "price"},
@@ -235,7 +235,7 @@ def test_run_config_rejects_invalid_data_arrays(tmp_path: Path, arrays: object) 
     raw = _run_config()
     raw["data"] = {
         "source": "synthetic",
-        "symbols": ["SYN"],
+        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
         "rows": 120,
         "arrays": arrays,
     }
@@ -298,7 +298,7 @@ def test_env_refs_are_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("BINANCE_API_KEY", "super-secret-token")
     config = make_data_config(
         source="binance",
-        symbols=["BTCUSDT"],
+        symbols=[{"ticker": "BTCUSDT", "ccy": "EUR"}],
         start="2020-01-01",
         end="2020-02-01",
         timeframe="1D",
@@ -314,7 +314,7 @@ def test_run_config_accepts_inline_credential_under_secret_like_key(tmp_path: Pa
     raw = _run_config()
     raw["data"] = {
         "source": "yf",
-        "symbols": ["BTC-USD"],
+        "symbols": [{"ticker": "BTC-USD", "ccy": "EUR"}],
         "start": "2020-01-01",
         "end": "2020-02-01",
         "timeframe": "1D",
@@ -625,7 +625,7 @@ def _run_config() -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "canonical_run",
-        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
+        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120, "arrays": ["OHLCV"]},
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],

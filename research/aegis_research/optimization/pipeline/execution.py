@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pandas as pd
+
 from research.aegis_research.configuration import (
     RunConfig,
 )
@@ -28,6 +30,7 @@ from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
+from research.aegis_research.portfolios import fx_adjusted_fees
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,23 @@ class ExecutionResult:
     """Typed hand-off from the pipeline execution stage."""
 
     optimization_result: OptimizationResult
+
+
+def _fx_fees(config: RunConfig) -> pd.Series:
+    """Per-symbol trade fees for the book.
+
+    ``fx_adjusted_fees`` is the single fee builder: it returns the base fee for
+    every leg and adds the FX surcharge only to non-base legs, so a zero-cost or
+    single-currency book gets a uniform no-op series - no branch, no special case.
+    """
+    portfolio = config.portfolio
+    return fx_adjusted_fees(
+        config.data.tickers,
+        config.data.currency_by_symbol,
+        portfolio.base_currency,
+        base_fee=portfolio.fees,
+        fx_conversion_cost=portfolio.fx_conversion_cost,
+    )
 
 
 def run_pipeline_execution(
@@ -73,6 +93,7 @@ def run_pipeline_execution(
             ranking=config.ranking,
             metric_registry=metric_registry,
             split_result=setup.split_result,
+            fees_by_symbol=_fx_fees(config),
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)

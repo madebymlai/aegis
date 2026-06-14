@@ -61,8 +61,8 @@ def _is_intraday_timeframe(timeframe: Any) -> bool:
 
 
 def _align_remote_index(
-    obj: "pd.Series | pd.DataFrame", *, intraday: bool
-) -> "pd.Series | pd.DataFrame":
+    obj: pd.Series | pd.DataFrame, *, intraday: bool
+) -> pd.Series | pd.DataFrame:
     """Align one symbol's index to the merge regime its timeframe implies (see above)."""
     index = obj.index
     if not isinstance(index, pd.DatetimeIndex):
@@ -124,7 +124,7 @@ def _pull_remote(data_cls, config: DataConfig) -> Any:
     )
     try:
         raw_outputs = data_cls.pull(
-            config.symbols,
+            config.tickers,
             start=config.start,
             end=config.end,
             timeframe=config.timeframe,
@@ -158,12 +158,12 @@ def _native_from_remote_raw_outputs(
     wrapper_kwargs: dict[str, Any],
     provider_kwargs: dict[str, Any],
 ) -> Any:
-    if len(raw_outputs) != len(config.symbols):
+    if len(raw_outputs) != len(config.tickers):
         raise ValueError("remote provider returned a different number of raw outputs than symbols")
 
     data: dict[str, pd.Series | pd.DataFrame] = {}
     returned_kwargs: dict[str, dict[str, Any]] = {}
-    fetch_kwargs = {symbol: dict(provider_kwargs) for symbol in config.symbols}
+    fetch_kwargs = {symbol: dict(provider_kwargs) for symbol in config.tickers}
     tz_localize = config.tz_localize
     tz_convert = config.tz_convert
     from_data_wrapper_kwargs = dict(wrapper_kwargs)
@@ -172,7 +172,7 @@ def _native_from_remote_raw_outputs(
     common_freq = None
     intraday = _is_intraday_timeframe(config.timeframe)
 
-    for symbol, output in zip(config.symbols, raw_outputs, strict=True):
+    for symbol, output in zip(config.tickers, raw_outputs, strict=True):
         if output is None:
             continue
         raw_data, raw_returned_kwargs = _remote_raw_data_and_metadata(output)

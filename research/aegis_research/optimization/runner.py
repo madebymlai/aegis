@@ -76,6 +76,7 @@ def execute_optimization(
     ranking: RankingConfig,
     metric_registry: FrozenMetricRegistry,
     split_result: RunSplitsResult,
+    fees_by_symbol: pd.Series | None = None,
 ) -> OptimizationResult:
     _validate_source_param_names(source.params)
     if ranking.metric not in metric_registry:
@@ -118,6 +119,7 @@ def execute_optimization(
         store=store,
         invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,
+        fees_by_symbol=fees_by_symbol,
     )
 
     # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.

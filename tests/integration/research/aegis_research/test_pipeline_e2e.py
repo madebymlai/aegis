@@ -11,7 +11,10 @@ from research.aegis_research import cli
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 
 COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components"
-_SYMBOLS = ["SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU"]
+_SYMBOLS = [
+    {"ticker": ticker, "ccy": "EUR"}
+    for ticker in ("SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU")
+]
 
 
 def test_pipeline_produces_valid_optimization_artifact_with_intree_components(

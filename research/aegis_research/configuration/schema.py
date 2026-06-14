@@ -102,12 +102,27 @@ ArrayToken = Annotated[str, AfterValidator(_validate_array_token)]
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class SymbolSpec:
+    """One universe member: its ticker and the currency it quotes in.
+
+    Currency is instrument identity, declared inline beside the ticker (never
+    sniffed from a data provider). ``ccy`` is the literal quote token, including
+    minor units such as ``GBp`` (pence); the converter owns the minor-unit math.
+    """
+
+    ticker: str
+    ccy: str
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DataConfig:
     source: str = "synthetic"
     # No schema default — required. Keyword-only so a required field can sit among
     # defaulted ones — every construction site splats **raw anyway.
     arrays: Annotated[list[ArrayToken], Field(min_length=1)] = field(kw_only=True)
-    symbols: list[str] = field(default_factory=lambda: ["SYN"])
+    symbols: list[SymbolSpec] = field(
+        default_factory=lambda: [SymbolSpec(ticker="SYN", ccy="EUR")]
+    )
     start: str | None = None
     end: str | None = None
     timeframe: str = "1D"
@@ -128,6 +143,16 @@ class DataConfig:
     @property
     def effective_arrays(self) -> tuple[str, ...]:
         return expand_data_arrays(self.arrays)
+
+    @property
+    def tickers(self) -> list[str]:
+        """The universe tickers, in declared order."""
+        return [spec.ticker for spec in self.symbols]
+
+    @property
+    def currency_by_symbol(self) -> dict[str, str]:
+        """Map ticker -> declared quote currency."""
+        return {spec.ticker: spec.ccy for spec in self.symbols}
 
     @model_validator(mode="after")
     def _validate_conditional_requireds(self) -> DataConfig:
@@ -228,6 +253,13 @@ class PortfolioConfig:
     init_cash: PositiveCash = 10_000.0
     fees: NonNegativeRate = 0.001
     slippage: NonNegativeRate = 0.0005
+    # The book's accounting currency. Prices are converted to it upstream in the
+    # data layer; a non-base leg additionally pays ``fx_conversion_cost`` per trade.
+    base_currency: str = "EUR"
+    # Per-conversion FX cost charged on every trade of a non-base-currency leg
+    # (the EUR->ccy buy and the ccy->EUR sell). Default 0 = off, so a single-currency
+    # book is unaffected.
+    fx_conversion_cost: NonNegativeRate = 0.0
     net_cap: NonNegativeRate = 1.0
     # Short financing carry: flat annual rates. Effective net carry = borrow - rebate,
     # charged only on short legs (see ADR-0008). The non-zero borrow default means carry

@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "ccb887e4c31cf918e11776447c0a4acec23052ec1e3ec511bedfc3718ce44e25",
+      "hash": "0d2c6bac4e7d3b3e5c23627167463c8010f8894c2fbdc7d9a8f6fad0a3b6ac9b",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 48953,
+      "size": 49292,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -57,16 +57,46 @@
       "source": "synthetic",
       "start": null,
       "symbols": [
-        "SPY",
-        "IWM",
-        "EEM",
-        "TLT",
-        "GLD",
-        "DBC",
-        "VNQ",
-        "UUP",
-        "XLE",
-        "XLU"
+        {
+          "ccy": "EUR",
+          "ticker": "SPY"
+        },
+        {
+          "ccy": "EUR",
+          "ticker": "IWM"
+        },
+        {
+          "ccy": "EUR",
+          "ticker": "EEM"
+        },
+        {
+          "ccy": "EUR",
+          "ticker": "TLT"
+        },
+        {
+          "ccy": "EUR",
+          "ticker": "GLD"
+        },
+        {
+          "ccy": "EUR",
+          "ticker": "DBC"
+        },
+        {
+          "ccy": "EUR",
+          "ticker": "VNQ"
+        },
+        {
+          "ccy": "EUR",
+          "ticker": "UUP"
+        },
+        {
+          "ccy": "EUR",
+          "ticker": "XLE"
+        },
+        {
+          "ccy": "EUR",
+          "ticker": "XLU"
+        }
       ],
       "timeframe": "1D",
       "tz_convert": null,
@@ -115,8 +145,10 @@
     },
     "output_dir": "runs",
     "portfolio": {
+      "base_currency": "EUR",
       "direction": "longonly",
       "fees": 0.0005,
+      "fx_conversion_cost": 0.0,
       "gross_cap": 1.0,
       "init_cash": 10000.0,
       "net_cap": 1.0,
@@ -145,11 +177,11 @@
   "evidence": {
     "component_registry_fingerprint": "1ed363838a71dec50a06186661e806d6f462d76f06040b5476c8e913c26d6084",
     "config": {
-      "authored_config_hash": "0fe5a40cec07b70e0b470d787e4ce8838a4d2461aa2e5274bf48cbfe0363682c",
+      "authored_config_hash": "250d536a9a59ddc36b23eb02a999ff1ed6f216b2bf043915d075fe56771a2a67",
       "raw_config_identity": {
-        "hash": "947a3dda8b3c83f7ab267475716cfb463a6618583a6252272539150f1f28f5fa"
+        "hash": "ca98d40f141ec6be9dd9abca45323747fac8d936a9d508068e682ec0a9e3e1bd"
       },
-      "resolved_config_hash": "790f6a3e70b3d55d547b0cc0d25dce84e87903f80d6b03f9c9e32cca74e670b0",
+      "resolved_config_hash": "deeadf4084cfda21783d26ec1cd48537bebc428b41371c9568386e1473047613",
       "schema_version": 8,
       "selection": {
         "config_path": "<masked>",
@@ -182,7 +214,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_0180a43319818556010d780a643f3163",
+          "candidate_key": "cand_da39e4d17020699df0ec271ec5f0f3fe",
           "held_out_metrics": {
             "0": {
               "max_dd": 19.259731031899552,
@@ -219,8 +251,10 @@
           },
           "identity": {
             "allocation_policy": {
+              "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
+              "fx_conversion_cost": 0.0,
               "gross_cap": 1.0,
               "init_cash": 10000.0,
               "net_cap": 1.0,
@@ -435,7 +469,7 @@
           }
         },
         {
-          "candidate_key": "cand_5f6ca0cffb6a5cc717ebb17b1f7cae4b",
+          "candidate_key": "cand_9c42db32f24f519a10746b35d4a8e958",
           "held_out_metrics": {
             "0": {
               "max_dd": 18.118116158313768,
@@ -472,8 +506,10 @@
           },
           "identity": {
             "allocation_policy": {
+              "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
+              "fx_conversion_cost": 0.0,
               "gross_cap": 1.0,
               "init_cash": 10000.0,
               "net_cap": 1.0,
@@ -688,7 +724,7 @@
           }
         },
         {
-          "candidate_key": "cand_c2f04e50c7da384ff0d1ce56dbb0582d",
+          "candidate_key": "cand_d8b807f3d48b105f091deed8ee3d83e8",
           "held_out_metrics": {
             "0": {
               "max_dd": 27.841344065208496,
@@ -725,8 +761,10 @@
           },
           "identity": {
             "allocation_policy": {
+              "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
+              "fx_conversion_cost": 0.0,
               "gross_cap": 1.0,
               "init_cash": 10000.0,
               "net_cap": 1.0,

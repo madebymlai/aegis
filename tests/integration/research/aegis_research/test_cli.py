@@ -222,7 +222,7 @@ def test_run_rejects_removed_labeler_without_train_guidance(
                 "name": "bad_run",
                 "data": {
                     "source": "synthetic",
-                    "symbols": ["SYN"],
+                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
                     "rows": 120,
                     "arrays": ["OHLCV"],
                 },
@@ -252,7 +252,7 @@ def _signed_book_run_config(direction: str) -> dict[str, object]:
         "output_dir": "runs",
         "data": {
             "source": "synthetic",
-            "symbols": ["SYN"],
+            "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
             "rows": 120,
             "arrays": ["OHLCV"],
         },
@@ -367,7 +367,7 @@ def test_run_rejects_stale_train_shaped_config_before_run_directory(
                 "output_dir": "runs",
                 "data": {
                     "source": "synthetic",
-                    "symbols": ["SYN"],
+                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
                     "rows": 120,
                     "arrays": ["OHLCV"],
                 },
@@ -625,7 +625,7 @@ def test_show_config_schema_embedded_example_validates(
         "name": "example.run",
         "data": {
             "source": "synthetic",
-            "symbols": ["A", "B", "C"],
+            "symbols": [{"ticker": "A", "ccy": "EUR"}, {"ticker": "B", "ccy": "EUR"}, {"ticker": "C", "ccy": "EUR"}],
             "rows": 250,
             "arrays": ["OHLCV"],
         },
@@ -687,7 +687,7 @@ def test_show_config_schema_coherence_optimization_required(
     raw_no_optimization = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "test",
-        "data": {"source": "synthetic", "symbols": ["A"], "rows": 100, "arrays": ["OHLCV"]},
+        "data": {"source": "synthetic", "symbols": [{"ticker": "A", "ccy": "EUR"}], "rows": 100, "arrays": ["OHLCV"]},
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
@@ -1130,7 +1130,7 @@ def test_authoring_story_round_trip(
         "name": "authoring.story",
         "data": {
             "source": "synthetic",
-            "symbols": ["A", "B", "C"],
+            "symbols": [{"ticker": "A", "ccy": "EUR"}, {"ticker": "B", "ccy": "EUR"}, {"ticker": "C", "ccy": "EUR"}],
             "rows": 250,
             "arrays": ["OHLCV"],
         },

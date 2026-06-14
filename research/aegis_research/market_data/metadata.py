@@ -64,7 +64,7 @@ def describe(
         schema_version="market_data.v3",
         request=RequestFacet(
             source=config.source,
-            requested_symbols=list(config.symbols),
+            requested_symbols=list(config.tickers),
             timeframe=config.timeframe,
             authored_arrays=to_builtin(config.arrays),
             effective_arrays=list(config.effective_arrays),

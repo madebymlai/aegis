@@ -395,7 +395,7 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
                 "output_dir": "runs",
                 "data": {
                     "source": "synthetic",
-                    "symbols": ["SYN"],
+                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
                     "rows": 120,
                     "arrays": ["OHLCV"],
                 },
@@ -482,7 +482,7 @@ def _write_run_config(
                 "output_dir": "runs",
                 "data": {
                     "source": "synthetic",
-                    "symbols": ["SYN", "SYN2"],
+                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}, {"ticker": "SYN2", "ccy": "EUR"}],
                     "rows": 80,
                     "arrays": arrays or ["OHLCV"],
                 }

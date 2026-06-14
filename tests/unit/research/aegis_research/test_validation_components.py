@@ -66,7 +66,7 @@ def _resolve(
     raw: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "comp-val-test",
-        "data": {"source": "synthetic", "symbols": ["SYN"], "rows": 120, "arrays": ["OHLCV"]},
+        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120, "arrays": ["OHLCV"]},
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": strategy if strategy is not None else {"id": "demo.strategy"},
         "indicators": indicators if indicators is not None else [{"id": "demo.returns"}],

@@ -60,6 +60,9 @@ class WindowEvaluator:
     store: IndicatorPrecompute
     invalid_candidate_keys: set[CandidateKey]
     extractors: Mapping[str, ExtractorSpec]
+    # Per-symbol trade fees (FX-conversion surcharge on non-base legs); None keeps
+    # the scalar-fee path, byte-identical to a single-currency book.
+    fees_by_symbol: pd.Series | None = None
 
     def evaluate(self, range_: slice, **params: Any) -> Any:
         """Metric frame for the Candidate chunk ``params`` over the window ``range_``."""
@@ -103,6 +106,7 @@ class WindowEvaluator:
             open_=open_window,
             market_index=self.close.index,
             periods_per_year=self.report.periods_per_year,
+            fees_by_symbol=self.fees_by_symbol,
         )
         return central_metrics_from_grouped_accessors(
             pf, self.report, metric_keys, param_names, self.extractors

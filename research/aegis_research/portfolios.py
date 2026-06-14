@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -12,6 +13,7 @@ from research.aegis_research.allocation_policy import (
 )
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
+from research.aegis_research.market_data.currency import requires_conversion
 
 _SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
@@ -57,6 +59,29 @@ def _execution_settings(open_: pd.DataFrame | None) -> dict[str, Any]:
     return {"price": VBT_NEXT_OPEN_PRICE, "open": open_}
 
 
+def _resolve_fees(
+    price_frame: pd.DataFrame,
+    config: PortfolioConfig,
+    fees_by_symbol: pd.Series | None,
+) -> Any:
+    """The per-column ``fees`` array for the engine - one path.
+
+    Every leg pays ``config.fees`` unless a per-symbol override is supplied (the
+    FX-conversion surcharge on non-base legs), in which case that replaces it.
+    A book with no surcharge simply gets a uniform array - a no-op, not a second
+    code path. The result is a ROW vector ``(1, n_cols)`` so the engine broadcasts
+    one fee down each column's rows (a bare 1d array reads as a ``(n_cols, 1)``
+    column instead).
+    """
+    symbols = price_frame.columns.get_level_values(SYMBOL_LEVEL)
+    fees = (
+        pd.Series(config.fees, index=symbols.unique())
+        if fees_by_symbol is None
+        else fees_by_symbol
+    )
+    return fees.reindex(symbols).to_numpy().reshape(1, -1)
+
+
 def _build_portfolio(
     price_frame: pd.DataFrame,
     allocations: pd.DataFrame,
@@ -66,6 +91,7 @@ def _build_portfolio(
     market_index: pd.Index | None,
     group_by: Any,
     periods_per_year: int,
+    fees_by_symbol: pd.Series | None = None,
 ) -> vbt.Portfolio:
     """Build a simulated portfolio from allocations.
 
@@ -93,7 +119,7 @@ def _build_portfolio(
         cash_sharing=True,
         call_seq="auto",
         group_by=group_by,
-        fees=config.fees,
+        fees=_resolve_fees(price_frame, config, fees_by_symbol),
         slippage=config.slippage,
         init_cash=config.init_cash,
         leverage=config.gross_cap * _GROSS_CAP_LEVERAGE_MULTIPLIER,
@@ -152,6 +178,31 @@ def short_masked_cash_dividends(
     return cash_dividends
 
 
+def fx_adjusted_fees(
+    symbols: Sequence[str],
+    currency_by_symbol: Mapping[str, str],
+    base_currency: str,
+    base_fee: float,
+    fx_conversion_cost: float,
+) -> pd.Series:
+    """Per-symbol trade fee, adding the FX conversion cost to foreign legs.
+
+    A foreign leg (one whose currency is not the book's base) crosses an FX
+    spread on every trade - the EUR->ccy buy and the ccy->EUR sell - so it pays
+    ``base_fee + fx_conversion_cost``; a base-currency leg pays ``base_fee``.
+    """
+    fees = {
+        symbol: base_fee
+        + (
+            fx_conversion_cost
+            if requires_conversion(currency_by_symbol[symbol], base_currency)
+            else 0.0
+        )
+        for symbol in symbols
+    }
+    return pd.Series(fees)
+
+
 def simulate_single_book(
     close: pd.DataFrame,
     allocations: pd.DataFrame,
@@ -160,6 +211,7 @@ def simulate_single_book(
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     periods_per_year: int = 252,
+    fees_by_symbol: pd.Series | None = None,
 ) -> vbt.Portfolio:
     """Test-support wrapper: simulate one book through the batched path.
 
@@ -181,6 +233,7 @@ def simulate_single_book(
         open_=open_,
         market_index=market_index,
         periods_per_year=periods_per_year,
+        fees_by_symbol=fees_by_symbol,
     )
 
 
@@ -192,6 +245,7 @@ def simulate_portfolio_batch(
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     periods_per_year: int,
+    fees_by_symbol: pd.Series | None = None,
 ) -> vbt.Portfolio:
     """Simulate a batch of candidate portfolios."""
     _validate_candidate_columns(allocations.columns, field_name="allocations")
@@ -222,6 +276,7 @@ def simulate_portfolio_batch(
         market_index=market_index,
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
         periods_per_year=periods_per_year,
+        fees_by_symbol=fees_by_symbol,
     )
 
 

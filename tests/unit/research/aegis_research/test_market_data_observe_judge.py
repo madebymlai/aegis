@@ -13,7 +13,7 @@ from tests.support.research.aegis_research.factories import make_data_config
 
 def test_judge_is_a_pure_verdict_over_typed_diagnostics() -> None:
     verdict = judge.evaluate(
-        make_data_config(source="diagnostic", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="diagnostic", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
         (
             DataDiagnostics(
                 symbol="SYN",
@@ -51,7 +51,7 @@ def test_observe_reports_per_symbol_array_diagnostics() -> None:
         index=index,
     )
     frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["symbol", "feature"])
-    config = make_data_config(source="frame", symbols=["SYN"], arrays=["Close"])
+    config = make_data_config(source="frame", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
 
     observation = observe.observe(
         config,

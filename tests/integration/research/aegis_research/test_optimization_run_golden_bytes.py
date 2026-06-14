@@ -34,7 +34,10 @@ _RUN_ID = "golden-bytes-oracle"
 # The rotator hardcodes its canary/offensive/defensive sleeves to these names;
 # the synthetic source generates deterministic OHLCV for whatever symbols the
 # config lists, so the names just have to match the sleeves.
-_SYMBOLS = ["SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU"]
+_SYMBOLS = [
+    {"ticker": ticker, "ccy": "EUR"}
+    for ticker in ("SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU")
+]
 
 
 def test_optimization_run_manifest_matches_golden_bytes(tmp_path, monkeypatch) -> None:

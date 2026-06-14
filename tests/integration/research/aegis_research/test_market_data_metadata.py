@@ -47,7 +47,7 @@ class _FrozenData:
 
 
 def test_describe_builds_the_market_data_v3_facet_model() -> None:
-    config = make_data_config(source="frozen", symbols=["SYN"], arrays=["Close"])
+    config = make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
     observation = _frozen_observation()
     diagnostics = (
         DataDiagnostics(
@@ -149,7 +149,7 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
 
 
 def test_provider_failure_routes_through_the_same_describe_builder() -> None:
-    config = make_data_config(source="future", symbols=["SYN"], arrays=["Close"])
+    config = make_data_config(source="future", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
     quality = MarketDataQuality(
         state="provider_failed",
         reasons=("future provider failed before usable native data was available",),
@@ -195,7 +195,7 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
 
 def test_failed_shape_equals_success_shape_minus_data() -> None:
     success = load_market_data_result(
-        make_data_config(source="frozen", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
         adapters={
             "frozen": lambda _config: MarketDataAdapterResult(
                 native_data=_FrozenData(),
@@ -209,7 +209,7 @@ def test_failed_shape_equals_success_shape_minus_data() -> None:
         raise RemoteDataPullError("frozen", "network unavailable")
 
     failure = load_market_data_result(
-        make_data_config(source="frozen", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
         adapters={"frozen": fail},
     )
 
@@ -226,7 +226,7 @@ def test_failed_shape_equals_success_shape_minus_data() -> None:
 
 
 def test_describe_tolerates_empty_provider_internals() -> None:
-    config = make_data_config(source="future", symbols=["SYN"], arrays=["Close"])
+    config = make_data_config(source="future", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
 
     metadata = data_metadata.describe(
         config,
@@ -265,7 +265,7 @@ def test_loaded_metadata_round_trips_through_the_public_loader() -> None:
     native_data = _FrozenData()
 
     result = load_market_data_result(
-        make_data_config(source="frozen", symbols=["SYN"], arrays=["Close"]),
+        make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
         adapters={
             "frozen": lambda _config: MarketDataAdapterResult(
                 native_data=native_data,

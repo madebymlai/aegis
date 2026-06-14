@@ -31,7 +31,7 @@ def build_resolved_run_config(
         "output_dir": output_dir or "runs",
         "data": {
             "source": "synthetic",
-            "symbols": ["SYN"],
+            "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
             "rows": 120,
             "arrays": ["OHLCV"],
         },

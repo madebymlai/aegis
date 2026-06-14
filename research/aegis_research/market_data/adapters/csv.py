@@ -52,7 +52,7 @@ def _csv_looks_multiindex(path: Path, config: DataConfig) -> bool:
         return False
     second_header = rows[1][1:]
     second_values = set(map(str, second_header))
-    multiindex_markers = set(config.symbols) | set(config.effective_arrays)
+    multiindex_markers = set(config.tickers) | set(config.effective_arrays)
     return (
         bool(second_header)
         and bool((first_header | second_values) & multiindex_markers)
@@ -84,9 +84,9 @@ def _csv_array_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.Dat
 
 
 def _flat_csv_array_data(frame: pd.DataFrame, config: DataConfig) -> dict[str, pd.DataFrame]:
-    if len(config.symbols) != 1:
+    if len(config.tickers) != 1:
         raise ValueError("flat CSV input requires exactly one configured symbol")
-    symbol = config.symbols[0]
+    symbol = config.tickers[0]
     array_data: dict[str, pd.DataFrame] = {}
     for name in _csv_array_candidates(map(str, frame.columns), config):
         if name in frame.columns:
@@ -110,7 +110,7 @@ def _multiindex_csv_array_data(
         panel = frame.xs(name, axis=1, level=feature_level)
         if isinstance(panel.columns, pd.MultiIndex):
             panel.columns = panel.columns.get_level_values(symbol_level)
-        panel = panel.loc[:, [symbol for symbol in config.symbols if symbol in panel.columns]]
+        panel = panel.loc[:, [symbol for symbol in config.tickers if symbol in panel.columns]]
         if not panel.empty:
             array_data[name] = panel
     if not array_data:
@@ -123,7 +123,7 @@ def _csv_multiindex_levels(frame: pd.DataFrame, config: DataConfig) -> tuple[int
         set(map(str, frame.columns.get_level_values(index)))
         for index in range(frame.columns.nlevels)
     ]
-    configured_symbols = set(config.symbols)
+    configured_symbols = set(config.tickers)
     symbol_levels = [
         index for index, values in enumerate(level_values) if configured_symbols & values
     ]
@@ -152,7 +152,7 @@ def _csv_array_candidates(values: Any, config: DataConfig) -> tuple[str, ...]:
     candidates = tuple(
         value
         for value in dict.fromkeys(map(str, values))
-        if value not in config.symbols and _looks_like_vbt_feature_name(value)
+        if value not in config.tickers and _looks_like_vbt_feature_name(value)
     )
     return merge_data_arrays(config.effective_arrays, candidates)
 

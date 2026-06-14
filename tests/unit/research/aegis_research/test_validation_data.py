@@ -111,7 +111,7 @@ def test_data_construction_accepts_any_string_source() -> None:
 
 def test_resolve_accepts_minimal_data(tmp_path: Path) -> None:
     resolved = _resolve(
-        {"source": "synthetic", "arrays": ["OHLCV"], "symbols": ["SYN"], "rows": 120},
+        {"source": "synthetic", "arrays": ["OHLCV"], "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120},
         tmp_path=tmp_path,
     )
     assert resolved.config.data.source == "synthetic"
@@ -121,7 +121,7 @@ def test_resolve_accepts_minimal_data(tmp_path: Path) -> None:
 def test_resolve_rejects_missing_arrays(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(
-            {"source": "synthetic", "symbols": ["SYN"], "rows": 120},
+            {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120},
             tmp_path=tmp_path,
         )
     issues = [(i.path, i.message) for i in e.value.issues]
@@ -170,7 +170,7 @@ def test_resolve_rejects_invalid_arrays_values(
             {
                 "source": "synthetic",
                 "arrays": arrays,
-                "symbols": ["SYN"],
+                "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
                 "rows": 120,
             },
             tmp_path=tmp_path,
@@ -187,7 +187,7 @@ def test_resolve_rejects_csv_without_path(tmp_path: Path) -> None:
             {
                 "source": "csv",
                 "arrays": ["OHLCV"],
-                "symbols": ["BTC-USD"],
+                "symbols": [{"ticker": "BTC-USD", "ccy": "EUR"}],
             },
             tmp_path=tmp_path,
         )

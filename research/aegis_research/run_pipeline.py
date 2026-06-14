@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
+
+import pandas as pd
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
@@ -10,14 +13,21 @@ from research.aegis_research.configuration import (
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     ConfigValidationError,
     ConfigValidationIssue,
+    DataConfig,
     ResolvedRunConfig,
     RunConfig,
+    SymbolSpec,
 )
 from research.aegis_research.data import (
     MarketDataBundle,
     MarketDataResult,
     load_market_data_result,
     market_data_bundle,
+)
+from research.aegis_research.market_data.currency import (
+    assemble_fx_rates,
+    convert_bundle_to_base,
+    required_fx_currencies,
 )
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.evidence_ledger import (
@@ -105,7 +115,7 @@ def run_strategy_sweep(
         )
         write_data_metadata_artifact(recorder, data_result, array_contract)
         data_result.assert_usable()
-        data_bundle = market_data_bundle(data_result)
+        data_bundle = _to_base_currency(config, data_bundle=market_data_bundle(data_result))
         metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
             config,
@@ -130,6 +140,58 @@ def run_strategy_sweep(
         if on_run_refs is not None:
             on_run_refs(recorder.run_refs())
         raise
+
+
+def _to_base_currency(
+    config: RunConfig, *, data_bundle: MarketDataBundle
+) -> MarketDataBundle:
+    """Re-express the loaded bundle in the portfolio's base currency.
+
+    One path: the price panels always flow through the converter. A book whose
+    legs already quote in the base needs no FX series, and the conversion is then
+    an identity - a no-op, not a separate branch.
+    """
+    base_currency = config.portfolio.base_currency
+    currency_by_symbol = config.data.currency_by_symbol
+    fx_rates = _load_fx_rates(
+        config.data,
+        base_currency=base_currency,
+        currencies=required_fx_currencies(currency_by_symbol, base_currency),
+        index=data_bundle.array("Close").index,
+    )
+    return convert_bundle_to_base(
+        data_bundle, currency_by_symbol, base_currency, fx_rates
+    )
+
+
+def _load_fx_rates(
+    data_config: DataConfig,
+    *,
+    base_currency: str,
+    currencies: set[str],
+    index: pd.Index,
+) -> pd.DataFrame:
+    """Fetch the ``base->ccy`` FX series (the native ``EUR<ccy>=X`` quotes) and
+    align them to the price ``index``."""
+    pair_by_currency = {ccy: f"{base_currency}{ccy}=X" for ccy in currencies}
+    if not pair_by_currency:
+        # No foreign legs: there is nothing to fetch (an empty symbol set cannot
+        # be pulled), and the empty rates frame makes the conversion an identity.
+        return pd.DataFrame(index=index)
+    fx_config = replace(
+        data_config,
+        symbols=[
+            SymbolSpec(ticker=pair, ccy=base_currency)
+            for pair in pair_by_currency.values()
+        ],
+    )
+    fx_result = load_market_data_result(fx_config, required_arrays=("Close",))
+    fx_result.assert_usable()
+    fx_close = market_data_bundle(fx_result).array("Close")
+    return assemble_fx_rates(
+        {ccy: fx_close[pair] for ccy, pair in pair_by_currency.items()},
+        index=index,
+    )
 
 
 def _failure_diagnostic(error: Exception) -> dict[str, str]:

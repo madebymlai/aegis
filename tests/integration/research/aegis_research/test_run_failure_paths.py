@@ -149,9 +149,11 @@ def test_component_optimization_artifact_write_failure_leaves_candidates_pending
 
     assert payload["error"]["category"] == "execution_failure"
     assert manifest["run"]["status"] == RunStatus.FAILED
-    with CandidateStore(store_path) as store:
-        with pytest.raises(CandidateStoreError, match="unknown role"):
-            store.candidate_key_for_role("artifact-failure", "best")
+    with (
+        CandidateStore(store_path) as store,
+        pytest.raises(CandidateStoreError, match="unknown role"),
+    ):
+        store.candidate_key_for_role("artifact-failure", "best")
 
 
 def test_component_optimization_completion_failure_leaves_candidates_pending(
@@ -178,9 +180,11 @@ def test_component_optimization_completion_failure_leaves_candidates_pending(
 
     # The run never activated, so its candidates stay pending and unqueryable.
     assert manifest["run"]["status"] == RunStatus.FAILED
-    with CandidateStore(store_path) as store:
-        with pytest.raises(CandidateStoreError, match="unknown role"):
-            store.candidate_key_for_role("completion-failure", "best")
+    with (
+        CandidateStore(store_path) as store,
+        pytest.raises(CandidateStoreError, match="unknown role"),
+    ):
+        store.candidate_key_for_role("completion-failure", "best")
 
 
 def test_component_optimization_activation_failure_fails_closed(
@@ -210,9 +214,11 @@ def test_component_optimization_activation_failure_fails_closed(
     assert manifest["run"]["status"] == RunStatus.FAILED
     # Activation failed closed: the run's candidates remain pending and unqueryable.
     assert "locks" not in artifact
-    with CandidateStore(store_path) as store:
-        with pytest.raises(CandidateStoreError, match="unknown role"):
-            store.candidate_key_for_role("activation-failure", "best")
+    with (
+        CandidateStore(store_path) as store,
+        pytest.raises(CandidateStoreError, match="unknown role"),
+    ):
+        store.candidate_key_for_role("activation-failure", "best")
 
 
 def test_component_optimization_runtime_error_records_failure_diagnostics(
@@ -311,7 +317,7 @@ def _run_config_payload(
         "output_dir": "runs",
         "data": {
             "source": "synthetic",
-            "symbols": ["SYN", "SYN2"],
+            "symbols": [{"ticker": "SYN", "ccy": "EUR"}, {"ticker": "SYN2", "ccy": "EUR"}],
             "rows": 80,
             "arrays": ["OHLCV"],
         },
