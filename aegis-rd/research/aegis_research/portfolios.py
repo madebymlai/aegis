@@ -41,34 +41,38 @@ VBT_LEVERAGE_MODE = "eager"
 # unmodeled, ADR-0008). If the tripwire ever fires on a legitimate Run, raise k — never
 # reintroduce a tolerance (ADR-0011 amendment).
 _GROSS_CAP_LEVERAGE_MULTIPLIER = 5
-# Next-close execution: a target decided from bar t's close fills at bar t+1's close.
-# VBT's ``price="nextclose"`` sets ``from_ago=1`` (shift one bar) and fills at the close,
-# which avoids same-bar look-ahead without manual shifting (same from_ago=1 guard as
-# nextopen — only the fill price within bar t+1 differs).
-# WARNING: this DIVERGES from ADR-0001, which specifies next-open execution byte-aligned
-# with Aegis Trader. Research now validates candidates on next-close fills; until the
-# trader is moved to next-close too (and ADR-0001 amended), promoted candidates will NOT
-# match live execution. A/B evidence: next-open vs next-close is a wash on the live
-# trend/carry/tail books (~0.01 Sharpe), so this trades a parity invariant for no P&L gain.
+# VBT ``price`` strings: both ``nextopen``/``nextclose`` set ``from_ago=1`` (shift one
+# bar -> no same-bar look-ahead); they differ only in which price of bar t+1 they fill at.
+VBT_NEXT_OPEN_PRICE = "nextopen"
 VBT_NEXT_CLOSE_PRICE = "nextclose"
+# Fill-timing -> VBT ``price``. ``same_close`` maps to None: no ``price`` override, so the
+# engine fills at the current bar's close (from_ago=0, look-ahead — mechanics tests only).
+_VBT_PRICE_BY_FILL_TIMING: dict[str, str | None] = {
+    "next_open": VBT_NEXT_OPEN_PRICE,
+    "next_close": VBT_NEXT_CLOSE_PRICE,
+    "same_close": None,
+}
 
 
-def _execution_settings(open_: pd.DataFrame | None) -> dict[str, Any]:
-    """Resolve VBT fill-timing kwargs.
+def _execution_settings(
+    fill_timing: str, open_: pd.DataFrame | None
+) -> dict[str, Any]:
+    """Resolve VBT fill-timing kwargs from the explicit ``fill_timing`` decision.
 
-    With ``open_`` provided, fill at the next bar's close (``price="nextclose"`` ->
-    ``from_ago=1``) so a target decided from bar t's close cannot fill on bar t —
-    eliminating same-bar look-ahead. Without it, fall back to same-bar close fills.
-
-    ``open_`` is still threaded through (and gates next-bar vs same-bar execution) even
-    though ``nextclose`` does not read the open price, to keep the call sites unchanged.
+    ``next_close`` fills at bar t+1's close, ``next_open`` at bar t+1's open (the only
+    mode that reads ``open_``), ``same_close`` at bar t's own close. The open array is
+    supplied only when the timing actually needs it.
     """
-    if open_ is None:
+    price = _VBT_PRICE_BY_FILL_TIMING[fill_timing]
+    if price is None:
         return {}
-    # nextclose fills against the close (already the engine's base series), so the open
-    # array is redundant — commented out, kept for provenance of the prior nextopen path.
-    # return {"price": VBT_NEXT_CLOSE_PRICE, "open": open_}
-    return {"price": VBT_NEXT_CLOSE_PRICE}
+    if price == VBT_NEXT_OPEN_PRICE:
+        if open_ is None:
+            raise ValueError(
+                "next_open fill_timing requires Open prices, but none were provided"
+            )
+        return {"price": price, "open": open_}
+    return {"price": price}
 
 
 def _resolve_fees(
@@ -121,7 +125,7 @@ def _build_portfolio(
         nonzero_only=False,
         unique_only=False,
     )
-    exec_kwargs = _execution_settings(open_frame)
+    exec_kwargs = _execution_settings(config.fill_timing, open_frame)
     pf = vbt.Portfolio.from_optimizer(
         price_frame,
         pfo,

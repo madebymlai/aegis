@@ -153,6 +153,12 @@ def test_same_close_signal_timing_does_not_require_open_feature() -> None:
     ) == ("Close",)
 
 
+def test_next_close_signal_timing_does_not_require_open_feature() -> None:
+    assert required_experiment_ohlcv_arrays(
+        signal_config=make_signal_config(execution_timing="next_close")
+    ) == ("Close",)
+
+
 def test_next_open_feature_requirement_rejects_close_only_data(tmp_path: Path) -> None:
     path = tmp_path / "close_only.csv"
     frame = pd.DataFrame(

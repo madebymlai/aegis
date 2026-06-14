@@ -111,6 +111,10 @@ def make_portfolio_config(**overrides: Any) -> PortfolioConfig:
         "direction": "longonly",
         "short_borrow_rate": 0.005,
         "short_rebate_rate": 0.0,
+        # Mechanics tests assert exact same-bar order dates/prices; pin same_close so they
+        # stay shift-free. Production PortfolioConfig defaults to next_close; tests that
+        # exercise realistic fills set fill_timing explicitly.
+        "fill_timing": "same_close",
     }
     defaults.update(overrides)
     return PortfolioConfig(**defaults)

@@ -652,3 +652,75 @@ def _two_symbol_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
         index=index,
     )
     return close, allocations
+
+
+def _distinct_open_close_entry_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """One symbol with open != close per bar, going 100% long at bar 0's close.
+
+    Distinct open/close prices let the first order's fill price reveal which bar and
+    which price the fill-timing resolved to: bar 0 close = 10.0, bar 1 open = 11.5,
+    bar 1 close = 11.0.
+    """
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({"A": [10.0, 11.0, 12.0, 13.0]}, index=index)
+    open_ = pd.DataFrame({"A": [10.5, 11.5, 12.5, 13.5]}, index=index)
+    allocations = pd.DataFrame({"A": [1.0, np.nan, np.nan, np.nan]}, index=index)
+    return close, open_, allocations
+
+
+def test_next_close_fill_timing_fills_at_next_bar_close() -> None:
+    close, open_, allocations = _distinct_open_close_entry_inputs()
+
+    pf = simulate_single_book(
+        close,
+        allocations,
+        make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="next_close"),
+        open_=open_,
+    )
+
+    first_order = pf.orders.records_readable.sort_values("Index").iloc[0]
+    assert first_order["Price"] == pytest.approx(11.0)  # bar 1 close, not bar 0 close or bar 1 open
+
+
+def test_next_open_fill_timing_fills_at_next_bar_open() -> None:
+    close, open_, allocations = _distinct_open_close_entry_inputs()
+
+    pf = simulate_single_book(
+        close,
+        allocations,
+        make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="next_open"),
+        open_=open_,
+    )
+
+    first_order = pf.orders.records_readable.sort_values("Index").iloc[0]
+    assert first_order["Price"] == pytest.approx(11.5)  # bar 1 open, not bar 1 close
+
+
+def test_same_close_fill_timing_fills_at_current_bar_close() -> None:
+    close, _open, allocations = _distinct_open_close_entry_inputs()
+
+    pf = simulate_single_book(
+        close,
+        allocations,
+        make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="same_close"),
+    )
+
+    first_order = pf.orders.records_readable.sort_values("Index").iloc[0]
+    assert first_order["Index"] == pd.Timestamp("2024-01-01")  # bar 0, no shift
+    assert first_order["Price"] == pytest.approx(10.0)  # bar 0's own close
+
+
+def test_portfolio_config_fill_timing_defaults_to_next_close() -> None:
+    assert PortfolioConfig(gross_cap=1.0, direction="longonly").fill_timing == "next_close"
+
+
+def test_next_open_fill_timing_without_open_prices_raises() -> None:
+    close, _open, allocations = _distinct_open_close_entry_inputs()
+
+    with pytest.raises(ValueError, match="next_open.*[Oo]pen"):
+        simulate_single_book(
+            close,
+            allocations,
+            make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="next_open"),
+            # open_ omitted -> next_open cannot resolve a fill price
+        )
