@@ -5,6 +5,7 @@ from typing import Any, ClassVar
 
 import pandas as pd
 import pytest
+from vectorbtpro import vbt
 
 from research.aegis_research.data import load_market_data_result
 from research.aegis_research.market_data.adapters import csv as csv_adapter
@@ -192,6 +193,76 @@ def test_remote_adapter_realigns_cross_venue_intraday_onto_one_grid() -> None:
     assert captured["missing_index"] == "nan"
     assert realign_rules == [pd.Timedelta("1h")]
     assert isinstance(out, _Recorder)
+
+
+def _daily_venue_frame(tz: str, dates: list[str], base: float) -> pd.DataFrame:
+    """A daily OHLC-less close panel at LOCAL-exchange midnight in ``tz``."""
+    index = pd.DatetimeIndex([f"{d} 00:00:00" for d in dates]).tz_localize(tz)
+    return pd.DataFrame({"Close": [base + i for i in range(len(dates))]}, index=index)
+
+
+def _merge_daily_cross_venue(raw_outputs, tickers, *, missing_index: str) -> pd.DataFrame:
+    """Drive the real ``vbt.Data`` merge through the adapter and return the Close panel."""
+    config = make_data_config(
+        source="yf",
+        start="2024-01-01",
+        end="2024-02-01",
+        symbols=[{"ticker": t, "ccy": "USD"} for t in tickers],
+        arrays=["Close"],
+        timeframe="1D",
+        missing_index=missing_index,
+    )
+    merged = remote_adapter._native_from_remote_raw_outputs(
+        vbt.Data, config, raw_outputs, wrapper_kwargs={}, provider_kwargs={}
+    )
+    return merged.close
+
+
+def test_remote_adapter_daily_merge_keeps_local_date_for_far_from_utc_venue() -> None:
+    """A daily bar denotes the venue's local calendar date, whatever its UTC offset.
+
+    Tokyo's local midnight is the prior day in UTC, so aligning by instant would shift a
+    ``.T`` bar back a day and de-align it from a ``.L`` bar on the same trade date. The
+    date collapse must keep each venue on its own local date so they merge 1:1. Exercises
+    the real ``vbt.Data`` merge (not a fake) across a 9-hour offset.
+    """
+    close = _merge_daily_cross_venue(
+        [
+            (_daily_venue_frame("Asia/Tokyo", ["2024-01-04", "2024-01-05"], 1.0), {"freq": "1D"}),
+            (_daily_venue_frame("Europe/London", ["2024-01-04", "2024-01-05"], 3.0), {"freq": "1D"}),
+        ],
+        ["7203.T", "VOD.L"],
+        missing_index="drop",
+    )
+
+    assert list(close.index.strftime("%Y-%m-%d")) == ["2024-01-04", "2024-01-05"]
+    assert int(close.isna().sum().sum()) == 0
+
+
+def test_remote_adapter_daily_merge_handles_divergent_trading_calendars() -> None:
+    """Venues with different holidays merge on shared dates; the policy decides the rest.
+
+    London trades a day XETRA is closed. ``drop`` keeps the intersection (no NaN); ``nan``
+    keeps the union with the closed venue NaN on exactly the divergent day -- the genuine
+    calendar gap, not a timezone artifact.
+    """
+    raw = [
+        (_daily_venue_frame("Europe/London", ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"], 0.0), {"freq": "1D"}),
+        (_daily_venue_frame("Europe/Berlin", ["2024-01-02", "2024-01-03", "2024-01-05"], 100.0), {"freq": "1D"}),
+    ]
+    tickers = ["VOD.L", "SAP.DE"]
+
+    dropped = _merge_daily_cross_venue(
+        [(f.copy(), kw) for f, kw in raw], tickers, missing_index="drop"
+    )
+    assert "2024-01-04" not in dropped.index.strftime("%Y-%m-%d").tolist()
+    assert int(dropped.isna().sum().sum()) == 0
+
+    unioned = _merge_daily_cross_venue(
+        [(f.copy(), kw) for f, kw in raw], tickers, missing_index="nan"
+    )
+    nan_dates = unioned.index[unioned["SAP.DE"].isna()].strftime("%Y-%m-%d").tolist()
+    assert nan_dates == ["2024-01-04"]
 
 
 def test_remote_adapter_chains_original_pull_failure_cause(
