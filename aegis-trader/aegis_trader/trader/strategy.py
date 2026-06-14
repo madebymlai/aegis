@@ -8,13 +8,20 @@ across sleeves before submitting orders.
 
 NEXT-CLOSE execution (ADR-0001): the target decided at bar t's close is
 submitted on bar t+1 and fills at bar t+1's close — one-bar lag, no look-ahead.
+
+RiskEngine guards (Slice 8): the ``RiskGuard`` computes per-instrument
+max-notional caps from NAV; the strategy logs every ``OrderDenied`` event
+so operators can trace rejected orders.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
+from nautilus_trader.model.events import OrderDenied
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
@@ -24,6 +31,7 @@ from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.rebalancer import rebalance
+from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
 
 
@@ -32,6 +40,7 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
 
     book: BookConfig
     bundle_label: str = "synthetic"
+    risk_guard_config: RiskGuardConfig = RiskGuardConfig()
 
 
 class RebalanceStrategy(Strategy):
@@ -56,6 +65,7 @@ class RebalanceStrategy(Strategy):
         self._contract: DataContract | None = None
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
         self._pending_targets: dict[SleeveName, pd.DataFrame] = {}
+        self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
 
     def on_start(self) -> None:
         sleeve = self._book.sleeves[0]
@@ -137,6 +147,36 @@ class RebalanceStrategy(Strategy):
         The Security Master (Slice 3) replaces this.
         """
         return InstrumentId.from_str(f"{figi}.{self._book.default_venue}")
+
+    # -- RiskEngine callbacks ---------------------------------------------------
+
+    def on_order_denied(self, event: OrderDenied) -> None:
+        """Log every order denial from the RiskEngine.
+
+        A denial means the RiskEngine rejected the order before submission —
+        protects against oversized orders and other pre-trade violations.
+        """
+        self.log.warning(
+            f"OrderDenied: instrument={event.instrument_id!r} "
+            f"client_order_id={event.client_order_id!r} "
+            f"reason={event.reason!r}"
+        )
+
+    def risk_engine_config_dict(self, nav: float) -> dict[str, Any]:
+        """Return a dict suitable for ``RiskEngineConfig`` kwargs.
+
+        Computes per-instrument max notionals from the current NAV.
+        """
+        figis: list[str] = []
+        if self._contract is not None:
+            figis = list(self._contract.figis)
+        return self._risk_guard.risk_engine_config_dict(
+            nav=nav,
+            figis=figis,
+            default_venue=self._book.default_venue,
+        )
+
+    # -- order submission -------------------------------------------------------
 
     def _submit_order_intent(self, oi: OrderIntent) -> None:
         """Translate a domain OrderIntent into a Nautilus MARKET order and submit."""
