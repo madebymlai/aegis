@@ -80,6 +80,9 @@ requires-dist = [
     { name = "pandas" },
 ]
 
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.0" }]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"

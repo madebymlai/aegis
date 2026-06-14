@@ -22,6 +22,12 @@ def requires_conversion(quote_currency: str, base_currency: str) -> bool:
     return major_currency != base_currency
 
 
+def major_currency(quote_currency: str) -> str:
+    """The ISO major currency for a quote token (``GBp`` pence -> ``GBP``)."""
+    major, _ = _major_currency_and_scale(quote_currency)
+    return major
+
+
 def assemble_fx_rates(
     pair_series_by_currency: Mapping[str, pd.Series],
     index: pd.Index,
@@ -113,6 +119,7 @@ __all__ = [
     "assemble_fx_rates",
     "convert_arrays_to_base",
     "convert_prices_to_base",
+    "major_currency",
     "required_fx_currencies",
     "requires_conversion",
 ]

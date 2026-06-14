@@ -120,6 +120,10 @@ _Avoid_: spec, recipe, template
 A fail-closed budget gate that runs before optimization begins. Estimates parameter combinations, output cell counts, and memory cost, and rejects the **Run** if any limit is exceeded.
 _Avoid_: dry run, validation, sanity check
 
+**FIGI**:
+The canonical, and sole, cross-boundary instrument identity (OpenFIGI / Bloomberg Global Identifier; root ADR-0002). The data-provider **ticker** is RD-internal — used only to fetch market data — and never crosses into an Execution Bundle. `aerd export` resolves each instrument's ticker to one **exchange-level** FIGI via OpenFIGI, fail-closed on ambiguous or unmapped, and bakes it into the bundle's data contract; the bundle's signed target-weight frame is keyed by FIGI. Currency and venue contract detail are derived downstream from the FIGI, not carried alongside it.
+_Avoid_: ticker, symbol, ISIN, CUSIP
+
 ## Example dialogue
 
 > **Dev**: I want to test a moving-average crossover idea on ETFs.

@@ -32,25 +32,35 @@ def _bundle(
     contract: DataContract,
     indicators: tuple[ComponentSpec, ...] = (),
     direction: str = "longonly",
+    symbols: tuple[str, ...] | None = None,
+    currency_by_symbol: dict[str, str] | None = None,
 ) -> ExecutionBundle:
+    plan_symbols = contract.figis if symbols is None else symbols
     plan = LockedExecutionPlan(
         strategy=_spec(strategy_module, "strategies", "target_weights"),
         indicators=indicators,
         gross_cap=1.0,
         net_cap=1.0,
         direction=direction,
+        symbols=plan_symbols,
+        currency_by_symbol=currency_by_symbol or {s: "EUR" for s in plan_symbols},
     )
-    manifest = BundleManifest(run_id="r", role="best", candidate_key="k", component_source_hashes={})
+    manifest = BundleManifest(
+        run_id="r",
+        role="best",
+        candidate_key="k",
+        component_source_hashes={},
+        figis=contract.figis,
+    )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
 
 
-def _eur_contract(symbols=("A", "B"), lookback_bars=0) -> DataContract:
+def _eur_contract(figis=("A", "B"), lookback_bars=0) -> DataContract:
     return DataContract(
-        symbols=symbols,
+        figis=figis,
         required_arrays=("Close",),
         base_currency="EUR",
         required_fx_currencies=(),
-        currency_by_symbol={s: "EUR" for s in symbols},
         timeframe="1D",
         lookback_bars=lookback_bars,
     )
@@ -72,19 +82,42 @@ def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:
     assert (weights.to_numpy() == 0.5).all()
 
 
+def test_compute_weights_keys_output_by_figi_and_feeds_components_authored_labels() -> None:
+    # The consumer supplies FIGI-keyed prices (the cross-boundary identity); the
+    # baked strategy resolves the instrument by its authored label ('A').
+    idx = _index(3)
+    figis = ("BBG000000001", "BBG000000002")
+    close = pd.DataFrame({figis[0]: [10.0, 11.0, 12.0], figis[1]: [20.0, 21.0, 22.0]}, index=idx)
+    bundle = _bundle(
+        "label_select_strategy",
+        contract=_eur_contract(figis=figis),
+        symbols=("A", "B"),
+    )
+
+    weights = bundle.compute_weights(MarketDataBundle({"Close": close}))
+
+    assert list(weights.columns) == list(figis)
+    assert weights.columns.name == "figi"
+    assert weights[figis[0]].tolist() == [1.0, 1.0, 1.0]
+    assert weights[figis[1]].tolist() == [0.0, 0.0, 0.0]
+
+
 def test_compute_weights_converts_foreign_prices_before_the_strategy_sees_them() -> None:
     idx = _index(2)
     # A quoted in USD, B in EUR (base). EURUSD = 1.25 => A_eur = A_usd / 1.25.
     close = pd.DataFrame({"A": [100.0, 125.0], "B": [20.0, 20.0]}, index=idx)
     contract = DataContract(
-        symbols=("A", "B"),
+        figis=("A", "B"),
         required_arrays=("Close",),
         base_currency="EUR",
         required_fx_currencies=("USD",),
-        currency_by_symbol={"A": "USD", "B": "EUR"},
         timeframe="1D",
     )
-    bundle = _bundle("price_proportional_strategy", contract=contract)
+    bundle = _bundle(
+        "price_proportional_strategy",
+        contract=contract,
+        currency_by_symbol={"A": "USD", "B": "EUR"},
+    )
 
     weights = bundle.compute_weights(
         MarketDataBundle({"Close": close}),
@@ -119,14 +152,17 @@ def test_compute_weights_fails_closed_when_required_fx_series_is_missing() -> No
     idx = _index(2)
     close = pd.DataFrame({"A": [100.0, 125.0], "B": [20.0, 20.0]}, index=idx)
     contract = DataContract(
-        symbols=("A", "B"),
+        figis=("A", "B"),
         required_arrays=("Close",),
         base_currency="EUR",
         required_fx_currencies=("USD",),
-        currency_by_symbol={"A": "USD", "B": "EUR"},
         timeframe="1D",
     )
-    bundle = _bundle("price_proportional_strategy", contract=contract)
+    bundle = _bundle(
+        "price_proportional_strategy",
+        contract=contract,
+        currency_by_symbol={"A": "USD", "B": "EUR"},
+    )
 
     with pytest.raises(ValueError, match=r"missing=\['USD'\]"):
         bundle.compute_weights(MarketDataBundle({"Close": close}))  # no fx_series

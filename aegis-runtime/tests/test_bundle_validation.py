@@ -16,14 +16,12 @@ def _index(n: int) -> pd.DatetimeIndex:
     return pd.date_range("2024-01-01", periods=n, freq="D")
 
 
-def _contract(symbols=("A", "B"), required_arrays=("Close",), currency_by_symbol=None):
-    currency_by_symbol = currency_by_symbol or {s: "EUR" for s in symbols}
+def _contract(figis=("A", "B"), required_arrays=("Close",)):
     return DataContract(
-        symbols=symbols,
+        figis=figis,
         required_arrays=required_arrays,
         base_currency="EUR",
         required_fx_currencies=(),
-        currency_by_symbol=currency_by_symbol,
         timeframe="1D",
     )
 
@@ -86,12 +84,6 @@ def test_validate_market_data_rejects_missing_or_extra_arrays() -> None:
     )
     with pytest.raises(ValueError, match=r"extra=\['Open'\]"):
         _validate_market_data(prices, _contract(required_arrays=("Close",)))
-
-
-def test_validate_market_data_rejects_currency_map_symbol_mismatch() -> None:
-    contract = _contract(symbols=("A", "B"), currency_by_symbol={"A": "EUR"})  # missing B
-    with pytest.raises(ValueError, match="currency map symbols do not match"):
-        _validate_market_data(_close(), contract)
 
 
 def test_validate_market_data_rejects_nonunique_index() -> None:

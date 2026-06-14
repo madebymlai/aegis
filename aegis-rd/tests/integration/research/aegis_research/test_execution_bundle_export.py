@@ -36,6 +36,11 @@ _FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
 _RUN_ID = "bundle-fidelity-run"
 _CANDIDATE_KEY = "0123456789abcdef0123456789abcdef"
 _SYMBOLS = ("SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU")
+# The provider ticker is RD-internal; the bundle crosses the boundary keyed by
+# FIGI. Export resolves ticker -> FIGI via OpenFIGI; tests stub that resolution
+# with a deterministic, well-formed (12-char) FIGI per ticker.
+_FIGI_BY_SYMBOL = {symbol: f"BBG000{index:06d}" for index, symbol in enumerate(_SYMBOLS)}
+_FIGIS = tuple(_FIGI_BY_SYMBOL[symbol] for symbol in _SYMBOLS)
 _MOMENTUM_PARAMS = {
     "h1": 15,
     "h2": 42,
@@ -48,6 +53,27 @@ _MOMENTUM_PARAMS = {
 }
 _VOL_PARAMS = {"window": 20}
 _STRATEGY_PARAMS = {"top_n": 3, "top_k_defensive": 1, "tau": 0.08}
+
+
+@pytest.fixture(autouse=True)
+def _stub_figi_resolution(monkeypatch) -> None:
+    """Resolve ticker -> FIGI deterministically so export never hits OpenFIGI."""
+    monkeypatch.setattr(
+        "research.aegis_research.cli_commands.export.resolve_symbol_figis",
+        lambda symbols: {spec.ticker: _FIGI_BY_SYMBOL[spec.ticker] for spec in symbols},
+    )
+
+
+def _figi_arrays(prices: MarketDataBundle) -> dict[str, pd.DataFrame]:
+    """Re-key supplied market-data arrays from provider ticker to FIGI."""
+    return {name: frame.rename(columns=_FIGI_BY_SYMBOL) for name, frame in prices.arrays.items()}
+
+
+def _as_figi_weights(weights: pd.DataFrame) -> pd.DataFrame:
+    """Express RD's ticker-keyed weights in the bundle's FIGI column space."""
+    relabeled = weights.rename(columns=_FIGI_BY_SYMBOL)
+    relabeled.columns.name = "figi"
+    return relabeled
 
 
 def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monkeypatch) -> None:
@@ -68,7 +94,7 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
     )
 
     prices = _market_data()
-    expected = _rd_locked_weights(config_path, prices)
+    expected = _as_figi_weights(_rd_locked_weights(config_path, prices))
     package_name = _package_name_from_wheel(wheel_path)
     import_path = str(wheel_path.resolve())
     sys.path.insert(0, import_path)
@@ -76,22 +102,30 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
     try:
         module = importlib.import_module(package_name)
         bundle = module.get_bundle()
-        actual = bundle.compute_weights(RuntimeMarketDataBundle(prices.arrays))
+        actual = bundle.compute_weights(RuntimeMarketDataBundle(_figi_arrays(prices)))
     finally:
         sys.path.remove(import_path)
         _remove_imported_package(package_name)
         importlib.invalidate_caches()
 
-    assert bundle.contract.symbols == _SYMBOLS
+    # The bundle crosses the boundary keyed by FIGI; the provider ticker stays
+    # RD-internal and never appears in the contract or its weight frame.
+    assert bundle.contract.figis == _FIGIS
+    assert not set(_SYMBOLS) & set(bundle.contract.figis)
+    assert tuple(actual.columns) == _FIGIS
     assert bundle.contract.required_arrays == ("Close",)
     assert bundle.manifest.run_id == _RUN_ID
     assert bundle.manifest.role == "best"
     assert bundle.manifest.candidate_key == _CANDIDATE_KEY
+    # The resolved FIGI set is recorded in the manifest provenance.
+    assert bundle.manifest.figis == _FIGIS
     pd.testing.assert_frame_equal(actual, expected)
 
-    with pytest.raises(ValueError, match="symbols"):
+    with pytest.raises(ValueError, match="figi"):
         bundle.compute_weights(
-            RuntimeMarketDataBundle({"Close": prices.array("Close").rename(columns={"SPY": "BAD"})})
+            RuntimeMarketDataBundle(
+                {"Close": prices.array("Close").rename(columns=_FIGI_BY_SYMBOL | {"SPY": "BAD"})}
+            )
         )
 
 
@@ -122,7 +156,7 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
     pd.testing.assert_series_equal(
         base_prices.array("Close")["SPY"], native_prices.array("Close")["SPY"]
     )
-    expected = _rd_locked_weights(config_path, base_prices)
+    expected = _as_figi_weights(_rd_locked_weights(config_path, base_prices))
 
     package_name = _package_name_from_wheel(wheel_path)
     import_path = str(wheel_path.resolve())
@@ -132,7 +166,7 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
         module = importlib.import_module(package_name)
         bundle = module.get_bundle()
         actual = bundle.compute_weights(
-            RuntimeMarketDataBundle(native_prices.arrays), fx_series=fx_series
+            RuntimeMarketDataBundle(_figi_arrays(native_prices)), fx_series=fx_series
         )
     finally:
         sys.path.remove(import_path)
@@ -141,11 +175,13 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
 
     assert bundle.contract.base_currency == "EUR"
     assert bundle.contract.required_fx_currencies == ("USD",)
-    assert bundle.contract.currency_by_symbol == currency_by_symbol
+    # Native currency is not a cross-boundary field; conversion still happens
+    # internally (fidelity below), driven by the bundle's internal plan.
+    assert not hasattr(bundle.contract, "currency_by_figi")
     pd.testing.assert_frame_equal(actual, expected)
 
     with pytest.raises(ValueError, match=r"missing=\['USD'\]"):
-        bundle.compute_weights(RuntimeMarketDataBundle(native_prices.arrays), fx_series={})
+        bundle.compute_weights(RuntimeMarketDataBundle(_figi_arrays(native_prices)), fx_series={})
 
 
 def test_multiple_exported_bundles_are_discovered_by_entry_points(tmp_path, monkeypatch) -> None:
@@ -240,13 +276,10 @@ def test_compute_weights_raises_when_window_shorter_than_lookback_bars(
         # lookback_bars should be at least 200 (max of momentum params h4)
         assert bundle.contract.lookback_bars >= 200
 
-        # Supply fewer bars than lookback_bars
-        prices = _market_data()
-        short_prices = MarketDataBundle(
-            {"Close": prices.array("Close").iloc[:50]}
-        )
+        # Supply fewer bars than lookback_bars (FIGI-keyed, as the boundary requires)
+        close = _market_data().array("Close").rename(columns=_FIGI_BY_SYMBOL)
         with pytest.raises(ValueError, match=r"lookback"):
-            bundle.compute_weights(RuntimeMarketDataBundle(short_prices.arrays))
+            bundle.compute_weights(RuntimeMarketDataBundle({"Close": close.iloc[:50]}))
     finally:
         sys.path.remove(import_path)
         _remove_imported_package(package_name)
@@ -273,12 +306,9 @@ def test_compute_weights_raises_when_latest_weight_row_is_non_finite(
         lookback = bundle.contract.lookback_bars
 
         # Supply exactly lookback_bars — latest row is NaN due to warmup
-        prices = _market_data()
-        minimal_prices = MarketDataBundle(
-            {"Close": prices.array("Close").iloc[:lookback]}
-        )
+        close = _market_data().array("Close").rename(columns=_FIGI_BY_SYMBOL)
         with pytest.raises(ValueError, match=r"NaN|warmup"):
-            bundle.compute_weights(RuntimeMarketDataBundle(minimal_prices.arrays))
+            bundle.compute_weights(RuntimeMarketDataBundle({"Close": close.iloc[:lookback]}))
     finally:
         sys.path.remove(import_path)
         _remove_imported_package(package_name)
@@ -334,6 +364,36 @@ def test_export_rejects_unlocked_config_with_an_actionable_error(tmp_path, monke
     assert "lock:" in message  # points at the fix — pin one with `lock: run_id[:role]`
 
 
+def test_export_fails_closed_when_a_ticker_cannot_be_resolved_to_a_figi(
+    tmp_path, monkeypatch
+) -> None:
+    from research.aegis_research.market_data.figi import FigiResolutionError
+
+    _install_fixture_components(tmp_path)
+    config_path = _write_locked_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _seed_candidate_store(config_path)
+
+    def _refuse(symbols):
+        raise FigiResolutionError("OpenFIGI resolution failed closed — no FIGI for SPY")
+
+    monkeypatch.setattr(
+        "research.aegis_research.cli_commands.export.resolve_symbol_figis", _refuse
+    )
+    out_dir = Path("dist")
+
+    stderr = _Stdout()
+    exit_code = cli._main(
+        ["export", "--config", str(config_path), "--out", str(out_dir)],
+        stdout=_Stdout(),
+        stderr=stderr,
+    )
+
+    assert exit_code != 0
+    assert not list(out_dir.glob("*.whl"))  # fail-closed: no wheel written
+    assert "failed closed" in stderr.text.lower()
+
+
 def _export_bundle(config_path: Path, *, out_dir: Path | str) -> dict[str, str]:
     stdout = _Stdout()
     exit_code = cli._main(
@@ -360,6 +420,12 @@ def _assert_wheel_metadata(wheel_path: Path) -> None:
     assert "Requires-Dist: aegis-runtime" in metadata
     assert manifest["manifest"]["run_id"] == _RUN_ID
     assert manifest["manifest"]["component_source_hashes"]
+    # FIGI provenance is baked, and the DataContract (the cross-boundary data
+    # contract) is keyed by FIGI with no provider ticker — the ticker is RD-internal.
+    assert manifest["manifest"]["figis"] == list(_FIGIS)
+    assert manifest["contract"]["figis"] == list(_FIGIS)
+    contract_and_provenance = json.dumps([manifest["contract"], manifest["manifest"]])
+    assert not any(symbol in contract_and_provenance for symbol in _SYMBOLS)
 
 
 def _assert_entry_point_metadata(wheel_path: Path, *, name: str, value: str) -> None:

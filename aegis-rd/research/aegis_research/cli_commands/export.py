@@ -9,7 +9,7 @@ import re
 import shutil
 import tempfile
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from textwrap import dedent
@@ -35,6 +35,7 @@ from research.aegis_research.configuration import (
     load_run_config,
 )
 from research.aegis_research.market_data.currency import required_fx_currencies
+from research.aegis_research.market_data.figi import resolve_symbol_figis
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.lock_run import ResolvedComponentParams, resolve_lock_run
@@ -44,6 +45,8 @@ STRATEGY_SLOT = "strategy"
 ENTRY_POINT_GROUP = "aegis.execution_bundles"
 
 ComponentSpecMap = dict[str, Any]
+# Resolves the universe's provider tickers to their canonical FIGIs (ticker -> FIGI).
+FigiResolver = Callable[[Sequence[Any]], Mapping[str, str]]
 
 
 @dataclass(frozen=True)
@@ -83,7 +86,9 @@ def handle_export(args: argparse.Namespace, **streams: Any) -> int:
     )
 
 
-def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
+def export_locked_bundle(
+    config_path: Path, *, out_dir: Path, figi_resolver: FigiResolver | None = None
+) -> Path:
     component_registry = discover_component_registry()
     resolved = load_run_config(config_path, component_registry=component_registry)
     config = resolved.config
@@ -96,6 +101,11 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
         )
     with CandidateStore(candidate_store_path(config)) as store:
         lock_run = resolve_lock_run(config.lock, store=store)
+    # Resolve the canonical cross-boundary identity once, before any artifact is
+    # written: a fail-closed FIGI resolution must stop the export with no wheel.
+    resolver = resolve_symbol_figis if figi_resolver is None else figi_resolver
+    figi_by_ticker = resolver(config.data.symbols)
+    figis = tuple(figi_by_ticker[ticker] for ticker in config.data.tickers)
     strategy_definition = component_registry.get(
         ComponentSelection("strategies", config.strategy.id)
     )
@@ -126,14 +136,17 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
             "role": _manifest_role(config.lock.candidate_id),
             "candidate_key": candidate_key,
             "component_source_hashes": components.source_hashes,
+            "figis": figis,
         }
-        contract = _bundle_contract(config, components)
+        contract = _bundle_contract(config, components, figi_by_ticker)
         plan = {
             "strategy": components.strategy,
             "indicators": components.indicators,
             "gross_cap": config.portfolio.gross_cap,
             "net_cap": config.portfolio.net_cap,
             "direction": config.portfolio.direction,
+            "symbols": tuple(config.data.tickers),
+            "currency_by_symbol": dict(config.data.currency_by_symbol),
         }
         _write_bundle_module(
             package_dir / "__init__.py",
@@ -277,17 +290,18 @@ def _component_spec(
     }
 
 
-def _bundle_contract(config: RunConfig, components: ExportedComponents) -> dict[str, Any]:
+def _bundle_contract(
+    config: RunConfig, components: ExportedComponents, figi_by_ticker: Mapping[str, str]
+) -> dict[str, Any]:
     currency_by_symbol = config.data.currency_by_symbol
     base_currency = config.portfolio.base_currency
     return {
-        "symbols": tuple(config.data.tickers),
+        "figis": tuple(figi_by_ticker[ticker] for ticker in config.data.tickers),
         "required_arrays": tuple(_required_arrays(components)),
         "base_currency": base_currency,
         "required_fx_currencies": tuple(
             sorted(required_fx_currencies(currency_by_symbol, base_currency))
         ),
-        "currency_by_symbol": dict(currency_by_symbol),
         "timeframe": config.data.timeframe,
         "lookback_bars": components.lookback_bars,
     }
