@@ -1,0 +1,299 @@
+from __future__ import annotations
+
+from typing import Any
+from warnings import warn
+
+import pandas as pd
+
+from research.aegis_research.configuration import DataConfig, resolve_env_refs
+from research.aegis_research.market_data import native_metadata as _native_metadata
+from research.aegis_research.market_data.adapters._support import (
+    index_evidence,
+    native_index,
+)
+from research.aegis_research.market_data.contracts import (
+    MarketDataAdapter,
+    MarketDataAdapterResult,
+    RemoteDataPullError,
+)
+from research.aegis_research.market_data.sources import vbt_data_source_classes
+
+SAFE_FETCH_KWARG_KEYS = {
+    "delay",
+    "end",
+    "exchange",
+    "find_earliest_date",
+    "klines_type",
+    "limit",
+    "period",
+    "retries",
+    "start",
+    "timeframe",
+    "tz",
+}
+SAFE_RETURNED_KWARG_KEYS = {"freq", "tz", "tz_convert", "tz_localize"}
+_REMOTE_PROVIDER_MAPPINGS = (
+    ("fetch_kwargs", SAFE_FETCH_KWARG_KEYS),
+    ("returned_kwargs", SAFE_RETURNED_KWARG_KEYS),
+)
+
+
+# Aligning a cross-timezone universe needs opposite tz operations by bar resolution, so the
+# regime is read from the timeframe (not hidden in a tz trick):
+#   - daily-or-coarser: a bar denotes a CALENDAR DATE. Drop tz to local wall time and floor
+#     to the date, so ^VIX (CBOE/Chicago midnight) and VXX (NYSE/New-York midnight) merge on
+#     the date they denote rather than looking an hour apart.
+#   - intraday (sub-daily): a bar denotes an INSTANT. Convert to a common tz (UTC) preserving
+#     the instant, so 09:30 Chicago and 09:30 New-York stay the distinct moments they are
+#     (and only truly-simultaneous bars align) rather than being collapsed by a naive strip.
+def _is_intraday_timeframe(timeframe: Any) -> bool:
+    """A bar shorter than a day aligns by instant; daily-or-coarser aligns by date.
+
+    Defers to pandas' duration parsing rather than enumerating unit spellings: sub-day
+    durations compare under a day; weekly/monthly/unknown are not fixed durations, raise,
+    and fall to the date regime. pandas reads 'm'/'min' as minutes (the yfinance
+    convention), so '15m' is intraday while '1mo'/'1M' are not.
+    """
+    try:
+        return pd.Timedelta(str(timeframe)) < pd.Timedelta(days=1)
+    except (ValueError, TypeError):
+        return False
+
+
+def _align_remote_index(
+    obj: pd.Series | pd.DataFrame, *, intraday: bool
+) -> pd.Series | pd.DataFrame:
+    """Align one symbol's index to the merge regime its timeframe implies (see above)."""
+    index = obj.index
+    if not isinstance(index, pd.DatetimeIndex):
+        return obj
+    if intraday:
+        if index.tz is None:
+            return obj  # naive intraday: no tz to reconcile against, leave the instant as-is
+        aligned = index.tz_convert("UTC")  # unify tz, preserve the instant
+    elif index.tz is None:
+        aligned = index.normalize()  # date regime, already naive: floor to the date
+    else:
+        aligned = index.tz_localize(None).normalize()  # date regime: local wall time -> date
+    obj = obj.copy()
+    obj.index = aligned
+    return obj
+
+
+def remote_source_loaders() -> dict[str, MarketDataAdapter]:
+    return {
+        source: (
+            lambda config, source=source, data_cls=data_cls: load_vbt_remote_source(
+                source,
+                data_cls,
+                config,
+            )
+        )
+        for source, data_cls in vbt_data_source_classes().items()
+    }
+
+
+def load_vbt_remote_source(source: str, data_cls, config: DataConfig) -> MarketDataAdapterResult:
+    native_data = _pull_remote(data_cls, config)
+    projected = _native_metadata.native_data_metadata(
+        native_data,
+        source=config.source,
+        provider_mappings=_REMOTE_PROVIDER_MAPPINGS,
+    )
+    return MarketDataAdapterResult(
+        native_data=native_data,
+        source_metadata={"provider_class": f"{data_cls.__module__}.{data_cls.__qualname__}"},
+        evidence=index_evidence(native_index(native_data), source="post_vectorbt_alignment"),
+        provider_metadata=projected["metadata"],
+        omitted_metadata_fields=projected["omitted"],
+    )
+
+
+def _pull_remote(data_cls, config: DataConfig) -> Any:
+    wrapper_kwargs = resolve_env_refs(
+        config.wrapper_kwargs,
+        "data.wrapper_kwargs",
+    )
+    provider_kwargs = resolve_env_refs(
+        config.provider_kwargs,
+        "data.provider_kwargs",
+    )
+    execution_kwargs = resolve_env_refs(
+        config.execution_kwargs,
+        "data.execution_kwargs",
+    )
+    try:
+        raw_outputs = data_cls.pull(
+            config.tickers,
+            start=config.start,
+            end=config.end,
+            timeframe=config.timeframe,
+            missing_index=config.missing_index,
+            missing_columns=config.missing_columns,
+            tz_localize=config.tz_localize,
+            tz_convert=config.tz_convert,
+            wrapper_kwargs=wrapper_kwargs,
+            skip_on_error=config.skip_on_error,
+            silence_warnings=config.silence_warnings,
+            execute_kwargs=execution_kwargs,
+            return_raw=True,
+            **provider_kwargs,
+        )
+        return _native_from_remote_raw_outputs(
+            data_cls,
+            config,
+            raw_outputs,
+            wrapper_kwargs=wrapper_kwargs,
+            provider_kwargs=provider_kwargs,
+        )
+    except Exception as error:
+        raise RemoteDataPullError(config.source, str(error)) from error
+
+
+def _native_from_remote_raw_outputs(
+    data_cls,
+    config: DataConfig,
+    raw_outputs: list[Any],
+    *,
+    wrapper_kwargs: dict[str, Any],
+    provider_kwargs: dict[str, Any],
+) -> Any:
+    if len(raw_outputs) != len(config.tickers):
+        raise ValueError("remote provider returned a different number of raw outputs than symbols")
+
+    data: dict[str, pd.Series | pd.DataFrame] = {}
+    returned_kwargs: dict[str, dict[str, Any]] = {}
+    fetch_kwargs = {symbol: dict(provider_kwargs) for symbol in config.tickers}
+    tz_localize = config.tz_localize
+    tz_convert = config.tz_convert
+    from_data_wrapper_kwargs = dict(wrapper_kwargs)
+    common_tz_localize = None
+    common_tz_convert = None
+    common_freq = None
+    intraday = _is_intraday_timeframe(config.timeframe)
+
+    for symbol, output in zip(config.tickers, raw_outputs, strict=True):
+        if output is None:
+            continue
+        raw_data, raw_returned_kwargs = _remote_raw_data_and_metadata(output)
+        projected = _project_remote_symbol_data(raw_data, config.effective_arrays, symbol=symbol)
+        if projected.size == 0:
+            if not config.silence_warnings:
+                warn(f"Symbol {symbol!r} returned an empty array. Skipping.", stacklevel=2)
+            continue
+        symbol_returned_kwargs = dict(raw_returned_kwargs)
+        # Align the index to the timeframe's merge regime (date vs instant) and drop the now-
+        # reconciled exchange-tz metadata so heterogeneous source tzs merge instead of raising.
+        projected = _align_remote_index(projected, intraday=intraday)
+        for _tz_key in ("tz", "tz_localize", "tz_convert"):
+            symbol_returned_kwargs.pop(_tz_key, None)
+        common_tz_localize, common_tz_convert, common_freq = _update_common_remote_metadata(
+            symbol_returned_kwargs,
+            common_tz_localize=common_tz_localize,
+            common_tz_convert=common_tz_convert,
+            common_freq=common_freq,
+            silence_warnings=config.silence_warnings,
+        )
+        data[symbol] = projected
+        returned_kwargs[symbol] = symbol_returned_kwargs
+
+    if not data:
+        raise ValueError("No symbols could be fetched")
+    if tz_localize is None and common_tz_localize is not None:
+        tz_localize = common_tz_localize
+    if tz_convert is None and common_tz_convert is not None:
+        tz_convert = common_tz_convert
+    if from_data_wrapper_kwargs.get("freq") is None and common_freq is not None:
+        from_data_wrapper_kwargs["freq"] = common_freq
+
+    # A daily bar denotes a calendar DATE, already collapsed to a shared naive date
+    # upstream, so the venues merge 1:1 under the configured policy. An intraday bar
+    # denotes an INSTANT: 09:30 London is not 09:30 Frankfurt, so cross-venue intraday
+    # bars can never share an index row and a plain merge interleaves them as a NaN
+    # checkerboard. Union them as NaN, then realign onto one regular grid below.
+    cross_venue_intraday = intraday and len(data) > 1
+    merged = data_cls.from_data(
+        data,
+        single_key=False,
+        tz_localize=tz_localize,
+        tz_convert=tz_convert,
+        missing_index="nan" if cross_venue_intraday else config.missing_index,
+        missing_columns=config.missing_columns,
+        wrapper_kwargs=from_data_wrapper_kwargs,
+        fetch_kwargs=fetch_kwargs,
+        returned_kwargs=returned_kwargs,
+        silence_warnings=config.silence_warnings,
+    )
+    if cross_venue_intraday:
+        # Project every venue onto one regular grid at the source timeframe. Realignment
+        # carries each symbol's last-known value to each step (realign_opening for Open,
+        # realign_closing elsewhere) with no look-ahead, so the venues co-exist instead
+        # of interleaving as NaN. This is vbt's documented cross-timezone alignment; the
+        # explicit Timedelta avoids ambiguous freq-string parsing of the timeframe.
+        merged = merged.realign(pd.Timedelta(config.timeframe))
+    return merged
+
+
+def _remote_raw_data_and_metadata(output: Any) -> tuple[Any, dict[str, Any]]:
+    if isinstance(output, tuple):
+        return output[0], dict(output[1])
+    return output, {}
+
+
+def _project_remote_symbol_data(
+    raw_data: Any,
+    requested_arrays: tuple[str, ...],
+    *,
+    symbol: str,
+) -> pd.Series | pd.DataFrame:
+    if isinstance(raw_data, pd.Series):
+        if raw_data.name in requested_arrays:
+            return raw_data
+        return raw_data.iloc[0:0]
+    if not isinstance(raw_data, pd.DataFrame):
+        raise TypeError(
+            f"remote provider returned non-tabular data for symbol {symbol!r}; "
+            "configured data arrays require named feature columns"
+        )
+    columns = [name for name in requested_arrays if name in raw_data.columns]
+    return raw_data.loc[:, columns]
+
+
+def _update_common_remote_metadata(
+    returned_kwargs: dict[str, Any],
+    *,
+    common_tz_localize: Any,
+    common_tz_convert: Any,
+    common_freq: Any,
+    silence_warnings: bool,
+) -> tuple[Any, Any, Any]:
+    tz = returned_kwargs.pop("tz", None)
+    tz_localize = returned_kwargs.pop("tz_localize", None)
+    tz_convert = returned_kwargs.pop("tz_convert", None)
+    freq = returned_kwargs.pop("freq", None)
+    if tz is not None:
+        if tz_localize is None:
+            tz_localize = tz
+        if tz_convert is None:
+            tz_convert = tz
+    if tz_localize is not None:
+        if common_tz_localize is None:
+            common_tz_localize = tz_localize
+        elif common_tz_localize != tz_localize:
+            raise ValueError("Returned objects have different timezones (tz_localize)")
+    if tz_convert is not None:
+        if common_tz_convert is None:
+            common_tz_convert = tz_convert
+        elif common_tz_convert != tz_convert:
+            if not silence_warnings:
+                warn(
+                    "Returned objects have different timezones (tz_convert). Setting to UTC.",
+                    stacklevel=2,
+                )
+            common_tz_convert = "utc"
+    if freq is not None:
+        if common_freq is None:
+            common_freq = freq
+        elif common_freq != freq:
+            raise ValueError("Returned objects have different frequencies (freq)")
+    return common_tz_localize, common_tz_convert, common_freq

@@ -1,0 +1,493 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import ClassVar
+
+import pandas as pd
+import pytest
+
+from research.aegis_research import data as data_module
+from research.aegis_research.canonical_json import to_builtin
+from research.aegis_research.configuration import DataConfig
+from research.aegis_research.data import (
+    LOGICAL_ARRAYS,
+    OHLCV_ARRAYS,
+    QUALITY_HEALTHY,
+    DataDiagnostics,
+    MarketDataAdapterResult,
+    MarketDataBundle,
+    RemoteDataPullError,
+    close_from_ohlcv,
+    load_market_data_result,
+    market_data_bundle,
+    required_ohlcv_arrays,
+)
+from research.aegis_research.market_data.sources import vbt_data_source_classes
+from tests.support.research.aegis_research.factories import make_data_config
+
+
+def test_synthetic_result_exposes_native_data_quality_and_diagnostics() -> None:
+    result = load_market_data_result(make_data_config(rows=10, symbols=[{"ticker": "AAA", "ccy": "EUR"}, {"ticker": "BBB", "ccy": "EUR"}]))
+    bundle = market_data_bundle(result)
+
+    assert result.native_data.feature_oriented
+    assert result.quality.state == "healthy"
+    assert {row.symbol for row in result.diagnostics} == {"AAA", "BBB"}
+    assert result.metadata.quality.state == "healthy"
+    assert close_from_ohlcv(result.native_data).shape == (10, 2)
+    assert bundle.array("Close").shape == (10, 2)
+
+
+def test_result_exposes_typed_diagnostics_and_observes_native_metadata_once() -> None:
+    native_data = _CountingMetadataData()
+
+    result = load_market_data_result(
+        make_data_config(source="counting", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
+        adapters={"counting": lambda _config: MarketDataAdapterResult(native_data=native_data)},
+    )
+
+    assert isinstance(result.diagnostics[0], DataDiagnostics)
+    assert result.metadata.diagnostics == list(result.diagnostics)
+    assert native_data.read_counts == {"index": 1, "features": 1, "symbols": 1}
+
+
+def test_market_data_bundle_resolves_eager_features() -> None:
+    index = pd.date_range("2020-01-01", periods=2, tz="UTC")
+    close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
+    factor = pd.DataFrame({"SYN": [10.0, 20.0]}, index=index)
+    bundle = MarketDataBundle(arrays={"Close": close, "Factor": factor})
+
+    assert bundle.array("Close").equals(close)
+    assert bundle.array("Factor").equals(factor)
+
+
+def test_market_data_bundle_rejects_unloaded_features() -> None:
+    index = pd.date_range("2020-01-01", periods=2, tz="UTC")
+    close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
+    bundle = MarketDataBundle(arrays={"Close": close})
+
+    with pytest.raises(ValueError, match="was not loaded"):
+        bundle.array("FundingRate")
+
+
+def test_data_facade_preserves_public_market_data_constants() -> None:
+    assert OHLCV_ARRAYS == ("Open", "High", "Low", "Close", "Volume")
+    assert LOGICAL_ARRAYS["close"] == "Close"
+    assert QUALITY_HEALTHY == "healthy"
+    assert "yf" in vbt_data_source_classes()
+
+
+def test_dynamic_vbt_source_discovery_uses_current_vbt_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(data_module.vbt, "DemoData", _DemoRemoteData, raising=False)
+    monkeypatch.setattr(data_module.vbt, "DemoNoPullData", object, raising=False)
+
+    source_classes = vbt_data_source_classes()
+    result = load_market_data_result(
+        make_data_config(
+            source="demo",
+            symbols=[{"ticker": "SYN", "ccy": "EUR"}],
+            start="2020-01-01",
+            end="2020-01-03",
+            timeframe="1D",
+        )
+    )
+
+    assert source_classes["demo"] is _DemoRemoteData
+    assert "demonopull" not in source_classes
+    assert result.quality.state == "healthy"
+    assert result.metadata.request.source == "demo"
+
+
+def test_provider_shaped_source_loads_dynamic_feature_arrays() -> None:
+    native_data = _DemoRemoteData(["SYN"], features=["Close", "FundingRate"])
+
+    result = load_market_data_result(
+        make_data_config(source="future", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close", "FundingRate"]),
+        adapters={"future": lambda _config: MarketDataAdapterResult(native_data=native_data)},
+    )
+    bundle = market_data_bundle(result)
+
+    assert result.quality.state == "healthy"
+    loaded = [d.name for d in result.metadata.arrays if d.loaded]
+    assert loaded == ["Close", "FundingRate"]
+    assert bundle.array("FundingRate").iloc[-1, 0] == 0.03
+
+
+def test_remote_source_projects_configured_arrays_before_column_alignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(data_module.vbt, "ProviderExtrasData", _ProviderExtrasData, raising=False)
+
+    result = load_market_data_result(
+        make_data_config(
+            source="providerextras",
+            symbols=[{"ticker": "AAA", "ccy": "EUR"}, {"ticker": "BBB", "ccy": "EUR"}],
+            arrays=["OHLCV"],
+            start="2020-01-01",
+            end="2020-01-03",
+            timeframe="1D",
+            missing_columns="raise",
+        )
+    )
+
+    assert _ProviderExtrasData.last_pull_kwargs["return_raw"] is True
+    assert _ProviderExtrasData.from_data_columns == {
+        "AAA": ["Open", "High", "Low", "Close", "Volume"],
+        "BBB": ["Open", "High", "Low", "Close", "Volume"],
+    }
+    assert _ProviderExtrasData.last_from_data_kwargs["missing_columns"] == "raise"
+    assert result.quality.state == "healthy"
+    loaded = [d.name for d in result.metadata.arrays if d.loaded]
+    assert sorted(loaded) == ["Close", "High", "Low", "Open", "Volume"]
+
+
+def test_bundle_can_serve_dynamic_feature_without_close() -> None:
+    native_data = _DemoRemoteData(["SYN"], features=["FundingRate"])
+
+    result = load_market_data_result(
+        make_data_config(source="future", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["FundingRate"]),
+        adapters={"future": lambda _config: MarketDataAdapterResult(native_data=native_data)},
+    )
+    bundle = market_data_bundle(result)
+
+    with pytest.raises(ValueError, match="was not loaded"):
+        bundle.array("Close")
+    assert bundle.array("FundingRate").iloc[-1, 0] == 0.03
+
+
+def test_provider_failure_metadata_preserves_required_arrays() -> None:
+    def fail(_config: DataConfig) -> MarketDataAdapterResult:
+        raise RemoteDataPullError("future", "network unavailable")
+
+    result = load_market_data_result(
+        make_data_config(source="future", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
+        required_arrays=("OpenInterest",),
+        adapters={"future": fail},
+    )
+
+    assert result.quality.state == "provider_failed"
+    required = [d.name for d in result.metadata.arrays if d.required]
+    unavailable = [d.name for d in result.metadata.arrays if d.required and not d.loaded]
+    assert sorted(required) == ["Close", "OpenInterest"]
+    assert unavailable == ["Close", "OpenInterest"]
+
+
+def test_csv_flat_vbt_feature_names_load_without_mapping(tmp_path: Path) -> None:
+    path = tmp_path / "prices.csv"
+    index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="time")
+    frame = pd.DataFrame(
+        {
+            "Open": [1.0, 2.0, 3.0],
+            "Close": [1.5, 2.5, 3.5],
+        },
+        index=index,
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        make_data_config(
+            source="csv",
+            path=str(path),
+            symbols=[{"ticker": "SYN", "ccy": "EUR"}],
+            arrays=["Open", "Close"],
+        )
+    )
+    bundle = market_data_bundle(result)
+
+    assert result.quality.state == "healthy"
+    assert list(bundle.array("Close").columns) == ["SYN"]
+    close_desc = next(d for d in result.metadata.arrays if d.name == "Close")
+    assert close_desc.ohlc is True
+    assert str(path) not in json.dumps(to_builtin(result.metadata))
+
+
+def test_csv_non_standard_flat_columns_fail_without_mapping(tmp_path: Path) -> None:
+    path = tmp_path / "prices.csv"
+    frame = pd.DataFrame(
+        {"my_close": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        make_data_config(source="csv", path=str(path), symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
+    )
+
+    assert result.quality.state == "rejected"
+    assert "required array 'Close' is unavailable" in result.quality.reasons
+
+
+def test_csv_extra_vbt_feature_loads_through_dynamic_access(tmp_path: Path) -> None:
+    path = tmp_path / "funding.csv"
+    frame = pd.DataFrame(
+        {
+            "Close": [1.0, 2.0, 3.0],
+            "FundingRate": [0.01, 0.02, 0.03],
+        },
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        make_data_config(source="csv", path=str(path), symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close", "FundingRate"])
+    )
+    bundle = market_data_bundle(result)
+
+    assert result.quality.state == "healthy"
+    assert bundle.array("FundingRate").iloc[-1, 0] == 0.03
+    loaded = [d.name for d in result.metadata.arrays if d.loaded]
+    assert loaded == ["Close", "FundingRate"]
+
+
+def test_configured_unused_array_must_still_load(tmp_path: Path) -> None:
+    path = tmp_path / "missing_funding.csv"
+    frame = pd.DataFrame(
+        {"Close": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        make_data_config(source="csv", path=str(path), symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close", "FundingRate"])
+    )
+
+    assert result.quality.state == "rejected"
+    assert "required array 'FundingRate' is unavailable" in result.quality.reasons
+    unavailable = [d.name for d in result.metadata.arrays if d.required and not d.loaded]
+    assert unavailable == ["FundingRate"]
+
+
+def test_csv_multiindex_symbol_feature_layout_preserves_symbols(tmp_path: Path) -> None:
+    path = tmp_path / "multi.csv"
+    index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="time")
+    frame = pd.DataFrame(
+        {
+            ("AAA", "Close"): [1.0, 2.0, 3.0],
+            ("BBB", "Close"): [4.0, 5.0, 6.0],
+            ("AAA", "High"): [1.1, 2.1, 3.1],
+            ("BBB", "High"): [4.1, 5.1, 6.1],
+        },
+        index=index,
+    )
+    frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["symbol", "feature"])
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        make_data_config(source="csv", path=str(path), symbols=[{"ticker": "AAA", "ccy": "EUR"}, {"ticker": "BBB", "ccy": "EUR"}], arrays=["Close", "High"])
+    )
+    bundle = market_data_bundle(result)
+
+    assert result.quality.state == "healthy"
+    assert list(bundle.array("Close").columns) == ["AAA", "BBB"]
+
+
+def test_csv_multiindex_layout_uses_one_full_pandas_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "multi.csv"
+    index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="time")
+    frame = pd.DataFrame(
+        {
+            ("AAA", "Close"): [1.0, 2.0, 3.0],
+            ("BBB", "Close"): [4.0, 5.0, 6.0],
+        },
+        index=index,
+    )
+    frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["symbol", "feature"])
+    frame.to_csv(path)
+    read_headers = []
+    read_csv = data_module.pd.read_csv
+
+    def spy_read_csv(*args, **kwargs):
+        read_headers.append(kwargs.get("header"))
+        return read_csv(*args, **kwargs)
+
+    monkeypatch.setattr(data_module.pd, "read_csv", spy_read_csv)
+
+    result = load_market_data_result(
+        make_data_config(source="csv", path=str(path), symbols=[{"ticker": "AAA", "ccy": "EUR"}, {"ticker": "BBB", "ccy": "EUR"}], arrays=["Close"])
+    )
+
+    assert result.quality.state == "healthy"
+    assert read_headers == [[0, 1]]
+
+
+def test_missing_required_feature_marks_quality_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "missing_close.csv"
+    frame = pd.DataFrame(
+        {"High": [1.0, 2.0, 3.0]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        make_data_config(source="csv", path=str(path), symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
+    )
+
+    assert result.quality.state == "rejected"
+    assert "required array 'Close' is unavailable" in result.quality.reasons
+
+
+def test_non_numeric_required_feature_marks_quality_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "bad_close.csv"
+    frame = pd.DataFrame(
+        {"Close": ["a", "b", "c"]},
+        index=pd.date_range("2020-01-01", periods=3, tz="UTC"),
+    )
+    frame.to_csv(path)
+
+    result = load_market_data_result(
+        make_data_config(source="csv", path=str(path), symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
+    )
+
+    assert result.quality.state == "rejected"
+    assert "required array 'Close' has non-numeric symbols ['SYN']" in result.quality.reasons
+
+
+def test_future_provider_adapter_uses_same_result_contract() -> None:
+    native_data = load_market_data_result(make_data_config(rows=5, symbols=[{"ticker": "FUT", "ccy": "EUR"}])).native_data
+
+    result = load_market_data_result(
+        make_data_config(source="future", symbols=[{"ticker": "FUT", "ccy": "EUR"}]),
+        adapters={"future": lambda _config: MarketDataAdapterResult(native_data=native_data)},
+    )
+    bundle = market_data_bundle(result)
+
+    assert result.quality.state == "healthy"
+    assert bundle.array("Close").shape == (5, 1)
+
+
+def test_required_arrays_default_to_close() -> None:
+    assert required_ohlcv_arrays() == ("Close",)
+
+
+class _CountingMetadataData:
+    def __init__(self) -> None:
+        self.read_counts = {"index": 0, "features": 0, "symbols": 0}
+        self._index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
+
+    @property
+    def index(self) -> pd.DatetimeIndex:
+        self.read_counts["index"] += 1
+        return self._index
+
+    @property
+    def features(self) -> list[str]:
+        self.read_counts["features"] += 1
+        return ["Close"]
+
+    @property
+    def symbols(self) -> list[str]:
+        self.read_counts["symbols"] += 1
+        return ["SYN"]
+
+    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
+        if feature not in {None, "Close"}:
+            raise ValueError(feature)
+        return pd.DataFrame({"SYN": [1.0, 2.0, 3.0]}, index=self._index)
+
+
+class _DemoRemoteData:
+    def __init__(self, symbols: list[str], *, features: list[str] | None = None) -> None:
+        self.symbols = symbols
+        self.index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
+        self.features = features or ["Open", "High", "Low", "Close", "Volume"]
+
+    @classmethod
+    def pull(cls, symbols, **kwargs):
+        if kwargs.get("return_raw"):
+            index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
+            frame = pd.DataFrame(
+                {
+                    "Open": [1.0, 2.0, 3.0],
+                    "High": [1.1, 2.1, 3.1],
+                    "Low": [0.9, 1.9, 2.9],
+                    "Close": [1.0, 2.0, 3.0],
+                    "Volume": [100.0, 100.0, 100.0],
+                },
+                index=index,
+            )
+            return [(frame.copy(), {"tz": "UTC", "freq": "1D"}) for _symbol in symbols]
+        return cls(list(symbols))
+
+    @classmethod
+    def from_data(cls, data, **_kwargs):
+        return cls(list(data), features=list(next(iter(data.values())).columns))
+
+    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
+        frame = pd.DataFrame(
+            {
+                "Open": [1.0, 2.0, 3.0],
+                "High": [1.1, 2.1, 3.1],
+                "Low": [0.9, 1.9, 2.9],
+                "Close": [1.0, 2.0, 3.0],
+                "Volume": [100.0, 100.0, 100.0],
+                "FundingRate": [0.01, 0.02, 0.03],
+            },
+            index=self.index,
+        )
+        frame = frame.loc[:, self.features]
+        frame.columns = pd.MultiIndex.from_product(
+            [self.symbols, frame.columns], names=["symbol", "feature"]
+        )
+        if feature is None:
+            return frame
+        return frame.xs(feature, axis=1, level="feature")
+
+
+class _ProviderExtrasData:
+    last_pull_kwargs: ClassVar[dict[str, object]] = {}
+    last_from_data_kwargs: ClassVar[dict[str, object]] = {}
+    from_data_columns: ClassVar[dict[str, list[str]]] = {}
+
+    def __init__(self, data: dict[str, pd.DataFrame]) -> None:
+        self.data = data
+        self.symbols = list(data)
+        self.index = next(iter(data.values())).index
+        self.features = list(next(iter(data.values())).columns)
+
+    @classmethod
+    def pull(cls, symbols, **kwargs):
+        cls.last_pull_kwargs = dict(kwargs)
+        if kwargs.get("return_raw") is not True:
+            raise ValueError("Symbols have mismatching columns")
+        index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
+        outputs = []
+        for symbol in symbols:
+            extra_feature = "Dividends" if symbol == "AAA" else "Capital Gains"
+            columns = ["Open", "High", "Low", "Close", "Volume", extra_feature]
+            frame = pd.DataFrame(
+                {column: [1.0, 2.0, 3.0] for column in columns},
+                index=index,
+            )
+            outputs.append((frame, {"tz": "UTC", "freq": "1D"}))
+        return outputs
+
+    @classmethod
+    def from_data(cls, data, **kwargs):
+        cls.last_from_data_kwargs = dict(kwargs)
+        cls.from_data_columns = {
+            symbol: list(frame.columns) for symbol, frame in data.items()
+        }
+        return cls(data)
+
+    def get(self, feature=None, **_kwargs) -> pd.DataFrame:
+        if feature is None:
+            frames = []
+            for symbol, frame in self.data.items():
+                symbol_frame = frame.copy()
+                symbol_frame.columns = pd.MultiIndex.from_product(
+                    [[symbol], symbol_frame.columns], names=["symbol", "feature"]
+                )
+                frames.append(symbol_frame)
+            return pd.concat(frames, axis=1)
+        if feature not in self.features:
+            raise ValueError(feature)
+        return pd.DataFrame(
+            {symbol: frame[feature] for symbol, frame in self.data.items()},
+            index=self.index,
+        )

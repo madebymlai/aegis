@@ -1,0 +1,45 @@
+schema_version: 8
+name: tests_tune_lock_vol
+output_dir: runs/etf_vanguard_tune
+
+data:
+  source: yf
+  symbols: [{ticker: SPY, ccy: EUR}, {ticker: IWM, ccy: EUR}, {ticker: EEM, ccy: EUR}, {ticker: TLT, ccy: EUR}, {ticker: GLD, ccy: EUR}, {ticker: DBC, ccy: EUR}, {ticker: VNQ, ccy: EUR}, {ticker: UUP, ccy: EUR}, {ticker: XLE, ccy: EUR}, {ticker: XLU, ccy: EUR}]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  arrays: [OHLCV]
+
+portfolio:
+  gross_cap: 0.8
+  direction: longonly
+  fees: 0.0005
+  slippage: 0.0005
+
+strategy:
+  id: tests.momentum_rotator
+
+indicators:
+  - id: tests.momentum_score
+  - id: tests.realized_vol
+    # Frozen Indicator: values-only params: replace the removed per-Component
+    # lock_id (ADR-0006). The Strategy and momentum_score keep optimizing.
+    params:
+      window: 16
+
+ranking:
+  metric: sharpe_ratio
+
+optimization:
+  search: random
+  random_subset: 2048
+  seed: 23
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
+    max_estimated_output_cells: 1000000000
+    max_public_artifact_bytes: 20000000
