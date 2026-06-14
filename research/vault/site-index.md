@@ -18,6 +18,8 @@ Useful sites found during research, organized by category. Add a one-line note o
 - [World Gold Council - Goldhub](https://www.gold.org/goldhub/data/gold-returns) - gold annual/period returns; COI (industry body), use for uncontested price figures only
 - [Portfolio Visualizer - Historical Asset Class Returns](https://legacy.portfoliovisualizer.com/historical-asset-class-returns) - annual asset-class total returns back to 1972 incl. long-Treasury, gold, commodities; uncontested figures
 - [ETF Database (etfdb.com)](https://etfdb.com/) - ETF category/liquidity/inception lookups (commodity and agricultural category pages); use for AUM and listing facts, not analysis
+- [justETF](https://www.justetf.com/) - UCITS ETF screener: ISIN, listing venue, quote currency, hedged/unhedged share class, TER and inception for EU-retail instruments; the primary tradability check for the UCITS pivot
+- [Absolute Hedge / Kepler Partners](https://absolutehedge.com/) - UCITS liquid-alternatives fund database (long-volatility, tail-risk, managed-futures UCITS); profiles and monthly returns for the Regime-A shelf
 
 ## Strategy research
 
@@ -106,6 +108,7 @@ Useful sites found during research, organized by category. Add a one-line note o
 - [Kritzman, Li, Page & Rigobon 2011 - Principal Components as a Measure of Systemic Risk (JPM)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1633027) - the absorption ratio; claimed ~1mo lead before declines, State Street product (COI), contested by replication
 - [Forbes & Rigobon 2002 - No Contagion, Only Interdependence (JF)](https://onlinelibrary.wiley.com/doi/10.1111/0022-1082.00494) - correlation spikes are a volatility-conditioning artifact; a correlation-spike trigger is coincident, not leading
 - [Cheema, Faff & Szulczyk 2022 - How safe are the safe haven assets? (IRFA)](https://www.sciencedirect.com/science/article/pii/S1057521922001934) - safe-haven character is regime-dependent; Treasuries and gold failed across GFC vs COVID, the dollar held best
+- [Gold versus the Swiss Franc 1999-2021 (JRFM 15(6):241, 2022)](https://www.mdpi.com/1911-8074/15/6/241) - peer-reviewed DCC hedge ratios: the Swiss franc beats gold for global equity portfolios (>80% variance reduction at a negative, cheaper hedge ratio); the academic case for a CHF-led physical anchor
 - [Avdjiev, Bruno, Koch & Shin 2019 - The Dollar as a Global Risk Factor (IMF Econ Rev / BIS WP695)](https://www.bis.org/publ/work695.pdf) - a stronger broad dollar tightens global financial conditions; the dollar-beta / dollar-as-risk-factor anchor
 - [Lustig, Roussanov & Verdelhan 2011 - Common Risk Factors in Currency Markets (RFS / NBER w14082)](https://www.nber.org/system/files/working_papers/w14082/w14082.pdf) - dollar carry earns a premium for being long USD in bad global states
 - [Habib & Stracca 2011 - What makes a safe haven currency? (ECB WP1288)](https://www.ecb.europa.eu/pub/pdf/scpwps/ecbwp1288.pdf) - safe-haven currencies; the dollar's haven status is messier than the yen's or franc's
