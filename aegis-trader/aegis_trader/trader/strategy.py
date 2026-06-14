@@ -26,7 +26,7 @@ from aegis_trader.domain.rebalancer import rebalance
 from aegis_trader.domain.types import OrderIntent, OrderSide
 
 
-class RebalanceStrategyConfig(StrategyConfig, frozen=True):
+class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
     """Configuration for the RebalanceStrategy."""
 
     book: BookConfig
@@ -80,6 +80,8 @@ class RebalanceStrategy(Strategy):
     def _buffer_bar(self, bar: Bar) -> list[Bar] | None:
         """Buffer *bar* into its per-instrument window and return the window
         if enough lookback bars have accumulated, otherwise None."""
+        if self._contract is None:  # pragma: no cover — guard, on_bar already checks
+            return None
         instr_id = bar.bar_type.instrument_id
         buf = self._bars_buffer.setdefault(instr_id, [])
         buf.append(bar)
@@ -96,6 +98,8 @@ class RebalanceStrategy(Strategy):
 
     def _compute_target(self, buf: list[Bar]) -> pd.DataFrame:
         """Assemble a MarketDataBundle from *buf* and call compute_weights."""
+        assert self._contract is not None  # guarded by on_bar
+        assert self._bundle is not None  # guarded by on_bar
         # For Slice 1 the buffer is per-instrument with a 1:1 FIGI mapping.
         close_series = _bars_to_close_series(buf, self._contract.figis[0])
         bundle_data = MarketDataBundle({"Close": close_series})
