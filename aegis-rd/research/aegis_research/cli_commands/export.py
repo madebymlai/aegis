@@ -30,6 +30,7 @@ from research.aegis_research.configuration import (
     RunConfig,
     load_run_config,
 )
+from research.aegis_research.market_data.currency import required_fx_currencies
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.lock_run import ResolvedComponentParams, resolve_lock_run
@@ -111,6 +112,15 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
             "symbols": tuple(config.data.tickers),
             "required_arrays": tuple(_required_arrays(components)),
             "base_currency": config.portfolio.base_currency,
+            "required_fx_currencies": tuple(
+                sorted(
+                    required_fx_currencies(
+                        config.data.currency_by_symbol,
+                        config.portfolio.base_currency,
+                    )
+                )
+            ),
+            "currency_by_symbol": dict(config.data.currency_by_symbol),
             "timeframe": config.data.timeframe,
         }
         plan = {

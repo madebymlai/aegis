@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from aegis_runtime.currency import assemble_fx_rates, convert_arrays_to_base
+
 SYMBOL_LEVEL = "symbol"
 _EXPOSURE_TOLERANCE = 1e-9
 _DIRECTIONS = frozenset({"longonly", "shortonly", "both"})
@@ -29,6 +31,8 @@ class DataContract:
     symbols: tuple[str, ...]
     required_arrays: tuple[str, ...]
     base_currency: str
+    required_fx_currencies: tuple[str, ...]
+    currency_by_symbol: Mapping[str, str]
     timeframe: str
 
 
@@ -86,12 +90,12 @@ class ExecutionBundle:
         *,
         fx_series: Mapping[str, pd.Series] | None = None,
     ) -> pd.DataFrame:
-        del fx_series  # base-currency slice: currency conversion lands in a later issue.
         _validate_market_data(prices, self.contract)
         close = prices.array("Close")
+        base_prices = _convert_to_base_currency(prices, self.contract, fx_series, close.index)
         n_candidates = 1
         n_symbols = len(self.contract.symbols)
-        data = _slice_data(prices, close.index, self.contract.required_arrays)
+        data = _slice_data(base_prices, close.index, self.contract.required_arrays)
         indicator_outputs = _compute_indicators(
             self._plan.indicators,
             data=data,
@@ -171,7 +175,41 @@ def _slice_data(
     return MarketDataBundle({name: data.array(name).loc[index] for name in required_arrays})
 
 
+def _convert_to_base_currency(
+    prices: MarketDataBundle,
+    contract: DataContract,
+    fx_series: Mapping[str, pd.Series] | None,
+    index: pd.Index,
+) -> MarketDataBundle:
+    supplied_fx = {} if fx_series is None else dict(fx_series)
+    required_fx = set(contract.required_fx_currencies)
+    supplied = set(supplied_fx)
+    missing = sorted(required_fx - supplied)
+    extra = sorted(supplied - required_fx)
+    if missing or extra:
+        raise ValueError(
+            "FX series mismatch against bundle contract: "
+            f"missing={missing}, extra={extra}"
+        )
+    fx_rates = assemble_fx_rates(supplied_fx, index)
+    return MarketDataBundle(
+        convert_arrays_to_base(
+            prices.arrays,
+            contract.currency_by_symbol,
+            contract.base_currency,
+            fx_rates,
+        )
+    )
+
+
 def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> None:
+    currency_symbols = set(contract.currency_by_symbol)
+    symbol_set = set(contract.symbols)
+    if currency_symbols != symbol_set:
+        raise ValueError(
+            "bundle currency map symbols do not match contract symbols: "
+            f"currency_symbols={sorted(currency_symbols)}, symbols={sorted(symbol_set)}"
+        )
     required = set(contract.required_arrays)
     supplied = set(prices.arrays)
     missing_arrays = sorted(required - supplied)

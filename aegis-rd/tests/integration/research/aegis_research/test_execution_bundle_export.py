@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
-
 from aegis_runtime import MarketDataBundle as RuntimeMarketDataBundle
+
 from research.aegis_research import cli
 from research.aegis_research.component_registry import (
     ComponentSelection,
@@ -20,6 +20,7 @@ from research.aegis_research.component_registry import (
 )
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION, load_run_config
 from research.aegis_research.data import MarketDataBundle
+from research.aegis_research.market_data.currency import assemble_fx_rates, convert_bundle_to_base
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import (
@@ -64,13 +65,14 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
     prices = _market_data()
     expected = _rd_locked_weights(config_path, prices)
     package_name = _package_name_from_wheel(wheel_path)
-    sys.path.insert(0, str(wheel_path))
+    import_path = str(wheel_path.resolve())
+    sys.path.insert(0, import_path)
     try:
         module = importlib.import_module(package_name)
         bundle = module.get_bundle()
         actual = bundle.compute_weights(RuntimeMarketDataBundle(prices.arrays))
     finally:
-        sys.path.remove(str(wheel_path))
+        sys.path.remove(import_path)
         sys.modules.pop(package_name, None)
 
     assert bundle.contract.symbols == _SYMBOLS
@@ -84,6 +86,58 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
         bundle.compute_weights(
             RuntimeMarketDataBundle({"Close": prices.array("Close").rename(columns={"SPY": "BAD"})})
         )
+
+
+def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
+    tmp_path, monkeypatch
+) -> None:
+    _install_fixture_components(tmp_path)
+    usd_symbols = {symbol for symbol in _SYMBOLS if symbol not in {"SPY", "TLT"}}
+    currency_by_symbol = {
+        symbol: ("USD" if symbol in usd_symbols else "EUR") for symbol in _SYMBOLS
+    }
+    config_path = _write_locked_config(tmp_path, currency_by_symbol=currency_by_symbol)
+    monkeypatch.chdir(tmp_path)
+    _seed_candidate_store(config_path)
+
+    stdout = _Stdout()
+    assert cli._main(["export", "--config", str(config_path), "--out", "dist"], stdout=stdout, stderr=_Stdout()) == 0
+    wheel_path = Path(json.loads(stdout.text)["wheel"])
+
+    native_prices = _market_data()
+    fx_series = _fx_series(native_prices.array("Close").index)
+    fx_rates = assemble_fx_rates(fx_series, native_prices.array("Close").index)
+    base_prices = convert_bundle_to_base(
+        native_prices,
+        currency_by_symbol=currency_by_symbol,
+        base_currency="EUR",
+        fx_rates=fx_rates,
+    )
+    pd.testing.assert_series_equal(
+        base_prices.array("Close")["SPY"], native_prices.array("Close")["SPY"]
+    )
+    expected = _rd_locked_weights(config_path, base_prices)
+
+    package_name = _package_name_from_wheel(wheel_path)
+    import_path = str(wheel_path.resolve())
+    sys.path.insert(0, import_path)
+    try:
+        module = importlib.import_module(package_name)
+        bundle = module.get_bundle()
+        actual = bundle.compute_weights(
+            RuntimeMarketDataBundle(native_prices.arrays), fx_series=fx_series
+        )
+    finally:
+        sys.path.remove(import_path)
+        sys.modules.pop(package_name, None)
+
+    assert bundle.contract.base_currency == "EUR"
+    assert bundle.contract.required_fx_currencies == ("USD",)
+    assert bundle.contract.currency_by_symbol == currency_by_symbol
+    pd.testing.assert_frame_equal(actual, expected)
+
+    with pytest.raises(ValueError, match=r"missing=\['USD'\]"):
+        bundle.compute_weights(RuntimeMarketDataBundle(native_prices.arrays), fx_series={})
 
 
 def _assert_wheel_metadata(wheel_path: Path) -> None:
@@ -173,6 +227,13 @@ def _market_data() -> MarketDataBundle:
     return MarketDataBundle({"Close": close})
 
 
+def _fx_series(index: pd.Index) -> dict[str, pd.Series]:
+    base = np.arange(len(index), dtype=float)
+    # EURUSD quote: native USD per 1 EUR. A rising series makes USD-quoted
+    # symbols move differently after conversion while EUR symbols pass through.
+    return {"USD": pd.Series(1.10 + base * 0.0005, index=index, name="USD")}
+
+
 def _install_fixture_components(tmp_path: Path) -> None:
     for family in ("indicators", "strategies"):
         target = tmp_path / "research" / "components" / family
@@ -181,8 +242,11 @@ def _install_fixture_components(tmp_path: Path) -> None:
             shutil.copy(source, target / source.name)
 
 
-def _write_locked_config(tmp_path: Path) -> Path:
+def _write_locked_config(
+    tmp_path: Path, *, currency_by_symbol: dict[str, str] | None = None
+) -> Path:
     path = tmp_path / "locked_bundle.yaml"
+    currency_by_symbol = currency_by_symbol or dict.fromkeys(_SYMBOLS, "EUR")
     path.write_text(
         yaml.safe_dump(
             {
@@ -192,7 +256,10 @@ def _write_locked_config(tmp_path: Path) -> Path:
                 "lock": f"{_RUN_ID}:best",
                 "data": {
                     "source": "synthetic",
-                    "symbols": [{"ticker": symbol, "ccy": "EUR"} for symbol in _SYMBOLS],
+                    "symbols": [
+                        {"ticker": symbol, "ccy": currency_by_symbol[symbol]}
+                        for symbol in _SYMBOLS
+                    ],
                     "rows": 320,
                     "seed": 7,
                     "timeframe": "1D",
