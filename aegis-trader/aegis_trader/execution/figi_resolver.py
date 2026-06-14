@@ -18,7 +18,6 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
 
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -83,13 +82,10 @@ class _FigiMetadata:
     figi: str
     ticker: str
     exch_code: str
-    security_type: str
-    currency: str
 
 
 # ── transport ─────────────────────────────────────────────────────────────────
 
-# OpenFIGI transport: takes headers + jobs list, returns aligned response list.
 OpenFigiTransport = Callable[..., list[dict]]
 
 
@@ -218,8 +214,6 @@ def _extract_metadata(figi: str, response: dict) -> _FigiMetadata:
         figi=figi,
         ticker=ticker,
         exch_code=row.get("exchCode", "") or "",
-        security_type=row.get("securityType", "") or "",
-        currency=row.get("currency", "") or "",
     )
 
 

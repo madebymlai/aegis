@@ -36,7 +36,6 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
 from aegis_trader.trader.strategy import (
     RebalanceStrategy,
     RebalanceStrategyConfig,

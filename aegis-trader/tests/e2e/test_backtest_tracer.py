@@ -144,19 +144,11 @@ def _make_book() -> BookConfig:
     )
 
 
-def _stub_resolver(figis: set[str]) -> dict[str, "InstrumentId"]:
-    """Stub resolver for e2e tests: FIGI → InstrumentId via FIGI.VENUE convention.
-
-    Matches the TestInstrumentProvider instruments created by _make_instrument().
-    """
-    return {figi: InstrumentId.from_str(f"{figi}.{VENUE.value}") for figi in figis}
-
-
 class _StubFigiResolver(FigiInstrumentResolver):
     """Resolver that returns convention-based InstrumentIds for testing."""
 
     def resolve(self, figis, *, transport=None):
-        return _stub_resolver(figis)
+        return {figi: InstrumentId.from_str(f"{figi}.{VENUE.value}") for figi in figis}
 
 
 # ── test ──────────────────────────────────────────────────────────────────────
@@ -195,10 +187,9 @@ def test_tracer_e2e():
     engine.add_instrument(instrument)
     engine.add_data(bars)
 
-    config = RebalanceStrategyConfig(book=book)
+    config = RebalanceStrategyConfig(book=book, figi_resolver=_StubFigiResolver())
     strategy = RebalanceStrategy(config=config)
     strategy._bundle = bundle
-    strategy._figi_bimap = _stub_resolver(set(bundle.contract.figis))
     engine.add_strategy(strategy)
 
     engine.run()

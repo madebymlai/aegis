@@ -121,8 +121,8 @@ class RebalanceStrategy(Strategy):
 
     def _compute_target(self, buf: list[Bar]) -> pd.DataFrame:
         """Assemble a MarketDataBundle from *buf* and call compute_weights."""
-        assert self._contract is not None  # guarded by on_bar
-        assert self._bundle is not None  # guarded by on_bar
+        assert self._contract is not None
+        assert self._bundle is not None
         # For Slice 1 the buffer is per-instrument with a 1:1 FIGI mapping.
         close_series = _bars_to_close_series(buf, self._contract.figis[0])
         bundle_data = MarketDataBundle({"Close": close_series})
@@ -147,18 +147,10 @@ class RebalanceStrategy(Strategy):
             self._submit_order_intent(oi)
 
     def _figi_to_instr_id(self, figi: str) -> InstrumentId:
-        """Resolve a FIGI to a venue-specific InstrumentId.
-
-        Slice 3: uses the Security Master bimap built at ``on_start``.
-        """
         return self._figi_bimap[figi]
 
     def _resolve_bimap(self, figis: set[str]) -> dict[str, InstrumentId]:
-        """Resolve *figis* to a bimap via the Security Master.
-
-        Wraps the resolver to allow subclasses (Slice 2 e2e) to extend
-        the FIGI set before resolution.
-        """
+        """Resolve *figis* to a bimap via the Security Master."""
         return self._figi_resolver.resolve(figis)
 
     def _submit_order_intent(self, oi: OrderIntent) -> None:
