@@ -41,22 +41,34 @@ VBT_LEVERAGE_MODE = "eager"
 # unmodeled, ADR-0008). If the tripwire ever fires on a legitimate Run, raise k — never
 # reintroduce a tolerance (ADR-0011 amendment).
 _GROSS_CAP_LEVERAGE_MULTIPLIER = 5
-# Next-open execution: a target decided from bar t's close fills at bar t+1's open.
-# VBT's ``price="nextopen"`` sets ``from_ago=1`` (shift one bar) and fills at the open,
-# which is the canonical VBT way to avoid same-bar look-ahead without manual shifting.
-VBT_NEXT_OPEN_PRICE = "nextopen"
+# Next-close execution: a target decided from bar t's close fills at bar t+1's close.
+# VBT's ``price="nextclose"`` sets ``from_ago=1`` (shift one bar) and fills at the close,
+# which avoids same-bar look-ahead without manual shifting (same from_ago=1 guard as
+# nextopen — only the fill price within bar t+1 differs).
+# WARNING: this DIVERGES from ADR-0001, which specifies next-open execution byte-aligned
+# with Aegis Trader. Research now validates candidates on next-close fills; until the
+# trader is moved to next-close too (and ADR-0001 amended), promoted candidates will NOT
+# match live execution. A/B evidence: next-open vs next-close is a wash on the live
+# trend/carry/tail books (~0.01 Sharpe), so this trades a parity invariant for no P&L gain.
+VBT_NEXT_CLOSE_PRICE = "nextclose"
 
 
 def _execution_settings(open_: pd.DataFrame | None) -> dict[str, Any]:
     """Resolve VBT fill-timing kwargs.
 
-    With ``open_`` provided, fill at the next bar's open (``price="nextopen"`` ->
+    With ``open_`` provided, fill at the next bar's close (``price="nextclose"`` ->
     ``from_ago=1``) so a target decided from bar t's close cannot fill on bar t —
-    eliminating same-bar look-ahead. Without it, fall back to close fills.
+    eliminating same-bar look-ahead. Without it, fall back to same-bar close fills.
+
+    ``open_`` is still threaded through (and gates next-bar vs same-bar execution) even
+    though ``nextclose`` does not read the open price, to keep the call sites unchanged.
     """
     if open_ is None:
         return {}
-    return {"price": VBT_NEXT_OPEN_PRICE, "open": open_}
+    # nextclose fills against the close (already the engine's base series), so the open
+    # array is redundant — commented out, kept for provenance of the prior nextopen path.
+    # return {"price": VBT_NEXT_CLOSE_PRICE, "open": open_}
+    return {"price": VBT_NEXT_CLOSE_PRICE}
 
 
 def _resolve_fees(
