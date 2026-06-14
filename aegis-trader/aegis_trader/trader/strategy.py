@@ -13,13 +13,20 @@ Slice 3: FIGI→InstrumentId resolution via the Security Master (OpenFIGI +
 bounded exchange-code table).  A FIGI→InstrumentId bimap is built at
 ``on_start``; netting stays in FIGI space, resolution to venue-specific
 InstrumentIds only at the execution edge (order submission).
+
+RiskEngine guards (Slice 8): the ``RiskGuard`` computes per-instrument
+max-notional caps from NAV; the strategy logs every ``OrderDenied`` event
+so operators can trace rejected orders.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
+from nautilus_trader.model.events import OrderDenied
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
@@ -29,6 +36,7 @@ from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.rebalancer import rebalance
+from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
 from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
@@ -40,6 +48,7 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     book: BookConfig
     bundle_label: str = "synthetic"
     figi_resolver: FigiInstrumentResolver | None = None
+    risk_guard_config: RiskGuardConfig = RiskGuardConfig()
 
 
 class RebalanceStrategy(Strategy):
@@ -69,6 +78,7 @@ class RebalanceStrategy(Strategy):
             config.figi_resolver if config.figi_resolver is not None
             else FigiInstrumentResolver()
         )
+        self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
 
     def on_start(self) -> None:
         sleeve = self._book.sleeves[0]
@@ -232,6 +242,36 @@ class RebalanceStrategy(Strategy):
         # is available.  For now, foreign-currency instruments fall back to
         # raw notional (the rebalancer will not size them).
         return None
+
+    # -- RiskEngine callbacks ---------------------------------------------------
+
+    def on_order_denied(self, event: OrderDenied) -> None:
+        """Log every order denial from the RiskEngine.
+
+        A denial means the RiskEngine rejected the order before submission —
+        protects against oversized orders and other pre-trade violations.
+        """
+        self.log.warning(
+            f"OrderDenied: instrument={event.instrument_id!r} "
+            f"client_order_id={event.client_order_id!r} "
+            f"reason={event.reason!r}"
+        )
+
+    def risk_engine_config_dict(self, nav: float) -> dict[str, Any]:
+        """Return a dict suitable for ``RiskEngineConfig`` kwargs.
+
+        Computes per-instrument max notionals from the current NAV.
+        """
+        figis: list[str] = []
+        if self._contract is not None:
+            figis = list(self._contract.figis)
+        return self._risk_guard.risk_engine_config_dict(
+            nav=nav,
+            figis=figis,
+            default_venue=self._book.default_venue,
+        )
+
+    # -- order submission -------------------------------------------------------
 
     def _submit_order_intent(self, oi: OrderIntent) -> None:
         """Translate a domain OrderIntent into a Nautilus MARKET order and submit.
