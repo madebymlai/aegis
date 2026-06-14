@@ -34,7 +34,7 @@ the durable id; execution uses venue-specific symbology — which is exactly Nau
 - **Hand-authored provider→broker symbol map** (in Trader or carried per-bundle):
   rejected. This is the artifact that rots; a stale row silently routes an order to the
   wrong listing/currency. It is precisely the maintenance burden we set out to avoid.
-- **Author the Nautilus `InstrumentId` directly in the Book Manifest** (`IHYU.LSEETF`,
+- **Author the Nautilus `InstrumentId` directly in the Book Config** (`IHYU.LSEETF`,
   `BTC/USD.PAXOS`): rejected as the default, **kept as a documented escape hatch**.
   Human-readable and dependency-free, but it is a hand-authored per-instrument identity,
   broker-coupled (the venue is baked into the id), and does not stay provider/broker

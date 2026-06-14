@@ -90,3 +90,32 @@ at runtime.
   the written path and the `uv add` line. Bundles are regenerable from the Lock,
   so they are gitignored by default (commit them only if a tracked record of what
   has shipped to live is wanted).
+
+## Amendment (2026-06-14): the bundle is a pure transform; exposure caps move to Aegis Trader
+
+The bundle no longer applies the **Allocation Policy**. The contract above baked the gate
+into `compute_weights` to make each wheel a *distributable safe atom* — intrinsically
+compliant regardless of caller (the "Aegis Trader operator installs a bundle" stories of
+`aegis-rd-qcj`). Aegis is a single-operator personal project with exactly one bundle
+consumer — Aegis Trader's overlay, which always validates — and no distribution. With no
+untrusted caller, the self-gate guards a consumer that does not exist.
+
+`compute_weights` therefore becomes a **pure `data → signed weights` transform**, keeping
+only its I/O-contract guards (fail closed on symbol/array/FX-currency mismatch, a window
+shorter than `lookback_bars`, and a non-finite latest row). **Exposure caps (per-sleeve and
+book) move to the Aegis Trader Book Config** (operator config), and the single shared
+`aegis-runtime` Allocation Policy validator is invoked by the overlay — at **book scope**
+(the mandatory realized-book compliance invariant; Aegis Trader ADR-0002) and at **sleeve
+scope** (fail-closed attribution). No cap field is added to the `DataContract`; the only
+change to this contract is the bundle dropping the gate.
+
+The wheel still records the candidate's research-validated caps in its `BundleManifest` as
+**provenance** (they are part of the baked candidate config). The overlay asserts each
+Manifest cap **≤** the sleeve's research-validated cap and refuses to run a sleeve *hotter*
+than it was scored — a "don't trade beyond your evidence" guard, enforced in Trader and
+sourced from provenance, not baked into the wheel as enforcement.
+
+`aegis-runtime` still contains the Allocation Policy validator (shared by research and the
+overlay); only its invocation inside `compute_weights` is removed. The book-scope gate of
+ADR-0002 is the **rebalancer's** realized-book invariant, distinct from this per-sleeve
+validator though it reuses the same function.
