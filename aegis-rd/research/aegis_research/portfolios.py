@@ -8,11 +8,11 @@ import pandas as pd
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
-from research.aegis_research.allocation_policy import (
-    assert_signed_allocations_within_caps,
-)
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
+from research.aegis_research.exposure_validation import (
+    validate_exposure,
+)
 from research.aegis_research.market_data.currency import requires_conversion
 
 _SINGLE_CANDIDATE_ID = "single"
@@ -27,7 +27,7 @@ VBT_PF_METHOD = "from_orders"
 VBT_RESOLVED_SIZE_TYPE = "targetpercent"
 VBT_LEVERAGE_MODE = "eager"
 # Surplus buying power for the VBT engine, expressed as a multiple of gross_cap.
-# The Allocation Policy gate is the sole gross_cap enforcer (ADR-0007 amended 2026-06-09);
+# Exposure Validation is the sole gross_cap enforcer (ADR-0007 amended 2026-06-09);
 # giving the engine k x gross_cap of headroom (k >= 2) prevents the engine from silently
 # under-filling orders during compliant at-cap rebalance transitions that need >1x cap
 # of temporary buying power (e.g. sell A -> buy B when call_seq="auto" sequences buys
@@ -41,22 +41,38 @@ VBT_LEVERAGE_MODE = "eager"
 # unmodeled, ADR-0008). If the tripwire ever fires on a legitimate Run, raise k — never
 # reintroduce a tolerance (ADR-0011 amendment).
 _GROSS_CAP_LEVERAGE_MULTIPLIER = 5
-# Next-open execution: a target decided from bar t's close fills at bar t+1's open.
-# VBT's ``price="nextopen"`` sets ``from_ago=1`` (shift one bar) and fills at the open,
-# which is the canonical VBT way to avoid same-bar look-ahead without manual shifting.
+# VBT ``price`` strings: both ``nextopen``/``nextclose`` set ``from_ago=1`` (shift one
+# bar -> no same-bar look-ahead); they differ only in which price of bar t+1 they fill at.
 VBT_NEXT_OPEN_PRICE = "nextopen"
+VBT_NEXT_CLOSE_PRICE = "nextclose"
+# Fill-timing -> VBT ``price``. ``same_close`` maps to None: no ``price`` override, so the
+# engine fills at the current bar's close (from_ago=0, look-ahead — mechanics tests only).
+_VBT_PRICE_BY_FILL_TIMING: dict[str, str | None] = {
+    "next_open": VBT_NEXT_OPEN_PRICE,
+    "next_close": VBT_NEXT_CLOSE_PRICE,
+    "same_close": None,
+}
 
 
-def _execution_settings(open_: pd.DataFrame | None) -> dict[str, Any]:
-    """Resolve VBT fill-timing kwargs.
+def _execution_settings(
+    fill_timing: str, open_: pd.DataFrame | None
+) -> dict[str, Any]:
+    """Resolve VBT fill-timing kwargs from the explicit ``fill_timing`` decision.
 
-    With ``open_`` provided, fill at the next bar's open (``price="nextopen"`` ->
-    ``from_ago=1``) so a target decided from bar t's close cannot fill on bar t —
-    eliminating same-bar look-ahead. Without it, fall back to close fills.
+    ``next_close`` fills at bar t+1's close, ``next_open`` at bar t+1's open (the only
+    mode that reads ``open_``), ``same_close`` at bar t's own close. The open array is
+    supplied only when the timing actually needs it.
     """
-    if open_ is None:
+    price = _VBT_PRICE_BY_FILL_TIMING[fill_timing]
+    if price is None:
         return {}
-    return {"price": VBT_NEXT_OPEN_PRICE, "open": open_}
+    if price == VBT_NEXT_OPEN_PRICE:
+        if open_ is None:
+            raise ValueError(
+                "next_open fill_timing requires Open prices, but none were provided"
+            )
+        return {"price": price, "open": open_}
+    return {"price": price}
 
 
 def _resolve_fees(
@@ -109,7 +125,7 @@ def _build_portfolio(
         nonzero_only=False,
         unique_only=False,
     )
-    exec_kwargs = _execution_settings(open_frame)
+    exec_kwargs = _execution_settings(config.fill_timing, open_frame)
     pf = vbt.Portfolio.from_optimizer(
         price_frame,
         pfo,
@@ -138,7 +154,7 @@ def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
     """Exact tripwire: any NoCash rejection is a genuine bug.
 
     With surplus buying power (leverage = k x gross_cap, k >= 2) the engine always has
-    headroom to fill every Allocation-Policy-compliant order.  A NoCash rejection under
+    headroom to fill every Exposure-Limits-compliant order.  A NoCash rejection under
     these conditions is not a tolerance-graded under-fill — it is a genuine mis-fill
     that must fail closed so no Candidate is silently scored on a corrupted book.
     """
@@ -148,7 +164,7 @@ def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
     if (records["res_status_info"] == OrderStatusInfo.NoCash).any():
         raise ValueError(
             "portfolio simulation produced an unexpected NoCash order rejection: "
-            "the engine exhausted buying power on an Allocation-Policy-compliant book"
+            "the engine exhausted buying power on an Exposure-Limits-compliant book"
         )
 
 
@@ -255,7 +271,7 @@ def simulate_portfolio_batch(
         feature_name="Close",
     )
     _validate_allocations_frame(expanded_close, allocations)
-    assert_signed_allocations_within_caps(
+    validate_exposure(
         allocations,
         gross_cap=config.gross_cap,
         net_cap=config.net_cap,

@@ -294,6 +294,6 @@ def _candidate_rows(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": [data_symbol], "timeframe": "1D"},
-        allocation_policy={"target_exposure_cap": 1.0},
+        book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )

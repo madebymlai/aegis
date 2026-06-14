@@ -24,13 +24,10 @@ data/
 runs/*
 !runs/.gitkeep
 
-research/configs/*
-!research/configs/README.md
-
-research/components/indicators/*
-!research/components/indicators/README.md
-research/components/strategies/*
-!research/components/strategies/README.md
+# Track research configs/components, but not archived variants
+research/configs/**/archive/
+research/components/indicators/**/archive/
+research/components/strategies/**/archive/
 
 research/playbooks/indicators/*
 !research/playbooks/indicators/README.md

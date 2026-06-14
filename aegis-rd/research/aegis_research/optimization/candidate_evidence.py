@@ -15,7 +15,7 @@ from research.aegis_research.optimization.ranking import (
     OptimizationResult,
 )
 
-CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v3"
+CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v4"
 CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v2"
 OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v3"
 CANDIDATE_ROLES = ("best", "median", "worst")
@@ -33,7 +33,7 @@ def candidate_rows_from_result(
     source_identity: Mapping[str, Any],
     data_identity: Mapping[str, Any],
     hidden_params: Mapping[str, Any] | None = None,
-    allocation_policy: Mapping[str, Any] | None = None,
+    book_settings: Mapping[str, Any] | None = None,
     store_namespace: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one role-tagged candidate row per representative candidate.
@@ -47,7 +47,7 @@ def candidate_rows_from_result(
     source_identity = _canonical_mapping(source_identity)
     data_identity = _canonical_mapping(data_identity)
     hidden_params = _canonical_mapping(hidden_params or {})
-    allocation_policy = _canonical_mapping(allocation_policy or {})
+    book_settings = _canonical_mapping(book_settings or {})
     store_namespace = _canonical_mapping(store_namespace or {})
     candidates = (result.best, result.median, result.worst)
     rows = []
@@ -58,7 +58,7 @@ def candidate_rows_from_result(
             source_identity=source_identity,
             data_identity=data_identity,
             hidden_params=hidden_params,
-            allocation_policy=allocation_policy,
+            book_settings=book_settings,
         )
         rows.append(
             {
@@ -196,7 +196,7 @@ def _candidate_identity(
     source_identity: Mapping[str, Any],
     data_identity: Mapping[str, Any],
     hidden_params: Mapping[str, Any],
-    allocation_policy: Mapping[str, Any],
+    book_settings: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {
         "schema_version": CANDIDATE_IDENTITY_SCHEMA_VERSION,
@@ -204,7 +204,7 @@ def _candidate_identity(
         "data_identity": dict(data_identity),
         "params": dict(params),
         "hidden_params": dict(hidden_params),
-        "allocation_policy": dict(allocation_policy),
+        "book_settings": dict(book_settings),
     }
 
 

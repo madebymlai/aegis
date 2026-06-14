@@ -31,7 +31,7 @@ PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
 # facade-exported catalog; get_args keeps them one source.
 SignalPolicy = Literal["long_only_hysteresis"]
 SIGNAL_POLICIES = set(get_args(SignalPolicy))
-SignalExecutionTiming = Literal["next_open", "same_close"]
+SignalExecutionTiming = Literal["next_open", "next_close", "same_close"]
 SIGNAL_EXECUTION_TIMINGS = set(get_args(SignalExecutionTiming))
 # VBT's Data.align_index / align_columns contract.
 MissingPolicy = Literal["nan", "drop", "raise"]
@@ -253,6 +253,11 @@ class PortfolioConfig:
     init_cash: PositiveCash = 10_000.0
     fees: NonNegativeRate = 0.001
     slippage: NonNegativeRate = 0.0005
+    # Where a target decided from bar t's close fills: ``next_close`` (bar t+1 close,
+    # the default), ``next_open`` (bar t+1 open — the only mode needing the Open array),
+    # or ``same_close`` (bar t's own close — look-ahead, for mechanics tests). All non-
+    # ``next_open`` modes avoid same-bar look-ahead via the engine's from_ago=1 shift.
+    fill_timing: SignalExecutionTiming = "next_close"
     # The book's accounting currency. Prices are converted to it upstream in the
     # data layer; a non-base leg additionally pays ``fx_conversion_cost`` per trade.
     base_currency: str = "EUR"

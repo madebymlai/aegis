@@ -311,7 +311,7 @@ def test_component_registry_fingerprint_golden_bytes_pin() -> None:
         "strategies": {"demo.strategy": _strategy()},
     })
     assert registry.fingerprint == (
-        "a11ac6a321d333fef87850ad5525463129b0a75db34cdad639209b76e9dc3f1f"
+        "b2cd17f0d35ddd6ee252a66042058b6952200d47fc6608b8c4dc18d559fbd023"
     )
 
 

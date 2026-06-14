@@ -84,9 +84,13 @@ _Avoid_: score, stat, KPI
 The per-**Candidate** portfolio value series a custom **Metric** reads once from a simulated batch (`get_value`), normalized to a frame with one column per Candidate. It is the single read behind every custom Metric's derivations — drawdown curve, annualized return, daily returns, and benchmark-aligned returns — so a reader honours the one-read-per-batch contract by constructing one Equity Curve and asking it, never re-reading the portfolio.
 _Avoid_: NAV, equity, value series, balance
 
-**Allocation Policy**:
-The fail-closed gate that validates a **Strategy's** signed target-weight frame against the **Run's** **Gross Exposure** and **Net Exposure** caps before simulation. It neither sizes nor normalizes allocations: the VBT portfolio simulator sizes the signed weights directly and reads **Direction** from their sign. The policy only rejects books that breach the caps.
-_Avoid_: normalizer, sizing engine, portfolio layer
+**Exposure Validation**:
+The fail-closed check that validates a **Strategy's** signed target-weight frame against the **Run's** **Exposure Limits** — its **Gross Exposure** and **Net Exposure** caps and admissible **Direction** sign — before simulation, and again at live execution inside an Execution Bundle. It neither sizes nor normalizes allocations: the VBT portfolio simulator sizes the signed weights directly and reads **Direction** from their sign. It only rejects books that breach the limits.
+_Avoid_: allocation policy, normalizer, sizing engine, portfolio layer
+
+**Exposure Limits**:
+The per-**Run** caps a signed target-weight book must satisfy: the **Gross Exposure** cap (`Σ|wᵢ| ≤ gross_cap`), the **Net Exposure** cap (`|Σwᵢ| ≤ net_cap`), and the admissible **Direction** sign. Declared in the run's `portfolio:` config and enforced by **Exposure Validation**.
+_Avoid_: allocation policy, risk limits, mandate
 
 **Direction**:
 The side an allocation takes, expressed as the sign of a **Strategy's** target weight: a positive weight is long, a negative weight is short. A book with only positive weights is long-only, only negative is short-only, and a mix is long/short.

@@ -647,6 +647,44 @@ def test_manifest_rejects_unknown_callable_plumbing_key(
     assert "Extra inputs are not permitted" in message
 
 
+def test_component_with_lookback_entrypoint_has_lookback_true(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    path = root / "indicators" / "with_lookback.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# %% component overview\n"
+        "# Fixture with a lookback() entrypoint.\n"
+        "\n"
+        "# %% define component metadata\n"
+        f"COMPONENT_MANIFEST = {_manifest_for('indicators', 'demo.with_lookback')!r}\n"
+        "\n# %% main compute\n"
+        "def run():\n"
+        '    """Return fixture value."""\n'
+        "    return 'value'\n"
+        "\n"
+        "def lookback(**params):\n"
+        '    """Return warmup bars for this component."""\n'
+        "    return 42\n"
+    )
+
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    definition = registry.get(ComponentSelection("indicators", "demo.with_lookback"))
+    assert definition.has_lookback is True
+    assert definition.lookback_entrypoint_name == "lookback"
+    lookback_fn = definition.load_lookback()
+    assert lookback_fn(window=10) == 42
+
+
+def test_component_without_lookback_entrypoint_has_lookback_false(tmp_path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_component(root / "indicators" / "no_lookback.py", "indicators", "demo.no_lookback")
+
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+    definition = registry.get(ComponentSelection("indicators", "demo.no_lookback"))
+    assert definition.has_lookback is False
+    assert definition.lookback_entrypoint_name is None
+
+
 def test_stray_module_level_callable_assignment_is_inert(tmp_path) -> None:
     root = tmp_path / "research" / "components"
     path = root / "indicators" / "stray_assignment.py"

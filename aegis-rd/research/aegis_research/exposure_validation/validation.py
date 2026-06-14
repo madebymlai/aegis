@@ -24,7 +24,7 @@ _EXPOSURE_TOLERANCE = 1e-9
 _SIGN_GUARDS: dict[str, str] = {"longonly": "≥ 0", "shortonly": "≤ 0", "both": "any"}
 
 
-def assert_signed_allocations_within_caps(
+def validate_exposure(
     allocations: pd.DataFrame,
     *,
     gross_cap: float,

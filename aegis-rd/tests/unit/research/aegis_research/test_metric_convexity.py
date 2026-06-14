@@ -154,3 +154,31 @@ def test_unavailable_benchmark_degrades_to_nan_not_error(monkeypatch: pytest.Mon
     assert np.isnan(vals[CRASH_DAY_RETURN_ID]["convex"])
     # The intrinsic skew metric needs no benchmark and still classifies the poles.
     assert vals[QUARTERLY_RETURN_SKEW_ID]["convex"] > 0.0
+
+
+def test_lazy_benchmark_close_conforms_tz_to_a_tz_aware_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lazily-pulled benchmark must carry the target index's tz.
+
+    yf-sourced panels have a tz-aware (UTC) value index. The pulled close is reindexed onto that
+    index downstream (``aligned_benchmark_returns``); a tz-naive benchmark index reindexes to
+    all-NaN, silently NaN-ing every benchmark-relative metric. Regression for that mismatch: the
+    conformed close must reindex onto a tz-aware target with no NaN gaps.
+    """
+    from vectorbtpro import vbt
+
+    target = pd.bdate_range("2021-01-04", periods=10, tz="UTC")
+    pulled = pd.Series(np.linspace(100.0, 110.0, len(target)), index=target)
+
+    class _FakeData:
+        @staticmethod
+        def get(field: str) -> pd.Series:
+            return pulled
+
+    monkeypatch.setattr(vbt.YFData, "pull", lambda *args, **kwargs: _FakeData())
+    cx._BENCHMARK_CACHE.clear()
+
+    close = cx._lazy_benchmark_close("SPY", target)
+
+    assert close.index.tz is not None
+    assert close.reindex(target).notna().all()
+    cx._BENCHMARK_CACHE.clear()

@@ -1,7 +1,7 @@
 # %% component overview
 # Parameterized moving-average crossover strategy component.
-# Emits a single allocation-native `active` array consumed by the allocation policy
-# layer; portfolio sizing, direction, and timing remain centrally configured.
+# Emits a single allocation-native `active` array consumed by Exposure Validation;
+# portfolio sizing, direction, and timing remain centrally configured.
 
 # %% imports
 import numpy as np

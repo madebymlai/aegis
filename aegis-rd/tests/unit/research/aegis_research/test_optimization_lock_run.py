@@ -140,7 +140,7 @@ def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        allocation_policy={"target_exposure_cap": 1.0},
+        book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     store.insert_completed_run(
@@ -171,7 +171,7 @@ def _candidate_rows() -> list[dict[str, object]]:
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
-        allocation_policy={"target_exposure_cap": 1.0},
+        book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
 

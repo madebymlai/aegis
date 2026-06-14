@@ -15,6 +15,7 @@ name = "aegis-rd"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aegis-runtime" },
     { name = "dill" },
     { name = "numpy" },
     { name = "pandas" },
@@ -40,6 +41,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aegis-runtime", editable = "../aegis-runtime" },
     { name = "dill" },
     { name = "numpy" },
     { name = "pandas" },
@@ -61,6 +63,21 @@ dev = [
     { name = "platformdirs", specifier = ">=4.9.6" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "tiktoken", specifier = ">=0.13.0" },
+]
+
+[[package]]
+name = "aegis-runtime"
+version = "0.1.0"
+source = { editable = "../aegis-runtime" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pandas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy" },
+    { name = "pandas" },
 ]
 
 [[package]]
