@@ -5,12 +5,14 @@ import json
 import shutil
 import sys
 import zipfile
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from aegis_runtime import ExecutionBundle as RuntimeExecutionBundle
 from aegis_runtime import MarketDataBundle as RuntimeMarketDataBundle
 
 from research.aegis_research import cli
@@ -54,26 +56,31 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
     monkeypatch.chdir(tmp_path)
     _seed_candidate_store(config_path)
 
-    stdout = _Stdout()
-    assert cli._main(["export", "--config", str(config_path), "--out", "dist"], stdout=stdout, stderr=_Stdout()) == 0
-    payload = json.loads(stdout.text)
+    payload = _export_bundle(config_path, out_dir="dist")
     wheel_path = Path(payload["wheel"])
     assert wheel_path.name == "aegis_exec_tests_momentum_rotator_01234567-1.0.0-py3-none-any.whl"
     assert payload["install"] == f"uv add {wheel_path}"
     _assert_wheel_metadata(wheel_path)
+    _assert_entry_point_metadata(
+        wheel_path,
+        name="tests.momentum_rotator@bundle-fidelity-run:best",
+        value="aegis_exec_tests_momentum_rotator_01234567:bundle",
+    )
 
     prices = _market_data()
     expected = _rd_locked_weights(config_path, prices)
     package_name = _package_name_from_wheel(wheel_path)
     import_path = str(wheel_path.resolve())
     sys.path.insert(0, import_path)
+    importlib.invalidate_caches()
     try:
         module = importlib.import_module(package_name)
         bundle = module.get_bundle()
         actual = bundle.compute_weights(RuntimeMarketDataBundle(prices.arrays))
     finally:
         sys.path.remove(import_path)
-        sys.modules.pop(package_name, None)
+        _remove_imported_package(package_name)
+        importlib.invalidate_caches()
 
     assert bundle.contract.symbols == _SYMBOLS
     assert bundle.contract.required_arrays == ("Close",)
@@ -100,9 +107,8 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
     monkeypatch.chdir(tmp_path)
     _seed_candidate_store(config_path)
 
-    stdout = _Stdout()
-    assert cli._main(["export", "--config", str(config_path), "--out", "dist"], stdout=stdout, stderr=_Stdout()) == 0
-    wheel_path = Path(json.loads(stdout.text)["wheel"])
+    payload = _export_bundle(config_path, out_dir="dist")
+    wheel_path = Path(payload["wheel"])
 
     native_prices = _market_data()
     fx_series = _fx_series(native_prices.array("Close").index)
@@ -121,6 +127,7 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
     package_name = _package_name_from_wheel(wheel_path)
     import_path = str(wheel_path.resolve())
     sys.path.insert(0, import_path)
+    importlib.invalidate_caches()
     try:
         module = importlib.import_module(package_name)
         bundle = module.get_bundle()
@@ -129,7 +136,8 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
         )
     finally:
         sys.path.remove(import_path)
-        sys.modules.pop(package_name, None)
+        _remove_imported_package(package_name)
+        importlib.invalidate_caches()
 
     assert bundle.contract.base_currency == "EUR"
     assert bundle.contract.required_fx_currencies == ("USD",)
@@ -140,11 +148,95 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
         bundle.compute_weights(RuntimeMarketDataBundle(native_prices.arrays), fx_series={})
 
 
+def test_multiple_exported_bundles_are_discovered_by_entry_points(tmp_path, monkeypatch) -> None:
+    _install_fixture_components(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    out_dir = Path("dist")
+
+    first_config = _write_locked_config(
+        tmp_path, path_name="locked_bundle_a.yaml", run_id="bundle-run-a"
+    )
+    second_config = _write_locked_config(
+        tmp_path, path_name="locked_bundle_b.yaml", run_id="bundle-run-b"
+    )
+    _seed_candidate_store(first_config, run_id="bundle-run-a", candidate_key="aaaa111122223333")
+    _seed_candidate_store(second_config, run_id="bundle-run-b", candidate_key="bbbb111122223333")
+
+    _export_bundle(first_config, out_dir=out_dir)
+    _export_bundle(second_config, out_dir=out_dir)
+
+    wheels = sorted(out_dir.glob("*.whl"))
+    assert [wheel.name for wheel in wheels] == [
+        "aegis_exec_tests_momentum_rotator_aaaa1111-1.0.0-py3-none-any.whl",
+        "aegis_exec_tests_momentum_rotator_bbbb1111-1.0.0-py3-none-any.whl",
+    ]
+
+    names = {
+        "tests.momentum_rotator@bundle-run-a:best",
+        "tests.momentum_rotator@bundle-run-b:best",
+    }
+    discovered = _discover_bundle_entry_points(wheels, names)
+
+    assert set(discovered) == names
+    assert all(isinstance(bundle, RuntimeExecutionBundle) for bundle in discovered.values())
+    assert (
+        discovered["tests.momentum_rotator@bundle-run-a:best"].manifest.candidate_key
+        == "aaaa111122223333"
+    )
+    assert (
+        discovered["tests.momentum_rotator@bundle-run-b:best"].manifest.candidate_key
+        == "bbbb111122223333"
+    )
+
+
+def test_export_lengthens_candidate_prefix_when_bundle_name_would_collide(
+    tmp_path, monkeypatch
+) -> None:
+    _install_fixture_components(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    out_dir = Path("dist")
+
+    first_config = _write_locked_config(
+        tmp_path, path_name="locked_bundle_first.yaml", run_id="bundle-collision-a"
+    )
+    second_config = _write_locked_config(
+        tmp_path, path_name="locked_bundle_second.yaml", run_id="bundle-collision-b"
+    )
+    _seed_candidate_store(
+        first_config, run_id="bundle-collision-a", candidate_key="deadbeef00001111"
+    )
+    _seed_candidate_store(
+        second_config, run_id="bundle-collision-b", candidate_key="deadbeef11112222"
+    )
+
+    _export_bundle(first_config, out_dir=out_dir)
+    _export_bundle(second_config, out_dir=out_dir)
+
+    assert [wheel.name for wheel in sorted(out_dir.glob("*.whl"))] == [
+        "aegis_exec_tests_momentum_rotator_deadbeef-1.0.0-py3-none-any.whl",
+        "aegis_exec_tests_momentum_rotator_deadbeef1-1.0.0-py3-none-any.whl",
+    ]
+
+
+def _export_bundle(config_path: Path, *, out_dir: Path | str) -> dict[str, str]:
+    stdout = _Stdout()
+    exit_code = cli._main(
+        ["export", "--config", str(config_path), "--out", str(out_dir)],
+        stdout=stdout,
+        stderr=_Stdout(),
+    )
+    assert exit_code == 0
+    payload: dict[str, str] = json.loads(stdout.text)
+    return payload
+
+
 def _assert_wheel_metadata(wheel_path: Path) -> None:
     with zipfile.ZipFile(wheel_path) as zf:
         metadata_path = next(name for name in zf.namelist() if name.endswith(".dist-info/METADATA"))
         metadata = zf.read(metadata_path).decode()
-        manifest_path = next(name for name in zf.namelist() if name.endswith("bundle_manifest.json"))
+        manifest_path = next(
+            name for name in zf.namelist() if name.endswith("bundle_manifest.json")
+        )
         manifest = json.loads(zf.read(manifest_path))
 
     assert "Name: aegis-exec-tests-momentum-rotator-01234567" in metadata
@@ -152,6 +244,40 @@ def _assert_wheel_metadata(wheel_path: Path) -> None:
     assert "Requires-Dist: aegis-runtime" in metadata
     assert manifest["manifest"]["run_id"] == _RUN_ID
     assert manifest["manifest"]["component_source_hashes"]
+
+
+def _assert_entry_point_metadata(wheel_path: Path, *, name: str, value: str) -> None:
+    with zipfile.ZipFile(wheel_path) as zf:
+        entry_points_path = next(
+            name for name in zf.namelist() if name.endswith(".dist-info/entry_points.txt")
+        )
+        entry_points = zf.read(entry_points_path).decode()
+
+    assert "[aegis.execution_bundles]" in entry_points
+    assert f"{name} = {value}" in entry_points
+
+
+def _discover_bundle_entry_points(
+    wheels: list[Path], names: set[str]
+) -> dict[str, RuntimeExecutionBundle]:
+    entries = [str(wheel) for wheel in wheels]
+    sys.path[:0] = entries
+    importlib.invalidate_caches()
+    packages = [_package_name_from_wheel(wheel) for wheel in wheels]
+    try:
+        entry_points = importlib_metadata.entry_points(group="aegis.execution_bundles")
+        return {ep.name: ep.load() for ep in entry_points if ep.name in names}
+    finally:
+        del sys.path[: len(entries)]
+        for package in packages:
+            _remove_imported_package(package)
+        importlib.invalidate_caches()
+
+
+def _remove_imported_package(package: str) -> None:
+    for module_name in list(sys.modules):
+        if module_name == package or module_name.startswith(f"{package}."):
+            sys.modules.pop(module_name, None)
 
 
 def _rd_locked_weights(config_path: Path, prices: MarketDataBundle) -> pd.DataFrame:
@@ -174,14 +300,16 @@ def _rd_locked_weights(config_path: Path, prices: MarketDataBundle) -> pd.DataFr
     return locked.droplevel([name for name in locked.columns.names if name != "symbol"], axis=1)
 
 
-def _seed_candidate_store(config_path: Path) -> None:
+def _seed_candidate_store(
+    config_path: Path, *, run_id: str = _RUN_ID, candidate_key: str = _CANDIDATE_KEY
+) -> None:
     registry = discover_component_registry()
     config = load_run_config(config_path, component_registry=registry).config
     provenance = {"source": _source_provenance(registry)}
     row = {
         "role": "best",
         "rank": 1,
-        "candidate_key": _CANDIDATE_KEY,
+        "candidate_key": candidate_key,
         "params": {FIXED_CANDIDATE_PARAM: 0},
         "identity": {"test": "bundle-fidelity"},
         "score": 1.0,
@@ -191,20 +319,32 @@ def _seed_candidate_store(config_path: Path) -> None:
     }
     rows = [dict(row, role=role, rank=i) for i, role in enumerate(("best", "median", "worst"), 1)]
     with CandidateStore(candidate_store_path(config)) as store:
-        store.insert_completed_run(run_id=_RUN_ID, candidate_rows=rows, provenance=provenance)
+        store.insert_completed_run(run_id=run_id, candidate_rows=rows, provenance=provenance)
 
 
 def _source_provenance(registry) -> dict[str, object]:
     return {
-        "strategy": _runtime(registry, "strategies", "tests.momentum_rotator", "strategy", _STRATEGY_PARAMS),
+        "strategy": _runtime(
+            registry, "strategies", "tests.momentum_rotator", "strategy", _STRATEGY_PARAMS
+        ),
         "indicators": [
-            _runtime(registry, "indicators", "tests.momentum_score", "tests.momentum_score", _MOMENTUM_PARAMS),
-            _runtime(registry, "indicators", "tests.realized_vol", "tests.realized_vol", _VOL_PARAMS),
+            _runtime(
+                registry,
+                "indicators",
+                "tests.momentum_score",
+                "tests.momentum_score",
+                _MOMENTUM_PARAMS,
+            ),
+            _runtime(
+                registry, "indicators", "tests.realized_vol", "tests.realized_vol", _VOL_PARAMS
+            ),
         ],
     }
 
 
-def _runtime(registry, family: str, component_id: str, slot: str, params: dict[str, object]) -> dict[str, object]:
+def _runtime(
+    registry, family: str, component_id: str, slot: str, params: dict[str, object]
+) -> dict[str, object]:
     definition = registry.get(ComponentSelection(family, component_id))
     return {
         "family": family,
@@ -243,9 +383,13 @@ def _install_fixture_components(tmp_path: Path) -> None:
 
 
 def _write_locked_config(
-    tmp_path: Path, *, currency_by_symbol: dict[str, str] | None = None
+    tmp_path: Path,
+    *,
+    path_name: str = "locked_bundle.yaml",
+    run_id: str = _RUN_ID,
+    currency_by_symbol: dict[str, str] | None = None,
 ) -> Path:
-    path = tmp_path / "locked_bundle.yaml"
+    path = tmp_path / path_name
     currency_by_symbol = currency_by_symbol or dict.fromkeys(_SYMBOLS, "EUR")
     path.write_text(
         yaml.safe_dump(
@@ -253,7 +397,7 @@ def _write_locked_config(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "locked_bundle",
                 "output_dir": "runs",
-                "lock": f"{_RUN_ID}:best",
+                "lock": f"{run_id}:best",
                 "data": {
                     "source": "synthetic",
                     "symbols": [
@@ -288,7 +432,9 @@ def _write_locked_config(
 
 def _package_name_from_wheel(path: Path) -> str:
     with zipfile.ZipFile(path) as zf:
-        packages = sorted(name.split("/")[0] for name in zf.namelist() if name.endswith("__init__.py"))
+        packages = sorted(
+            name.split("/")[0] for name in zf.namelist() if name.endswith("__init__.py")
+        )
     return packages[0]
 
 
