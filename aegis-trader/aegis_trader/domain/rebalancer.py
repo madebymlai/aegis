@@ -22,6 +22,15 @@ For sizing (Slice 5):
 - EUR notional = |net weight| × NAV-in-EUR → native share quantity via FX,
   GBp pence factor, and increment rounding.
 - Sub-increment quantities are silently dropped (no OrderIntent emitted).
+
+Slice 7 adds reconciliation — integrity-halt + quarantine:
+- *held_positions* are broker positions for FIGIs not covered by any sleeve
+  contract.  They are included in the gate union (cap checks) but excluded
+  from the trade set — no orders are generated for them.
+- A quarantined position that breaches per_name_cap is unfixable and causes a
+  fail-closed error.
+- The caller receives a ``RebalanceResult`` with both the orders to submit
+  and the set of quarantined FIGIs (for alerting).
 """
 
 from __future__ import annotations
@@ -30,7 +39,7 @@ import pandas as pd
 
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.sizing import InstrumentSizing, size_order
-from aegis_trader.domain.types import Figi, OrderIntent, OrderSide, SleeveName
+from aegis_trader.domain.types import Figi, OrderIntent, OrderSide, RebalanceResult, SleeveName
 
 _ZERO_GUARD = 1e-12
 
@@ -41,10 +50,11 @@ def rebalance(
     book: BookConfig,
     *,
     realized_weights: dict[str, float] | None = None,
+    held_positions: dict[str, float] | None = None,
     instrument_metas: dict[str, InstrumentSizing] | None = None,
     fx_rates: dict[str, float] | None = None,
     prices: dict[str, float] | None = None,
-) -> list[OrderIntent]:
+) -> RebalanceResult:
     """Convert per-sleeve target weights into provider-agnostic orders.
 
     *sleeve_targets* maps each sleeve name to its most-recent target-weight
@@ -56,8 +66,15 @@ def rebalance(
     budget-scaled weights are netted per FIGI.
 
     *realized_weights* (Slice 4) maps FIGI string → current realized weight
-    (signed fraction of NAV).  When supplied, the realised book is gated
-    against caps and drift bands before any orders are emitted.
+    (signed fraction of NAV) for tradeable instruments.  When supplied, the
+    realised book is gated against caps and drift bands before any orders are
+    emitted.
+
+    *held_positions* (Slice 7) maps FIGI string → signed weight for broker
+    positions NOT covered by any sleeve in *book*.  These are included in the
+    gate union (cap checks, aggregate drift) but are never traded — orders are
+    only generated for FIGIs with sleeve targets.  Held FIGIs that breach
+    per_name_cap fail closed (unfixable).
 
     *instrument_metas* maps FIGI → InstrumentSizing (currency, size_increment).
     *fx_rates* maps currency → units of that currency per 1 EUR.
@@ -71,6 +88,9 @@ def rebalance(
     """
     if nav <= 0:
         raise ValueError(f"NAV must be positive; got {nav!r}")
+
+    held = held_positions or {}
+    quarantined: list[str] = []
 
     # ── Step 1: net target weights across sleeves ──
     net_target_by_figi: dict[str, float] = {}
@@ -93,12 +113,23 @@ def rebalance(
 
     # ── Step 2: build the post-execution book projection ──
     rw = realized_weights or {}
-    all_figis = net_target_by_figi.keys() | rw.keys()
-    post_book: dict[str, float] = dict(rw)  # start from realized
+    all_figis = net_target_by_figi.keys() | rw.keys() | held.keys()
+    post_book: dict[str, float] = dict(rw)  # start from realised
+
+    # Add held positions to post_book (included in gate, excluded from trading)
+    for figi_key, held_w in held.items():
+        post_book[figi_key] = post_book.get(figi_key, 0.0) + held_w
 
     orders: list[OrderIntent] = []
 
     for figi_key in all_figis:
+        # ── held-only FIGIs are quarantined — no orders, but gate counts them ──
+        is_held_only = figi_key in held and figi_key not in net_target_by_figi
+        if is_held_only:
+            quarantined.append(figi_key)
+            # held positions are already in post_book → skip order generation
+            continue
+
         target_w = net_target_by_figi.get(figi_key, 0.0)
         realized_w = rw.get(figi_key, 0.0)
         has_realized = figi_key in rw
@@ -146,10 +177,23 @@ def rebalance(
     # ── Step 3: cap gate on the realised book ──
     # Per-name cap: if realised breaches and band suppressed the corrective
     # trade, widen-to-compliance (bring to cap boundary).
-    _gate_per_name_caps(rw, targets=net_target_by_figi, post_book=post_book,
-                        orders=orders, book=book, nav=nav,
-                        instrument_metas=instrument_metas, fx_rates=fx_rates,
-                        prices=prices)
+    _gate_per_name_caps(
+        rw, targets=net_target_by_figi, post_book=post_book,
+        orders=orders, book=book, nav=nav,
+        instrument_metas=instrument_metas, fx_rates=fx_rates,
+        prices=prices,
+    )
+
+    # ── Step 3b: per-name cap gate for quarantined positions ──
+    if book.per_name_cap is not None and held:
+        for figi_key, held_w in held.items():
+            if abs(held_w) > book.per_name_cap + _ZERO_GUARD:
+                raise ValueError(
+                    f"FIGI {figi_key}: quarantined position "
+                    f"|weight|={abs(held_w):.6f} exceeds per-name cap "
+                    f"{book.per_name_cap:.6f} — unfixable (cannot trade "
+                    f"quarantined instrument)"
+                )
 
     # ── Step 4: gross / net caps (always checked on post_book) ──
     _gate_book_caps(post_book, book)
@@ -157,14 +201,20 @@ def rebalance(
     # ── Step 5: aggregate drift trip ──
     if rw and book.aggregate_drift_threshold is not None:
         agg_drift = sum(abs(net_target_by_figi.get(f, 0.0) - rw.get(f, 0.0))
-                        for f in all_figis)
+                        for f in net_target_by_figi.keys() | rw.keys())
+        # Also include drift from held positions (held vs zero target)
+        for f, held_w in held.items():
+            agg_drift += abs(0.0 - held_w)  # held has no target
         if agg_drift > book.aggregate_drift_threshold:
             raise ValueError(
                 f"Aggregate drift {agg_drift:.6f} exceeds "
                 f"threshold {book.aggregate_drift_threshold:.6f}"
             )
 
-    return orders
+    return RebalanceResult(
+        orders=tuple(orders),
+        quarantined=tuple(quarantined),
+    )
 
 
 def _size_if_configured(

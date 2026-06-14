@@ -49,3 +49,16 @@ class OrderIntent:
     figi: Figi
     side: OrderSide
     quantity: float  # signed-then-abs'd; positive means |weight·NAV/priceref|
+
+
+@dataclass(frozen=True)
+class RebalanceResult:
+    """Result of a rebalance: orders to submit plus quarantined FIGIs.
+
+    *quarantined* lists the FIGIs of held positions that are not covered by
+    any sleeve in the BookConfig — they are counted in the gate but excluded
+    from trading.
+    """
+
+    orders: tuple[OrderIntent, ...]
+    quarantined: tuple[str, ...]

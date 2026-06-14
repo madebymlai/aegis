@@ -24,6 +24,13 @@ Slice 6 — cadence (per-sleeve timeframe + calendar-aware):
 - Calendar-aware: orders emitted only for instruments whose venue is open
   (had a fresh bar during the completed period).
 - Drift is evaluated every period even on an unchanged target.
+
+Slice 7 — reconciliation (integrity-halt + quarantine):
+- Account-integrity check at startup: cache health, account ID, NAV/cash
+  consistency.  A failed check halts the book globally.
+- Unknown held positions (broker positions for FIGIs not in any sleeve
+  contract) are quarantined: included in the gate but never auto-traded,
+  logged as alerts.
 """
 
 from __future__ import annotations
@@ -42,10 +49,11 @@ from nautilus_trader.trading.strategy import Strategy
 from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
 from aegis_trader.domain.book_config import BookConfig
+from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
 from aegis_trader.domain.rebalancer import rebalance
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.sizing import InstrumentSizing
-from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
+from aegis_trader.domain.types import OrderIntent, OrderSide, RebalanceResult, SleeveName
 from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
 
 _NS_PER_DAY: int = 86_400_000_000_000
@@ -99,6 +107,9 @@ class RebalanceStrategy(Strategy):
         )
         # ── Slice 8: RiskEngine guards ───────────────────────────────────
         self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
+        # ── Slice 7: integrity + quarantine ──────────────────────────────
+        self._integrity_report: IntegrityReport | None = None
+        self._is_halted: bool = False
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -125,6 +136,35 @@ class RebalanceStrategy(Strategy):
         if not self._sleeve_to_bundle:
             self.log.warning("No sleeves registered; strategy will idle.")
             return
+
+        # ── Slice 7: account-integrity check at startup ──────────────────
+        venue = Venue(self._book.default_venue)
+        try:
+            equity_map = self.portfolio.equity(venue=venue)
+            base_ccy = Currency.from_str(self._book.base_currency)
+            nav = float(equity_map.get(base_ccy, Money(0, base_ccy)).as_double())
+            cash = float(self.portfolio.balances_locked_committed(venue=venue).get(
+                base_ccy, Money(0, base_ccy),
+            ).as_double())
+        except Exception:
+            nav = 0.0
+            cash = 0.0
+
+        cache_healthy = len(self.cache.instruments()) > 0
+        self._integrity_report = check_account_integrity(
+            nav=nav,
+            cash=cash,
+            cache_healthy=cache_healthy,
+        )
+        if not self._integrity_report.healthy:
+            self.log.error(
+                f"Integrity check FAILED: {self._integrity_report.reason}. "
+                f"HALTING the book."
+            )
+            self._is_halted = True
+            return
+
+        self.log.info(f"Integrity check passed: NAV={nav:.2f}, cash={cash:.2f}")
 
         # Build FIGI → venue map from sleeve configs
         for sleeve in self._book.sleeves:
@@ -175,7 +215,7 @@ class RebalanceStrategy(Strategy):
         submits orders that will fill at the *new* period's close — one-bar
         execution lag.
         """
-        if not self._sleeve_to_bundle:
+        if not self._sleeve_to_bundle or self._is_halted:
             return
 
         instr_id = bar.bar_type.instrument_id
@@ -230,7 +270,14 @@ class RebalanceStrategy(Strategy):
         FX rates from Nautilus and passes them through to the rebalancer for
         sizing (EUR notional → native share quantity with GBp pence + increment
         rounding).
+
+        Slice 7: collects held positions (broker positions for FIGIs not in any
+        sleeve contract) and passes them to the rebalancer for quarantine;
+        quarantined FIGIs are logged as alerts.
         """
+        if self._is_halted:
+            return
+
         pending: dict[SleeveName, pd.DataFrame] = {}
 
         for sleeve in self._book.sleeves:
@@ -277,18 +324,27 @@ class RebalanceStrategy(Strategy):
         nav = float(equity_map[base_ccy].as_double())
 
         instrument_metas, fx_rates, prices = self._collect_sizing_params(venue)
+        held_positions = self._collect_held_positions(nav, venue)
 
-        orders = rebalance(
+        result: RebalanceResult = rebalance(
             pending,
             nav,
             self._book,
             instrument_metas=instrument_metas,
             fx_rates=fx_rates,
             prices=prices,
+            held_positions=held_positions,
         )
 
+        # Slice 7: alert on quarantined instruments
+        if result.quarantined:
+            self.log.warning(
+                f"Quarantined instruments (held but not in any sleeve): "
+                f"{', '.join(result.quarantined)}"
+            )
+
         # Calendar-aware: only emit orders for FIGIs with a fresh bar
-        for oi in orders:
+        for oi in result.orders:
             if oi.figi.value not in self._period_fresh_figis:
                 self.log.info(
                     f"Skipping {oi.side.value} {oi.quantity:.0f} "
@@ -357,6 +413,62 @@ class RebalanceStrategy(Strategy):
                 fx_rates[currency] = rate
 
         return instrument_metas, fx_rates, prices
+
+    def _collect_held_positions(
+        self, nav: float, venue: Venue,
+    ) -> dict[str, float]:
+        """Collect broker positions for FIGIs NOT in any sleeve contract.
+
+        Returns a dict of FIGI → signed weight (position value / NAV).
+        Positions for FIGIs that are covered by at least one sleeve contract
+        are excluded — they are tracked via ``realized_weights`` instead.
+
+        An empty dict when no held positions exist or NAV ≤ 0.
+        """
+        if nav <= 0:
+            return {}
+
+        # Collect all FIGIs covered by any sleeve
+        tracked_figis: set[str] = set()
+        for contract in self._sleeve_to_contract.values():
+            tracked_figis.update(contract.figis)
+
+        held: dict[str, float] = {}
+        positions = self.cache.positions()
+        if not positions:
+            return {}
+
+        for pos in positions:
+            if pos.is_flat:
+                continue
+            instr_id = pos.instrument_id
+            # Resolve InstrumentId back to FIGI via the instr→figi map
+            figi = self._instr_to_figi.get(instr_id.value)
+            if figi is None:
+                # Try alternate: check if instrument_id contains the FIGI
+                # by stripping the venue suffix
+                parts = instr_id.value.rsplit(".", 1)
+                if len(parts) == 2:
+                    candidate = parts[0]
+                    if candidate in tracked_figis:
+                        continue  # tracked, not held
+                    figi = candidate
+
+            if figi and figi in tracked_figis:
+                continue  # tracked by some sleeve → not quarantined
+
+            # Compute signed weight from net quantity
+            instrument = self.cache.instrument(instr_id)
+            if instrument is None:
+                continue
+            price = self.cache.price(instr_id)
+            if price is None:
+                continue
+
+            notional = float(pos.net_qty.as_double()) * float(price.as_double())
+            held[figi or instr_id.value] = notional / nav
+
+        return held
 
     def _get_fx_rate(self, venue: Venue, target_currency: str) -> float | None:
         """Get the FX rate in units of *target_currency* per 1 EUR.
