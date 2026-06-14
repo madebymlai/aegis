@@ -1,0 +1,90 @@
+name: atalanta_trend_ucits
+schema_version: 8
+output_dir: runs/atalanta/trend_ucits
+
+# EU-RETAIL-TRADABLE atalanta trend champion on the CURATED orthogonal-non-equity universe,
+# all single-venue London (.L) so the book shares one calendar (no cross-exchange calendar
+# mixing -> no rolling-vol poisoning, no "dropping missing data"). Champion mechanism
+# (single trend_score lb252 + realized_vol vw63) + a TURNOVER BUFFER (trendStraddleBuffered,
+# no-trade band ~0.20): the one lever validated to raise Sharpe AND crisis-window capture AND
+# cut drawdown together (speed-neutral, so it keeps the slow pole's crisis virtue). The slow-
+# band ENSEMBLE was dropped — it raised standalone Sharpe but fired later and DILUTED crisis
+# capture (the floor pole's actual job). See research/vault/runs/atalanta/2026-06-14.md (Addendum).
+#
+# Universe = the breadth-saturation peak (~20 names) from the orthogonal-non-equity study,
+# curated for INDEPENDENT macro axes (duration, inflation, EUR/USD rates, gold/silver,
+# energy, base+ags+softs, USD, credit) rather than count. See the vault doc for the full
+# per-ticker rationale and tier ladder:
+#   research/vault/research/the-orthogonal-non-equity-trend-universe.md
+#
+#   Tier 0 - essentials (10): IDTL ITPS SEGA AIGC IGLN BRNT COPA AIGA GBUS EMCP
+#   Tier 1 - expansion (+10): HYLD SSLV IEGE GILI WEAT HEAT COCO NGAS IGLO IBTA
+#
+# This IEGE+NGAS book is the HELD-OUT WINNER of the Tier-1 A/B (from_rolling, 6 splits):
+# held-out Sharpe +0.571, beating the IBGE+LEUR variant (+0.385) and the +CARB.L 21-name
+# variant (+0.422 - carbon is orthogonal but a net dilutant past the ~20 peak, NOT added).
+data:
+  source: yf
+  arrays:
+  - OHLCV
+  # ccy = each LSE line's native yfinance quote currency (GBp = pence). Prices are
+  # converted to portfolio.base_currency (EUR) before indicators/portfolio.
+  symbols:
+  - {ticker: IDTL.L, ccy: USD}
+  - {ticker: ITPS.L, ccy: GBP}
+  - {ticker: SEGA.L, ccy: GBP}
+  - {ticker: AIGC.L, ccy: USD}
+  - {ticker: IGLN.L, ccy: USD}
+  - {ticker: BRNT.L, ccy: USD}
+  - {ticker: COPA.L, ccy: USD}
+  - {ticker: AIGA.L, ccy: USD}
+  - {ticker: GBUS.L, ccy: GBp}
+  - {ticker: EMCP.L, ccy: GBP}
+  - {ticker: HYLD.L, ccy: USD}
+  - {ticker: SSLV.L, ccy: USD}
+  - {ticker: IEGE.L, ccy: EUR}
+  - {ticker: GILI.L, ccy: GBp}
+  - {ticker: WEAT.L, ccy: USD}
+  - {ticker: HEAT.L, ccy: USD}
+  - {ticker: COCO.L, ccy: USD}
+  - {ticker: NGAS.L, ccy: USD}
+  - {ticker: IGLO.L, ccy: USD}
+  - {ticker: IBTA.L, ccy: USD}
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  # single venue (LSE) -> shared calendar; drop kept only as a safety net.
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+- id: atalanta.realized_vol
+
+strategy:
+  id: atalanta.trendStraddleBuffered
+
+portfolio:
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003  # 0.03% IBKR auto-conversion, charged per trade on non-EUR legs
+
+# Trend is the long-gamma drawdown-payer: rank it by a drawdown-aware, skew-neutral metric,
+# NOT Sharpe (Sharpe penalizes positive skew and rewards smoothing that SELLS crisis capture —
+# on the buffer/ensemble sweep, Sharpe ranked the floor's WORST-crisis config top, UPI ranked
+# the floor-best config top). Calmar rejected (codebase's "fragile negative control": single
+# max-DD point). UPI = return / RMS-drawdown-path: credits crisis payout AND calm compounding.
+ranking:
+  metric: ulcer_performance_index
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

@@ -1,0 +1,71 @@
+name: demeter_eu_credit_carry_duration
+schema_version: 8
+output_dir: runs/demeter_eu/credit_carry_duration
+
+# DURATION-STRIPPED credit pole — the live, EU-retail redesign of carry.yaml. The live long-only
+# pole (carry.yaml: IHYU/LQDE/IEMB) earns the credit carry but its unhedged legs carry RATES
+# DURATION, which OVERLAPS atalanta's government-bond book — so the two floor poles are not
+# factor-orthogonal (they ride the same rates factor with opposite sign = correlation, not
+# orthogonality). Fix: keep the credit beta (it carries the premium AND is the short-gamma
+# counterparty) but STRIP the duration by swapping the unhedged IG/EM legs for LQDH.L = iShares
+# $ Corp Bond Interest-Rate-Hedged UCITS ETF (long USD IG, duration neutralised INSIDE the
+# wrapper; vol 0.059 vs LQDE 0.083 = the removed rate risk). HY (IHYU) is already short-duration.
+#
+# Why duration-NEUTRAL not market-NEUTRAL: in credit, carry lives inside the credit beta, so
+# beta-hedging it (long-HY/short-IG CDS spread) earns ~0 — AND the clean long CDS legs (Xtrackers
+# XTXC/XTXE, all Tabula) are DELISTED, so that spread is not even investable in 2026. Stripping
+# only the duration is the live, retail-long, no-shorting move. Live A/B 2015-2026 (pinned cell
+# vt0.10/cg2.0), this book (IHYU+LQDH) vs the live pole (IHYU+LQDE+IEMB):
+#   rates-beta 0.214 -> 0.006 (kills the atalanta overlap) | Sharpe 0.40 -> 0.62 (duration was
+#   unrewarded drag, esp. 2022) | qskew -0.70 -> -1.80 (clears the <= -0.5 pole gate harder) |
+#   equity-beta ~0.18 retained (the premium + crisis-bleed counterparty role kept).
+# Prototype: research/prototypes/demeter_marketneutral_carry_test.py
+# (Add IEMB.L back for EM breadth = the RATEHEDGE variant, but it re-injects rates-beta -> 0.066.)
+data:
+  source: yf
+  arrays:
+  - OHLCV
+  # ccy = each LSE line's native yfinance quote currency. Prices are converted to
+  # portfolio.base_currency (EUR) before indicators/portfolio.
+  symbols:
+  - {ticker: IHYU.L, ccy: USD}
+  - {ticker: LQDH.L, ccy: USD}
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: demeter_eu.credit_carry
+  params:
+    carry_window: 252
+- id: demeter.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: demeter.carry
+  params:
+    vol_target: 0.10
+    carry_gain: 2.0
+
+portfolio:
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003  # 0.03% IBKR auto-conversion, charged per trade on non-EUR legs
+
+ranking:
+  metric: sharpe_ratio
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
