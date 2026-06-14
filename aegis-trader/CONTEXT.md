@@ -35,6 +35,21 @@ The fraction of the **Commingled Book's** capital notionally allocated to a **Sl
 netted into one target-weight vector.
 _Avoid_: weight, allocation, capital, sizing
 
+**Book Config**:
+The Aegis Trader-owned, declarative specification that fully defines the **Commingled
+Book**: each **Sleeve** (a name/role bound to an **Execution Bundle** by its content-addressed
+wheel filename), its **Sleeve Budget**, the book's exposure caps, and the drift bands. Inert —
+it selects trusted artifacts and parameters only; it is the live counterpart of Aegis RD's
+**Run Config**.
+_Avoid_: book manifest, manifest, portfolio config, roster
+
+**Security Master**:
+The shared `aegis-runtime` component that resolves an instrument's canonical **FIGI** to a
+venue-native contract (a Nautilus `InstrumentId` / broker contract) and back, fail-closed on
+ambiguity. It is the single authority for cross-context instrument identity, so research,
+export, and live execution all agree on which instrument a target weight refers to.
+_Avoid_: symbol map, instrument map, ticker table, security database
+
 Add domain terms here as decisions crystallise — one or two sentences each,
 defining what the term **is** (not what it does), with an `_Avoid_:` line
 listing rejected synonyms. Keep this file a glossary only; implementation

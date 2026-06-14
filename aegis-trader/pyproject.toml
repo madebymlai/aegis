@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegis-trader"
+version = "0.1.0"
+description = "Live execution context for Aegis: runs the commingled book of Execution Bundles as a NautilusTrader overlay."
+requires-python = ">=3.12"
+# Per ADR-0001 (Trader is a NautilusTrader commingling overlay): aegis-runtime is the
+# shared locked-execution kernel, nautilus_trader owns the venue/OMS/event loop, pydantic
+# types the Book Config. VBT PRO is only a *transitive* dep, arriving with an installed
+# Execution Bundle wheel — never declared here.
+dependencies = [
+  "aegis-runtime",
+  "nautilus_trader",
+  "pydantic>=2.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["aegis_trader*"]
+
+[tool.uv.sources]
+aegis-runtime = { path = "../aegis-runtime", editable = true }
