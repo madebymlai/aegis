@@ -36,6 +36,7 @@ from research.aegis_research.optimization.lock_run import ResolvedComponentParam
 from research.aegis_research.optimization.param_namespace import ComponentRef
 
 STRATEGY_SLOT = "strategy"
+ENTRY_POINT_GROUP = "aegis.execution_bundles"
 
 ComponentSpecMap = dict[str, Any]
 
@@ -86,10 +87,14 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
     strategy_manifest = _strategy_manifest(strategy_definition)
     strategy_id = strategy_definition.id
     candidate_key = lock_run.candidate_key
-    dist_name = _distribution_name(strategy_id, candidate_key)
-    package_name = _package_name(strategy_id, candidate_key)
     version = strategy_manifest.version
     out_dir.mkdir(parents=True, exist_ok=True)
+    candidate_prefix = _candidate_prefix(
+        strategy_id=strategy_id, candidate_key=candidate_key, out_dir=out_dir
+    )
+    dist_name = _distribution_name(strategy_id, candidate_prefix)
+    package_name = _package_name(strategy_id, candidate_prefix)
+    entry_point_name = _entry_point_name(strategy_id, lock_run.run_id, config.lock.candidate_id)
     with tempfile.TemporaryDirectory(prefix="aegis-export-") as tmp:
         root = Path(tmp)
         package_dir = root / package_name
@@ -139,7 +144,13 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
         )
         dist_info = root / f"{_wheel_safe(dist_name)}-{version}.dist-info"
         dist_info.mkdir()
-        _write_dist_info(dist_info, dist_name=dist_name, version=version)
+        _write_dist_info(
+            dist_info,
+            dist_name=dist_name,
+            version=version,
+            entry_point_name=entry_point_name,
+            entry_point_value=f"{package_name}:bundle",
+        )
         wheel_path = out_dir / f"{_wheel_safe(dist_name)}-{version}-py3-none-any.whl"
         _write_wheel(root, wheel_path)
     return wheel_path
@@ -281,7 +292,14 @@ def _write_bundle_module(
     )
 
 
-def _write_dist_info(dist_info: Path, *, dist_name: str, version: str) -> None:
+def _write_dist_info(
+    dist_info: Path,
+    *,
+    dist_name: str,
+    version: str,
+    entry_point_name: str,
+    entry_point_value: str,
+) -> None:
     (dist_info / "METADATA").write_text(
         "Metadata-Version: 2.1\n"
         f"Name: {dist_name}\n"
@@ -294,6 +312,9 @@ def _write_dist_info(dist_info: Path, *, dist_name: str, version: str) -> None:
         "Generator: aegis-rd-export\n"
         "Root-Is-Purelib: true\n"
         "Tag: py3-none-any\n"
+    )
+    (dist_info / "entry_points.txt").write_text(
+        f"[{ENTRY_POINT_GROUP}]\n{entry_point_name} = {entry_point_value}\n"
     )
 
 
@@ -333,12 +354,49 @@ def _default_bundle_dir() -> Path:
     return cwd / "bundles"
 
 
-def _distribution_name(strategy_id: str, candidate_key: str) -> str:
-    return f"aegis-exec-{_slug(strategy_id)}-{candidate_key[:8]}"
+def _distribution_name(strategy_id: str, candidate_prefix: str) -> str:
+    return f"aegis-exec-{_slug(strategy_id)}-{candidate_prefix}"
 
 
-def _package_name(strategy_id: str, candidate_key: str) -> str:
-    return f"aegis_exec_{_module_slug(strategy_id)}_{candidate_key[:8]}"
+def _package_name(strategy_id: str, candidate_prefix: str) -> str:
+    return f"aegis_exec_{_module_slug(strategy_id)}_{candidate_prefix}"
+
+
+def _candidate_prefix(*, strategy_id: str, candidate_key: str, out_dir: Path) -> str:
+    existing = _existing_bundle_owners(strategy_id=strategy_id, out_dir=out_dir)
+    minimum_length = min(8, len(candidate_key))
+    for length in range(minimum_length, len(candidate_key) + 1):
+        prefix = candidate_key[:length]
+        owner = existing.get(_package_name(strategy_id, prefix))
+        if owner is None or owner == candidate_key:
+            return prefix
+    raise ValueError(f"candidate key {candidate_key!r} cannot be uniquely abbreviated")
+
+
+def _existing_bundle_owners(*, strategy_id: str, out_dir: Path) -> dict[str, str]:
+    owners: dict[str, str] = {}
+    for wheel_path in sorted(out_dir.glob(f"{_wheel_safe(_distribution_name(strategy_id, ''))}*.whl")):
+        package_name = _bundle_package_name(wheel_path)
+        candidate_key = _bundle_candidate_key(wheel_path)
+        if package_name is not None and candidate_key is not None:
+            owners[package_name] = candidate_key
+    return owners
+
+
+def _bundle_package_name(wheel_path: Path) -> str | None:
+    with zipfile.ZipFile(wheel_path) as zf:
+        packages = sorted(name.split("/")[0] for name in zf.namelist() if name.endswith("__init__.py"))
+    return packages[0] if packages else None
+
+
+def _bundle_candidate_key(wheel_path: Path) -> str | None:
+    with zipfile.ZipFile(wheel_path) as zf:
+        manifest_paths = [name for name in zf.namelist() if name.endswith("bundle_manifest.json")]
+        if not manifest_paths:
+            return None
+        manifest = json.loads(zf.read(manifest_paths[0]))
+    value = manifest.get("manifest", {}).get("candidate_key")
+    return value if isinstance(value, str) else None
 
 
 def _slug(value: str) -> str:
@@ -355,6 +413,11 @@ def _wheel_safe(value: str) -> str:
 
 def _manifest_role(candidate_id: str) -> str:
     return candidate_id if candidate_id in LOCK_ROLES else "candidate_key"
+
+
+def _entry_point_name(strategy_id: str, run_id: str, candidate_id: str) -> str:
+    role_suffix = f":{candidate_id}" if candidate_id in LOCK_ROLES else ""
+    return f"{strategy_id}@{run_id}{role_suffix}"
 
 
 def _urlsafe_b64(value: bytes) -> str:
