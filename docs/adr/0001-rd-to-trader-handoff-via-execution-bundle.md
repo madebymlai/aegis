@@ -45,9 +45,14 @@ at runtime.
   loading, the `force_locked` / `n_candidates=1` orchestration, currency
   conversion (`currency.py`), the Allocation Policy gate, and the
   `MarketDataBundle` types — is extracted from `aegis-rd` so research and every
-  Execution Bundle share one runtime. This is real work beyond adding an export
-  command — issue #40 covers both, sequenced internally as: carve out
-  `aegis-runtime` first, then build `aerd export` on top of it.
+  Execution Bundle share one runtime. It lives as a **top-level package**
+  (`aegis-runtime/`, sibling of `aegis-rd`/`aegis-trader`) with its own
+  distribution; `aegis-rd` and every Execution Bundle *depend on* it (a path /
+  workspace source) and it is never shipped inside the `aegis-rd` distribution —
+  doing so would reintroduce the rejected "wheel depends on aegis-rd" coupling.
+  This is real work beyond adding an export command — issue #40 covers both,
+  sequenced internally as: carve out `aegis-runtime` first, then build `aerd
+  export` on top of it.
 - **No new single-candidate execution signature.** The existing batched
   `run(inputs, *, n_candidates, **param_lists)` at `n_candidates=1` with locked
   params is the live path; baking the Lock drops `param_space` entirely.

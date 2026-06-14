@@ -17,7 +17,8 @@ records what the contexts are and how they relate.
   `n_candidates=1`) orchestration, currency conversion, and the **Allocation
   Policy** gate. Depended on by both Aegis RD and every **Execution Bundle**, so
   the research apparatus (optimizer, Candidate Store, preflight, ranking) never
-  crosses into execution. _(planned — not yet carved out of Aegis RD)_
+  crosses into execution. _(top-level package `aegis-runtime/`; Aegis RD depends
+  on it today, Aegis Trader will once it exists)_
 
 ## Relationships
 
