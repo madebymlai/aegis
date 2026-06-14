@@ -5,6 +5,7 @@ import pytest
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.rebalancer import rebalance
+from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.types import Figi, OrderIntent, OrderSide, SleeveName
 
 
@@ -410,3 +411,220 @@ class TestRebalanceMultiSleeve:
 
         assert len(orders) == 1
         assert orders[0].quantity == pytest.approx(20_000.0)
+
+
+class TestRebalanceWithSizing:
+    """Slice 5: sizing integration — EUR notional → native share quantity."""
+
+    @staticmethod
+    def _target(figi_to_weight: dict[str, float]) -> pd.DataFrame:
+        df = pd.DataFrame(
+            {k: [v] for k, v in figi_to_weight.items()},
+            index=pd.DatetimeIndex(["2025-06-01"], name="timestamp"),
+        )
+        df.columns.name = "figi"
+        return df
+
+    # ── EUR instrument (no FX) ───────────────────────────────────────────
+
+    def test_eur_instrument_sized(self):
+        """EUR instrument with price → native share quantity."""
+        book = make_book([("trend", "trend.whl", 1.0)])
+        target = self._target({"EUR_ETF": 0.5})
+
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+            instrument_metas={"EUR_ETF": InstrumentSizing(currency="EUR", size_increment=1.0)},
+            fx_rates={"EUR": 1.0},
+            prices={"EUR_ETF": 100.0},
+        )
+
+        assert len(orders) == 1
+        # 50_000 / 100 = 500 shares
+        assert orders[0].quantity == pytest.approx(500.0)
+        assert orders[0].side == OrderSide.BUY
+
+    def test_eur_instrument_sub_increment_dropped(self):
+        """EUR instrument with tiny notional → sub-increment → no order."""
+        book = make_book([("trend", "trend.whl", 1.0)])
+        target = self._target({"EUR_ETF": 0.00001})  # 0.001% of NAV = 1 EUR
+
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+            instrument_metas={"EUR_ETF": InstrumentSizing(currency="EUR", size_increment=1.0)},
+            fx_rates={"EUR": 1.0},
+            prices={"EUR_ETF": 100.0},
+        )
+
+        assert len(orders) == 0  # 1 EUR / 100 = 0.01 → rounds to 0
+
+    # ── USD instrument ───────────────────────────────────────────────────
+
+    def test_usd_instrument_sized(self):
+        """USD instrument: apply FX rate to convert EUR→USD notional."""
+        book = make_book([("trend", "trend.whl", 1.0)])
+        target = self._target({"US_STOCK": 0.5})
+
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+            instrument_metas={"US_STOCK": InstrumentSizing(currency="USD", size_increment=1.0)},
+            fx_rates={"USD": 1.10},
+            prices={"US_STOCK": 110.0},
+        )
+
+        assert len(orders) == 1
+        # 50_000 × 1.10 / 110 = 55_000 / 110 = 500 shares
+        assert orders[0].quantity == pytest.approx(500.0)
+        assert orders[0].side == OrderSide.BUY
+
+    # ── GBP instrument ───────────────────────────────────────────────────
+
+    def test_gbp_instrument_sized(self):
+        """GBP instrument: apply GBP/EUR FX rate."""
+        book = make_book([("trend", "trend.whl", 1.0)])
+        target = self._target({"LSE_ETF": 0.5})
+
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+            instrument_metas={"LSE_ETF": InstrumentSizing(currency="GBP", size_increment=1.0)},
+            fx_rates={"GBP": 0.85},
+            prices={"LSE_ETF": 85.0},
+        )
+
+        assert len(orders) == 1
+        # 50_000 × 0.85 / 85 = 42_500 / 85 = 500 shares
+        assert orders[0].quantity == pytest.approx(500.0)
+
+    # ── GBp instrument (London pence) ────────────────────────────────────
+
+    def test_gbp_pence_sized(self):
+        """GBp instrument: GBP/EUR rate + 100× pence factor."""
+        book = make_book([("trend", "trend.whl", 1.0)])
+        target = self._target({"LSE_GBP": 0.5})
+
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+            instrument_metas={"LSE_GBP": InstrumentSizing(currency="GBp", size_increment=1.0)},
+            fx_rates={"GBp": 0.85},  # GBP/EUR (NOT GBp/EUR)
+            prices={"LSE_GBP": 8_500.0},  # price in pence
+        )
+
+        assert len(orders) == 1
+        # 50_000 × 0.85 × 100 / 8_500 = 4,250,000 / 8_500 = 500 shares
+        assert orders[0].quantity == pytest.approx(500.0)
+
+    # ── size increment rounding ──────────────────────────────────────────
+
+    def test_rounding_to_increment(self):
+        """Quantity rounds to the instrument's size_increment."""
+        book = make_book([("trend", "trend.whl", 1.0)])
+        target = self._target({"STOCK": 0.5})
+
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+            instrument_metas={"STOCK": InstrumentSizing(currency="EUR", size_increment=100.0)},
+            fx_rates={"EUR": 1.0},
+            prices={"STOCK": 100.0},
+        )
+
+        assert len(orders) == 1
+        # 50_000 / 100 = 500 → 500/100 = 5 → 5*100 = 500
+        assert orders[0].quantity == pytest.approx(500.0)
+        assert orders[0].quantity % 100.0 == 0.0
+
+    def test_rounding_drops_sub_increment(self):
+        """Quantity below half increment → no order emitted."""
+        book = make_book([("trend", "trend.whl", 1.0)])
+        target = self._target({"STOCK": 0.01})
+
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+            instrument_metas={"STOCK": InstrumentSizing(currency="EUR", size_increment=100.0)},
+            fx_rates={"EUR": 1.0},
+            prices={"STOCK": 100.0},
+        )
+
+        # 1_000 / 100 = 10 → 10/100 = 0.1 → round(0.1)*100 = 0 → dropped
+        assert len(orders) == 0
+
+    # ── multi-ccy netting ────────────────────────────────────────────────
+
+    def test_multi_ccy_sizing(self):
+        """Two sleeves, overlapping FIGIs in different currencies."""
+        book = make_book([
+            ("trend", "trend.whl", 0.6),
+            ("carry", "carry.whl", 0.4),
+        ])
+        trend_target = self._target({"EUR_ETF": 0.5, "US_STOCK": 0.3})
+        carry_target = self._target({"EUR_ETF": -0.2, "US_STOCK": 0.1})
+        # EUR_ETF: 0.6*0.5 + 0.4*(-0.2) = 0.30 - 0.08 = 0.22 → BUY
+        # US_STOCK: 0.6*0.3 + 0.4*0.1 = 0.18 + 0.04 = 0.22 → BUY
+
+        orders = rebalance(
+            {book.sleeves[0].name: trend_target, book.sleeves[1].name: carry_target},
+            nav=100_000.0,
+            book=book,
+            instrument_metas={
+                "EUR_ETF": InstrumentSizing(currency="EUR", size_increment=1.0),
+                "US_STOCK": InstrumentSizing(currency="USD", size_increment=1.0),
+            },
+            fx_rates={"EUR": 1.0, "USD": 1.10},
+            prices={"EUR_ETF": 100.0, "US_STOCK": 110.0},
+        )
+
+        assert len(orders) == 2
+        by_figi = {o.figi.value: o for o in orders}
+        # EUR_ETF: 22_000 / 100 = 220 shares
+        assert by_figi["EUR_ETF"].quantity == pytest.approx(220.0)
+        # US_STOCK: 22_000 × 1.10 / 110 = 24_200 / 110 = 220 shares
+        assert by_figi["US_STOCK"].quantity == pytest.approx(220.0)
+        for o in orders:
+            assert o.side == OrderSide.BUY
+
+    # ── backward compat ──────────────────────────────────────────────────
+
+    def test_missing_sizing_params_falls_back_to_raw_notional(self):
+        """When sizing params are omitted, quantity is raw EUR notional."""
+        book = make_book([("trend", "trend.whl", 1.0)])
+        target = self._target({"ANY_FIGI": 0.5})
+
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+        )
+
+        assert len(orders) == 1
+        assert orders[0].quantity == pytest.approx(50_000.0)  # raw EUR notional
+
+    def test_partial_sizing_params_falls_back(self):
+        """Unknown FIGI falls back to raw notional; known FIGIs are sized."""
+        book = make_book([("trend", "trend.whl", 1.0)])
+        target = self._target({"KNOWN": 0.5, "UNKNOWN": 0.3})
+
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+            instrument_metas={"KNOWN": InstrumentSizing(currency="EUR", size_increment=1.0)},
+            fx_rates={"EUR": 1.0},
+            prices={"KNOWN": 100.0},
+        )
+
+        by_figi = {o.figi.value: o for o in orders}
+        assert by_figi["KNOWN"].quantity == pytest.approx(500.0)  # sized
+        assert by_figi["UNKNOWN"].quantity == pytest.approx(30_000.0)  # raw notional

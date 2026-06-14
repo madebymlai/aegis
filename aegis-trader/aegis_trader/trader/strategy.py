@@ -29,6 +29,7 @@ from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.rebalancer import rebalance
+from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
 from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
 
@@ -134,6 +135,11 @@ class RebalanceStrategy(Strategy):
 
         This is the one-bar lag: the target was decided at bar t-1 and is now
         submitted on bar t, filling at bar t's close.
+
+        Slice 5: collects per-FIGI instrument metadata, close prices, and
+        FX rates from Nautilus and passes them through to the rebalancer for
+        sizing (EUR notional → native share quantity with GBp pence + increment
+        rounding).
         """
         if not self._pending_targets:
             return
@@ -141,7 +147,17 @@ class RebalanceStrategy(Strategy):
         equity_map = self.portfolio.equity(venue=venue)
         base_ccy = Currency.from_str(self._book.base_currency)
         nav = float(equity_map[base_ccy].as_double())
-        orders = rebalance(self._pending_targets, nav, self._book)
+
+        instrument_metas, fx_rates, prices = self._collect_sizing_params(venue)
+
+        orders = rebalance(
+            self._pending_targets,
+            nav,
+            self._book,
+            instrument_metas=instrument_metas,
+            fx_rates=fx_rates,
+            prices=prices,
+        )
         self._pending_targets = {}
         for oi in orders:
             self._submit_order_intent(oi)
@@ -153,8 +169,76 @@ class RebalanceStrategy(Strategy):
         """Resolve *figis* to a bimap via the Security Master."""
         return self._figi_resolver.resolve(figis)
 
+    def _collect_sizing_params(
+        self, venue: Venue
+    ) -> tuple[dict[str, InstrumentSizing], dict[str, float], dict[str, float]]:
+        """Gather per-FIGI instrument metadata, FX rates, and latest close
+        prices from Nautilus for sizing.
+
+        Returns three dicts keyed by FIGI (instrument_metas/prices) or
+        currency (fx_rates).  An instrument that cannot be resolved from the
+        cache is silently omitted (the rebalancer will fall back to raw
+        notional for it).
+        """
+        instrument_metas: dict[str, InstrumentSizing] = {}
+        prices: dict[str, float] = {}
+        currencies: set[str] = set()
+
+        for target in self._pending_targets.values():
+            if target is None or target.empty:
+                continue
+            for figi in target.columns:
+                figi_str = str(figi)
+                if figi_str in instrument_metas:
+                    continue
+                instr_id = self._figi_to_instr_id(figi_str)
+                instrument = self.cache.instrument(instr_id)
+                if instrument is None:
+                    continue
+
+                currency = instrument.quote_currency.code
+                instrument_metas[figi_str] = InstrumentSizing(
+                    currency=currency,
+                    size_increment=float(instrument.size_increment),
+                )
+
+                buf = self._bars_buffer.get(instr_id)
+                if buf:
+                    prices[figi_str] = float(buf[-1].close.as_double())
+
+                currencies.add(currency)
+
+        fx_rates: dict[str, float] = {}
+        for currency in currencies:
+            rate = self._get_fx_rate(venue, currency)
+            if rate is not None:
+                fx_rates[currency] = rate
+
+        return instrument_metas, fx_rates, prices
+
+    def _get_fx_rate(self, venue: Venue, target_currency: str) -> float | None:
+        """Get the FX rate in units of *target_currency* per 1 EUR.
+
+        Returns None when the rate is unavailable (rebalancer falls back to
+        raw EUR notional).
+
+        Currently returns 1.0 for base currency, None for foreign currencies
+        (FX rate sourcing from Nautilus cache will be wired in a later slice
+        when per-venue FX data is integrated into the backtest engine).
+        """
+        if target_currency == self._book.base_currency:
+            return 1.0
+        # TODO(j4a.4): query Nautilus cache for FX rates when multi-ccy data
+        # is available.  For now, foreign-currency instruments fall back to
+        # raw notional (the rebalancer will not size them).
+        return None
+
     def _submit_order_intent(self, oi: OrderIntent) -> None:
-        """Translate a domain OrderIntent into a Nautilus MARKET order and submit."""
+        """Translate a domain OrderIntent into a Nautilus MARKET order and submit.
+
+        Slice 5: the OrderIntent quantity is already a native share count
+        (sized by the rebalancer), so it is passed directly to ``make_qty``.
+        """
         instr_id = self._figi_to_instr_id(oi.figi.value)
         instrument = self.cache.instrument(instr_id)
         if instrument is None:
