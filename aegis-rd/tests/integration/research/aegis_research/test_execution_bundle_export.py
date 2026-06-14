@@ -314,6 +314,26 @@ def test_export_lengthens_candidate_prefix_when_bundle_name_would_collide(
     ]
 
 
+def test_export_rejects_unlocked_config_with_an_actionable_error(tmp_path, monkeypatch) -> None:
+    _install_fixture_components(tmp_path)
+    config_path = _write_locked_config(tmp_path, include_lock=False)
+    monkeypatch.chdir(tmp_path)
+    out_dir = Path("dist")
+
+    stderr = _Stdout()
+    exit_code = cli._main(
+        ["export", "--config", str(config_path), "--out", str(out_dir)],
+        stdout=_Stdout(),
+        stderr=stderr,
+    )
+
+    assert exit_code != 0
+    assert not list(out_dir.glob("*.whl"))  # fail-closed: no wheel written
+    message = stderr.text.lower()
+    assert "candidate" in message  # explains the params resolve to no single scored Candidate
+    assert "lock:" in message  # points at the fix — pin one with `lock: run_id[:role]`
+
+
 def _export_bundle(config_path: Path, *, out_dir: Path | str) -> dict[str, str]:
     stdout = _Stdout()
     exit_code = cli._main(
@@ -484,45 +504,43 @@ def _write_locked_config(
     path_name: str = "locked_bundle.yaml",
     run_id: str = _RUN_ID,
     currency_by_symbol: dict[str, str] | None = None,
+    include_lock: bool = True,
 ) -> Path:
     path = tmp_path / path_name
     currency_by_symbol = currency_by_symbol or dict.fromkeys(_SYMBOLS, "EUR")
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "schema_version": CONFIG_SCHEMA_VERSION,
-                "name": "locked_bundle",
-                "output_dir": "runs",
-                "lock": f"{run_id}:best",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": [
-                        {"ticker": symbol, "ccy": currency_by_symbol[symbol]}
-                        for symbol in _SYMBOLS
-                    ],
-                    "rows": 320,
-                    "seed": 7,
-                    "timeframe": "1D",
-                    "arrays": ["Close"],
-                },
-                "portfolio": {"gross_cap": 1.0, "direction": "longonly", "base_currency": "EUR"},
-                "strategy": {"id": "tests.momentum_rotator"},
-                "indicators": [
-                    {"id": "tests.momentum_score"},
-                    {"id": "tests.realized_vol"},
-                ],
-                "ranking": {"metric": "sharpe_ratio"},
-                "optimization": {
-                    "search": "grid",
-                    "split": {
-                        "method": "from_rolling",
-                        "params": {"length": 252, "offset": 0, "split": 0.5},
-                    },
-                },
+    config: dict[str, object] = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "locked_bundle",
+        "output_dir": "runs",
+        "lock": f"{run_id}:best",
+        "data": {
+            "source": "synthetic",
+            "symbols": [
+                {"ticker": symbol, "ccy": currency_by_symbol[symbol]} for symbol in _SYMBOLS
+            ],
+            "rows": 320,
+            "seed": 7,
+            "timeframe": "1D",
+            "arrays": ["Close"],
+        },
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly", "base_currency": "EUR"},
+        "strategy": {"id": "tests.momentum_rotator"},
+        "indicators": [
+            {"id": "tests.momentum_score"},
+            {"id": "tests.realized_vol"},
+        ],
+        "ranking": {"metric": "sharpe_ratio"},
+        "optimization": {
+            "search": "grid",
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 252, "offset": 0, "split": 0.5},
             },
-            sort_keys=False,
-        )
-    )
+        },
+    }
+    if not include_lock:
+        del config["lock"]
+    path.write_text(yaml.safe_dump(config, sort_keys=False))
     return path
 
 

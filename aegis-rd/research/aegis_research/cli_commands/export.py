@@ -15,7 +15,11 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
-from research.aegis_research.cli_support.errors import ConfigCliError, ExecutionFailureError
+from research.aegis_research.cli_support.errors import (
+    CliError,
+    ConfigCliError,
+    ExecutionFailureError,
+)
 from research.aegis_research.cli_support.output import CommandResult, write_success
 from research.aegis_research.component_registry import (
     ComponentDefinition,
@@ -63,6 +67,8 @@ def handle_export(args: argparse.Namespace, **streams: Any) -> int:
         wheel_path = export_locked_bundle(Path(args.config), out_dir=out_dir)
     except ConfigValidationError as error:
         raise ConfigCliError(str(error)) from error
+    except CliError:
+        raise
     except Exception as error:
         raise ExecutionFailureError(str(error)) from error
     return write_success(
@@ -82,7 +88,12 @@ def export_locked_bundle(config_path: Path, *, out_dir: Path) -> Path:
     resolved = load_run_config(config_path, component_registry=component_registry)
     config = resolved.config
     if config.lock is None:
-        raise ValueError("aerd export requires a locked config")
+        raise ConfigCliError(
+            "aerd export requires a Lock. This config has no `lock:`, so its "
+            "parameters resolve to no single scored Candidate — an optimization "
+            "sweep defines a search over many candidates, not one. Pin a "
+            "published result with `lock: run_id[:role]` and re-run export."
+        )
     with CandidateStore(candidate_store_path(config)) as store:
         lock_run = resolve_lock_run(config.lock, store=store)
     strategy_definition = component_registry.get(
