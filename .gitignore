@@ -5,3 +5,8 @@ opencode.jsonc
 .env
 .env.*
 !.env.example
+
+# Execution Bundle wheels are regenerable from a Lock (ADR-0001): ignore the
+# artifacts but keep the output dir tracked via .gitkeep.
+bundles/*
+!bundles/.gitkeep
