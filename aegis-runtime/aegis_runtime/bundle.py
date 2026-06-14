@@ -10,7 +10,7 @@ import pandas as pd
 
 from aegis_runtime.currency import assemble_fx_rates, convert_arrays_to_base
 
-SYMBOL_LEVEL = "symbol"
+FIGI_LEVEL = "figi"
 _EXPOSURE_TOLERANCE = 1e-9
 _DIRECTIONS = frozenset({"longonly", "shortonly", "both"})
 
@@ -28,11 +28,13 @@ class MarketDataBundle:
 
 @dataclass(frozen=True)
 class DataContract:
-    symbols: tuple[str, ...]
+    # FIGI is the sole per-instrument identity that crosses the boundary (root
+    # ADR-0002): no provider ticker, no native currency. Currency/contract detail
+    # is derived Trader-side from the FIGI; the consumer keys everything on it.
+    figis: tuple[str, ...]
     required_arrays: tuple[str, ...]
     base_currency: str
     required_fx_currencies: tuple[str, ...]
-    currency_by_symbol: Mapping[str, str]
     timeframe: str
     lookback_bars: int = 0
 
@@ -43,6 +45,7 @@ class BundleManifest:
     role: str
     candidate_key: str
     component_source_hashes: Mapping[str, str]
+    figis: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,12 @@ class LockedExecutionPlan:
     gross_cap: float
     net_cap: float | None
     direction: str
+    # Internal execution detail (never crosses as identity): the per-instrument
+    # labels the baked components were authored against, in FIGI order, and their
+    # native quote currencies. The boundary speaks FIGI; `compute_weights`
+    # relabels FIGI -> label and converts native -> base before running components.
+    symbols: tuple[str, ...]
+    currency_by_symbol: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -101,9 +110,17 @@ class ExecutionBundle:
                 f"at least {lookback} lookback bars"
             )
         index = close.index
-        base_prices = _convert_to_base_currency(prices, self.contract, fx_series, index)
+        component_prices = _relabel_to_symbols(prices, self.contract.figis, self._plan.symbols)
+        base_prices = _convert_to_base_currency(
+            component_prices,
+            currency_by_symbol=self._plan.currency_by_symbol,
+            base_currency=self.contract.base_currency,
+            required_fx_currencies=self.contract.required_fx_currencies,
+            fx_series=fx_series,
+            index=index,
+        )
         n_candidates = 1
-        n_symbols = len(self.contract.symbols)
+        n_symbols = len(self.contract.figis)
         data = _slice_data(base_prices, index, self.contract.required_arrays)
         indicator_outputs = _compute_indicators(
             self._plan.indicators,
@@ -132,7 +149,7 @@ class ExecutionBundle:
             label=f"strategy {self._plan.strategy.component_id} allocation",
         )
         weights = pd.DataFrame(arr[:, :n_symbols], index=close.index, columns=close.columns)
-        weights.columns.name = SYMBOL_LEVEL
+        weights.columns.name = FIGI_LEVEL
         _assert_latest_row_not_nan(weights)
         validate_exposure(
             weights,
@@ -185,22 +202,30 @@ def _slice_data(
     return MarketDataBundle({name: data.array(name).loc[index] for name in required_arrays})
 
 
+def _relabel_to_symbols(
+    data: MarketDataBundle, figis: Sequence[str], symbols: Sequence[str]
+) -> MarketDataBundle:
+    """Re-key FIGI-columned panels into the label space the components expect."""
+    rename = dict(zip(figis, symbols, strict=True))
+    return MarketDataBundle(
+        {name: frame.rename(columns=rename) for name, frame in data.arrays.items()}
+    )
+
+
 def _convert_to_base_currency(
     prices: MarketDataBundle,
-    contract: DataContract,
+    *,
+    currency_by_symbol: Mapping[str, str],
+    base_currency: str,
+    required_fx_currencies: Sequence[str],
     fx_series: Mapping[str, pd.Series] | None,
     index: pd.Index,
 ) -> MarketDataBundle:
     supplied_fx = {} if fx_series is None else dict(fx_series)
-    _validate_fx_series_contract(supplied_fx, contract.required_fx_currencies)
+    _validate_fx_series_contract(supplied_fx, required_fx_currencies)
     fx_rates = assemble_fx_rates(supplied_fx, index)
     return MarketDataBundle(
-        convert_arrays_to_base(
-            prices.arrays,
-            contract.currency_by_symbol,
-            contract.base_currency,
-            fx_rates,
-        )
+        convert_arrays_to_base(prices.arrays, currency_by_symbol, base_currency, fx_rates)
     )
 
 
@@ -220,13 +245,6 @@ def _validate_fx_series_contract(
 
 
 def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> None:
-    currency_symbols = set(contract.currency_by_symbol)
-    symbol_set = set(contract.symbols)
-    if currency_symbols != symbol_set:
-        raise ValueError(
-            "bundle currency map symbols do not match contract symbols: "
-            f"currency_symbols={sorted(currency_symbols)}, symbols={sorted(symbol_set)}"
-        )
     required = set(contract.required_arrays)
     supplied = set(prices.arrays)
     missing_arrays = sorted(required - supplied)
@@ -239,10 +257,10 @@ def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> N
     for name in contract.required_arrays:
         frame = prices.array(name)
         actual = tuple(str(column) for column in frame.columns)
-        if actual != contract.symbols:
+        if actual != contract.figis:
             raise ValueError(
-                f"market data array {name!r} symbols {actual} do not match "
-                f"contract symbols {contract.symbols}"
+                f"market data array {name!r} figis {actual} do not match "
+                f"contract figis {contract.figis}"
             )
         if not frame.index.is_unique:
             raise ValueError(f"market data array {name!r} index must be unique")

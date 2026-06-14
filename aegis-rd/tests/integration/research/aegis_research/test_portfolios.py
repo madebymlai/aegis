@@ -717,7 +717,7 @@ def test_portfolio_config_fill_timing_defaults_to_next_close() -> None:
 def test_next_open_fill_timing_without_open_prices_raises() -> None:
     close, _open, allocations = _distinct_open_close_entry_inputs()
 
-    with pytest.raises(ValueError, match="next_open.*[Oo]pen"):
+    with pytest.raises(ValueError, match=r"next_open.*[Oo]pen"):
         simulate_single_book(
             close,
             allocations,

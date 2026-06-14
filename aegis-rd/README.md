@@ -18,7 +18,7 @@ Aegis RD gives each research loop a clear contract:
 - Build indicator outputs with preserved parameter metadata.
 - Generate strategy signals from reviewed components.
 - Optionally split run scoring into selection and held-out windows with native VBT splitter labels preserved as evidence.
-- Simulate shared-cash portfolios with explicit entry budgets, costs, execution timing, direction, metric scope, and benchmark assumptions.
+- Simulate shared-cash portfolios with explicit entry budgets, costs, fill timing (`portfolio.fill_timing`: `next_open` / `next_close` / `same_close`, default `next_close` — only `next_open` reads the Open array), direction, metric scope, and benchmark assumptions.
 - Produce leaderboards that rank complete composed strategy candidates, not isolated indicators.
 
 ## Research Command
