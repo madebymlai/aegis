@@ -73,10 +73,16 @@ _BENCHMARK_CACHE: dict[tuple[str, str, str], pd.Series] = {}
 
 
 def _lazy_benchmark_close(symbol: str, index: pd.DatetimeIndex) -> pd.Series:
-    """Pull the benchmark close over the portfolio's own span, tz-normalized to its dates.
+    """Pull the benchmark close over the portfolio's own span, tz-conformed to the target index.
 
     Only used when the benchmark is not a traded column: convexity is benchmark-relative by
     definition, so the reference is sourced on demand rather than required in the universe.
+
+    The pulled close is normalized to calendar dates and then conformed to ``index``'s tz, which
+    is the portfolio value index it will be reindexed onto downstream
+    (``EquityCurve.aligned_benchmark_returns``). yf-sourced panels carry a tz-aware (UTC) index, so
+    a tz-naive benchmark would reindex to all-NaN — silently NaN-ing every benchmark-relative
+    metric. Matching the tz keeps the alignment real.
     """
     key = (symbol, str(index.min()), str(index.max()))
     if key not in _BENCHMARK_CACHE:
@@ -88,6 +94,8 @@ def _lazy_benchmark_close(symbol: str, index: pd.DatetimeIndex) -> pd.Series:
         if isinstance(close.index, pd.DatetimeIndex) and close.index.tz is not None:
             close.index = close.index.tz_localize(None)
         close.index = close.index.normalize()
+        if index.tz is not None:
+            close.index = close.index.tz_localize(index.tz)
         _BENCHMARK_CACHE[key] = close
     return _BENCHMARK_CACHE[key]
 
