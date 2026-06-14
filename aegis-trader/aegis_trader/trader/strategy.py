@@ -17,6 +17,13 @@ InstrumentIds only at the execution edge (order submission).
 RiskEngine guards (Slice 8): the ``RiskGuard`` computes per-instrument
 max-notional caps from NAV; the strategy logs every ``OrderDenied`` event
 so operators can trace rejected orders.
+
+Slice 6 — cadence (per-sleeve timeframe + calendar-aware):
+- Each sleeve rebalances off bar-close at its own DataContract.timeframe.
+- Debounced: one re-net per completed period, not per-instrument-bar churn.
+- Calendar-aware: orders emitted only for instruments whose venue is open
+  (had a fresh bar during the completed period).
+- Drift is evaluated every period even on an unchanged target.
 """
 
 from __future__ import annotations
@@ -41,6 +48,8 @@ from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
 from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
 
+_NS_PER_DAY: int = 86_400_000_000_000
+
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
     """Configuration for the RebalanceStrategy."""
@@ -54,105 +63,214 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
 class RebalanceStrategy(Strategy):
     """Commingled-book rebalance overlay — submits orders NEXT-CLOSE.
 
-    Buffer bars as they arrive; when enough lookback is accumulated, assemble
-    a MarketDataBundle each bar, call the bundle's compute_weights, and store
-    the latest row as the next-bar target.  On the *following* bar, submit
-    order(s) from the previously-stored targets — implementing the one-bar
-    execution lag.
+    Per-sleeve timeframe cadence (Slice 6):
+    - Bars are buffered per instrument as they arrive.
+    - When the period (day) changes, a rebalance is triggered for the
+      *completed* period using all bars buffered up to that point.
+    - Each sleeve's bundle computes targets from its own buffered bars
+      (per-sleeve-latest as-of), netted across sleeves, and orders are
+      emitted only for FIGIs whose venue was open (had a fresh bar) during
+      the completed period.
 
-    In single-sleeve mode (Slice 1) the base class handles everything.
-    Multi-sleeve setups (Slice 2+) extend this class and accumulate
-    per-sleeve targets into ``_pending_targets`` before calling
-    ``_submit_pending_orders()``.
+    Backward-compatible with the Slice 1 single-sleeve ``_bundle`` attribute
+    — setting it directly is converted to the new sleeve-registry API in
+    ``on_start``.
     """
 
     def __init__(self, config: RebalanceStrategyConfig) -> None:
         super().__init__(config)
         self._book: BookConfig = config.book
-        self._bundle: ExecutionBundle | None = None
-        self._contract: DataContract | None = None
+        self._bundle: ExecutionBundle | None = None  # backward compat (Slice 1)
+        self._contract: DataContract | None = None  # backward compat
+        # ── Slice 6 sleeve registry ──────────────────────────────────────
+        self._sleeve_to_bundle: dict[SleeveName, ExecutionBundle] = {}
+        self._sleeve_to_contract: dict[SleeveName, DataContract] = {}
+        self._figi_to_venue: dict[str, str] = {}
+        self._instr_to_figi: dict[str, str] = {}  # "FIGI.VENUE" → FIGI
+        # ── bar buffers & cadence state ──────────────────────────────────
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
-        self._pending_targets: dict[SleeveName, pd.DataFrame] = {}
+        self._current_period: int | None = None
+        self._period_fresh_figis: set[str] = set()
+        # ── Slice 3: FIGI bimap ──────────────────────────────────────────
         self._figi_bimap: dict[str, InstrumentId] = {}
         self._figi_resolver: FigiInstrumentResolver = (
             config.figi_resolver if config.figi_resolver is not None
             else FigiInstrumentResolver()
         )
+        # ── Slice 8: RiskEngine guards ───────────────────────────────────
         self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
 
+    # ── public API ────────────────────────────────────────────────────────────
+
+    def register_sleeve(
+        self, name: SleeveName, bundle: ExecutionBundle,
+    ) -> None:
+        """Register a sleeve with its backing ExecutionBundle.
+
+        Replaces the Slice 1 ``_bundle`` direct-set pattern — call this
+        before the engine starts for each sleeve declared in the BookConfig.
+        """
+        self._sleeve_to_bundle[name] = bundle
+        self._sleeve_to_contract[name] = bundle.contract
+
+    # ── Nautilus lifecycle ────────────────────────────────────────────────────
+
     def on_start(self) -> None:
-        sleeve = self._book.sleeves[0]
-        if self._bundle is None:
-            self.log.warning("No bundle injected; strategy will idle.")
+        # Backward compat: Slice 1 single-sleeve via _bundle attribute
+        if self._bundle is not None and not self._sleeve_to_bundle:
+            sleeve_name = self._book.sleeves[0].name
+            self._sleeve_to_bundle[sleeve_name] = self._bundle
+            self._sleeve_to_contract[sleeve_name] = self._bundle.contract
+
+        if not self._sleeve_to_bundle:
+            self.log.warning("No sleeves registered; strategy will idle.")
             return
-        self._contract = self._bundle.contract
-        figis = self._contract.figis
+
+        # Build FIGI → venue map from sleeve configs
+        for sleeve in self._book.sleeves:
+            venue = sleeve.venue or self._book.default_venue
+            bundle = self._sleeve_to_bundle.get(sleeve.name)
+            if bundle is None:
+                continue
+            for figi in bundle.contract.figis:
+                self._figi_to_venue[figi] = venue
+
+        # Collect all unique FIGIs across all sleeves
+        all_figis: set[str] = set()
+        for bundle in self._sleeve_to_bundle.values():
+            all_figis.update(bundle.contract.figis)
 
         # Slice 3: resolve FIGIs via the Security Master bimap.
         # Skip resolution if a stub bimap was injected (e2e tests).
         if not self._figi_bimap:
-            self._figi_bimap = self._resolve_bimap(set(figis))
+            self._figi_bimap = self._resolve_bimap(all_figis)
 
-        for figi in figis:
-            bar_type = BarType.from_str(f"{self._figi_to_instr_id(figi).value}-1-DAY-LAST-EXTERNAL")
-            self.subscribe_bars(bar_type)
-        self.log.info(f"RebalanceStrategy starting; sleeve={sleeve.name.value}, figis={figis}")
+        # Subscribe to bars for all unique FIGI+venue combinations
+        seen: set[str] = set()
+        for name, bundle in self._sleeve_to_bundle.items():
+            for figi in bundle.contract.figis:
+                venue = self._figi_to_venue[figi]
+                instr_id_str = f"{figi}.{venue}"
+                if instr_id_str in seen:
+                    continue
+                seen.add(instr_id_str)
+                self._instr_to_figi[instr_id_str] = figi
+                bar_type = BarType.from_str(
+                    f"{instr_id_str}-1-DAY-LAST-EXTERNAL"
+                )
+                self.subscribe_bars(bar_type)
+
+        names = [s.value for s in self._sleeve_to_bundle]
+        self.log.info(
+            f"RebalanceStrategy starting; sleeves={names}, "
+            f"figi_venue_map={self._figi_to_venue}"
+        )
 
     def on_bar(self, bar: Bar) -> None:
-        if self._bundle is None or self._contract is None:
+        """Buffer bar and trigger a period-level rebalance when the period advances.
+
+        Debounce (Slice 6): only one re-net per completed period, not
+        per-instrument.  When the first bar of a new period arrives the
+        strategy rebalances using all bars from the *completed* period and
+        submits orders that will fill at the *new* period's close — one-bar
+        execution lag.
+        """
+        if not self._sleeve_to_bundle:
             return
 
-        buf = self._buffer_bar(bar)
-        if buf is None:
-            return  # not enough lookback bars yet
-
-        target = self._compute_target(buf)
-        self._submit_pending_orders()
-        sleeve_name = self._book.sleeves[0].name
-        self._pending_targets[sleeve_name] = target
-
-    def _buffer_bar(self, bar: Bar) -> list[Bar] | None:
-        """Buffer *bar* into its per-instrument window and return the window
-        if enough lookback bars have accumulated, otherwise None."""
-        if self._contract is None:  # pragma: no cover — guard, on_bar already checks
-            return None
         instr_id = bar.bar_type.instrument_id
+        period = self._extract_period(bar)
+
+        # ── period-advance → rebalance the completed period ──────────────
+        if self._current_period is not None and period != self._current_period:
+            self._rebalance_for_period()
+            self._period_fresh_figis = set()
+
+        # ── buffer the bar AFTER the rebalance (so rebalance only sees
+        #    completed-period bars — no same-bar look-ahead) ──────────────
         buf = self._bars_buffer.setdefault(instr_id, [])
         buf.append(bar)
 
-        lookback = self._contract.lookback_bars
-        needed = lookback + 1  # lookback bars + the current bar
-        if len(buf) < needed:
-            return None
-
-        # Drop excess beyond what we need
+        # Trim to lookback_needed bars (use max lookback across sleeves)
+        max_lookback = max(
+            c.lookback_bars for c in self._sleeve_to_contract.values()
+        )
+        needed = max_lookback + 1
         if len(buf) > needed:
             buf[:] = buf[-needed:]
-        return buf
 
-    def _compute_target(self, buf: list[Bar]) -> pd.DataFrame:
-        """Assemble a MarketDataBundle from *buf* and call compute_weights."""
-        assert self._contract is not None
-        assert self._bundle is not None
-        # For Slice 1 the buffer is per-instrument with a 1:1 FIGI mapping.
-        close_series = _bars_to_close_series(buf, self._contract.figis[0])
-        bundle_data = MarketDataBundle({"Close": close_series})
-        # For Slice 1 we pass no FX series (single-currency EUR)
-        return self._bundle.compute_weights(bundle_data)
+        if self._current_period is None:
+            self._current_period = period
+        else:
+            self._current_period = period
 
-    def _submit_pending_orders(self) -> None:
-        """Submit orders for the target computed on the previous bar.
+        figi = self._instr_to_figi.get(instr_id.value)
+        if figi:
+            self._period_fresh_figis.add(figi)
 
-        This is the one-bar lag: the target was decided at bar t-1 and is now
-        submitted on bar t, filling at bar t's close.
+    # ── internal helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_period(bar: Bar) -> int:
+        """Extract the day period from *bar*'s event timestamp.
+
+        For 1D bars the period is the calendar day; this generalises to
+        any fixed-width bar by replacing the divisor with the bar step.
+        """
+        return bar.ts_event // _NS_PER_DAY
+
+    def _rebalance_for_period(self) -> None:
+        """Compute per-sleeve targets from buffered bars, net, and submit.
+
+        Each sleeve computes on its own most-recent completed bars
+        (per-sleeve-latest as-of).  Orders are filtered to only FIGIs whose
+        venue was open during the completed period (calendar-aware).
 
         Slice 5: collects per-FIGI instrument metadata, close prices, and
         FX rates from Nautilus and passes them through to the rebalancer for
         sizing (EUR notional → native share quantity with GBp pence + increment
         rounding).
         """
-        if not self._pending_targets:
+        pending: dict[SleeveName, pd.DataFrame] = {}
+
+        for sleeve in self._book.sleeves:
+            bundle = self._sleeve_to_bundle.get(sleeve.name)
+            if bundle is None:
+                continue
+            contract = bundle.contract
+            lookback = contract.lookback_bars
+            needed = lookback + 1
+
+            # Assemble per-sleeve close-price series
+            sleeve_closes: dict[str, pd.DataFrame] = {}
+            sleeve_ok = True
+            for figi in contract.figis:
+                venue = self._figi_to_venue.get(figi, self._book.default_venue)
+                instr_id = InstrumentId.from_str(f"{figi}.{venue}")
+                buf = self._bars_buffer.get(instr_id, [])
+                if len(buf) < needed:
+                    sleeve_ok = False
+                    break
+                close_series = _bars_to_close_series(buf, figi)
+                sleeve_closes[figi] = close_series
+
+            if not sleeve_ok or not sleeve_closes:
+                continue
+
+            # Combine all FIGI close series for this sleeve into one DataFrame
+            if len(sleeve_closes) == 1:
+                close_df = next(iter(sleeve_closes.values()))
+            else:
+                close_df = pd.concat(sleeve_closes.values(), axis=1)
+
+            bundle_data = MarketDataBundle({"Close": close_df})
+            target = bundle.compute_weights(bundle_data)
+            pending[sleeve.name] = target
+
+        if not pending:
             return
+
+        # Net all sleeve targets and submit
         venue = Venue(self._book.default_venue)
         equity_map = self.portfolio.equity(venue=venue)
         base_ccy = Currency.from_str(self._book.base_currency)
@@ -161,19 +279,34 @@ class RebalanceStrategy(Strategy):
         instrument_metas, fx_rates, prices = self._collect_sizing_params(venue)
 
         orders = rebalance(
-            self._pending_targets,
+            pending,
             nav,
             self._book,
             instrument_metas=instrument_metas,
             fx_rates=fx_rates,
             prices=prices,
         )
-        self._pending_targets = {}
+
+        # Calendar-aware: only emit orders for FIGIs with a fresh bar
         for oi in orders:
+            if oi.figi.value not in self._period_fresh_figis:
+                self.log.info(
+                    f"Skipping {oi.side.value} {oi.quantity:.0f} "
+                    f"{oi.figi.value}: venue closed this period"
+                )
+                continue
             self._submit_order_intent(oi)
 
     def _figi_to_instr_id(self, figi: str) -> InstrumentId:
-        return self._figi_bimap[figi]
+        """Resolve a FIGI to a venue-specific InstrumentId.
+
+        Uses the FIGI bimap (Slice 3) when available, falling back to the
+        per-sleeve venue map (Slice 6) or the book's default_venue.
+        """
+        if figi in self._figi_bimap:
+            return self._figi_bimap[figi]
+        venue = self._figi_to_venue.get(figi, self._book.default_venue)
+        return InstrumentId.from_str(f"{figi}.{venue}")
 
     def _resolve_bimap(self, figis: set[str]) -> dict[str, InstrumentId]:
         """Resolve *figis* to a bimap via the Security Master."""
@@ -194,29 +327,28 @@ class RebalanceStrategy(Strategy):
         prices: dict[str, float] = {}
         currencies: set[str] = set()
 
-        for target in self._pending_targets.values():
-            if target is None or target.empty:
+        # Collect all FIGIs from all sleeves
+        all_figis: set[str] = set()
+        for bundle in self._sleeve_to_bundle.values():
+            all_figis.update(bundle.contract.figis)
+
+        for figi_str in all_figis:
+            instr_id = self._figi_to_instr_id(figi_str)
+            instrument = self.cache.instrument(instr_id)
+            if instrument is None:
                 continue
-            for figi in target.columns:
-                figi_str = str(figi)
-                if figi_str in instrument_metas:
-                    continue
-                instr_id = self._figi_to_instr_id(figi_str)
-                instrument = self.cache.instrument(instr_id)
-                if instrument is None:
-                    continue
 
-                currency = instrument.quote_currency.code
-                instrument_metas[figi_str] = InstrumentSizing(
-                    currency=currency,
-                    size_increment=float(instrument.size_increment),
-                )
+            currency = instrument.quote_currency.code
+            instrument_metas[figi_str] = InstrumentSizing(
+                currency=currency,
+                size_increment=float(instrument.size_increment),
+            )
 
-                buf = self._bars_buffer.get(instr_id)
-                if buf:
-                    prices[figi_str] = float(buf[-1].close.as_double())
+            buf = self._bars_buffer.get(instr_id)
+            if buf:
+                prices[figi_str] = float(buf[-1].close.as_double())
 
-                currencies.add(currency)
+            currencies.add(currency)
 
         fx_rates: dict[str, float] = {}
         for currency in currencies:
@@ -263,8 +395,8 @@ class RebalanceStrategy(Strategy):
         Computes per-instrument max notionals from the current NAV.
         """
         figis: list[str] = []
-        if self._contract is not None:
-            figis = list(self._contract.figis)
+        for contract in self._sleeve_to_contract.values():
+            figis.extend(contract.figis)
         return self._risk_guard.risk_engine_config_dict(
             nav=nav,
             figis=figis,
@@ -282,7 +414,9 @@ class RebalanceStrategy(Strategy):
         instr_id = self._figi_to_instr_id(oi.figi.value)
         instrument = self.cache.instrument(instr_id)
         if instrument is None:
-            self.log.error(f"Instrument not found for FIGI {oi.figi.value}; skipping order")
+            self.log.error(
+                f"Instrument not found for FIGI {oi.figi.value}; skipping order"
+            )
             return
 
         nt_side = NtOrderSide.BUY if oi.side == OrderSide.BUY else NtOrderSide.SELL
@@ -296,7 +430,7 @@ class RebalanceStrategy(Strategy):
 
 
 def _bars_to_close_series(
-    bars: list[Bar], figi: str
+    bars: list[Bar], figi: str,
 ) -> pd.DataFrame:
     """Convert buffered bars into a single-column close-price DataFrame keyed by *figi*."""
     index = pd.DatetimeIndex([b.ts_event for b in bars])
