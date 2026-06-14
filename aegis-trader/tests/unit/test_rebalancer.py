@@ -509,17 +509,24 @@ class TestRebalanceSlice4:
 
     # ── cap gate — per-name ─────────────────────────────────────────────
 
-    def test_per_name_cap_breach_widen_to_compliance(self):
-        """Realised exceeds per_name_cap; no band trade exists → widen to cap."""
+    def test_per_name_cap_breach_band_creates_corrective_verified(self):
+        """Band gate creates corrective trade for cap breach; cap gate verifies post_book."""
         book = self._book(per_name_cap=0.10, default_band_up=0.02, default_band_down=0.02)
         target = self._target({"FIGI_A": 0.08})
 
         # Realised = 0.12 → exceeds per_name_cap 0.10.
-        # Band: delta = 0.08-0.12 = -0.04 > band_down=0.02 → band would trigger SELL
-        # So band gate DOES trigger. Let me test the case where band would NOT trigger.
-        # Wait, with target=0.08, band_down=0.02, realised=0.12:
-        #   delta = target - realized = -0.04, abs(delta)=0.04 > band_down=0.02
-        # Band gate triggers a SELL. But what if the band is wider?
+        # Band: delta = 0.08 - 0.12 = -0.04 > band_up=0.02 → SELL.
+        # Cap gate: realised breach; already correcting → verify post_book=0.08 ≤ cap.
+        orders = rebalance(
+            {book.sleeves[0].name: target},
+            nav=100_000.0,
+            book=book,
+            realized_weights={"FIGI_A": 0.12},
+        )
+        assert len(orders) == 1
+        assert orders[0].side == OrderSide.SELL
+        # delta = -0.04 → SELL 4_000
+        assert orders[0].quantity == pytest.approx(4_000.0)
 
     def test_per_name_cap_breach_band_suppressed_corrective_order(self):
         """Realised breaches per_name_cap but band suppresses trade → widen."""
