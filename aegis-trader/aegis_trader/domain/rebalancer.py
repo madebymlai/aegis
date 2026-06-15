@@ -29,6 +29,7 @@ from types import MappingProxyType
 import pandas as pd
 
 from aegis_trader.domain.allocator import (
+    Allocation,
     SleeveWeightBand,
     allocate_covariance_vol_target,
     allocate_diagonal_vol_target,
@@ -108,29 +109,13 @@ def rebalance_plan(
             continue  # silently skip sleeves without data
         latest_targets[sleeve.name] = _latest_target_weights(target)
 
-    risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
-    sleeve_weight_bands = _sleeve_weight_bands(book)
-    if realized_covariance is not None:
-        allocation = allocate_covariance_vol_target(
-            sleeve_targets=latest_targets,
-            risk_shares=risk_shares,
-            realized_covariance=realized_covariance,
-            book_vol_target=book.book_vol_target,
-            groups={sleeve.name: sleeve.group for sleeve in book.sleeves},
-            previous_multipliers=previous_sleeve_weights,
-            sleeve_weight_bands=sleeve_weight_bands,
-            sleeve_reversion_fraction=book.sleeve_reversion_fraction,
-        )
-    else:
-        allocation = allocate_diagonal_vol_target(
-            sleeve_targets=latest_targets,
-            risk_shares=risk_shares,
-            realized_vols=realized_vols,
-            book_vol_target=book.book_vol_target,
-            previous_multipliers=previous_sleeve_weights,
-            sleeve_weight_bands=sleeve_weight_bands,
-            sleeve_reversion_fraction=book.sleeve_reversion_fraction,
-        )
+    allocation = _allocate_sleeves(
+        latest_targets,
+        book,
+        realized_vols=realized_vols,
+        realized_covariance=realized_covariance,
+        previous_sleeve_weights=previous_sleeve_weights,
+    )
 
     net_target_by_figi: dict[str, float] = {}
     for scaled_targets in allocation.scaled_targets.values():
@@ -198,6 +183,40 @@ def rebalance_plan(
     return RebalancePlan(
         deltas=tuple(deltas),
         applied_sleeve_weights=MappingProxyType(dict(allocation.multipliers)),
+    )
+
+
+def _allocate_sleeves(
+    latest_targets: dict[SleeveName, dict[str, float]],
+    book: BookConfig,
+    *,
+    realized_vols: dict[SleeveName, float] | None,
+    realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None,
+    previous_sleeve_weights: dict[SleeveName, float] | None,
+) -> Allocation:
+    risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
+    sleeve_weight_bands = _sleeve_weight_bands(book)
+
+    if realized_covariance is not None:
+        return allocate_covariance_vol_target(
+            sleeve_targets=latest_targets,
+            risk_shares=risk_shares,
+            realized_covariance=realized_covariance,
+            book_vol_target=book.book_vol_target,
+            groups={sleeve.name: sleeve.group for sleeve in book.sleeves},
+            previous_multipliers=previous_sleeve_weights,
+            sleeve_weight_bands=sleeve_weight_bands,
+            sleeve_reversion_fraction=book.sleeve_reversion_fraction,
+        )
+
+    return allocate_diagonal_vol_target(
+        sleeve_targets=latest_targets,
+        risk_shares=risk_shares,
+        realized_vols=realized_vols,
+        book_vol_target=book.book_vol_target,
+        previous_multipliers=previous_sleeve_weights,
+        sleeve_weight_bands=sleeve_weight_bands,
+        sleeve_reversion_fraction=book.sleeve_reversion_fraction,
     )
 
 

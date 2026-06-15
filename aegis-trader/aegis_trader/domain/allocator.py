@@ -79,14 +79,12 @@ def allocate_diagonal_vol_target(
     if not active:
         return Allocation(multipliers={}, scaled_targets={})
     if realized_vols is None:
-        return _allocation_from_multipliers(
+        return _allocation_with_sleeve_weight_bands(
             sleeve_targets,
-            _apply_sleeve_weight_bands(
-                _risk_share_multipliers(active, risk_shares),
-                previous_multipliers=previous_multipliers,
-                sleeve_weight_bands=sleeve_weight_bands,
-                sleeve_reversion_fraction=sleeve_reversion_fraction,
-            ),
+            _risk_share_multipliers(active, risk_shares),
+            previous_multipliers=previous_multipliers,
+            sleeve_weight_bands=sleeve_weight_bands,
+            sleeve_reversion_fraction=sleeve_reversion_fraction,
         )
 
     vols = _validate_vols(active, realized_vols)
@@ -100,13 +98,13 @@ def allocate_diagonal_vol_target(
 
     scale = book_vol_target / raw_vol
     multipliers = {name: multiplier * scale for name, multiplier in raw.items()}
-    multipliers = _apply_sleeve_weight_bands(
+    return _allocation_with_sleeve_weight_bands(
+        sleeve_targets,
         multipliers,
         previous_multipliers=previous_multipliers,
         sleeve_weight_bands=sleeve_weight_bands,
         sleeve_reversion_fraction=sleeve_reversion_fraction,
     )
-    return _allocation_from_multipliers(sleeve_targets, multipliers)
 
 
 def allocate_covariance_vol_target(
@@ -138,14 +136,12 @@ def allocate_covariance_vol_target(
     if not active:
         return Allocation(multipliers={}, scaled_targets={})
     if realized_covariance is None:
-        return _allocation_from_multipliers(
+        return _allocation_with_sleeve_weight_bands(
             sleeve_targets,
-            _apply_sleeve_weight_bands(
-                _risk_share_multipliers(active, risk_shares),
-                previous_multipliers=previous_multipliers,
-                sleeve_weight_bands=sleeve_weight_bands,
-                sleeve_reversion_fraction=sleeve_reversion_fraction,
-            ),
+            _risk_share_multipliers(active, risk_shares),
+            previous_multipliers=previous_multipliers,
+            sleeve_weight_bands=sleeve_weight_bands,
+            sleeve_reversion_fraction=sleeve_reversion_fraction,
         )
 
     covariance = _covariance_matrix(active, realized_covariance)
@@ -168,13 +164,13 @@ def allocate_covariance_vol_target(
         name: multiplier * scale
         for name, multiplier in composition_by_name.items()
     }
-    multipliers = _apply_sleeve_weight_bands(
+    return _allocation_with_sleeve_weight_bands(
+        sleeve_targets,
         multipliers,
         previous_multipliers=previous_multipliers,
         sleeve_weight_bands=sleeve_weight_bands,
         sleeve_reversion_fraction=sleeve_reversion_fraction,
     )
-    return _allocation_from_multipliers(sleeve_targets, multipliers)
 
 
 def equal_risk_contribution_weights(
@@ -258,6 +254,28 @@ def _risk_share_multipliers(
     return {name: float(risk_shares[name]) for name in active}
 
 
+def _allocation_with_sleeve_weight_bands(
+    sleeve_targets: Mapping[SleeveName, Mapping[str, float]],
+    multipliers: Mapping[SleeveName, float],
+    *,
+    previous_multipliers: Mapping[SleeveName, float] | None,
+    sleeve_weight_bands: Mapping[SleeveName, SleeveWeightBand] | None,
+    sleeve_reversion_fraction: float,
+) -> Allocation:
+    return _allocation_from_multipliers(
+        sleeve_targets,
+        _apply_sleeve_weight_bands(
+            multipliers,
+            previous_multipliers=previous_multipliers,
+            sleeve_weight_bands=sleeve_weight_bands,
+            sleeve_reversion_fraction=sleeve_reversion_fraction,
+        ),
+    )
+
+
+_DEFAULT_SLEEVE_WEIGHT_BAND = SleeveWeightBand(down=0.0, up=0.0)
+
+
 def _apply_sleeve_weight_bands(
     multipliers: Mapping[SleeveName, float],
     *,
@@ -281,7 +299,7 @@ def _apply_sleeve_weight_bands(
             raise ValueError(
                 f"previous multiplier for sleeve {name.value!r} must be finite"
             )
-        band = sleeve_weight_bands.get(name, SleeveWeightBand(down=0.0, up=0.0))
+        band = sleeve_weight_bands.get(name, _DEFAULT_SLEEVE_WEIGHT_BAND)
         drift = target - previous
         if _within_sleeve_weight_band(drift, band):
             banded[name] = previous
