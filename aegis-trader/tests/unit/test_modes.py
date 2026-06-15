@@ -1,8 +1,9 @@
-"""Unit tests for Slice 10: paper-mode wiring (IBKR SANDBOX, no live connection).
+"""Unit tests for Slice 10 (paper-mode) and Slice 11 (live-mode) wiring.
 
-Validates that the paper-mode configuration functions build a correctly
-configured SANDBOX TradingNodeConfig with cache, logging, and reconciliation —
-all without requiring a live IBKR connection or the ``ibapi`` package.
+Validates that paper-mode (SANDBOX) and live-mode (LIVE) configuration
+functions build correctly configured TradingNodeConfigs with cache,
+logging, and reconciliation — all without requiring a live IBKR
+connection or the ``ibapi`` package.
 
 These are *wiring* tests: they assert that the right components are present
 and correctly configured, not that the node connects to IBKR.
@@ -27,8 +28,14 @@ from aegis_trader.trader.modes import (
     build_paper_trading_node_config,
     build_paper_data_client_config,
     build_paper_exec_client_config,
+    build_live_trading_node,
+    build_live_trading_node_config,
+    build_live_data_client_config,
+    build_live_exec_client_config,
     IB_CLIENT_ID,
     IB_HOST,
+    IB_LIVE_ACCOUNT_ID,
+    IB_LIVE_PORT,
     IB_PAPER_ACCOUNT_ID,
     IB_PAPER_PORT,
 )
@@ -138,5 +145,98 @@ def test_paper_trading_node_constructs():
         node = build_paper_trading_node()
     except Exception as exc:
         assert False, f"build_paper_trading_node() raised {type(exc).__name__}: {exc}"
+    else:
+        assert node is not None
+
+
+# --------------------------------------------------------------------------- #
+# LIVE-mode structural config tests (Slice 11 — no IBKR imports needed)
+# --------------------------------------------------------------------------- #
+
+def test_live_node_config_has_live_environment():
+    """The live TradingNodeConfig MUST use Environment.LIVE."""
+    cfg = build_live_trading_node_config()
+    assert cfg.environment == Environment.LIVE, (
+        f"Expected LIVE, got {cfg.environment}"
+    )
+
+
+def test_live_node_config_has_cache():
+    cfg = build_live_trading_node_config()
+    assert cfg.cache is not None
+    assert isinstance(cfg.cache, CacheConfig)
+
+
+def test_live_node_config_has_logging():
+    cfg = build_live_trading_node_config()
+    assert cfg.logging is not None
+    assert isinstance(cfg.logging, LoggingConfig)
+
+
+def test_live_node_config_has_reconciliation():
+    cfg = build_live_trading_node_config()
+    assert cfg.exec_engine.reconciliation is True, (
+        f"Expected reconciliation=True, got {cfg.exec_engine.reconciliation}"
+    )
+
+
+def test_live_node_config_is_msgspec_serializable():
+    cfg = build_live_trading_node_config()
+    cfg_json = cfg.json()
+    loaded = TradingNodeConfig.parse(cfg_json)
+    assert loaded.environment == cfg.environment
+    assert loaded.trader_id == cfg.trader_id
+    assert loaded.cache is not None
+    assert loaded.logging is not None
+    assert loaded.exec_engine.reconciliation is True
+
+
+# --------------------------------------------------------------------------- #
+# LIVE-mode IBKR dict config tests (no ibapi needed)
+# --------------------------------------------------------------------------- #
+
+def test_live_data_client_config_defaults():
+    """The live IBKR data client dict defaults to realtime on the live port."""
+    cfg = build_live_data_client_config()
+    assert cfg["ibg_host"] == IB_HOST
+    assert cfg["ibg_port"] == IB_LIVE_PORT
+    assert cfg["ibg_client_id"] == IB_CLIENT_ID
+    assert cfg["market_data_type"] == "realtime"
+
+
+def test_live_data_client_config_custom_host():
+    cfg = build_live_data_client_config(ibg_host="10.0.0.1", ibg_port=4001)
+    assert cfg["ibg_host"] == "10.0.0.1"
+    assert cfg["ibg_port"] == 4001
+
+
+def test_live_data_client_config_custom_client_id():
+    cfg = build_live_data_client_config(ibg_client_id=99)
+    assert cfg["ibg_client_id"] == 99
+
+
+def test_live_exec_client_config_defaults():
+    """The live IBKR exec client dict MUST use live port and non-DU account."""
+    cfg = build_live_exec_client_config()
+    assert cfg["ibg_host"] == IB_HOST
+    assert cfg["ibg_port"] == IB_LIVE_PORT
+    assert cfg["ibg_client_id"] == IB_CLIENT_ID
+    assert not cfg["account_id"].startswith("DU"), (
+        f"Expected non-DU live account, got {cfg['account_id']!r}"
+    )
+    assert cfg["account_id"] == IB_LIVE_ACCOUNT_ID
+
+
+def test_live_exec_client_config_custom_account():
+    cfg = build_live_exec_client_config(account_id="U1234567")
+    assert cfg["account_id"] == "U1234567"
+
+
+def test_live_trading_node_constructs():
+    """Live TradingNode constructs without error — no IBKR connection required."""
+    try:
+        node = build_live_trading_node()
+    except Exception as exc:
+        assert False, f"build_live_trading_node() raised {type(exc).__name__}: {exc}"
     else:
         assert node is not None
