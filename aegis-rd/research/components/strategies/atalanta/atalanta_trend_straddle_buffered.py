@@ -46,6 +46,12 @@ def param_space():
     }
 
 
+# %% lookback
+def lookback(**params):
+    """No warmup beyond the indicators': the buffered straddle adds none."""
+    return 0
+
+
 # %% helpers
 def _candidate_weights(score_2d, vol_2d, entry_band):
     """Signed vol-scaled conviction weights for one candidate, gross-normalized to 1.0."""
