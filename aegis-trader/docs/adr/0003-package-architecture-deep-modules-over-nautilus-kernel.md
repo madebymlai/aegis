@@ -139,3 +139,26 @@ backtest is what you trade.**
   (arrives with installed bundle wheels), not a direct Trader dependency.
 - **Backtest = live parity** is inherited from Nautilus: the overlay validated in `backtest`
   mode is byte-for-byte what runs in `paper`/`live`.
+
+## Amendment (2026-06-15, aegis-rd-bwb.2 — Wave B)
+
+**Ports may speak Nautilus; only `domain/*` is Nautilus-free.** The original rule
+("importing the port never drags in Nautilus") is relaxed for the concern ports.
+Nautilus already ships read-ports — `PortfolioFacade` and `CacheFacade` (the
+abstractions its own kernel, live node, and risk engine depend on) — that cover
+every book-state and cache read the overlay needs. Re-declaring a parallel
+Nautilus-free protocol over them would add a shallow indirection, not depth.
+
+So `data/MarketDataPort` and `portfolio/BookStatePort` are **narrow deep ports
+that delegate to those facades**: their adapters (`*/nautilus.py`) take a
+`PortfolioFacade` / `CacheFacade` in the constructor and collapse the kernel's
+Demeter train-wrecks (`portfolio.equity(venue)[base].as_double()`, …) into a few
+plain methods (`nav`/`cash`/`realized_weights`; `instrument_sizing`/`make_quantity`).
+Realized exposure is marked and FX-converted by Nautilus
+(`net_exposure(target_currency=base)`), not re-derived Trader-side. The port
+modules therefore import Nautilus types, and the value they add is **depth + the
+DIP test seam**, not provider isolation.
+
+The Nautilus-free boundary that still holds is `domain/*` — the rebalancer,
+sizing, attribution, types, and Book Config (the high test seam). Nautilus types
+never cross into `domain/`.
