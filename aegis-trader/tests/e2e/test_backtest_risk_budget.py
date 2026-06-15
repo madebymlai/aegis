@@ -35,16 +35,12 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
     x = np.linspace(0.0, 80.0 * np.pi, days)
     trend_returns = 0.10 / np.sqrt(252.0) * np.sin(x)
     tail_returns = 0.20 / np.sqrt(252.0) * np.cos(x)
-    covariance = {
-        _TREND: {
-            _TREND: float(np.var(trend_returns, ddof=1) * 252.0),
-            _TAIL: float(np.cov(trend_returns, tail_returns, ddof=1)[0, 1] * 252.0),
-        },
-        _TAIL: {
-            _TREND: float(np.cov(trend_returns, tail_returns, ddof=1)[0, 1] * 252.0),
-            _TAIL: float(np.var(tail_returns, ddof=1) * 252.0),
-        },
-    }
+    covariance = _annualized_covariance(
+        {
+            _TREND: trend_returns,
+            _TAIL: tail_returns,
+        }
+    )
 
     book = BookConfig(
         sleeves=(
@@ -120,13 +116,7 @@ def test_five_year_tail_convexity_budget_bounds_target_risk_and_zeros_expansion(
         _TAIL: tail_returns,
         _EXPANSION: expansion_returns,
     }
-    covariance = {
-        left: {
-            right: float(np.cov(left_returns, right_returns, ddof=1)[0, 1] * 252.0)
-            for right, right_returns in returns.items()
-        }
-        for left, left_returns in returns.items()
-    }
+    covariance = _annualized_covariance(returns)
 
     book = BookConfig(
         sleeves=(
@@ -185,6 +175,18 @@ def test_five_year_tail_convexity_budget_bounds_target_risk_and_zeros_expansion(
     assert realized_risk[_TAIL] < 0.02
     assert realized_risk[_TAIL] < realized_risk[_TREND]
     assert weights["TAIL"] < weights["TREND"] * 0.02
+
+
+def _annualized_covariance(
+    returns: dict[SleeveName, np.ndarray],
+) -> dict[SleeveName, dict[SleeveName, float]]:
+    return {
+        left: {
+            right: float(np.cov(left_returns, right_returns, ddof=1)[0, 1] * 252.0)
+            for right, right_returns in returns.items()
+        }
+        for left, left_returns in returns.items()
+    }
 
 
 def _one_row_target(figi_to_weight: dict[str, float]):

@@ -186,6 +186,21 @@ def test_tail_convexity_budget_loads(tmp_path):
     assert book.allocator_risk_shares()[SleeveName("tail")] == pytest.approx(0.05)
 
 
+def test_tail_convexity_budget_must_be_table(tmp_path):
+    path = _write(tmp_path, """
+        tail_convexity_budget = 1.0
+
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+
+    with pytest.raises(BookConfigError, match="tail_convexity_budget must be a table"):
+        load_book_config(path)
+
+
 def test_missing_file_fails_closed(tmp_path):
     with pytest.raises(BookConfigError, match="cannot read"):
         load_book_config(tmp_path / "nope.toml")

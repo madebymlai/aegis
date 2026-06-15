@@ -12,7 +12,6 @@ in the sleeves' bundles and checked at load by
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -114,15 +113,19 @@ class TailConvexityBudget:
         ):
             if remaining_units <= _EPS:
                 break
-            capacity = candidate.capacity_risk_share
-            if capacity <= _EPS:
+            capacity_risk_share = candidate.capacity_risk_share
+            if capacity_risk_share <= _EPS:
                 continue
-            needed = remaining_units / candidate.convexity_units_per_risk_share
-            risk_share = min(capacity, needed)
-            if risk_share <= _EPS:
+            needed_risk_share = (
+                remaining_units / candidate.convexity_units_per_risk_share
+            )
+            allocated_risk_share = min(capacity_risk_share, needed_risk_share)
+            if allocated_risk_share <= _EPS:
                 continue
-            allocations[candidate.sleeve] = risk_share
-            remaining_units -= risk_share * candidate.convexity_units_per_risk_share
+            allocations[candidate.sleeve] = allocated_risk_share
+            remaining_units -= (
+                allocated_risk_share * candidate.convexity_units_per_risk_share
+            )
         return allocations
 
 
@@ -214,17 +217,19 @@ class BookConfig:
         Expansion sleeves consume zero risk by default until a later slice gives
         them an explicit budget.
         """
-        shares = {sleeve.name: sleeve.risk_share for sleeve in self.sleeves}
+        shares: dict[SleeveName, float] = {}
         for sleeve in self.sleeves:
             if sleeve.group == RiskGroup.EXPANSION:
                 shares[sleeve.name] = 0.0
+            else:
+                shares[sleeve.name] = sleeve.risk_share
+        if self.tail_convexity_budget is None:
+            return shares
 
-        if self.tail_convexity_budget is not None:
-            for sleeve in self.sleeves:
-                if sleeve.group == RiskGroup.TARGET:
-                    shares[sleeve.name] = 0.0
-            shares.update(self.tail_convexity_budget.risk_shares())
-
+        for sleeve in self.sleeves:
+            if sleeve.group == RiskGroup.TARGET:
+                shares[sleeve.name] = 0.0
+        shares.update(self.tail_convexity_budget.risk_shares())
         return shares
 
     def band_for(self, figi: str) -> tuple[float, float]:
@@ -237,9 +242,7 @@ class BookConfig:
     def _validate_tail_convexity_budget(self) -> None:
         if self.tail_convexity_budget is None:
             return
-        sleeve_by_name: Mapping[SleeveName, SleeveConfig] = {
-            sleeve.name: sleeve for sleeve in self.sleeves
-        }
+        sleeve_by_name = {sleeve.name: sleeve for sleeve in self.sleeves}
         for candidate in self.tail_convexity_budget.candidates:
             sleeve = sleeve_by_name.get(candidate.sleeve)
             if sleeve is None:
