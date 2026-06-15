@@ -24,14 +24,15 @@ base_currency = "EUR"
 [[sleeves]]
 name = "trend"
 wheel_filename = "trend.whl"
-budget = 1.0
+risk_share = 1.0
+group = "Floor"
 """
 
 
 def _book() -> BookConfig:
     return BookConfig(
         sleeves=(SleeveConfig(name=SleeveName("trend"),
-                              wheel_filename="trend.whl", budget=1.0),),
+                              wheel_filename="trend.whl", risk_share=1.0),),
         base_currency="EUR",
     )
 

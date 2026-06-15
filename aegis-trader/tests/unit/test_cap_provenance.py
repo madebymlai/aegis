@@ -51,7 +51,7 @@ def _bundle(*, gross_cap: float, net_cap: float | None = None) -> ExecutionBundl
 
 def _book(**caps) -> BookConfig:
     return BookConfig(
-        sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="trend.whl", budget=1.0),),
+        sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="trend.whl", risk_share=1.0),),
         **caps,
     )
 

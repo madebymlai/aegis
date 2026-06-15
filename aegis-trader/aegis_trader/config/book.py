@@ -15,7 +15,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
 from aegis_trader.domain.types import SleeveName
 
 
@@ -67,7 +67,8 @@ def load_book_config(path: str | Path) -> BookConfig:
             SleeveConfig(
                 name=SleeveName(s["name"]),
                 wheel_filename=s["wheel_filename"],
-                budget=float(s["budget"]),
+                risk_share=float(s["risk_share"]),
+                group=RiskGroup(s["group"]),
             )
             for s in data.get("sleeves", [])
         )
@@ -75,7 +76,7 @@ def load_book_config(path: str | Path) -> BookConfig:
             (o["figi"], float(o["band_up"]), float(o["band_down"]))
             for o in data.get("band_overrides", [])
         )
-    except (KeyError, TypeError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise BookConfigError(
             f"book config {str(path)!r} has a malformed sleeve/band entry: {exc}"
         ) from exc
@@ -83,6 +84,7 @@ def load_book_config(path: str | Path) -> BookConfig:
     return BookConfig(
         sleeves=sleeves,
         base_currency=data.get("base_currency", "EUR"),
+        book_vol_target=float(data.get("book_vol_target", 0.09)),
         max_book_gross=float(data.get("max_book_gross", 1.0)),
         gross_cap=data.get("gross_cap"),
         net_cap=data.get("net_cap"),

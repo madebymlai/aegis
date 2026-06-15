@@ -15,14 +15,15 @@ from aegis_trader.config import (
     find_book_config,
     load_book_config,
 )
-from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
 from aegis_trader.domain.types import SleeveName
 
 _MINIMAL = """
 [[sleeves]]
 name = "trend"
 wheel_filename = "trend.whl"
-budget = 1.0
+risk_share = 1.0
+group = "Floor"
 """
 
 
@@ -36,27 +37,32 @@ def test_minimal_book_loads(tmp_path):
     """base_currency + one sleeve -> a BookConfig with those values."""
     path = _write(tmp_path, """
         base_currency = "EUR"
+        book_vol_target = 0.09
 
         [[sleeves]]
         name = "trend_lse"
         wheel_filename = "trend_lse-abc123.whl"
-        budget = 1.0
+        risk_share = 1.0
+        group = "Floor"
     """)
 
     book = load_book_config(path)
 
     assert isinstance(book, BookConfig)
     assert book.base_currency == "EUR"
+    assert book.book_vol_target == 0.09
     assert book.sleeve_count == 1
     assert book.sleeves[0].name == SleeveName("trend_lse")
     assert book.sleeves[0].wheel_filename == "trend_lse-abc123.whl"
-    assert book.sleeves[0].budget == 1.0
+    assert book.sleeves[0].risk_share == 1.0
+    assert book.sleeves[0].group == RiskGroup.FLOOR
 
 
 def test_full_book_round_trips_to_hand_built_config(tmp_path):
     """Every field the e2e tests build by hand survives the TOML round-trip."""
     path = _write(tmp_path, """
         base_currency = "EUR"
+        book_vol_target = 0.12
         max_book_gross = 2.0
         gross_cap = 1.0
         net_cap = 0.5
@@ -68,12 +74,14 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         [[sleeves]]
         name = "trend_lse"
         wheel_filename = "trend_lse-abc123.whl"
-        budget = 1.0
+        risk_share = 0.6
+        group = "Floor"
 
         [[sleeves]]
         name = "trend_xetra"
         wheel_filename = "trend_xetra-def456.whl"
-        budget = 1.0
+        risk_share = 0.4
+        group = "Target"
 
         [[band_overrides]]
         figi = "BBG000B9XRY4"
@@ -86,11 +94,14 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
     assert book == BookConfig(
         sleeves=(
             SleeveConfig(name=SleeveName("trend_lse"),
-                         wheel_filename="trend_lse-abc123.whl", budget=1.0),
+                         wheel_filename="trend_lse-abc123.whl", risk_share=0.6,
+                         group=RiskGroup.FLOOR),
             SleeveConfig(name=SleeveName("trend_xetra"),
-                         wheel_filename="trend_xetra-def456.whl", budget=1.0),
+                         wheel_filename="trend_xetra-def456.whl", risk_share=0.4,
+                         group=RiskGroup.TARGET),
         ),
         base_currency="EUR",
+        book_vol_target=0.12,
         max_book_gross=2.0,
         gross_cap=1.0,
         net_cap=0.5,
@@ -108,12 +119,14 @@ def test_defaults_applied_when_keys_omitted(tmp_path):
         [[sleeves]]
         name = "trend"
         wheel_filename = "trend.whl"
-        budget = 1.0
+        risk_share = 1.0
+        group = "Floor"
     """)
 
     book = load_book_config(path)
 
     assert book.base_currency == "EUR"
+    assert book.book_vol_target == 0.09
     assert book.max_book_gross == 1.0
     assert book.gross_cap is None
     assert book.default_band_up == 0.02
@@ -136,7 +149,21 @@ def test_missing_required_sleeve_key_fails_closed(tmp_path):
     path = _write(tmp_path, """
         [[sleeves]]
         name = "trend"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+    with pytest.raises(BookConfigError, match="malformed sleeve"):
+        load_book_config(path)
+
+
+def test_legacy_budget_key_fails_closed(tmp_path):
+    """Forward-first schema: static capital budget is removed, no shim."""
+    path = _write(tmp_path, """
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
         budget = 1.0
+        group = "Floor"
     """)
     with pytest.raises(BookConfigError, match="malformed sleeve"):
         load_book_config(path)
@@ -146,23 +173,6 @@ def test_no_sleeves_surfaces_book_invariant(tmp_path):
     """An empty book hits BookConfig's own 'at least one sleeve' guard."""
     path = _write(tmp_path, 'base_currency = "EUR"\n')
     with pytest.raises(ValueError, match="at least one sleeve"):
-        load_book_config(path)
-
-
-def test_over_budget_gross_surfaces_book_invariant(tmp_path):
-    """Sum of budgets over max_book_gross hits BookConfig's leverage guard."""
-    path = _write(tmp_path, """
-        [[sleeves]]
-        name = "a"
-        wheel_filename = "a.whl"
-        budget = 0.7
-
-        [[sleeves]]
-        name = "b"
-        wheel_filename = "b.whl"
-        budget = 0.7
-    """)
-    with pytest.raises(ValueError, match="max_book_gross"):
         load_book_config(path)
 
 

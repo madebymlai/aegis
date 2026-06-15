@@ -18,7 +18,7 @@ from aegis_trader.domain.types import Figi, OrderSide, SleeveName, WeightDelta
 def make_book(sleeves: list[tuple[str, str, float]], **kwargs) -> BookConfig:
     return BookConfig(
         sleeves=tuple(
-            SleeveConfig(name=SleeveName(n), wheel_filename=w, budget=b)
+            SleeveConfig(name=SleeveName(n), wheel_filename=w, risk_share=b)
             for n, w, b in sleeves
         ),
         **kwargs,
@@ -164,7 +164,7 @@ class TestRebalanceMultiSleeve:
         for d in result:
             assert d.side == OrderSide.BUY
 
-    def test_budget_scales_before_netting(self):
+    def test_risk_share_scales_before_netting_during_warmup(self):
         book = make_book([("trend", "trend-abc.whl", 0.6), ("carry", "carry-def.whl", 0.0)])
         result = rebalance(
             {book.sleeves[0].name: _target({"FIGI_A": 0.5}),
@@ -173,6 +173,23 @@ class TestRebalanceMultiSleeve:
         )
         assert len(result) == 1
         assert result[0].delta == pytest.approx(0.30)
+
+    def test_realized_vols_scale_high_vol_sleeve_down_before_netting(self):
+        book = BookConfig(
+            sleeves=(
+                SleeveConfig(name=SleeveName("low"), wheel_filename="low.whl", risk_share=0.5),
+                SleeveConfig(name=SleeveName("high"), wheel_filename="high.whl", risk_share=0.5),
+            ),
+            book_vol_target=0.10,
+        )
+        result = rebalance(
+            {book.sleeves[0].name: _target({"LOW": 1.0}),
+             book.sleeves[1].name: _target({"HIGH": 1.0})},
+            book,
+            realized_vols={book.sleeves[0].name: 0.10, book.sleeves[1].name: 0.20},
+        )
+        by_figi = {d.figi.value: d.delta for d in result}
+        assert by_figi["HIGH"] == pytest.approx(by_figi["LOW"] / 2.0)
 
     def test_three_sleeves_complex_netting(self):
         book = make_book([("a", "a.whl", 0.4), ("b", "b.whl", 0.3), ("c", "c.whl", 0.3)])
@@ -214,7 +231,7 @@ class TestRebalanceSlice4:
     @staticmethod
     def _book(name: str = "trend", budget: float = 1.0, **kwargs) -> BookConfig:
         return BookConfig(
-            sleeves=(SleeveConfig(name=SleeveName(name), wheel_filename=f"{name}.whl", budget=budget),),
+            sleeves=(SleeveConfig(name=SleeveName(name), wheel_filename=f"{name}.whl", risk_share=budget),),
             **kwargs,
         )
 

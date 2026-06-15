@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from aegis_trader.domain.allocator import allocate_diagonal_vol_target
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.types import Figi, SleeveName, WeightDelta
 
@@ -35,6 +36,7 @@ def rebalance(
     book: BookConfig,
     *,
     realized_weights: dict[str, float] | None = None,
+    realized_vols: dict[SleeveName, float] | None = None,
 ) -> tuple[WeightDelta, ...]:
     """Net per-sleeve target weights into signed weight deltas to trade.
 
@@ -43,8 +45,8 @@ def rebalance(
     processed; sleeves missing from the dict or with empty DataFrames are
     silently skipped.
 
-    Each sleeve's latest row is scaled by its budget, then all budget-scaled
-    weights are netted per FIGI.
+    Each sleeve's latest row is scaled by the risk-budget allocator, then all
+    scaled weights are netted per FIGI.
 
     *realized_weights* maps FIGI string -> current realized weight (signed
     fraction of NAV).  When supplied, the realised book is gated against caps and
@@ -53,23 +55,29 @@ def rebalance(
     Returns the signed weight deltas to trade (fraction of NAV); converting a
     delta to a share quantity is the sizing step's job (``sizing.size_deltas``).
     """
-    # -- Step 1: net target weights across sleeves --
-    net_target_by_figi: dict[str, float] = {}
-
+    # -- Step 1: net allocator-scaled target weights across sleeves --
+    latest_targets: dict[SleeveName, dict[str, float]] = {}
     for sleeve in book.sleeves:
         target = sleeve_targets.get(sleeve.name)
         if target is None or target.empty:
             continue  # silently skip sleeves without data
+        latest_targets[sleeve.name] = {
+            str(col): float(target.iloc[-1][col])
+            for col in target.iloc[-1].index
+        }
 
-        budget = sleeve.budget
-        latest = target.iloc[-1]
+    allocation = allocate_diagonal_vol_target(
+        sleeve_targets=latest_targets,
+        risk_shares={sleeve.name: sleeve.risk_share for sleeve in book.sleeves},
+        realized_vols=realized_vols,
+        book_vol_target=book.book_vol_target,
+    )
 
-        for col in latest.index:
-            w = float(latest[col])
-            if abs(w) < _ZERO_GUARD:
+    net_target_by_figi: dict[str, float] = {}
+    for scaled_targets in allocation.scaled_targets.values():
+        for figi_key, scaled in scaled_targets.items():
+            if abs(scaled) < _ZERO_GUARD:
                 continue
-            scaled = w * budget
-            figi_key = str(col)
             net_target_by_figi[figi_key] = net_target_by_figi.get(figi_key, 0.0) + scaled
 
     # -- Step 2: net -> band -> post-execution book projection --

@@ -77,7 +77,7 @@ def _make_bars(figi: str, prices: list[float]) -> list[Bar]:
 
 def test_attribution_uses_real_per_period_nav():
     book = BookConfig(
-        sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="trend.whl", budget=1.0),),
+        sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="trend.whl", risk_share=1.0),),
         base_currency="EUR",
     )
     instr = eur_equity(_FIGI, VENUE.value)

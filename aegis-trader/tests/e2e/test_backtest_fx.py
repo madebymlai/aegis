@@ -89,7 +89,7 @@ def _make_bars(prices: list[float]) -> list[Bar]:
 
 def _make_book() -> BookConfig:
     return BookConfig(
-        sleeves=(SleeveConfig(name=SleeveName("uk"), wheel_filename="uk.whl", budget=1.0),),
+        sleeves=(SleeveConfig(name=SleeveName("uk"), wheel_filename="uk.whl", risk_share=1.0),),
         base_currency="EUR",
     )
 

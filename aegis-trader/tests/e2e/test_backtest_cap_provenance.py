@@ -79,7 +79,7 @@ def _make_bars(figi: str) -> list[Bar]:
 def test_cap_violating_book_is_rejected_at_load():
     """book.gross_cap (1.5) > bundle.gross_cap (1.0) → halted, zero fills."""
     book = BookConfig(
-        sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="trend.whl", budget=1.0),),
+        sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="trend.whl", risk_share=1.0),),
         base_currency="EUR",
         gross_cap=_BUNDLE_GROSS_CAP + 0.5,  # looser than research validated
     )

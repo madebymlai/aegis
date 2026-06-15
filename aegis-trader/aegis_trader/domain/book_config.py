@@ -2,17 +2,30 @@
 the Commingled Book.
 
 Declares one or more sleeves, each bound to a content-addressed wheel filename
-with a static budget, plus the book's risk controls (caps, bands, per-instrument
-overrides, aggregate-drift threshold).  Cap *provenance* — that the caps never
-exceed what research validated — is grounded in the sleeves' bundles and checked
-at load by ``bundles.provenance.check_cap_provenance``, not on this config.
+with a static risk share and risk group, plus the book's risk controls (vol
+target, caps, bands, per-instrument overrides, aggregate-drift threshold).  Cap
+*provenance* — that the caps never exceed what research validated — is grounded
+in the sleeves' bundles and checked at load by
+``bundles.provenance.check_cap_provenance``, not on this config.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from enum import StrEnum
 
 from aegis_trader.domain.types import SleeveName
+
+_EPS = 1e-12
+
+
+class RiskGroup(StrEnum):
+    """Top-level risk-budget group for a sleeve."""
+
+    FLOOR = "Floor"
+    TARGET = "Target"
+    EXPANSION = "Expansion"
 
 
 @dataclass(frozen=True)
@@ -27,25 +40,37 @@ class SleeveConfig:
 
     name: SleeveName
     wheel_filename: str
-    budget: float  # fraction of book NAV notionally allocated (<= 1.0)
+    risk_share: float
+    group: RiskGroup = RiskGroup.FLOOR
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.risk_share) or self.risk_share < 0:
+            raise ValueError(
+                f"sleeve {self.name.value!r} risk_share must be finite and non-negative"
+            )
+        if not isinstance(self.group, RiskGroup):
+            object.__setattr__(self, "group", RiskGroup(self.group))
 
 
 @dataclass(frozen=True)
 class BookConfig:
     """The full Commingled Book declaration.
 
-    Risk controls: gross/net/per-name caps, asymmetric drift bands with
-    per-instrument overrides, and a book-level aggregate drift threshold.  Cap
-    *provenance* — that these caps never exceed what research validated — is a
-    bundle-grounded load-time check (``bundles.provenance.check_cap_provenance``),
-    not a self-referential field on this config.
+    Risk controls: book volatility target, gross/net/per-name caps, asymmetric
+    drift bands with per-instrument overrides, and a book-level aggregate drift
+    threshold.  Cap *provenance* — that these caps never exceed what research
+    validated — is a bundle-grounded load-time check
+    (``bundles.provenance.check_cap_provenance``), not a self-referential field
+    on this config.
     """
 
     sleeves: tuple[SleeveConfig, ...]
     base_currency: str = "EUR"
+    book_vol_target: float = 0.09
 
-    # Book gross = Σ sleeve budgets.  Defaults to 1.0 (fully invested, no
-    # leverage, ADR-0001); raise explicitly to run levered.
+    # Gross cap stays authoritative after risk-budget scaling.  It is no longer
+    # derived from static capital budgets; the allocator produces the requested
+    # weights and the rebalancer's cap gate validates the post-band book.
     max_book_gross: float = 1.0
 
     # ── caps (all as fractions of NAV) ──
@@ -68,17 +93,12 @@ class BookConfig:
         names = [s.name.value for s in self.sleeves]
         if len(names) != len(set(names)):
             raise ValueError(f"duplicate sleeve names in BookConfig: {names}")
-
-        # Book gross = Σ budgets must not exceed the configured max (ADR-0001:
-        # sleeve budgets sum to the book gross; >1.0 is leverage and must be
-        # opted into by raising max_book_gross).
-        book_gross = sum(s.budget for s in self.sleeves)
-        if book_gross > self.max_book_gross + 1e-9:
-            raise ValueError(
-                f"book gross (Σ budgets = {book_gross:.4f}) exceeds "
-                f"max_book_gross ({self.max_book_gross:.4f}); raise max_book_gross "
-                f"to run levered"
-            )
+        if not math.isfinite(self.book_vol_target) or self.book_vol_target <= 0:
+            raise ValueError("book_vol_target must be finite and positive")
+        if not math.isfinite(self.max_book_gross) or self.max_book_gross <= 0:
+            raise ValueError("max_book_gross must be finite and positive")
+        if sum(s.risk_share for s in self.sleeves) <= _EPS:
+            raise ValueError("BookConfig must allocate positive total risk_share")
 
     @property
     def sleeve_count(self) -> int:

@@ -18,8 +18,10 @@
 # Base currency of the book — NAV, cash, and FX sizing are expressed in it.
 base_currency = "EUR"
 
-# Book gross = sum of sleeve budgets. Defaults to 1.0 (fully invested, no
-# leverage); raise it to run levered across sleeves.
+# Annualized book volatility target for risk-budget scaling.
+book_vol_target = 0.09
+
+# Gross cap after risk-budget scaling; raise it to run levered across sleeves.
 max_book_gross = 1.0
 
 # Risk caps, all as fractions of NAV. Provenance (caps <= what research
@@ -35,18 +37,20 @@ default_band_down = 0.02
 # Book-level aggregate fidelity: max sum |w_realized - w_target| before tripping.
 aggregate_drift_threshold = 0.5
 
-# Sleeves — each a notional sub-portfolio backed by one content-addressed bundle
-# wheel. Instruments carry their own venue (resolved per FIGI); the book never
-# names a single venue.
+# Sleeves — each a risk-budgeted sub-portfolio backed by one content-addressed
+# bundle wheel. Instruments carry their own venue (resolved per FIGI); the book
+# never names a single venue.
 [[sleeves]]
 name = "trend_lse"
 wheel_filename = "trend_lse-abc123.whl"
-budget = 0.6
+risk_share = 0.6
+group = "Floor"
 
 [[sleeves]]
 name = "trend_xetra"
 wheel_filename = "trend_xetra-def456.whl"
-budget = 0.4
+risk_share = 0.4
+group = "Target"
 
 # Per-FIGI asymmetric band overrides (optional).
 [[band_overrides]]

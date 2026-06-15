@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import math
 import pandas as pd
 from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
@@ -382,7 +383,13 @@ class RebalanceStrategy(Strategy):
         # weight deltas) against the REALIZED book (so bands, the realized-book
         # gate, and the fidelity trip engage); the sizer converts each delta into
         # a native share count.
-        deltas = rebalance(pending, self._book, realized_weights=realized_weights)
+        realized_vols = self._realized_sleeve_vols()
+        deltas = rebalance(
+            pending,
+            self._book,
+            realized_weights=realized_weights,
+            realized_vols=realized_vols,
+        )
         orders = size_deltas(
             deltas,
             nav,
@@ -455,6 +462,51 @@ class RebalanceStrategy(Strategy):
                 f"notional={summary.total_notional:.2f}"
             )
 
+    def _realized_sleeve_vols(self) -> dict[SleeveName, float] | None:
+        """Estimate annualized sleeve vol from recorded rebalance-period data.
+
+        The estimate uses only bars already consumed by the strategy: each
+        sleeve's raw target weights held from period t to t+1 are multiplied by
+        the observed instrument returns over that same interval.  Until every
+        positive-risk sleeve has enough non-degenerate returns, return ``None``
+        so the allocator uses the warmup fallback (raw risk shares) instead of
+        dividing by an undefined estimate.
+        """
+        min_returns = 20
+        if len(self._attribution_periods) < min_returns + 1:
+            return None
+
+        returns_by_sleeve: dict[SleeveName, list[float]] = {
+            sleeve.name: []
+            for sleeve in self._book.sleeves
+            if sleeve.risk_share > 0
+        }
+        periods = self._attribution_periods[-(min_returns + 1):]
+        for prev, curr in zip(periods, periods[1:], strict=False):
+            for name in returns_by_sleeve:
+                sleeve_return = 0.0
+                has_input = False
+                for figi, weight in prev.sleeve_targets.get(name, {}).items():
+                    prev_px = prev.closes.get(figi)
+                    curr_px = curr.closes.get(figi)
+                    if prev_px is None or curr_px is None or prev_px <= 0:
+                        continue
+                    sleeve_return += weight * (curr_px / prev_px - 1.0)
+                    has_input = True
+                if has_input:
+                    returns_by_sleeve[name].append(sleeve_return)
+
+        vols: dict[SleeveName, float] = {}
+        for name, returns in returns_by_sleeve.items():
+            if len(returns) < min_returns:
+                return None
+            series = pd.Series(returns, dtype="float64")
+            vol = float(series.std(ddof=1) * math.sqrt(252.0))
+            if not math.isfinite(vol) or vol <= 0:
+                return None
+            vols[name] = vol
+        return vols
+
     def on_stop(self) -> None:
         """Compute and log per-sleeve P&L attribution at end of run.
 
@@ -465,9 +517,9 @@ class RebalanceStrategy(Strategy):
         if len(self._attribution_periods) < 2:
             return
 
-        budgets = {sleeve.name: sleeve.budget for sleeve in self._book.sleeves}
+        risk_shares = {sleeve.name: sleeve.risk_share for sleeve in self._book.sleeves}
         attribution = compute_sleeve_attribution(
-            self._attribution_periods, budgets=budgets
+            self._attribution_periods, budgets=risk_shares
         )
         self._last_attribution = attribution
 

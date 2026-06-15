@@ -132,7 +132,7 @@ def _make_book() -> BookConfig:
             SleeveConfig(
                 name=SleeveName("tracer"),
                 wheel_filename="tracer-abc123.whl",
-                budget=1.0,
+                risk_share=1.0,
             ),
         ),
         base_currency="EUR",

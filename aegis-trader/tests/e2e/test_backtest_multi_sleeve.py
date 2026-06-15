@@ -148,12 +148,12 @@ def _make_book(budgets: tuple[float, float]) -> BookConfig:
             SleeveConfig(
                 name=SleeveName("trend"),
                 wheel_filename="trend-abc.whl",
-                budget=budgets[0],
+                risk_share=budgets[0],
             ),
             SleeveConfig(
                 name=SleeveName("carry"),
                 wheel_filename="carry-def.whl",
-                budget=budgets[1],
+                risk_share=budgets[1],
             ),
         ),
         base_currency="EUR",
@@ -174,8 +174,8 @@ def test_multi_sleeve_e2e():
     Two sleeves sharing the same instrument (VUSA) net to a single
     OrderIntent.  With NEXT-CLOSE lag (5 daily bars, lookback=1):
 
-      trend: budget=0.6, weight=+0.5 on VUSA → scaled=+0.30
-      carry: budget=0.4, weight=-0.2 on VUSA → scaled=-0.08
+      trend: risk_share=0.6, weight=+0.5 on VUSA → scaled=+0.30
+      carry: risk_share=0.4, weight=-0.2 on VUSA → scaled=-0.08
       net = +0.22 → BUY 22_000
 
     Expected: ≥2 filled BUY orders of ~22,000 shares each.

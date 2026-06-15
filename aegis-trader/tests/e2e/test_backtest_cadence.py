@@ -151,12 +151,12 @@ def _make_book() -> BookConfig:
             SleeveConfig(
                 name=SleeveName("trend_lse"),
                 wheel_filename="trend_lse.whl",
-                budget=1.0,
+                risk_share=1.0,
             ),
             SleeveConfig(
                 name=SleeveName("trend_xetra"),
                 wheel_filename="trend_xetra.whl",
-                budget=1.0,
+                risk_share=1.0,
             ),
         ),
         base_currency="EUR",
