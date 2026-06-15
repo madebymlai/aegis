@@ -13,13 +13,16 @@ the sleeves' bundle wheels are read here, never hand-built in production code.
 from __future__ import annotations
 
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 
 from aegis_trader.domain.book_config import (
     BookConfig,
+    ConvexityBudgetCandidate,
     DrawdownDeleverCurve,
     RiskGroup,
     SleeveConfig,
+    TailConvexityBudget,
 )
 from aegis_trader.domain.types import SleeveName
 
@@ -84,9 +87,10 @@ def load_book_config(path: str | Path) -> BookConfig:
             for o in data.get("band_overrides", [])
         )
         drawdown_delever = _drawdown_delever_curve(data.get("drawdown_delever"))
+        tail_convexity_budget = _parse_tail_convexity_budget(data)
     except (KeyError, TypeError, ValueError) as exc:
         raise BookConfigError(
-            f"book config {str(path)!r} has a malformed sleeve/band entry: {exc}"
+            f"book config {str(path)!r} has a malformed sleeve/band/tail entry: {exc}"
         ) from exc
 
     return BookConfig(
@@ -101,6 +105,7 @@ def load_book_config(path: str | Path) -> BookConfig:
         default_band_up=float(data.get("default_band_up", 0.02)),
         default_band_down=float(data.get("default_band_down", 0.02)),
         band_overrides=band_overrides,
+        tail_convexity_budget=tail_convexity_budget,
         aggregate_drift_threshold=data.get("aggregate_drift_threshold"),
         drawdown_delever=drawdown_delever,
     )
@@ -115,4 +120,40 @@ def _drawdown_delever_curve(raw: object) -> DrawdownDeleverCurve | None:
         start_drawdown=float(raw["start_drawdown"]),
         end_drawdown=float(raw["end_drawdown"]),
         floor_multiplier=float(raw["floor_multiplier"]),
+    )
+
+
+def _parse_tail_convexity_budget(
+    data: Mapping[str, object],
+) -> TailConvexityBudget | None:
+    raw_budget = data.get("tail_convexity_budget")
+    if raw_budget is None:
+        return None
+    if not isinstance(raw_budget, Mapping):
+        raise TypeError("tail_convexity_budget must be a table")
+
+    return TailConvexityBudget(
+        coverage_target_units=float(raw_budget["coverage_target_units"]),
+        unit_payoff_fraction_at_20_down=float(
+            raw_budget["unit_payoff_fraction_at_20_down"]
+        ),
+        candidates=tuple(
+            _parse_tail_candidate(candidate)
+            for candidate in raw_budget.get("candidates", [])
+        ),
+    )
+
+
+def _parse_tail_candidate(candidate: object) -> ConvexityBudgetCandidate:
+    if not isinstance(candidate, Mapping):
+        raise TypeError("tail_convexity_budget candidates must be tables")
+    return ConvexityBudgetCandidate(
+        sleeve=SleeveName(candidate["sleeve"]),
+        expected_annual_payoff=float(candidate["expected_annual_payoff"]),
+        annual_carry=float(candidate["annual_carry"]),
+        crisis_reliability=float(candidate["crisis_reliability"]),
+        convexity_units_per_risk_share=float(
+            candidate["convexity_units_per_risk_share"]
+        ),
+        capacity_risk_share=float(candidate["capacity_risk_share"]),
     )

@@ -486,7 +486,10 @@ class RebalanceStrategy(Strategy):
         if len(self._attribution_periods) < _MIN_SLEEVE_VOL_RETURNS + 1:
             return None
 
-        names = self._positive_risk_sleeve_names()
+        risk_shares = self._book.allocator_risk_shares()
+        names = tuple(
+            sleeve.name for sleeve in self._book.sleeves if risk_shares[sleeve.name] > 0
+        )
         periods = self._attribution_periods[-(_MIN_SLEEVE_VOL_RETURNS + 1):]
         rows = _complete_sleeve_return_rows(periods, names)
         if len(rows) < _MIN_SLEEVE_VOL_RETURNS:
@@ -516,8 +519,9 @@ class RebalanceStrategy(Strategy):
 
     def _positive_risk_sleeve_names(self) -> tuple[SleeveName, ...]:
         """Return the sleeve universe shared by covariance and skew estimates."""
+        risk_shares = self._book.allocator_risk_shares()
         return tuple(
-            sleeve.name for sleeve in self._book.sleeves if sleeve.risk_share > 0
+            sleeve.name for sleeve in self._book.sleeves if risk_shares[sleeve.name] > 0
         )
 
     def on_stop(self) -> None:
@@ -530,7 +534,7 @@ class RebalanceStrategy(Strategy):
         if len(self._attribution_periods) < 2:
             return
 
-        risk_shares = {sleeve.name: sleeve.risk_share for sleeve in self._book.sleeves}
+        risk_shares = self._book.allocator_risk_shares()
         attribution = compute_sleeve_attribution(
             self._attribution_periods, budgets=risk_shares
         )

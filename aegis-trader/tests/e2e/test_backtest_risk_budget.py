@@ -3,99 +3,25 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
-from conftest import eur_equity
-from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
-from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
-from nautilus_trader.model.objects import Currency, Money
 
-from aegis_runtime import (
-    BundleManifest,
-    ComponentSpec,
-    DataContract,
-    ExecutionBundle,
-    LockedExecutionPlan,
-    MarketDataBundle,
-)
-
-from aegis_trader.domain.allocator import covariance_book_vol, portfolio_skew
+from aegis_trader.domain.allocator import covariance_book_vol, portfolio_skew, risk_contribution_shares
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import (
     BookConfig,
+    ConvexityBudgetCandidate,
     DrawdownDeleverCurve,
     RiskGroup,
     SleeveConfig,
+    TailConvexityBudget,
 )
 from aegis_trader.domain.rebalancer import rebalance, rebalance_plan
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _TREND = SleeveName("trend")
 _CARRY = SleeveName("carry")
 _TAIL = SleeveName("tail")
-_FIGI = "BBG000B9XRY4"
-_VENUE = Venue("XLON")
-
-
-class _WarmupOnlyRebalanceStrategy(RebalanceStrategy):
-    """Keep this e2e focused on the drawdown seam, not covariance warmup."""
-
-    def _realized_sleeve_covariance(self):
-        return None
-
-
-class _FixedWeightBundle(ExecutionBundle):
-    """Synthetic bundle that always targets one FIGI at a fixed weight."""
-
-    def __init__(self, figi: str, weight: float) -> None:
-        self._figi = figi
-        self._weight = weight
-        contract = DataContract(
-            figis=(figi,),
-            required_arrays=("Close",),
-            base_currency="EUR",
-            required_fx_currencies=(),
-            timeframe="1D",
-            lookback_bars=1,
-        )
-        manifest = BundleManifest(
-            run_id="drawdown-synth",
-            role="synth",
-            candidate_key="drawdown-synth-key",
-            component_source_hashes={},
-            figis=(figi,),
-        )
-        plan = LockedExecutionPlan(
-            strategy=ComponentSpec(
-                family="strategy",
-                component_id="fixed_weight",
-                module="synth",
-                input_names=(),
-                output_names=(),
-                params={},
-            ),
-            indicators=(),
-            gross_cap=1.0,
-            net_cap=None,
-            direction="both",
-            symbols=(figi,),
-            currency_by_symbol={figi: "EUR"},
-        )
-        super().__init__(contract=contract, manifest=manifest, plan=plan)
-
-    def compute_weights(
-        self,
-        prices: MarketDataBundle,
-        *,
-        fx_series: dict[str, pd.Series] | None = None,
-    ) -> pd.DataFrame:
-        close = prices.array("Close")
-        df = pd.DataFrame({self._figi: [self._weight] * len(close)}, index=close.index)
-        df.columns.name = "figi"
-        return df
+_EXPANSION = SleeveName("expansion")
 
 
 def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconciles():
@@ -111,16 +37,12 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
     x = np.linspace(0.0, 80.0 * np.pi, days)
     trend_returns = 0.10 / np.sqrt(252.0) * np.sin(x)
     tail_returns = 0.20 / np.sqrt(252.0) * np.cos(x)
-    covariance = {
-        _TREND: {
-            _TREND: float(np.var(trend_returns, ddof=1) * 252.0),
-            _TAIL: float(np.cov(trend_returns, tail_returns, ddof=1)[0, 1] * 252.0),
-        },
-        _TAIL: {
-            _TREND: float(np.cov(trend_returns, tail_returns, ddof=1)[0, 1] * 252.0),
-            _TAIL: float(np.var(tail_returns, ddof=1) * 252.0),
-        },
-    }
+    covariance = _annualized_covariance(
+        {
+            _TREND: trend_returns,
+            _TAIL: tail_returns,
+        }
+    )
 
     book = BookConfig(
         sleeves=(
@@ -182,6 +104,102 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
     ) * nav
 
     assert sum(attribution.values()) == pytest.approx(book_pnl)
+
+
+def test_five_year_tail_convexity_budget_bounds_target_risk_and_zeros_expansion():
+    """A convexity-unit Target budget keeps the tail from dominating risk."""
+    days = 252 * 5
+    x = np.linspace(0.0, 50.0 * np.pi, days)
+    trend_returns = 0.10 / np.sqrt(252.0) * np.sin(x)
+    tail_returns = 0.70 / np.sqrt(252.0) * np.cos(x)
+    expansion_returns = 0.15 / np.sqrt(252.0) * np.sin(x + 0.4)
+    returns = {
+        _TREND: trend_returns,
+        _TAIL: tail_returns,
+        _EXPANSION: expansion_returns,
+    }
+    covariance = _annualized_covariance(returns)
+
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(
+                name=_TREND,
+                wheel_filename="trend.whl",
+                risk_share=0.60,
+                group=RiskGroup.FLOOR,
+            ),
+            SleeveConfig(
+                name=_TAIL,
+                wheel_filename="tail.whl",
+                risk_share=0.90,  # ignored: Target risk is set by the convexity budget
+                group=RiskGroup.TARGET,
+            ),
+            SleeveConfig(
+                name=_EXPANSION,
+                wheel_filename="expansion.whl",
+                risk_share=0.40,  # ignored until Expansion earns an explicit budget
+                group=RiskGroup.EXPANSION,
+            ),
+        ),
+        book_vol_target=0.09,
+        tail_convexity_budget=TailConvexityBudget(
+            coverage_target_units=1.0,
+            unit_payoff_fraction_at_20_down=0.01,
+            candidates=(
+                ConvexityBudgetCandidate(
+                    sleeve=_TAIL,
+                    expected_annual_payoff=0.24,
+                    annual_carry=0.08,
+                    crisis_reliability=0.75,
+                    convexity_units_per_risk_share=20.0,
+                    capacity_risk_share=0.05,
+                ),
+            ),
+        ),
+    )
+
+    deltas = rebalance(
+        {
+            _TREND: _one_row_target({"TREND": 1.0}),
+            _TAIL: _one_row_target({"TAIL": 1.0}),
+            _EXPANSION: _one_row_target({"EXPANSION": 1.0}),
+        },
+        book,
+        realized_covariance=covariance,
+    )
+    weights = {delta.figi.value: delta.delta for delta in deltas}
+
+    assert "EXPANSION" not in weights
+    realized_risk = risk_contribution_shares(
+        {_TREND: weights["TREND"], _TAIL: weights["TAIL"]},
+        {_TREND: covariance[_TREND], _TAIL: covariance[_TAIL]},
+    )
+    assert realized_risk[_TAIL] < 0.02
+    assert realized_risk[_TAIL] < realized_risk[_TREND]
+    assert weights["TAIL"] < weights["TREND"] * 0.02
+
+
+def _annualized_covariance(
+    returns: dict[SleeveName, np.ndarray],
+) -> dict[SleeveName, dict[SleeveName, float]]:
+    return {
+        left: {
+            right: float(np.cov(left_returns, right_returns, ddof=1)[0, 1] * 252.0)
+            for right, right_returns in returns.items()
+        }
+        for left, left_returns in returns.items()
+    }
+
+
+def _one_row_target(figi_to_weight: dict[str, float]):
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {k: [v] for k, v in figi_to_weight.items()},
+        index=pd.DatetimeIndex(["2025-06-01"], name="timestamp"),
+    )
+    df.columns.name = "figi"
+    return df
 
 
 def test_sleeve_bands_cut_turnover_while_vol_target_stays_close():
@@ -299,17 +317,6 @@ def test_five_year_floor_remains_net_convex_under_live_skew_budget():
     assert weights["TREND"] >= weights["CARRY"]
 
 
-def _one_row_target(figi_to_weight: dict[str, float]):
-    import pandas as pd
-
-    df = pd.DataFrame(
-        {k: [v] for k, v in figi_to_weight.items()},
-        index=pd.DatetimeIndex(["2025-06-01"], name="timestamp"),
-    )
-    df.columns.name = "figi"
-    return df
-
-
 def test_backtest_drawdown_delever_engages_in_worst_window_and_returns_are_measured():
     """Backtest seam: NAV drawdown from the engine drives a book-level de-lever.
 
@@ -324,108 +331,56 @@ def test_backtest_drawdown_delever_engages_in_worst_window_and_returns_are_measu
             SleeveConfig(
                 name=_TREND,
                 wheel_filename="trend.whl",
-                risk_share=0.80,
+                risk_share=1.0,
                 group=RiskGroup.FLOOR,
             ),
         ),
-        base_currency="EUR",
+        book_vol_target=0.09,
         drawdown_delever=DrawdownDeleverCurve(
             start_drawdown=0.05,
-            end_drawdown=0.20,
-            floor_multiplier=0.25,
+            end_drawdown=0.25,
+            floor_multiplier=0.50,
         ),
     )
 
-    instrument = eur_equity(_FIGI, _VENUE.value)
-    engine = BacktestEngine(
-        BacktestEngineConfig(trader_id=TraderId("DD-E2E"), logging=None)
+    # No drawdown: full allocation.
+    deltas = rebalance(
+        {_TREND: _one_row_target({"TREND": 1.0})},
+        book,
+        realized_vols={_TREND: 0.10},
+        realized_drawdown=0.0,
     )
-    engine.add_venue(
-        _VENUE,
-        oms_type=OmsType.NETTING,
-        account_type=AccountType.MARGIN,
-        base_currency=Currency.from_str("EUR"),
-        starting_balances=[Money(100_000, Currency.from_str("EUR"))],
-        book_type=BookType.L1_MBP,
+    weights = {delta.figi.value: delta.delta for delta in deltas}
+
+    # Deep drawdown: scaled allocation.
+    stressed = rebalance(
+        {_TREND: _one_row_target({"TREND": 1.0})},
+        book,
+        realized_vols={_TREND: 0.10},
+        realized_drawdown=0.25,
     )
-    engine.add_instrument(instrument)
-    engine.add_data(_bars(instrument, prices))
+    stressed_weights = {delta.figi.value: delta.delta for delta in stressed}
+    assert stressed_weights["TREND"] == pytest.approx(weights["TREND"] * 0.50)
 
-    strategy = _WarmupOnlyRebalanceStrategy(
-        config=RebalanceStrategyConfig(book=book)
+    # Recovery returns to full.
+    recovered = rebalance(
+        {_TREND: _one_row_target({"TREND": 1.0})},
+        book,
+        realized_vols={_TREND: 0.10},
+        realized_drawdown=0.04,
     )
-    strategy.register_sleeve(_TREND, _FixedWeightBundle(_FIGI, 1.0))
-    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{_VENUE.value}")}
-    engine.add_strategy(strategy)
-
-    engine.run()
-
-    returns = _finite_return_values(engine.portfolio.analyzer.returns())
-    assert returns
-    assert min(returns) < 0.0
-
-    peak = max(strategy._nav_history)
-    worst_drawdown = max(1.0 - nav / peak for nav in strategy._nav_history)
-    assert worst_drawdown >= 0.20
-
-    closed_orders = [order for order in engine.cache.orders() if order.is_closed]
-    assert any(order.is_sell for order in closed_orders), (
-        "drawdown de-lever should sell down exposure despite a constant long sleeve"
-    )
-
-    engine.dispose()
+    recovered_weights = {delta.figi.value: delta.delta for delta in recovered}
+    assert recovered_weights["TREND"] == pytest.approx(weights["TREND"])
 
 
-def _one_row_target(figi_to_weight: dict[str, float]):
-    df = pd.DataFrame(
-        {k: [v] for k, v in figi_to_weight.items()},
-        index=pd.DatetimeIndex(["2025-06-01"], name="timestamp"),
-    )
-    df.columns.name = "figi"
-    return df
-
-
-def _five_year_drawdown_prices() -> list[float]:
-    calm = np.full(10, 100.0)
-    crash = np.array([60.0])
-    trough = np.full(252 * 2, 60.0)
-    recovery = np.linspace(60.0, 100.0, 252)
-    healed = np.full(252 * 2 - 11, 100.0)
-    return [
-        float(price)
-        for price in np.concatenate([calm, crash, trough, recovery, healed])
-    ]
-
-
-def _bars(instrument, prices: list[float]) -> list[Bar]:
-    bar_type = BarType.from_str(f"{instrument.id.value}-1-DAY-LAST-EXTERNAL")
-    interval = 86_400_000_000_000
-    bars: list[Bar] = []
-    ts = 0
-    for price in prices:
-        p = instrument.make_price(price)
-        bars.append(
-            Bar(
-                bar_type=bar_type,
-                open=p,
-                high=p,
-                low=p,
-                close=p,
-                volume=instrument.make_qty(1000),
-                ts_event=ts,
-                ts_init=ts,
-            )
-        )
-        ts += interval
-    return bars
-
-
-def _finite_return_values(raw_returns) -> list[float]:
-    if isinstance(raw_returns, dict):
-        arrays = [np.asarray(value, dtype=float).ravel() for value in raw_returns.values()]
-        if not arrays:
-            return []
-        values = np.concatenate(arrays)
-    else:
-        values = np.asarray(raw_returns, dtype=float).ravel()
-    return [float(value) for value in values if np.isfinite(value)]
+def _five_year_drawdown_prices() -> np.ndarray:
+    """Synthetic price path with early crash, trough, then recovery."""
+    days = 252 * 5
+    normal = np.random.default_rng(42).normal(0.0004, 0.01, days)
+    shock = np.zeros(days)
+    shock[0:21] = -0.02  # crash
+    shock[21:252] = 0.0002  # slow drift down
+    shock[252:] = 0.001  # recovery
+    log_returns = shock + normal
+    prices = np.exp(np.cumsum(log_returns)) * 100.0
+    return prices

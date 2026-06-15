@@ -61,12 +61,31 @@ weight_band_down = 0.02
 weight_band_up = 0.02
 
 [[sleeves]]
-name = "trend_xetra"
-wheel_filename = "trend_xetra-def456.whl"
-risk_share = 0.4
+name = "tail_xetra"
+wheel_filename = "tail_xetra-def456.whl"
+risk_share = 0.0  # Target risk is set by tail_convexity_budget below.
 group = "Target"
 weight_band_down = 0.02
 weight_band_up = 0.02
+
+[[sleeves]]
+name = "market_neutral"
+wheel_filename = "market_neutral-ghi789.whl"
+risk_share = 0.0  # Expansion defaults to zero until it earns a budget.
+group = "Expansion"
+
+[tail_convexity_budget]
+# One convexity unit is X% of book notional delivered at a -20% move.
+coverage_target_units = 1.0
+unit_payoff_fraction_at_20_down = 0.01
+
+[[tail_convexity_budget.candidates]]
+sleeve = "tail_xetra"
+expected_annual_payoff = 0.24
+annual_carry = 0.08
+crisis_reliability = 0.75
+convexity_units_per_risk_share = 20.0
+capacity_risk_share = 0.05
 
 # Per-FIGI asymmetric band overrides (optional).
 [[band_overrides]]

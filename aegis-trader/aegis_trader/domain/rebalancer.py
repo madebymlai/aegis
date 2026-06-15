@@ -219,7 +219,7 @@ def _allocate_sleeves(
     realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None = None,
     realized_drawdown: float | None = None,
 ) -> Allocation:
-    risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
+    risk_shares = book.allocator_risk_shares()
     sleeve_weight_bands = _sleeve_weight_bands(book)
 
     if realized_covariance is not None:
