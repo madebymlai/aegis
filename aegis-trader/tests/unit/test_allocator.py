@@ -12,6 +12,7 @@ from aegis_trader.domain.allocator import (
     equal_risk_contribution_weights,
     risk_contribution_shares,
 )
+from aegis_trader.domain.book_config import DrawdownDeleverCurve
 from aegis_trader.domain.types import SleeveName
 
 _TREND = SleeveName("trend")
@@ -163,6 +164,33 @@ def test_top_down_group_split_prevents_correlated_cluster_dominating_book_risk()
     target_risk = rc[_TAIL]
     assert floor_risk == pytest.approx(target_risk, abs=2e-3)
     assert floor_risk < 0.55
+
+
+def test_drawdown_delever_scales_exposure_monotonically_and_recovers():
+    curve = DrawdownDeleverCurve(
+        start_drawdown=0.05,
+        end_drawdown=0.25,
+        floor_multiplier=0.40,
+    )
+    sleeve_targets = {_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}}
+    risk_shares = {_TREND: 0.5, _CARRY: 0.5}
+    vols = {_TREND: 0.10, _CARRY: 0.10}
+
+    exposures = []
+    for drawdown in (0.00, 0.10, 0.20, 0.25, 0.10, 0.00):
+        allocation = allocate_diagonal_vol_target(
+            sleeve_targets=sleeve_targets,
+            risk_shares=risk_shares,
+            realized_vols=vols,
+            book_vol_target=0.09,
+            realized_drawdown=drawdown,
+            drawdown_delever_curve=curve,
+        )
+        exposures.append(sum(abs(v) for v in allocation.multipliers.values()))
+
+    assert exposures[0] > exposures[1] > exposures[2] > exposures[3]
+    assert exposures[4] == pytest.approx(exposures[1])
+    assert exposures[5] == pytest.approx(exposures[0])
 
 
 def test_multi_name_default_equal_risk_contribution_scales_high_vol_name_down():

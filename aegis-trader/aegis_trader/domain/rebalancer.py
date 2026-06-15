@@ -41,6 +41,7 @@ def rebalance(
     realized_weights: dict[str, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
+    realized_drawdown: float | None = None,
 ) -> tuple[WeightDelta, ...]:
     """Net per-sleeve target weights into signed weight deltas to trade.
 
@@ -59,7 +60,9 @@ def rebalance(
     *realized_covariance* is the covariance-aware allocator input.  During
     warmup callers pass ``None`` and the allocator falls back to raw risk
     shares.  ``realized_vols`` is retained for the diagonal tracer path and is
-    used only when covariance is absent.
+    used only when covariance is absent.  ``realized_drawdown`` is the current
+    book drawdown fraction; when the book declares a drawdown-de-lever curve it
+    scales the whole allocation down after risk budgeting.
 
     Returns the signed weight deltas to trade (fraction of NAV); converting a
     delta to a share quantity is the sizing step's job (``sizing.size_deltas``).
@@ -80,6 +83,8 @@ def rebalance(
             realized_covariance=realized_covariance,
             book_vol_target=book.book_vol_target,
             groups={sleeve.name: sleeve.group for sleeve in book.sleeves},
+            realized_drawdown=realized_drawdown,
+            drawdown_delever_curve=book.drawdown_delever,
         )
     else:
         allocation = allocate_diagonal_vol_target(
@@ -87,6 +92,8 @@ def rebalance(
             risk_shares=risk_shares,
             realized_vols=realized_vols,
             book_vol_target=book.book_vol_target,
+            realized_drawdown=realized_drawdown,
+            drawdown_delever_curve=book.drawdown_delever,
         )
 
     net_target_by_figi: dict[str, float] = {}

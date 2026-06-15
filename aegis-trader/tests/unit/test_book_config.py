@@ -2,7 +2,12 @@
 
 import pytest
 
-from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
+from aegis_trader.domain.book_config import (
+    BookConfig,
+    DrawdownDeleverCurve,
+    RiskGroup,
+    SleeveConfig,
+)
 from aegis_trader.domain.types import SleeveName
 
 
@@ -62,6 +67,30 @@ class TestBookConfig:
     def test_invalid_vol_target_rejected(self):
         with pytest.raises(ValueError, match="book_vol_target"):
             BookConfig(sleeves=(make_sleeve("a"),), book_vol_target=0.0)
+
+    def test_drawdown_delever_curve_maps_drawdown_to_exposure_multiplier(self):
+        curve = DrawdownDeleverCurve(
+            start_drawdown=0.05,
+            end_drawdown=0.25,
+            floor_multiplier=0.4,
+        )
+        assert curve.multiplier_for(0.00) == pytest.approx(1.0)
+        assert curve.multiplier_for(0.15) == pytest.approx(0.7)
+        assert curve.multiplier_for(0.25) == pytest.approx(0.4)
+
+    def test_invalid_drawdown_delever_curve_rejected(self):
+        with pytest.raises(ValueError, match="drawdown"):
+            DrawdownDeleverCurve(
+                start_drawdown=0.25,
+                end_drawdown=0.05,
+                floor_multiplier=0.4,
+            )
+        with pytest.raises(ValueError, match="floor_multiplier"):
+            DrawdownDeleverCurve(
+                start_drawdown=0.05,
+                end_drawdown=0.25,
+                floor_multiplier=1.2,
+            )
 
 
 class TestBookConfigCapsAndBands:

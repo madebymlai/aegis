@@ -17,6 +17,7 @@ from typing import TypeVar
 
 import numpy as np
 
+from aegis_trader.domain.book_config import DrawdownDeleverCurve
 from aegis_trader.domain.types import SleeveName
 
 _EPS = 1e-12
@@ -48,6 +49,8 @@ def allocate_diagonal_vol_target(
     risk_shares: Mapping[SleeveName, float],
     realized_vols: Mapping[SleeveName, float] | None,
     book_vol_target: float,
+    realized_drawdown: float | None = None,
+    drawdown_delever_curve: DrawdownDeleverCurve | None = None,
 ) -> Allocation:
     """Scale per-sleeve target weights to realize a diagonal risk budget.
 
@@ -64,7 +67,11 @@ def allocate_diagonal_vol_target(
     if realized_vols is None:
         return _allocation_from_multipliers(
             sleeve_targets,
-            _risk_share_multipliers(active, risk_shares),
+            _apply_drawdown_delever(
+                _risk_share_multipliers(active, risk_shares),
+                realized_drawdown=realized_drawdown,
+                curve=drawdown_delever_curve,
+            ),
         )
 
     vols = _validate_vols(active, realized_vols)
@@ -78,7 +85,14 @@ def allocate_diagonal_vol_target(
 
     scale = book_vol_target / raw_vol
     multipliers = {name: multiplier * scale for name, multiplier in raw.items()}
-    return _allocation_from_multipliers(sleeve_targets, multipliers)
+    return _allocation_from_multipliers(
+        sleeve_targets,
+        _apply_drawdown_delever(
+            multipliers,
+            realized_drawdown=realized_drawdown,
+            curve=drawdown_delever_curve,
+        ),
+    )
 
 
 def allocate_covariance_vol_target(
@@ -88,6 +102,8 @@ def allocate_covariance_vol_target(
     realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]] | None,
     book_vol_target: float,
     groups: Mapping[SleeveName, Hashable] | None = None,
+    realized_drawdown: float | None = None,
+    drawdown_delever_curve: DrawdownDeleverCurve | None = None,
 ) -> Allocation:
     """Scale per-sleeve target weights using covariance-aware ERC/HRP.
 
@@ -109,7 +125,11 @@ def allocate_covariance_vol_target(
     if realized_covariance is None:
         return _allocation_from_multipliers(
             sleeve_targets,
-            _risk_share_multipliers(active, risk_shares),
+            _apply_drawdown_delever(
+                _risk_share_multipliers(active, risk_shares),
+                realized_drawdown=realized_drawdown,
+                curve=drawdown_delever_curve,
+            ),
         )
 
     covariance = _covariance_matrix(active, realized_covariance)
@@ -132,7 +152,14 @@ def allocate_covariance_vol_target(
         name: multiplier * scale
         for name, multiplier in composition_by_name.items()
     }
-    return _allocation_from_multipliers(sleeve_targets, multipliers)
+    return _allocation_from_multipliers(
+        sleeve_targets,
+        _apply_drawdown_delever(
+            multipliers,
+            realized_drawdown=realized_drawdown,
+            curve=drawdown_delever_curve,
+        ),
+    )
 
 
 def equal_risk_contribution_weights(
@@ -207,6 +234,21 @@ def risk_contribution_shares(
 def _validate_book_vol_target(book_vol_target: float) -> None:
     if book_vol_target <= 0 or not math.isfinite(book_vol_target):
         raise ValueError(f"book_vol_target must be positive, got {book_vol_target!r}")
+
+
+def _apply_drawdown_delever(
+    multipliers: Mapping[SleeveName, float],
+    *,
+    realized_drawdown: float | None,
+    curve: DrawdownDeleverCurve | None,
+) -> dict[SleeveName, float]:
+    if curve is None:
+        return {name: float(multiplier) for name, multiplier in multipliers.items()}
+    exposure_multiplier = curve.multiplier_for(0.0 if realized_drawdown is None else realized_drawdown)
+    return {
+        name: float(multiplier) * exposure_multiplier
+        for name, multiplier in multipliers.items()
+    }
 
 
 def _risk_share_multipliers(

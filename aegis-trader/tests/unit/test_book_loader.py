@@ -15,7 +15,12 @@ from aegis_trader.config import (
     find_book_config,
     load_book_config,
 )
-from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
+from aegis_trader.domain.book_config import (
+    BookConfig,
+    DrawdownDeleverCurve,
+    RiskGroup,
+    SleeveConfig,
+)
 from aegis_trader.domain.types import SleeveName
 
 _MINIMAL = """
@@ -71,6 +76,11 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         default_band_down = 0.01
         aggregate_drift_threshold = 0.5
 
+        [drawdown_delever]
+        start_drawdown = 0.05
+        end_drawdown = 0.25
+        floor_multiplier = 0.4
+
         [[sleeves]]
         name = "trend_lse"
         wheel_filename = "trend_lse-abc123.whl"
@@ -110,7 +120,29 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         default_band_down=0.01,
         band_overrides=(("BBG000B9XRY4", 0.05, 0.02),),
         aggregate_drift_threshold=0.5,
+        drawdown_delever=DrawdownDeleverCurve(
+            start_drawdown=0.05,
+            end_drawdown=0.25,
+            floor_multiplier=0.4,
+        ),
     )
+
+
+def test_malformed_drawdown_delever_fails_closed(tmp_path):
+    path = _write(tmp_path, """
+        [drawdown_delever]
+        start_drawdown = 0.25
+        end_drawdown = 0.05
+        floor_multiplier = 0.4
+
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+    with pytest.raises(ValueError, match="drawdown"):
+        load_book_config(path)
 
 
 def test_defaults_applied_when_keys_omitted(tmp_path):

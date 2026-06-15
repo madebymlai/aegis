@@ -21,6 +21,14 @@ base_currency = "EUR"
 # Annualized book volatility target for risk-budget scaling.
 book_vol_target = 0.09
 
+# Optional book-level drawdown de-lever: exposure stays at 1.0 until the
+# running NAV drawdown reaches start_drawdown, then linearly scales to
+# floor_multiplier at end_drawdown. It never increases exposure.
+[drawdown_delever]
+start_drawdown = 0.05
+end_drawdown = 0.25
+floor_multiplier = 0.50
+
 # Gross cap after risk-budget scaling; raise it to run levered across sleeves.
 max_book_gross = 1.0
 

@@ -9,7 +9,7 @@ test_sizing.py; the composition is exercised by ``TestRebalancePipeline`` below.
 import pandas as pd
 import pytest
 
-from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.book_config import BookConfig, DrawdownDeleverCurve, SleeveConfig
 from aegis_trader.domain.rebalancer import rebalance
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.types import Figi, OrderSide, SleeveName, WeightDelta
@@ -326,6 +326,22 @@ class TestRebalanceSlice4:
         assert len(result) == 1
         assert result[0].side == OrderSide.BUY
         assert result[0].delta == pytest.approx(0.02)  # -0.10 - (-0.12)
+
+    def test_gross_cap_still_binds_after_drawdown_delever(self):
+        book = self._book(
+            gross_cap=0.20,
+            drawdown_delever=DrawdownDeleverCurve(
+                start_drawdown=0.05,
+                end_drawdown=0.25,
+                floor_multiplier=0.50,
+            ),
+        )
+        with pytest.raises(ValueError, match="Gross exposure"):
+            rebalance(
+                {book.sleeves[0].name: _target({"FIGI_A": 0.50})},
+                book,
+                realized_drawdown=0.25,
+            )
 
     def test_gross_cap_breach_fails_closed(self):
         book = self._book(gross_cap=0.50)

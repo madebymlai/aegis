@@ -392,6 +392,7 @@ class RebalanceStrategy(Strategy):
             self._book,
             realized_weights=realized_weights,
             realized_covariance=realized_covariance,
+            realized_drawdown=current_drawdown(self._nav_history, nav),
         )
         orders = size_deltas(
             deltas,
@@ -672,6 +673,17 @@ class RebalanceStrategy(Strategy):
             kwargs["time_in_force"] = self.config.fill_time_in_force
         order = self.order_factory.market(**kwargs)
         self.submit_order(order)
+
+
+def current_drawdown(nav_history: list[float], current_nav: float) -> float:
+    """Return current drawdown from the running NAV peak as a fraction."""
+    if not np.isfinite(current_nav):
+        raise ValueError("current NAV must be finite")
+    peak = max([float(current_nav), *(float(nav) for nav in nav_history)])
+    if peak <= 0.0:
+        return 0.0
+    drawdown = 1.0 - float(current_nav) / peak
+    return min(max(drawdown, 0.0), 1.0)
 
 
 def _bars_to_close_series(

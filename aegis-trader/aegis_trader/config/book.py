@@ -15,7 +15,12 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
+from aegis_trader.domain.book_config import (
+    BookConfig,
+    DrawdownDeleverCurve,
+    RiskGroup,
+    SleeveConfig,
+)
 from aegis_trader.domain.types import SleeveName
 
 
@@ -76,6 +81,7 @@ def load_book_config(path: str | Path) -> BookConfig:
             (o["figi"], float(o["band_up"]), float(o["band_down"]))
             for o in data.get("band_overrides", [])
         )
+        drawdown_delever = _drawdown_delever_curve(data.get("drawdown_delever"))
     except (KeyError, TypeError, ValueError) as exc:
         raise BookConfigError(
             f"book config {str(path)!r} has a malformed sleeve/band entry: {exc}"
@@ -93,4 +99,17 @@ def load_book_config(path: str | Path) -> BookConfig:
         default_band_down=float(data.get("default_band_down", 0.02)),
         band_overrides=band_overrides,
         aggregate_drift_threshold=data.get("aggregate_drift_threshold"),
+        drawdown_delever=drawdown_delever,
+    )
+
+
+def _drawdown_delever_curve(raw: object) -> DrawdownDeleverCurve | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TypeError("drawdown_delever must be a TOML table")
+    return DrawdownDeleverCurve(
+        start_drawdown=float(raw["start_drawdown"]),
+        end_drawdown=float(raw["end_drawdown"]),
+        floor_multiplier=float(raw["floor_multiplier"]),
     )
