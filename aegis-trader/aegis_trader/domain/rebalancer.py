@@ -196,6 +196,19 @@ def rebalance_plan(
         book=book,
     )
 
+    # -- Step 3.5: down-only clamp on the PROJECTED book --
+    # Step 1 clamps the *target* to max_book_gross, but within-band, untraded
+    # names keep their drifted realised weight, so the projected post-execution
+    # book can still exceed the ceiling.  Re-apply the same down-only clamp to
+    # the projection and re-derive the deltas (the bands yield to the clamp), so
+    # the hard gross gate below is not tripped by a vol-target / drift overshoot.
+    # Net is intentionally NOT scaled here: a directional (net) breach is an
+    # anomaly that must surface at the gate, not be silently shrunk.
+    clamped_post_book = _clamp_to_max_gross(post_book, book)
+    if clamped_post_book is not post_book:
+        post_book = clamped_post_book
+        deltas = _deltas_from_realized(post_book, rw)
+
     # -- Step 4: gross / net caps (always checked on post_book; the fidelity
     #    cleanup above stays subordinate to these hard caps — fail closed) --
     _gate_book_caps(post_book, book)
@@ -332,6 +345,23 @@ def _clamp_to_max_gross(
         return net_target_by_figi
     clamp = book.max_book_gross / gross
     return {figi: weight * clamp for figi, weight in net_target_by_figi.items()}
+
+
+def _deltas_from_realized(
+    post_book: dict[Figi, float], realized: dict[Figi, float]
+) -> list[WeightDelta]:
+    """Signed weight deltas to move from *realized* to *post_book* (all names).
+
+    Used after the projected book is clamped down to the gross ceiling: every
+    position — including previously within-band ones — gets the corrective trade
+    that realises the clamped book.
+    """
+    deltas: list[WeightDelta] = []
+    for figi, weight in post_book.items():
+        delta = weight - realized.get(figi, 0.0)
+        if abs(delta) >= _ZERO_GUARD:
+            deltas.append(WeightDelta(figi=figi, delta=delta))
+    return deltas
 
 
 def _gate_book_caps(

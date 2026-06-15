@@ -386,6 +386,27 @@ class TestRebalanceSlice4:
         with pytest.raises(ValueError, match="Gross exposure"):
             rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.30, "FIGI_B": 0.30})}, book)
 
+    def test_within_band_drift_over_ceiling_clamped_not_failed(self):
+        """Within-band drift can push the projected book over max_book_gross even
+        when the target is within it.  The down-only clamp scales the projection
+        back to the ceiling (bands yield) instead of tripping the hard gross gate."""
+        book = self._book(
+            max_book_gross=1.0, gross_cap=1.0,
+            default_band_up=0.05, default_band_down=0.05,
+        )
+        result = rebalance(
+            {book.sleeves[0].name: _target({"FIGI_A": 0.5, "FIGI_B": 0.5})},
+            book,
+            realized_weights={Figi("FIGI_A"): 0.53, Figi("FIGI_B"): 0.53},
+        )
+        # Drift 0.03 <= band 0.05, so without the projected clamp the book sits at
+        # gross 1.06 and fails closed.  With it, both names get a corrective sell
+        # and the resulting book lands on the ceiling.
+        after = {d.figi.value: 0.53 + d.delta for d in result}
+        gross_after = sum(abs(w) for w in after.values())
+        assert gross_after == pytest.approx(1.0)
+        assert gross_after <= book.gross_cap + 1e-9
+
     def test_net_cap_breach_fails_closed(self):
         book = self._book(net_cap=0.10)
         with pytest.raises(ValueError, match="Net exposure"):
