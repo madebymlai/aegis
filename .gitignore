@@ -10,3 +10,4 @@ opencode.jsonc
 # artifacts but keep the output dir tracked via .gitkeep.
 bundles/*
 !bundles/.gitkeep
+vbt.toml
