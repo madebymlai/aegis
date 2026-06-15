@@ -69,10 +69,6 @@ from aegis_trader.portfolio.nautilus import NautilusBookState
 from aegis_trader.portfolio.port import BookStatePort
 
 _NS_PER_DAY: int = 86_400_000_000_000
-# Placeholder NAV for on_stop attribution when per-period NAV history is not
-# yet tracked (Slice 9 MVP).  Replaced once NAV snapshots are collected per
-# rebalance period alongside sleeve targets.
-_ATTRIBUTION_PLACEHOLDER_NAV: float = 100_000.0
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -131,6 +127,9 @@ class RebalanceStrategy(Strategy):
         # Wave B: reconciled book state behind a port (no direct cache/portfolio reads).
         self._book_state: BookStatePort | None = None
         self._market_data: MarketDataPort | None = None
+        # Wave B (B14): real per-period NAV history feeding on_stop attribution.
+        self._nav_history: list[float] = []
+        self._last_attribution: dict[SleeveName, float] = {}
         # ── Slice 9: observability + attribution ─────────────────────────
         self._obs_port: ObservabilityPort | None = config.obs_port
         self._sleeve_target_history: dict[SleeveName, list[pd.DataFrame]] = {}
@@ -389,6 +388,7 @@ class RebalanceStrategy(Strategy):
         for sleeve_name, target_df in pending.items():
             history = self._sleeve_target_history.setdefault(sleeve_name, [])
             history.append(target_df)
+        self._nav_history.append(nav)
         if prices:
             for figi, px in prices.items():
                 cl = self._close_history.setdefault(figi, [])
@@ -471,15 +471,22 @@ class RebalanceStrategy(Strategy):
         closes_df = pd.DataFrame(closes_data, index=combined_idx)
         closes_df.columns.name = "figi"
 
-        nav_series = pd.Series(
-            _ATTRIBUTION_PLACEHOLDER_NAV, index=combined_idx
+        # Real per-period NAV recorded each rebalance, aligned to the target
+        # index the same way closes are (right-aligned, padded then trimmed);
+        # ffill/bfill carries the nearest known NAV across any padded slots.
+        nav_padded = (
+            [float("nan")] * max(0, len(combined_idx) - len(self._nav_history))
+            + self._nav_history
         )
+        nav_padded = nav_padded[-len(combined_idx):]
+        nav_series = pd.Series(nav_padded, index=combined_idx).ffill().bfill()
 
         attribution = compute_sleeve_attribution(
             sleeve_targets=sleeve_targets,
             closes=closes_df,
             nav_series=nav_series,
         )
+        self._last_attribution = attribution
 
         if attribution:
             total_book_pnl = sum(attribution.values())
