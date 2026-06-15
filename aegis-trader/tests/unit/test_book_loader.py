@@ -63,6 +63,7 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
     path = _write(tmp_path, """
         base_currency = "EUR"
         book_vol_target = 0.12
+        sleeve_reversion_fraction = 0.5
         max_book_gross = 2.0
         gross_cap = 1.0
         net_cap = 0.5
@@ -76,12 +77,16 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         wheel_filename = "trend_lse-abc123.whl"
         risk_share = 0.6
         group = "Floor"
+        weight_band_down = 0.01
+        weight_band_up = 0.03
 
         [[sleeves]]
         name = "trend_xetra"
         wheel_filename = "trend_xetra-def456.whl"
         risk_share = 0.4
         group = "Target"
+        weight_band_down = 0.02
+        weight_band_up = 0.04
 
         [[band_overrides]]
         figi = "BBG000B9XRY4"
@@ -95,13 +100,16 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         sleeves=(
             SleeveConfig(name=SleeveName("trend_lse"),
                          wheel_filename="trend_lse-abc123.whl", risk_share=0.6,
-                         group=RiskGroup.FLOOR),
+                         group=RiskGroup.FLOOR, weight_band_down=0.01,
+                         weight_band_up=0.03),
             SleeveConfig(name=SleeveName("trend_xetra"),
                          wheel_filename="trend_xetra-def456.whl", risk_share=0.4,
-                         group=RiskGroup.TARGET),
+                         group=RiskGroup.TARGET, weight_band_down=0.02,
+                         weight_band_up=0.04),
         ),
         base_currency="EUR",
         book_vol_target=0.12,
+        sleeve_reversion_fraction=0.5,
         max_book_gross=2.0,
         gross_cap=1.0,
         net_cap=0.5,
@@ -127,9 +135,12 @@ def test_defaults_applied_when_keys_omitted(tmp_path):
 
     assert book.base_currency == "EUR"
     assert book.book_vol_target == 0.09
+    assert book.sleeve_reversion_fraction == 1.0
     assert book.max_book_gross == 1.0
     assert book.gross_cap is None
     assert book.default_band_up == 0.02
+    assert book.sleeves[0].weight_band_down == 0.0
+    assert book.sleeves[0].weight_band_up == 0.0
     assert book.band_overrides == ()
 
 

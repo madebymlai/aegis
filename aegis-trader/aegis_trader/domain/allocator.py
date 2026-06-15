@@ -35,6 +35,20 @@ class Allocation:
 
 
 @dataclass(frozen=True)
+class SleeveWeightBand:
+    """No-churn band around the previously applied sleeve multiplier."""
+
+    down: float
+    up: float
+
+    def __post_init__(self) -> None:
+        if self.down < 0 or self.up < 0:
+            raise ValueError("sleeve weight bands must be non-negative")
+        if not math.isfinite(self.down) or not math.isfinite(self.up):
+            raise ValueError("sleeve weight bands must be finite")
+
+
+@dataclass(frozen=True)
 class _GroupComposition:
     """Within-group ERC composition in member order."""
 
@@ -48,6 +62,9 @@ def allocate_diagonal_vol_target(
     risk_shares: Mapping[SleeveName, float],
     realized_vols: Mapping[SleeveName, float] | None,
     book_vol_target: float,
+    previous_multipliers: Mapping[SleeveName, float] | None = None,
+    sleeve_weight_bands: Mapping[SleeveName, SleeveWeightBand] | None = None,
+    sleeve_reversion_fraction: float = 1.0,
 ) -> Allocation:
     """Scale per-sleeve target weights to realize a diagonal risk budget.
 
@@ -64,7 +81,12 @@ def allocate_diagonal_vol_target(
     if realized_vols is None:
         return _allocation_from_multipliers(
             sleeve_targets,
-            _risk_share_multipliers(active, risk_shares),
+            _apply_sleeve_weight_bands(
+                _risk_share_multipliers(active, risk_shares),
+                previous_multipliers=previous_multipliers,
+                sleeve_weight_bands=sleeve_weight_bands,
+                sleeve_reversion_fraction=sleeve_reversion_fraction,
+            ),
         )
 
     vols = _validate_vols(active, realized_vols)
@@ -78,6 +100,12 @@ def allocate_diagonal_vol_target(
 
     scale = book_vol_target / raw_vol
     multipliers = {name: multiplier * scale for name, multiplier in raw.items()}
+    multipliers = _apply_sleeve_weight_bands(
+        multipliers,
+        previous_multipliers=previous_multipliers,
+        sleeve_weight_bands=sleeve_weight_bands,
+        sleeve_reversion_fraction=sleeve_reversion_fraction,
+    )
     return _allocation_from_multipliers(sleeve_targets, multipliers)
 
 
@@ -88,6 +116,9 @@ def allocate_covariance_vol_target(
     realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]] | None,
     book_vol_target: float,
     groups: Mapping[SleeveName, Hashable] | None = None,
+    previous_multipliers: Mapping[SleeveName, float] | None = None,
+    sleeve_weight_bands: Mapping[SleeveName, SleeveWeightBand] | None = None,
+    sleeve_reversion_fraction: float = 1.0,
 ) -> Allocation:
     """Scale per-sleeve target weights using covariance-aware ERC/HRP.
 
@@ -109,7 +140,12 @@ def allocate_covariance_vol_target(
     if realized_covariance is None:
         return _allocation_from_multipliers(
             sleeve_targets,
-            _risk_share_multipliers(active, risk_shares),
+            _apply_sleeve_weight_bands(
+                _risk_share_multipliers(active, risk_shares),
+                previous_multipliers=previous_multipliers,
+                sleeve_weight_bands=sleeve_weight_bands,
+                sleeve_reversion_fraction=sleeve_reversion_fraction,
+            ),
         )
 
     covariance = _covariance_matrix(active, realized_covariance)
@@ -132,6 +168,12 @@ def allocate_covariance_vol_target(
         name: multiplier * scale
         for name, multiplier in composition_by_name.items()
     }
+    multipliers = _apply_sleeve_weight_bands(
+        multipliers,
+        previous_multipliers=previous_multipliers,
+        sleeve_weight_bands=sleeve_weight_bands,
+        sleeve_reversion_fraction=sleeve_reversion_fraction,
+    )
     return _allocation_from_multipliers(sleeve_targets, multipliers)
 
 
@@ -214,6 +256,55 @@ def _risk_share_multipliers(
     risk_shares: Mapping[SleeveName, float],
 ) -> dict[SleeveName, float]:
     return {name: float(risk_shares[name]) for name in active}
+
+
+def _apply_sleeve_weight_bands(
+    multipliers: Mapping[SleeveName, float],
+    *,
+    previous_multipliers: Mapping[SleeveName, float] | None,
+    sleeve_weight_bands: Mapping[SleeveName, SleeveWeightBand] | None,
+    sleeve_reversion_fraction: float,
+) -> dict[SleeveName, float]:
+    _validate_reversion_fraction(sleeve_reversion_fraction)
+    if previous_multipliers is None or sleeve_weight_bands is None:
+        return {name: float(multiplier) for name, multiplier in multipliers.items()}
+
+    banded: dict[SleeveName, float] = {}
+    for name, target in multipliers.items():
+        target = float(target)
+        previous = previous_multipliers.get(name)
+        if previous is None:
+            banded[name] = target
+            continue
+        previous = float(previous)
+        if not math.isfinite(previous):
+            raise ValueError(
+                f"previous multiplier for sleeve {name.value!r} must be finite"
+            )
+        band = sleeve_weight_bands.get(name, SleeveWeightBand(down=0.0, up=0.0))
+        drift = target - previous
+        if _within_sleeve_weight_band(drift, band):
+            banded[name] = previous
+        else:
+            banded[name] = previous + sleeve_reversion_fraction * drift
+    return banded
+
+
+def _validate_reversion_fraction(sleeve_reversion_fraction: float) -> None:
+    if (
+        sleeve_reversion_fraction <= 0.0
+        or sleeve_reversion_fraction > 1.0
+        or not math.isfinite(sleeve_reversion_fraction)
+    ):
+        raise ValueError("sleeve_reversion_fraction must be in (0, 1]")
+
+
+def _within_sleeve_weight_band(drift: float, band: SleeveWeightBand) -> bool:
+    if drift > 0:
+        return drift <= band.up + _EPS
+    if drift < 0:
+        return -drift <= band.down + _EPS
+    return True
 
 
 def _allocation_from_multipliers(

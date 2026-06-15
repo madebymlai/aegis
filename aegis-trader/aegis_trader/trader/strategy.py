@@ -54,7 +54,7 @@ from aegis_trader.data import MarketDataPort, NautilusMarketData
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
-from aegis_trader.domain.rebalancer import rebalance
+from aegis_trader.domain.rebalancer import rebalance_plan
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
@@ -134,6 +134,7 @@ class RebalanceStrategy(Strategy):
         # Wave B (B14): real per-period NAV history feeding on_stop attribution.
         self._nav_history: list[float] = []
         self._last_attribution: dict[SleeveName, float] = {}
+        self._last_sleeve_weights: dict[SleeveName, float] = {}
         # ── Slice 9: observability + attribution ─────────────────────────
         self._obs_port: ObservabilityPort | None = config.obs_port
         # Per-period inputs for the realized-weight sleeve attribution (on_stop).
@@ -387,14 +388,16 @@ class RebalanceStrategy(Strategy):
         # gate, and the fidelity trip engage); the sizer converts each delta into
         # a native share count.
         realized_covariance = self._realized_sleeve_covariance()
-        deltas = rebalance(
+        plan = rebalance_plan(
             pending,
             self._book,
             realized_weights=realized_weights,
             realized_covariance=realized_covariance,
+            previous_sleeve_weights=self._last_sleeve_weights,
         )
+        self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
         orders = size_deltas(
-            deltas,
+            plan.deltas,
             nav,
             instrument_metas=instrument_metas,
             fx_rates=fx_rates,

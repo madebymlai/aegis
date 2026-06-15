@@ -69,6 +69,8 @@ def load_book_config(path: str | Path) -> BookConfig:
                 wheel_filename=s["wheel_filename"],
                 risk_share=float(s["risk_share"]),
                 group=RiskGroup(s["group"]),
+                weight_band_down=float(s.get("weight_band_down", 0.0)),
+                weight_band_up=float(s.get("weight_band_up", 0.0)),
             )
             for s in data.get("sleeves", [])
         )
@@ -85,6 +87,7 @@ def load_book_config(path: str | Path) -> BookConfig:
         sleeves=sleeves,
         base_currency=data.get("base_currency", "EUR"),
         book_vol_target=float(data.get("book_vol_target", 0.09)),
+        sleeve_reversion_fraction=float(data.get("sleeve_reversion_fraction", 1.0)),
         max_book_gross=float(data.get("max_book_gross", 1.0)),
         gross_cap=data.get("gross_cap"),
         net_cap=data.get("net_cap"),

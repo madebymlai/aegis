@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from aegis_trader.domain.allocator import (
+    SleeveWeightBand,
     allocate_covariance_vol_target,
     allocate_diagonal_vol_target,
     covariance_book_vol,
@@ -163,6 +164,54 @@ def test_top_down_group_split_prevents_correlated_cluster_dominating_book_risk()
     target_risk = rc[_TAIL]
     assert floor_risk == pytest.approx(target_risk, abs=2e-3)
     assert floor_risk < 0.55
+
+
+def test_sleeve_weight_band_suppresses_inside_band_churn():
+    allocation = allocate_diagonal_vol_target(
+        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        risk_shares={_TREND: 0.5, _CARRY: 0.5},
+        realized_vols={_TREND: 0.10, _CARRY: 0.101},
+        book_vol_target=0.09,
+        previous_multipliers={_TREND: 0.6363961030678927, _CARRY: 0.6363961030678927},
+        sleeve_weight_bands={
+            _TREND: SleeveWeightBand(down=0.01, up=0.01),
+            _CARRY: SleeveWeightBand(down=0.01, up=0.01),
+        },
+        sleeve_reversion_fraction=0.5,
+    )
+
+    assert allocation.multipliers[_TREND] == pytest.approx(0.6363961030678927)
+    assert allocation.multipliers[_CARRY] == pytest.approx(0.6363961030678927)
+    assert allocation.scaled_targets[_CARRY]["B"] == pytest.approx(0.6363961030678927)
+
+
+def test_sleeve_weight_band_reverts_partially_after_breach():
+    previous = 0.6363961030678927
+    full_target = allocate_diagonal_vol_target(
+        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        risk_shares={_TREND: 0.5, _CARRY: 0.5},
+        realized_vols={_TREND: 0.10, _CARRY: 0.102},
+        book_vol_target=0.09,
+    )
+
+    allocation = allocate_diagonal_vol_target(
+        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        risk_shares={_TREND: 0.5, _CARRY: 0.5},
+        realized_vols={_TREND: 0.10, _CARRY: 0.102},
+        book_vol_target=0.09,
+        previous_multipliers={_TREND: previous, _CARRY: previous},
+        sleeve_weight_bands={
+            _TREND: SleeveWeightBand(down=0.01, up=0.01),
+            _CARRY: SleeveWeightBand(down=0.01, up=0.01),
+        },
+        sleeve_reversion_fraction=0.5,
+    )
+
+    assert allocation.multipliers[_TREND] == pytest.approx(previous)
+    assert allocation.multipliers[_CARRY] == pytest.approx(
+        previous + 0.5 * (full_target.multipliers[_CARRY] - previous)
+    )
+    assert allocation.multipliers[_CARRY] != pytest.approx(full_target.multipliers[_CARRY])
 
 
 def test_multi_name_default_equal_risk_contribution_scales_high_vol_name_down():

@@ -42,6 +42,8 @@ class SleeveConfig:
     wheel_filename: str
     risk_share: float
     group: RiskGroup = RiskGroup.FLOOR
+    weight_band_down: float = 0.0
+    weight_band_up: float = 0.0
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.risk_share) or self.risk_share < 0:
@@ -50,6 +52,14 @@ class SleeveConfig:
             )
         if not isinstance(self.group, RiskGroup):
             object.__setattr__(self, "group", RiskGroup(self.group))
+        for label, value in (
+            ("weight_band_down", self.weight_band_down),
+            ("weight_band_up", self.weight_band_up),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(
+                    f"sleeve {self.name.value!r} {label} must be finite and non-negative"
+                )
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,7 @@ class BookConfig:
     sleeves: tuple[SleeveConfig, ...]
     base_currency: str = "EUR"
     book_vol_target: float = 0.09
+    sleeve_reversion_fraction: float = 1.0
 
     # Gross cap stays authoritative after risk-budget scaling.  It is no longer
     # derived from static capital budgets; the allocator produces the requested
@@ -95,6 +106,12 @@ class BookConfig:
             raise ValueError(f"duplicate sleeve names in BookConfig: {names}")
         if not math.isfinite(self.book_vol_target) or self.book_vol_target <= 0:
             raise ValueError("book_vol_target must be finite and positive")
+        if (
+            not math.isfinite(self.sleeve_reversion_fraction)
+            or self.sleeve_reversion_fraction <= 0
+            or self.sleeve_reversion_fraction > 1
+        ):
+            raise ValueError("sleeve_reversion_fraction must be in (0, 1]")
         if not math.isfinite(self.max_book_gross) or self.max_book_gross <= 0:
             raise ValueError("max_book_gross must be finite and positive")
         if sum(s.risk_share for s in self.sleeves) <= _EPS:

@@ -21,6 +21,10 @@ base_currency = "EUR"
 # Annualized book volatility target for risk-budget scaling.
 book_vol_target = 0.09
 
+# On a sleeve-weight band breach, move this fraction toward the newly solved
+# risk-budget weight rather than fully resetting the sleeve.
+sleeve_reversion_fraction = 0.5
+
 # Gross cap after risk-budget scaling; raise it to run levered across sleeves.
 max_book_gross = 1.0
 
@@ -45,12 +49,16 @@ name = "trend_lse"
 wheel_filename = "trend_lse-abc123.whl"
 risk_share = 0.6
 group = "Floor"
+weight_band_down = 0.02
+weight_band_up = 0.02
 
 [[sleeves]]
 name = "trend_xetra"
 wheel_filename = "trend_xetra-def456.whl"
 risk_share = 0.4
 group = "Target"
+weight_band_down = 0.02
+weight_band_up = 0.02
 
 # Per-FIGI asymmetric band overrides (optional).
 [[band_overrides]]

@@ -11,6 +11,7 @@
 
 base_currency = "EUR"
 book_vol_target = 0.09
+sleeve_reversion_fraction = 0.5
 
 # Gross cap after risk-budget scaling; raise max_book_gross to run levered.
 max_book_gross = 1.0
@@ -27,6 +28,8 @@ name = "atalanta_trend"
 wheel_filename = "aegis_exec_atalanta_trendstraddlebuffered_cand_b98-1.0.0-py3-none-any.whl"
 risk_share = 0.35
 group = "Floor"
+weight_band_down = 0.02
+weight_band_up = 0.02
 
 # demeter — EU credit-carry pole (IHYU + LQDH, USD legs converted to EUR).
 [[sleeves]]
@@ -34,6 +37,8 @@ name = "demeter_carry"
 wheel_filename = "aegis_exec_demeter_carry_cand_c94-1.0.0-py3-none-any.whl"
 risk_share = 0.35
 group = "Floor"
+weight_band_down = 0.02
+weight_band_up = 0.02
 
 # aegis — UCITS tail hedge (VOOL, native EUR, held 100% within the sleeve).
 [[sleeves]]
@@ -41,3 +46,5 @@ name = "aegis_tail"
 wheel_filename = "aegis_exec_aegis_heldhedge_cand_fa6-1.0.0-py3-none-any.whl"
 risk_share = 0.15
 group = "Target"
+weight_band_down = 0.02
+weight_band_up = 0.02

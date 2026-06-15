@@ -8,7 +8,7 @@ import pytest
 from aegis_trader.domain.allocator import covariance_book_vol
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
-from aegis_trader.domain.rebalancer import rebalance
+from aegis_trader.domain.rebalancer import rebalance, rebalance_plan
 from aegis_trader.domain.types import SleeveName
 
 _TREND = SleeveName("trend")
@@ -99,6 +99,66 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
     ) * nav
 
     assert sum(attribution.values()) == pytest.approx(book_pnl)
+
+
+def test_sleeve_bands_cut_turnover_while_vol_target_stays_close():
+    """Synthetic two-period revalidation of the sleeve-band allocator seam."""
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(
+                name=_TREND,
+                wheel_filename="trend.whl",
+                risk_share=0.5,
+                group=RiskGroup.FLOOR,
+                weight_band_down=0.01,
+                weight_band_up=0.01,
+            ),
+            SleeveConfig(
+                name=_TAIL,
+                wheel_filename="tail.whl",
+                risk_share=0.5,
+                group=RiskGroup.TARGET,
+                weight_band_down=0.01,
+                weight_band_up=0.01,
+            ),
+        ),
+        book_vol_target=0.09,
+        sleeve_reversion_fraction=0.5,
+    )
+    targets = {_TREND: _one_row_target({"TREND": 1.0}), _TAIL: _one_row_target({"TAIL": 1.0})}
+    first_covariance = {
+        _TREND: {_TREND: 0.10**2, _TAIL: 0.0},
+        _TAIL: {_TREND: 0.0, _TAIL: 0.10**2},
+    }
+    second_covariance = {
+        _TREND: {_TREND: 0.10**2, _TAIL: 0.0},
+        _TAIL: {_TREND: 0.0, _TAIL: 0.102**2},
+    }
+
+    first = rebalance_plan(targets, book, realized_covariance=first_covariance)
+    full_second = rebalance_plan(targets, book, realized_covariance=second_covariance)
+    banded_second = rebalance_plan(
+        targets,
+        book,
+        realized_covariance=second_covariance,
+        previous_sleeve_weights=dict(first.applied_sleeve_weights),
+    )
+
+    full_turnover = sum(
+        abs(full_second.applied_sleeve_weights[name] - first.applied_sleeve_weights[name])
+        for name in first.applied_sleeve_weights
+    )
+    banded_turnover = sum(
+        abs(banded_second.applied_sleeve_weights[name] - first.applied_sleeve_weights[name])
+        for name in first.applied_sleeve_weights
+    )
+
+    assert banded_turnover < full_turnover
+    assert banded_turnover == pytest.approx(full_turnover / 2.0)
+    assert covariance_book_vol(
+        dict(banded_second.applied_sleeve_weights),
+        second_covariance,
+    ) == pytest.approx(book.book_vol_target, abs=0.001)
 
 
 def _one_row_target(figi_to_weight: dict[str, float]):

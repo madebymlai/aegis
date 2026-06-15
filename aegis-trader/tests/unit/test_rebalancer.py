@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
-from aegis_trader.domain.rebalancer import rebalance
+from aegis_trader.domain.rebalancer import rebalance, rebalance_plan
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.types import Figi, OrderSide, SleeveName, WeightDelta
 
@@ -190,6 +190,43 @@ class TestRebalanceMultiSleeve:
         )
         by_figi = {d.figi.value: d.delta for d in result}
         assert by_figi["HIGH"] == pytest.approx(by_figi["LOW"] / 2.0)
+
+    def test_sleeve_weight_bands_use_previous_applied_weight(self):
+        book = BookConfig(
+            sleeves=(
+                SleeveConfig(
+                    name=SleeveName("trend"),
+                    wheel_filename="trend.whl",
+                    risk_share=0.5,
+                    weight_band_down=0.01,
+                    weight_band_up=0.01,
+                ),
+                SleeveConfig(
+                    name=SleeveName("carry"),
+                    wheel_filename="carry.whl",
+                    risk_share=0.5,
+                    weight_band_down=0.01,
+                    weight_band_up=0.01,
+                ),
+            ),
+            book_vol_target=0.09,
+            sleeve_reversion_fraction=0.5,
+        )
+        previous = {book.sleeves[0].name: 0.6363961030678927, book.sleeves[1].name: 0.6363961030678927}
+
+        plan = rebalance_plan(
+            {book.sleeves[0].name: _target({"TREND": 1.0}),
+             book.sleeves[1].name: _target({"CARRY": 1.0})},
+            book,
+            realized_vols={book.sleeves[0].name: 0.10, book.sleeves[1].name: 0.102},
+            previous_sleeve_weights=previous,
+        )
+
+        assert plan.applied_sleeve_weights[book.sleeves[0].name] == pytest.approx(previous[book.sleeves[0].name])
+        assert plan.applied_sleeve_weights[book.sleeves[1].name] == pytest.approx(0.630156925586835)
+        by_figi = {d.figi.value: d.delta for d in plan.deltas}
+        assert by_figi["TREND"] == pytest.approx(previous[book.sleeves[0].name])
+        assert by_figi["CARRY"] == pytest.approx(0.630156925586835)
 
     def test_covariance_scales_correlated_sleeves_before_netting(self):
         book = make_book([("trend", "trend.whl", 0.5), ("carry", "carry.whl", 0.5)])

@@ -22,9 +22,14 @@ Realized-book gate (Slice 4):
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+
 import pandas as pd
 
 from aegis_trader.domain.allocator import (
+    SleeveWeightBand,
     allocate_covariance_vol_target,
     allocate_diagonal_vol_target,
 )
@@ -34,6 +39,14 @@ from aegis_trader.domain.types import Figi, SleeveName, WeightDelta
 _ZERO_GUARD = 1e-12
 
 
+@dataclass(frozen=True)
+class RebalancePlan:
+    """Pure rebalance decision plus sleeve weights applied by the allocator."""
+
+    deltas: tuple[WeightDelta, ...]
+    applied_sleeve_weights: Mapping[SleeveName, float]
+
+
 def rebalance(
     sleeve_targets: dict[SleeveName, pd.DataFrame],
     book: BookConfig,
@@ -41,8 +54,29 @@ def rebalance(
     realized_weights: dict[str, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
+    previous_sleeve_weights: dict[SleeveName, float] | None = None,
 ) -> tuple[WeightDelta, ...]:
-    """Net per-sleeve target weights into signed weight deltas to trade.
+    """Net per-sleeve target weights into signed weight deltas to trade."""
+    return rebalance_plan(
+        sleeve_targets,
+        book,
+        realized_weights=realized_weights,
+        realized_vols=realized_vols,
+        realized_covariance=realized_covariance,
+        previous_sleeve_weights=previous_sleeve_weights,
+    ).deltas
+
+
+def rebalance_plan(
+    sleeve_targets: dict[SleeveName, pd.DataFrame],
+    book: BookConfig,
+    *,
+    realized_weights: dict[str, float] | None = None,
+    realized_vols: dict[SleeveName, float] | None = None,
+    realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
+    previous_sleeve_weights: dict[SleeveName, float] | None = None,
+) -> RebalancePlan:
+    """Net per-sleeve target weights into a complete rebalance plan.
 
     *sleeve_targets* maps each sleeve name to its most-recent target-weight
     DataFrame (index=time, columns=FIGI).  Only sleeves listed in *book* are
@@ -61,8 +95,10 @@ def rebalance(
     shares.  ``realized_vols`` is retained for the diagonal tracer path and is
     used only when covariance is absent.
 
-    Returns the signed weight deltas to trade (fraction of NAV); converting a
-    delta to a share quantity is the sizing step's job (``sizing.size_deltas``).
+    Returns the signed weight deltas to trade (fraction of NAV) and the applied
+    sleeve weights that Strategy keeps for the next period's sleeve-band check.
+    Converting a delta to a share quantity is the sizing step's job
+    (``sizing.size_deltas``).
     """
     # -- Step 1: net allocator-scaled target weights across sleeves --
     latest_targets: dict[SleeveName, dict[str, float]] = {}
@@ -73,6 +109,7 @@ def rebalance(
         latest_targets[sleeve.name] = _latest_target_weights(target)
 
     risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
+    sleeve_weight_bands = _sleeve_weight_bands(book)
     if realized_covariance is not None:
         allocation = allocate_covariance_vol_target(
             sleeve_targets=latest_targets,
@@ -80,6 +117,9 @@ def rebalance(
             realized_covariance=realized_covariance,
             book_vol_target=book.book_vol_target,
             groups={sleeve.name: sleeve.group for sleeve in book.sleeves},
+            previous_multipliers=previous_sleeve_weights,
+            sleeve_weight_bands=sleeve_weight_bands,
+            sleeve_reversion_fraction=book.sleeve_reversion_fraction,
         )
     else:
         allocation = allocate_diagonal_vol_target(
@@ -87,6 +127,9 @@ def rebalance(
             risk_shares=risk_shares,
             realized_vols=realized_vols,
             book_vol_target=book.book_vol_target,
+            previous_multipliers=previous_sleeve_weights,
+            sleeve_weight_bands=sleeve_weight_bands,
+            sleeve_reversion_fraction=book.sleeve_reversion_fraction,
         )
 
     net_target_by_figi: dict[str, float] = {}
@@ -152,7 +195,20 @@ def rebalance(
     #    cleanup above stays subordinate to these hard caps — fail closed) --
     _gate_book_caps(post_book, book)
 
-    return tuple(deltas)
+    return RebalancePlan(
+        deltas=tuple(deltas),
+        applied_sleeve_weights=MappingProxyType(dict(allocation.multipliers)),
+    )
+
+
+def _sleeve_weight_bands(book: BookConfig) -> dict[SleeveName, SleeveWeightBand]:
+    return {
+        sleeve.name: SleeveWeightBand(
+            down=sleeve.weight_band_down,
+            up=sleeve.weight_band_up,
+        )
+        for sleeve in book.sleeves
+    }
 
 
 def _latest_target_weights(target: pd.DataFrame) -> dict[str, float]:

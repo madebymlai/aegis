@@ -11,12 +11,16 @@ def make_sleeve(
     wheel: str = "test.whl",
     risk_share: float = 1.0,
     group: RiskGroup = RiskGroup.FLOOR,
+    weight_band_down: float = 0.0,
+    weight_band_up: float = 0.0,
 ) -> SleeveConfig:
     return SleeveConfig(
         name=SleeveName(name),
         wheel_filename=wheel,
         risk_share=risk_share,
         group=group,
+        weight_band_down=weight_band_down,
+        weight_band_up=weight_band_up,
     )
 
 
@@ -26,9 +30,12 @@ class TestBookConfig:
         assert book.sleeve_count == 1
         assert book.base_currency == "EUR"
         assert book.book_vol_target == 0.09
+        assert book.sleeve_reversion_fraction == 1.0
         assert book.sleeves[0].name == SleeveName("trend")
         assert book.sleeves[0].risk_share == 1.0
         assert book.sleeves[0].group == RiskGroup.FLOOR
+        assert book.sleeves[0].weight_band_down == 0.0
+        assert book.sleeves[0].weight_band_up == 0.0
 
     def test_duplicate_sleeve_names_rejected(self):
         with pytest.raises(ValueError, match="duplicate"):
@@ -62,6 +69,24 @@ class TestBookConfig:
     def test_invalid_vol_target_rejected(self):
         with pytest.raises(ValueError, match="book_vol_target"):
             BookConfig(sleeves=(make_sleeve("a"),), book_vol_target=0.0)
+
+    def test_sleeve_weight_bands_and_reversion_fraction_configured(self):
+        book = BookConfig(
+            sleeves=(make_sleeve("a", weight_band_down=0.01, weight_band_up=0.03),),
+            sleeve_reversion_fraction=0.5,
+        )
+
+        assert book.sleeve_reversion_fraction == 0.5
+        assert book.sleeves[0].weight_band_down == 0.01
+        assert book.sleeves[0].weight_band_up == 0.03
+
+    def test_invalid_sleeve_weight_band_rejected(self):
+        with pytest.raises(ValueError, match="weight_band_down"):
+            make_sleeve("a", weight_band_down=-0.01)
+
+    def test_invalid_sleeve_reversion_fraction_rejected(self):
+        with pytest.raises(ValueError, match="sleeve_reversion_fraction"):
+            BookConfig(sleeves=(make_sleeve("a"),), sleeve_reversion_fraction=0.0)
 
 
 class TestBookConfigCapsAndBands:
