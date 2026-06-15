@@ -25,10 +25,11 @@ from __future__ import annotations
 import pandas as pd
 
 from aegis_trader.domain.allocator import (
+    SkewConstraint,
     allocate_covariance_vol_target,
     allocate_diagonal_vol_target,
 )
-from aegis_trader.domain.book_config import BookConfig
+from aegis_trader.domain.book_config import BookConfig, RiskGroup
 from aegis_trader.domain.types import Figi, SleeveName, WeightDelta
 
 _ZERO_GUARD = 1e-12
@@ -41,6 +42,7 @@ def rebalance(
     realized_weights: dict[str, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
+    realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None = None,
 ) -> tuple[WeightDelta, ...]:
     """Net per-sleeve target weights into signed weight deltas to trade.
 
@@ -59,7 +61,8 @@ def rebalance(
     *realized_covariance* is the covariance-aware allocator input.  During
     warmup callers pass ``None`` and the allocator falls back to raw risk
     shares.  ``realized_vols`` is retained for the diagonal tracer path and is
-    used only when covariance is absent.
+    used only when covariance is absent.  ``realized_skew_returns`` carries
+    same-horizon sleeve returns for the Floor net-convex skew constraint.
 
     Returns the signed weight deltas to trade (fraction of NAV); converting a
     delta to a share quantity is the sizing step's job (``sizing.size_deltas``).
@@ -74,12 +77,20 @@ def rebalance(
 
     risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
     if realized_covariance is not None:
+        groups = {sleeve.name: sleeve.group for sleeve in book.sleeves}
         allocation = allocate_covariance_vol_target(
             sleeve_targets=latest_targets,
             risk_shares=risk_shares,
             realized_covariance=realized_covariance,
             book_vol_target=book.book_vol_target,
-            groups={sleeve.name: sleeve.group for sleeve in book.sleeves},
+            groups=groups,
+            skew_constraint=(
+                SkewConstraint(
+                    realized_returns=realized_skew_returns,
+                    constrained_group=RiskGroup.FLOOR,
+                )
+                if realized_skew_returns is not None else None
+            ),
         )
     else:
         allocation = allocate_diagonal_vol_target(

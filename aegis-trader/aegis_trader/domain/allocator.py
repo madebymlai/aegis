@@ -35,6 +35,23 @@ class Allocation:
 
 
 @dataclass(frozen=True)
+class SkewConstraint:
+    """Live net-convex book-skew floor for a risk group.
+
+    ``realized_returns`` are same-horizon sleeve return series (quarterly in
+    production).  The allocator keeps the portfolio skew at or above
+    ``min_skew`` by reducing negatively-skewed sleeves inside
+    ``constrained_group`` and reallocating that weight to positively-skewed
+    peers.  If ``constrained_group`` is ``None``, every active sleeve is
+    eligible for the adjustment.
+    """
+
+    realized_returns: Mapping[SleeveName, tuple[float, ...]]
+    min_skew: float = 0.0
+    constrained_group: Hashable | None = None
+
+
+@dataclass(frozen=True)
 class _GroupComposition:
     """Within-group ERC composition in member order."""
 
@@ -88,6 +105,7 @@ def allocate_covariance_vol_target(
     realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]] | None,
     book_vol_target: float,
     groups: Mapping[SleeveName, Hashable] | None = None,
+    skew_constraint: SkewConstraint | None = None,
 ) -> Allocation:
     """Scale per-sleeve target weights using covariance-aware ERC/HRP.
 
@@ -118,6 +136,12 @@ def allocate_covariance_vol_target(
         covariance=covariance,
         risk_shares=risk_shares,
         groups=groups,
+    )
+    composition = _apply_skew_constraint(
+        active=active,
+        composition=composition,
+        groups=groups,
+        constraint=skew_constraint,
     )
 
     composition_by_name = {
@@ -184,6 +208,19 @@ def covariance_book_vol(
     if variance < -_EPS:
         raise ValueError(f"covariance produced negative variance: {variance!r}")
     return math.sqrt(max(variance, 0.0))
+
+
+def portfolio_skew(
+    multipliers: Mapping[SleeveName, float],
+    realized_returns: Mapping[SleeveName, tuple[float, ...]],
+) -> float:
+    """Return realized skew of a multiplier-weighted sleeve-return stream."""
+    if not multipliers:
+        return 0.0
+    active = tuple(multipliers.keys())
+    returns = _return_matrix(active, realized_returns)
+    weights = np.array([float(multipliers[name]) for name in active], dtype=float)
+    return _skew(returns @ weights)
 
 
 def risk_contribution_shares(
@@ -437,6 +474,123 @@ def _variance_budgets(risk_shares: list[float]) -> np.ndarray:
     if total <= _EPS:
         raise ValueError("ERC risk budget must be positive")
     return squared / total
+
+
+def _apply_skew_constraint(
+    *,
+    active: tuple[SleeveName, ...],
+    composition: np.ndarray,
+    groups: Mapping[SleeveName, Hashable] | None,
+    constraint: SkewConstraint | None,
+) -> np.ndarray:
+    if constraint is None:
+        return composition
+    if not math.isfinite(constraint.min_skew):
+        raise ValueError("skew constraint min_skew must be finite")
+
+    returns = _return_matrix(active, constraint.realized_returns)
+    current_skew = _skew(returns @ composition)
+    if current_skew >= constraint.min_skew - 1e-10:
+        return composition
+
+    eligible = _skew_constraint_indices(active, groups, constraint.constrained_group)
+    sleeve_skews = {index: _skew(returns[:, index]) for index in eligible}
+    concave = [
+        index for index in eligible
+        if sleeve_skews[index] < constraint.min_skew - 1e-10
+        and composition[index] > _EPS
+    ]
+    convex = [
+        index for index in eligible
+        if sleeve_skews[index] >= constraint.min_skew - 1e-10
+        and composition[index] > _EPS
+    ]
+    if not concave or not convex:
+        raise ValueError("skew constraint cannot be satisfied by active sleeves")
+
+    zero_concave = _skew_adjusted_composition(composition, concave, convex, 0.0)
+    if _skew(returns @ zero_concave) < constraint.min_skew - 1e-10:
+        raise ValueError("skew constraint cannot make the book net-convex")
+
+    best = zero_concave
+    low = 0.0
+    high = 1.0
+    for _ in range(80):
+        mid = (low + high) / 2.0
+        candidate = _skew_adjusted_composition(composition, concave, convex, mid)
+        if _skew(returns @ candidate) >= constraint.min_skew - 1e-10:
+            best = candidate
+            low = mid
+        else:
+            high = mid
+    return best / float(best.sum())
+
+
+def _return_matrix(
+    active: tuple[SleeveName, ...],
+    realized_returns: Mapping[SleeveName, tuple[float, ...]],
+) -> np.ndarray:
+    rows: list[tuple[float, ...]] = []
+    length: int | None = None
+    for name in active:
+        if name not in realized_returns:
+            raise ValueError(f"missing realized skew returns for sleeve {name.value!r}")
+        series = tuple(float(value) for value in realized_returns[name])
+        if len(series) < 3:
+            raise ValueError("skew constraint requires at least three return rows")
+        if any(not math.isfinite(value) for value in series):
+            raise ValueError("realized skew returns must be finite")
+        if length is None:
+            length = len(series)
+        elif len(series) != length:
+            raise ValueError("realized skew return series must have equal length")
+        rows.append(series)
+    return np.array(rows, dtype=float).T
+
+
+def _skew(values: np.ndarray) -> float:
+    mean = float(np.mean(values))
+    centered = values - mean
+    variance = float(np.mean(centered * centered))
+    if variance <= _EPS or not math.isfinite(variance):
+        raise ValueError("cannot compute skew for a degenerate return series")
+    std = math.sqrt(variance)
+    return float(np.mean(centered * centered * centered) / (std * std * std))
+
+
+def _skew_constraint_indices(
+    active: tuple[SleeveName, ...],
+    groups: Mapping[SleeveName, Hashable] | None,
+    constrained_group: Hashable | None,
+) -> list[int]:
+    if constrained_group is None:
+        return list(range(len(active)))
+    if groups is None:
+        raise ValueError("skew constraint group requires sleeve groups")
+    indices: list[int] = []
+    for index, name in enumerate(active):
+        if groups.get(name) == constrained_group:
+            indices.append(index)
+    if not indices:
+        raise ValueError("skew constraint group has no active sleeves")
+    return indices
+
+
+def _skew_adjusted_composition(
+    composition: np.ndarray,
+    concave: list[int],
+    convex: list[int],
+    concave_fraction: float,
+) -> np.ndarray:
+    candidate = composition.copy()
+    removed = float(np.sum(candidate[concave] * (1.0 - concave_fraction)))
+    candidate[concave] *= concave_fraction
+    convex_total = float(np.sum(composition[convex]))
+    if convex_total <= _EPS:
+        raise ValueError("skew constraint has no convex sleeve weight")
+    for index in convex:
+        candidate[index] += removed * float(composition[index]) / convex_total
+    return candidate
 
 
 def _erc_vector(covariance: np.ndarray, variance_budgets: np.ndarray) -> np.ndarray:

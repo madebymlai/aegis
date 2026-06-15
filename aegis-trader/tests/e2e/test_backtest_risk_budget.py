@@ -5,13 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from aegis_trader.domain.allocator import covariance_book_vol
+from aegis_trader.domain.allocator import covariance_book_vol, portfolio_skew
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
 from aegis_trader.domain.rebalancer import rebalance
 from aegis_trader.domain.types import SleeveName
 
 _TREND = SleeveName("trend")
+_CARRY = SleeveName("carry")
 _TAIL = SleeveName("tail")
 
 
@@ -99,6 +100,61 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
     ) * nav
 
     assert sum(attribution.values()) == pytest.approx(book_pnl)
+
+
+def test_five_year_floor_remains_net_convex_under_live_skew_budget():
+    days = 252 * 5
+    base = np.linspace(0.0, 70.0 * np.pi, days)
+    trend_daily = 0.001 * np.sin(base)
+    carry_daily = 0.0008 * np.cos(base)
+    covariance = {
+        _TREND: {
+            _TREND: float(np.var(trend_daily, ddof=1) * 252.0),
+            _CARRY: float(np.cov(trend_daily, carry_daily, ddof=1)[0, 1] * 252.0),
+        },
+        _CARRY: {
+            _TREND: float(np.cov(trend_daily, carry_daily, ddof=1)[0, 1] * 252.0),
+            _CARRY: float(np.var(carry_daily, ddof=1) * 252.0),
+        },
+    }
+    quarterly_returns = {
+        _TREND: (0.20, -0.03, 0.01, -0.02, 0.16, -0.02, 0.01, -0.01),
+        _CARRY: (0.03, 0.02, 0.03, 0.01, -0.50, 0.02, 0.03, -0.40),
+    }
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(
+                name=_TREND,
+                wheel_filename="trend.whl",
+                risk_share=0.6,
+                group=RiskGroup.FLOOR,
+            ),
+            SleeveConfig(
+                name=_CARRY,
+                wheel_filename="carry.whl",
+                risk_share=0.4,
+                group=RiskGroup.FLOOR,
+            ),
+        ),
+        book_vol_target=0.09,
+    )
+
+    deltas = rebalance(
+        {
+            _TREND: _one_row_target({"TREND": 1.0}),
+            _CARRY: _one_row_target({"CARRY": 1.0}),
+        },
+        book,
+        realized_covariance=covariance,
+        realized_skew_returns=quarterly_returns,
+    )
+    weights = {delta.figi.value: delta.delta for delta in deltas}
+
+    assert portfolio_skew(
+        {_TREND: weights["TREND"], _CARRY: weights["CARRY"]},
+        quarterly_returns,
+    ) >= -1e-10
+    assert weights["TREND"] >= weights["CARRY"]
 
 
 def _one_row_target(figi_to_weight: dict[str, float]):
