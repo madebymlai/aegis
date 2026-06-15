@@ -49,7 +49,7 @@ from aegis_runtime.currency import major_currency
 
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data import MarketDataPort, NautilusMarketData
-from aegis_trader.domain.attribution import compute_sleeve_attribution
+from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
 from aegis_trader.domain.rebalancer import rebalance
@@ -131,8 +131,8 @@ class RebalanceStrategy(Strategy):
         self._last_attribution: dict[SleeveName, float] = {}
         # ── Slice 9: observability + attribution ─────────────────────────
         self._obs_port: ObservabilityPort | None = config.obs_port
-        self._sleeve_target_history: dict[SleeveName, list[pd.DataFrame]] = {}
-        self._close_history: dict[str, list[float]] = {}  # FIGI → list of closes
+        # Per-period inputs for the realized-weight sleeve attribution (on_stop).
+        self._attribution_periods: list[AttributionPeriod] = []
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -204,11 +204,7 @@ class RebalanceStrategy(Strategy):
 
         self.log.info(f"Integrity check passed: NAV={nav:.2f}, cash={cash:.2f}")
 
-        # ── Slice 9: initialise attribution trackers ────────────────────
-        for sleeve in self._book.sleeves:
-            self._sleeve_target_history[sleeve.name] = []
-
-        # Collect all unique FIGIs across all sleeves
+        # Collect all unique FIGIs across all sleeves.
         all_figis: set[str] = set()
         for bundle in self._sleeve_to_bundle.values():
             all_figis.update(bundle.contract.figis)
@@ -388,18 +384,21 @@ class RebalanceStrategy(Strategy):
 
 
         # ── Slice 9: store per-sleeve targets & closes for attribution ───
-        # Store only this period's target row (the one the rebalancer nets via
-        # target.iloc[-1]) -- not the whole growing compute_weights window, which
-        # would duplicate timestamps and break the attribution alignment.  Every
-        # target here is non-empty: rebalance() above already took iloc[-1].
-        for sleeve_name, target_df in pending.items():
-            history = self._sleeve_target_history.setdefault(sleeve_name, [])
-            history.append(target_df.iloc[[-1]])
+        # Record this period's realized weights, per-sleeve target rows, and
+        # closes so on_stop can decompose the realized-weight book P&L by sleeve.
+        # Each pending target is non-empty: rebalance() above took iloc[-1].
         self._nav_history.append(nav)
-        if prices:
-            for figi, px in prices.items():
-                cl = self._close_history.setdefault(figi, [])
-                cl.append(px)
+        self._attribution_periods.append(
+            AttributionPeriod(
+                nav=nav,
+                realized_weights=dict(realized_weights),
+                sleeve_targets={
+                    name: target_df.iloc[-1].to_dict()
+                    for name, target_df in pending.items()
+                },
+                closes=dict(prices),
+            )
+        )
 
         # Calendar-aware: only emit orders for FIGIs with a fresh bar
         for oi in orders:
@@ -431,67 +430,16 @@ class RebalanceStrategy(Strategy):
     def on_stop(self) -> None:
         """Compute and log per-sleeve P&L attribution at end of run.
 
-        Attribution is computed from the history of sleeve targets and
-        close prices collected during the run.  When insufficient data
-        exists (fewer than 2 periods per FIGI), attribution is skipped.
+        Decomposes the realized-weight book P&L across sleeves by their
+        budget-scaled target share (compute_sleeve_attribution); needs at
+        least two recorded rebalance periods.
         """
-        if not self._sleeve_target_history or not self._close_history:
+        if len(self._attribution_periods) < 2:
             return
 
-        # Build consolidated sleeve targets — each target_list entry is a
-        # single-row DataFrame; concat produces a multi-row frame indexed
-        # by the original bar timestamps.
-        sleeve_targets: dict[SleeveName, pd.DataFrame] = {}
-        for sleeve_name, target_list in self._sleeve_target_history.items():
-            if not target_list:
-                continue
-            all_targets = pd.concat(target_list)
-            sleeve_targets[sleeve_name] = all_targets
-
-        if not sleeve_targets:
-            return
-
-        # Build a closes DataFrame with the same index as the targets.
-        # Use the union of all target timestamps as the index.
-        all_idxs = [df.index for df in sleeve_targets.values()]
-        combined_idx = all_idxs[0]
-        for idx in all_idxs[1:]:
-            combined_idx = combined_idx.union(idx)
-        combined_idx = combined_idx.sort_values()
-        combined_idx.name = "timestamp"
-
-        if len(combined_idx) < 2:
-            return
-
-        closes_data: dict[str, list[float]] = {}
-        for figi, px_list in self._close_history.items():
-            if len(px_list) < 2:
-                continue
-            # Align to the combined index (pad with NaN at the front)
-            padded = [float("nan")] * max(0, len(combined_idx) - len(px_list)) + px_list
-            padded = padded[-len(combined_idx):]  # trim to index length
-            closes_data[figi] = padded
-
-        if not closes_data:
-            return
-
-        closes_df = pd.DataFrame(closes_data, index=combined_idx)
-        closes_df.columns.name = "figi"
-
-        # Real per-period NAV recorded each rebalance, aligned to the target
-        # index the same way closes are (right-aligned, padded then trimmed);
-        # ffill/bfill carries the nearest known NAV across any padded slots.
-        nav_padded = (
-            [float("nan")] * max(0, len(combined_idx) - len(self._nav_history))
-            + self._nav_history
-        )
-        nav_padded = nav_padded[-len(combined_idx):]
-        nav_series = pd.Series(nav_padded, index=combined_idx).ffill().bfill()
-
+        budgets = {sleeve.name: sleeve.budget for sleeve in self._book.sleeves}
         attribution = compute_sleeve_attribution(
-            sleeve_targets=sleeve_targets,
-            closes=closes_df,
-            nav_series=nav_series,
+            self._attribution_periods, budgets=budgets
         )
         self._last_attribution = attribution
 

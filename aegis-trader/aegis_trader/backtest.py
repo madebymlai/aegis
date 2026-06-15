@@ -85,7 +85,11 @@ def run_book_backtest(
         if ccy == book.base_currency:
             continue
         rate = fetch_fx(book.base_currency, ccy, start, end)
-        engine.cache.set_mark_xrate(base, Currency.from_str(ccy), rate)
+        quote = Currency.from_str(ccy)
+        # Both directions: base->ccy sizes orders; ccy->base lets net_exposure
+        # value a non-base position back into the book's base for realized weights.
+        engine.cache.set_mark_xrate(base, quote, rate)
+        engine.cache.set_mark_xrate(quote, base, 1.0 / rate)
 
     strategy = RebalanceStrategy(RebalanceStrategyConfig(book=book, fill_time_in_force=None))
     for name, bundle in sleeves:

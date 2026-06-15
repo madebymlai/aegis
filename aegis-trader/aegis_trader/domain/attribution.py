@@ -1,96 +1,77 @@
-"""Per-sleeve P&L attribution — derived from weights × book returns.
+"""Per-sleeve P&L attribution — reconciles to book P&L by construction.
 
-Not a second ledger — one pure function that computes each sleeve's
-contribution to book P&L using the identity:
+Not a second ledger.  The book's realized gain over a period is the
+realized-weight return identity
 
-    P&L_sleeve = Σ_t (w_{i,t-1} × ret_{i,t} × NAV_{t-1})
+    P&L_book = Σ_i realized_w_{i,t-1} × return_{i,t} × NAV_{t-1}
 
-where ret_{i,t} = close_{i,t} / close_{i,t-1} - 1.
-
-Sleeve attributions must sum to the total book P&L (the linearity of the
-weighted-return decomposition guarantees this).  The function is a pure
-domain component — no Nautilus, no I/O.
+where return_{i,t} = close_{i,t} / close_{i,t-1} - 1.  Each instrument's realized
+weight is split across sleeves by their *budget-scaled target* share — the share
+of the netted book position each sleeve intended.  Because the shares sum to 1
+per instrument, the per-sleeve P&Ls sum back to the book P&L.  A position no
+sleeve currently targets is split by budget fraction so reconciliation still
+holds.  Pure domain — no Nautilus, no I/O.
 """
 
 from __future__ import annotations
 
-import pandas as pd
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 from aegis_trader.domain.types import SleeveName
 
+_EPS = 1e-15
+
+
+@dataclass(frozen=True)
+class AttributionPeriod:
+    """One rebalance period's inputs for attribution.
+
+    *realized_weights* — the book's realized weight (position/NAV) per FIGI, held
+      into the next period; *sleeve_targets* — each sleeve's raw target weight per
+      FIGI (pre-budget); *closes* — each FIGI's close; *nav* — book NAV.
+    """
+
+    nav: float
+    realized_weights: Mapping[str, float]
+    sleeve_targets: Mapping[SleeveName, Mapping[str, float]]
+    closes: Mapping[str, float]
+
 
 def compute_sleeve_attribution(
+    periods: Sequence[AttributionPeriod],
     *,
-    sleeve_targets: dict[SleeveName, pd.DataFrame],
-    closes: pd.DataFrame,
-    nav_series: pd.Series,
+    budgets: Mapping[SleeveName, float],
 ) -> dict[SleeveName, float]:
-    """Compute per-sleeve P&L as the cumulative sum of weight_{t-1} × return_t × NAV_{t-1}.
+    """Per-sleeve P&L over *periods*, reconciling to book P&L.
 
-    *sleeve_targets* — maps each sleeve to its target-weight DataFrame
-      (index=timestamp, columns=FIGI strings).  The weight at time t-1 is
-      applied to the return from t-1 to t.
-    *closes* — DataFrame of close prices (index=timestamp, columns=FIGI strings).
-      Must contain the FIGIs that appear in the sleeve targets.
-    *nav_series* — Series of NAV values at each timestamp (index matches closes).
-
-    Returns a dict mapping each SleeveName to its cumulative P&L in base currency.
-    An empty dict when no sleeves are supplied.
-
-    Any FIGI present in sleeve_targets but missing from *closes* contributes zero
-    — the function does not error on partial data.
+    Returns a dict mapping each sleeve to its cumulative P&L in base currency.
     """
-    if not sleeve_targets:
-        return {}
+    result: dict[SleeveName, float] = {name: 0.0 for name in budgets}
+    total_budget = sum(budgets.values())
 
-    result: dict[SleeveName, float] = {}
+    for prev, curr in zip(periods, periods[1:], strict=False):
+        for figi, realized_w in prev.realized_weights.items():
+            if abs(realized_w) < _EPS:
+                continue
+            prev_px = prev.closes.get(figi)
+            curr_px = curr.closes.get(figi)
+            if prev_px is None or curr_px is None or prev_px <= 0:
+                continue
+            book_contrib = realized_w * (curr_px / prev_px - 1.0) * prev.nav
 
-    for sleeve_name, weights_df in sleeve_targets.items():
-        if weights_df.empty:
-            result[sleeve_name] = 0.0
-            continue
-
-        # Align closes and weights on common index
-        common_idx = weights_df.index.intersection(closes.index)
-        if len(common_idx) < 2:
-            result[sleeve_name] = 0.0
-            continue
-
-        closes_aligned = closes.loc[common_idx]
-        nav_aligned = nav_series.loc[common_idx]
-
-        # Align weights — use the weight at time t-1 for return from t-1 to t
-        weights_aligned = weights_df.loc[common_idx]
-
-        pnl = 0.0
-        prev_close = closes_aligned.iloc[0]
-        prev_weight = weights_aligned.iloc[0]
-        prev_nav = nav_aligned.iloc[0]
-
-        for t in range(1, len(common_idx)):
-            curr_close = closes_aligned.iloc[t]
-            curr_weight = weights_aligned.iloc[t]
-            curr_nav = nav_aligned.iloc[t]
-
-            for figi in weights_df.columns:
-                w = float(prev_weight.get(figi, 0.0))
-                if abs(w) < 1e-15:
-                    continue
-                prev_px = prev_close.get(figi)
-                curr_px = curr_close.get(figi)
-                if prev_px is None or curr_px is None:
-                    continue
-                prev_px, curr_px = float(prev_px), float(curr_px)
-                if pd.isna(prev_px) or pd.isna(curr_px) or prev_px <= 0:
-                    continue
-                ret = curr_px / prev_px - 1.0
-                pnl += w * ret * prev_nav
-
-            # Shift the window: current becomes previous for the next period.
-            prev_close = curr_close
-            prev_weight = curr_weight
-            prev_nav = curr_nav
-
-        result[sleeve_name] = pnl
+            intended = {
+                name: budgets[name] * prev.sleeve_targets.get(name, {}).get(figi, 0.0)
+                for name in budgets
+            }
+            total_intended = sum(intended.values())
+            for name in budgets:
+                if abs(total_intended) > _EPS:
+                    share = intended[name] / total_intended
+                elif total_budget > _EPS:
+                    share = budgets[name] / total_budget  # untargeted residual
+                else:
+                    share = 0.0
+                result[name] += share * book_contrib
 
     return result
