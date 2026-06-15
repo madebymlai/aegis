@@ -39,7 +39,7 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.events import OrderDenied
-from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
@@ -166,12 +166,10 @@ class RebalanceStrategy(Strategy):
             return
 
         # ── Slice 7: account-integrity check at startup ──────────────────
-        venue = Venue(self._book.default_venue)
         base_ccy = Currency.from_str(self._book.base_currency)
         self._book_state = NautilusBookState(
             portfolio=self.portfolio,
             cache=self.cache,
-            venue=venue,
             base_currency=base_ccy,
             instr_to_figi=self._instr_to_figi,
         )
@@ -351,10 +349,9 @@ class RebalanceStrategy(Strategy):
             return
 
         # Net all sleeve targets and submit
-        venue = Venue(self._book.default_venue)
         nav = self._book_state.nav()
 
-        instrument_metas, fx_rates, prices = self._collect_sizing_params(venue)
+        instrument_metas, fx_rates, prices = self._collect_sizing_params()
         realized_weights = self._book_state.realized_weights()
 
         # Two-step pipeline: the pure rebalancer decides what to trade (signed
@@ -524,7 +521,7 @@ class RebalanceStrategy(Strategy):
         return self._figi_resolver.resolve(figis)
 
     def _collect_sizing_params(
-        self, venue: Venue
+        self,
     ) -> tuple[dict[str, InstrumentSizing], dict[str, float], dict[str, float]]:
         """Gather per-FIGI instrument metadata, FX rates, and latest close
         prices from Nautilus for sizing.
@@ -619,15 +616,20 @@ class RebalanceStrategy(Strategy):
     def risk_engine_config_dict(self, nav: float) -> dict[str, Any]:
         """Return a dict suitable for ``RiskEngineConfig`` kwargs.
 
-        Computes per-instrument max notionals from the current NAV.
+        Computes per-instrument max notionals from the current NAV, keyed by each
+        FIGI's *resolved* InstrumentId (so every instrument carries its own
+        venue).  FIGIs absent from the bimap are skipped — the caps are only as
+        complete as the resolution.
         """
-        figis: list[str] = []
-        for contract in self._sleeve_to_contract.values():
-            figis.extend(contract.figis)
+        instrument_ids: list[str] = [
+            self._figi_bimap[figi].value
+            for contract in self._sleeve_to_contract.values()
+            for figi in contract.figis
+            if figi in self._figi_bimap
+        ]
         return self._risk_guard.risk_engine_config_dict(
             nav=nav,
-            figis=figis,
-            default_venue=self._book.default_venue,
+            instrument_ids=instrument_ids,
         )
 
     # -- order submission -------------------------------------------------------

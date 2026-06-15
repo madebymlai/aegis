@@ -16,7 +16,7 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
 from nautilus_trader.model.instruments import Instrument
-from nautilus_trader.model.objects import Currency, Money
+from nautilus_trader.model.objects import Money
 
 from conftest import gbp_equity
 
@@ -91,7 +91,6 @@ def _make_book() -> BookConfig:
     return BookConfig(
         sleeves=(SleeveConfig(name=SleeveName("uk"), wheel_filename="uk.whl", budget=1.0),),
         base_currency="EUR",
-        default_venue=VENUE.value,
     )
 
 

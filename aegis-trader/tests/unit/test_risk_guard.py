@@ -1,7 +1,10 @@
 """Unit tests for RiskGuard — pure domain, zero Nautilus.
 
-Validates that the RiskGuard correctly computes per-FIGI max-notional
-caps relative to NAV and rejects invalid configurations.
+Validates that the RiskGuard computes per-instrument max-notional caps relative
+to NAV and rejects invalid configurations.  Caps are keyed by the *resolved*
+InstrumentId (Wave D): each instrument keeps its own venue, so the guard never
+assumes a single book-wide venue and never reconstructs identity by string-
+joining a FIGI to a venue (ADR-0002).
 """
 
 import pytest
@@ -11,7 +14,6 @@ from aegis_trader.domain.risk_guard import (
     RiskGuardConfig,
     compute_risk_engine_max_notionals,
 )
-from aegis_trader.domain.types import SleeveName
 
 
 class TestRiskGuardConfig:
@@ -45,124 +47,81 @@ class TestRiskGuardConfig:
 
 
 class TestComputeMaxNotionals:
-    """compute_risk_engine_max_notionals — pure function."""
+    """compute_risk_engine_max_notionals — pure function, keyed by InstrumentId."""
 
-    def test_single_figi(self):
-        """One FIGI → one cap = NAV × fraction."""
+    def test_single_instrument(self):
+        """One instrument -> one cap = NAV x fraction, keyed by its InstrumentId."""
         result = compute_risk_engine_max_notionals(
             nav=100_000.0,
-            figis=["BBG000B9XRY4"],
-            default_venue="XLON",
+            instrument_ids=["BBG000B9XRY4.XLON"],
             fraction=0.25,
         )
         assert result == {"BBG000B9XRY4.XLON": 25_000}
 
-    def test_multiple_figis_same_cap(self):
-        """Each FIGI gets the same max notional."""
+    def test_instruments_on_different_venues(self):
+        """Each instrument keeps its own venue — no single book-wide venue."""
         result = compute_risk_engine_max_notionals(
             nav=200_000.0,
-            figis=["FIGI_A", "FIGI_B", "FIGI_C"],
-            default_venue="XLON",
+            instrument_ids=["BBG000B9XRY4.XLON", "BBG000C6K6G9.XETR"],
             fraction=0.10,
         )
         assert result == {
-            "FIGI_A.XLON": 20_000,
-            "FIGI_B.XLON": 20_000,
-            "FIGI_C.XLON": 20_000,
+            "BBG000B9XRY4.XLON": 20_000,
+            "BBG000C6K6G9.XETR": 20_000,
         }
 
-    def test_different_venue(self):
-        """The venue is reflected in the InstrumentId string keys."""
+    def test_empty(self):
+        """No instruments -> empty dict."""
         result = compute_risk_engine_max_notionals(
             nav=100_000.0,
-            figis=["BBG000B9XRY4"],
-            default_venue="XETR",
-            fraction=0.25,
-        )
-        assert result == {"BBG000B9XRY4.XETR": 25_000}
-
-    def test_empty_figis(self):
-        """Empty FIGI list → empty dict."""
-        result = compute_risk_engine_max_notionals(
-            nav=100_000.0,
-            figis=[],
-            default_venue="XLON",
+            instrument_ids=[],
             fraction=0.25,
         )
         assert result == {}
 
     def test_zero_nav(self):
-        """Zero NAV → zero caps."""
+        """Zero NAV -> zero caps."""
         result = compute_risk_engine_max_notionals(
             nav=0.0,
-            figis=["BBG000B9XRY4"],
-            default_venue="XLON",
+            instrument_ids=["BBG000B9XRY4.XLON"],
             fraction=0.25,
         )
         assert result == {"BBG000B9XRY4.XLON": 0}
 
-    def test_duplicate_figis(self):
-        """Duplicate FIGIs produce one key (last-write wins behavior, all same value)."""
+    def test_fraction_rounds_down_to_int(self):
+        """Max notional is rounded down (int) for the RiskEngine config."""
         result = compute_risk_engine_max_notionals(
-            nav=100_000.0,
-            figis=["FIGI_A", "FIGI_A"],
-            default_venue="XLON",
+            nav=100_001.0,
+            instrument_ids=["BBG000B9XRY4.XLON"],
             fraction=0.25,
         )
-        assert result == {"FIGI_A.XLON": 25_000}
+        # 100_001 * 0.25 = 25_000.25 -> int() = 25_000
+        assert result["BBG000B9XRY4.XLON"] == 25_000
 
 
-class TestRiskGuardFromBook:
-    """RiskGuard.from_book_config integration."""
+class TestRiskGuardComputesCaps:
+    """RiskGuard helper API."""
 
-    @staticmethod
-    def _make_book(sleeves=1, figi="BBG000B9XRY4"):
-        from aegis_trader.domain.book_config import BookConfig, SleeveConfig
-        return BookConfig(
-            sleeves=tuple(
-                SleeveConfig(
-                    name=SleeveName(f"slv{i}"),
-                    wheel_filename=f"slv{i}.whl",
-                    budget=1.0 / sleeves,
-                )
-                for i in range(sleeves)
-            ),
-            default_venue="XLON",
-        )
-
-    def test_single_sleeve_single_figi(self):
-        """Guard computes max notionals from book + NAV."""
+    def test_compute_max_notionals_by_instrument_id(self):
+        """Guard computes max notionals from resolved instrument ids + NAV."""
         guard = RiskGuard(config=RiskGuardConfig(max_notional_fraction=0.25))
 
         result = guard.compute_max_notionals(
             nav=100_000.0,
-            figis=["BBG000B9XRY4"],
-            default_venue="XLON",
+            instrument_ids=["BBG000B9XRY4.XLON"],
         )
 
         assert result == {"BBG000B9XRY4.XLON": 25_000}
 
-    def test_fraction_rounds_down_to_int(self):
-        """Max notional is rounded down (int) for the RiskEngine config."""
-        guard = RiskGuard(config=RiskGuardConfig(max_notional_fraction=0.25))
-        result = guard.compute_max_notionals(
-            nav=100_001.0,
-            figis=["BBG000B9XRY4"],
-            default_venue="XLON",
-        )
-        # 100_001 * 0.25 = 25_000.25 → int() = 25_000
-        assert result["BBG000B9XRY4.XLON"] == 25_000
-
     def test_rate_limits_preserved(self):
-        """Rate limit configs are passed through."""
+        """Rate limit configs are passed through alongside the notionals."""
         guard = RiskGuard(config=RiskGuardConfig(
             max_order_submit_rate="3/00:00:05",
             max_order_modify_rate="2/00:00:05",
         ))
         cfg = guard.risk_engine_config_dict(
             nav=100_000.0,
-            figis=["BBG000B9XRY4"],
-            default_venue="XLON",
+            instrument_ids=["BBG000B9XRY4.XLON"],
         )
         assert cfg["max_order_submit_rate"] == "3/00:00:05"
         assert cfg["max_order_modify_rate"] == "2/00:00:05"

@@ -157,7 +157,6 @@ def _make_book(budgets: tuple[float, float]) -> BookConfig:
             ),
         ),
         base_currency="EUR",
-        default_venue=VENUE.value,
     )
 
 

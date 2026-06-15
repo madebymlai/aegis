@@ -89,7 +89,6 @@ def _make_book() -> BookConfig:
     return BookConfig(
         sleeves=(SleeveConfig(name=SleeveName("tracer"), wheel_filename="t.whl", budget=1.0),),
         base_currency="EUR",
-        default_venue=VENUE.value,
     )
 
 

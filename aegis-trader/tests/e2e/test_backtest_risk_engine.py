@@ -141,7 +141,6 @@ def _make_book() -> BookConfig:
             ),
         ),
         base_currency="EUR",
-        default_venue=VENUE.value,
     )
 
 
@@ -181,8 +180,7 @@ def test_risk_engine_config_wired_from_risk_guard():
     # Compute what the RiskGuard would produce for the starting NAV.
     max_notionals = compute_risk_engine_max_notionals(
         nav=_STARTING_NAV,
-        figis=[_SYNTH_FIGI],
-        default_venue=VENUE.value,
+        instrument_ids=[instr_id_str],
         fraction=0.25,
     )
 

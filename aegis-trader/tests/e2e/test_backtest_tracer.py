@@ -136,7 +136,6 @@ def _make_book() -> BookConfig:
             ),
         ),
         base_currency="EUR",
-        default_venue=VENUE.value,
     )
 
 

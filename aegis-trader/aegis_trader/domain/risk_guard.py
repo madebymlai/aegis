@@ -53,14 +53,12 @@ class RiskGuard:
         self,
         *,
         nav: float,
-        figis: list[str],
-        default_venue: str,
+        instrument_ids: list[str],
     ) -> dict[str, int]:
-        """Return a mapping of ``InstrumentId-string → max notional (int)``."""
+        """Return a mapping of ``InstrumentId-string -> max notional (int)``."""
         return compute_risk_engine_max_notionals(
             nav=nav,
-            figis=figis,
-            default_venue=default_venue,
+            instrument_ids=instrument_ids,
             fraction=self._config.max_notional_fraction,
         )
 
@@ -68,15 +66,14 @@ class RiskGuard:
         self,
         *,
         nav: float,
-        figis: list[str],
-        default_venue: str,
+        instrument_ids: list[str],
     ) -> dict:
         """Return a dict suitable for ``RiskEngineConfig(...)`` kwargs."""
         return {
             "max_order_submit_rate": self._config.max_order_submit_rate,
             "max_order_modify_rate": self._config.max_order_modify_rate,
             "max_notional_per_order": self.compute_max_notionals(
-                nav=nav, figis=figis, default_venue=default_venue,
+                nav=nav, instrument_ids=instrument_ids,
             ),
         }
 
@@ -89,13 +86,14 @@ class RiskGuard:
 def compute_risk_engine_max_notionals(
     *,
     nav: float,
-    figis: list[str],
-    default_venue: str,
+    instrument_ids: list[str],
     fraction: float,
 ) -> dict[str, int]:
-    """Pure function: compute max notional per instrument as NAV × fraction.
+    """Pure function: compute max notional per instrument as NAV x fraction.
 
-    Returns dict mapping ``{figi}.{venue}`` → int max notional.
+    Keyed by the *resolved* InstrumentId string (e.g. ``"BBG...XLON"``), so each
+    instrument carries its own venue and identity is never reconstructed by
+    string-joining a FIGI to a book-wide venue (ADR-0002).
     """
     cap = int(nav * fraction)
-    return {f"{figi}.{default_venue}": cap for figi in figis}
+    return {instrument_id: cap for instrument_id in instrument_ids}

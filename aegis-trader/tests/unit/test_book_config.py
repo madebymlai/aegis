@@ -15,7 +15,6 @@ class TestBookConfig:
         book = BookConfig(sleeves=(make_sleeve("trend"),))
         assert book.sleeve_count == 1
         assert book.base_currency == "EUR"
-        assert book.default_venue == "XLON"
         assert book.sleeves[0].name == SleeveName("trend")
         assert book.sleeves[0].budget == 1.0
 
@@ -30,10 +29,6 @@ class TestBookConfig:
     def test_custom_base_currency(self):
         book = BookConfig(sleeves=(make_sleeve("trend"),), base_currency="USD")
         assert book.base_currency == "USD"
-
-    def test_custom_venue(self):
-        book = BookConfig(sleeves=(make_sleeve("trend"),), default_venue="XETR")
-        assert book.default_venue == "XETR"
 
     def test_book_gross_at_default_max_allowed(self):
         """Σ budgets == 1.0 (fully invested, no leverage) is allowed by default."""

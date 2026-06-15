@@ -28,7 +28,6 @@ class SleeveConfig:
     name: SleeveName
     wheel_filename: str
     budget: float  # fraction of book NAV notionally allocated (<= 1.0)
-    venue: str | None = None  # per-sleeve venue override (defaults to BookConfig.default_venue)
 
 
 @dataclass(frozen=True)
@@ -44,7 +43,6 @@ class BookConfig:
 
     sleeves: tuple[SleeveConfig, ...]
     base_currency: str = "EUR"
-    default_venue: str = "XLON"
 
     # Book gross = Σ sleeve budgets.  Defaults to 1.0 (fully invested, no
     # leverage, ADR-0001); raise explicitly to run levered.

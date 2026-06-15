@@ -79,7 +79,6 @@ def test_attribution_uses_real_per_period_nav():
     book = BookConfig(
         sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="trend.whl", budget=1.0),),
         base_currency="EUR",
-        default_venue=VENUE.value,
     )
     instr = eur_equity(_FIGI, VENUE.value)
     # Rising prices → the held position's unrealized P&L (and thus NAV) moves.

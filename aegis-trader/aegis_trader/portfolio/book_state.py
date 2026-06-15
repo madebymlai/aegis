@@ -19,7 +19,6 @@ from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from nautilus_trader.cache.base import CacheFacade
-from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.portfolio.base import PortfolioFacade
 
@@ -29,11 +28,11 @@ class BookStatePort(Protocol):
     """Reconciled book-state reads the rebalance overlay depends on."""
 
     def nav(self) -> float:
-        """Account net asset value in the book's base currency."""
+        """Net asset value in the book's base currency, summed across accounts."""
         ...
 
     def cash(self) -> float:
-        """Total cash balance in the book's base currency."""
+        """Total cash in the book's base currency, summed across accounts."""
         ...
 
     def is_cache_healthy(self) -> bool:
@@ -50,34 +49,43 @@ class BookStatePort(Protocol):
 
 
 class NautilusBookState:
-    """BookStatePort backed by the Nautilus Portfolio + Cache read interfaces."""
+    """BookStatePort backed by the Nautilus Portfolio + Cache read interfaces.
+
+    Venue-agnostic (Wave D): NAV and cash sum the base-currency total over every
+    reconciled account (``cache.accounts()``).  One IBKR account spanning many
+    exchanges and a multi-venue backtest with one account per venue both reduce
+    to the same aggregation — the book never names a single venue.
+    """
 
     def __init__(
         self,
         *,
         portfolio: PortfolioFacade,
         cache: CacheFacade,
-        venue: Venue,
         base_currency: Currency,
         instr_to_figi: Mapping[str, str],
     ) -> None:
         self._portfolio = portfolio
         self._cache = cache
-        self._venue = venue
         self._base = base_currency
         self._instr_to_figi = instr_to_figi
 
     def nav(self) -> float:
-        equity = self._portfolio.equity(venue=self._venue)
-        money = equity.get(self._base) if equity else None
-        return float(money.as_double()) if money is not None else 0.0
+        total = 0.0
+        for account in self._cache.accounts():
+            equity = self._portfolio.equity(account_id=account.id)
+            money = equity.get(self._base) if equity else None
+            if money is not None:
+                total += float(money.as_double())
+        return total
 
     def cash(self) -> float:
-        account = self._portfolio.account(venue=self._venue)
-        if account is None:
-            return 0.0
-        balance = account.balances().get(self._base)
-        return float(balance.total.as_double()) if balance is not None else 0.0
+        total = 0.0
+        for account in self._cache.accounts():
+            money = account.balances_total().get(self._base)
+            if money is not None:
+                total += float(money.as_double())
+        return total
 
     def is_cache_healthy(self) -> bool:
         return len(self._cache.instruments()) > 0

@@ -152,17 +152,14 @@ def _make_book() -> BookConfig:
                 name=SleeveName("trend_lse"),
                 wheel_filename="trend_lse.whl",
                 budget=1.0,
-                venue="XLON",
             ),
             SleeveConfig(
                 name=SleeveName("trend_xetra"),
                 wheel_filename="trend_xetra.whl",
                 budget=1.0,
-                venue="XETR",
             ),
         ),
         base_currency="EUR",
-        default_venue="XLON",
         # two fully-budgeted sleeves on disjoint venues → book gross 2.0
         max_book_gross=2.0,
     )
