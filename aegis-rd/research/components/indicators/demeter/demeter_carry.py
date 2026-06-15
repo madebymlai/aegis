@@ -81,6 +81,12 @@ def param_space():
     }
 
 
+# %% lookback
+def lookback(**params):
+    """Warmup bars for credit carry: the trailing-mean window (NaN before a full window)."""
+    return int(params["carry_window"])
+
+
 # %% helpers
 def _fred_series(series_id):
     """Full-history daily FRED series as a float Series, pulled once and cached.

@@ -44,6 +44,12 @@ COMPONENT_MANIFEST = {
 _MIN_VOL = 0.01
 
 
+# %% lookback
+def lookback(**params):
+    """No warmup beyond the indicators': the held inverse-vol shape adds none."""
+    return 0
+
+
 # %% helpers
 def _held_weights(vol_2d, n_held):
     """Fixed inverse-vol SHAPE over the first ``n_held`` legs, gross-normalized to 1.0.
