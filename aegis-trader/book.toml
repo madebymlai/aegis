@@ -1,6 +1,6 @@
 # Aegis commingled-book spec.
 #
-# Two research-validated sleeves, each pinned to a content-addressed execution
+# Three research-validated sleeves, each pinned to a content-addressed execution
 # bundle wheel exported from aegis-rd (aerd export) and installed into this
 # runtime.  Base currency is EUR; each instrument carries its own venue (the
 # book is venue-agnostic).
@@ -8,29 +8,32 @@
 #   Run:   aegis-trader --mode {backtest,paper,live} --book book.toml
 #          (paper/live also read IB_ACCOUNT_ID / IB_HOST / IB_PORT /
 #           IB_CLIENT_ID / TRADER_ID from the environment)
-#
-# A third sleeve (atalanta trend) is pending: 11 of its 20 LSE names have no
-# unique OpenFIGI mapping yet (curated FIGI/ISIN identity needed).
 
 base_currency = "EUR"
 
-# Sum of sleeve budgets (0.5 + 0.5 = 1.0); raise max_book_gross to run levered.
+# Sum of sleeve budgets (0.4 + 0.4 + 0.2 = 1.0); raise max_book_gross to run levered.
 max_book_gross = 1.0
 
 # Book caps as fractions of NAV.  Provenance is checked at load against each
-# sleeve's bundle (both bundles carry gross_cap = net_cap = 1.0), so these must
-# not exceed those ceilings.
+# sleeve's bundle (all three carry gross_cap = net_cap = 1.0), so these must not
+# exceed those ceilings.
 gross_cap = 1.0
 net_cap = 1.0
+
+# atalanta — trend floor pole (20-name orthogonal non-equity LSE universe).
+[[sleeves]]
+name = "atalanta_trend"
+wheel_filename = "aegis_exec_atalanta_trendstraddlebuffered_cand_b98-1.0.0-py3-none-any.whl"
+budget = 0.4
 
 # demeter — EU credit-carry pole (IHYU + LQDH, USD legs converted to EUR).
 [[sleeves]]
 name = "demeter_carry"
 wheel_filename = "aegis_exec_demeter_carry_cand_c94-1.0.0-py3-none-any.whl"
-budget = 0.5
+budget = 0.4
 
 # aegis — UCITS tail hedge (VOOL, native EUR, held 100% within the sleeve).
 [[sleeves]]
 name = "aegis_tail"
 wheel_filename = "aegis_exec_aegis_heldhedge_cand_fa6-1.0.0-py3-none-any.whl"
-budget = 0.5
+budget = 0.2
