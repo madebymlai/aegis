@@ -43,6 +43,16 @@ interface and *called* by the overlay — never registered as node strategies.
 - **Dynamic sleeve weighting computed live in Trader**: rejected. Conditioning allocations
   on market state is alpha and must carry **Provenance**; it belongs in Aegis RD as a
   composite **Strategy** exported as one Execution Bundle. Trader's budgets are static.
+  - **Amended 2026-06-15 (aegis-rd-bu4 / ADR-0004): the line is return-conditioning, not all
+    conditioning.** "Trader's budgets are static" was too broad. Trader's **Allocator** may
+    condition weights on the *realized risk structure* — sleeve volatilities, the sleeve
+    correlation/covariance matrix, drawdown state, and realized skew — to hold a static
+    **risk** budget, target a constant book volatility, de-lever in stress, and keep the book
+    net-convex. None of these forecast returns; they *measure risk*, the same class as the
+    caps and drift bands (ADR-0002). What remains alpha — and still ships as an RD Execution
+    Bundle with Provenance — is any signal that encodes a **return view**: which sleeve will
+    outperform, or when to size the tail up on a regime / dispersion / valuation signal. The
+    dividing test is whether the input **forecasts returns** or **measures risk**.
 
 ## Consequences
 
