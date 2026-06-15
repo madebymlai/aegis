@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.execution.figi_resolver import (
     FigiInstrumentResolver,

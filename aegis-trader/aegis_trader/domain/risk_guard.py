@@ -8,7 +8,7 @@ denies any single order whose notional exceeds the cap.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

@@ -72,8 +72,14 @@ aegis-trader/
     fixtures/
 ```
 
-Each concern package keeps its **port in a separate module from its adapter**, so importing
-the port never drags in Nautilus.
+The more a concern **delegates to Nautilus, the better**: a port wraps Nautilus's own
+read-interfaces (`PortfolioFacade`, `CacheFacade`) and may speak Nautilus types freely.
+There is no advantage in keeping a port Nautilus-free for its own sake — the Trader *is* a
+NautilusTrader overlay, so an artificial Nautilus-free boundary at the port buys nothing. A
+port is split into a separate module from its adapter only when a concern has two or more
+implementations (`bundles/`, `observability/`); single-impl concerns colocate the Protocol
+and its sole adapter. The Nautilus-free boundary that does earn its keep is `domain/` (see
+the 2026-06-15 amendments below).
 
 ## Three modes — one Strategy, three environments
 
@@ -162,3 +168,12 @@ DIP test seam**, not provider isolation.
 The Nautilus-free boundary that still holds is `domain/*` — the rebalancer,
 sizing, attribution, types, and Book Config (the high test seam). Nautilus types
 never cross into `domain/`.
+
+**Single-impl concerns colocate port + adapter.** Because the Trader is a
+NautilusTrader overlay, `data/` and `portfolio/` each have exactly one adapter,
+forever — so their Protocol and its sole adapter live in one module
+(`data/market_data.py`, `portfolio/book_state.py`), re-exported from the package
+`__init__`.  The separate `port.py` + adapter split is kept only where there are
+genuinely ≥2 implementations: `bundles/` (`StubBundleRegistry` +
+`EntryPointBundleRegistry`) and `observability/` (multiple planned backends).
+The split is a function of implementation count, not a blanket rule.

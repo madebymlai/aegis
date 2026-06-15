@@ -14,7 +14,7 @@ from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 
-from aegis_trader.data.nautilus import NautilusMarketData
+from aegis_trader.data import NautilusMarketData
 from aegis_trader.domain.sizing import InstrumentSizing
 
 _IID = InstrumentId(symbol=Symbol("VUSA"), venue=Venue("XLON"))

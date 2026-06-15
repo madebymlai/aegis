@@ -16,7 +16,6 @@ bar-synchronisation simple.
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType

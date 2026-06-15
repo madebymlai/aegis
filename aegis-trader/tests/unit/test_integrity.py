@@ -1,8 +1,7 @@
 """Unit tests for the pure-domain account-integrity check — zero Nautilus."""
 
-import pytest
 
-from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
+from aegis_trader.domain.integrity import check_account_integrity
 
 
 class TestCheckAccountIntegrity:

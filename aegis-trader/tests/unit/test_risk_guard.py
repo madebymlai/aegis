@@ -11,7 +11,7 @@ from aegis_trader.domain.risk_guard import (
     RiskGuardConfig,
     compute_risk_engine_max_notionals,
 )
-from aegis_trader.domain.types import Figi, SleeveName
+from aegis_trader.domain.types import SleeveName
 
 
 class TestRiskGuardConfig:
@@ -132,7 +132,6 @@ class TestRiskGuardFromBook:
 
     def test_single_sleeve_single_figi(self):
         """Guard computes max notionals from book + NAV."""
-        book = self._make_book()
         guard = RiskGuard(config=RiskGuardConfig(max_notional_fraction=0.25))
 
         result = guard.compute_max_notionals(

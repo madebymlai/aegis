@@ -47,8 +47,7 @@ from nautilus_trader.trading.strategy import Strategy
 from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
-from aegis_trader.data.nautilus import NautilusMarketData
-from aegis_trader.data.port import MarketDataPort
+from aegis_trader.data import MarketDataPort, NautilusMarketData
 from aegis_trader.domain.attribution import compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
@@ -65,8 +64,7 @@ from aegis_trader.observability.port import (
     ObservabilityPort,
     RebalanceSummary,
 )
-from aegis_trader.portfolio.nautilus import NautilusBookState
-from aegis_trader.portfolio.port import BookStatePort
+from aegis_trader.portfolio import BookStatePort, NautilusBookState
 
 _NS_PER_DAY: int = 86_400_000_000_000
 

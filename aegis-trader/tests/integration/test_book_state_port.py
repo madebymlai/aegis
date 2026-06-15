@@ -21,7 +21,7 @@ from nautilus_trader.model.currencies import EUR
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Money
 
-from aegis_trader.portfolio.nautilus import NautilusBookState
+from aegis_trader.portfolio import NautilusBookState
 
 _VENUE = Venue("XLON")
 _FIGI_A = "BBG000B9XRY4"
