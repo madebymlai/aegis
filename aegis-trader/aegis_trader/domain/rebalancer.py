@@ -77,6 +77,16 @@ def rebalance(
     all_figis = net_target_by_figi.keys() | rw.keys()
     post_book: dict[str, float] = dict(rw)  # start from realised
 
+    # Book-level fidelity trip (ADR-0002): when the realised book has drifted too
+    # far from intent — typically many within-band drifts accumulating — force a
+    # *fuller cleanup* this rebalance: ignore the per-instrument bands and trade
+    # every position back to target.  The hard caps (Steps 3-4) still run, so a
+    # book that cannot be made compliant fails closed.
+    force_cleanup = False
+    if rw and book.aggregate_drift_threshold is not None:
+        agg_drift = sum(abs(net_target_by_figi.get(f, 0.0) - rw.get(f, 0.0)) for f in all_figis)
+        force_cleanup = agg_drift > book.aggregate_drift_threshold
+
     deltas: list[WeightDelta] = []
 
     for figi_key in all_figis:
@@ -89,8 +99,8 @@ def rebalance(
 
         delta = target_w - realized_w
 
-        # -- band gate (only when we have a realised position to gate) --
-        if has_realized:
+        # -- band gate (skipped on a forced full cleanup) --
+        if has_realized and not force_cleanup:
             band_up, band_down = book.band_for(figi_key)
 
             if delta > 0 and delta <= band_down:
@@ -114,18 +124,9 @@ def rebalance(
     _gate_per_name_caps(rw, targets=net_target_by_figi, post_book=post_book,
                         deltas=deltas, book=book)
 
-    # -- Step 4: gross / net caps (always checked on post_book) --
+    # -- Step 4: gross / net caps (always checked on post_book; the fidelity
+    #    cleanup above stays subordinate to these hard caps — fail closed) --
     _gate_book_caps(post_book, book)
-
-    # -- Step 5: aggregate drift trip --
-    if rw and book.aggregate_drift_threshold is not None:
-        agg_drift = sum(abs(net_target_by_figi.get(f, 0.0) - rw.get(f, 0.0))
-                        for f in net_target_by_figi.keys() | rw.keys())
-        if agg_drift > book.aggregate_drift_threshold:
-            raise ValueError(
-                f"Aggregate drift {agg_drift:.6f} exceeds "
-                f"threshold {book.aggregate_drift_threshold:.6f}"
-            )
 
     return tuple(deltas)
 
