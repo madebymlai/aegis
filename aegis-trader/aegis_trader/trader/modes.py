@@ -42,7 +42,7 @@ IB_LIVE_PORT: int = 7496  # TWS live port; IB Gateway live default is 4001
 IB_LIVE_ACCOUNT_ID: str = "U0000000"  # placeholder — operator provides real one
 
 
-# ── IBKR config dict builders ─────────────────────────────────────────────────
+# ── IBKR config dict builders (paper) ────────────────────────────────────────
 #
 # These return *dicts* rather than importing IBKR config classes so the module
 # remains importable without ``ibapi``.  At runtime (with ibapi available) the
@@ -59,8 +59,9 @@ def build_paper_data_client_config(
 ) -> dict[str, Any]:
     """Build an IBKR paper-mode data client config dict.
 
-    ``market_data_type`` defaults to ``"frozen"`` (IBMarketDataTypeEnum.DELAYED_FROZEN)
-    so that no real-time data subscription is required.
+    ``market_data_type`` defaults to ``"frozen"``
+    (IBMarketDataTypeEnum.DELAYED_FROZEN) so that no real-time data
+    subscription is required.
     """
     return {
         "ibg_host": ibg_host,
@@ -81,8 +82,8 @@ def build_paper_exec_client_config(
     """Build an IBKR paper-mode execution client config dict.
 
     The account ID must be the Interactive Brokers paper account ID
-    (DU-prefixed).  The actual go-live account ID is provided by the
-    operator, not hard-coded here.
+    (DU-prefixed).  The actual account ID is provided by the operator,
+    not hard-coded here.
     """
     return {
         "ibg_host": ibg_host,
@@ -92,47 +93,7 @@ def build_paper_exec_client_config(
     }
 
 
-# ── node config builder ───────────────────────────────────────────────────────
-
-
-def build_paper_trading_node_config(
-    *,
-    trader_id: str = "TRADER-001",
-) -> TradingNodeConfig:
-    """Build a SANDBOX TradingNodeConfig for paper trading with IBKR.
-
-    Wires cache, logging, and reconciliation.  IBKR client configs are NOT
-    populated — use ``build_paper_data_client_config()`` and
-    ``build_paper_exec_client_config()`` to produce dicts, then pass them
-    through the IBKR config constructors at node-build time (requires ``ibapi``).
-    """
-    return TradingNodeConfig(
-        environment=Environment.SANDBOX,
-        trader_id=trader_id,
-        exec_engine=LiveExecEngineConfig(reconciliation=True),
-        cache=CacheConfig(),
-        logging=LoggingConfig(),
-    )
-
-
-# ── node builder (paper) ─────────────────────────────────────────────────────
-
-
-def build_paper_trading_node(
-    *,
-    trader_id: str = "TRADER-001",
-) -> TradingNode:
-    """Build a SANDBOX TradingNode for IBKR paper trading.
-
-    Constructs (but does NOT build/connect) a TradingNode.  Caller must
-    add IBKR client configs, register factories, add the strategy, then
-    call ``node.build()`` and ``node.run()``.
-    """
-    config = build_paper_trading_node_config(trader_id=trader_id)
-    return TradingNode(config=config)
-
-
-# ── live-mode config dict builders ───────────────────────────────────────────
+# ── IBKR config dict builders (live) ─────────────────────────────────────────
 
 
 def build_live_data_client_config(
@@ -166,7 +127,7 @@ def build_live_exec_client_config(
     """Build an IBKR live-mode execution client config dict.
 
     The account ID must be the Interactive Brokers live account ID
-    (non-DU-prefixed).  The actual go-live account ID is provided by the
+    (non-DU-prefixed).  The actual account ID is provided by the
     operator, not hard-coded here.
     """
     return {
@@ -177,22 +138,22 @@ def build_live_exec_client_config(
     }
 
 
-# ── live-mode node config ────────────────────────────────────────────────────
+# ── TradingNodeConfig builders ───────────────────────────────────────────────
 
 
-def build_live_trading_node_config(
+def _build_trading_node_config(
     *,
+    environment: Environment,
     trader_id: str = "TRADER-001",
 ) -> TradingNodeConfig:
-    """Build a LIVE TradingNodeConfig for live trading with IBKR.
+    """Build a TradingNodeConfig with cache, logging, and reconciliation.
 
-    Wires cache, logging, and reconciliation.  IBKR client configs are NOT
-    populated — use ``build_live_data_client_config()`` and
-    ``build_live_exec_client_config()`` to produce dicts, then pass them
-    through the IBKR config constructors at node-build time (requires ``ibapi``).
+    IBKR client configs are NOT populated — use the dict builders to
+    produce configs, then pass them through the IBKR config constructors
+    at node-build time (requires ``ibapi``).
     """
     return TradingNodeConfig(
-        environment=Environment.LIVE,
+        environment=environment,
         trader_id=trader_id,
         exec_engine=LiveExecEngineConfig(reconciliation=True),
         cache=CacheConfig(),
@@ -200,7 +161,42 @@ def build_live_trading_node_config(
     )
 
 
-# ── node builder (live) ──────────────────────────────────────────────────────
+def build_paper_trading_node_config(
+    *,
+    trader_id: str = "TRADER-001",
+) -> TradingNodeConfig:
+    """Build a SANDBOX TradingNodeConfig for IBKR paper trading."""
+    return _build_trading_node_config(
+        environment=Environment.SANDBOX,
+        trader_id=trader_id,
+    )
+
+
+def build_live_trading_node_config(
+    *,
+    trader_id: str = "TRADER-001",
+) -> TradingNodeConfig:
+    """Build a LIVE TradingNodeConfig for IBKR live trading."""
+    return _build_trading_node_config(
+        environment=Environment.LIVE,
+        trader_id=trader_id,
+    )
+
+
+# ── TradingNode builders ─────────────────────────────────────────────────────
+
+
+def build_paper_trading_node(
+    *,
+    trader_id: str = "TRADER-001",
+) -> TradingNode:
+    """Build a SANDBOX TradingNode for IBKR paper trading.
+
+    Caller must add IBKR client configs, register factories, add the
+    strategy, then call ``node.build()`` and ``node.run()``.
+    """
+    config = build_paper_trading_node_config(trader_id=trader_id)
+    return TradingNode(config=config)
 
 
 def build_live_trading_node(
@@ -209,9 +205,8 @@ def build_live_trading_node(
 ) -> TradingNode:
     """Build a LIVE TradingNode for IBKR live trading.
 
-    Constructs (but does NOT build/connect) a TradingNode.  Caller must
-    add IBKR client configs, register factories, add the strategy, then
-    call ``node.build()`` and ``node.run()``.
+    Caller must add IBKR client configs, register factories, add the
+    strategy, then call ``node.build()`` and ``node.run()``.
     """
     config = build_live_trading_node_config(trader_id=trader_id)
     return TradingNode(config=config)

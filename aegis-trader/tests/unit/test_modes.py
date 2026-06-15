@@ -16,6 +16,8 @@ are tested separately in an integration environment.
 
 from __future__ import annotations
 
+import asyncio
+
 from nautilus_trader.config import (
     CacheConfig,
     LoggingConfig,
@@ -54,7 +56,6 @@ def test_paper_node_config_has_sandbox_environment():
 
 
 def test_paper_node_config_has_cache():
-    """The paper TradingNodeConfig MUST include a cache config."""
     cfg = build_paper_trading_node_config()
     assert cfg.cache is not None, (
         "Expected cache config to be set"
@@ -63,7 +64,6 @@ def test_paper_node_config_has_cache():
 
 
 def test_paper_node_config_has_logging():
-    """The paper TradingNodeConfig MUST include a logging config."""
     cfg = build_paper_trading_node_config()
     assert cfg.logging is not None, (
         "Expected logging config to be set"
@@ -72,7 +72,6 @@ def test_paper_node_config_has_logging():
 
 
 def test_paper_node_config_has_reconciliation():
-    """The paper TradingNodeConfig MUST enable reconciliation on the exec engine."""
     cfg = build_paper_trading_node_config()
     assert cfg.exec_engine.reconciliation is True, (
         f"Expected reconciliation=True, got {cfg.exec_engine.reconciliation}"
@@ -105,14 +104,12 @@ def test_paper_data_client_config_defaults():
 
 
 def test_paper_data_client_config_custom_host():
-    """The paper IBKR data client dict MUST accept custom host and port."""
     cfg = build_paper_data_client_config(ibg_host="10.0.0.1", ibg_port=4002)
     assert cfg["ibg_host"] == "10.0.0.1"
     assert cfg["ibg_port"] == 4002
 
 
 def test_paper_data_client_config_custom_client_id():
-    """The paper IBKR data client dict MUST accept a custom client ID."""
     cfg = build_paper_data_client_config(ibg_client_id=99)
     assert cfg["ibg_client_id"] == 99
 
@@ -130,7 +127,6 @@ def test_paper_exec_client_config_defaults():
 
 
 def test_paper_exec_client_config_custom_account():
-    """The paper IBKR exec client dict MUST accept a custom account ID."""
     cfg = build_paper_exec_client_config(account_id="DU1234567")
     assert cfg["account_id"] == "DU1234567"
 
@@ -140,13 +136,18 @@ def test_paper_exec_client_config_custom_account():
 # --------------------------------------------------------------------------- #
 
 def test_paper_trading_node_constructs():
-    """TradingNode constructs without error — no IBKR connection required."""
+    """TradingNode constructs without error."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        node = build_paper_trading_node()
-    except Exception as exc:
-        assert False, f"build_paper_trading_node() raised {type(exc).__name__}: {exc}"
-    else:
-        assert node is not None
+        try:
+            node = build_paper_trading_node()
+        except Exception as exc:
+            assert False, f"build_paper_trading_node() raised {type(exc).__name__}: {exc}"
+        else:
+            assert node is not None
+    finally:
+        loop.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -233,10 +234,15 @@ def test_live_exec_client_config_custom_account():
 
 
 def test_live_trading_node_constructs():
-    """Live TradingNode constructs without error — no IBKR connection required."""
+    """TradingNode constructs without error."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        node = build_live_trading_node()
-    except Exception as exc:
-        assert False, f"build_live_trading_node() raised {type(exc).__name__}: {exc}"
-    else:
-        assert node is not None
+        try:
+            node = build_live_trading_node()
+        except Exception as exc:
+            assert False, f"build_live_trading_node() raised {type(exc).__name__}: {exc}"
+        else:
+            assert node is not None
+    finally:
+        loop.close()
