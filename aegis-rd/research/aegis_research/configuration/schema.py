@@ -109,15 +109,23 @@ class SymbolSpec:
     sniffed from a data provider). ``ccy`` is the literal quote token, including
     minor units such as ``GBp`` (pence); the converter owns the minor-unit math.
 
-    ``figi`` optionally pins the instrument's canonical OpenFIGI identity. When
-    set it is used verbatim at export and the OpenFIGI ticker lookup is skipped
-    entirely — the authoritative escape hatch for names OpenFIGI cannot map
-    uniquely (ambiguous LSE share-class lines) or at all (no usable suffix).
+    Optional, provider-agnostic identity hints — ``figi`` / ``isin`` / ``mic`` —
+    are used ONLY by ``aerd export`` to resolve the ticker to exactly one FIGI;
+    the research runtime never reads them. Supply whatever uniquely identifies
+    the instrument:
+
+    - ``figi``: pins the canonical OpenFIGI identity verbatim (the authoritative
+      override; also the catch-all for crypto and anything OpenFIGI cannot map).
+    - ``isin``: the global ISO 6166 security id; resolved via OpenFIGI ID_ISIN.
+    - ``mic``: the ISO 10383 venue code (e.g. ``XLON``); the venue filter for the
+      ticker lookup, replacing any provider-specific exchange suffix.
     """
 
     ticker: str
     ccy: str
     figi: str | None = None
+    isin: str | None = None
+    mic: str | None = None
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

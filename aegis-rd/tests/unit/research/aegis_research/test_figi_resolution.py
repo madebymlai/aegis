@@ -35,52 +35,51 @@ def test_resolves_each_ticker_to_its_unique_exchange_level_figi() -> None:
     assert resolved == {"SPY": "BBG000BDTBL9", "IWM": "BBG000B9XB24"}
 
 
-def test_lse_suffix_stripped_and_mic_sent() -> None:
-    # OpenFIGI's TICKER type rejects the yfinance venue suffix ('IHYU.L' -> no
-    # match); the resolver must send the bare symbol + the venue's micCode.
-    symbols = [SymbolSpec(ticker="IHYU.L", ccy="USD")]
+def test_mic_drives_miccode_with_bare_symbol() -> None:
+    # The provider-agnostic ISO MIC supplies the venue filter; the provider
+    # ticker's suffix is stripped to the bare OpenFIGI symbol (OpenFIGI's
+    # TICKER type rejects 'IHYU.L').
+    symbols = [SymbolSpec(ticker="IHYU.L", ccy="USD", mic="XLON")]
     client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
 
     resolve_figis(symbols, client=client)
 
     job = client.seen_jobs[0]
+    assert job["idType"] == "TICKER"
     assert job["idValue"] == "IHYU"
+    assert job["micCode"] == "XLON"
+    assert job["currency"] == "USD"
+
+
+def test_isin_resolves_via_id_isin() -> None:
+    # An ISIN is the authoritative, provider-agnostic security id: resolve it
+    # through OpenFIGI's ID_ISIN type, ignoring the provider ticker entirely.
+    symbols = [SymbolSpec(ticker="IHYU.L", ccy="USD", isin="IE00BF3N7094")]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idType"] == "ID_ISIN"
+    assert job["idValue"] == "IE00BF3N7094"
+    # Currency narrows a multi-currency-listed ISIN to the right trading line.
+    assert job["currency"] == "USD"
+
+
+def test_isin_with_mic_narrows_to_venue() -> None:
+    symbols = [SymbolSpec(ticker="IHYU.L", ccy="USD", isin="IE00BF3N7094", mic="XLON")]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idType"] == "ID_ISIN"
     assert job["micCode"] == "XLON"
 
 
-def test_xetra_suffix_maps_to_xetr_mic() -> None:
-    symbols = [SymbolSpec(ticker="VOOL.DE", ccy="EUR")]
-    client = _FakeOpenFigiClient([_hit("BBG003Q292W1")])
-
-    resolve_figis(symbols, client=client)
-
-    job = client.seen_jobs[0]
-    assert job["idValue"] == "VOOL"
-    assert job["micCode"] == "XETR"
-
-
-def test_milan_suffix_maps_to_xmil_mic() -> None:
-    symbols = [SymbolSpec(ticker="SWDA.MI", ccy="EUR")]
-    client = _FakeOpenFigiClient([_hit("BBG000BMTYP4")])
-
-    resolve_figis(symbols, client=client)
-
-    job = client.seen_jobs[0]
-    assert job["idValue"] == "SWDA"
-    assert job["micCode"] == "XMIL"
-
-
-def test_unknown_exchange_suffix_fails_closed() -> None:
-    # Fail closed rather than guess a venue for an unmapped suffix.
-    symbols = [SymbolSpec(ticker="FOO.XX", ccy="USD")]
-    client = _FakeOpenFigiClient([_hit("BBG000000001")])
-
-    with pytest.raises(FigiResolutionError, match="XX"):
-        resolve_figis(symbols, client=client)
-
-
-def test_suffixless_ticker_sent_without_mic() -> None:
-    # A bare (US-style) ticker carries no venue suffix: send it as-is.
+def test_ticker_without_hints_sends_bare_symbol_and_currency() -> None:
+    # No mic/isin: best-effort TICKER + currency, no venue filter (resolves
+    # only when the bare symbol + currency is globally unique).
     symbols = [SymbolSpec(ticker="SPY", ccy="USD")]
     client = _FakeOpenFigiClient([_hit("BBG000BDTBL9")])
 
@@ -88,6 +87,7 @@ def test_suffixless_ticker_sent_without_mic() -> None:
 
     job = client.seen_jobs[0]
     assert job["idValue"] == "SPY"
+    assert job["currency"] == "USD"
     assert "micCode" not in job
 
 
@@ -95,7 +95,7 @@ def test_quote_currency_is_sent_to_openfigi_verbatim() -> None:
     # GBp (pence) is the literal exchange quote token; OpenFIGI stores LSE
     # pence lines under 'GBp', so the filter must receive it verbatim (sending
     # the ISO major 'GBP' returns no match).
-    symbols = [SymbolSpec(ticker="GILI.L", ccy="GBp")]
+    symbols = [SymbolSpec(ticker="GILI.L", ccy="GBp", mic="XLON")]
     client = _FakeOpenFigiClient([_hit("BBG000PLNQN7")])
 
     resolve_figis(symbols, client=client)
