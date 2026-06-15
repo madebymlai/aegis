@@ -19,6 +19,7 @@ dicts into the full IBKR config classes at node-build time.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from nautilus_trader.backtest.config import BacktestEngineConfig
@@ -97,6 +98,10 @@ def build_live_risk_engine_config(
 IB_HOST: str = "127.0.0.1"
 IB_CLIENT_ID: int = 1
 
+# IBKR spot-FX venue; FX reference pairs (e.g. "EUR/USD.IDEALPRO") are loaded
+# here so the overlay can mark the cache xrates from their quotes (aegis-rd-x0a).
+IB_FX_VENUE: str = "IDEALPRO"
+
 IB_PAPER_PORT: int = 7497  # TWS paper port; IB Gateway paper default is 4002
 IB_PAPER_ACCOUNT_ID: str = "DU0000000"  # placeholder — operator provides real one
 
@@ -112,26 +117,71 @@ IB_LIVE_ACCOUNT_ID: str = "U0000000"  # placeholder — operator provides real o
 # InteractiveBrokersExecClientConfig, which Nautilus resolves automatically.
 
 
-def build_paper_data_client_config(
-    *,
-    ibg_host: str = IB_HOST,
-    ibg_port: int = IB_PAPER_PORT,
-    ibg_client_id: int = IB_CLIENT_ID,
-    market_data_type: str = "frozen",
-) -> dict[str, Any]:
-    """Build an IBKR paper-mode data client config dict.
+def fx_reference_instrument_ids(
+    base_currency: str,
+    fx_currencies: Iterable[str],
+) -> list[str]:
+    """FX reference-pair ``InstrumentId`` strings for the IBKR InstrumentProvider
+    to load — one ``{base}/{ccy}.IDEALPRO`` pair per non-base currency.
 
-    ``market_data_type`` defaults to ``"frozen"``
-    (IBMarketDataTypeEnum.DELAYED_FROZEN) so that no real-time data
-    subscription is required.
+    Feed the result to a data-client builder's ``fx_instrument_ids`` so the
+    overlay can mark the cache xrate from each pair's quotes (sizing and base
+    valuation both read it).  Broker-neutral (plain ``InstrumentId`` strings, no
+    ``ibapi`` import).  Assumes the book's base is the FX pair base — true for an
+    EUR-base book on IDEALPRO (EUR is the base in every EUR cross); a non-base
+    book would need an FX-convention map (not built: no such book today).
     """
-    return {
+    return sorted(
+        f"{base_currency}/{ccy}.{IB_FX_VENUE}"
+        for ccy in set(fx_currencies)
+        if ccy != base_currency
+    )
+
+
+def _data_client_config(
+    *,
+    ibg_host: str,
+    ibg_port: int,
+    ibg_client_id: int,
+    market_data_type: str,
+    fx_instrument_ids: Iterable[str],
+) -> dict[str, Any]:
+    """Shared data-client dict; embeds an InstrumentProvider that loads the FX
+    reference pairs (``load_ids``) when any are given, so Nautilus resolves them
+    into the cache for the overlay to mark from."""
+    cfg: dict[str, Any] = {
         "ibg_host": ibg_host,
         "ibg_port": ibg_port,
         "ibg_client_id": ibg_client_id,
         "market_data_type": market_data_type,
         "use_regular_trading_hours": True,
     }
+    load_ids = list(fx_instrument_ids)
+    if load_ids:
+        cfg["instrument_provider"] = {"load_ids": load_ids}
+    return cfg
+
+
+def build_paper_data_client_config(
+    *,
+    ibg_host: str = IB_HOST,
+    ibg_port: int = IB_PAPER_PORT,
+    ibg_client_id: int = IB_CLIENT_ID,
+    market_data_type: str = "realtime",
+    fx_instrument_ids: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Build an IBKR paper-mode data client config dict.
+
+    ``market_data_type`` defaults to ``"realtime"`` (IBMarketDataTypeEnum.REALTIME):
+    IDEALPRO spot FX streams real-time quotes the overlay needs to maintain its
+    mark xrates, and DELAYED_FROZEN delivers none of them (live-validated). Pass
+    *fx_instrument_ids* (see :func:`fx_reference_instrument_ids`) to have the
+    InstrumentProvider load the book's FX reference pairs.
+    """
+    return _data_client_config(
+        ibg_host=ibg_host, ibg_port=ibg_port, ibg_client_id=ibg_client_id,
+        market_data_type=market_data_type, fx_instrument_ids=fx_instrument_ids,
+    )
 
 
 def build_paper_exec_client_config(
@@ -164,19 +214,19 @@ def build_live_data_client_config(
     ibg_port: int = IB_LIVE_PORT,
     ibg_client_id: int = IB_CLIENT_ID,
     market_data_type: str = "realtime",
+    fx_instrument_ids: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Build an IBKR live-mode data client config dict.
 
-    ``market_data_type`` defaults to ``"realtime"``
-    (IBMarketDataTypeEnum.REALTIME) for live market data.
+    ``market_data_type`` defaults to ``"realtime"`` (IBMarketDataTypeEnum.REALTIME)
+    for live market data.  Pass *fx_instrument_ids* (see
+    :func:`fx_reference_instrument_ids`) to have the InstrumentProvider load the
+    book's FX reference pairs so the overlay can mark FX from their quotes.
     """
-    return {
-        "ibg_host": ibg_host,
-        "ibg_port": ibg_port,
-        "ibg_client_id": ibg_client_id,
-        "market_data_type": market_data_type,
-        "use_regular_trading_hours": True,
-    }
+    return _data_client_config(
+        ibg_host=ibg_host, ibg_port=ibg_port, ibg_client_id=ibg_client_id,
+        market_data_type=market_data_type, fx_instrument_ids=fx_instrument_ids,
+    )
 
 
 def build_live_exec_client_config(

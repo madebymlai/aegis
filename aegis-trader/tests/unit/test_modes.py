@@ -39,13 +39,32 @@ from aegis_trader.trader.modes import (
     build_live_exec_client_config,
     build_risk_engine_config,
     fill_time_in_force_for_mode,
+    fx_reference_instrument_ids,
     IB_CLIENT_ID,
+    IB_FX_VENUE,
     IB_HOST,
     IB_LIVE_ACCOUNT_ID,
     IB_LIVE_PORT,
     IB_PAPER_ACCOUNT_ID,
     IB_PAPER_PORT,
 )
+
+
+# --------------------------------------------------------------------------- #
+# FX reference-pair loading (aegis-rd-x0a: the overlay marks FX from these)
+# --------------------------------------------------------------------------- #
+
+def test_fx_reference_instrument_ids_for_eur_book():
+    """Each non-base currency yields a base/ccy IDEALPRO FX pair id for the
+    InstrumentProvider to load; the base currency itself is never a pair."""
+    ids = fx_reference_instrument_ids("EUR", ["USD", "GBP", "EUR"])
+    assert set(ids) == {f"EUR/USD.{IB_FX_VENUE}", f"EUR/GBP.{IB_FX_VENUE}"}
+
+
+def test_fx_reference_instrument_ids_empty_when_single_currency():
+    """A book wholly in its base currency needs no FX reference pairs."""
+    assert fx_reference_instrument_ids("EUR", ["EUR"]) == []
+    assert fx_reference_instrument_ids("EUR", []) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -151,12 +170,16 @@ def test_paper_node_config_is_msgspec_serializable():
 # --------------------------------------------------------------------------- #
 
 def test_paper_data_client_config_defaults():
-    """The paper IBKR data client dict defaults to frozen market data on the paper port."""
+    """The paper IBKR data client dict uses realtime market data on the paper port.
+
+    Realtime (not frozen): IDEALPRO spot FX streams real-time quotes that
+    DELAYED_FROZEN does not deliver — and the overlay needs those quotes to
+    maintain its FX mark xrates (live-validated against paper DUQ455398)."""
     cfg = build_paper_data_client_config()
     assert cfg["ibg_host"] == IB_HOST
     assert cfg["ibg_port"] == IB_PAPER_PORT
     assert cfg["ibg_client_id"] == IB_CLIENT_ID
-    assert cfg["market_data_type"] == "frozen"
+    assert cfg["market_data_type"] == "realtime"
 
 
 def test_paper_data_client_config_custom_host():
@@ -168,6 +191,22 @@ def test_paper_data_client_config_custom_host():
 def test_paper_data_client_config_custom_client_id():
     cfg = build_paper_data_client_config(ibg_client_id=99)
     assert cfg["ibg_client_id"] == 99
+
+
+def test_data_client_loads_fx_reference_pairs_into_instrument_provider():
+    """FX reference pairs are wired into the InstrumentProvider's load_ids so the
+    venue streams their quotes and the overlay can mark the cache xrates."""
+    fx_ids = fx_reference_instrument_ids("EUR", ["USD", "GBP"])
+    cfg = build_paper_data_client_config(fx_instrument_ids=fx_ids)
+    assert cfg["instrument_provider"]["load_ids"] == fx_ids
+    # live builder wires it identically
+    live = build_live_data_client_config(fx_instrument_ids=fx_ids)
+    assert live["instrument_provider"]["load_ids"] == fx_ids
+
+
+def test_data_client_omits_instrument_provider_when_no_fx_pairs():
+    """A base-only book needs no FX pairs → no InstrumentProvider override."""
+    assert "instrument_provider" not in build_paper_data_client_config()
 
 
 def test_paper_exec_client_config_defaults():
