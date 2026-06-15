@@ -61,6 +61,17 @@ the fix to RD calibration of the convex pole / tail — never to a live Trader p
 `realized_skew_returns` plumbing from Strategy → rebalancer → allocator; `portfolio_skew` is
 **retained as a pure measurement** (no longer a constraint input).
 
+**Validation (`aegis-rd-ytr.3`):** a five-year re-validation drives the unlevered book through
+every regime — a calm stretch where the solve over-levers (clamp binds), an all-concave-Floor
+stretch (the old halt case), and a crisis drawdown — and confirms it never fails closed while
+holding every invariant (gross ≤ cap, vol as a ceiling that de-levers in the worst window, tail
+Risk Share bounded, attribution reconciling, Floor net-convex by construction). One nuance the
+re-validation surfaces: vol-targeting *down-weights* the convex pole in capital terms (trend
+carries higher vol, so it earns its risk share with less capital), so by-construction
+net-convexity is **conditional on the convex pole being convex enough** — a marginally-convex
+trend pole can flip the Floor net-concave. That is a convex-pole / tail **calibration** matter
+for `aegis-rd-bu4.7`, never a reason to resurrect the live solve.
+
 ---
 
 Aegis Trader gains an **Allocator**: a pure module that turns each sleeve's signed target
