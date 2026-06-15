@@ -15,6 +15,7 @@ dependencies = [
   "aegis-runtime",
   "nautilus_trader",
   "pydantic>=2.0",
+  "requests>=2.0",
 ]
 
 [tool.setuptools.packages.find]
