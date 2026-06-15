@@ -22,11 +22,12 @@ max_book_gross = 1.0
 gross_cap = 1.0
 net_cap = 1.0
 
+# Floor risk keeps a fixed 60/40 trend/carry conviction tilt.
 # atalanta — trend floor pole (20-name orthogonal non-equity LSE universe).
 [[sleeves]]
 name = "atalanta_trend"
 wheel_filename = "aegis_exec_atalanta_trendstraddlebuffered_cand_b98-1.0.0-py3-none-any.whl"
-risk_share = 0.35
+risk_share = 0.42
 group = "Floor"
 weight_band_down = 0.02
 weight_band_up = 0.02
@@ -35,7 +36,7 @@ weight_band_up = 0.02
 [[sleeves]]
 name = "demeter_carry"
 wheel_filename = "aegis_exec_demeter_carry_cand_c94-1.0.0-py3-none-any.whl"
-risk_share = 0.35
+risk_share = 0.28
 group = "Floor"
 weight_band_down = 0.02
 weight_band_up = 0.02

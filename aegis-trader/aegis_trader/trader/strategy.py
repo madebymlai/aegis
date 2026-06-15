@@ -73,6 +73,8 @@ _NS_PER_DAY: int = 86_400_000_000_000
 _MIN_SLEEVE_VOL_RETURNS = 20
 _TRADING_DAYS_PER_YEAR = 252.0
 _EWMA_COVARIANCE_ALPHA = 0.06
+_QUARTERLY_RETURN_PERIODS = 63
+_MIN_QUARTERLY_SKEW_RETURNS = 8
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -388,12 +390,14 @@ class RebalanceStrategy(Strategy):
         # gate, and the fidelity trip engage); the sizer converts each delta into
         # a native share count.
         realized_covariance = self._realized_sleeve_covariance()
+        realized_skew_returns = self._realized_quarterly_sleeve_returns()
         plan = rebalance_plan(
             pending,
             self._book,
             realized_weights=realized_weights,
             realized_covariance=realized_covariance,
             previous_sleeve_weights=self._last_sleeve_weights,
+            realized_skew_returns=realized_skew_returns,
         )
         self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
         orders = size_deltas(
@@ -481,14 +485,39 @@ class RebalanceStrategy(Strategy):
         if len(self._attribution_periods) < _MIN_SLEEVE_VOL_RETURNS + 1:
             return None
 
-        names = tuple(
-            sleeve.name for sleeve in self._book.sleeves if sleeve.risk_share > 0
-        )
+        names = self._positive_risk_sleeve_names()
         periods = self._attribution_periods[-(_MIN_SLEEVE_VOL_RETURNS + 1):]
         rows = _complete_sleeve_return_rows(periods, names)
         if len(rows) < _MIN_SLEEVE_VOL_RETURNS:
             return None
         return _annualized_covariance_by_sleeve(names, rows)
+
+    def _realized_quarterly_sleeve_returns(self) -> dict[SleeveName, tuple[float, ...]] | None:
+        """Estimate realized quarterly sleeve returns for the skew constraint.
+
+        Uses the same per-period sleeve-return rows as the covariance estimator,
+        compounded over a rolling quarter.  Until enough complete quarterly rows
+        exist, return ``None`` so the allocator leaves the Floor tilt at its
+        risk-budget conviction split rather than solving an undefined skew.
+        """
+        names = self._positive_risk_sleeve_names()
+        rows = _complete_sleeve_return_rows(self._attribution_periods, names)
+        quarterly_rows = _rolling_compounded_return_rows(
+            rows,
+            horizon=_QUARTERLY_RETURN_PERIODS,
+        )
+        if len(quarterly_rows) < _MIN_QUARTERLY_SKEW_RETURNS:
+            return None
+        return {
+            name: tuple(float(row[index]) for row in quarterly_rows)
+            for index, name in enumerate(names)
+        }
+
+    def _positive_risk_sleeve_names(self) -> tuple[SleeveName, ...]:
+        """Return the sleeve universe shared by covariance and skew estimates."""
+        return tuple(
+            sleeve.name for sleeve in self._book.sleeves if sleeve.risk_share > 0
+        )
 
     def on_stop(self) -> None:
         """Compute and log per-sleeve P&L attribution at end of run.
@@ -728,6 +757,24 @@ def _sleeve_period_return(
         sleeve_return += float(weight) * (curr_px / prev_px - 1.0)
         has_input = True
     return sleeve_return if has_input else None
+
+
+def _rolling_compounded_return_rows(
+    rows: list[list[float]],
+    *,
+    horizon: int,
+) -> list[list[float]]:
+    """Compound complete per-period sleeve returns over a rolling horizon."""
+    if horizon <= 0:
+        raise ValueError("quarterly return horizon must be positive")
+    if len(rows) < horizon:
+        return []
+    values = np.array(rows, dtype=float)
+    compounded: list[list[float]] = []
+    for end in range(horizon, len(rows) + 1):
+        window = values[end - horizon:end]
+        compounded.append((np.prod(1.0 + window, axis=0) - 1.0).tolist())
+    return compounded
 
 
 def _annualized_covariance_by_sleeve(

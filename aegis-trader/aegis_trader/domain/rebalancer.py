@@ -30,11 +30,12 @@ import pandas as pd
 
 from aegis_trader.domain.allocator import (
     Allocation,
+    SkewConstraint,
     SleeveWeightBand,
     allocate_covariance_vol_target,
     allocate_diagonal_vol_target,
 )
-from aegis_trader.domain.book_config import BookConfig
+from aegis_trader.domain.book_config import BookConfig, RiskGroup
 from aegis_trader.domain.types import Figi, SleeveName, WeightDelta
 
 _ZERO_GUARD = 1e-12
@@ -56,6 +57,7 @@ def rebalance(
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
     previous_sleeve_weights: dict[SleeveName, float] | None = None,
+    realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None = None,
 ) -> tuple[WeightDelta, ...]:
     """Net per-sleeve target weights into signed weight deltas to trade."""
     return rebalance_plan(
@@ -65,6 +67,7 @@ def rebalance(
         realized_vols=realized_vols,
         realized_covariance=realized_covariance,
         previous_sleeve_weights=previous_sleeve_weights,
+        realized_skew_returns=realized_skew_returns,
     ).deltas
 
 
@@ -76,6 +79,7 @@ def rebalance_plan(
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
     previous_sleeve_weights: dict[SleeveName, float] | None = None,
+    realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None = None,
 ) -> RebalancePlan:
     """Net per-sleeve target weights into a complete rebalance plan.
 
@@ -94,7 +98,12 @@ def rebalance_plan(
     *realized_covariance* is the covariance-aware allocator input.  During
     warmup callers pass ``None`` and the allocator falls back to raw risk
     shares.  ``realized_vols`` is retained for the diagonal tracer path and is
-    used only when covariance is absent.
+    used only when covariance is absent.  ``realized_skew_returns`` carries
+    same-horizon sleeve returns for the Floor net-convex skew constraint.
+
+    ``previous_sleeve_weights`` and the sleeve-band parameters carry the
+    per-sleeve no-churn bands from the previous rebalance (Slice 4.3).  ``realized_skew_returns`` carries
+    same-horizon sleeve returns for the Floor net-convex skew constraint.
 
     Returns the signed weight deltas to trade (fraction of NAV) and the applied
     sleeve weights that Strategy keeps for the next period's sleeve-band check.
@@ -115,6 +124,7 @@ def rebalance_plan(
         realized_vols=realized_vols,
         realized_covariance=realized_covariance,
         previous_sleeve_weights=previous_sleeve_weights,
+        realized_skew_returns=realized_skew_returns,
     )
 
     net_target_by_figi: dict[str, float] = {}
@@ -136,7 +146,10 @@ def rebalance_plan(
     # book that cannot be made compliant fails closed.
     force_cleanup = False
     if rw and book.aggregate_drift_threshold is not None:
-        agg_drift = sum(abs(net_target_by_figi.get(f, 0.0) - rw.get(f, 0.0)) for f in all_figis)
+        agg_drift = sum(
+            abs(net_target_by_figi.get(figi, 0.0) - rw.get(figi, 0.0))
+            for figi in all_figis
+        )
         force_cleanup = agg_drift > book.aggregate_drift_threshold
 
     deltas: list[WeightDelta] = []
@@ -173,8 +186,13 @@ def rebalance_plan(
         post_book[figi_key] = target_w
 
     # -- Step 3: per-name cap gate on the realised book (widen-to-compliance) --
-    _gate_per_name_caps(rw, targets=net_target_by_figi, post_book=post_book,
-                        deltas=deltas, book=book)
+    _gate_per_name_caps(
+        rw,
+        targets=net_target_by_figi,
+        post_book=post_book,
+        deltas=deltas,
+        book=book,
+    )
 
     # -- Step 4: gross / net caps (always checked on post_book; the fidelity
     #    cleanup above stays subordinate to these hard caps — fail closed) --
@@ -193,20 +211,24 @@ def _allocate_sleeves(
     realized_vols: dict[SleeveName, float] | None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None,
     previous_sleeve_weights: dict[SleeveName, float] | None,
+    realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None = None,
 ) -> Allocation:
     risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
     sleeve_weight_bands = _sleeve_weight_bands(book)
 
     if realized_covariance is not None:
+        groups = {sleeve.name: sleeve.group for sleeve in book.sleeves}
+        skew_constraint = _floor_skew_constraint(realized_skew_returns)
         return allocate_covariance_vol_target(
             sleeve_targets=latest_targets,
             risk_shares=risk_shares,
             realized_covariance=realized_covariance,
             book_vol_target=book.book_vol_target,
-            groups={sleeve.name: sleeve.group for sleeve in book.sleeves},
+            groups=groups,
             previous_multipliers=previous_sleeve_weights,
             sleeve_weight_bands=sleeve_weight_bands,
             sleeve_reversion_fraction=book.sleeve_reversion_fraction,
+            skew_constraint=skew_constraint,
         )
 
     return allocate_diagonal_vol_target(
@@ -228,6 +250,18 @@ def _sleeve_weight_bands(book: BookConfig) -> dict[SleeveName, SleeveWeightBand]
         )
         for sleeve in book.sleeves
     }
+
+
+def _floor_skew_constraint(
+    realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None,
+) -> SkewConstraint | None:
+    """Build the Floor-only skew constraint when live skew returns are ready."""
+    if realized_skew_returns is None:
+        return None
+    return SkewConstraint(
+        realized_returns=realized_skew_returns,
+        constrained_group=RiskGroup.FLOOR,
+    )
 
 
 def _latest_target_weights(target: pd.DataFrame) -> dict[str, float]:
