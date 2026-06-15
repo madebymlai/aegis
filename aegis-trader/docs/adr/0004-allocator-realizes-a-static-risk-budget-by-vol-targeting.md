@@ -50,11 +50,16 @@ delivered **by construction**, not by a live solve: the fixed ~0.60 / ~0.40 tren
 tail**. The deleted live skew≥0 re-weighting conditioned on *trailing realized skew* — a noisy,
 window-unstable signal, the very instability this ADR already rejected when it threw out
 skew-neutral floor weighting — and it was the only part of the Allocator that could go
-infeasible. Net-convexity is therefore a property to **observe** (a Run may record realized book
-skew as Evidence so an operator can *see* when the floor isn't net-convex and fix the
-strategy/config), **never** to defensively re-weight toward. Removed: `SkewConstraint`,
-`_apply_skew_constraint`, `portfolio_skew`, and the `realized_skew_returns` plumbing from the
-Strategy → rebalancer → allocator.
+infeasible. Net-convexity is therefore a property to **observe**, never to defensively re-weight
+toward. Observation is **mandatory, not optional**: it is the honest substitute for the dropped
+guarantee — deleting the enforcement *without* recording would leave the book blind, which is
+worse than the fragile guard. The Strategy **records realized book skew as Evidence every run**
+(`RebalanceStrategy._last_book_skew`, computed by the pure `portfolio_skew` measurement once
+enough return history exists) and logs it, so an operator can *see* a net-concave book and route
+the fix to RD calibration of the convex pole / tail — never to a live Trader patch. Removed: the
+`SkewConstraint` *enforcement* (`_apply_skew_constraint` and helpers) and the
+`realized_skew_returns` plumbing from Strategy → rebalancer → allocator; `portfolio_skew` is
+**retained as a pure measurement** (no longer a constraint input).
 
 ---
 

@@ -51,6 +51,7 @@ from aegis_runtime.currency import major_currency
 
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data import MarketDataPort, NautilusMarketData
+from aegis_trader.domain.allocator import portfolio_skew
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
@@ -73,6 +74,7 @@ _NS_PER_DAY: int = 86_400_000_000_000
 _MIN_SLEEVE_VOL_RETURNS = 20
 _TRADING_DAYS_PER_YEAR = 252.0
 _EWMA_COVARIANCE_ALPHA = 0.06
+_MIN_BOOK_SKEW_RETURNS = 8
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -134,6 +136,7 @@ class RebalanceStrategy(Strategy):
         # Wave B (B14): real per-period NAV history feeding on_stop attribution.
         self._nav_history: list[float] = []
         self._last_attribution: dict[SleeveName, float] = {}
+        self._last_book_skew: float | None = None
         self._last_sleeve_weights: dict[SleeveName, float] = {}
         # ── Slice 9: observability + attribution ─────────────────────────
         self._obs_port: ObservabilityPort | None = config.obs_port
@@ -514,13 +517,40 @@ class RebalanceStrategy(Strategy):
             sleeve.name for sleeve in self._book.sleeves if risk_shares[sleeve.name] > 0
         )
 
+    def _record_book_skew(self) -> None:
+        """Record the book's realized skew as evidence (aegis-rd-ytr.2).
+
+        Net-convexity is delivered by construction (ADR-0004 amendment), not
+        enforced; this surfaces *whether* it holds for the applied allocation so
+        a net-concave book is seen rather than silently re-weighted toward
+        convexity.  Stays ``None`` until enough complete return rows exist to
+        define a skew.
+        """
+        names = self._positive_risk_sleeve_names()
+        rows = _complete_sleeve_return_rows(self._attribution_periods, names)
+        if len(rows) < _MIN_BOOK_SKEW_RETURNS:
+            return
+        realized_returns = {
+            name: tuple(row[index] for row in rows)
+            for index, name in enumerate(names)
+        }
+        weights = {name: self._last_sleeve_weights.get(name, 0.0) for name in names}
+        self._last_book_skew = portfolio_skew(weights, realized_returns)
+        convexity = "convex" if self._last_book_skew >= 0.0 else "concave"
+        self.log.info(
+            f"Realized book skew: {self._last_book_skew:+.3f} (net-{convexity})"
+        )
+
     def on_stop(self) -> None:
-        """Compute and log per-sleeve P&L attribution at end of run.
+        """Record end-of-run evidence: realized book skew and per-sleeve P&L.
 
         Decomposes the realized-weight book P&L across sleeves by their
         budget-scaled target share (compute_sleeve_attribution); needs at
-        least two recorded rebalance periods.
+        least two recorded rebalance periods.  The realized-book-skew recording
+        has its own (longer) history requirement and runs first.
         """
+        self._record_book_skew()
+
         if len(self._attribution_periods) < 2:
             return
 

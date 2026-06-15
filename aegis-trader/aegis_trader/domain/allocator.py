@@ -253,6 +253,58 @@ def risk_contribution_shares(
     return {name: float(rc) for name, rc in zip(names, contributions, strict=True)}
 
 
+def portfolio_skew(
+    multipliers: Mapping[SleeveName, float],
+    realized_returns: Mapping[SleeveName, tuple[float, ...]],
+) -> float:
+    """Realized skew of the multiplier-weighted sleeve-return stream.
+
+    A pure *measurement* (observability) — never a constraint.  Net-convexity is
+    delivered by construction (ADR-0004 amendment: fixed conviction tilt + the
+    convexity-premium tail); this surfaces *whether* it holds for an applied
+    allocation so an operator can see a net-concave book rather than have the
+    Allocator silently re-weight toward convexity.  Returns ``0.0`` for an empty
+    stream or one with no dispersion, so callers need not special-case those.
+    """
+    if not multipliers:
+        return 0.0
+    active = tuple(multipliers.keys())
+    returns = _return_matrix(active, realized_returns)
+    weights = np.array([float(multipliers[name]) for name in active], dtype=float)
+    return _skew(returns @ weights)
+
+
+def _return_matrix(
+    active: tuple[SleeveName, ...],
+    realized_returns: Mapping[SleeveName, tuple[float, ...]],
+) -> np.ndarray:
+    rows: list[tuple[float, ...]] = []
+    length: int | None = None
+    for name in active:
+        if name not in realized_returns:
+            raise ValueError(f"missing realized returns for sleeve {name.value!r}")
+        series = tuple(float(value) for value in realized_returns[name])
+        if any(not math.isfinite(value) for value in series):
+            raise ValueError("realized returns must be finite")
+        if length is None:
+            length = len(series)
+        elif len(series) != length:
+            raise ValueError("realized return series must have equal length")
+        rows.append(series)
+    return np.array(rows, dtype=float).T
+
+
+def _skew(values: np.ndarray) -> float:
+    """Population skewness of *values*; 0.0 when there is no dispersion."""
+    mean = float(np.mean(values))
+    centered = values - mean
+    variance = float(np.mean(centered * centered))
+    if variance <= _EPS or not math.isfinite(variance):
+        return 0.0
+    std = math.sqrt(variance)
+    return float(np.mean(centered * centered * centered) / (std * std * std))
+
+
 def _validate_book_vol_target(book_vol_target: float) -> None:
     if book_vol_target <= 0 or not math.isfinite(book_vol_target):
         raise ValueError(f"book_vol_target must be positive, got {book_vol_target!r}")

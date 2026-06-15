@@ -11,6 +11,7 @@ from aegis_trader.domain.allocator import (
     covariance_book_vol,
     diagonal_book_vol,
     equal_risk_contribution_weights,
+    portfolio_skew,
     risk_contribution_shares,
 )
 from aegis_trader.domain.book_config import DrawdownDeleverCurve
@@ -213,6 +214,23 @@ def test_sleeve_weight_band_reverts_partially_after_breach():
         previous + 0.5 * (full_target.multipliers[_CARRY] - previous)
     )
     assert allocation.multipliers[_CARRY] != pytest.approx(full_target.multipliers[_CARRY])
+
+
+def test_portfolio_skew_measures_realized_convexity_of_the_weighted_book_stream():
+    # Left-skewed (occasional large loss) -> net-concave -> negative skew.
+    concave = (0.01, 0.01, 0.01, 0.01, -0.20, 0.01, 0.01, 0.01)
+    # Right-skewed (occasional large gain) -> net-convex -> positive skew.
+    convex = tuple(-r for r in concave)
+
+    assert portfolio_skew({_TREND: 1.0}, {_TREND: concave}) < 0.0
+    assert portfolio_skew({_TREND: 1.0}, {_TREND: convex}) > 0.0
+
+
+def test_portfolio_skew_is_zero_for_an_empty_or_flat_stream():
+    # A measurement, not a constraint: routine no-data / no-dispersion cases are
+    # not errors — they are "no measurable skew" (0.0), so callers never guard.
+    assert portfolio_skew({}, {}) == 0.0
+    assert portfolio_skew({_TREND: 1.0}, {_TREND: (0.01, 0.01, 0.01, 0.01)}) == 0.0
 
 
 def test_drawdown_delever_scales_exposure_monotonically_and_recovers():

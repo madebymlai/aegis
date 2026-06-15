@@ -110,3 +110,54 @@ def test_attribution_uses_real_per_period_nav():
     assert strategy._last_attribution
 
     engine.dispose()
+
+
+def _left_skewed_prices() -> list[float]:
+    """A price path whose returns are left-skewed: mostly small gains, occasional
+    sharp drops — i.e. a net-concave realized return distribution (skew < 0)."""
+    prices = [100.0]
+    for _ in range(6):
+        for _ in range(4):
+            prices.append(prices[-1] * 1.01)
+        prices.append(prices[-1] * 0.88)
+    return prices
+
+
+def test_realized_book_skew_is_recorded_as_evidence():
+    """Observability replaces the deleted live skew solve (aegis-rd-ytr.2).
+
+    Net-convexity is by construction, not enforced — so the book must *record*
+    its realized skew, otherwise deleting the guard leaves it blind.  Here a
+    left-skewed (net-concave) price path drives a negative realized book skew,
+    and the strategy surfaces it as evidence rather than silently re-weighting.
+    """
+    book = BookConfig(
+        sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="trend.whl", risk_share=1.0),),
+        base_currency="EUR",
+    )
+    instr = eur_equity(_FIGI, VENUE.value)
+    bars = _make_bars(_FIGI, _left_skewed_prices())
+
+    engine = BacktestEngine(BacktestEngineConfig(trader_id=TraderId("SKEW-E2E"), logging=None))
+    engine.add_venue(
+        VENUE, oms_type=OmsType.NETTING, account_type=AccountType.MARGIN,
+        base_currency=Currency.from_str("EUR"),
+        starting_balances=[Money(100_000, Currency.from_str("EUR"))],
+        book_type=BookType.L1_MBP,
+    )
+    engine.add_instrument(instr)
+    engine.add_data(bars)
+
+    strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
+    strategy.register_sleeve(book.sleeves[0].name, _FixedWeightBundle(_FIGI, 0.5))
+    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    engine.add_strategy(strategy)
+
+    engine.run()
+
+    # Realized book skew was recorded (mandatory observability) and reflects the
+    # net-concave path — the operator can see it, no live re-weighting happened.
+    assert strategy._last_book_skew is not None
+    assert strategy._last_book_skew < 0.0
+
+    engine.dispose()
