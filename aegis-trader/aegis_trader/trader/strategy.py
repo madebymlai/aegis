@@ -146,7 +146,11 @@ class RebalanceStrategy(Strategy):
             cash = float(self.portfolio.balances_locked_committed(venue=venue).get(
                 base_ccy, Money(0, base_ccy),
             ).as_double())
-        except Exception:
+        except Exception as exc:
+            self.log.error(
+                f"Failed to query portfolio for integrity check: {exc}. "
+                f"Marking NAV/cash as zero."
+            )
             nav = 0.0
             cash = 0.0
 
@@ -445,16 +449,14 @@ class RebalanceStrategy(Strategy):
             # Resolve InstrumentId back to FIGI via the instr→figi map
             figi = self._instr_to_figi.get(instr_id.value)
             if figi is None:
-                # Try alternate: check if instrument_id contains the FIGI
-                # by stripping the venue suffix
+                # Fallback: strip the venue suffix to recover the FIGI
                 parts = instr_id.value.rsplit(".", 1)
-                if len(parts) == 2:
+                if len(parts) == 2 and parts[0]:
                     candidate = parts[0]
                     if candidate in tracked_figis:
-                        continue  # tracked, not held
+                        continue  # tracked by some sleeve → not quarantined
                     figi = candidate
-
-            if figi and figi in tracked_figis:
+            elif figi in tracked_figis:
                 continue  # tracked by some sleeve → not quarantined
 
             # Compute signed weight from net quantity

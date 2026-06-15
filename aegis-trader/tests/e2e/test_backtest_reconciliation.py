@@ -18,11 +18,10 @@ N.B. Only one BacktestEngine per process; run this test in isolation.
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
+from nautilus_trader.model.identifiers import TraderId, Venue
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
@@ -145,22 +144,18 @@ def _make_book() -> BookConfig:
     )
 
 
-# ── tests ─────────────────────────────────────────────────────────────────────
+# ── engine factory ────────────────────────────────────────────────────────────
 
 
-def test_integrity_check_passes_in_normal_backtest():
-    """Slice 7: account-integrity check passes at startup in a normal backtest.
+def _setup_engine(trader_id: str, book: BookConfig, bundle: _SyntheticBundle) -> tuple[BacktestEngine, RebalanceStrategy]:
+    """Create a configured BacktestEngine with one instrument, five daily bars.
 
-    The strategy performs an integrity check in ``on_start``.  With a healthy
-    cache and valid NAV/cash, the check passes and the strategy continues to
-    trade normally.
+    Returns (engine, strategy) — the caller must call ``engine.run()`` and
+    ``engine.dispose()``.
     """
-    book = _make_book()
-    bundle = _SyntheticBundle(weight=0.5)
     bars = _make_bars([100.0, 101.0, 102.0, 103.0, 104.0])
-
     engine = BacktestEngine(BacktestEngineConfig(
-        trader_id=TraderId("INTEGRITY-E2E"),
+        trader_id=TraderId(trader_id),
         logging=None,
     ))
     engine.add_venue(
@@ -178,7 +173,20 @@ def test_integrity_check_passes_in_normal_backtest():
     strategy = RebalanceStrategy(config=config)
     strategy._bundle = bundle
     engine.add_strategy(strategy)
+    return engine, strategy
 
+
+# ── tests ─────────────────────────────────────────────────────────────────────
+
+
+def test_integrity_check_passes_in_normal_backtest():
+    """Slice 7: account-integrity check passes at startup in a normal backtest.
+
+    The strategy performs an integrity check in ``on_start``.  With a healthy
+    cache and valid NAV/cash, the check passes and the strategy continues to
+    trade normally.
+    """
+    engine, strategy = _setup_engine("INTEGRITY-E2E", _make_book(), _SyntheticBundle(weight=0.5))
     engine.run()
 
     assert engine.get_result() is not None
@@ -210,30 +218,7 @@ def test_normal_backtest_no_quarantine():
     All broker positions correspond to FIGIs in sleeve contracts, so
     ``held_positions`` is empty and ``quarantined`` is empty.
     """
-    book = _make_book()
-    bundle = _SyntheticBundle(weight=0.5)
-    bars = _make_bars([100.0, 101.0, 102.0, 103.0, 104.0])
-
-    engine = BacktestEngine(BacktestEngineConfig(
-        trader_id=TraderId("NO-QUARANTINE-E2E"),
-        logging=None,
-    ))
-    engine.add_venue(
-        VENUE,
-        oms_type=OmsType.NETTING,
-        account_type=AccountType.CASH,
-        base_currency=Currency.from_str("EUR"),
-        starting_balances=[Money(100_000, Currency.from_str("EUR"))],
-        book_type=BookType.L1_MBP,
-    )
-    engine.add_instrument(_make_instrument())
-    engine.add_data(bars)
-
-    config = RebalanceStrategyConfig(book=book)
-    strategy = RebalanceStrategy(config=config)
-    strategy._bundle = bundle
-    engine.add_strategy(strategy)
-
+    engine, strategy = _setup_engine("NO-QUARANTINE-E2E", _make_book(), _SyntheticBundle(weight=0.5))
     engine.run()
 
     assert engine.get_result() is not None

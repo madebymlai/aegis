@@ -2,8 +2,8 @@
 
 Pure domain component: checks account-level invariants (account ID,
 cache hydration, NAV/cash consistency) and returns an IntegrityReport.
-Zero Nautilus — the Strategy calls this at startup and before each
-rebalance; a failed report causes a global halt.
+Zero Nautilus — the Strategy calls this at startup; a failed report
+halts the book globally.
 """
 
 from __future__ import annotations
