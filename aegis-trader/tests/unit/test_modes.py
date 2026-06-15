@@ -73,15 +73,12 @@ def test_paper_node_config_has_reconciliation():
 
 
 def test_paper_node_config_is_msgspec_serializable():
-    """The paper TradingNodeConfig MUST survive a JSON round-trip.
-
-    This verifies that the config produced by this module is valid as JSON
-    and can be reloaded — critical for CI / operator scripting.
-    """
+    """TradingNodeConfig survives a JSON round-trip."""
     cfg = build_paper_trading_node_config()
     cfg_json = cfg.json()
     loaded = TradingNodeConfig.parse(cfg_json)
     assert loaded.environment == cfg.environment
+    assert loaded.trader_id == cfg.trader_id
     assert loaded.cache is not None
     assert loaded.logging is not None
     assert loaded.exec_engine.reconciliation is True
@@ -92,12 +89,11 @@ def test_paper_node_config_is_msgspec_serializable():
 # --------------------------------------------------------------------------- #
 
 def test_paper_data_client_config_defaults():
-    """The paper IBKR data client dict MUST use FROZEN market data and paper port."""
+    """The paper IBKR data client dict defaults to frozen market data on the paper port."""
     cfg = build_paper_data_client_config()
     assert cfg["ibg_host"] == IB_HOST
     assert cfg["ibg_port"] == IB_PAPER_PORT
     assert cfg["ibg_client_id"] == IB_CLIENT_ID
-    # FROZEN market data = "frozen" (maps to IBMarketDataTypeEnum.DELAYED_FROZEN)
     assert cfg["market_data_type"] == "frozen"
 
 
@@ -112,20 +108,6 @@ def test_paper_data_client_config_custom_client_id():
     """The paper IBKR data client dict MUST accept a custom client ID."""
     cfg = build_paper_data_client_config(ibg_client_id=99)
     assert cfg["ibg_client_id"] == 99
-
-
-def test_paper_data_client_config_routing():
-    """The paper IBKR data client dict MUST accept a routing override.
-
-    Routing is configured on each Nautilus client config (LiveDataClientConfig
-    base type), not on the engine.  The operator provides this dict to
-    InteractiveBrokersDataClientConfig at runtime (requires ibapi).
-    """
-    cfg = build_paper_data_client_config()
-    # The dict supports the base LiveDataClientConfig fields; routing is
-    # set by the operator when constructing the full IBKR config object.
-    cfg["routing"] = {"default": True}
-    assert cfg["routing"] == {"default": True}
 
 
 def test_paper_exec_client_config_defaults():
@@ -146,33 +128,15 @@ def test_paper_exec_client_config_custom_account():
     assert cfg["account_id"] == "DU1234567"
 
 
-def test_paper_exec_client_config_routing():
-    """The paper IBKR exec client dict MUST accept a routing override.
-
-    Per the Nautilus API: ``InteractiveBrokersExecClientConfig(routing=RoutingConfig(default=True))``.
-    Routing is on the exec client, not the engine.
-    """
-    cfg = build_paper_exec_client_config()
-    cfg["routing"] = {"default": True}
-    assert cfg["routing"] == {"default": True}
-
-
 # --------------------------------------------------------------------------- #
 # node construction test (no live connection required)
 # --------------------------------------------------------------------------- #
 
 def test_paper_trading_node_constructs():
-    """The paper TradingNode MUST construct without error (no IBKR connection).
-
-    This test validates that the node's configuration is accepted by Nautilus.
-    It does NOT require ibapi or a running IB Gateway.
-    """
+    """TradingNode constructs without error — no IBKR connection required."""
     try:
         node = build_paper_trading_node()
     except Exception as exc:
         assert False, f"build_paper_trading_node() raised {type(exc).__name__}: {exc}"
     else:
         assert node is not None
-        # In Nautilus 1.228.0, the TradingNode constructor initialises
-        # the kernel; is_built() returns True after node.build() is called.
-        # We just verify construction didn't throw.

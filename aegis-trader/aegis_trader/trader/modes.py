@@ -31,8 +31,6 @@ from nautilus_trader.live.node import TradingNode
 
 # ── paper-mode constants ──────────────────────────────────────────────────────
 
-IB_DATA_CLIENT_NAME: str = "IB"
-IB_EXEC_CLIENT_NAME: str = "IB"
 IB_HOST: str = "127.0.0.1"
 IB_PAPER_PORT: int = 7497  # TWS paper port; IB Gateway paper default is 4002
 IB_CLIENT_ID: int = 1
@@ -52,15 +50,12 @@ def build_paper_data_client_config(
     ibg_host: str = IB_HOST,
     ibg_port: int = IB_PAPER_PORT,
     ibg_client_id: int = IB_CLIENT_ID,
-    market_data_type: str = "frozen",  # IBMarketDataTypeEnum.DELAYED_FROZEN
+    market_data_type: str = "frozen",
 ) -> dict[str, Any]:
     """Build an IBKR paper-mode data client config dict.
 
-    Uses IB Market Data line type ``"frozen"`` (delayed frozen) so that no
-    real-time data subscription is required.  The actual IBKR implementation
-    is provided by Nautilus; this is a plain config wire.
-
-    Paper port 7497 = TWS paper default; IB Gateway paper default is 4002.
+    ``market_data_type`` defaults to ``"frozen"`` (IBMarketDataTypeEnum.DELAYED_FROZEN)
+    so that no real-time data subscription is required.
     """
     return {
         "ibg_host": ibg_host,
@@ -101,31 +96,10 @@ def build_paper_trading_node_config(
 ) -> TradingNodeConfig:
     """Build a SANDBOX TradingNodeConfig for paper trading with IBKR.
 
-    Wires every component required for a paper-mode deployment:
-
-    * ``Environment.SANDBOX`` (no real money — paper venue)
-    * ``RoutingConfig(default=True)`` on each IBKR client (via the dict
-      builders, which the operator feeds through IBKR config constructors)
-    * ``CacheConfig`` — in-memory cache for price/order/position state
-    * ``LoggingConfig`` — structured logging
-    * Reconciliation enabled on the exec engine (startup position sync)
-
-    The IBKR data-client and exec-client configs are NOT populated here —
-    they require the ``InteractiveBrokersDataClientConfig`` /
-    ``InteractiveBrokersExecClientConfig`` types which need ``ibapi`` at
-    runtime.  Use ``build_paper_data_client_config()`` and
-    ``build_paper_exec_client_config()`` to produce the dicts, then pass
-    them through the proper IBKR config constructors at node-build time.
-
-    Parameters
-    ----------
-    trader_id : str
-        The trader ID for this node (must be unique per process).
-
-    Returns
-    -------
-    TradingNodeConfig
-        Fully wired paper-mode configuration (clients not yet populated).
+    Wires cache, logging, and reconciliation.  IBKR client configs are NOT
+    populated — use ``build_paper_data_client_config()`` and
+    ``build_paper_exec_client_config()`` to produce dicts, then pass them
+    through the IBKR config constructors at node-build time (requires ``ibapi``).
     """
     return TradingNodeConfig(
         environment=Environment.SANDBOX,
@@ -145,27 +119,9 @@ def build_paper_trading_node(
 ) -> TradingNode:
     """Build a SANDBOX TradingNode for IBKR paper trading.
 
-    Constructs (but does NOT build/connect) a TradingNode wired for paper
-    mode.  The caller must:
-
-    1. Add the IBKR data client and exec client configs (via the
-       ``InteractiveBrokersDataClientConfig`` /
-       ``InteractiveBrokersExecClientConfig`` types — requires ``ibapi``
-       runtime).
-    2. Register data/exec client factories via
-       ``node.add_data_client_factory`` / ``node.add_exec_client_factory``.
-    3. Add the strategy.
-    4. Call ``node.build()`` and ``node.run()``.
-
-    Parameters
-    ----------
-    trader_id : str
-        The trader ID for this node.
-
-    Returns
-    -------
-    TradingNode
-        The constructed (not yet built) paper trading node.
+    Constructs (but does NOT build/connect) a TradingNode.  Caller must
+    add IBKR client configs, register factories, add the strategy, then
+    call ``node.build()`` and ``node.run()``.
     """
     config = build_paper_trading_node_config(trader_id=trader_id)
     return TradingNode(config=config)
