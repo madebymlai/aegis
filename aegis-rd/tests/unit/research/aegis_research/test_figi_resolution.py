@@ -35,15 +35,61 @@ def test_resolves_each_ticker_to_its_unique_exchange_level_figi() -> None:
     assert resolved == {"SPY": "BBG000BDTBL9", "IWM": "BBG000B9XB24"}
 
 
-def test_minor_unit_currency_is_sent_to_openfigi_as_its_iso_major() -> None:
-    # GBp (pence) is a quote token, not an ISO currency; OpenFIGI's currency
-    # filter must receive the major GBP or it returns no match.
-    symbols = [SymbolSpec(ticker="SGLN.L", ccy="GBp")]
+def test_lse_suffix_stripped_and_mic_sent() -> None:
+    # OpenFIGI's TICKER type rejects the yfinance venue suffix ('IHYU.L' -> no
+    # match); the resolver must send the bare symbol + the venue's micCode.
+    symbols = [SymbolSpec(ticker="IHYU.L", ccy="USD")]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idValue"] == "IHYU"
+    assert job["micCode"] == "XLON"
+
+
+def test_xetra_suffix_maps_to_xetr_mic() -> None:
+    symbols = [SymbolSpec(ticker="VOOL.DE", ccy="EUR")]
+    client = _FakeOpenFigiClient([_hit("BBG003Q292W1")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idValue"] == "VOOL"
+    assert job["micCode"] == "XETR"
+
+
+def test_unknown_exchange_suffix_fails_closed() -> None:
+    # Fail closed rather than guess a venue for an unmapped suffix.
+    symbols = [SymbolSpec(ticker="FOO.XX", ccy="USD")]
+    client = _FakeOpenFigiClient([_hit("BBG000000001")])
+
+    with pytest.raises(FigiResolutionError, match="XX"):
+        resolve_figis(symbols, client=client)
+
+
+def test_suffixless_ticker_sent_without_mic() -> None:
+    # A bare (US-style) ticker carries no venue suffix: send it as-is.
+    symbols = [SymbolSpec(ticker="SPY", ccy="USD")]
+    client = _FakeOpenFigiClient([_hit("BBG000BDTBL9")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idValue"] == "SPY"
+    assert "micCode" not in job
+
+
+def test_quote_currency_is_sent_to_openfigi_verbatim() -> None:
+    # GBp (pence) is the literal exchange quote token; OpenFIGI stores LSE
+    # pence lines under 'GBp', so the filter must receive it verbatim (sending
+    # the ISO major 'GBP' returns no match).
+    symbols = [SymbolSpec(ticker="GILI.L", ccy="GBp")]
     client = _FakeOpenFigiClient([_hit("BBG000PLNQN7")])
 
     resolve_figis(symbols, client=client)
 
-    assert client.seen_jobs[0]["currency"] == "GBP"
+    assert client.seen_jobs[0]["currency"] == "GBp"
 
 
 def test_unmapped_ticker_fails_closed() -> None:

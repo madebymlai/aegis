@@ -14,11 +14,17 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Sequence
 
-from aegis_runtime.currency import major_currency
-
 from research.aegis_research.configuration.schema import SymbolSpec
 
 OPENFIGI_MAPPING_URL = "https://api.openfigi.com/v3/mapping"
+
+# Bounded provider-suffix -> OpenFIGI MIC table (fail-closed: an unmapped suffix
+# refuses the export rather than guessing a venue).  Mirrors the EU-retail
+# universe's venues; extend deliberately, one venue at a time.
+_SUFFIX_TO_MIC: dict[str, str] = {
+    "L": "XLON",   # London Stock Exchange (yfinance .L)
+    "DE": "XETR",  # Deutsche Boerse Xetra (yfinance .DE)
+}
 # OpenFIGI caps an unauthenticated mapping request at 10 jobs (100 with a key);
 # the conservative bound works in either mode.
 _MAX_JOBS_PER_REQUEST = 10
@@ -132,11 +138,28 @@ def _fail_closed(*, unmapped: list[str], ambiguous: list[str], collisions: list[
 
 
 def _mapping_job(spec: SymbolSpec) -> dict[str, str]:
-    return {
-        "idType": "TICKER",
-        "idValue": spec.ticker,
-        "currency": major_currency(spec.ccy),
-    }
+    """Build the OpenFIGI mapping job for one symbol.
+
+    The provider ticker carries the venue as a yfinance suffix (``IHYU.L``),
+    which OpenFIGI's ``TICKER`` type rejects: send the bare symbol plus the
+    venue's MIC code instead.  The currency filter receives the literal quote
+    token (``GBp`` for pence), which is how OpenFIGI stores the LSE pence lines —
+    not its ISO major.  A bare (suffixless) ticker is US-style: no MIC.
+    """
+    base, dot, suffix = spec.ticker.rpartition(".")
+    job: dict[str, str] = {"idType": "TICKER", "currency": spec.ccy}
+    if not dot:
+        job["idValue"] = spec.ticker
+        return job
+    mic = _SUFFIX_TO_MIC.get(suffix)
+    if mic is None:
+        raise FigiResolutionError(
+            f"unknown exchange suffix {suffix!r} in ticker {spec.ticker!r}; "
+            f"extend the suffix->MIC table to resolve it (fail closed, no guess)"
+        )
+    job["idValue"] = base
+    job["micCode"] = mic
+    return job
 
 
 def _figis_of(response: dict) -> set[str]:
