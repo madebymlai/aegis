@@ -70,6 +70,8 @@ from aegis_trader.observability.port import (
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
 
 _NS_PER_DAY: int = 86_400_000_000_000
+_MIN_SLEEVE_VOL_RETURNS = 20
+_TRADING_DAYS_PER_YEAR = 252.0
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -472,8 +474,7 @@ class RebalanceStrategy(Strategy):
         so the allocator uses the warmup fallback (raw risk shares) instead of
         dividing by an undefined estimate.
         """
-        min_returns = 20
-        if len(self._attribution_periods) < min_returns + 1:
+        if len(self._attribution_periods) < _MIN_SLEEVE_VOL_RETURNS + 1:
             return None
 
         returns_by_sleeve: dict[SleeveName, list[float]] = {
@@ -481,7 +482,7 @@ class RebalanceStrategy(Strategy):
             for sleeve in self._book.sleeves
             if sleeve.risk_share > 0
         }
-        periods = self._attribution_periods[-(min_returns + 1):]
+        periods = self._attribution_periods[-(_MIN_SLEEVE_VOL_RETURNS + 1):]
         for prev, curr in zip(periods, periods[1:], strict=False):
             for name in returns_by_sleeve:
                 sleeve_return = 0.0
@@ -498,10 +499,10 @@ class RebalanceStrategy(Strategy):
 
         vols: dict[SleeveName, float] = {}
         for name, returns in returns_by_sleeve.items():
-            if len(returns) < min_returns:
+            if len(returns) < _MIN_SLEEVE_VOL_RETURNS:
                 return None
             series = pd.Series(returns, dtype="float64")
-            vol = float(series.std(ddof=1) * math.sqrt(252.0))
+            vol = float(series.std(ddof=1) * math.sqrt(_TRADING_DAYS_PER_YEAR))
             if not math.isfinite(vol) or vol <= 0:
                 return None
             vols[name] = vol

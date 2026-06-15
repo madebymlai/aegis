@@ -49,8 +49,8 @@ def load_book_config(path: str | Path) -> BookConfig:
 
     Fails closed: a missing file, malformed TOML, or a missing required sleeve
     key raises :class:`BookConfigError` naming the file; structural violations
-    (no sleeves, duplicate names, over-budget gross) surface as the BookConfig's
-    own ``ValueError``.
+    (no sleeves, duplicate names, invalid risk controls) surface as the
+    BookConfig's own ``ValueError``.
     """
     path = Path(path)
     try:

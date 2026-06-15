@@ -5,8 +5,8 @@ weight space (fractions of NAV); turning a weight delta into a native share
 count is a separate concern (``sizing.size_deltas``).
 
 Netting (Slice 2):
-- Each sleeve's latest target weights are scaled by its static Sleeve Budget.
-- Budget-scaled weights are netted per FIGI across all sleeves.
+- Each sleeve's latest target weights are scaled by the risk-budget allocator.
+- Allocator-scaled weights are netted per FIGI across all sleeves.
 - A non-zero net delta becomes a WeightDelta; its sign is the trade side.
 - Two sleeves sharing an instrument collapse to a single delta for the residual.
 
@@ -61,10 +61,7 @@ def rebalance(
         target = sleeve_targets.get(sleeve.name)
         if target is None or target.empty:
             continue  # silently skip sleeves without data
-        latest_targets[sleeve.name] = {
-            str(col): float(target.iloc[-1][col])
-            for col in target.iloc[-1].index
-        }
+        latest_targets[sleeve.name] = _latest_target_weights(target)
 
     allocation = allocate_diagonal_vol_target(
         sleeve_targets=latest_targets,
@@ -137,6 +134,11 @@ def rebalance(
     _gate_book_caps(post_book, book)
 
     return tuple(deltas)
+
+
+def _latest_target_weights(target: pd.DataFrame) -> dict[str, float]:
+    latest = target.iloc[-1]
+    return {str(col): float(latest[col]) for col in latest.index}
 
 
 def _gate_per_name_caps(

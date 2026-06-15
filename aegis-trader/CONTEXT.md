@@ -24,23 +24,34 @@ _Avoid_: fund-of-funds, sub-account, master account, portfolio
 
 **Sleeve**:
 A notional sub-portfolio of the **Commingled Book** backed by exactly one **Execution
-Bundle**. Its signed target weights are scaled by its **Sleeve Budget** and summed
-with the other sleeves into the book's net target. A sleeve owns no account; it exists
-only in Aegis Trader's bookkeeping.
+Bundle**. Its signed target weights are scaled by the Trader-owned **Allocator** and
+summed with the other sleeves into the book's net target. A sleeve owns no account; it
+exists only in Aegis Trader's bookkeeping.
 _Avoid_: strategy, fund, sub-account, allocation
 
-**Sleeve Budget**:
-The fraction of the **Commingled Book's** capital notionally allocated to a **Sleeve**
-— the scalar each sleeve's signed weights are multiplied by before the sleeves are
-netted into one target-weight vector.
-_Avoid_: weight, allocation, capital, sizing
+**Risk Share**:
+The static share of the **Commingled Book's** volatility budget assigned to a **Sleeve**.
+The **Allocator** converts Risk Shares, sleeve target weights, and realized sleeve
+volatility estimates into the capital multipliers netted by the rebalancer.
+_Avoid_: capital budget, weight, sizing
+
+**Risk Group**:
+The top-level role of a **Sleeve** in the book's risk budget: Floor, Target, or
+Expansion.
+_Avoid_: strategy class, sector, asset class
+
+**Allocator**:
+The Trader-owned domain service that scales raw per-sleeve target weights into
+risk-budgeted target weights before the sleeves are netted into one target-weight
+vector.
+_Avoid_: alpha model, bundle allocator, portfolio optimizer
 
 **Book Config**:
 The Aegis Trader-owned, declarative specification that fully defines the **Commingled
-Book**: each **Sleeve** (a name/role bound to an **Execution Bundle** by its content-addressed
-wheel filename), its **Sleeve Budget**, the book's exposure caps, and the drift bands. Inert —
-it selects trusted artifacts and parameters only; it is the live counterpart of Aegis RD's
-**Run Config**.
+Book**: each **Sleeve** (a name/risk group bound to an **Execution Bundle** by its
+content-addressed wheel filename), its **Risk Share**, the book volatility target,
+exposure caps, and drift bands. Inert — it selects trusted artifacts and parameters
+only; it is the live counterpart of Aegis RD's **Run Config**.
 _Avoid_: book manifest, manifest, portfolio config, roster
 
 **Security Master**:

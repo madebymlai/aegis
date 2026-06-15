@@ -2,8 +2,8 @@
 
 The allocator owns the Trader-side risk-budget scaling seam: raw per-sleeve
 weights from Execution Bundles in, risk-budget-scaled per-sleeve weights out.
-This tracer implements the diagonal (zero-correlation) case from ADR-0004 and
-imports no Nautilus types.
+This implementation covers the diagonal (zero-correlation) case from ADR-0004
+and imports no Nautilus types.
 """
 
 from __future__ import annotations
@@ -118,12 +118,25 @@ def _scale_targets(
     sleeve_targets: Mapping[SleeveName, Mapping[str, float]],
     multipliers: Mapping[SleeveName, float],
 ) -> dict[SleeveName, dict[str, float]]:
-    return {
-        name: {
-            figi: float(weight) * multipliers[name]
-            for figi, weight in targets.items()
-            if abs(float(weight) * multipliers[name]) > _EPS
-        }
-        for name, targets in sleeve_targets.items()
-        if name in multipliers
-    }
+    scaled_targets: dict[SleeveName, dict[str, float]] = {}
+    for name, targets in sleeve_targets.items():
+        if name not in multipliers:
+            continue
+        scaled_targets[name] = _scale_sleeve_targets(
+            targets,
+            multiplier=multipliers[name],
+        )
+    return scaled_targets
+
+
+def _scale_sleeve_targets(
+    targets: Mapping[str, float],
+    *,
+    multiplier: float,
+) -> dict[str, float]:
+    scaled_targets: dict[str, float] = {}
+    for figi, weight in targets.items():
+        scaled = float(weight) * multiplier
+        if abs(scaled) > _EPS:
+            scaled_targets[figi] = scaled
+    return scaled_targets
