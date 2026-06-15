@@ -1,6 +1,7 @@
 # The allocator realizes a static risk budget against the live risk structure
 
-Status: accepted (implementation pending; **amends ADR-0001's static-budget boundary** and
+Status: accepted (allocator implemented in `aegis-rd-bu4` slices 1–6; knob calibration +
+HITL sign-off `aegis-rd-bu4.7` pending; **amends ADR-0001's static-budget boundary** and
 feeds the netting/gate of ADR-0002)
 
 Aegis Trader gains an **Allocator**: a pure module that turns each sleeve's signed target
@@ -38,8 +39,12 @@ Decision points:
   - **Floor** (both signs of skew): a small-N conviction tilt of **~0.60 trend / ~0.40 carry**
     of the floor's risk, held **net-convex** as a *live* constraint (book quarterly skew ≥ 0
     on realized returns). Trend is the standing crisis engine; carry is the income overlay.
-  - **Target** (tail): a **fixed, small convexity budget** (convexity units), **with no
-    timer**. The rebalancer's tight `band_up` / loose `band_down` (ADR-0002) monetizes it.
+  - **Target** (tail): a **fixed, small convexity budget**, **with no timer**. Coverage is
+    denominated in **book NAV delivered at an attachment (stress) move** (e.g. −20%) and
+    filled highest-efficiency-first to a coverage target, capped per-candidate by capacity and
+    collectively by an **annual-carry (premium) budget** — so either the coverage target or
+    the premium ceiling binds first. The rebalancer's tight `band_up` / loose `band_down`
+    (ADR-0002) monetizes it.
   - **Expansion** (market-neutral): off-axis, breadth-gated — **zero risk until a wider
     universe earns it**.
 - **Within a multi-name sleeve**, weights default to **Equal Risk Contribution**.
@@ -91,7 +96,11 @@ Decision points:
   carries the **book volatility target**, the **drawdown-de-lever** parameters, and per-sleeve
   **min/max weight bands** + a **reversion fraction** (the tail keeping ADR-0002's asymmetric
   `band_up`/`band_down`). Forward-First: the static `budget` float is replaced outright — no
-  compatibility shim.
+  compatibility shim. The **Target tail** is sized by a `tail_convexity_budget` block — an
+  `attachment` move, a `coverage_target` (NAV at that move), an optional `annual_carry_budget`
+  premium ceiling, and per-candidate `payoff_at_attachment` / `annual_carry` /
+  `crisis_reliability` / `capacity_risk_share` scores (efficiency derived, not stored) — whose
+  resulting **risk share** feeds the same ERC / vol-target solve as every other sleeve.
 - **A new deep module `domain/allocator.py`.** Pure, importing no Nautilus types:
   `(per-sleeve target weights, realized covariance estimate, risk budget) → budget-scaled
   per-sleeve weights`. It owns the ERC/HRP solve, the group hierarchy, the net-convex skew
@@ -110,10 +119,10 @@ Decision points:
 - **Re-validation.** The 5-year commingled backtest re-runs under the risk-budgeted Allocator;
   per-sleeve attribution (commit `5d40170`) and the realized-book gate consume the new weights
   with no change.
-- **Open knobs (settled in the PRD / at re-validation, not here):** the across-group risk
-  split, the book vol target level, the drawdown-de-lever curve, the tail's convexity-unit
-  budget and instrument, and the band widths / reversion fraction. Calibration, not
-  architecture.
+- **Open knobs (settled at re-validation in `aegis-rd-bu4.7`, not here):** the across-group
+  risk split, the book vol target level, the drawdown-de-lever curve, the tail's coverage
+  target / attachment / annual-carry budget and per-candidate scores, and the band widths /
+  reversion fraction. Calibration, not architecture.
 
 ## Evidence
 
@@ -125,5 +134,9 @@ Decision points:
   So Naive" (small-N tilt); Roncalli, equally-weighted risk contributions (ERC); Man Group,
   building a multi-strategy portfolio (hierarchical, correlation-clustered risk groups);
   Robeco, Dynamic 1/N (bands + partial reversion); Harvey et al., Strategic Rebalancing
-  (rebalancing is concave, trend offsets it); Universa/Spitznagel and convexity-unit budgeting
-  (fixed small tail, no timing).
+  (rebalancing is concave, trend offsets it); Universa/Spitznagel (fixed small tail, no
+  timing, "crash-bang-for-the-buck"). The convexity-**premium-budget** shape now shipped is
+  grounded in published practitioner policy: PSERS' Tail-Risk Mitigation Strategy (a fixed
+  annual premium budget that caps spend; max yearly loss = the budget), Resonanz Capital
+  (coverage target + pay-off efficiency = crisis gains ÷ premiums), and AQR's Put-vs-Trend
+  study (always-on, constant budget; the cost / reliability / convexity trade-off).
