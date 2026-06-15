@@ -264,8 +264,11 @@ class BookConfig:
     drawdown_delever: DrawdownDeleverCurve | None = None
 
     # Gross ceiling for vol-targeting.  The rebalancer clamps any vol-target
-    # up-scale down to this (down-only; ADR-0004 amendment), and the gross cap
-    # gate below stays the authoritative hard backstop on the post-band book.
+    # up-scale down to this (down-only; ADR-0004 amendment).  It must not exceed
+    # gross_cap (validated in __post_init__): a soft ceiling above the hard cap
+    # could never be made compliant by the down-only clamp.  Given that invariant
+    # the clamp keeps every valid post-band book within gross_cap, so the gross
+    # cap gate below is a defensive backstop rather than a path normally reached.
     max_book_gross: float = 1.0
 
     # ── caps (all as fractions of NAV) ──
@@ -301,6 +304,13 @@ class BookConfig:
             raise ValueError("sleeve_reversion_fraction must be in (0, 1]")
         if not math.isfinite(self.max_book_gross) or self.max_book_gross <= 0:
             raise ValueError("max_book_gross must be finite and positive")
+        if self.gross_cap is not None and self.max_book_gross > self.gross_cap + _EPS:
+            raise ValueError(
+                f"max_book_gross ({self.max_book_gross}) exceeds gross_cap "
+                f"({self.gross_cap}): the down-only clamp scales the book only to "
+                f"max_book_gross, so a soft ceiling above the hard cap could never "
+                f"be made compliant and would always fail closed at the gross gate"
+            )
         self._validate_tail_convexity_budget()
         if sum(self.allocator_risk_shares().values()) <= _EPS:
             raise ValueError("BookConfig must allocate positive total risk_share")

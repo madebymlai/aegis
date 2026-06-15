@@ -88,26 +88,24 @@ def build_currency_pair(base_currency: str, quote_currency: str, venue: str) -> 
     )
 
 
-def flat_fx_quotes(
-    pair: CurrencyPair, rate: float, index: pd.DatetimeIndex
-) -> list[QuoteTick]:
-    """Constant ``bid == ask == rate`` quotes for *pair* across *index*.
+def wrangle_fx_quotes(pair: CurrencyPair, fx_series: pd.Series) -> list[QuoteTick]:
+    """One ``bid == ask`` quote per date in *fx_series*, at that date's rate.
 
-    The flat-FX backtest approximation: one quote per timestamp at the fetched
-    rate, enough for the overlay to mark the xrate and for the accounting layer
-    to value foreign positions in the book's base currency.
+    The overlay marks the cache xrate from each quote (``on_quote_tick``) and the
+    accounting layer values foreign legs from the same per-date quotes, so a
+    backtest tracks historical FX instead of one flat rate across the window.
     """
-    price = Price(rate, _FX_PRICE_PRECISION)
+    precision = pair.price_precision
     size = Quantity.from_int(_FX_SIZE)
     return [
         QuoteTick(
             instrument_id=pair.id,
-            bid_price=price,
-            ask_price=price,
+            bid_price=Price(float(rate), precision),
+            ask_price=Price(float(rate), precision),
             bid_size=size,
             ask_size=size,
             ts_event=ts.value,
             ts_init=ts.value,
         )
-        for ts in index
+        for ts, rate in fx_series.items()
     ]

@@ -30,9 +30,9 @@ from aegis_trader.data import (
     InstrumentSpec,
     build_currency_pair,
     build_equity,
-    flat_fx_quotes,
     resolve_book_timeframe,
     wrangle_bars,
+    wrangle_fx_quotes,
 )
 from aegis_trader.trader.modes import build_backtest_engine_config
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
@@ -52,8 +52,9 @@ class BarRequest:
 
 # BarRequest -> OHLCV frame (native quote) with open/high/low/close/volume.
 OhlcvFetcher = Callable[[BarRequest], pd.DataFrame]
-# (base, quote, start, end) -> quote units per 1 base (e.g. EUR,USD -> ~1.08).
-FxFetcher = Callable[[str, str, str, str], float]
+# (base, quote, start, end) -> per-date FX series, quote units per 1 base
+# (e.g. EUR,USD -> a daily series around ~1.08).
+FxFetcher = Callable[[str, str, str, str], pd.Series]
 
 _PRICE_COLS = ("open", "high", "low", "close")
 
@@ -140,10 +141,11 @@ def run_book_backtest(
     for ccy in fx_currencies:
         if ccy == book.base_currency:
             continue
-        rate = fetch_fx(book.base_currency, ccy, start, end)
+        fx_series = fetch_fx(book.base_currency, ccy, start, end)
+        aligned = fx_series.reindex(fx_index).ffill()
         pair = build_currency_pair(book.base_currency, ccy, venue)
         engine.add_instrument(pair)
-        engine.add_data(flat_fx_quotes(pair, rate, fx_index))
+        engine.add_data(wrangle_fx_quotes(pair, aligned))
 
     strategy = RebalanceStrategy(RebalanceStrategyConfig(book=book, fill_time_in_force=None))
     for name, bundle in sleeves:
@@ -213,11 +215,11 @@ def yfinance_ohlcv(request: BarRequest) -> pd.DataFrame:
     return df
 
 
-def yfinance_fx(base: str, quote: str, start: str, end: str) -> float:
+def yfinance_fx(base: str, quote: str, start: str, end: str) -> pd.Series:
     import yfinance as yf
 
     df = yf.download(f"{base}{quote}=X", start=start, end=end, progress=False, threads=False)
     close = df["Close"]
     if isinstance(close, pd.DataFrame):
         close = close.iloc[:, 0]
-    return float(close.dropna().iloc[-1])
+    return close.dropna()

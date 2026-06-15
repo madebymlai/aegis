@@ -71,8 +71,8 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         base_currency = "EUR"
         book_vol_target = 0.12
         sleeve_reversion_fraction = 0.5
-        max_book_gross = 2.0
-        gross_cap = 1.0
+        max_book_gross = 1.0
+        gross_cap = 2.0
         net_cap = 0.5
         per_name_cap = 0.1
         default_band_up = 0.03
@@ -122,8 +122,8 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         base_currency="EUR",
         book_vol_target=0.12,
         sleeve_reversion_fraction=0.5,
-        max_book_gross=2.0,
-        gross_cap=1.0,
+        max_book_gross=1.0,
+        gross_cap=2.0,
         net_cap=0.5,
         per_name_cap=0.1,
         default_band_up=0.03,

@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from aegis_trader.domain.book_config import BookConfig, DrawdownDeleverCurve, SleeveConfig
-from aegis_trader.domain.rebalancer import rebalance, rebalance_plan
+from aegis_trader.domain.rebalancer import _gate_book_caps, rebalance, rebalance_plan
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.types import Figi, OrderSide, SleeveName, WeightDelta
 
@@ -365,26 +365,41 @@ class TestRebalanceSlice4:
         assert result[0].side == OrderSide.BUY
         assert result[0].delta == pytest.approx(0.02)  # -0.10 - (-0.12)
 
-    def test_gross_cap_still_binds_after_drawdown_delever(self):
+    def test_gross_within_ceiling_after_drawdown_delever(self):
+        """The down-only clamp keeps gross within the ceiling through the
+        drawdown-delever path: the delevered target is still clamped to
+        max_book_gross (== gross_cap), so the post-book never breaches the cap."""
         book = self._book(
-            gross_cap=0.20,
+            max_book_gross=0.20, gross_cap=0.20,
             drawdown_delever=DrawdownDeleverCurve(
                 start_drawdown=0.05,
                 end_drawdown=0.25,
                 floor_multiplier=0.50,
             ),
         )
-        with pytest.raises(ValueError, match="Gross exposure"):
-            rebalance(
-                {book.sleeves[0].name: _target({"FIGI_A": 0.50})},
-                book,
-                realized_drawdown=0.25,
-            )
+        result = rebalance(
+            {book.sleeves[0].name: _target({"FIGI_A": 0.50})},
+            book,
+            realized_drawdown=0.25,
+        )
+        gross = sum(abs(d.delta) for d in result)  # realized empty -> delta == post weight
+        assert gross <= book.max_book_gross + 1e-9
 
-    def test_gross_cap_breach_fails_closed(self):
-        book = self._book(gross_cap=0.50)
+    def test_max_book_gross_above_gross_cap_rejected(self):
+        """A soft clamp ceiling above the hard gross cap is incoherent — the
+        down-only clamp could never make such a book compliant — so it is
+        rejected at config construction, not 13 months into a backtest."""
+        with pytest.raises(ValueError, match="exceeds gross_cap"):
+            self._book(max_book_gross=1.0, gross_cap=0.8)
+
+    def test_gate_book_caps_gross_breach_defensive(self):
+        """The gross gate is a defensive backstop: the schema rule keeps gross
+        within cap for any constructable book, but the gate still fails closed if
+        a post-book ever reaches it over the cap (e.g. a future path bypassing the
+        clamp).  Exercised directly because rebalance() can no longer reach it."""
+        book = self._book(max_book_gross=0.50, gross_cap=0.50)
         with pytest.raises(ValueError, match="Gross exposure"):
-            rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.30, "FIGI_B": 0.30})}, book)
+            _gate_book_caps({Figi("FIGI_A"): 0.6, Figi("FIGI_B"): 0.6}, book)
 
     def test_within_band_drift_over_ceiling_clamped_not_failed(self):
         """Within-band drift can push the projected book over max_book_gross even
@@ -429,14 +444,22 @@ class TestRebalanceSlice4:
         assert by_figi["FIGI_A"].delta == pytest.approx(-0.02)
         assert by_figi["FIGI_B"].delta == pytest.approx(0.02)
 
-    def test_cleanup_still_breaching_hard_cap_fails_closed(self):
-        """If the post-cleanup book still breaches a hard cap → fail closed."""
-        book = self._book(aggregate_drift_threshold=0.03, gross_cap=0.50,
+    def test_cleanup_gross_clamped_to_ceiling(self):
+        """The force-cleanup path stays subordinate to the gross ceiling: cleanup
+        trades every name back to target (gross 0.70), then the down-only clamp
+        pulls the projected book to max_book_gross (== gross_cap), so the cleanup
+        never breaches the cap."""
+        book = self._book(aggregate_drift_threshold=0.03, max_book_gross=0.50, gross_cap=0.50,
                           default_band_up=0.10, default_band_down=0.10)
-        # Drift trips; cleanup trades to target (0.40+0.30 gross 0.70) > gross_cap 0.50.
-        with pytest.raises(ValueError, match="Gross exposure"):
-            rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.40, "FIGI_B": 0.30})}, book,
-                      realized_weights={Figi("FIGI_A"): 0.36, Figi("FIGI_B"): 0.26})
+        # Drift trips; cleanup targets 0.40+0.30 (gross 0.70) > ceiling 0.50 -> clamped.
+        result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.40, "FIGI_B": 0.30})}, book,
+                           realized_weights={Figi("FIGI_A"): 0.36, Figi("FIGI_B"): 0.26})
+        after = {Figi("FIGI_A"): 0.36, Figi("FIGI_B"): 0.26}
+        for d in result:
+            after[d.figi] = after.get(d.figi, 0.0) + d.delta
+        gross = sum(abs(w) for w in after.values())
+        assert gross == pytest.approx(0.50)
+        assert gross <= book.gross_cap + 1e-9
 
     def test_correlated_drift_triggers_cleanup(self):
         """N small within-band drifts trip the aggregate threshold → cleanup all."""

@@ -7,8 +7,8 @@ from aegis_trader.data.backtest_data import (
     InstrumentSpec,
     build_currency_pair,
     build_equity,
-    flat_fx_quotes,
     wrangle_bars,
+    wrangle_fx_quotes,
 )
 from aegis_trader.data.bar_type import (
     MixedTimeframeError,
@@ -28,8 +28,8 @@ __all__ = [
     "bar_type",
     "build_currency_pair",
     "build_equity",
-    "flat_fx_quotes",
     "resolve_book_timeframe",
     "timeframe_to_ns",
     "wrangle_bars",
+    "wrangle_fx_quotes",
 ]

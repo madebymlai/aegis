@@ -50,6 +50,11 @@ def _bundle(*, gross_cap: float, net_cap: float | None = None) -> ExecutionBundl
 
 
 def _book(**caps) -> BookConfig:
+    # Provenance is orthogonal to the vol-target clamp ceiling; pin max_book_gross
+    # at the gross_cap (when given) so the book is internally coherent
+    # (max_book_gross <= gross_cap) and we isolate the provenance check.
+    if caps.get("gross_cap") is not None:
+        caps.setdefault("max_book_gross", caps["gross_cap"])
     return BookConfig(
         sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="trend.whl", risk_share=1.0),),
         **caps,

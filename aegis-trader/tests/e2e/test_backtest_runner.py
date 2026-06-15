@@ -16,6 +16,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 from nautilus_trader.model.data import BarType
+from nautilus_trader.model.instruments import CurrencyPair
 
 from aegis_runtime import (
     BundleManifest,
@@ -291,10 +292,66 @@ def test_run_book_backtest_values_foreign_positions_without_xrate_noise(capfd, t
         start="2020-01-01",
         end="2020-01-07",
         fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: 1.10,  # EUR->USD
+        fetch_fx=lambda base, quote, start, end: pd.Series(1.10, index=ohlcv.index),
         registry=registry,
     )
     engine.dispose()
 
     captured = capfd.readouterr()
     assert "Cannot calculate exchange rate" not in (captured.out + captured.err)
+
+
+def test_run_book_backtest_feeds_time_varying_fx_quotes(tmp_path):
+    """An FxFetcher returning a per-date series produces FX quotes whose rate
+    changes over time — not one flat rate held across the whole window."""
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    bundle = _FixedWeightBundle(
+        _FIGI, 0.5, currency="USD", required_fx_currencies=("USD",)
+    )
+    registry = StubBundleRegistry({_WHEEL: bundle})
+    ohlcv = _synthetic_ohlcv()  # 6 daily bars, 2020-01-01..06
+    fx = pd.Series([1.10, 1.20, 1.30, 1.40, 1.50, 1.60], index=ohlcv.index)
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=lambda base, quote, start, end: fx,
+        registry=registry,
+    )
+    pairs = [i for i in engine.cache.instruments() if isinstance(i, CurrencyPair)]
+    bids = {round(float(q.bid_price), 5) for q in engine.cache.quote_ticks(pairs[0].id)}
+    engine.dispose()
+
+    assert len(pairs) == 1
+    assert bids == {1.10, 1.20, 1.30, 1.40, 1.50, 1.60}
+
+
+def test_run_book_backtest_aligns_sparse_fx_to_the_bar_timeline(tmp_path):
+    """A coarse FX series is forward-filled onto the bar timeline, so every bar
+    date resolves a current rate — not only the dates the FX provider quoted."""
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    bundle = _FixedWeightBundle(
+        _FIGI, 0.5, currency="USD", required_fx_currencies=("USD",)
+    )
+    registry = StubBundleRegistry({_WHEEL: bundle})
+    ohlcv = _synthetic_ohlcv()  # 6 daily bars, 2020-01-01..06
+    sparse = pd.Series([1.10, 1.40], index=ohlcv.index[[0, 3]])  # quoted on 2 of 6
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=lambda base, quote, start, end: sparse,
+        registry=registry,
+    )
+    pair = next(i for i in engine.cache.instruments() if isinstance(i, CurrencyPair))
+    bids = sorted(round(float(q.bid_price), 5) for q in engine.cache.quote_ticks(pair.id))
+    engine.dispose()
+
+    # one quote per bar date, forward-filled across the gap
+    assert bids == [1.10, 1.10, 1.10, 1.40, 1.40, 1.40]
