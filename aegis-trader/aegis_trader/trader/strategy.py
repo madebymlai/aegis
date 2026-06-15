@@ -40,12 +40,15 @@ from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.events import OrderDenied
 from nautilus_trader.model.identifiers import InstrumentId, Venue
-from nautilus_trader.model.objects import Currency, Money
+from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
 from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
+from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
+from aegis_trader.data.nautilus import NautilusMarketData
+from aegis_trader.data.port import MarketDataPort
 from aegis_trader.domain.attribution import compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
@@ -62,6 +65,8 @@ from aegis_trader.observability.port import (
     ObservabilityPort,
     RebalanceSummary,
 )
+from aegis_trader.portfolio.nautilus import NautilusBookState
+from aegis_trader.portfolio.port import BookStatePort
 
 _NS_PER_DAY: int = 86_400_000_000_000
 # Placeholder NAV for on_stop attribution when per-period NAV history is not
@@ -123,6 +128,9 @@ class RebalanceStrategy(Strategy):
         # Slice 7: account-integrity check + global halt
         self._integrity_report: IntegrityReport | None = None
         self._is_halted: bool = False
+        # Wave B: reconciled book state behind a port (no direct cache/portfolio reads).
+        self._book_state: BookStatePort | None = None
+        self._market_data: MarketDataPort | None = None
         # ── Slice 9: observability + attribution ─────────────────────────
         self._obs_port: ObservabilityPort | None = config.obs_port
         self._sleeve_target_history: dict[SleeveName, list[pd.DataFrame]] = {}
@@ -148,30 +156,41 @@ class RebalanceStrategy(Strategy):
             self.log.warning("No sleeves registered; strategy will idle.")
             return
 
+        # Wave B (B13): reject at load if any book cap exceeds its sleeve
+        # bundle's research-validated cap.  A misconfigured book never trades.
+        try:
+            check_cap_provenance(self._book, self._sleeve_to_bundle)
+        except CapProvenanceError as exc:
+            self.log.error(f"Cap provenance FAILED: {exc}. HALTING the book.")
+            self._is_halted = True
+            if self._obs_port is not None:
+                self._obs_port.alert_halt(str(exc))
+            return
+
         # ── Slice 7: account-integrity check at startup ──────────────────
         venue = Venue(self._book.default_venue)
-        try:
-            equity_map = self.portfolio.equity(venue=venue)
-            base_ccy = Currency.from_str(self._book.base_currency)
-            nav = float(equity_map.get(base_ccy, Money(0, base_ccy)).as_double())
+        base_ccy = Currency.from_str(self._book.base_currency)
+        self._book_state = NautilusBookState(
+            portfolio=self.portfolio,
+            cache=self.cache,
+            venue=venue,
+            base_currency=base_ccy,
+            instr_to_figi=self._instr_to_figi,
+        )
+        self._market_data = NautilusMarketData(cache=self.cache)
 
-            # Total cash balance from the account state
-            cash = 0.0
-            account_state = self.portfolio.account(venue=venue)
-            if account_state is not None:
-                balances = account_state.balances()
-                bal = balances.get(base_ccy)
-                if bal is not None:
-                    cash = float(bal.total.as_double())
+        try:
+            nav = self._book_state.nav()
+            cash = self._book_state.cash()
         except Exception as exc:
             self.log.error(
-                f"Failed to query portfolio for integrity check: {exc}. "
+                f"Failed to query book state for integrity check: {exc}. "
                 f"Marking NAV/cash as zero."
             )
             nav = 0.0
             cash = 0.0
 
-        cache_healthy = len(self.cache.instruments()) > 0
+        cache_healthy = self._book_state.is_cache_healthy()
         self._integrity_report = check_account_integrity(
             nav=nav,
             cash=cash,
@@ -328,12 +347,10 @@ class RebalanceStrategy(Strategy):
 
         # Net all sleeve targets and submit
         venue = Venue(self._book.default_venue)
-        equity_map = self.portfolio.equity(venue=venue)
-        base_ccy = Currency.from_str(self._book.base_currency)
-        nav = float(equity_map[base_ccy].as_double())
+        nav = self._book_state.nav()
 
         instrument_metas, fx_rates, prices = self._collect_sizing_params(venue)
-        realized_weights = self._collect_realized_weights(nav)
+        realized_weights = self._book_state.realized_weights()
 
         # Two-step pipeline: the pure rebalancer decides what to trade (signed
         # weight deltas) against the REALIZED book (so bands, the realized-book
@@ -515,21 +532,17 @@ class RebalanceStrategy(Strategy):
 
         for figi_str in all_figis:
             instr_id = self._figi_to_instr_id(figi_str)
-            instrument = self.cache.instrument(instr_id)
-            if instrument is None:
+            sizing = self._market_data.instrument_sizing(instr_id)
+            if sizing is None:
                 continue
 
-            currency = instrument.quote_currency.code
-            instrument_metas[figi_str] = InstrumentSizing(
-                currency=currency,
-                size_increment=float(instrument.size_increment),
-            )
+            instrument_metas[figi_str] = sizing
 
             buf = self._bars_buffer.get(instr_id)
             if buf:
                 prices[figi_str] = float(buf[-1].close.as_double())
 
-            currencies.add(currency)
+            currencies.add(sizing.currency)
 
         fx_rates: dict[str, float] = {}
         for currency in currencies:
@@ -538,38 +551,6 @@ class RebalanceStrategy(Strategy):
                 fx_rates[currency] = rate
 
         return instrument_metas, fx_rates, prices
-
-    def _collect_realized_weights(self, nav: float) -> dict[str, float]:
-        """Realized weight (signed fraction of NAV) per tracked instrument.
-
-        Reads the reconciled Cache positions for instruments in the bimap inverse
-        (i.e. covered by a sleeve) and divides each position's marked value by NAV.
-        Feeding these to the rebalancer is what makes the drift bands, the
-        realized-book gate, and the fidelity trip engage on the live book — the
-        overlay trades the drift to target rather than re-buying every period.
-
-        (Native position value over an EUR NAV is exact for EUR instruments; a
-        cross-currency position needs FX, which arrives with Wave C.)
-        """
-        if nav <= 0:
-            return {}
-
-        realized: dict[str, float] = {}
-        for pos in self.cache.positions():
-            if not pos.is_open:
-                continue
-            instr_id = pos.instrument_id
-            figi = self._instr_to_figi.get(instr_id.value)
-            if figi is None:
-                continue  # not covered by any sleeve
-            buf = self._bars_buffer.get(instr_id)
-            if not buf:
-                continue  # no mark yet
-            price = float(buf[-1].close.as_double())
-            notional = float(pos.signed_qty) * price
-            realized[figi] = realized.get(figi, 0.0) + notional / nav
-
-        return realized
 
     def _get_fx_rate(self, venue: Venue, target_currency: str) -> float | None:
         """Get the FX rate in units of *target_currency* per 1 EUR.
@@ -625,15 +606,14 @@ class RebalanceStrategy(Strategy):
         so it is passed directly to ``make_qty``.
         """
         instr_id = self._figi_to_instr_id(oi.figi.value)
-        instrument = self.cache.instrument(instr_id)
-        if instrument is None:
+        quantity = self._market_data.make_quantity(instr_id, oi.quantity)
+        if quantity is None:
             self.log.error(
                 f"Instrument not found for FIGI {oi.figi.value}; skipping order"
             )
             return
 
         nt_side = NtOrderSide.BUY if oi.side == OrderSide.BUY else NtOrderSide.SELL
-        quantity = instrument.make_qty(oi.quantity)
         kwargs: dict[str, Any] = {
             "instrument_id": instr_id,
             "order_side": nt_side,
