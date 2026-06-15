@@ -22,6 +22,8 @@ from aegis_trader.domain.types import SleeveName
 _EPS = 1e-12
 _ERC_TOLERANCE = 1e-10
 _ERC_MAX_ITERATIONS = 10_000
+_SKEW_TOLERANCE = 1e-10
+_SKEW_BISECTION_ITERATIONS = 80
 
 NameT = TypeVar("NameT", bound=Hashable)
 
@@ -489,36 +491,37 @@ def _apply_skew_constraint(
         raise ValueError("skew constraint min_skew must be finite")
 
     returns = _return_matrix(active, constraint.realized_returns)
+    minimum_skew = constraint.min_skew - _SKEW_TOLERANCE
     current_skew = _skew(returns @ composition)
-    if current_skew >= constraint.min_skew - 1e-10:
+    if current_skew >= minimum_skew:
         return composition
 
     eligible = _skew_constraint_indices(active, groups, constraint.constrained_group)
     sleeve_skews = {index: _skew(returns[:, index]) for index in eligible}
     concave = [
-        index for index in eligible
-        if sleeve_skews[index] < constraint.min_skew - 1e-10
-        and composition[index] > _EPS
+        index
+        for index in eligible
+        if sleeve_skews[index] < minimum_skew and composition[index] > _EPS
     ]
     convex = [
-        index for index in eligible
-        if sleeve_skews[index] >= constraint.min_skew - 1e-10
-        and composition[index] > _EPS
+        index
+        for index in eligible
+        if sleeve_skews[index] >= minimum_skew and composition[index] > _EPS
     ]
     if not concave or not convex:
         raise ValueError("skew constraint cannot be satisfied by active sleeves")
 
-    zero_concave = _skew_adjusted_composition(composition, concave, convex, 0.0)
-    if _skew(returns @ zero_concave) < constraint.min_skew - 1e-10:
+    max_adjustment = _skew_adjusted_composition(composition, concave, convex, 0.0)
+    if _skew(returns @ max_adjustment) < minimum_skew:
         raise ValueError("skew constraint cannot make the book net-convex")
 
-    best = zero_concave
+    best = max_adjustment
     low = 0.0
     high = 1.0
-    for _ in range(80):
+    for _ in range(_SKEW_BISECTION_ITERATIONS):
         mid = (low + high) / 2.0
         candidate = _skew_adjusted_composition(composition, concave, convex, mid)
-        if _skew(returns @ candidate) >= constraint.min_skew - 1e-10:
+        if _skew(returns @ candidate) >= minimum_skew:
             best = candidate
             low = mid
         else:

@@ -78,19 +78,14 @@ def rebalance(
     risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
     if realized_covariance is not None:
         groups = {sleeve.name: sleeve.group for sleeve in book.sleeves}
+        skew_constraint = _floor_skew_constraint(realized_skew_returns)
         allocation = allocate_covariance_vol_target(
             sleeve_targets=latest_targets,
             risk_shares=risk_shares,
             realized_covariance=realized_covariance,
             book_vol_target=book.book_vol_target,
             groups=groups,
-            skew_constraint=(
-                SkewConstraint(
-                    realized_returns=realized_skew_returns,
-                    constrained_group=RiskGroup.FLOOR,
-                )
-                if realized_skew_returns is not None else None
-            ),
+            skew_constraint=skew_constraint,
         )
     else:
         allocation = allocate_diagonal_vol_target(
@@ -119,7 +114,10 @@ def rebalance(
     # book that cannot be made compliant fails closed.
     force_cleanup = False
     if rw and book.aggregate_drift_threshold is not None:
-        agg_drift = sum(abs(net_target_by_figi.get(f, 0.0) - rw.get(f, 0.0)) for f in all_figis)
+        agg_drift = sum(
+            abs(net_target_by_figi.get(figi, 0.0) - rw.get(figi, 0.0))
+            for figi in all_figis
+        )
         force_cleanup = agg_drift > book.aggregate_drift_threshold
 
     deltas: list[WeightDelta] = []
@@ -156,14 +154,31 @@ def rebalance(
         post_book[figi_key] = target_w
 
     # -- Step 3: per-name cap gate on the realised book (widen-to-compliance) --
-    _gate_per_name_caps(rw, targets=net_target_by_figi, post_book=post_book,
-                        deltas=deltas, book=book)
+    _gate_per_name_caps(
+        rw,
+        targets=net_target_by_figi,
+        post_book=post_book,
+        deltas=deltas,
+        book=book,
+    )
 
     # -- Step 4: gross / net caps (always checked on post_book; the fidelity
     #    cleanup above stays subordinate to these hard caps — fail closed) --
     _gate_book_caps(post_book, book)
 
     return tuple(deltas)
+
+
+def _floor_skew_constraint(
+    realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None,
+) -> SkewConstraint | None:
+    """Build the Floor-only skew constraint when live skew returns are ready."""
+    if realized_skew_returns is None:
+        return None
+    return SkewConstraint(
+        realized_returns=realized_skew_returns,
+        constrained_group=RiskGroup.FLOOR,
+    )
 
 
 def _latest_target_weights(target: pd.DataFrame) -> dict[str, float]:

@@ -482,9 +482,7 @@ class RebalanceStrategy(Strategy):
         if len(self._attribution_periods) < _MIN_SLEEVE_VOL_RETURNS + 1:
             return None
 
-        names = tuple(
-            sleeve.name for sleeve in self._book.sleeves if sleeve.risk_share > 0
-        )
+        names = self._positive_risk_sleeve_names()
         periods = self._attribution_periods[-(_MIN_SLEEVE_VOL_RETURNS + 1):]
         rows = _complete_sleeve_return_rows(periods, names)
         if len(rows) < _MIN_SLEEVE_VOL_RETURNS:
@@ -499,9 +497,7 @@ class RebalanceStrategy(Strategy):
         exist, return ``None`` so the allocator leaves the Floor tilt at its
         risk-budget conviction split rather than solving an undefined skew.
         """
-        names = tuple(
-            sleeve.name for sleeve in self._book.sleeves if sleeve.risk_share > 0
-        )
+        names = self._positive_risk_sleeve_names()
         rows = _complete_sleeve_return_rows(self._attribution_periods, names)
         quarterly_rows = _rolling_compounded_return_rows(
             rows,
@@ -513,6 +509,12 @@ class RebalanceStrategy(Strategy):
             name: tuple(float(row[index]) for row in quarterly_rows)
             for index, name in enumerate(names)
         }
+
+    def _positive_risk_sleeve_names(self) -> tuple[SleeveName, ...]:
+        """Return the sleeve universe shared by covariance and skew estimates."""
+        return tuple(
+            sleeve.name for sleeve in self._book.sleeves if sleeve.risk_share > 0
+        )
 
     def on_stop(self) -> None:
         """Compute and log per-sleeve P&L attribution at end of run.
