@@ -29,6 +29,8 @@ from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.portfolio.base import PortfolioFacade
 
+from aegis_trader.domain.types import Figi
+
 
 @runtime_checkable
 class BookStatePort(Protocol):
@@ -46,8 +48,8 @@ class BookStatePort(Protocol):
         """Whether the reconciled cache holds instruments (startup integrity)."""
         ...
 
-    def realized_weights(self) -> dict[str, float]:
-        """Signed realized weight (fraction of NAV) per covered FIGI.
+    def realized_weights(self) -> dict[Figi, float]:
+        """Signed realized weight (fraction of NAV) per covered :class:`Figi`.
 
         The marking and base-currency conversion of each open position's net
         exposure is delegated to Nautilus; the sign comes from the position.
@@ -97,14 +99,14 @@ class NautilusBookState:
     def is_cache_healthy(self) -> bool:
         return len(self._cache.instruments()) > 0
 
-    def realized_weights(self) -> dict[str, float]:
+    def realized_weights(self) -> dict[Figi, float]:
         nav = self.nav()
         if nav <= 0:
             return {}
-        weights: dict[str, float] = {}
+        weights: dict[Figi, float] = {}
         for position in self._cache.positions_open():
-            figi = self._instr_to_figi.get(position.instrument_id.value)
-            if figi is None:
+            figi_str = self._instr_to_figi.get(position.instrument_id.value)
+            if figi_str is None:
                 continue  # holding not covered by any sleeve
             exposure = self._portfolio.net_exposure(position.instrument_id)
             if exposure is None:
@@ -114,6 +116,7 @@ class NautilusBookState:
                 continue  # no FX rate to base — fail closed, do not fabricate
             if position.is_short:
                 signed = -signed
+            figi = Figi(figi_str)
             weights[figi] = weights.get(figi, 0.0) + signed / nav
         return weights
 

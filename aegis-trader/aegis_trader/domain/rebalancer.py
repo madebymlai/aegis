@@ -53,7 +53,7 @@ def rebalance(
     sleeve_targets: dict[SleeveName, pd.DataFrame],
     book: BookConfig,
     *,
-    realized_weights: dict[str, float] | None = None,
+    realized_weights: dict[Figi, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
     previous_sleeve_weights: dict[SleeveName, float] | None = None,
@@ -77,7 +77,7 @@ def rebalance_plan(
     sleeve_targets: dict[SleeveName, pd.DataFrame],
     book: BookConfig,
     *,
-    realized_weights: dict[str, float] | None = None,
+    realized_weights: dict[Figi, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
     previous_sleeve_weights: dict[SleeveName, float] | None = None,
@@ -94,8 +94,8 @@ def rebalance_plan(
     Each sleeve's latest row is scaled by the risk-budget allocator, then all
     scaled weights are netted per FIGI.
 
-    *realized_weights* maps FIGI string -> current realized weight (signed
-    fraction of NAV).  When supplied, the realised book is gated against caps and
+    *realized_weights* maps each covered :class:`Figi` -> current realized weight
+    (signed fraction of NAV).  When supplied, the realised book is gated against caps and
     drift bands before any delta is emitted.
 
     *realized_covariance* selects the covariance-aware ERC/HRP allocator.  When
@@ -116,7 +116,7 @@ def rebalance_plan(
     (``sizing.size_deltas``).
     """
     # -- Step 1: net allocator-scaled target weights across sleeves --
-    latest_targets: dict[SleeveName, dict[str, float]] = {}
+    latest_targets: dict[SleeveName, dict[Figi, float]] = {}
     for sleeve in book.sleeves:
         target = sleeve_targets.get(sleeve.name)
         if target is None or target.empty:
@@ -133,7 +133,7 @@ def rebalance_plan(
         realized_drawdown=realized_drawdown,
     )
 
-    net_target_by_figi: dict[str, float] = {}
+    net_target_by_figi: dict[Figi, float] = {}
     for scaled_targets in allocation.scaled_targets.values():
         for figi_key, scaled in scaled_targets.items():
             if abs(scaled) < _ZERO_GUARD:
@@ -143,7 +143,7 @@ def rebalance_plan(
     # -- Step 2: net -> band -> post-execution book projection --
     rw = realized_weights or {}
     all_figis = net_target_by_figi.keys() | rw.keys()
-    post_book: dict[str, float] = dict(rw)  # start from realised
+    post_book: dict[Figi, float] = dict(rw)  # start from realised
 
     # Book-level fidelity trip (ADR-0002): when the realised book has drifted too
     # far from intent — typically many within-band drifts accumulating — force a
@@ -172,7 +172,7 @@ def rebalance_plan(
 
         # -- band gate (skipped on a forced full cleanup) --
         if has_realized and not force_cleanup:
-            band_up, band_down = book.band_for(figi_key)
+            band_up, band_down = book.band_for(figi_key.value)
 
             if delta > 0 and delta <= band_down:
                 # realised below target but within lower band -> no trade
@@ -188,7 +188,7 @@ def rebalance_plan(
             post_book[figi_key] = realized_w
             continue
 
-        deltas.append(WeightDelta(figi=Figi(figi_key), delta=delta))
+        deltas.append(WeightDelta(figi=figi_key, delta=delta))
         post_book[figi_key] = target_w
 
     # -- Step 3: per-name cap gate on the realised book (widen-to-compliance) --
@@ -211,7 +211,7 @@ def rebalance_plan(
 
 
 def _allocate_sleeves(
-    latest_targets: dict[SleeveName, dict[str, float]],
+    latest_targets: dict[SleeveName, dict[Figi, float]],
     book: BookConfig,
     *,
     realized_vols: dict[SleeveName, float] | None,
@@ -275,15 +275,15 @@ def _floor_skew_constraint(
     )
 
 
-def _latest_target_weights(target: pd.DataFrame) -> dict[str, float]:
+def _latest_target_weights(target: pd.DataFrame) -> dict[Figi, float]:
     latest = target.iloc[-1]
-    return {str(col): float(latest[col]) for col in latest.index}
+    return {Figi(str(col)): float(latest[col]) for col in latest.index}
 
 
 def _gate_per_name_caps(
-    realized: dict[str, float],
-    targets: dict[str, float],
-    post_book: dict[str, float],
+    realized: dict[Figi, float],
+    targets: dict[Figi, float],
+    post_book: dict[Figi, float],
     deltas: list[WeightDelta],
     book: BookConfig,
 ) -> None:
@@ -309,17 +309,17 @@ def _gate_per_name_caps(
         # If target itself exceeds cap -> unfixable, fail closed.
         if abs(target_w) > book.per_name_cap + _ZERO_GUARD:
             raise ValueError(
-                f"FIGI {figi_key}: target weight {abs(target_w):.6f} exceeds "
+                f"FIGI {figi_key.value}: target weight {abs(target_w):.6f} exceeds "
                 f"per-name cap {book.per_name_cap:.6f} — unfixable"
             )
 
         # Check if a corrective delta already exists (from the band gate).
-        already_correcting = any(d.figi.value == figi_key for d in deltas)
+        already_correcting = any(d.figi == figi_key for d in deltas)
         if already_correcting:
             pw = post_book.get(figi_key, 0.0)
             if abs(pw) > book.per_name_cap + _ZERO_GUARD:
                 raise ValueError(
-                    f"FIGI {figi_key} cap breach ({abs(real_w):.6f} > "
+                    f"FIGI {figi_key.value} cap breach ({abs(real_w):.6f} > "
                     f"{book.per_name_cap:.6f}) cannot be remedied: "
                     f"post-execution weight {abs(pw):.6f} still exceeds cap"
                 )
@@ -331,12 +331,12 @@ def _gate_per_name_caps(
         if abs(delta) < _ZERO_GUARD:
             continue
 
-        deltas.append(WeightDelta(figi=Figi(figi_key), delta=delta))
+        deltas.append(WeightDelta(figi=figi_key, delta=delta))
         post_book[figi_key] = cap_w
 
 
 def _gate_book_caps(
-    post_book: dict[str, float],
+    post_book: dict[Figi, float],
     book: BookConfig,
 ) -> None:
     """Gate the post-execution book against gross and net caps.

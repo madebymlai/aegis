@@ -15,9 +15,9 @@ class TestSizeDeltas:
         orders = size_deltas(
             (WeightDelta(figi=Figi("F"), delta=0.25),),
             nav=100_000.0,
-            instrument_metas={"F": InstrumentSizing(currency="EUR", size_increment=1.0)},
+            instrument_metas={Figi("F"): InstrumentSizing(currency="EUR", size_increment=1.0)},
             fx_rates={"EUR": 1.0},
-            prices={"F": 100.0},
+            prices={Figi("F"): 100.0},
         )
         assert len(orders) == 1
         assert orders[0].figi == Figi("F")
@@ -28,9 +28,9 @@ class TestSizeDeltas:
         orders = size_deltas(
             (WeightDelta(figi=Figi("F"), delta=-0.25),),
             nav=100_000.0,
-            instrument_metas={"F": InstrumentSizing(currency="EUR", size_increment=1.0)},
+            instrument_metas={Figi("F"): InstrumentSizing(currency="EUR", size_increment=1.0)},
             fx_rates={"EUR": 1.0},
-            prices={"F": 100.0},
+            prices={Figi("F"): 100.0},
         )
         assert orders[0].side == OrderSide.SELL
         assert orders[0].quantity == pytest.approx(250.0)
@@ -40,9 +40,9 @@ class TestSizeDeltas:
         orders = size_deltas(
             (WeightDelta(figi=Figi("UK"), delta=0.10),),
             nav=100_000.0,
-            instrument_metas={"UK": InstrumentSizing(currency="GBp", size_increment=1.0)},
+            instrument_metas={Figi("UK"): InstrumentSizing(currency="GBp", size_increment=1.0)},
             fx_rates={"GBp": 0.85},  # GBP per EUR
-            prices={"UK": 850.0},     # price in pence
+            prices={Figi("UK"): 850.0},     # price in pence
         )
         # 10_000 EUR · 0.85 · 100 pence / 850 = 1000 shares
         assert orders[0].quantity == pytest.approx(1000.0)
@@ -52,9 +52,9 @@ class TestSizeDeltas:
         orders = size_deltas(
             (WeightDelta(figi=Figi("F"), delta=0.25),),
             nav=100_000.0,
-            instrument_metas={"F": InstrumentSizing(currency="USD", size_increment=1.0)},
+            instrument_metas={Figi("F"): InstrumentSizing(currency="USD", size_increment=1.0)},
             fx_rates={},  # no USD
-            prices={"F": 100.0},
+            prices={Figi("F"): 100.0},
         )
         assert orders == ()
 
@@ -63,9 +63,9 @@ class TestSizeDeltas:
         orders = size_deltas(
             (WeightDelta(figi=Figi("F"), delta=0.000001),),
             nav=100_000.0,
-            instrument_metas={"F": InstrumentSizing(currency="EUR", size_increment=1.0)},
+            instrument_metas={Figi("F"): InstrumentSizing(currency="EUR", size_increment=1.0)},
             fx_rates={"EUR": 1.0},
-            prices={"F": 100.0},
+            prices={Figi("F"): 100.0},
         )
         assert orders == ()
 

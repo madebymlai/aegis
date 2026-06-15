@@ -16,7 +16,7 @@ from aegis_trader.domain.allocator import (
     risk_contribution_shares,
 )
 from aegis_trader.domain.book_config import DrawdownDeleverCurve
-from aegis_trader.domain.types import SleeveName
+from aegis_trader.domain.types import Figi, SleeveName
 
 _TREND = SleeveName("trend")
 _CARRY = SleeveName("carry")
@@ -25,7 +25,7 @@ _TAIL = SleeveName("tail")
 
 def test_equal_vols_make_multipliers_track_risk_shares():
     allocation = allocate_diagonal_vol_target(
-        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        sleeve_targets={_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}},
         risk_shares={_TREND: 0.75, _CARRY: 0.25},
         realized_vols={_TREND: 0.10, _CARRY: 0.10},
         book_vol_target=0.09,
@@ -37,7 +37,7 @@ def test_equal_vols_make_multipliers_track_risk_shares():
 
 def test_higher_vol_sleeve_is_scaled_down_to_hold_its_share():
     allocation = allocate_diagonal_vol_target(
-        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        sleeve_targets={_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.20},
         book_vol_target=0.10,
@@ -50,7 +50,7 @@ def test_higher_vol_sleeve_is_scaled_down_to_hold_its_share():
 
 def test_diagonal_book_hits_vol_target():
     allocation = allocate_diagonal_vol_target(
-        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        sleeve_targets={_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.20},
         book_vol_target=0.09,
@@ -65,7 +65,7 @@ def test_diagonal_book_hits_vol_target():
 def test_missing_or_zero_vol_fails_closed():
     with pytest.raises(ValueError, match="missing realized vol"):
         allocate_diagonal_vol_target(
-            sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+            sleeve_targets={_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}},
             risk_shares={_TREND: 0.5, _CARRY: 0.5},
             realized_vols={_TREND: 0.10},
             book_vol_target=0.09,
@@ -73,7 +73,7 @@ def test_missing_or_zero_vol_fails_closed():
 
     with pytest.raises(ValueError, match="degenerate realized vol"):
         allocate_diagonal_vol_target(
-            sleeve_targets={_TREND: {"A": 1.0}},
+            sleeve_targets={_TREND: {Figi("A"): 1.0}},
             risk_shares={_TREND: 1.0},
             realized_vols={_TREND: 0.0},
             book_vol_target=0.09,
@@ -82,18 +82,18 @@ def test_missing_or_zero_vol_fails_closed():
 
 def test_warmup_without_vols_falls_back_to_raw_risk_share():
     allocation = allocate_diagonal_vol_target(
-        sleeve_targets={_TREND: {"A": 0.5}, _CARRY: {"B": -0.25}},
+        sleeve_targets={_TREND: {Figi("A"): 0.5}, _CARRY: {Figi("B"): -0.25}},
         risk_shares={_TREND: 0.6, _CARRY: 0.4},
         realized_vols=None,
         book_vol_target=0.09,
     )
 
-    assert allocation.scaled_targets[_TREND]["A"] == pytest.approx(0.30)
-    assert allocation.scaled_targets[_CARRY]["B"] == pytest.approx(-0.10)
+    assert allocation.scaled_targets[_TREND][Figi("A")] == pytest.approx(0.30)
+    assert allocation.scaled_targets[_CARRY][Figi("B")] == pytest.approx(-0.10)
 
 
 def test_covariance_zero_correlation_reproduces_diagonal_result():
-    sleeve_targets = {_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}}
+    sleeve_targets = {_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}}
     risk_shares = {_TREND: 0.75, _CARRY: 0.25}
     vols = {_TREND: 0.10, _CARRY: 0.20}
     diagonal = allocate_diagonal_vol_target(
@@ -118,7 +118,7 @@ def test_covariance_zero_correlation_reproduces_diagonal_result():
 
 
 def test_correlated_sleeves_receive_smaller_combined_weight_than_uncorrelated():
-    sleeve_targets = {_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}}
+    sleeve_targets = {_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}}
     risk_shares = {_TREND: 0.5, _CARRY: 0.5}
     uncorrelated = allocate_covariance_vol_target(
         sleeve_targets=sleeve_targets,
@@ -155,7 +155,7 @@ def test_top_down_group_split_prevents_correlated_cluster_dominating_book_risk()
     }
 
     allocation = allocate_covariance_vol_target(
-        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}, _TAIL: {"C": 1.0}},
+        sleeve_targets={_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}, _TAIL: {Figi("C"): 1.0}},
         risk_shares={_TREND: 0.25, _CARRY: 0.25, _TAIL: 0.5},
         realized_covariance=covariance,
         book_vol_target=0.09,
@@ -171,7 +171,7 @@ def test_top_down_group_split_prevents_correlated_cluster_dominating_book_risk()
 
 def test_sleeve_weight_band_suppresses_inside_band_churn():
     allocation = allocate_diagonal_vol_target(
-        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        sleeve_targets={_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.101},
         book_vol_target=0.09,
@@ -185,20 +185,20 @@ def test_sleeve_weight_band_suppresses_inside_band_churn():
 
     assert allocation.multipliers[_TREND] == pytest.approx(0.6363961030678927)
     assert allocation.multipliers[_CARRY] == pytest.approx(0.6363961030678927)
-    assert allocation.scaled_targets[_CARRY]["B"] == pytest.approx(0.6363961030678927)
+    assert allocation.scaled_targets[_CARRY][Figi("B")] == pytest.approx(0.6363961030678927)
 
 
 def test_sleeve_weight_band_reverts_partially_after_breach():
     previous = 0.6363961030678927
     full_target = allocate_diagonal_vol_target(
-        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        sleeve_targets={_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.102},
         book_vol_target=0.09,
     )
 
     allocation = allocate_diagonal_vol_target(
-        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        sleeve_targets={_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.102},
         book_vol_target=0.09,
@@ -223,7 +223,7 @@ def test_floor_skew_constraint_keeps_book_net_convex_without_cutting_trend_below
         _CARRY: (0.03, 0.02, 0.03, 0.01, -0.50, 0.02, 0.03, -0.40),
     }
     unconstrained = allocate_covariance_vol_target(
-        sleeve_targets={_TREND: {"TREND": 1.0}, _CARRY: {"CARRY": 1.0}},
+        sleeve_targets={_TREND: {Figi("TREND"): 1.0}, _CARRY: {Figi("CARRY"): 1.0}},
         risk_shares={_TREND: 0.6, _CARRY: 0.4},
         realized_covariance={
             _TREND: {_TREND: 0.10**2, _CARRY: 0.0},
@@ -235,7 +235,7 @@ def test_floor_skew_constraint_keeps_book_net_convex_without_cutting_trend_below
     assert portfolio_skew(unconstrained.multipliers, returns) < 0.0
 
     constrained = allocate_covariance_vol_target(
-        sleeve_targets={_TREND: {"TREND": 1.0}, _CARRY: {"CARRY": 1.0}},
+        sleeve_targets={_TREND: {Figi("TREND"): 1.0}, _CARRY: {Figi("CARRY"): 1.0}},
         risk_shares={_TREND: 0.6, _CARRY: 0.4},
         realized_covariance={
             _TREND: {_TREND: 0.10**2, _CARRY: 0.0},
@@ -281,7 +281,7 @@ def _drawdown_delevered_gross_exposure(
     drawdown: float,
 ) -> float:
     allocation = allocate_diagonal_vol_target(
-        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        sleeve_targets={_TREND: {Figi("A"): 1.0}, _CARRY: {Figi("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.10},
         book_vol_target=0.09,

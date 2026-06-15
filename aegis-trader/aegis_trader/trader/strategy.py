@@ -57,7 +57,7 @@ from aegis_trader.domain.integrity import IntegrityReport, check_account_integri
 from aegis_trader.domain.rebalancer import rebalance_plan
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
-from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
+from aegis_trader.domain.types import Figi, OrderIntent, OrderSide, SleeveName
 from aegis_trader.execution.figi_resolver import (
     FigiInstrumentResolver,
     FigiResolutionError,
@@ -439,7 +439,10 @@ class RebalanceStrategy(Strategy):
                 nav=nav,
                 realized_weights=dict(realized_weights),
                 sleeve_targets={
-                    name: target_df.iloc[-1].to_dict()
+                    name: {
+                        Figi(str(figi)): float(weight)
+                        for figi, weight in target_df.iloc[-1].to_dict().items()
+                    }
                     for name, target_df in pending.items()
                 },
                 closes=dict(prices),
@@ -568,17 +571,17 @@ class RebalanceStrategy(Strategy):
 
     def _collect_sizing_params(
         self,
-    ) -> tuple[dict[str, InstrumentSizing], dict[str, float], dict[str, float]]:
+    ) -> tuple[dict[Figi, InstrumentSizing], dict[str, float], dict[Figi, float]]:
         """Gather per-FIGI instrument metadata, FX rates, and latest close
         prices from Nautilus for sizing.
 
-        Returns three dicts keyed by FIGI (instrument_metas/prices) or
+        Returns three dicts keyed by :class:`Figi` (instrument_metas/prices) or
         currency (fx_rates).  An instrument that cannot be resolved from the
         cache is silently omitted (the rebalancer will fall back to raw
         notional for it).
         """
-        instrument_metas: dict[str, InstrumentSizing] = {}
-        prices: dict[str, float] = {}
+        instrument_metas: dict[Figi, InstrumentSizing] = {}
+        prices: dict[Figi, float] = {}
         currencies: set[str] = set()
 
         # Collect all FIGIs from all sleeves
@@ -592,11 +595,12 @@ class RebalanceStrategy(Strategy):
             if sizing is None:
                 continue
 
-            instrument_metas[figi_str] = sizing
+            figi = Figi(figi_str)
+            instrument_metas[figi] = sizing
 
             buf = self._bars_buffer.get(instr_id)
             if buf:
-                prices[figi_str] = float(buf[-1].close.as_double())
+                prices[figi] = float(buf[-1].close.as_double())
 
             currencies.add(sizing.currency)
 

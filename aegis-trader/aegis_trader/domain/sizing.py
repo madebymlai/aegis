@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from aegis_trader.domain.types import OrderIntent, WeightDelta
+from aegis_trader.domain.types import Figi, OrderIntent, WeightDelta
 
 _PENCE_FACTOR = 100.0
 _GBP_CURRENCY = "GBp"
@@ -75,9 +75,9 @@ def size_deltas(
     deltas: tuple[WeightDelta, ...],
     nav: float,
     *,
-    instrument_metas: Mapping[str, InstrumentSizing],
+    instrument_metas: Mapping[Figi, InstrumentSizing],
     fx_rates: Mapping[str, float],
-    prices: Mapping[str, float],
+    prices: Mapping[Figi, float],
 ) -> tuple[OrderIntent, ...]:
     """Convert signed weight deltas into sized, provider-agnostic orders.
 
@@ -96,8 +96,8 @@ def size_deltas(
 
     orders: list[OrderIntent] = []
     for d in deltas:
-        meta = instrument_metas.get(d.figi.value)
-        price = prices.get(d.figi.value)
+        meta = instrument_metas.get(d.figi)
+        price = prices.get(d.figi)
         if meta is None or price is None:
             continue
         fx_rate = fx_rates.get(meta.currency)

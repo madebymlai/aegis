@@ -30,7 +30,7 @@ from aegis_runtime import (
 )
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
-from aegis_trader.domain.types import SleeveName
+from aegis_trader.domain.types import Figi, SleeveName
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _FIGI = "BBG000C6K6G9"  # a London-listed name (GBP)
@@ -242,8 +242,8 @@ def test_held_gbp_position_surfaces_in_realized_weights_via_mark_xrate():
     )
 
     weights = book_state.realized_weights()
-    assert _FIGI in weights, "The held GBP sleeve must surface in realized_weights"
-    assert weights[_FIGI] == pytest.approx(0.5, rel=5e-2)
+    assert Figi(_FIGI) in weights, "The held GBP sleeve must surface in realized_weights"
+    assert weights[Figi(_FIGI)] == pytest.approx(0.5, rel=5e-2)
     engine.dispose()
 
 
@@ -310,7 +310,7 @@ def test_overlay_marks_fx_from_quotes_so_non_base_sleeve_trades_and_surfaces():
         portfolio=engine.portfolio, cache=engine.cache,
         base_currency=EUR, instr_to_figi={gbp_id.value: _FIGI},
     )
-    assert _FIGI in book_state.realized_weights(), (
+    assert Figi(_FIGI) in book_state.realized_weights(), (
         "The GBP sleeve must surface in realized_weights from the FX-quote-derived mark"
     )
     engine.dispose()

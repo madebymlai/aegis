@@ -16,7 +16,7 @@ from aegis_trader.domain.book_config import (
     TailConvexityBudget,
 )
 from aegis_trader.domain.rebalancer import rebalance, rebalance_plan
-from aegis_trader.domain.types import SleeveName
+from aegis_trader.domain.types import Figi, SleeveName
 
 _TREND = SleeveName("trend")
 _CARRY = SleeveName("carry")
@@ -83,15 +83,15 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
     periods = [
         AttributionPeriod(
             nav=nav,
-            realized_weights=weights,
-            sleeve_targets={_TREND: {"TREND": 1.0}, _TAIL: {"TAIL": 1.0}},
-            closes={"TREND": 100.0, "TAIL": 100.0},
+            realized_weights={Figi(k): v for k, v in weights.items()},
+            sleeve_targets={_TREND: {Figi("TREND"): 1.0}, _TAIL: {Figi("TAIL"): 1.0}},
+            closes={Figi("TREND"): 100.0, Figi("TAIL"): 100.0},
         ),
         AttributionPeriod(
             nav=nav,
-            realized_weights=weights,
-            sleeve_targets={_TREND: {"TREND": 1.0}, _TAIL: {"TAIL": 1.0}},
-            closes={"TREND": 101.0, "TAIL": 98.0},
+            realized_weights={Figi(k): v for k, v in weights.items()},
+            sleeve_targets={_TREND: {Figi("TREND"): 1.0}, _TAIL: {Figi("TAIL"): 1.0}},
+            closes={Figi("TREND"): 101.0, Figi("TAIL"): 98.0},
         ),
     ]
     attribution = compute_sleeve_attribution(
@@ -107,7 +107,7 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
 
 
 def test_five_year_tail_convexity_budget_bounds_target_risk_and_zeros_expansion():
-    """A convexity-unit Target budget keeps the tail from dominating risk."""
+    """A convexity-premium Target budget keeps the tail from dominating risk."""
     days = 252 * 5
     x = np.linspace(0.0, 50.0 * np.pi, days)
     trend_returns = 0.10 / np.sqrt(252.0) * np.sin(x)
