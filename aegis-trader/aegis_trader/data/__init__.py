@@ -5,7 +5,9 @@ of truth shared by the LOAD and SUBSCRIBE sides."""
 
 from aegis_trader.data.backtest_data import (
     InstrumentSpec,
+    build_currency_pair,
     build_equity,
+    flat_fx_quotes,
     wrangle_bars,
 )
 from aegis_trader.data.bar_type import (
@@ -24,7 +26,9 @@ __all__ = [
     "NautilusMarketData",
     "UnsupportedTimeframeError",
     "bar_type",
+    "build_currency_pair",
     "build_equity",
+    "flat_fx_quotes",
     "resolve_book_timeframe",
     "timeframe_to_ns",
     "wrangle_bars",

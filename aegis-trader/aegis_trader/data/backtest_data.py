@@ -16,13 +16,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
-from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import Bar, QuoteTick
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
-from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.instruments import CurrencyPair, Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.wranglers import BarDataWrangler
 
 from aegis_trader.data.bar_type import bar_type
+
+_FX_PRICE_PRECISION = 5
+_FX_SIZE = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -61,3 +64,50 @@ def wrangle_bars(instrument: Equity, ohlcv: pd.DataFrame, timeframe: str) -> lis
     (the contract timeframe; the LAST-EXTERNAL bar type is derived from it)."""
     wrangler = BarDataWrangler(bar_type(instrument.id.value, timeframe), instrument)
     return wrangler.process(ohlcv)
+
+
+def build_currency_pair(base_currency: str, quote_currency: str, venue: str) -> CurrencyPair:
+    """A spot FX ``CurrencyPair`` (``base/quote``) on *venue*.
+
+    Backtests feed FX the same way live does — as a quote-tick'd reference pair —
+    so the overlay marks the cache xrate from it (``on_quote_tick``) and the
+    accounting layer values foreign legs from the same quotes.
+    """
+    symbol = Symbol(f"{base_currency}/{quote_currency}")
+    return CurrencyPair(
+        instrument_id=InstrumentId(symbol=symbol, venue=Venue(venue)),
+        raw_symbol=symbol,
+        base_currency=Currency.from_str(base_currency),
+        quote_currency=Currency.from_str(quote_currency),
+        price_precision=_FX_PRICE_PRECISION,
+        size_precision=0,
+        price_increment=Price(10 ** -_FX_PRICE_PRECISION, _FX_PRICE_PRECISION),
+        size_increment=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )
+
+
+def flat_fx_quotes(
+    pair: CurrencyPair, rate: float, index: pd.DatetimeIndex
+) -> list[QuoteTick]:
+    """Constant ``bid == ask == rate`` quotes for *pair* across *index*.
+
+    The flat-FX backtest approximation: one quote per timestamp at the fetched
+    rate, enough for the overlay to mark the xrate and for the accounting layer
+    to value foreign positions in the book's base currency.
+    """
+    price = Price(rate, _FX_PRICE_PRECISION)
+    size = Quantity.from_int(_FX_SIZE)
+    return [
+        QuoteTick(
+            instrument_id=pair.id,
+            bid_price=price,
+            ask_price=price,
+            bid_size=size,
+            ask_size=size,
+            ts_event=ts.value,
+            ts_init=ts.value,
+        )
+        for ts in index
+    ]

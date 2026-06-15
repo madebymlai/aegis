@@ -28,7 +28,9 @@ from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
 from aegis_trader.data import (
     InstrumentSpec,
+    build_currency_pair,
     build_equity,
+    flat_fx_quotes,
     resolve_book_timeframe,
     wrangle_bars,
 )
@@ -99,6 +101,7 @@ def run_book_backtest(
 
     bimap: dict[str, object] = {}
     fx_currencies: set[str] = set()
+    bar_index: set[pd.Timestamp] = set()
     for sleeve_name, bundle in sleeves:
         fx_currencies |= set(bundle.contract.required_fx_currencies)
         for figi, ticker in zip(bundle.contract.figis, bundle.symbols, strict=True):
@@ -124,15 +127,23 @@ def run_book_backtest(
                 min_rows=bundle.contract.lookback_bars + 1,
             )
             ohlcv = _normalize(raw, scale)
+            bar_index |= set(ohlcv.index)
             engine.add_instrument(instrument)
             engine.add_data(wrangle_bars(instrument, ohlcv, book_timeframe))
             bimap[figi] = instrument.id
 
+    # FX as quote-tick'd CurrencyPair instruments (same path as live): the
+    # overlay's on_quote_tick mirrors these into cache mark xrates for sizing,
+    # and the accounting layer values foreign legs from the same quotes — so a
+    # bar-fed backtest no longer fails to compute account-state exchange rates.
+    fx_index = pd.DatetimeIndex(sorted(bar_index))
     for ccy in fx_currencies:
         if ccy == book.base_currency:
             continue
         rate = fetch_fx(book.base_currency, ccy, start, end)
-        engine.cache.set_mark_xrate(base, Currency.from_str(ccy), rate)
+        pair = build_currency_pair(book.base_currency, ccy, venue)
+        engine.add_instrument(pair)
+        engine.add_data(flat_fx_quotes(pair, rate, fx_index))
 
     strategy = RebalanceStrategy(RebalanceStrategyConfig(book=book, fill_time_in_force=None))
     for name, bundle in sleeves:

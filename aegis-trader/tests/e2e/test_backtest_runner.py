@@ -52,15 +52,18 @@ class _FixedWeightBundle(ExecutionBundle):
         weight: float,
         required_arrays: tuple[str, ...] = ("Close",),
         timeframe: str = "1D",
+        currency: str = "EUR",
+        required_fx_currencies: tuple[str, ...] = (),
     ) -> None:
         self._figi = figi
         self._weight = weight
+        self._currency = currency
         self.seen_arrays: tuple[str, ...] = ()
         contract = DataContract(
             figis=(figi,),
             required_arrays=required_arrays,
             base_currency="EUR",
-            required_fx_currencies=(),
+            required_fx_currencies=required_fx_currencies,
             timeframe=timeframe,
             lookback_bars=1,
         )
@@ -85,7 +88,7 @@ class _FixedWeightBundle(ExecutionBundle):
             net_cap=None,
             direction="both",
             symbols=(figi,),
-            currency_by_symbol={figi: "EUR"},
+            currency_by_symbol={figi: self._currency},
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
@@ -269,3 +272,29 @@ def test_run_book_backtest_fails_closed_when_lookback_is_not_satisfied(tmp_path)
         )
 
     assert _FIGI in str(exc.value)
+
+
+def test_run_book_backtest_values_foreign_positions_without_xrate_noise(capfd, tmp_path):
+    """A non-base (USD) sleeve is valued in EUR via the mark xrate the runner
+    sets — the portfolio must not spam 'Cannot calculate exchange rate' because
+    it tried to derive FX from quote ticks that a bar-fed backtest never has."""
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    bundle = _FixedWeightBundle(
+        _FIGI, 0.5, currency="USD", required_fx_currencies=("USD",)
+    )
+    registry = StubBundleRegistry({_WHEEL: bundle})
+    ohlcv = _synthetic_ohlcv()
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=lambda base, quote, start, end: 1.10,  # EUR->USD
+        registry=registry,
+    )
+    engine.dispose()
+
+    captured = capfd.readouterr()
+    assert "Cannot calculate exchange rate" not in (captured.out + captured.err)
