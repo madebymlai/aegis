@@ -29,6 +29,55 @@ class RiskGroup(StrEnum):
 
 
 @dataclass(frozen=True)
+class DrawdownDeleverCurve:
+    """Book-level exposure multiplier as realized drawdown deepens.
+
+    The curve is deliberately one-way risk conditioning: it maps the current
+    realized drawdown to a scalar in ``[floor_multiplier, 1]`` and is applied to
+    the whole allocator output.  It never increases exposure above the
+    vol-targeted allocation.
+    """
+
+    start_drawdown: float
+    end_drawdown: float
+    floor_multiplier: float
+
+    def __post_init__(self) -> None:
+        if (
+            not math.isfinite(self.start_drawdown)
+            or self.start_drawdown < 0.0
+            or self.start_drawdown >= 1.0
+        ):
+            raise ValueError("start_drawdown must be finite in [0, 1)")
+        if (
+            not math.isfinite(self.end_drawdown)
+            or self.end_drawdown <= self.start_drawdown
+            or self.end_drawdown > 1.0
+        ):
+            raise ValueError("end_drawdown must be finite and greater than start_drawdown, up to 1")
+        if (
+            not math.isfinite(self.floor_multiplier)
+            or self.floor_multiplier < 0.0
+            or self.floor_multiplier > 1.0
+        ):
+            raise ValueError("floor_multiplier must be finite in [0, 1]")
+
+    def multiplier_for(self, drawdown: float) -> float:
+        """Return the exposure multiplier for a realized drawdown fraction."""
+        if not math.isfinite(drawdown):
+            raise ValueError("drawdown must be finite")
+        bounded = min(max(float(drawdown), 0.0), 1.0)
+        if bounded <= self.start_drawdown:
+            return 1.0
+        if bounded >= self.end_drawdown:
+            return self.floor_multiplier
+        progress = (bounded - self.start_drawdown) / (
+            self.end_drawdown - self.start_drawdown
+        )
+        return 1.0 - progress * (1.0 - self.floor_multiplier)
+
+
+@dataclass(frozen=True)
 class SleeveConfig:
     """One sleeve in the book — a notional sub-portfolio backed by one bundle.
 
@@ -78,6 +127,7 @@ class BookConfig:
     base_currency: str = "EUR"
     book_vol_target: float = 0.09
     sleeve_reversion_fraction: float = 1.0
+    drawdown_delever: DrawdownDeleverCurve | None = None
 
     # Gross cap stays authoritative after risk-budget scaling.  It is no longer
     # derived from static capital budgets; the allocator produces the requested

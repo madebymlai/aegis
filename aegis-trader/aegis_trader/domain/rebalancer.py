@@ -58,6 +58,7 @@ def rebalance(
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
     previous_sleeve_weights: dict[SleeveName, float] | None = None,
     realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None = None,
+    realized_drawdown: float | None = None,
 ) -> tuple[WeightDelta, ...]:
     """Net per-sleeve target weights into signed weight deltas to trade."""
     return rebalance_plan(
@@ -68,6 +69,7 @@ def rebalance(
         realized_covariance=realized_covariance,
         previous_sleeve_weights=previous_sleeve_weights,
         realized_skew_returns=realized_skew_returns,
+        realized_drawdown=realized_drawdown,
     ).deltas
 
 
@@ -80,6 +82,7 @@ def rebalance_plan(
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
     previous_sleeve_weights: dict[SleeveName, float] | None = None,
     realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None = None,
+    realized_drawdown: float | None = None,
 ) -> RebalancePlan:
     """Net per-sleeve target weights into a complete rebalance plan.
 
@@ -98,12 +101,13 @@ def rebalance_plan(
     *realized_covariance* is the covariance-aware allocator input.  During
     warmup callers pass ``None`` and the allocator falls back to raw risk
     shares.  ``realized_vols`` is retained for the diagonal tracer path and is
-    used only when covariance is absent.  ``realized_skew_returns`` carries
-    same-horizon sleeve returns for the Floor net-convex skew constraint.
+    used only when covariance is absent.  ``realized_drawdown`` is the current
+    book drawdown fraction; when the book declares a drawdown-de-lever curve it
+    scales the whole allocation down after risk budgeting.  ``realized_skew_returns``
+    carries same-horizon sleeve returns for the Floor net-convex skew constraint.
 
     ``previous_sleeve_weights`` and the sleeve-band parameters carry the
-    per-sleeve no-churn bands from the previous rebalance (Slice 4.3).  ``realized_skew_returns`` carries
-    same-horizon sleeve returns for the Floor net-convex skew constraint.
+    per-sleeve no-churn bands from the previous rebalance (Slice 4.3).
 
     Returns the signed weight deltas to trade (fraction of NAV) and the applied
     sleeve weights that Strategy keeps for the next period's sleeve-band check.
@@ -125,6 +129,7 @@ def rebalance_plan(
         realized_covariance=realized_covariance,
         previous_sleeve_weights=previous_sleeve_weights,
         realized_skew_returns=realized_skew_returns,
+        realized_drawdown=realized_drawdown,
     )
 
     net_target_by_figi: dict[str, float] = {}
@@ -212,6 +217,7 @@ def _allocate_sleeves(
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None,
     previous_sleeve_weights: dict[SleeveName, float] | None,
     realized_skew_returns: dict[SleeveName, tuple[float, ...]] | None = None,
+    realized_drawdown: float | None = None,
 ) -> Allocation:
     risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
     sleeve_weight_bands = _sleeve_weight_bands(book)
@@ -229,6 +235,8 @@ def _allocate_sleeves(
             sleeve_weight_bands=sleeve_weight_bands,
             sleeve_reversion_fraction=book.sleeve_reversion_fraction,
             skew_constraint=skew_constraint,
+            realized_drawdown=realized_drawdown,
+            drawdown_delever_curve=book.drawdown_delever,
         )
 
     return allocate_diagonal_vol_target(
@@ -239,6 +247,8 @@ def _allocate_sleeves(
         previous_multipliers=previous_sleeve_weights,
         sleeve_weight_bands=sleeve_weight_bands,
         sleeve_reversion_fraction=book.sleeve_reversion_fraction,
+        realized_drawdown=realized_drawdown,
+        drawdown_delever_curve=book.drawdown_delever,
     )
 
 
