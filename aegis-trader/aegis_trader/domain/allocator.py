@@ -65,13 +65,11 @@ def allocate_diagonal_vol_target(
     if not active:
         return Allocation(multipliers={}, scaled_targets={})
     if realized_vols is None:
-        return _allocation_from_multipliers(
+        return _delevered_allocation(
             sleeve_targets,
-            _apply_drawdown_delever(
-                _risk_share_multipliers(active, risk_shares),
-                realized_drawdown=realized_drawdown,
-                curve=drawdown_delever_curve,
-            ),
+            _risk_share_multipliers(active, risk_shares),
+            realized_drawdown=realized_drawdown,
+            curve=drawdown_delever_curve,
         )
 
     vols = _validate_vols(active, realized_vols)
@@ -85,13 +83,11 @@ def allocate_diagonal_vol_target(
 
     scale = book_vol_target / raw_vol
     multipliers = {name: multiplier * scale for name, multiplier in raw.items()}
-    return _allocation_from_multipliers(
+    return _delevered_allocation(
         sleeve_targets,
-        _apply_drawdown_delever(
-            multipliers,
-            realized_drawdown=realized_drawdown,
-            curve=drawdown_delever_curve,
-        ),
+        multipliers,
+        realized_drawdown=realized_drawdown,
+        curve=drawdown_delever_curve,
     )
 
 
@@ -123,13 +119,11 @@ def allocate_covariance_vol_target(
     if not active:
         return Allocation(multipliers={}, scaled_targets={})
     if realized_covariance is None:
-        return _allocation_from_multipliers(
+        return _delevered_allocation(
             sleeve_targets,
-            _apply_drawdown_delever(
-                _risk_share_multipliers(active, risk_shares),
-                realized_drawdown=realized_drawdown,
-                curve=drawdown_delever_curve,
-            ),
+            _risk_share_multipliers(active, risk_shares),
+            realized_drawdown=realized_drawdown,
+            curve=drawdown_delever_curve,
         )
 
     covariance = _covariance_matrix(active, realized_covariance)
@@ -152,13 +146,11 @@ def allocate_covariance_vol_target(
         name: multiplier * scale
         for name, multiplier in composition_by_name.items()
     }
-    return _allocation_from_multipliers(
+    return _delevered_allocation(
         sleeve_targets,
-        _apply_drawdown_delever(
-            multipliers,
-            realized_drawdown=realized_drawdown,
-            curve=drawdown_delever_curve,
-        ),
+        multipliers,
+        realized_drawdown=realized_drawdown,
+        curve=drawdown_delever_curve,
     )
 
 
@@ -236,6 +228,23 @@ def _validate_book_vol_target(book_vol_target: float) -> None:
         raise ValueError(f"book_vol_target must be positive, got {book_vol_target!r}")
 
 
+def _delevered_allocation(
+    sleeve_targets: Mapping[SleeveName, Mapping[str, float]],
+    multipliers: Mapping[SleeveName, float],
+    *,
+    realized_drawdown: float | None,
+    curve: DrawdownDeleverCurve | None,
+) -> Allocation:
+    return _allocation_from_multipliers(
+        sleeve_targets,
+        _apply_drawdown_delever(
+            multipliers,
+            realized_drawdown=realized_drawdown,
+            curve=curve,
+        ),
+    )
+
+
 def _apply_drawdown_delever(
     multipliers: Mapping[SleeveName, float],
     *,
@@ -244,7 +253,9 @@ def _apply_drawdown_delever(
 ) -> dict[SleeveName, float]:
     if curve is None:
         return {name: float(multiplier) for name, multiplier in multipliers.items()}
-    exposure_multiplier = curve.multiplier_for(0.0 if realized_drawdown is None else realized_drawdown)
+
+    drawdown = 0.0 if realized_drawdown is None else realized_drawdown
+    exposure_multiplier = curve.multiplier_for(drawdown)
     return {
         name: float(multiplier) * exposure_multiplier
         for name, multiplier in multipliers.items()

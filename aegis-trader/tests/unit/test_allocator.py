@@ -172,25 +172,33 @@ def test_drawdown_delever_scales_exposure_monotonically_and_recovers():
         end_drawdown=0.25,
         floor_multiplier=0.40,
     )
-    sleeve_targets = {_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}}
-    risk_shares = {_TREND: 0.5, _CARRY: 0.5}
-    vols = {_TREND: 0.10, _CARRY: 0.10}
 
-    exposures = []
-    for drawdown in (0.00, 0.10, 0.20, 0.25, 0.10, 0.00):
-        allocation = allocate_diagonal_vol_target(
-            sleeve_targets=sleeve_targets,
-            risk_shares=risk_shares,
-            realized_vols=vols,
-            book_vol_target=0.09,
-            realized_drawdown=drawdown,
-            drawdown_delever_curve=curve,
-        )
-        exposures.append(sum(abs(v) for v in allocation.multipliers.values()))
+    no_drawdown = _drawdown_delevered_gross_exposure(curve, drawdown=0.00)
+    mild_drawdown = _drawdown_delevered_gross_exposure(curve, drawdown=0.10)
+    deep_drawdown = _drawdown_delevered_gross_exposure(curve, drawdown=0.20)
+    floor_drawdown = _drawdown_delevered_gross_exposure(curve, drawdown=0.25)
+    recovered_to_mild = _drawdown_delevered_gross_exposure(curve, drawdown=0.10)
+    fully_recovered = _drawdown_delevered_gross_exposure(curve, drawdown=0.00)
 
-    assert exposures[0] > exposures[1] > exposures[2] > exposures[3]
-    assert exposures[4] == pytest.approx(exposures[1])
-    assert exposures[5] == pytest.approx(exposures[0])
+    assert no_drawdown > mild_drawdown > deep_drawdown > floor_drawdown
+    assert recovered_to_mild == pytest.approx(mild_drawdown)
+    assert fully_recovered == pytest.approx(no_drawdown)
+
+
+def _drawdown_delevered_gross_exposure(
+    curve: DrawdownDeleverCurve,
+    *,
+    drawdown: float,
+) -> float:
+    allocation = allocate_diagonal_vol_target(
+        sleeve_targets={_TREND: {"A": 1.0}, _CARRY: {"B": 1.0}},
+        risk_shares={_TREND: 0.5, _CARRY: 0.5},
+        realized_vols={_TREND: 0.10, _CARRY: 0.10},
+        book_vol_target=0.09,
+        realized_drawdown=drawdown,
+        drawdown_delever_curve=curve,
+    )
+    return sum(abs(multiplier) for multiplier in allocation.multipliers.values())
 
 
 def test_multi_name_default_equal_risk_contribution_scales_high_vol_name_down():
