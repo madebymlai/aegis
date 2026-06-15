@@ -12,11 +12,11 @@ import pandas as pd
 import pytest
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.currencies import EUR, GBP
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
-from nautilus_trader.model.instruments import Instrument
-from nautilus_trader.model.objects import Money
+from nautilus_trader.model.identifiers import InstrumentId, Symbol, TraderId, Venue
+from nautilus_trader.model.instruments import CurrencyPair, Instrument
+from nautilus_trader.model.objects import Money, Price, Quantity
 
 from conftest import gbp_equity
 
@@ -244,4 +244,73 @@ def test_held_gbp_position_surfaces_in_realized_weights_via_mark_xrate():
     weights = book_state.realized_weights()
     assert _FIGI in weights, "The held GBP sleeve must surface in realized_weights"
     assert weights[_FIGI] == pytest.approx(0.5, rel=5e-2)
+    engine.dispose()
+
+
+# -- the FX feed: marks maintained from live FX quotes (no manual set_mark_xrate) -
+#
+# In live the venue streams FX CurrencyPair quotes; the overlay turns them into
+# the cache mark xrate that BOTH the sizer and realized_weights read.  This is
+# the mechanism that replaces the backtest's manual set_mark_xrate in paper/live.
+
+def _fx_pair_eurgbp() -> CurrencyPair:
+    """EUR/GBP reference pair (price = GBP per 1 EUR)."""
+    symbol = Symbol("EUR/GBP")
+    return CurrencyPair(
+        instrument_id=InstrumentId(symbol=symbol, venue=VENUE), raw_symbol=symbol,
+        base_currency=EUR, quote_currency=GBP, price_precision=5, size_precision=0,
+        price_increment=Price.from_str("0.00001"), size_increment=Quantity.from_int(1),
+        lot_size=None, max_quantity=None, min_quantity=None, max_notional=None,
+        min_notional=None, max_price=None, min_price=None, margin_init=0,
+        margin_maint=0, maker_fee=0, taker_fee=0, ts_event=0, ts_init=0,
+    )
+
+
+def _fx_quotes(pair: CurrencyPair, rate: float, n: int = 5) -> list[QuoteTick]:
+    """A flat top-of-book quote series carrying *rate* (quote per 1 base)."""
+    p = pair.make_price(rate)
+    interval, ts, out = 86_400_000_000_000, 0, []
+    for _ in range(n):
+        out.append(QuoteTick(
+            instrument_id=pair.id, bid_price=p, ask_price=p,
+            bid_size=Quantity.from_int(1_000_000), ask_size=Quantity.from_int(1_000_000),
+            ts_event=ts, ts_init=ts,
+        ))
+        ts += interval
+    return out
+
+
+def test_overlay_marks_fx_from_quotes_so_non_base_sleeve_trades_and_surfaces():
+    """With FX quotes flowing (and NO manual set_mark_xrate), the overlay marks
+    the cache from them, so the GBP sleeve both sizes/fills (sizer reads the mark)
+    and surfaces in realized_weights (valuation reads the same mark)."""
+    engine = BacktestEngine(BacktestEngineConfig(trader_id=TraderId("FX-FEED-E2E"), logging=None))
+    engine.add_venue(
+        VENUE, oms_type=OmsType.NETTING, account_type=AccountType.MARGIN,
+        base_currency=EUR, starting_balances=[Money(100_000, EUR)], book_type=BookType.L1_MBP,
+    )
+    engine.add_instrument(_make_instrument())  # GBP equity
+    fx = _fx_pair_eurgbp()
+    engine.add_instrument(fx)
+    engine.add_data(_fx_quotes(fx, _EURGBP))   # the FX feed — NO set_mark_xrate
+    engine.add_data(_make_bars([85.0, 85.0, 85.0, 85.0, 85.0]))
+
+    book = _make_book()
+    strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
+    strategy.register_sleeve(book.sleeves[0].name, _GbpBundle(0.5))
+    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    engine.add_strategy(strategy)
+    engine.run()
+
+    fills = [o for o in engine.cache.orders() if o.is_closed]
+    assert fills, "FX-quote-derived mark must let the GBP sleeve size and fill"
+
+    gbp_id = engine.cache.positions_open()[0].instrument_id
+    book_state = NautilusBookState(
+        portfolio=engine.portfolio, cache=engine.cache,
+        base_currency=EUR, instr_to_figi={gbp_id.value: _FIGI},
+    )
+    assert _FIGI in book_state.realized_weights(), (
+        "The GBP sleeve must surface in realized_weights from the FX-quote-derived mark"
+    )
     engine.dispose()

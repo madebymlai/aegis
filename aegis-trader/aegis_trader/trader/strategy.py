@@ -35,11 +35,12 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.events import OrderDenied
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
@@ -225,11 +226,38 @@ class RebalanceStrategy(Strategy):
                 BarType.from_str(f"{instr_id.value}-1-DAY-LAST-EXTERNAL")
             )
 
+        # Subscribe to FX reference-pair quotes so the cache mark xrates stay
+        # current from live data — both the sizer (MarketDataPort.fx_rate) and
+        # base valuation (NautilusBookState) read get_mark_xrate.  The overlay
+        # never trades these pairs; it only mirrors their quotes into marks
+        # (on_quote_tick).  Pairs are discovered from the reconciled cache (loaded
+        # by the venue's instrument provider in live, fed as data in backtest), so
+        # no broker-specific ids are constructed here (ADR-0003).
+        for instrument in self.cache.instruments():
+            if isinstance(instrument, CurrencyPair):
+                self.subscribe_quote_ticks(instrument.id)
+
         names = [s.value for s in self._sleeve_to_bundle]
         self.log.info(
             f"RebalanceStrategy starting; sleeves={names}, "
             f"bimap={ {f: i.value for f, i in self._figi_bimap.items()} }"
         )
+
+    def on_quote_tick(self, tick: QuoteTick) -> None:
+        """Mirror an FX reference pair's quote into the cache mark xrate.
+
+        ``set_mark_xrate`` also sets the inverse, so this is orientation- and
+        venue-agnostic: ``get_mark_xrate(base, ccy)`` then resolves whichever way
+        the pair is quoted, on whatever venue it trades.  Non-FX quotes (no
+        ``CurrencyPair`` behind them) are ignored.
+        """
+        instrument = self.cache.instrument(tick.instrument_id)
+        if not isinstance(instrument, CurrencyPair):
+            return
+        mid = (tick.bid_price.as_double() + tick.ask_price.as_double()) / 2.0
+        if mid <= 0.0:
+            return
+        self.cache.set_mark_xrate(instrument.base_currency, instrument.quote_currency, mid)
 
     def on_bar(self, bar: Bar) -> None:
         """Buffer bar and trigger a period-level rebalance when the period advances.
