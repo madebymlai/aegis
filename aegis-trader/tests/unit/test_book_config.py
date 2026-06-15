@@ -53,55 +53,13 @@ class TestBookConfig:
         assert book.sleeve_count == 2
 
 
-class TestBookConfigSlice4:
-    """Slice 4: caps, bands, provenance assertion."""
+class TestBookConfigCapsAndBands:
+    """Caps and bands declaration.
 
-    def test_per_name_cap_exceeding_research_cap_rejected(self):
-        """BookConfig per_name_cap > sleeve research_validated_cap → ValueError."""
-        with pytest.raises(ValueError, match="per_name_cap.*exceeds"):
-            BookConfig(
-                sleeves=(SleeveConfig(
-                    name=SleeveName("trend"),
-                    wheel_filename="trend.whl",
-                    budget=1.0,
-                    research_validated_cap=0.15,
-                ),),
-                per_name_cap=0.20,
-            )
-
-    def test_per_name_cap_within_research_cap_allowed(self):
-        """BookConfig per_name_cap ≤ research_validated_cap is fine."""
-        book = BookConfig(
-            sleeves=(SleeveConfig(
-                name=SleeveName("trend"),
-                wheel_filename="trend.whl",
-                budget=1.0,
-                research_validated_cap=0.15,
-            ),),
-            per_name_cap=0.12,
-        )
-        assert book.per_name_cap == 0.12
-
-    def test_per_name_cap_ok_when_no_research_cap(self):
-        """No research_validated_cap on sleeves → no provenance check."""
-        book = BookConfig(
-            sleeves=(make_sleeve("trend"),),
-            per_name_cap=0.20,
-        )
-        assert book.per_name_cap == 0.20
-
-    def test_multiple_sleeves_all_must_pass_provenance(self):
-        """Every sleeve with a research cap must be ≥ per_name_cap."""
-        with pytest.raises(ValueError, match="per_name_cap.*exceeds"):
-            BookConfig(
-                sleeves=(
-                    SleeveConfig(name=SleeveName("a"), wheel_filename="a.whl", budget=0.5,
-                                 research_validated_cap=0.15),
-                    SleeveConfig(name=SleeveName("b"), wheel_filename="b.whl", budget=0.5,
-                                 research_validated_cap=0.10),
-                ),
-                per_name_cap=0.12,  # OK for a but exceeds b's 0.10
-            )
+    Cap *provenance* (caps never exceeding the bundles' research-validated
+    ceilings) is bundle-grounded and lives in test_cap_provenance.py — it is no
+    longer a self-referential check on BookConfig.
+    """
 
     def test_default_bands(self):
         """Default bands are 0.02 symmetric."""

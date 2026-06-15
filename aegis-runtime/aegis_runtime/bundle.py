@@ -94,6 +94,18 @@ class ExecutionBundle:
         self.manifest = manifest
         self._plan = plan
 
+    @property
+    def gross_cap(self) -> float:
+        """The locked plan's gross-exposure cap (max Σ|wᵢ|) — the
+        manifest-grounded source of what research validated for this bundle."""
+        return self._plan.gross_cap
+
+    @property
+    def net_cap(self) -> float | None:
+        """The locked plan's net-exposure cap (max |Σwᵢ|), or ``None`` when the
+        plan leaves net exposure bounded only by the gross cap."""
+        return self._plan.net_cap
+
     def compute_weights(
         self,
         prices: MarketDataBundle,

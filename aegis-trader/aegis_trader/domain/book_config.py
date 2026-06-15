@@ -2,8 +2,10 @@
 the Commingled Book.
 
 Declares one or more sleeves, each bound to a content-addressed wheel filename
-with a static budget.  Caps, bands, per-instrument overrides, and
-research-validated cap provenance assertion arrive in Slice 4.
+with a static budget, plus the book's risk controls (caps, bands, per-instrument
+overrides, aggregate-drift threshold).  Cap *provenance* — that the caps never
+exceed what research validated — is grounded in the sleeves' bundles and checked
+at load by ``bundles.provenance.check_cap_provenance``, not on this config.
 """
 
 from __future__ import annotations
@@ -15,12 +17,17 @@ from aegis_trader.domain.types import SleeveName
 
 @dataclass(frozen=True)
 class SleeveConfig:
-    """One sleeve in the book — a notional sub-portfolio backed by one bundle."""
+    """One sleeve in the book — a notional sub-portfolio backed by one bundle.
+
+    Caps are *not* declared per sleeve here: the research-validated ceiling lives
+    in the sleeve's bundle (``LockedExecutionPlan`` gross/net caps) and is
+    enforced at load by ``bundles.provenance.check_cap_provenance`` (B13) — never
+    an operator-entered field compared against the operator's own caps.
+    """
 
     name: SleeveName
     wheel_filename: str
-    budget: float  # fraction of book NAV notionally allocated (≤ 1.0)
-    research_validated_cap: float | None = None  # max per-name cap from the bundle manifest
+    budget: float  # fraction of book NAV notionally allocated (<= 1.0)
     venue: str | None = None  # per-sleeve venue override (defaults to BookConfig.default_venue)
 
 
@@ -28,10 +35,11 @@ class SleeveConfig:
 class BookConfig:
     """The full Commingled Book declaration.
 
-    Slice 4 adds risk controls: gross/net/per-name caps, asymmetric drift
-    bands with per-instrument overrides, a book-level aggregate drift
-    threshold, and a provenance assertion that the Book Config's per-name
-    cap never exceeds any sleeve's research-validated cap.
+    Risk controls: gross/net/per-name caps, asymmetric drift bands with
+    per-instrument overrides, and a book-level aggregate drift threshold.  Cap
+    *provenance* — that these caps never exceed what research validated — is a
+    bundle-grounded load-time check (``bundles.provenance.check_cap_provenance``),
+    not a self-referential field on this config.
     """
 
     sleeves: tuple[SleeveConfig, ...]
@@ -73,16 +81,6 @@ class BookConfig:
                 f"max_book_gross ({self.max_book_gross:.4f}); raise max_book_gross "
                 f"to run levered"
             )
-
-        # Provenance assertion: per_name_cap ≤ each sleeve's research-validated cap.
-        if self.per_name_cap is not None:
-            for s in self.sleeves:
-                rvc = s.research_validated_cap
-                if rvc is not None and self.per_name_cap > rvc:
-                    raise ValueError(
-                        f"BookConfig per_name_cap ({self.per_name_cap}) exceeds "
-                        f"sleeve '{s.name.value}' research-validated cap ({rvc})"
-                    )
 
     @property
     def sleeve_count(self) -> int:
