@@ -1,20 +1,29 @@
-"""Pure diagonal risk-budget allocator.
+"""Pure covariance-aware risk-budget allocator.
 
 The allocator owns the Trader-side risk-budget scaling seam: raw per-sleeve
 weights from Execution Bundles in, risk-budget-scaled per-sleeve weights out.
-This implementation covers the diagonal (zero-correlation) case from ADR-0004
-and imports no Nautilus types.
+It imports no Nautilus types.  The diagonal allocator from the tracer slice is
+kept as the zero-correlation limit; the covariance path uses Equal Risk
+Contribution (ERC) and can split risk top-down by declared risk group before
+allocating within each group.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
+from typing import TypeVar
+
+import numpy as np
 
 from aegis_trader.domain.types import SleeveName
 
 _EPS = 1e-12
+_ERC_TOLERANCE = 1e-10
+_ERC_MAX_ITERATIONS = 10_000
+
+NameT = TypeVar("NameT", bound=Hashable)
 
 
 @dataclass(frozen=True)
@@ -39,8 +48,7 @@ def allocate_diagonal_vol_target(
     sleeve with positive risk share must have a finite, positive volatility;
     missing or degenerate estimates fail closed rather than silently mis-sizing.
     """
-    if book_vol_target <= 0 or not math.isfinite(book_vol_target):
-        raise ValueError(f"book_vol_target must be positive, got {book_vol_target!r}")
+    _validate_book_vol_target(book_vol_target)
 
     active = _active_sleeves(sleeve_targets, risk_shares)
     if not active:
@@ -69,6 +77,83 @@ def allocate_diagonal_vol_target(
     )
 
 
+def allocate_covariance_vol_target(
+    *,
+    sleeve_targets: Mapping[SleeveName, Mapping[str, float]],
+    risk_shares: Mapping[SleeveName, float],
+    realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]] | None,
+    book_vol_target: float,
+    groups: Mapping[SleeveName, Hashable] | None = None,
+) -> Allocation:
+    """Scale per-sleeve target weights using covariance-aware ERC/HRP.
+
+    ``risk_shares`` are the same operator-facing shares as the diagonal tracer:
+    in the zero-correlation case capital multipliers are proportional to
+    ``risk_share / volatility``.  Internally, ERC variance budgets are therefore
+    the squared risk shares normalized to one, which makes the covariance-aware
+    solver's diagonal limit exactly reproduce ``allocate_diagonal_vol_target``.
+
+    When ``groups`` is supplied, risk is allocated top-down: ERC across groups
+    using group shares, then ERC within each group.  This is the HRP seam that
+    prevents a correlated cluster with many sleeves from dominating the book.
+    """
+    _validate_book_vol_target(book_vol_target)
+
+    active = _active_sleeves(sleeve_targets, risk_shares)
+    if not active:
+        return Allocation(multipliers={}, scaled_targets={})
+    if realized_covariance is None:
+        multipliers = {name: float(risk_shares[name]) for name in active}
+        return Allocation(
+            multipliers=multipliers,
+            scaled_targets=_scale_targets(sleeve_targets, multipliers),
+        )
+
+    covariance = _covariance_matrix(active, realized_covariance)
+    composition = (
+        _hierarchical_composition(active, covariance, risk_shares, groups)
+        if groups is not None
+        else _erc_vector(covariance, _variance_budgets([risk_shares[name] for name in active]))
+    )
+
+    composition_by_name = {
+        name: float(weight) for name, weight in zip(active, composition, strict=True)
+    }
+    composition_vol = covariance_book_vol(composition_by_name, realized_covariance)
+    if composition_vol <= _EPS or not math.isfinite(composition_vol):
+        raise ValueError("covariance allocation produced degenerate book vol")
+
+    scale = book_vol_target / composition_vol
+    multipliers = {
+        name: multiplier * scale
+        for name, multiplier in composition_by_name.items()
+    }
+    return Allocation(
+        multipliers=multipliers,
+        scaled_targets=_scale_targets(sleeve_targets, multipliers),
+    )
+
+
+def equal_risk_contribution_weights(
+    covariance: Mapping[NameT, Mapping[NameT, float]],
+    risk_shares: Mapping[NameT, float] | None = None,
+) -> dict[NameT, float]:
+    """Return long-only ERC composition weights that sum to one.
+
+    This generic helper is the pure default for a multi-name sleeve.  If no
+    shares are supplied, every name receives equal risk.  If shares are supplied,
+    their diagonal-limit interpretation matches the book allocator:
+    zero-correlation weights are proportional to ``share / volatility``.
+    """
+    names = tuple(covariance.keys())
+    if not names:
+        return {}
+    matrix = _generic_covariance_matrix(names, covariance)
+    shares = [1.0 if risk_shares is None else float(risk_shares[name]) for name in names]
+    weights = _erc_vector(matrix, _variance_budgets(shares))
+    return {name: float(weight) for name, weight in zip(names, weights, strict=True)}
+
+
 def diagonal_book_vol(
     multipliers: Mapping[SleeveName, float],
     realized_vols: Mapping[SleeveName, float],
@@ -79,6 +164,45 @@ def diagonal_book_vol(
         vol = float(realized_vols[name])
         variance += (float(multiplier) * vol) ** 2
     return math.sqrt(variance)
+
+
+def covariance_book_vol(
+    multipliers: Mapping[NameT, float],
+    realized_covariance: Mapping[NameT, Mapping[NameT, float]],
+) -> float:
+    """Return book volatility for weights/multipliers and a covariance matrix."""
+    if not multipliers:
+        return 0.0
+    names = tuple(multipliers.keys())
+    matrix = _generic_covariance_matrix(names, realized_covariance)
+    weights = np.array([float(multipliers[name]) for name in names], dtype=float)
+    variance = float(weights @ matrix @ weights)
+    if variance < -_EPS:
+        raise ValueError(f"covariance produced negative variance: {variance!r}")
+    return math.sqrt(max(variance, 0.0))
+
+
+def risk_contribution_shares(
+    multipliers: Mapping[NameT, float],
+    realized_covariance: Mapping[NameT, Mapping[NameT, float]],
+) -> dict[NameT, float]:
+    """Return each name's variance risk-contribution share."""
+    if not multipliers:
+        return {}
+    names = tuple(multipliers.keys())
+    matrix = _generic_covariance_matrix(names, realized_covariance)
+    weights = np.array([float(multipliers[name]) for name in names], dtype=float)
+    marginal = matrix @ weights
+    variance = float(weights @ marginal)
+    if variance <= _EPS or not math.isfinite(variance):
+        raise ValueError("cannot compute risk contributions for degenerate book")
+    contributions = weights * marginal / variance
+    return {name: float(rc) for name, rc in zip(names, contributions, strict=True)}
+
+
+def _validate_book_vol_target(book_vol_target: float) -> None:
+    if book_vol_target <= 0 or not math.isfinite(book_vol_target):
+        raise ValueError(f"book_vol_target must be positive, got {book_vol_target!r}")
 
 
 def _active_sleeves(
@@ -112,6 +236,146 @@ def _validate_vols(
             )
         vols[name] = vol
     return vols
+
+
+def _covariance_matrix(
+    active: tuple[SleeveName, ...],
+    realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]],
+) -> np.ndarray:
+    try:
+        return _generic_covariance_matrix(active, realized_covariance)
+    except KeyError as exc:
+        missing = exc.args[0]
+        label = missing.value if isinstance(missing, SleeveName) else str(missing)
+        raise ValueError(f"missing realized covariance for sleeve {label!r}") from exc
+
+
+def _generic_covariance_matrix(
+    names: tuple[NameT, ...],
+    covariance: Mapping[NameT, Mapping[NameT, float]],
+) -> np.ndarray:
+    matrix = np.empty((len(names), len(names)), dtype=float)
+    for i, row_name in enumerate(names):
+        row = covariance[row_name]
+        for j, col_name in enumerate(names):
+            value = float(row[col_name])
+            if not math.isfinite(value):
+                raise ValueError("realized covariance entries must be finite")
+            matrix[i, j] = value
+    for i, name in enumerate(names):
+        diag = matrix[i, i]
+        if diag <= _EPS:
+            raise ValueError(f"degenerate realized variance for {str(name)!r}: {diag!r}")
+    if not np.allclose(matrix, matrix.T, rtol=1e-8, atol=1e-12):
+        raise ValueError("realized covariance matrix must be symmetric")
+    return matrix
+
+
+def _hierarchical_composition(
+    active: tuple[SleeveName, ...],
+    covariance: np.ndarray,
+    risk_shares: Mapping[SleeveName, float],
+    groups: Mapping[SleeveName, Hashable] | None,
+) -> np.ndarray:
+    if groups is None:
+        raise ValueError("groups must be supplied for hierarchical allocation")
+
+    active_index = {name: i for i, name in enumerate(active)}
+    grouped: dict[Hashable, list[SleeveName]] = {}
+    for name in active:
+        group = groups.get(name)
+        if group is None:
+            raise ValueError(f"missing risk group for sleeve {name.value!r}")
+        grouped.setdefault(group, []).append(name)
+
+    group_names = tuple(grouped.keys())
+    within: dict[Hashable, np.ndarray] = {}
+    for group_name, members in grouped.items():
+        member_indices = [active_index[name] for name in members]
+        sub_cov = covariance[np.ix_(member_indices, member_indices)]
+        member_shares = [risk_shares[name] for name in members]
+        within[group_name] = _erc_vector(sub_cov, _variance_budgets(member_shares))
+
+    group_covariance = np.empty((len(group_names), len(group_names)), dtype=float)
+    for i, left_group in enumerate(group_names):
+        left_members = grouped[left_group]
+        left_indices = [active_index[name] for name in left_members]
+        left_weights = within[left_group]
+        for j, right_group in enumerate(group_names):
+            right_members = grouped[right_group]
+            right_indices = [active_index[name] for name in right_members]
+            right_weights = within[right_group]
+            block = covariance[np.ix_(left_indices, right_indices)]
+            group_covariance[i, j] = float(left_weights @ block @ right_weights)
+
+    group_shares = [sum(float(risk_shares[name]) for name in grouped[group]) for group in group_names]
+    group_weights = _erc_vector(group_covariance, _variance_budgets(group_shares))
+
+    composition = np.zeros(len(active), dtype=float)
+    for group_weight, group_name in zip(group_weights, group_names, strict=True):
+        for member_weight, member in zip(within[group_name], grouped[group_name], strict=True):
+            composition[active_index[member]] = group_weight * member_weight
+    return composition / float(composition.sum())
+
+
+def _variance_budgets(risk_shares: list[float]) -> np.ndarray:
+    shares = np.array(risk_shares, dtype=float)
+    if np.any(~np.isfinite(shares)) or np.any(shares < -_EPS):
+        raise ValueError("risk shares must be finite and non-negative")
+    if np.any(shares <= _EPS):
+        raise ValueError("active ERC names must have positive risk shares")
+    squared = shares * shares
+    total = float(squared.sum())
+    if total <= _EPS:
+        raise ValueError("ERC risk budget must be positive")
+    return squared / total
+
+
+def _erc_vector(covariance: np.ndarray, variance_budgets: np.ndarray) -> np.ndarray:
+    size = covariance.shape[0]
+    if size == 0:
+        return np.array([], dtype=float)
+    if size == 1:
+        return np.array([1.0], dtype=float)
+
+    vols = np.sqrt(np.diag(covariance))
+    weights = np.sqrt(variance_budgets) / vols
+    weights = weights / float(weights.sum())
+
+    for _ in range(_ERC_MAX_ITERATIONS):
+        previous = weights.copy()
+        marginal = covariance @ weights
+        variance = float(weights @ marginal)
+        if variance <= _EPS or not math.isfinite(variance):
+            raise ValueError("ERC solve produced degenerate variance")
+        target_contributions = variance_budgets * variance
+
+        for index in range(size):
+            own_variance = float(covariance[index, index])
+            cross = float(covariance[index] @ weights - own_variance * weights[index])
+            target = float(target_contributions[index])
+            discriminant = cross * cross + 4.0 * own_variance * target
+            if discriminant < 0.0 or not math.isfinite(discriminant):
+                raise ValueError("ERC solve failed on covariance matrix")
+            weights[index] = max(
+                (-cross + math.sqrt(discriminant)) / (2.0 * own_variance),
+                _EPS,
+            )
+
+        weights = weights / float(weights.sum())
+        if np.max(np.abs(weights - previous)) <= _ERC_TOLERANCE:
+            marginal = covariance @ weights
+            variance = float(weights @ marginal)
+            contributions = weights * marginal / variance
+            if np.max(np.abs(contributions - variance_budgets)) <= 1e-7:
+                return weights
+
+    marginal = covariance @ weights
+    variance = float(weights @ marginal)
+    contributions = weights * marginal / variance
+    if np.max(np.abs(contributions - variance_budgets)) > 1e-5:
+        raise ValueError("ERC solve did not converge")
+    return weights
 
 
 def _scale_targets(

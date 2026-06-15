@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import math
+import numpy as np
 import pandas as pd
 from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
@@ -72,6 +72,7 @@ from aegis_trader.portfolio import BookStatePort, NautilusBookState
 _NS_PER_DAY: int = 86_400_000_000_000
 _MIN_SLEEVE_VOL_RETURNS = 20
 _TRADING_DAYS_PER_YEAR = 252.0
+_EWMA_COVARIANCE_ALPHA = 0.06
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -385,12 +386,12 @@ class RebalanceStrategy(Strategy):
         # weight deltas) against the REALIZED book (so bands, the realized-book
         # gate, and the fidelity trip engage); the sizer converts each delta into
         # a native share count.
-        realized_vols = self._realized_sleeve_vols()
+        realized_covariance = self._realized_sleeve_covariance()
         deltas = rebalance(
             pending,
             self._book,
             realized_weights=realized_weights,
-            realized_vols=realized_vols,
+            realized_covariance=realized_covariance,
         )
         orders = size_deltas(
             deltas,
@@ -464,27 +465,28 @@ class RebalanceStrategy(Strategy):
                 f"notional={summary.total_notional:.2f}"
             )
 
-    def _realized_sleeve_vols(self) -> dict[SleeveName, float] | None:
-        """Estimate annualized sleeve vol from recorded rebalance-period data.
+    def _realized_sleeve_covariance(self) -> dict[SleeveName, dict[SleeveName, float]] | None:
+        """Estimate annualized sleeve covariance from recorded period data.
 
         The estimate uses only bars already consumed by the strategy: each
         sleeve's raw target weights held from period t to t+1 are multiplied by
         the observed instrument returns over that same interval.  Until every
-        positive-risk sleeve has enough non-degenerate returns, return ``None``
-        so the allocator uses the warmup fallback (raw risk shares) instead of
-        dividing by an undefined estimate.
+        positive-risk sleeve has enough complete, non-degenerate returns, return
+        ``None`` so the allocator uses the warmup fallback (raw risk shares)
+        instead of solving on an undefined covariance matrix.
         """
         if len(self._attribution_periods) < _MIN_SLEEVE_VOL_RETURNS + 1:
             return None
 
-        returns_by_sleeve: dict[SleeveName, list[float]] = {
-            sleeve.name: []
-            for sleeve in self._book.sleeves
-            if sleeve.risk_share > 0
-        }
+        names = tuple(
+            sleeve.name for sleeve in self._book.sleeves if sleeve.risk_share > 0
+        )
         periods = self._attribution_periods[-(_MIN_SLEEVE_VOL_RETURNS + 1):]
+        rows: list[list[float]] = []
         for prev, curr in zip(periods, periods[1:], strict=False):
-            for name in returns_by_sleeve:
+            row: list[float] = []
+            complete = True
+            for name in names:
                 sleeve_return = 0.0
                 has_input = False
                 for figi, weight in prev.sleeve_targets.get(name, {}).items():
@@ -492,21 +494,31 @@ class RebalanceStrategy(Strategy):
                     curr_px = curr.closes.get(figi)
                     if prev_px is None or curr_px is None or prev_px <= 0:
                         continue
-                    sleeve_return += weight * (curr_px / prev_px - 1.0)
+                    sleeve_return += float(weight) * (curr_px / prev_px - 1.0)
                     has_input = True
-                if has_input:
-                    returns_by_sleeve[name].append(sleeve_return)
+                if not has_input:
+                    complete = False
+                    break
+                row.append(sleeve_return)
+            if complete:
+                rows.append(row)
 
-        vols: dict[SleeveName, float] = {}
-        for name, returns in returns_by_sleeve.items():
-            if len(returns) < _MIN_SLEEVE_VOL_RETURNS:
-                return None
-            series = pd.Series(returns, dtype="float64")
-            vol = float(series.std(ddof=1) * math.sqrt(_TRADING_DAYS_PER_YEAR))
-            if not math.isfinite(vol) or vol <= 0:
-                return None
-            vols[name] = vol
-        return vols
+        if len(rows) < _MIN_SLEEVE_VOL_RETURNS:
+            return None
+        covariance = _ewma_covariance(rows, alpha=_EWMA_COVARIANCE_ALPHA)
+        covariance *= _TRADING_DAYS_PER_YEAR
+        if not np.all(np.isfinite(covariance)):
+            return None
+        if np.any(np.diag(covariance) <= 0.0):
+            return None
+
+        return {
+            left: {
+                right: float(covariance[i, j])
+                for j, right in enumerate(names)
+            }
+            for i, left in enumerate(names)
+        }
 
     def on_stop(self) -> None:
         """Compute and log per-sleeve P&L attribution at end of run.
@@ -702,3 +714,15 @@ def _bars_to_close_series(
     index = pd.DatetimeIndex([b.ts_event for b in bars])
     values = [float(b.close.as_double()) for b in bars]
     return pd.DataFrame({figi: values}, index=index)
+
+
+def _ewma_covariance(rows: list[list[float]], *, alpha: float) -> np.ndarray:
+    """Return an EWMA covariance matrix for complete return rows."""
+    values = np.array(rows, dtype=float)
+    mean = values[0].copy()
+    covariance = np.zeros((values.shape[1], values.shape[1]), dtype=float)
+    for row in values[1:]:
+        diff = row - mean
+        covariance = (1.0 - alpha) * covariance + alpha * np.outer(diff, diff)
+        mean = (1.0 - alpha) * mean + alpha * row
+    return (covariance + covariance.T) / 2.0

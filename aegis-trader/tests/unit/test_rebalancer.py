@@ -191,6 +191,35 @@ class TestRebalanceMultiSleeve:
         by_figi = {d.figi.value: d.delta for d in result}
         assert by_figi["HIGH"] == pytest.approx(by_figi["LOW"] / 2.0)
 
+    def test_covariance_scales_correlated_sleeves_before_netting(self):
+        book = make_book([("trend", "trend.whl", 0.5), ("carry", "carry.whl", 0.5)])
+        uncorrelated = rebalance(
+            {book.sleeves[0].name: _target({"TREND": 1.0}),
+             book.sleeves[1].name: _target({"CARRY": 1.0})},
+            book,
+            realized_covariance={
+                book.sleeves[0].name: {book.sleeves[0].name: 0.10**2, book.sleeves[1].name: 0.0},
+                book.sleeves[1].name: {book.sleeves[0].name: 0.0, book.sleeves[1].name: 0.10**2},
+            },
+        )
+        correlated = rebalance(
+            {book.sleeves[0].name: _target({"TREND": 1.0}),
+             book.sleeves[1].name: _target({"CARRY": 1.0})},
+            book,
+            realized_covariance={
+                book.sleeves[0].name: {
+                    book.sleeves[0].name: 0.10**2,
+                    book.sleeves[1].name: 0.90 * 0.10 * 0.10,
+                },
+                book.sleeves[1].name: {
+                    book.sleeves[0].name: 0.90 * 0.10 * 0.10,
+                    book.sleeves[1].name: 0.10**2,
+                },
+            },
+        )
+
+        assert sum(abs(d.delta) for d in correlated) < sum(abs(d.delta) for d in uncorrelated)
+
     def test_three_sleeves_complex_netting(self):
         book = make_book([("a", "a.whl", 0.4), ("b", "b.whl", 0.3), ("c", "c.whl", 0.3)])
         result = rebalance(

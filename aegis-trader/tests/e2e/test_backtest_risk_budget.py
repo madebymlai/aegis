@@ -1,11 +1,11 @@
-"""Risk-budget tracer e2e: 5-year diagonal vol-target budget and attribution."""
+"""Risk-budget e2e: 5-year covariance vol-target budget and attribution."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from aegis_trader.domain.allocator import diagonal_book_vol
+from aegis_trader.domain.allocator import covariance_book_vol
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
 from aegis_trader.domain.rebalancer import rebalance
@@ -15,21 +15,29 @@ _TREND = SleeveName("trend")
 _TAIL = SleeveName("tail")
 
 
-def test_five_year_diagonal_risk_budget_hits_vol_target_and_attribution_reconciles():
+def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconciles():
     """Tracer for the commingled backtest invariant without external data/wheels.
 
-    Five years of synthetic daily sleeve returns produce realized vol inputs.  The
-    rebalancer must use the allocator seam (not static capital budgets): the
-    higher-vol tail receives half the capital multiplier of the lower-vol trend,
-    the diagonal book hits the configured annualized vol target, and the
-    attribution decomposition sums back to the realized-weight NAV change.
+    Five years of synthetic daily sleeve returns produce a realized covariance
+    input.  The rebalancer must use the allocator seam (not static capital
+    budgets): the higher-vol tail receives half the capital multiplier of the
+    lower-vol trend in the zero-correlation limit, the book hits the configured
+    annualized vol target, and attribution sums back to the realized NAV change.
     """
     days = 252 * 5
     x = np.linspace(0.0, 80.0 * np.pi, days)
     trend_returns = 0.10 / np.sqrt(252.0) * np.sin(x)
     tail_returns = 0.20 / np.sqrt(252.0) * np.cos(x)
-    trend_vol = float(np.std(trend_returns, ddof=1) * np.sqrt(252.0))
-    tail_vol = float(np.std(tail_returns, ddof=1) * np.sqrt(252.0))
+    covariance = {
+        _TREND: {
+            _TREND: float(np.var(trend_returns, ddof=1) * 252.0),
+            _TAIL: float(np.cov(trend_returns, tail_returns, ddof=1)[0, 1] * 252.0),
+        },
+        _TAIL: {
+            _TREND: float(np.cov(trend_returns, tail_returns, ddof=1)[0, 1] * 252.0),
+            _TAIL: float(np.var(tail_returns, ddof=1) * 252.0),
+        },
+    }
 
     book = BookConfig(
         sleeves=(
@@ -56,14 +64,14 @@ def test_five_year_diagonal_risk_budget_hits_vol_target_and_attribution_reconcil
             _TAIL: target({"TAIL": 1.0}),
         },
         book,
-        realized_vols={_TREND: trend_vol, _TAIL: tail_vol},
+        realized_covariance=covariance,
     )
     weights = {delta.figi.value: delta.delta for delta in deltas}
 
     assert weights["TAIL"] == pytest.approx(weights["TREND"] / 2.0, rel=0.02)
-    assert diagonal_book_vol(
+    assert covariance_book_vol(
         {_TREND: weights["TREND"], _TAIL: weights["TAIL"]},
-        {_TREND: trend_vol, _TAIL: tail_vol},
+        covariance,
     ) == pytest.approx(book.book_vol_target)
 
     nav = 1_000_000.0

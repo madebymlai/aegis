@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from aegis_trader.domain.allocator import allocate_diagonal_vol_target
+from aegis_trader.domain.allocator import (
+    allocate_covariance_vol_target,
+    allocate_diagonal_vol_target,
+)
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.types import Figi, SleeveName, WeightDelta
 
@@ -37,6 +40,7 @@ def rebalance(
     *,
     realized_weights: dict[str, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
+    realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
 ) -> tuple[WeightDelta, ...]:
     """Net per-sleeve target weights into signed weight deltas to trade.
 
@@ -52,6 +56,11 @@ def rebalance(
     fraction of NAV).  When supplied, the realised book is gated against caps and
     drift bands before any delta is emitted.
 
+    *realized_covariance* is the covariance-aware allocator input.  During
+    warmup callers pass ``None`` and the allocator falls back to raw risk
+    shares.  ``realized_vols`` is retained for the diagonal tracer path and is
+    used only when covariance is absent.
+
     Returns the signed weight deltas to trade (fraction of NAV); converting a
     delta to a share quantity is the sizing step's job (``sizing.size_deltas``).
     """
@@ -63,12 +72,22 @@ def rebalance(
             continue  # silently skip sleeves without data
         latest_targets[sleeve.name] = _latest_target_weights(target)
 
-    allocation = allocate_diagonal_vol_target(
-        sleeve_targets=latest_targets,
-        risk_shares={sleeve.name: sleeve.risk_share for sleeve in book.sleeves},
-        realized_vols=realized_vols,
-        book_vol_target=book.book_vol_target,
-    )
+    risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
+    if realized_covariance is not None:
+        allocation = allocate_covariance_vol_target(
+            sleeve_targets=latest_targets,
+            risk_shares=risk_shares,
+            realized_covariance=realized_covariance,
+            book_vol_target=book.book_vol_target,
+            groups={sleeve.name: sleeve.group for sleeve in book.sleeves},
+        )
+    else:
+        allocation = allocate_diagonal_vol_target(
+            sleeve_targets=latest_targets,
+            risk_shares=risk_shares,
+            realized_vols=realized_vols,
+            book_vol_target=book.book_vol_target,
+        )
 
     net_target_by_figi: dict[str, float] = {}
     for scaled_targets in allocation.scaled_targets.values():
