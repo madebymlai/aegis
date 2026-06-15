@@ -53,15 +53,21 @@ weight_band_down = 0.02
 weight_band_up = 0.02
 
 [tail_convexity_budget]
-# One convexity unit is one percentage point of book notional delivered at a
-# -20% move.  Fill the highest efficiency candidates to one unit, capacity-capped.
-coverage_target_units = 1.0
-unit_payoff_fraction_at_20_down = 0.01
+# Tail protection is a fixed convexity premium, not a timed bet.  Coverage is
+# denominated in book NAV delivered at the attachment (stress) move; candidates
+# are filled highest-efficiency-first to coverage_target, capped per-candidate
+# by capacity and collectively by the annual carry (premium) budget — so either
+# the coverage target or the premium budget can bind first.
+attachment = -0.20            # protect against a -20% book move
+coverage_target = 0.01        # deliver >= 1% of book NAV at the attachment
+annual_carry_budget = 0.0075  # spend <= 0.75% of NAV/yr in premium
 
 [[tail_convexity_budget.candidates]]
+# Per unit of the sleeve's risk share: NAV delivered at the attachment, and
+# NAV/yr of carry.  Operator-supplied (calibrated at re-validation); never
+# measured live in Trader.
 sleeve = "aegis_tail"
-expected_annual_payoff = 0.24
+payoff_at_attachment = 0.20
 annual_carry = 0.08
 crisis_reliability = 0.75
-convexity_units_per_risk_share = 20.0
 capacity_risk_share = 0.05

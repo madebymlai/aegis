@@ -132,10 +132,12 @@ def _parse_tail_convexity_budget(
     if not isinstance(raw_budget, Mapping):
         raise TypeError("tail_convexity_budget must be a table")
 
+    raw_carry_budget = raw_budget.get("annual_carry_budget")
     return TailConvexityBudget(
-        coverage_target_units=float(raw_budget["coverage_target_units"]),
-        unit_payoff_fraction_at_20_down=float(
-            raw_budget["unit_payoff_fraction_at_20_down"]
+        attachment=float(raw_budget["attachment"]),
+        coverage_target=float(raw_budget["coverage_target"]),
+        annual_carry_budget=(
+            None if raw_carry_budget is None else float(raw_carry_budget)
         ),
         candidates=tuple(
             _parse_tail_candidate(candidate)
@@ -149,11 +151,8 @@ def _parse_tail_candidate(candidate: object) -> ConvexityBudgetCandidate:
         raise TypeError("tail_convexity_budget candidates must be tables")
     return ConvexityBudgetCandidate(
         sleeve=SleeveName(candidate["sleeve"]),
-        expected_annual_payoff=float(candidate["expected_annual_payoff"]),
+        payoff_at_attachment=float(candidate["payoff_at_attachment"]),
         annual_carry=float(candidate["annual_carry"]),
         crisis_reliability=float(candidate["crisis_reliability"]),
-        convexity_units_per_risk_share=float(
-            candidate["convexity_units_per_risk_share"]
-        ),
         capacity_risk_share=float(candidate["capacity_risk_share"]),
     )

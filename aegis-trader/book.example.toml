@@ -75,16 +75,19 @@ risk_share = 0.0  # Expansion defaults to zero until it earns a budget.
 group = "Expansion"
 
 [tail_convexity_budget]
-# One convexity unit is X% of book notional delivered at a -20% move.
-coverage_target_units = 1.0
-unit_payoff_fraction_at_20_down = 0.01
+# Coverage is book NAV delivered at the attachment (stress) move; candidates are
+# filled highest-efficiency-first to coverage_target, capped per-candidate by
+# capacity and collectively by the annual carry (premium) budget.
+attachment = -0.20            # the stress move protection is defined against
+coverage_target = 0.01        # deliver >= 1% of book NAV at the attachment
+annual_carry_budget = 0.0075  # optional premium ceiling: <= 0.75% of NAV/yr
 
 [[tail_convexity_budget.candidates]]
+# Per unit of the sleeve's risk share: NAV at the attachment, and NAV/yr carry.
 sleeve = "tail_xetra"
-expected_annual_payoff = 0.24
+payoff_at_attachment = 0.20
 annual_carry = 0.08
 crisis_reliability = 0.75
-convexity_units_per_risk_share = 20.0
 capacity_risk_share = 0.05
 
 # Per-FIGI asymmetric band overrides (optional).

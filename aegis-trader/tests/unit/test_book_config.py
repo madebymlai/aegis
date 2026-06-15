@@ -128,23 +128,21 @@ class TestBookConfig:
                 make_sleeve("market_neutral", risk_share=0.4, group=RiskGroup.EXPANSION),
             ),
             tail_convexity_budget=TailConvexityBudget(
-                coverage_target_units=3.0,
-                unit_payoff_fraction_at_20_down=0.01,
+                attachment=-0.20,
+                coverage_target=0.03,
                 candidates=(
                     ConvexityBudgetCandidate(
                         sleeve=SleeveName("dear_tail"),
-                        expected_annual_payoff=0.20,
+                        payoff_at_attachment=0.10,
                         annual_carry=0.10,
                         crisis_reliability=0.5,
-                        convexity_units_per_risk_share=10.0,
                         capacity_risk_share=0.20,
                     ),
                     ConvexityBudgetCandidate(
                         sleeve=SleeveName("cheap_tail"),
-                        expected_annual_payoff=0.30,
+                        payoff_at_attachment=0.20,
                         annual_carry=0.10,
                         crisis_reliability=0.9,
-                        convexity_units_per_risk_share=20.0,
                         capacity_risk_share=0.10,
                     ),
                 ),
@@ -157,6 +155,40 @@ class TestBookConfig:
         assert shares[SleeveName("cheap_tail")] == pytest.approx(0.10)
         assert shares[SleeveName("dear_tail")] == pytest.approx(0.10)
         assert shares[SleeveName("market_neutral")] == 0.0
+
+    def test_tail_convexity_annual_carry_budget_caps_the_fill(self):
+        cheap = ConvexityBudgetCandidate(
+            sleeve=SleeveName("tail"),
+            payoff_at_attachment=0.20,
+            annual_carry=0.10,
+            crisis_reliability=1.0,
+            capacity_risk_share=0.50,
+        )
+        # Coverage alone wants 0.15 risk share (0.03 / 0.20); the premium budget
+        # of 0.01 NAV/yr at 0.10 carry per risk share caps the fill at 0.10.
+        budgeted = TailConvexityBudget(
+            attachment=-0.20,
+            coverage_target=0.03,
+            annual_carry_budget=0.01,
+            candidates=(cheap,),
+        )
+        assert budgeted.risk_shares()[SleeveName("tail")] == pytest.approx(0.10)
+
+        # Without the premium ceiling the same budget fills coverage to 0.15.
+        uncapped = TailConvexityBudget(
+            attachment=-0.20,
+            coverage_target=0.03,
+            candidates=(cheap,),
+        )
+        assert uncapped.risk_shares()[SleeveName("tail")] == pytest.approx(0.15)
+
+    def test_tail_convexity_attachment_must_be_a_downside_move(self):
+        with pytest.raises(ValueError, match="attachment"):
+            TailConvexityBudget(
+                attachment=0.20,
+                coverage_target=0.0,
+                candidates=(),
+            )
 
 
 class TestBookConfigCapsAndBands:

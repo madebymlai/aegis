@@ -143,15 +143,15 @@ def test_five_year_tail_convexity_budget_bounds_target_risk_and_zeros_expansion(
         ),
         book_vol_target=0.09,
         tail_convexity_budget=TailConvexityBudget(
-            coverage_target_units=1.0,
-            unit_payoff_fraction_at_20_down=0.01,
+            attachment=-0.20,
+            coverage_target=0.01,
+            annual_carry_budget=0.0075,
             candidates=(
                 ConvexityBudgetCandidate(
                     sleeve=_TAIL,
-                    expected_annual_payoff=0.24,
+                    payoff_at_attachment=0.20,
                     annual_carry=0.08,
                     crisis_reliability=0.75,
-                    convexity_units_per_risk_share=20.0,
                     capacity_risk_share=0.05,
                 ),
             ),
@@ -325,7 +325,6 @@ def test_backtest_drawdown_delever_engages_in_worst_window_and_returns_are_measu
     passes it to the allocator; the observable effect is a sell order while the
     bundle still asks for a constant long target.
     """
-    prices = _five_year_drawdown_prices()
     book = BookConfig(
         sleeves=(
             SleeveConfig(
@@ -371,16 +370,3 @@ def test_backtest_drawdown_delever_engages_in_worst_window_and_returns_are_measu
     )
     recovered_weights = {delta.figi.value: delta.delta for delta in recovered}
     assert recovered_weights["TREND"] == pytest.approx(weights["TREND"])
-
-
-def _five_year_drawdown_prices() -> np.ndarray:
-    """Synthetic price path with early crash, trough, then recovery."""
-    days = 252 * 5
-    normal = np.random.default_rng(42).normal(0.0004, 0.01, days)
-    shock = np.zeros(days)
-    shock[0:21] = -0.02  # crash
-    shock[21:252] = 0.0002  # slow drift down
-    shock[252:] = 0.001  # recovery
-    log_returns = shock + normal
-    prices = np.exp(np.cumsum(log_returns)) * 100.0
-    return prices

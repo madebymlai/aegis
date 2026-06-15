@@ -79,21 +79,28 @@ class DrawdownDeleverCurve:
 
 @dataclass(frozen=True)
 class ConvexityBudgetCandidate:
-    """One operator-scored Target hedge candidate for convexity-unit sizing."""
+    """One operator-scored Target hedge candidate.
+
+    All quantities are expressed *per unit of the sleeve's risk share* — the
+    lever the allocator pulls: ``payoff_at_attachment`` is the book-NAV fraction
+    the candidate delivers at the budget's attachment (stress) move, and
+    ``annual_carry`` is the NAV fraction it bleeds per year, both per unit risk
+    share.  These are operator-supplied forecasts (calibrated and signed off at
+    re-validation), never measured live in Trader.
+    """
 
     sleeve: SleeveName
-    expected_annual_payoff: float
+    payoff_at_attachment: float
     annual_carry: float
     crisis_reliability: float
-    convexity_units_per_risk_share: float
     capacity_risk_share: float
 
     def __post_init__(self) -> None:
         if not isinstance(self.sleeve, SleeveName):
             object.__setattr__(self, "sleeve", SleeveName(self.sleeve))
-        _validate_non_negative(
-            self.expected_annual_payoff,
-            f"tail candidate {self.sleeve.value!r} expected_annual_payoff",
+        _validate_positive(
+            self.payoff_at_attachment,
+            f"tail candidate {self.sleeve.value!r} payoff_at_attachment",
         )
         _validate_positive(
             self.annual_carry,
@@ -107,10 +114,6 @@ class ConvexityBudgetCandidate:
                 f"tail candidate {self.sleeve.value!r} crisis_reliability "
                 "must be in [0, 1]"
             )
-        _validate_positive(
-            self.convexity_units_per_risk_share,
-            f"tail candidate {self.sleeve.value!r} convexity_units_per_risk_share",
-        )
         _validate_non_negative(
             self.capacity_risk_share,
             f"tail candidate {self.sleeve.value!r} capacity_risk_share",
@@ -118,9 +121,9 @@ class ConvexityBudgetCandidate:
 
     @property
     def efficiency(self) -> float:
-        """Convex payoff per unit carry, reliability-adjusted."""
+        """Crisis payoff per unit carry, reliability-adjusted (pay-off efficiency)."""
         return (
-            self.expected_annual_payoff
+            self.payoff_at_attachment
             / self.annual_carry
             * self.crisis_reliability
         )
@@ -128,53 +131,78 @@ class ConvexityBudgetCandidate:
 
 @dataclass(frozen=True)
 class TailConvexityBudget:
-    """Target-group budget expressed in convexity units, not live signals."""
+    """Target-group budget sized by a fixed convexity premium, not live signals.
 
-    coverage_target_units: float
-    unit_payoff_fraction_at_20_down: float
+    Coverage is denominated directly in book NAV delivered at ``attachment``
+    (the stress move the protection is defined against, e.g. ``-0.20``).
+    Candidates are ranked by efficiency and filled to ``coverage_target``, each
+    capped by its own ``capacity_risk_share`` and, collectively, by the optional
+    ``annual_carry_budget`` premium ceiling — so either the coverage target or
+    the premium budget can bind first.  Reviewed on a slow (~quarterly) cadence;
+    never sized up on a live regime/dispersion/valuation signal.
+    """
+
+    attachment: float
+    coverage_target: float
     candidates: tuple[ConvexityBudgetCandidate, ...]
+    annual_carry_budget: float | None = None
 
     def __post_init__(self) -> None:
+        if not math.isfinite(self.attachment) or not -1.0 < self.attachment < 0.0:
+            raise ValueError("tail convexity attachment must be a move in (-1, 0)")
         _validate_non_negative(
-            self.coverage_target_units,
-            "tail convexity coverage_target_units",
+            self.coverage_target,
+            "tail convexity coverage_target",
         )
-        _validate_positive(
-            self.unit_payoff_fraction_at_20_down,
-            "tail convexity unit_payoff_fraction_at_20_down",
-        )
+        if self.annual_carry_budget is not None:
+            _validate_positive(
+                self.annual_carry_budget,
+                "tail convexity annual_carry_budget",
+            )
         sleeves = [candidate.sleeve for candidate in self.candidates]
         if len(sleeves) != len(set(sleeves)):
             labels = [sleeve.value for sleeve in sleeves]
             raise ValueError(f"duplicate tail convexity candidates: {labels}")
-        if self.coverage_target_units > _EPS and not self.candidates:
+        if self.coverage_target > _EPS and not self.candidates:
             raise ValueError(
                 "tail convexity budget with positive coverage needs candidates"
             )
 
     def risk_shares(self) -> dict[SleeveName, float]:
-        """Fill highest-efficiency candidates first to the coverage target."""
-        remaining_units = self.coverage_target_units
+        """Fill highest-efficiency candidates first to the coverage target.
+
+        Each candidate is capped by its own ``capacity_risk_share`` and by the
+        running ``annual_carry_budget`` (when set); the fill stops once the
+        coverage target is met or no candidate can add more within the premium
+        budget.
+        """
+        remaining_coverage = self.coverage_target
+        remaining_carry = self.annual_carry_budget
         allocations: dict[SleeveName, float] = {}
         for candidate in sorted(
             self.candidates,
             key=lambda c: (-c.efficiency, c.sleeve.value),
         ):
-            if remaining_units <= _EPS:
+            if remaining_coverage <= _EPS:
                 break
             capacity_risk_share = candidate.capacity_risk_share
             if capacity_risk_share <= _EPS:
                 continue
-            needed_risk_share = (
-                remaining_units / candidate.convexity_units_per_risk_share
+            allocated_risk_share = min(
+                capacity_risk_share,
+                remaining_coverage / candidate.payoff_at_attachment,
             )
-            allocated_risk_share = min(capacity_risk_share, needed_risk_share)
+            if remaining_carry is not None:
+                allocated_risk_share = min(
+                    allocated_risk_share,
+                    remaining_carry / candidate.annual_carry,
+                )
             if allocated_risk_share <= _EPS:
                 continue
             allocations[candidate.sleeve] = allocated_risk_share
-            remaining_units -= (
-                allocated_risk_share * candidate.convexity_units_per_risk_share
-            )
+            remaining_coverage -= allocated_risk_share * candidate.payoff_at_attachment
+            if remaining_carry is not None:
+                remaining_carry -= allocated_risk_share * candidate.annual_carry
         return allocations
 
 

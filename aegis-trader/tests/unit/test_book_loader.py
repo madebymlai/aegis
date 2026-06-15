@@ -194,30 +194,30 @@ def test_tail_convexity_budget_loads(tmp_path):
         group = "Target"
 
         [tail_convexity_budget]
-        coverage_target_units = 1.0
-        unit_payoff_fraction_at_20_down = 0.01
+        attachment = -0.20
+        coverage_target = 0.01
+        annual_carry_budget = 0.0075
 
         [[tail_convexity_budget.candidates]]
         sleeve = "tail"
-        expected_annual_payoff = 0.24
+        payoff_at_attachment = 0.20
         annual_carry = 0.08
         crisis_reliability = 0.75
-        convexity_units_per_risk_share = 20.0
         capacity_risk_share = 0.05
     """)
 
     book = load_book_config(path)
 
     assert book.tail_convexity_budget == TailConvexityBudget(
-        coverage_target_units=1.0,
-        unit_payoff_fraction_at_20_down=0.01,
+        attachment=-0.20,
+        coverage_target=0.01,
+        annual_carry_budget=0.0075,
         candidates=(
             ConvexityBudgetCandidate(
                 sleeve=SleeveName("tail"),
-                expected_annual_payoff=0.24,
+                payoff_at_attachment=0.20,
                 annual_carry=0.08,
                 crisis_reliability=0.75,
-                convexity_units_per_risk_share=20.0,
                 capacity_risk_share=0.05,
             ),
         ),
