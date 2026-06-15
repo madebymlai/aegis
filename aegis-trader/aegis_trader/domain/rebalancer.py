@@ -98,10 +98,11 @@ def rebalance_plan(
     fraction of NAV).  When supplied, the realised book is gated against caps and
     drift bands before any delta is emitted.
 
-    *realized_covariance* is the covariance-aware allocator input.  During
-    warmup callers pass ``None`` and the allocator falls back to raw risk
-    shares.  ``realized_vols`` is retained for the diagonal tracer path and is
-    used only when covariance is absent.  ``realized_drawdown`` is the current
+    *realized_covariance* selects the covariance-aware ERC/HRP allocator.  When
+    it is absent (a cold book with no estimate yet) the rebalancer routes to the
+    diagonal path, where the configured risk shares are the base allocation and
+    ``realized_vols`` refines them toward equal diagonal risk once available.
+    ``realized_drawdown`` is the current
     book drawdown fraction; when the book declares a drawdown-de-lever curve it
     scales the whole allocation down after risk budgeting.  ``realized_skew_returns``
     carries same-horizon sleeve returns for the Floor net-convex skew constraint.

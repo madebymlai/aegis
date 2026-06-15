@@ -480,16 +480,13 @@ class RebalanceStrategy(Strategy):
         sleeve's raw target weights held from period t to t+1 are multiplied by
         the observed instrument returns over that same interval.  Until every
         positive-risk sleeve has enough complete, non-degenerate returns, return
-        ``None`` so the allocator uses the warmup fallback (raw risk shares)
-        instead of solving on an undefined covariance matrix.
+        ``None`` so the rebalancer sizes from the configured risk budget (the
+        base allocation) rather than solving on an undefined covariance matrix.
         """
         if len(self._attribution_periods) < _MIN_SLEEVE_VOL_RETURNS + 1:
             return None
 
-        risk_shares = self._book.allocator_risk_shares()
-        names = tuple(
-            sleeve.name for sleeve in self._book.sleeves if risk_shares[sleeve.name] > 0
-        )
+        names = self._positive_risk_sleeve_names()
         periods = self._attribution_periods[-(_MIN_SLEEVE_VOL_RETURNS + 1):]
         rows = _complete_sleeve_return_rows(periods, names)
         if len(rows) < _MIN_SLEEVE_VOL_RETURNS:

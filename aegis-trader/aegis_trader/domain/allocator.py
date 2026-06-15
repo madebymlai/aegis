@@ -90,10 +90,14 @@ def allocate_diagonal_vol_target(
 ) -> Allocation:
     """Scale per-sleeve target weights to realize a diagonal risk budget.
 
-    During warmup callers pass ``realized_vols=None`` and the allocator falls
-    back to raw risk shares.  Once a vol estimate is supplied, every active
-    sleeve with positive risk share must have a finite, positive volatility;
-    missing or degenerate estimates fail closed rather than silently mis-sizing.
+    The configured ``risk_shares`` are the base allocation.  Before any
+    volatility has been observed (a cold book with no return history,
+    ``realized_vols=None``) they stand on their own as the per-sleeve
+    multipliers — the risk budget is the allocation, not a degraded substitute
+    for one.  Once a vol estimate is supplied it refines them toward equal
+    diagonal risk; every active sleeve with positive risk share must then have a
+    finite, positive volatility, and missing or degenerate estimates fail closed
+    rather than silently mis-sizing.
     """
     _validate_book_vol_target(book_vol_target)
 
@@ -101,6 +105,7 @@ def allocate_diagonal_vol_target(
     if not active:
         return Allocation(multipliers={}, scaled_targets={})
     if realized_vols is None:
+        # No volatility observed yet: the configured risk budget is the allocation.
         return _delevered_allocation(
             sleeve_targets,
             _risk_share_multipliers(active, risk_shares),
@@ -134,7 +139,7 @@ def allocate_covariance_vol_target(
     *,
     sleeve_targets: Mapping[SleeveName, Mapping[str, float]],
     risk_shares: Mapping[SleeveName, float],
-    realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]] | None,
+    realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]],
     book_vol_target: float,
     groups: Mapping[SleeveName, Hashable] | None = None,
     previous_multipliers: Mapping[SleeveName, float] | None = None,
@@ -155,22 +160,18 @@ def allocate_covariance_vol_target(
     When ``groups`` is supplied, risk is allocated top-down: ERC across groups
     using group shares, then ERC within each group.  This is the HRP seam that
     prevents a correlated cluster with many sleeves from dominating the book.
+
+    A realized covariance is required: this is the *refinement* path, reached
+    only once enough return history exists.  The cold-book base case (no
+    estimate yet) is the configured risk budget realized by
+    ``allocate_diagonal_vol_target``; the rebalancer routes there instead of
+    calling this with an absent estimate.
     """
     _validate_book_vol_target(book_vol_target)
 
     active = _active_sleeves(sleeve_targets, risk_shares)
     if not active:
         return Allocation(multipliers={}, scaled_targets={})
-    if realized_covariance is None:
-        return _delevered_allocation(
-            sleeve_targets,
-            _risk_share_multipliers(active, risk_shares),
-            previous_multipliers=previous_multipliers,
-            sleeve_weight_bands=sleeve_weight_bands,
-            sleeve_reversion_fraction=sleeve_reversion_fraction,
-            realized_drawdown=realized_drawdown,
-            curve=drawdown_delever_curve,
-        )
 
     covariance = _covariance_matrix(active, realized_covariance)
     composition = _composition_vector(
@@ -344,25 +345,6 @@ def _risk_share_multipliers(
     risk_shares: Mapping[SleeveName, float],
 ) -> dict[SleeveName, float]:
     return {name: float(risk_shares[name]) for name in active}
-
-
-def _allocation_with_sleeve_weight_bands(
-    sleeve_targets: Mapping[SleeveName, Mapping[str, float]],
-    multipliers: Mapping[SleeveName, float],
-    *,
-    previous_multipliers: Mapping[SleeveName, float] | None,
-    sleeve_weight_bands: Mapping[SleeveName, SleeveWeightBand] | None,
-    sleeve_reversion_fraction: float,
-) -> Allocation:
-    return _allocation_from_multipliers(
-        sleeve_targets,
-        _apply_sleeve_weight_bands(
-            multipliers,
-            previous_multipliers=previous_multipliers,
-            sleeve_weight_bands=sleeve_weight_bands,
-            sleeve_reversion_fraction=sleeve_reversion_fraction,
-        ),
-    )
 
 
 _DEFAULT_SLEEVE_WEIGHT_BAND = SleeveWeightBand(down=0.0, up=0.0)
