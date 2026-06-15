@@ -11,7 +11,7 @@
 
 base_currency = "EUR"
 
-# Sum of sleeve budgets (0.4 + 0.4 + 0.2 = 1.0); raise max_book_gross to run levered.
+# Sum of sleeve budgets (0.35 + 0.35 + 0.15 = 0.85, a 15% cash buffer keeps netted gross under the 1.0 cap); raise max_book_gross to run levered.
 max_book_gross = 1.0
 
 # Book caps as fractions of NAV.  Provenance is checked at load against each
@@ -24,16 +24,16 @@ net_cap = 1.0
 [[sleeves]]
 name = "atalanta_trend"
 wheel_filename = "aegis_exec_atalanta_trendstraddlebuffered_cand_b98-1.0.0-py3-none-any.whl"
-budget = 0.4
+budget = 0.35
 
 # demeter — EU credit-carry pole (IHYU + LQDH, USD legs converted to EUR).
 [[sleeves]]
 name = "demeter_carry"
 wheel_filename = "aegis_exec_demeter_carry_cand_c94-1.0.0-py3-none-any.whl"
-budget = 0.4
+budget = 0.35
 
 # aegis — UCITS tail hedge (VOOL, native EUR, held 100% within the sleeve).
 [[sleeves]]
 name = "aegis_tail"
 wheel_filename = "aegis_exec_aegis_heldhedge_cand_fa6-1.0.0-py3-none-any.whl"
-budget = 0.2
+budget = 0.15
