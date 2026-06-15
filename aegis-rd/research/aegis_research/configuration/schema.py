@@ -108,10 +108,16 @@ class SymbolSpec:
     Currency is instrument identity, declared inline beside the ticker (never
     sniffed from a data provider). ``ccy`` is the literal quote token, including
     minor units such as ``GBp`` (pence); the converter owns the minor-unit math.
+
+    ``figi`` optionally pins the instrument's canonical OpenFIGI identity. When
+    set it is used verbatim at export and the OpenFIGI ticker lookup is skipped
+    entirely — the authoritative escape hatch for names OpenFIGI cannot map
+    uniquely (ambiguous LSE share-class lines) or at all (no usable suffix).
     """
 
     ticker: str
     ccy: str
+    figi: str | None = None
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

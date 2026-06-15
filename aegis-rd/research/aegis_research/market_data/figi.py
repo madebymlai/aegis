@@ -92,12 +92,13 @@ def resolve_figis(
     Returns a ticker -> FIGI map in declared order. Fail-closed: an unmapped or
     ambiguous ticker raises :class:`FigiResolutionError`.
     """
-    jobs = [_mapping_job(spec) for spec in symbols]
-    responses = client.map(jobs)
-    resolved: dict[str, str] = {}
+    # An explicit figi pins the identity verbatim; only the rest are looked up.
+    resolved: dict[str, str] = {spec.ticker: spec.figi for spec in symbols if spec.figi}
+    to_map = [spec for spec in symbols if not spec.figi]
+    responses = client.map([_mapping_job(spec) for spec in to_map]) if to_map else []
     unmapped: list[str] = []
     ambiguous: list[str] = []
-    for spec, response in zip(symbols, responses, strict=True):
+    for spec, response in zip(to_map, responses, strict=True):
         figis = _figis_of(response)
         if not figis:
             unmapped.append(spec.ticker)

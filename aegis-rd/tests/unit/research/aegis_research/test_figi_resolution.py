@@ -103,6 +103,43 @@ def test_quote_currency_is_sent_to_openfigi_verbatim() -> None:
     assert client.seen_jobs[0]["currency"] == "GBp"
 
 
+def test_explicit_figi_bypasses_openfigi() -> None:
+    # An authoritative figi on the symbol is used verbatim; the ambiguous/
+    # unmappable OpenFIGI lookup is skipped entirely (no job is sent).
+    symbols = [SymbolSpec(ticker="AIGC.L", ccy="USD", figi="BBG000BLDWV1")]
+    client = _FakeOpenFigiClient([])
+
+    resolved = resolve_figis(symbols, client=client)
+
+    assert resolved == {"AIGC.L": "BBG000BLDWV1"}
+    assert client.seen_jobs == []
+
+
+def test_explicit_figi_mixes_with_resolved() -> None:
+    # Only the symbols without an explicit figi are sent to OpenFIGI.
+    symbols = [
+        SymbolSpec(ticker="AIGC.L", ccy="USD", figi="BBG000BLDWV1"),
+        SymbolSpec(ticker="IHYU.L", ccy="USD"),
+    ]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    resolved = resolve_figis(symbols, client=client)
+
+    assert resolved == {"AIGC.L": "BBG000BLDWV1", "IHYU.L": "BBG0022FR5K6"}
+    assert [job["idValue"] for job in client.seen_jobs] == ["IHYU"]
+
+
+def test_explicit_figi_colliding_with_resolved_fails_closed() -> None:
+    symbols = [
+        SymbolSpec(ticker="AIGC.L", ccy="USD", figi="BBG0022FR5K6"),
+        SymbolSpec(ticker="IHYU.L", ccy="USD"),
+    ]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    with pytest.raises(FigiResolutionError, match="BBG0022FR5K6"):
+        resolve_figis(symbols, client=client)
+
+
 def test_unmapped_ticker_fails_closed() -> None:
     symbols = [SymbolSpec(ticker="SPY", ccy="USD"), SymbolSpec(ticker="NOPE", ccy="USD")]
     client = _FakeOpenFigiClient([_hit("BBG000BDTBL9"), {"warning": "No identifier found."}])
