@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from aegis_trader.domain.allocator import covariance_book_vol, portfolio_skew, risk_contribution_shares
+from aegis_trader.domain.allocator import covariance_book_vol, risk_contribution_shares
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import (
     BookConfig,
@@ -303,25 +303,15 @@ def test_sleeve_bands_cut_turnover_while_vol_target_stays_close():
     ) == pytest.approx(book.book_vol_target, abs=0.001)
 
 
-def test_five_year_floor_remains_net_convex_under_live_skew_budget():
-    days = 252 * 5
-    base = np.linspace(0.0, 70.0 * np.pi, days)
-    trend_daily = 0.001 * np.sin(base)
-    carry_daily = 0.0008 * np.cos(base)
-    covariance = {
-        _TREND: {
-            _TREND: float(np.var(trend_daily, ddof=1) * 252.0),
-            _CARRY: float(np.cov(trend_daily, carry_daily, ddof=1)[0, 1] * 252.0),
-        },
-        _CARRY: {
-            _TREND: float(np.cov(trend_daily, carry_daily, ddof=1)[0, 1] * 252.0),
-            _CARRY: float(np.var(carry_daily, ddof=1) * 252.0),
-        },
-    }
-    quarterly_returns = {
-        _TREND: (0.20, -0.03, 0.01, -0.02, 0.16, -0.02, 0.01, -0.01),
-        _CARRY: (0.03, 0.02, 0.03, 0.01, -0.50, 0.02, 0.03, -0.40),
-    }
+def test_all_concave_floor_allocates_by_conviction_tilt_with_no_skew_enforcement():
+    """Net-convexity is by construction (ADR-0004 amendment), not a live solve.
+
+    Both Floor poles can be transiently concave with no convex donor — the case
+    that used to raise "skew constraint cannot be satisfied" (the bu4.7 blocker).
+    With the live skew solve removed, the book simply allocates by its risk-budget
+    conviction tilt (trend the larger pole) and completes; there is no skew
+    machinery left to go infeasible.
+    """
     book = BookConfig(
         sleeves=(
             SleeveConfig(
@@ -338,24 +328,26 @@ def test_five_year_floor_remains_net_convex_under_live_skew_budget():
             ),
         ),
         book_vol_target=0.09,
+        max_book_gross=2.0,  # isolate from the down-only clamp; this is about skew
     )
 
+    # The allocator no longer takes any skew input; an all-concave Floor is just
+    # ordinary data it allocates over.
     deltas = rebalance(
         {
             _TREND: _one_row_target({"TREND": 1.0}),
             _CARRY: _one_row_target({"CARRY": 1.0}),
         },
         book,
-        realized_covariance=covariance,
-        realized_skew_returns=quarterly_returns,
+        realized_covariance={
+            _TREND: {_TREND: 0.10**2, _CARRY: 0.0},
+            _CARRY: {_TREND: 0.0, _CARRY: 0.10**2},
+        },
     )
     weights = {delta.figi.value: delta.delta for delta in deltas}
 
-    assert portfolio_skew(
-        {_TREND: weights["TREND"], _CARRY: weights["CARRY"]},
-        quarterly_returns,
-    ) >= -1e-10
-    assert weights["TREND"] >= weights["CARRY"]
+    # Completed (no infeasibility) and kept the conviction tilt: trend > carry.
+    assert weights["TREND"] > weights["CARRY"]
 
 
 def test_backtest_drawdown_delever_engages_in_worst_window_and_returns_are_measured():

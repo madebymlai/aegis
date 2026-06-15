@@ -5,14 +5,12 @@ from __future__ import annotations
 import pytest
 
 from aegis_trader.domain.allocator import (
-    SkewConstraint,
     SleeveWeightBand,
     allocate_covariance_vol_target,
     allocate_diagonal_vol_target,
     covariance_book_vol,
     diagonal_book_vol,
     equal_risk_contribution_weights,
-    portfolio_skew,
     risk_contribution_shares,
 )
 from aegis_trader.domain.book_config import DrawdownDeleverCurve
@@ -215,45 +213,6 @@ def test_sleeve_weight_band_reverts_partially_after_breach():
         previous + 0.5 * (full_target.multipliers[_CARRY] - previous)
     )
     assert allocation.multipliers[_CARRY] != pytest.approx(full_target.multipliers[_CARRY])
-
-
-def test_floor_skew_constraint_keeps_book_net_convex_without_cutting_trend_below_carry():
-    returns = {
-        _TREND: (0.20, -0.03, 0.01, -0.02, 0.16, -0.02, 0.01, -0.01),
-        _CARRY: (0.03, 0.02, 0.03, 0.01, -0.50, 0.02, 0.03, -0.40),
-    }
-    unconstrained = allocate_covariance_vol_target(
-        sleeve_targets={_TREND: {Figi("TREND"): 1.0}, _CARRY: {Figi("CARRY"): 1.0}},
-        risk_shares={_TREND: 0.6, _CARRY: 0.4},
-        realized_covariance={
-            _TREND: {_TREND: 0.10**2, _CARRY: 0.0},
-            _CARRY: {_TREND: 0.0, _CARRY: 0.10**2},
-        },
-        book_vol_target=0.09,
-        groups={_TREND: "Floor", _CARRY: "Floor"},
-    )
-    assert portfolio_skew(unconstrained.multipliers, returns) < 0.0
-
-    constrained = allocate_covariance_vol_target(
-        sleeve_targets={_TREND: {Figi("TREND"): 1.0}, _CARRY: {Figi("CARRY"): 1.0}},
-        risk_shares={_TREND: 0.6, _CARRY: 0.4},
-        realized_covariance={
-            _TREND: {_TREND: 0.10**2, _CARRY: 0.0},
-            _CARRY: {_TREND: 0.0, _CARRY: 0.10**2},
-        },
-        book_vol_target=0.09,
-        groups={_TREND: "Floor", _CARRY: "Floor"},
-        skew_constraint=SkewConstraint(
-            realized_returns=returns,
-            min_skew=0.0,
-            constrained_group="Floor",
-        ),
-    )
-
-    assert portfolio_skew(constrained.multipliers, returns) >= -1e-10
-    assert constrained.multipliers[_TREND] >= constrained.multipliers[_CARRY]
-    assert constrained.multipliers[_TREND] >= unconstrained.multipliers[_TREND]
-    assert constrained.multipliers[_CARRY] <= unconstrained.multipliers[_CARRY]
 
 
 def test_drawdown_delever_scales_exposure_monotonically_and_recovers():

@@ -73,8 +73,6 @@ _NS_PER_DAY: int = 86_400_000_000_000
 _MIN_SLEEVE_VOL_RETURNS = 20
 _TRADING_DAYS_PER_YEAR = 252.0
 _EWMA_COVARIANCE_ALPHA = 0.06
-_QUARTERLY_RETURN_PERIODS = 63
-_MIN_QUARTERLY_SKEW_RETURNS = 8
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -154,6 +152,21 @@ class RebalanceStrategy(Strategy):
         """
         self._sleeve_to_bundle[name] = bundle
         self._sleeve_to_contract[name] = bundle.contract
+
+    # ── port accessors ──────────────────────────────────────────────────────
+    # The reconciled-book and market-data ports are wired in ``on_start``; every
+    # trading path runs after it.  These accessors make that lifecycle invariant
+    # explicit and fail fast if a path is ever reached before the engine starts.
+
+    def _require_book_state(self) -> BookStatePort:
+        if self._book_state is None:
+            raise RuntimeError("book-state port queried before on_start wired it")
+        return self._book_state
+
+    def _require_market_data(self) -> MarketDataPort:
+        if self._market_data is None:
+            raise RuntimeError("market-data port queried before on_start wired it")
+        return self._market_data
 
     # ── Nautilus lifecycle ────────────────────────────────────────────────────
 
@@ -380,24 +393,22 @@ class RebalanceStrategy(Strategy):
             return
 
         # Net all sleeve targets and submit
-        nav = self._book_state.nav()
+        nav = self._require_book_state().nav()
 
         instrument_metas, fx_rates, prices = self._collect_sizing_params()
-        realized_weights = self._book_state.realized_weights()
+        realized_weights = self._require_book_state().realized_weights()
 
         # Two-step pipeline: the pure rebalancer decides what to trade (signed
         # weight deltas) against the REALIZED book (so bands, the realized-book
         # gate, and the fidelity trip engage); the sizer converts each delta into
         # a native share count.
         realized_covariance = self._realized_sleeve_covariance()
-        realized_skew_returns = self._realized_quarterly_sleeve_returns()
         plan = rebalance_plan(
             pending,
             self._book,
             realized_weights=realized_weights,
             realized_covariance=realized_covariance,
             previous_sleeve_weights=self._last_sleeve_weights,
-            realized_skew_returns=realized_skew_returns,
             realized_drawdown=current_drawdown(self._nav_history, nav),
         )
         self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
@@ -496,27 +507,6 @@ class RebalanceStrategy(Strategy):
             return None
         return _annualized_covariance_by_sleeve(names, rows)
 
-    def _realized_quarterly_sleeve_returns(self) -> dict[SleeveName, tuple[float, ...]] | None:
-        """Estimate realized quarterly sleeve returns for the skew constraint.
-
-        Uses the same per-period sleeve-return rows as the covariance estimator,
-        compounded over a rolling quarter.  Until enough complete quarterly rows
-        exist, return ``None`` so the allocator leaves the Floor tilt at its
-        risk-budget conviction split rather than solving an undefined skew.
-        """
-        names = self._positive_risk_sleeve_names()
-        rows = _complete_sleeve_return_rows(self._attribution_periods, names)
-        quarterly_rows = _rolling_compounded_return_rows(
-            rows,
-            horizon=_QUARTERLY_RETURN_PERIODS,
-        )
-        if len(quarterly_rows) < _MIN_QUARTERLY_SKEW_RETURNS:
-            return None
-        return {
-            name: tuple(float(row[index]) for row in quarterly_rows)
-            for index, name in enumerate(names)
-        }
-
     def _positive_risk_sleeve_names(self) -> tuple[SleeveName, ...]:
         """Return the sleeve universe shared by covariance and skew estimates."""
         risk_shares = self._book.allocator_risk_shares()
@@ -591,7 +581,7 @@ class RebalanceStrategy(Strategy):
 
         for figi_str in all_figis:
             instr_id = self._figi_to_instr_id(figi_str)
-            sizing = self._market_data.instrument_sizing(instr_id)
+            sizing = self._require_market_data().instrument_sizing(instr_id)
             if sizing is None:
                 continue
 
@@ -628,7 +618,7 @@ class RebalanceStrategy(Strategy):
         base = self._book.base_currency
         series: dict[str, pd.Series] = {}
         for ccy in needed:
-            rate = self._market_data.fx_rate(base, ccy)
+            rate = self._require_market_data().fx_rate(base, ccy)
             if rate is None:
                 return None
             series[ccy] = pd.Series(rate, index=index)
@@ -647,7 +637,7 @@ class RebalanceStrategy(Strategy):
         major = major_currency(target_currency)
         if major == base:
             return 1.0
-        return self._market_data.fx_rate(base, major)
+        return self._require_market_data().fx_rate(base, major)
 
     # -- RiskEngine callbacks ---------------------------------------------------
 
@@ -691,7 +681,7 @@ class RebalanceStrategy(Strategy):
         so it is passed directly to ``make_qty``.
         """
         instr_id = self._figi_to_instr_id(oi.figi.value)
-        quantity = self._market_data.make_quantity(instr_id, oi.quantity)
+        quantity = self._require_market_data().make_quantity(instr_id, oi.quantity)
         if quantity is None:
             self.log.error(
                 f"Instrument not found for FIGI {oi.figi.value}; skipping order"
@@ -774,24 +764,6 @@ def _sleeve_period_return(
         sleeve_return += float(weight) * (curr_px / prev_px - 1.0)
         has_input = True
     return sleeve_return if has_input else None
-
-
-def _rolling_compounded_return_rows(
-    rows: list[list[float]],
-    *,
-    horizon: int,
-) -> list[list[float]]:
-    """Compound complete per-period sleeve returns over a rolling horizon."""
-    if horizon <= 0:
-        raise ValueError("quarterly return horizon must be positive")
-    if len(rows) < horizon:
-        return []
-    values = np.array(rows, dtype=float)
-    compounded: list[list[float]] = []
-    for end in range(horizon, len(rows) + 1):
-        window = values[end - horizon:end]
-        compounded.append((np.prod(1.0 + window, axis=0) - 1.0).tolist())
-    return compounded
 
 
 def _annualized_covariance_by_sleeve(

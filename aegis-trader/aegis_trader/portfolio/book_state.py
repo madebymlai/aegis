@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from nautilus_trader.cache.base import CacheFacade
-from nautilus_trader.model.objects import Currency
+from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.portfolio.base import PortfolioFacade
 
 from aegis_trader.domain.types import Figi
@@ -120,7 +120,7 @@ class NautilusBookState:
             weights[figi] = weights.get(figi, 0.0) + signed / nav
         return weights
 
-    def _in_base(self, exposure: object) -> float | None:
+    def _in_base(self, exposure: Money) -> float | None:
         """Native exposure magnitude converted to base via the mark xrate, or
         ``None`` when no rate is available (same-currency yields 1.0)."""
         rate = self._cache.get_mark_xrate(exposure.currency, self._base)

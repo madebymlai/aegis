@@ -3,7 +3,7 @@
 Status: accepted (allocator implemented in `aegis-rd-bu4` slices 1–6; knob calibration +
 HITL sign-off `aegis-rd-bu4.7` pending; **amends ADR-0001's static-budget boundary** and
 feeds the netting/gate of ADR-0002; **amended by `aegis-rd-ytr` — vol-targeting is down-only,
-see the amendment below**)
+and the live net-convex skew solve is removed; see the amendments below**)
 
 ## Amendment (`aegis-rd-ytr`): vol-targeting is down-only; the vol target is a ceiling
 
@@ -33,6 +33,28 @@ gross constraint binds, the achievable risk budget is necessarily the constraine
 & Roncalli, "Constrained Risk Budgeting"). The clamp lives in the rebalancer (which owns
 per-FIGI netting) because it must scale the *netted* book gross, not a per-sleeve sum — a long
 in one sleeve and a short in another cancel, so the netted gross is what the cap governs.
+
+## Amendment (`aegis-rd-ytr.2`): the live net-convex skew solve is removed; net-convexity is by construction
+
+The original decision below kept the Floor net-convex via a **live constraint** — each rebalance
+the Allocator re-weighted *within* the Floor to hold book quarterly skew ≥ 0 on realized
+returns. The `aegis-rd-bu4.7` re-validation showed this goes **infeasible** whenever both Floor
+poles are transiently concave at once (no convex sleeve to donate to, the tail being a separate
+group): the solve raises and halts the book. A graceful fallback (run without the guarantee, set
+a flag) was **rejected as silent degradation** — it advertises a net-convex floor while quietly
+not delivering one.
+
+**Amendment:** the live net-convex skew solve is **removed entirely**. Net-convexity is
+delivered **by construction**, not by a live solve: the fixed ~0.60 / ~0.40 trend/carry
+**conviction tilt** (trend the larger, standing convex pole) plus the **convexity-premium
+tail**. The deleted live skew≥0 re-weighting conditioned on *trailing realized skew* — a noisy,
+window-unstable signal, the very instability this ADR already rejected when it threw out
+skew-neutral floor weighting — and it was the only part of the Allocator that could go
+infeasible. Net-convexity is therefore a property to **observe** (a Run may record realized book
+skew as Evidence so an operator can *see* when the floor isn't net-convex and fix the
+strategy/config), **never** to defensively re-weight toward. Removed: `SkewConstraint`,
+`_apply_skew_constraint`, `portfolio_skew`, and the `realized_skew_returns` plumbing from the
+Strategy → rebalancer → allocator.
 
 ---
 

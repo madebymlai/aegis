@@ -37,6 +37,24 @@ filterwarnings = [
     "ignore:.*multi-threaded, use of fork.*:DeprecationWarning",
 ]
 
+[tool.mypy]
+python_version = "3.12"
+files = ["aegis_trader", "tests"]
+
+# nautilus_trader ships no type stubs, pandas' stubs aren't installed, and
+# aegis-runtime is resolved as an editable local wheel — none expose types to
+# mypy.  Suppress the missing-import noise without weakening checks on our own code.
+[[tool.mypy.overrides]]
+module = [
+    "nautilus_trader.*",
+    "pandas",
+    "pandas.*",
+    "aegis_runtime",
+    "aegis_runtime.*",
+    "yfinance",
+]
+ignore_missing_imports = true
+
 [tool.uv.sources]
 aegis-runtime = { path = "../aegis-runtime", editable = true }
 

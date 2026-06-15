@@ -9,17 +9,23 @@ from aegis_trader.observability.port import (
 )
 
 
-def _make_summary(**overrides) -> RebalanceSummary:
-    defaults = dict(
-        nav=100_000.0,
-        num_sleeves=2,
-        num_targets=3,
-        num_orders=2,
-        gate_outcome=GateOutcome.PASS,
-        total_notional=22_000.0,
+def _make_summary(
+    *,
+    nav: float = 100_000.0,
+    num_sleeves: int = 2,
+    num_targets: int = 3,
+    num_orders: int = 2,
+    gate_outcome: GateOutcome = GateOutcome.PASS,
+    total_notional: float = 22_000.0,
+) -> RebalanceSummary:
+    return RebalanceSummary(
+        nav=nav,
+        num_sleeves=num_sleeves,
+        num_targets=num_targets,
+        num_orders=num_orders,
+        gate_outcome=gate_outcome,
+        total_notional=total_notional,
     )
-    defaults.update(overrides)
-    return RebalanceSummary(**defaults)
 
 
 class _FakePort(ObservabilityPort):
