@@ -388,9 +388,13 @@ class RebalanceStrategy(Strategy):
 
 
         # ── Slice 9: store per-sleeve targets & closes for attribution ───
+        # Store only this period's target row (the one the rebalancer nets via
+        # target.iloc[-1]) -- not the whole growing compute_weights window, which
+        # would duplicate timestamps and break the attribution alignment.  Every
+        # target here is non-empty: rebalance() above already took iloc[-1].
         for sleeve_name, target_df in pending.items():
             history = self._sleeve_target_history.setdefault(sleeve_name, [])
-            history.append(target_df)
+            history.append(target_df.iloc[[-1]])
         self._nav_history.append(nav)
         if prices:
             for figi, px in prices.items():
