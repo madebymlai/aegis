@@ -32,11 +32,12 @@ globally on failure.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from nautilus_trader.model.data import Bar, BarType, QuoteTick
+from nautilus_trader.model.data import Bar, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.events import OrderDenied
@@ -50,7 +51,13 @@ from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 from aegis_runtime.currency import major_currency
 
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
-from aegis_trader.data import MarketDataPort, NautilusMarketData
+from aegis_trader.data import (
+    MarketDataPort,
+    NautilusMarketData,
+    bar_type,
+    resolve_book_timeframe,
+    timeframe_to_ns,
+)
 from aegis_trader.domain.allocator import portfolio_skew
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig
@@ -119,6 +126,8 @@ class RebalanceStrategy(Strategy):
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
         self._current_period: int | None = None
         self._period_fresh_figis: set[str] = set()
+        # Rebalance-period width in ns; set from the book timeframe in on_start.
+        self._period_ns: int = _NS_PER_DAY
         # ── Slice 3: FIGI bimap ──────────────────────────────────────────
         self._figi_bimap: dict[str, InstrumentId] = {}
         self._figi_resolver: FigiInstrumentResolver = (
@@ -242,12 +251,17 @@ class RebalanceStrategy(Strategy):
 
         # Subscribe to bars on the RESOLVED InstrumentId and build the inverse
         # (InstrumentId -> FIGI) map used for position lookups.
+        # The book runs on one timeframe (all sleeves agree); resolve it once for
+        # the bar subscription and the rebalance-period width.
+        book_timeframe = resolve_book_timeframe(
+            contract.timeframe for contract in self._sleeve_to_contract.values()
+        )
+        self._period_ns = timeframe_to_ns(book_timeframe)
+
         for figi in all_figis:
             instr_id = self._figi_to_instr_id(figi)
             self._instr_to_figi[instr_id.value] = figi
-            self.subscribe_bars(
-                BarType.from_str(f"{instr_id.value}-1-DAY-LAST-EXTERNAL")
-            )
+            self.subscribe_bars(bar_type(instr_id.value, book_timeframe))
 
         # Subscribe to FX reference-pair quotes so the cache mark xrates stay
         # current from live data — both the sizer (MarketDataPort.fx_rate) and
@@ -326,14 +340,10 @@ class RebalanceStrategy(Strategy):
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
-    @staticmethod
-    def _extract_period(bar: Bar) -> int:
-        """Extract the day period from *bar*'s event timestamp.
-
-        For 1D bars the period is the calendar day; this generalises to
-        any fixed-width bar by replacing the divisor with the bar step.
-        """
-        return bar.ts_event // _NS_PER_DAY
+    def _extract_period(self, bar: Bar) -> int:
+        """The rebalance period index for *bar*: its event timestamp floored to
+        the book's bar width (set from the contract timeframe in on_start)."""
+        return bar.ts_event // self._period_ns
 
     def _rebalance_for_period(self) -> None:
         """Compute per-sleeve targets from buffered bars, net, and submit.
@@ -360,8 +370,8 @@ class RebalanceStrategy(Strategy):
             lookback = contract.lookback_bars
             needed = lookback + 1
 
-            # Assemble per-sleeve close-price series
-            sleeve_closes: dict[str, pd.DataFrame] = {}
+            # Collect each FIGI's completed-period bar buffer (enough lookback).
+            sleeve_bufs: dict[str, list[Bar]] = {}
             sleeve_ok = True
             for figi in contract.figis:
                 instr_id = self._figi_to_instr_id(figi)
@@ -369,20 +379,20 @@ class RebalanceStrategy(Strategy):
                 if len(buf) < needed:
                     sleeve_ok = False
                     break
-                close_series = _bars_to_close_series(buf, figi)
-                sleeve_closes[figi] = close_series
+                sleeve_bufs[figi] = buf
 
-            if not sleeve_ok or not sleeve_closes:
+            if not sleeve_ok or not sleeve_bufs:
                 continue
 
-            # Combine all FIGI close series for this sleeve into one DataFrame
-            if len(sleeve_closes) == 1:
-                close_df = next(iter(sleeve_closes.values()))
-            else:
-                close_df = pd.concat(sleeve_closes.values(), axis=1)
-
-            bundle_data = MarketDataBundle({"Close": close_df})
-            fx_series = self._fx_series_for(contract, close_df.index)
+            # Assemble one DataFrame per array the contract declares (a column per
+            # FIGI), sourced from the buffered bars — the overlay feeds
+            # compute_weights exactly the arrays the bundle asked for.
+            arrays = {
+                name: _combine_array_series(sleeve_bufs, name)
+                for name in contract.required_arrays
+            }
+            bundle_data = MarketDataBundle(arrays)
+            fx_series = self._fx_series_for(contract, next(iter(arrays.values())).index)
             if fx_series is None:
                 self.log.warning(
                     f"sleeve {sleeve.name.value}: required FX unavailable; "
@@ -743,13 +753,35 @@ def current_drawdown(nav_history: list[float], current_nav: float) -> float:
     return min(max(drawdown, 0.0), 1.0)
 
 
-def _bars_to_close_series(
-    bars: list[Bar], figi: str,
-) -> pd.DataFrame:
-    """Convert buffered bars into a single-column close-price DataFrame keyed by *figi*."""
+_BAR_ARRAY_ACCESSORS: dict[str, Callable[[Bar], float]] = {
+    "Open": lambda b: float(b.open.as_double()),
+    "High": lambda b: float(b.high.as_double()),
+    "Low": lambda b: float(b.low.as_double()),
+    "Close": lambda b: float(b.close.as_double()),
+    "Volume": lambda b: float(b.volume.as_double()),
+}
+
+
+def _bars_to_array_series(bars: list[Bar], figi: str, array_name: str) -> pd.DataFrame:
+    """Convert buffered bars into a single-column DataFrame of the named OHLCV
+    array (Open/High/Low/Close/Volume) keyed by *figi*."""
+    accessor = _BAR_ARRAY_ACCESSORS[array_name]
     index = pd.DatetimeIndex([b.ts_event for b in bars])
-    values = [float(b.close.as_double()) for b in bars]
+    values = [accessor(b) for b in bars]
     return pd.DataFrame({figi: values}, index=index)
+
+
+def _combine_array_series(
+    bufs_by_figi: dict[str, list[Bar]], array_name: str
+) -> pd.DataFrame:
+    """One DataFrame for *array_name* with a column per FIGI, from each FIGI's bars."""
+    series = {
+        figi: _bars_to_array_series(buf, figi, array_name)
+        for figi, buf in bufs_by_figi.items()
+    }
+    if len(series) == 1:
+        return next(iter(series.values()))
+    return pd.concat(series.values(), axis=1)
 
 
 def _complete_sleeve_return_rows(

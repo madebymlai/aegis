@@ -16,11 +16,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.wranglers import BarDataWrangler
+
+from aegis_trader.data.bar_type import bar_type
 
 
 @dataclass(frozen=True)
@@ -54,12 +56,8 @@ def build_equity(spec: InstrumentSpec) -> Equity:
     )
 
 
-def daily_bar_type(instrument: Equity) -> BarType:
-    """The 1-DAY LAST-EXTERNAL bar type the overlay subscribes for *instrument*."""
-    return BarType.from_str(f"{instrument.id.value}-1-DAY-LAST-EXTERNAL")
-
-
-def wrangle_daily_bars(instrument: Equity, ohlcv: pd.DataFrame) -> list[Bar]:
-    """Wrangle an OHLCV frame into the instrument's daily ``Bar`` list."""
-    wrangler = BarDataWrangler(daily_bar_type(instrument), instrument)
+def wrangle_bars(instrument: Equity, ohlcv: pd.DataFrame, timeframe: str) -> list[Bar]:
+    """Wrangle an OHLCV frame into the instrument's ``Bar`` list at *timeframe*
+    (the contract timeframe; the LAST-EXTERNAL bar type is derived from it)."""
+    wrangler = BarDataWrangler(bar_type(instrument.id.value, timeframe), instrument)
     return wrangler.process(ohlcv)

@@ -11,7 +11,7 @@ import pandas as pd
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.instruments import Equity
 
-from aegis_trader.data import InstrumentSpec, build_equity, wrangle_daily_bars
+from aegis_trader.data import InstrumentSpec, build_equity, wrangle_bars
 
 _FIGI = "BBG0022FR5K6"
 
@@ -40,10 +40,10 @@ def test_build_equity_keys_instrument_by_figi_and_venue():
     assert instrument.quote_currency.code == "USD"
 
 
-def test_wrangle_daily_bars_turns_ohlcv_into_close_bars():
+def test_wrangle_bars_turns_ohlcv_into_close_bars():
     instrument = build_equity(InstrumentSpec(figi=_FIGI, venue="XLON", quote_currency="USD"))
 
-    bars = wrangle_daily_bars(instrument, _ohlcv([100.0, 101.0, 102.0]))
+    bars = wrangle_bars(instrument, _ohlcv([100.0, 101.0, 102.0]), "1D")
 
     assert all(isinstance(b, Bar) for b in bars)
     assert len(bars) == 3
