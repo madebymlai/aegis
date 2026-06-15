@@ -2,6 +2,9 @@ name: demeter_eu_credit_carry_duration
 schema_version: 8
 output_dir: runs/demeter_eu/credit_carry_duration
 
+# Pinned winner of the latest sweep (role: best) for execution-bundle export.
+lock: 20260615T033157551406Z_demeter_eu_credit_carry_duration
+
 # DURATION-STRIPPED credit pole — the live, EU-retail redesign of carry.yaml. The live long-only
 # pole (carry.yaml: IHYU/LQDE/IEMB) earns the credit carry but its unhedged legs carry RATES
 # DURATION, which OVERLAPS atalanta's government-bond book — so the two floor poles are not
