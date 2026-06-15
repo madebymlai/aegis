@@ -21,7 +21,7 @@ import pandas as pd
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import TraderId, Venue
+from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
@@ -172,6 +172,9 @@ def _setup_engine(trader_id: str, book: BookConfig, bundle: _SyntheticBundle) ->
     config = RebalanceStrategyConfig(book=book)
     strategy = RebalanceStrategy(config=config)
     strategy._bundle = bundle
+    # Inject a stub bimap so the strategy skips HTTP OpenFIGI resolution
+    instr_id = InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")
+    strategy._figi_bimap = {_SYNTH_FIGI: instr_id}
     engine.add_strategy(strategy)
     return engine, strategy
 

@@ -42,7 +42,7 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.events import OrderDenied
 from nautilus_trader.model.identifiers import InstrumentId, Venue
-from nautilus_trader.model.objects import Currency
+from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
@@ -143,9 +143,15 @@ class RebalanceStrategy(Strategy):
             equity_map = self.portfolio.equity(venue=venue)
             base_ccy = Currency.from_str(self._book.base_currency)
             nav = float(equity_map.get(base_ccy, Money(0, base_ccy)).as_double())
-            cash = float(self.portfolio.balances_locked_committed(venue=venue).get(
-                base_ccy, Money(0, base_ccy),
-            ).as_double())
+
+            # Total cash balance from the account state
+            cash = 0.0
+            account_state = self.portfolio.account(venue=venue)
+            if account_state is not None:
+                balances = account_state.balances()
+                bal = balances.get(base_ccy)
+                if bal is not None:
+                    cash = float(bal.total.as_double())
         except Exception as exc:
             self.log.error(
                 f"Failed to query portfolio for integrity check: {exc}. "
@@ -443,7 +449,7 @@ class RebalanceStrategy(Strategy):
             return {}
 
         for pos in positions:
-            if pos.is_flat:
+            if not pos.is_open:
                 continue
             instr_id = pos.instrument_id
             # Resolve InstrumentId back to FIGI via the instr→figi map
