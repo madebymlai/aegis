@@ -20,7 +20,7 @@ import pytest
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import TraderId, Venue
+from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.test_kit.providers import TestInstrumentProvider

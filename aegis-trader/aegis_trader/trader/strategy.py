@@ -48,6 +48,7 @@ from nautilus_trader.trading.strategy import Strategy
 
 from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
+from aegis_trader.domain.attribution import compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
 from aegis_trader.domain.rebalancer import rebalance
@@ -55,6 +56,11 @@ from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.types import OrderIntent, OrderSide, RebalanceResult, SleeveName
 from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
+from aegis_trader.observability.port import (
+    GateOutcome,
+    ObservabilityPort,
+    RebalanceSummary,
+)
 
 _NS_PER_DAY: int = 86_400_000_000_000
 
@@ -66,6 +72,7 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     bundle_label: str = "synthetic"
     figi_resolver: FigiInstrumentResolver | None = None
     risk_guard_config: RiskGuardConfig = RiskGuardConfig()
+    obs_port: ObservabilityPort | None = None
 
 
 class RebalanceStrategy(Strategy):
@@ -110,6 +117,10 @@ class RebalanceStrategy(Strategy):
         # ── Slice 7: integrity + quarantine ──────────────────────────────
         self._integrity_report: IntegrityReport | None = None
         self._is_halted: bool = False
+        # ── Slice 9: observability + attribution ─────────────────────────
+        self._obs_port: ObservabilityPort | None = config.obs_port
+        self._sleeve_target_history: dict[SleeveName, list[pd.DataFrame]] = {}
+        self._close_history: dict[str, list[float]] = {}  # FIGI → list of closes
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -172,9 +183,15 @@ class RebalanceStrategy(Strategy):
                 f"HALTING the book."
             )
             self._is_halted = True
+            if self._obs_port is not None:
+                self._obs_port.alert_halt(self._integrity_report.reason)
             return
 
         self.log.info(f"Integrity check passed: NAV={nav:.2f}, cash={cash:.2f}")
+
+        # ── Slice 9: initialise attribution trackers ────────────────────
+        for sleeve in self._book.sleeves:
+            self._sleeve_target_history[sleeve.name] = []
 
         # Build FIGI → venue map from sleeve configs
         for sleeve in self._book.sleeves:
@@ -346,12 +363,40 @@ class RebalanceStrategy(Strategy):
             held_positions=held_positions,
         )
 
+        # ── Slice 9: compute total notional for the summary ──────────────
+        total_notional = sum(
+            abs(o.quantity) for o in result.orders
+            if o.figi.value in self._period_fresh_figis
+        )
+
+        # ── Slice 9: build and log the rebalance summary ─────────────────
+        summary = RebalanceSummary(
+            nav=nav,
+            num_sleeves=len(pending),
+            num_targets=len(result.orders),
+            num_orders=len(result.orders),
+            num_quarantined=len(result.quarantined),
+            quarantined_figis=result.quarantined,
+            gate_outcome=GateOutcome.PASS,
+            total_notional=total_notional,
+        )
+        self._log_rebalance_summary(summary)
+
         # Slice 7: alert on quarantined instruments
         if result.quarantined:
             self.log.warning(
                 f"Quarantined instruments (held but not in any sleeve): "
                 f"{', '.join(result.quarantined)}"
             )
+
+        # ── Slice 9: store per-sleeve targets & closes for attribution ───
+        for sleeve_name, target_df in pending.items():
+            history = self._sleeve_target_history.setdefault(sleeve_name, [])
+            history.append(target_df)
+        if prices:
+            for figi, px in prices.items():
+                cl = self._close_history.setdefault(figi, [])
+                cl.append(px)
 
         # Calendar-aware: only emit orders for FIGIs with a fresh bar
         for oi in result.orders:
@@ -362,6 +407,92 @@ class RebalanceStrategy(Strategy):
                 )
                 continue
             self._submit_order_intent(oi)
+
+    def _log_rebalance_summary(self, summary: RebalanceSummary) -> None:
+        """Emit a structured rebalance log through the observability port.
+
+        Falls back to ``self.log.info`` when no port is configured.
+        """
+        if self._obs_port is not None:
+            self._obs_port.log_rebalance_decision(summary)
+        else:
+            self.log.info(
+                f"Rebalance: NAV={summary.nav:.2f} "
+                f"sleeves={summary.num_sleeves} "
+                f"targets={summary.num_targets} "
+                f"orders={summary.num_orders} "
+                f"quarantined={summary.num_quarantined} "
+                f"gate={summary.gate_outcome.value} "
+                f"notional={summary.total_notional:.2f}"
+            )
+
+    def on_stop(self) -> None:
+        """Compute and log per-sleeve P&L attribution at end of run.
+
+        Attribution is computed from the history of sleeve targets and
+        close prices collected during the run.  When insufficient data
+        exists (fewer than 2 periods per FIGI), attribution is skipped.
+        """
+        if not self._sleeve_target_history or not self._close_history:
+            return
+
+        # Build consolidated sleeve targets — each target_list entry is a
+        # single-row DataFrame; concat produces a multi-row frame indexed
+        # by the original bar timestamps.
+        sleeve_targets: dict[SleeveName, pd.DataFrame] = {}
+        for sleeve_name, target_list in self._sleeve_target_history.items():
+            if not target_list:
+                continue
+            all_targets = pd.concat(target_list)
+            sleeve_targets[sleeve_name] = all_targets
+
+        if not sleeve_targets:
+            return
+
+        # Build a closes DataFrame with the same index as the targets.
+        # Use the union of all target timestamps as the index.
+        all_idxs = [df.index for df in sleeve_targets.values()]
+        combined_idx = all_idxs[0]
+        for idx in all_idxs[1:]:
+            combined_idx = combined_idx.union(idx)
+        combined_idx = combined_idx.sort_values()
+        combined_idx.name = "timestamp"
+
+        if len(combined_idx) < 2:
+            return
+
+        closes_data: dict[str, list[float]] = {}
+        for figi, px_list in self._close_history.items():
+            if len(px_list) < 2:
+                continue
+            # Align to the combined index (pad with NaN at the front)
+            padded = [float("nan")] * max(0, len(combined_idx) - len(px_list)) + px_list
+            padded = padded[-len(combined_idx):]  # trim to index length
+            closes_data[figi] = padded
+
+        if not closes_data:
+            return
+
+        closes_df = pd.DataFrame(closes_data, index=combined_idx)
+        closes_df.columns.name = "figi"
+
+        nav_series = pd.Series([100_000.0] * len(combined_idx), index=combined_idx)
+
+        attribution = compute_sleeve_attribution(
+            sleeve_targets=sleeve_targets,
+            closes=closes_df,
+            nav_series=nav_series,
+        )
+
+        if attribution:
+            total_book_pnl = sum(attribution.values())
+            parts = ", ".join(
+                f"{s.value}={pnl:.2f}" for s, pnl in attribution.items()
+            )
+            self.log.info(
+                f"Per-sleeve P&L attribution: {parts} "
+                f"(book total={total_book_pnl:.2f})"
+            )
 
     def _figi_to_instr_id(self, figi: str) -> InstrumentId:
         """Resolve a FIGI to a venue-specific InstrumentId.
