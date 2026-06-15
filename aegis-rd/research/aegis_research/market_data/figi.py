@@ -24,6 +24,7 @@ OPENFIGI_MAPPING_URL = "https://api.openfigi.com/v3/mapping"
 _SUFFIX_TO_MIC: dict[str, str] = {
     "L": "XLON",   # London Stock Exchange (yfinance .L)
     "DE": "XETR",  # Deutsche Boerse Xetra (yfinance .DE)
+    "MI": "XMIL",  # Borsa Italiana / Euronext Milan (yfinance .MI)
 }
 # OpenFIGI caps an unauthenticated mapping request at 10 jobs (100 with a key);
 # the conservative bound works in either mode.

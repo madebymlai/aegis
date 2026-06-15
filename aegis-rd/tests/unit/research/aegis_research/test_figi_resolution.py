@@ -59,6 +59,17 @@ def test_xetra_suffix_maps_to_xetr_mic() -> None:
     assert job["micCode"] == "XETR"
 
 
+def test_milan_suffix_maps_to_xmil_mic() -> None:
+    symbols = [SymbolSpec(ticker="SWDA.MI", ccy="EUR")]
+    client = _FakeOpenFigiClient([_hit("BBG000BMTYP4")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idValue"] == "SWDA"
+    assert job["micCode"] == "XMIL"
+
+
 def test_unknown_exchange_suffix_fails_closed() -> None:
     # Fail closed rather than guess a venue for an unmapped suffix.
     symbols = [SymbolSpec(ticker="FOO.XX", ccy="USD")]
