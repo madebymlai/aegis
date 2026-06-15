@@ -63,6 +63,10 @@ from aegis_trader.observability.port import (
 )
 
 _NS_PER_DAY: int = 86_400_000_000_000
+# Placeholder NAV for on_stop attribution when per-period NAV history is not
+# yet tracked (Slice 9 MVP).  Replaced once NAV snapshots are collected per
+# rebalance period alongside sleeve targets.
+_ATTRIBUTION_PLACEHOLDER_NAV: float = 100_000.0
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -370,6 +374,8 @@ class RebalanceStrategy(Strategy):
         )
 
         # ── Slice 9: build and log the rebalance summary ─────────────────
+        # After netting there is at most one OrderIntent per FIGI, so
+        # num_targets (distinct FIGIs with non-zero net) equals num_orders.
         summary = RebalanceSummary(
             nav=nav,
             num_sleeves=len(pending),
@@ -476,7 +482,9 @@ class RebalanceStrategy(Strategy):
         closes_df = pd.DataFrame(closes_data, index=combined_idx)
         closes_df.columns.name = "figi"
 
-        nav_series = pd.Series([100_000.0] * len(combined_idx), index=combined_idx)
+        nav_series = pd.Series(
+            _ATTRIBUTION_PLACEHOLDER_NAV, index=combined_idx
+        )
 
         attribution = compute_sleeve_attribution(
             sleeve_targets=sleeve_targets,

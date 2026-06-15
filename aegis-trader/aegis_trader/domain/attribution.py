@@ -70,19 +70,23 @@ def compute_sleeve_attribution(
         for t in range(1, len(common_idx)):
             curr_close = closes_aligned.iloc[t]
             curr_weight = weights_aligned.iloc[t]
-            curr_nav = nav_aligned.iloc[t]  # NAV at start of period: prev_nav
+            curr_nav = nav_aligned.iloc[t]
 
             for figi in weights_df.columns:
                 w = float(prev_weight.get(figi, 0.0))
                 if abs(w) < 1e-15:
                     continue
-                prev_px = float(prev_close.get(figi, float("nan")))
-                curr_px = float(curr_close.get(figi, float("nan")))
+                prev_px = prev_close.get(figi)
+                curr_px = curr_close.get(figi)
+                if prev_px is None or curr_px is None:
+                    continue
+                prev_px, curr_px = float(prev_px), float(curr_px)
                 if pd.isna(prev_px) or pd.isna(curr_px) or prev_px <= 0:
                     continue
                 ret = curr_px / prev_px - 1.0
                 pnl += w * ret * prev_nav
 
+            # Shift the window: current becomes previous for the next period.
             prev_close = curr_close
             prev_weight = curr_weight
             prev_nav = curr_nav
