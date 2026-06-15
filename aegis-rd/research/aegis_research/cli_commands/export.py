@@ -119,7 +119,10 @@ def export_locked_bundle(
     )
     dist_name = _distribution_name(strategy_id, candidate_prefix)
     package_name = _package_name(strategy_id, candidate_prefix)
-    entry_point_name = _entry_point_name(strategy_id, lock_run.run_id, config.lock.candidate_id)
+    # The wheel advertises itself under its own filename: that is the
+    # content-addressed handle a Book Config sleeve references, and the
+    # aegis-trader registry resolves the bundle by an entry point of that name.
+    wheel_filename = f"{_wheel_safe(dist_name)}-{version}-py3-none-any.whl"
     with tempfile.TemporaryDirectory(prefix="aegis-export-") as tmp:
         root = Path(tmp)
         package_dir = root / package_name
@@ -171,10 +174,10 @@ def export_locked_bundle(
             dist_info,
             dist_name=dist_name,
             version=version,
-            entry_point_name=entry_point_name,
-            entry_point_value=f"{package_name}:bundle",
+            entry_point_name=wheel_filename,
+            entry_point_value=f"{package_name}:get_bundle",
         )
-        wheel_path = out_dir / f"{_wheel_safe(dist_name)}-{version}-py3-none-any.whl"
+        wheel_path = out_dir / wheel_filename
         _write_wheel(root, wheel_path)
     return wheel_path
 
@@ -487,11 +490,6 @@ def _wheel_safe(value: str) -> str:
 
 def _manifest_role(candidate_id: str) -> str:
     return candidate_id if candidate_id in LOCK_ROLES else "candidate_key"
-
-
-def _entry_point_name(strategy_id: str, run_id: str, candidate_id: str) -> str:
-    role_suffix = f":{candidate_id}" if candidate_id in LOCK_ROLES else ""
-    return f"{strategy_id}@{run_id}{role_suffix}"
 
 
 def _urlsafe_b64(value: bytes) -> str:

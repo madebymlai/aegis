@@ -87,10 +87,13 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
     assert wheel_path.name == "aegis_exec_tests_momentum_rotator_01234567-1.0.0-py3-none-any.whl"
     assert payload["install"] == f"uv add {wheel_path}"
     _assert_wheel_metadata(wheel_path)
+    # The wheel advertises itself under its own filename (the content-addressed
+    # handle a Book Config sleeve references) and points at the zero-arg
+    # get_bundle factory the aegis-trader registry calls.
     _assert_entry_point_metadata(
         wheel_path,
-        name="tests.momentum_rotator@bundle-fidelity-run:best",
-        value="aegis_exec_tests_momentum_rotator_01234567:bundle",
+        name="aegis_exec_tests_momentum_rotator_01234567-1.0.0-py3-none-any.whl",
+        value="aegis_exec_tests_momentum_rotator_01234567:get_bundle",
     )
 
     prices = _market_data()
@@ -208,19 +211,21 @@ def test_multiple_exported_bundles_are_discovered_by_entry_points(tmp_path, monk
     ]
 
     names = {
-        "tests.momentum_rotator@bundle-run-a:best",
-        "tests.momentum_rotator@bundle-run-b:best",
+        "aegis_exec_tests_momentum_rotator_aaaa1111-1.0.0-py3-none-any.whl",
+        "aegis_exec_tests_momentum_rotator_bbbb1111-1.0.0-py3-none-any.whl",
     }
     discovered = _discover_bundle_entry_points(wheels, names)
 
     assert set(discovered) == names
     assert all(isinstance(bundle, RuntimeExecutionBundle) for bundle in discovered.values())
     assert (
-        discovered["tests.momentum_rotator@bundle-run-a:best"].manifest.candidate_key
+        discovered["aegis_exec_tests_momentum_rotator_aaaa1111-1.0.0-py3-none-any.whl"]
+        .manifest.candidate_key
         == "aaaa111122223333"
     )
     assert (
-        discovered["tests.momentum_rotator@bundle-run-b:best"].manifest.candidate_key
+        discovered["aegis_exec_tests_momentum_rotator_bbbb1111-1.0.0-py3-none-any.whl"]
+        .manifest.candidate_key
         == "bbbb111122223333"
     )
 
@@ -448,7 +453,9 @@ def _discover_bundle_entry_points(
     packages = [_package_name_from_wheel(wheel) for wheel in wheels]
     try:
         entry_points = importlib_metadata.entry_points(group="aegis.execution_bundles")
-        return {ep.name: ep.load() for ep in entry_points if ep.name in names}
+        # The entry point loads to a zero-arg factory (as the aegis-trader
+        # registry expects); call it to get the bundle.
+        return {ep.name: ep.load()() for ep in entry_points if ep.name in names}
     finally:
         del sys.path[: len(entries)]
         for package in packages:
