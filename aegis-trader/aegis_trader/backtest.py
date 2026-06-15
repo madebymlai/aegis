@@ -85,11 +85,7 @@ def run_book_backtest(
         if ccy == book.base_currency:
             continue
         rate = fetch_fx(book.base_currency, ccy, start, end)
-        quote = Currency.from_str(ccy)
-        # Both directions: base->ccy sizes orders; ccy->base lets net_exposure
-        # value a non-base position back into the book's base for realized weights.
-        engine.cache.set_mark_xrate(base, quote, rate)
-        engine.cache.set_mark_xrate(quote, base, 1.0 / rate)
+        engine.cache.set_mark_xrate(base, Currency.from_str(ccy), rate)
 
     strategy = RebalanceStrategy(RebalanceStrategyConfig(book=book, fill_time_in_force=None))
     for name, bundle in sleeves:
@@ -116,12 +112,19 @@ def _normalize(ohlcv: pd.DataFrame, scale: float) -> pd.DataFrame:
 
 
 # -- default yfinance fetchers (provider-specific; injected, not core) -----------
+#
+# ``threads=False`` on every download: each call pulls a single ticker, so the
+# download pool buys nothing, and its worker threads each open a connection to
+# yfinance's peewee/sqlite timezone cache that yfinance's atexit hook never
+# closes (it only closes the main thread's) — those leaked connections surface
+# as ``ResourceWarning: unclosed database`` at GC time. Single-threaded downloads
+# keep every tz-cache connection on the main thread, where it is closed cleanly.
 
 
 def yfinance_ohlcv(ticker: str, start: str, end: str) -> pd.DataFrame:
     import yfinance as yf
 
-    df = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
+    df = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False, threads=False)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     return df
@@ -130,7 +133,7 @@ def yfinance_ohlcv(ticker: str, start: str, end: str) -> pd.DataFrame:
 def yfinance_fx(base: str, quote: str, start: str, end: str) -> float:
     import yfinance as yf
 
-    df = yf.download(f"{base}{quote}=X", start=start, end=end, progress=False)
+    df = yf.download(f"{base}{quote}=X", start=start, end=end, progress=False, threads=False)
     close = df["Close"]
     if isinstance(close, pd.DataFrame):
         close = close.iloc[:, 0]
