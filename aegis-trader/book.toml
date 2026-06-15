@@ -36,8 +36,24 @@ risk_share = 0.35
 group = "Floor"
 
 # aegis — UCITS tail hedge (VOOL, native EUR, held 100% within the sleeve).
+# The declared risk_share is intentionally zero: Target risk is set by the
+# convexity-unit budget below, not by an ad-hoc sleeve weight or live timer.
 [[sleeves]]
 name = "aegis_tail"
 wheel_filename = "aegis_exec_aegis_heldhedge_cand_fa6-1.0.0-py3-none-any.whl"
-risk_share = 0.15
+risk_share = 0.0
 group = "Target"
+
+[tail_convexity_budget]
+# One convexity unit is one percentage point of book notional delivered at a
+# -20% move.  Fill the highest efficiency candidates to one unit, capacity-capped.
+coverage_target_units = 1.0
+unit_payoff_fraction_at_20_down = 0.01
+
+[[tail_convexity_budget.candidates]]
+sleeve = "aegis_tail"
+expected_annual_payoff = 0.24
+annual_carry = 0.08
+crisis_reliability = 0.75
+convexity_units_per_risk_share = 20.0
+capacity_risk_share = 0.05

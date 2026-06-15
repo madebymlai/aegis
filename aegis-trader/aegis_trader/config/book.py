@@ -15,7 +15,13 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
+from aegis_trader.domain.book_config import (
+    BookConfig,
+    ConvexityBudgetCandidate,
+    RiskGroup,
+    SleeveConfig,
+    TailConvexityBudget,
+)
 from aegis_trader.domain.types import SleeveName
 
 
@@ -76,6 +82,7 @@ def load_book_config(path: str | Path) -> BookConfig:
             (o["figi"], float(o["band_up"]), float(o["band_down"]))
             for o in data.get("band_overrides", [])
         )
+        tail_convexity_budget = _parse_tail_convexity_budget(data)
     except (KeyError, TypeError, ValueError) as exc:
         raise BookConfigError(
             f"book config {str(path)!r} has a malformed sleeve/band entry: {exc}"
@@ -92,5 +99,32 @@ def load_book_config(path: str | Path) -> BookConfig:
         default_band_up=float(data.get("default_band_up", 0.02)),
         default_band_down=float(data.get("default_band_down", 0.02)),
         band_overrides=band_overrides,
+        tail_convexity_budget=tail_convexity_budget,
         aggregate_drift_threshold=data.get("aggregate_drift_threshold"),
+    )
+
+
+def _parse_tail_convexity_budget(data: dict) -> TailConvexityBudget | None:
+    raw_budget = data.get("tail_convexity_budget")
+    if raw_budget is None:
+        return None
+    candidates = tuple(
+        ConvexityBudgetCandidate(
+            sleeve=SleeveName(candidate["sleeve"]),
+            expected_annual_payoff=float(candidate["expected_annual_payoff"]),
+            annual_carry=float(candidate["annual_carry"]),
+            crisis_reliability=float(candidate["crisis_reliability"]),
+            convexity_units_per_risk_share=float(
+                candidate["convexity_units_per_risk_share"]
+            ),
+            capacity_risk_share=float(candidate["capacity_risk_share"]),
+        )
+        for candidate in raw_budget.get("candidates", [])
+    )
+    return TailConvexityBudget(
+        coverage_target_units=float(raw_budget["coverage_target_units"]),
+        unit_payoff_fraction_at_20_down=float(
+            raw_budget["unit_payoff_fraction_at_20_down"]
+        ),
+        candidates=candidates,
     )

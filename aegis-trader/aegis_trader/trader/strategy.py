@@ -478,8 +478,9 @@ class RebalanceStrategy(Strategy):
         if len(self._attribution_periods) < _MIN_SLEEVE_VOL_RETURNS + 1:
             return None
 
+        risk_shares = self._book.allocator_risk_shares()
         names = tuple(
-            sleeve.name for sleeve in self._book.sleeves if sleeve.risk_share > 0
+            sleeve.name for sleeve in self._book.sleeves if risk_shares[sleeve.name] > 0
         )
         periods = self._attribution_periods[-(_MIN_SLEEVE_VOL_RETURNS + 1):]
         rows = _complete_sleeve_return_rows(periods, names)
@@ -497,7 +498,7 @@ class RebalanceStrategy(Strategy):
         if len(self._attribution_periods) < 2:
             return
 
-        risk_shares = {sleeve.name: sleeve.risk_share for sleeve in self._book.sleeves}
+        risk_shares = self._book.allocator_risk_shares()
         attribution = compute_sleeve_attribution(
             self._attribution_periods, budgets=risk_shares
         )

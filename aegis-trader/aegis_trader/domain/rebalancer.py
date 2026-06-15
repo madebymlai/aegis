@@ -72,7 +72,7 @@ def rebalance(
             continue  # silently skip sleeves without data
         latest_targets[sleeve.name] = _latest_target_weights(target)
 
-    risk_shares = {sleeve.name: sleeve.risk_share for sleeve in book.sleeves}
+    risk_shares = book.allocator_risk_shares()
     if realized_covariance is not None:
         allocation = allocate_covariance_vol_target(
             sleeve_targets=latest_targets,

@@ -15,7 +15,13 @@ from aegis_trader.config import (
     find_book_config,
     load_book_config,
 )
-from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
+from aegis_trader.domain.book_config import (
+    BookConfig,
+    ConvexityBudgetCandidate,
+    RiskGroup,
+    SleeveConfig,
+    TailConvexityBudget,
+)
 from aegis_trader.domain.types import SleeveName
 
 _MINIMAL = """
@@ -131,6 +137,53 @@ def test_defaults_applied_when_keys_omitted(tmp_path):
     assert book.gross_cap is None
     assert book.default_band_up == 0.02
     assert book.band_overrides == ()
+    assert book.tail_convexity_budget is None
+
+
+def test_tail_convexity_budget_loads(tmp_path):
+    path = _write(tmp_path, """
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 0.6
+        group = "Floor"
+
+        [[sleeves]]
+        name = "tail"
+        wheel_filename = "tail.whl"
+        risk_share = 0.0
+        group = "Target"
+
+        [tail_convexity_budget]
+        coverage_target_units = 1.0
+        unit_payoff_fraction_at_20_down = 0.01
+
+        [[tail_convexity_budget.candidates]]
+        sleeve = "tail"
+        expected_annual_payoff = 0.24
+        annual_carry = 0.08
+        crisis_reliability = 0.75
+        convexity_units_per_risk_share = 20.0
+        capacity_risk_share = 0.05
+    """)
+
+    book = load_book_config(path)
+
+    assert book.tail_convexity_budget == TailConvexityBudget(
+        coverage_target_units=1.0,
+        unit_payoff_fraction_at_20_down=0.01,
+        candidates=(
+            ConvexityBudgetCandidate(
+                sleeve=SleeveName("tail"),
+                expected_annual_payoff=0.24,
+                annual_carry=0.08,
+                crisis_reliability=0.75,
+                convexity_units_per_risk_share=20.0,
+                capacity_risk_share=0.05,
+            ),
+        ),
+    )
+    assert book.allocator_risk_shares()[SleeveName("tail")] == pytest.approx(0.05)
 
 
 def test_missing_file_fails_closed(tmp_path):

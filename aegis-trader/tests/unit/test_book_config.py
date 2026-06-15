@@ -2,7 +2,13 @@
 
 import pytest
 
-from aegis_trader.domain.book_config import BookConfig, RiskGroup, SleeveConfig
+from aegis_trader.domain.book_config import (
+    BookConfig,
+    ConvexityBudgetCandidate,
+    RiskGroup,
+    SleeveConfig,
+    TailConvexityBudget,
+)
 from aegis_trader.domain.types import SleeveName
 
 
@@ -62,6 +68,45 @@ class TestBookConfig:
     def test_invalid_vol_target_rejected(self):
         with pytest.raises(ValueError, match="book_vol_target"):
             BookConfig(sleeves=(make_sleeve("a"),), book_vol_target=0.0)
+
+    def test_tail_convexity_budget_sets_target_shares_and_expansion_defaults_zero(self):
+        book = BookConfig(
+            sleeves=(
+                make_sleeve("trend", risk_share=0.6, group=RiskGroup.FLOOR),
+                make_sleeve("cheap_tail", risk_share=0.9, group=RiskGroup.TARGET),
+                make_sleeve("dear_tail", risk_share=0.9, group=RiskGroup.TARGET),
+                make_sleeve("market_neutral", risk_share=0.4, group=RiskGroup.EXPANSION),
+            ),
+            tail_convexity_budget=TailConvexityBudget(
+                coverage_target_units=3.0,
+                unit_payoff_fraction_at_20_down=0.01,
+                candidates=(
+                    ConvexityBudgetCandidate(
+                        sleeve=SleeveName("dear_tail"),
+                        expected_annual_payoff=0.20,
+                        annual_carry=0.10,
+                        crisis_reliability=0.5,
+                        convexity_units_per_risk_share=10.0,
+                        capacity_risk_share=0.20,
+                    ),
+                    ConvexityBudgetCandidate(
+                        sleeve=SleeveName("cheap_tail"),
+                        expected_annual_payoff=0.30,
+                        annual_carry=0.10,
+                        crisis_reliability=0.9,
+                        convexity_units_per_risk_share=20.0,
+                        capacity_risk_share=0.10,
+                    ),
+                ),
+            ),
+        )
+
+        shares = book.allocator_risk_shares()
+
+        assert shares[SleeveName("trend")] == pytest.approx(0.6)
+        assert shares[SleeveName("cheap_tail")] == pytest.approx(0.10)
+        assert shares[SleeveName("dear_tail")] == pytest.approx(0.10)
+        assert shares[SleeveName("market_neutral")] == 0.0
 
 
 class TestBookConfigCapsAndBands:
