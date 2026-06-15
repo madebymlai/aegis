@@ -49,3 +49,11 @@ def test_net_cap_exposes_plan_net_cap():
 
 def test_net_cap_may_be_absent():
     assert _bundle(gross_cap=0.30, net_cap=None).net_cap is None
+
+
+def test_symbols_expose_plan_symbols():
+    assert _bundle(gross_cap=0.30, net_cap=None).symbols == (_FIGI,)
+
+
+def test_currency_by_symbol_exposes_plan_currency_by_symbol():
+    assert _bundle(gross_cap=0.30, net_cap=None).currency_by_symbol == {_FIGI: "EUR"}

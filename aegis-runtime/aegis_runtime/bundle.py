@@ -106,6 +106,18 @@ class ExecutionBundle:
         plan leaves net exposure bounded only by the gross cap."""
         return self._plan.net_cap
 
+    @property
+    def symbols(self) -> tuple[str, ...]:
+        """The provider tickers, aligned 1:1 with :attr:`contract.figis` — the
+        FIGI->ticker map a backtest runner needs to fetch each instrument's data."""
+        return tuple(self._plan.symbols)
+
+    @property
+    def currency_by_symbol(self) -> Mapping[str, str]:
+        """Each provider ticker's native quote currency (incl. minor units like
+        ``GBp``)."""
+        return self._plan.currency_by_symbol
+
     def compute_weights(
         self,
         prices: MarketDataBundle,
