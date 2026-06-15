@@ -201,8 +201,8 @@ def test_integrity_check_passes_in_normal_backtest():
 
     # Verify trading continued normally
     fills = [o for o in engine.cache.orders() if o.is_closed]
-    assert len(fills) >= 2, (
-        f"Expected ≥2 fills (normal trading), got {len(fills)}"
+    assert len(fills) == 1, (
+        f"Expected 1 fill (normal trading: buy to target, then hold), got {len(fills)}"
     )
 
     engine.dispose()

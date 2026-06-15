@@ -194,7 +194,10 @@ def test_tracer_e2e():
     assert engine.get_result() is not None
 
     fills = [o for o in engine.cache.orders() if o.is_closed]
-    assert len(fills) >= 2, f"Expected >=2 fills, got {len(fills)}"
+    assert len(fills) == 1, (
+        f"Expected 1 fill (trade to target, then hold via realized gate), "
+        f"got {len(fills)}"
+    )
     for f in fills:
         assert f.is_buy
         assert float(f.quantity.as_double()) > 0

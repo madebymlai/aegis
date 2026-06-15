@@ -216,7 +216,10 @@ def test_multi_sleeve_e2e():
     assert engine.get_result() is not None
 
     fills = [o for o in engine.cache.orders() if o.is_closed]
-    assert len(fills) >= 2, f"Expected >=2 fills, got {len(fills)}"
+    assert len(fills) == 1, (
+        f"Expected 1 fill (trade to target, then hold via realized gate), "
+        f"got {len(fills)}"
+    )
 
     # All fills should be BUY VUSA, ~22,000 shares each.
     for f in fills:

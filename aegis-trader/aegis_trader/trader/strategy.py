@@ -333,10 +333,13 @@ class RebalanceStrategy(Strategy):
         nav = float(equity_map[base_ccy].as_double())
 
         instrument_metas, fx_rates, prices = self._collect_sizing_params(venue)
+        realized_weights = self._collect_realized_weights(nav)
 
         # Two-step pipeline: the pure rebalancer decides what to trade (signed
-        # weight deltas); the sizer converts each delta into a native share count.
-        deltas = rebalance(pending, self._book)
+        # weight deltas) against the REALIZED book (so bands, the realized-book
+        # gate, and the fidelity trip engage); the sizer converts each delta into
+        # a native share count.
+        deltas = rebalance(pending, self._book, realized_weights=realized_weights)
         orders = size_deltas(
             deltas,
             nav,
@@ -535,6 +538,38 @@ class RebalanceStrategy(Strategy):
                 fx_rates[currency] = rate
 
         return instrument_metas, fx_rates, prices
+
+    def _collect_realized_weights(self, nav: float) -> dict[str, float]:
+        """Realized weight (signed fraction of NAV) per tracked instrument.
+
+        Reads the reconciled Cache positions for instruments in the bimap inverse
+        (i.e. covered by a sleeve) and divides each position's marked value by NAV.
+        Feeding these to the rebalancer is what makes the drift bands, the
+        realized-book gate, and the fidelity trip engage on the live book — the
+        overlay trades the drift to target rather than re-buying every period.
+
+        (Native position value over an EUR NAV is exact for EUR instruments; a
+        cross-currency position needs FX, which arrives with Wave C.)
+        """
+        if nav <= 0:
+            return {}
+
+        realized: dict[str, float] = {}
+        for pos in self.cache.positions():
+            if not pos.is_open:
+                continue
+            instr_id = pos.instrument_id
+            figi = self._instr_to_figi.get(instr_id.value)
+            if figi is None:
+                continue  # not covered by any sleeve
+            buf = self._bars_buffer.get(instr_id)
+            if not buf:
+                continue  # no mark yet
+            price = float(buf[-1].close.as_double())
+            notional = float(pos.signed_qty) * price
+            realized[figi] = realized.get(figi, 0.0) + notional / nav
+
+        return realized
 
     def _get_fx_rate(self, venue: Venue, target_currency: str) -> float | None:
         """Get the FX rate in units of *target_currency* per 1 EUR.

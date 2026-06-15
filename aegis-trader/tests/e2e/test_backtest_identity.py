@@ -141,9 +141,9 @@ def test_strategy_follows_resolved_instrument_id():
     engine.run()
 
     fills = [o for o in engine.cache.orders() if o.is_closed]
-    assert len(fills) >= 2, (
-        f"Expected fills on the resolved id; got {len(fills)} "
-        f"(strategy likely subscribed to a FIGI-shaped id with no instrument)"
+    assert len(fills) == 1, (
+        f"Expected 1 fill on the resolved id (trade to target, then hold); "
+        f"got {len(fills)} (strategy likely subscribed to a FIGI-shaped id)"
     )
     for f in fills:
         assert f.instrument_id == _RESOLVED, (

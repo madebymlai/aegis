@@ -50,8 +50,13 @@ _FIGI_VOOL = "BBG000BF46Y8"  # VOOL.DE
 _NS_PER_DAY = 86_400_000_000_000
 
 
-class _FixedWeightBundle(ExecutionBundle):
-    """A bundle that always returns a fixed weight for a fixed FIGI."""
+class _StepWeightBundle(ExecutionBundle):
+    """A bundle whose target steps up once the close crosses a threshold.
+
+    Under the realized-book gate an OPEN instrument needs a real (>band) trade
+    each period to be distinguishable from a CLOSED one (which the calendar
+    logic filters); the step guarantees that.
+    """
 
     def __init__(self, figi: str, weight: float) -> None:
         self._figi = figi
@@ -97,8 +102,10 @@ class _FixedWeightBundle(ExecutionBundle):
     ) -> pd.DataFrame:
         close = prices.array("Close")
         n = len(close)
+        last = float(close.iloc[-1].iloc[0])
+        w = self._weight if last < 102.0 else self._weight + 0.3
         df = pd.DataFrame(
-            {self._figi: [self._weight] * n},
+            {self._figi: [w] * n},
             index=close.index,
         )
         df.columns.name = "figi"
@@ -174,13 +181,17 @@ def test_cadence_calendar_aware():
       Day 2: VUSA=102.0               (VOOL MISSING — XETR closed)
       Day 3: VUSA=103.0, VOOL=202.0  → rebalance triggers day 3 → VUSA fills; VOOL held
 
-    Expected fills (weight=0.5, budget=1.0, NAV=100_000 → ~50,000):
-      - Day 2 close: VUSA BUY 50,000 AND VOOL BUY 50,000 (both venues open day 1)
-      - Day 3 close: VUSA BUY 50,000 ONLY (XETR closed day 2, VOOL held)
+    Targets step up once close >= 102 so the OPEN instrument keeps trading under
+    the realized gate; the CLOSED one is filtered by the calendar logic:
+      - Period 1 (triggered day 2): VUSA BUY to target AND VOOL BUY to target
+        (both venues had a day-1 bar).
+      - Period 2 (triggered day 3): VUSA BUY the step-up delta ONLY — XETR was
+        closed day 2 so VOOL has no fresh bar and is held.
+    => 2 VUSA fills + 1 VOOL fill.
     """
     book = _make_book()
-    vusa_bundle = _FixedWeightBundle(_FIGI_VUSA, 0.5)
-    vool_bundle = _FixedWeightBundle(_FIGI_VOOL, 0.5)
+    vusa_bundle = _StepWeightBundle(_FIGI_VUSA, 0.5)
+    vool_bundle = _StepWeightBundle(_FIGI_VOOL, 0.5)
 
     vusa_instr = _make_instrument(_FIGI_VUSA, VENUE_LSE)
     vool_instr = _make_instrument(_FIGI_VOOL, VENUE_XETRA)
@@ -199,10 +210,9 @@ def test_cadence_calendar_aware():
         trader_id=TraderId("CADENCE-E2E"),
         logging=None,
     ))
-    # MARGIN venues: the two fully-budgeted sleeves run a gross-2.0 book, and the
-    # overlay re-buys each period (realized-weight tracking is a later slice), so
-    # a CASH account would reject the repeat buys.  This test exercises
-    # calendar-awareness, not cash management.
+    # MARGIN venues: the two fully-budgeted sleeves run a gross-2.0 book whose
+    # stepping targets buy then add, which a CASH account would cash-constrain.
+    # This test exercises calendar-awareness, not cash management.
     engine.add_venue(
         VENUE_LSE,
         oms_type=OmsType.NETTING,
