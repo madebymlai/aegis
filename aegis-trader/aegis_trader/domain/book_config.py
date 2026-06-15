@@ -308,7 +308,7 @@ class BookConfig:
         """Return risk shares consumed by the allocator.
 
         Floor sleeves use their declared static shares.  Target sleeves are
-        overridden by the slow-reviewed convexity-unit budget when supplied.
+        overridden by the slow-reviewed convexity-premium budget when supplied.
         Expansion sleeves consume zero risk by default until a later slice gives
         them an explicit budget.
         """

@@ -43,7 +43,7 @@ weight_band_up = 0.02
 
 # aegis — UCITS tail hedge (VOOL, native EUR, held 100% within the sleeve).
 # The declared risk_share is intentionally zero: Target risk is set by the
-# convexity-unit budget below, not by an ad-hoc sleeve weight or live timer.
+# convexity-premium budget below, not by an ad-hoc sleeve weight or live timer.
 [[sleeves]]
 name = "aegis_tail"
 wheel_filename = "aegis_exec_aegis_heldhedge_cand_fa6-1.0.0-py3-none-any.whl"
