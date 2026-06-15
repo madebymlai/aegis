@@ -188,7 +188,7 @@ class RebalanceStrategy(Strategy):
             )
             self._is_halted = True
             if self._obs_port is not None:
-                self._obs_port.alert_halt(self._integrity_report.reason)
+                self._obs_port.alert_halt(self._integrity_report.reason or "Unknown integrity failure")
             return
 
         self.log.info(f"Integrity check passed: NAV={nav:.2f}, cash={cash:.2f}")
