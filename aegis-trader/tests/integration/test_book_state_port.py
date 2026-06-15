@@ -3,9 +3,10 @@
 The adapter is a *deep* module: it collapses the Demeter train-wrecks the
 Strategy used to inline (``portfolio.equity(venue)[base].as_double()``,
 ``account.balances().get(base).total.as_double()``) into a narrow
-``BookStatePort`` (nav / cash / health / realized_weights), delegating the
-marking + base-currency conversion of realized exposure to Nautilus's own
-``PortfolioFacade.net_exposure``.
+``BookStatePort`` (nav / cash / health / realized_weights).  Realized exposure
+is marked by ``PortfolioFacade.net_exposure`` (in the position's native
+currency) and converted to base via the cache's venue-agnostic
+``get_mark_xrate`` — the same FX source the sizer uses.
 
 Wave D — the book is *venue-agnostic*: NAV and cash aggregate across every
 account the reconciled cache holds (``cache.accounts()``), summing the
@@ -22,7 +23,7 @@ rewired.
 
 from __future__ import annotations
 
-from nautilus_trader.model.currencies import EUR
+from nautilus_trader.model.currencies import EUR, GBP
 from nautilus_trader.model.identifiers import AccountId, InstrumentId
 from nautilus_trader.model.objects import Money
 
@@ -72,10 +73,12 @@ class _FakePosition:
 
 
 class _FakeCache:
-    def __init__(self, *, instruments: list, positions: list, accounts: list) -> None:
+    def __init__(self, *, instruments: list, positions: list, accounts: list,
+                 mark_xrates: dict | None = None) -> None:
         self._instruments = instruments
         self._positions = positions
         self._accounts = accounts
+        self._mark_xrates = mark_xrates or {}
 
     def instruments(self):
         return self._instruments
@@ -85,6 +88,13 @@ class _FakeCache:
 
     def accounts(self):
         return self._accounts
+
+    def get_mark_xrate(self, from_currency, to_currency):
+        """Quacks like Cache.get_mark_xrate: 1.0 for same-currency, else the set
+        rate or None (no fabrication)."""
+        if from_currency == to_currency:
+            return 1.0
+        return self._mark_xrates.get((from_currency, to_currency))
 
 
 def _book_state(*, portfolio: _FakePortfolio, cache: _FakeCache,
@@ -99,7 +109,8 @@ def _book_state(*, portfolio: _FakePortfolio, cache: _FakeCache,
 
 def _single_account_book(*, equity: float, cash: float,
                          exposures: dict[InstrumentId, Money] | None = None,
-                         positions: list | None = None) -> NautilusBookState:
+                         positions: list | None = None,
+                         mark_xrates: dict | None = None) -> NautilusBookState:
     """One account holding the given base-currency equity/cash."""
     return _book_state(
         portfolio=_FakePortfolio(
@@ -109,6 +120,7 @@ def _single_account_book(*, equity: float, cash: float,
             instruments=["x"],
             positions=positions or [],
             accounts=[_FakeAccount(_ACCT_XLON, cash=Money(cash, EUR))],
+            mark_xrates=mark_xrates,
         ),
     )
 
@@ -193,6 +205,30 @@ def test_realized_weight_short_is_negative():
         positions=[_FakePosition(_IID_A, is_short=True)],
     )
     assert bs.realized_weights() == {_FIGI_A: -0.10}
+
+
+def test_realized_weight_non_base_position_converts_via_mark_xrate():
+    """A non-base (GBP) position's native exposure is converted to base via the
+    mark xrate before weighting — 40_000 GBP × 1.25 EUR/GBP = 50_000 EUR / NAV."""
+    bs = _single_account_book(
+        equity=100_000.0, cash=0.0,
+        exposures={_IID_A: Money(40_000.0, GBP)},
+        positions=[_FakePosition(_IID_A, is_short=False)],
+        mark_xrates={(GBP, EUR): 1.25},
+    )
+    assert bs.realized_weights() == {_FIGI_A: 0.5}
+
+
+def test_realized_weight_skips_position_without_mark_rate():
+    """No mark xrate from the position's currency to base → skipped (fail closed,
+    no fabricated rate), even though the position is marked in its native currency."""
+    bs = _single_account_book(
+        equity=100_000.0, cash=0.0,
+        exposures={_IID_A: Money(40_000.0, GBP)},
+        positions=[_FakePosition(_IID_A, is_short=False)],
+        mark_xrates={},  # no GBP→EUR rate
+    )
+    assert bs.realized_weights() == {}
 
 
 def test_realized_weight_skips_uncovered_holdings():

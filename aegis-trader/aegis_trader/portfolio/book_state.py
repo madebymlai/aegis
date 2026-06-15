@@ -4,9 +4,16 @@ A *deep* port: it hides the multi-hop Nautilus reads the overlay needs —
 NAV-in-base, total cash, cache health, and per-instrument realized weights —
 behind four plain methods.  The sole adapter, :class:`NautilusBookState`,
 implements it over Nautilus's own ``PortfolioFacade`` + ``CacheFacade`` read
-interfaces, delegating the marking + base-currency conversion of realized
-exposure to ``net_exposure(target_currency=base)`` and applying only the
-position's sign.
+interfaces: it marks each open position with ``net_exposure`` (in the position's
+*native* currency) and converts that to base via the cache's venue-agnostic mark
+xrate — the *same* FX source the sizer uses — applying only the position's sign.
+
+Why not ``net_exposure(target_currency=base)``?  That path converts through the
+cache's per-venue quote table, which only resolves when an FX ``CurrencyPair``
+is registered *on the position's own venue*.  A commingled book spans many
+venues (XLON, XNYS, …) while FX is one rate; sourcing the base conversion from
+the venue-agnostic mark xrate keeps valuation working on every venue and uses
+exactly the rate the sizer already trades against.
 
 One concern, one Nautilus implementation — so the Protocol and its adapter live
 in one module.  The port/adapter file split is reserved for multi-impl concerns
@@ -99,13 +106,21 @@ class NautilusBookState:
             figi = self._instr_to_figi.get(position.instrument_id.value)
             if figi is None:
                 continue  # holding not covered by any sleeve
-            exposure = self._portfolio.net_exposure(
-                position.instrument_id, target_currency=self._base
-            )
+            exposure = self._portfolio.net_exposure(position.instrument_id)
             if exposure is None:
                 continue  # unpriced — no mark available
-            signed = float(exposure.as_double())
+            signed = self._in_base(exposure)
+            if signed is None:
+                continue  # no FX rate to base — fail closed, do not fabricate
             if position.is_short:
                 signed = -signed
             weights[figi] = weights.get(figi, 0.0) + signed / nav
         return weights
+
+    def _in_base(self, exposure: object) -> float | None:
+        """Native exposure magnitude converted to base via the mark xrate, or
+        ``None`` when no rate is available (same-currency yields 1.0)."""
+        rate = self._cache.get_mark_xrate(exposure.currency, self._base)
+        if rate is None or rate <= 0.0:
+            return None
+        return float(exposure.as_double()) * float(rate)

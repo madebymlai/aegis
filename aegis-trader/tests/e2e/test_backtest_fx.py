@@ -206,3 +206,42 @@ def test_missing_required_fx_fails_closed():
         "compute_weights must not run without its required FX series"
     )
     engine.dispose()
+
+
+# -- valuing a held non-base position back to base (the realized-weight path) ----
+#
+# realized_weights values each held position in base via the SAME venue-agnostic
+# mark xrate the sizer uses (cache.get_mark_xrate) — not a venue-scoped FX
+# instrument.  This is what lets a non-base sleeve appear in the realized book
+# (and therefore be rebalanced against, not re-bought as if flat) on any venue,
+# without a per-venue FX CurrencyPair.
+
+from aegis_trader.portfolio.book_state import NautilusBookState  # noqa: E402
+
+
+def test_held_gbp_position_surfaces_in_realized_weights_via_mark_xrate():
+    """A held GBP position is valued back to EUR via the mark xrate and surfaces
+    in realized_weights at ~its target weight — the same rate the sizer used.
+
+    weight 0.5 × NAV 100_000 EUR = 50_000 EUR → 500 shares × 85 GBP = 42_500 GBP
+    held; ÷ 0.85 GBP/EUR ≈ 50_000 EUR exposure → ~0.5 of NAV.
+    """
+    engine = _build_engine()  # XLON, EUR account, mark xrate set, NO CurrencyPair
+    engine.add_data(_make_bars([85.0, 85.0, 85.0, 85.0, 85.0]))
+    book = _make_book()
+    strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
+    strategy.register_sleeve(book.sleeves[0].name, _GbpBundle(0.5))
+    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    engine.add_strategy(strategy)
+    engine.run()
+
+    gbp_id = engine.cache.positions_open()[0].instrument_id
+    book_state = NautilusBookState(
+        portfolio=engine.portfolio, cache=engine.cache,
+        base_currency=EUR, instr_to_figi={gbp_id.value: _FIGI},
+    )
+
+    weights = book_state.realized_weights()
+    assert _FIGI in weights, "The held GBP sleeve must surface in realized_weights"
+    assert weights[_FIGI] == pytest.approx(0.5, rel=5e-2)
+    engine.dispose()
