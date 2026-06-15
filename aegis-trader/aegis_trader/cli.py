@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import logging
 
+from aegis_trader.backtest import run_book_backtest, yfinance_fx, yfinance_ohlcv
 from aegis_trader.config import (
     IBConnectionSettings,
     find_book_config,
@@ -79,14 +80,50 @@ def build_ib_client_configs(
     return data, execution
 
 
+def _run_backtest(args: argparse.Namespace) -> int:
+    """Run an offline backtest of the book end-to-end and summarize the outcome.
+
+    Fully independent of ``--mode``: it resolves the book, runs the contract-driven
+    runner with the default contract-aware fetchers, and reports the result.
+    """
+    book_path = args.book if args.book is not None else find_book_config()
+    engine = run_book_backtest(
+        book_path,
+        start=args.start,
+        end=args.end,
+        fetch_ohlcv=yfinance_ohlcv,
+        fetch_fx=yfinance_fx,
+    )
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+    _log.info(
+        "Backtest complete: %d fill(s) over %s..%s", len(fills), args.start, args.end
+    )
+    engine.dispose()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Assemble and validate the run configuration for the requested mode."""
+    """Run an offline ``backtest`` of the book, or assemble a ``--mode`` run config."""
     parser = argparse.ArgumentParser(
         prog="aegis-trader",
-        description="Run the Aegis commingled book overlay in a given mode.",
+        description="Run the Aegis commingled book overlay.",
     )
-    parser.add_argument("--mode", required=True, choices=_MODES)
     parser.add_argument(
+        "--mode", choices=_MODES, help="assemble and validate a run config for this mode"
+    )
+    parser.add_argument(
+        "--book",
+        default=None,
+        help="path to the book.toml spec "
+        "(default: discover book.toml by walking up from the cwd)",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+    backtest_p = subparsers.add_parser(
+        "backtest", help="run an offline backtest of the book end-to-end"
+    )
+    backtest_p.add_argument("--start", required=True, help="start date (YYYY-MM-DD)")
+    backtest_p.add_argument("--end", required=True, help="end date (YYYY-MM-DD)")
+    backtest_p.add_argument(
         "--book",
         default=None,
         help="path to the book.toml spec "
@@ -95,6 +132,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO)
+
+    if args.command == "backtest":
+        return _run_backtest(args)
+
+    if args.mode is None:
+        parser.error(
+            "a run mode is required: pass --mode {backtest,paper,live} "
+            "or the 'backtest' subcommand"
+        )
 
     book_path = args.book if args.book is not None else find_book_config()
     book = load_book_config(book_path)
