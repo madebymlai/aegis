@@ -35,6 +35,23 @@ class TestBookConfig:
         book = BookConfig(sleeves=(make_sleeve("trend"),), default_venue="XETR")
         assert book.default_venue == "XETR"
 
+    def test_book_gross_at_default_max_allowed(self):
+        """Σ budgets == 1.0 (fully invested, no leverage) is allowed by default."""
+        book = BookConfig(sleeves=(make_sleeve("a", budget=0.6), make_sleeve("b", budget=0.4)))
+        assert book.sleeve_count == 2
+
+    def test_book_gross_above_default_max_rejected(self):
+        """Σ budgets > 1.0 is leverage and must be opted into via max_book_gross."""
+        with pytest.raises(ValueError, match="book gross"):
+            BookConfig(sleeves=(make_sleeve("a", budget=0.7), make_sleeve("b", budget=0.7)))
+
+    def test_book_gross_leverage_allowed_when_max_raised(self):
+        book = BookConfig(
+            sleeves=(make_sleeve("a", budget=1.0), make_sleeve("b", budget=1.0)),
+            max_book_gross=2.0,
+        )
+        assert book.sleeve_count == 2
+
 
 class TestBookConfigSlice4:
     """Slice 4: caps, bands, provenance assertion."""

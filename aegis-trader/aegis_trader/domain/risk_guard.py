@@ -24,12 +24,7 @@ class RiskGuardConfig:
     max_order_modify_rate: str = "10/00:00:01"
     """Max order modification rate per timedelta."""
 
-    bypass: bool = False
-    """If True, skip all pre-trade risk checks."""
-
     def __post_init__(self) -> None:
-        if self.bypass:
-            return
         if not (0 < self.max_notional_fraction <= 1.0):
             raise ValueError(
                 f"max_notional_fraction must be > 0 and <= 1; got {self.max_notional_fraction!r}"
@@ -40,8 +35,7 @@ class RiskGuard:
     """Compute per-instrument max-notional caps from NAV.
 
     Produces a dict suitable for ``RiskEngineConfig.max_notional_per_order``
-    (InstrumentId string → max notional as int), plus rate limits.  Bypassed
-    when ``config.bypass`` is True.
+    (InstrumentId string → max notional as int), plus rate limits.
     """
 
     def __init__(self, config: RiskGuardConfig | None = None) -> None:
@@ -62,12 +56,7 @@ class RiskGuard:
         figis: list[str],
         default_venue: str,
     ) -> dict[str, int]:
-        """Return a mapping of ``InstrumentId-string → max notional (int)``.
-
-        When bypassed, returns an empty dict (no per-instrument caps).
-        """
-        if self._config.bypass:
-            return {}
+        """Return a mapping of ``InstrumentId-string → max notional (int)``."""
         return compute_risk_engine_max_notionals(
             nav=nav,
             figis=figis,
@@ -84,7 +73,6 @@ class RiskGuard:
     ) -> dict:
         """Return a dict suitable for ``RiskEngineConfig(...)`` kwargs."""
         return {
-            "bypass": self._config.bypass,
             "max_order_submit_rate": self._config.max_order_submit_rate,
             "max_order_modify_rate": self._config.max_order_modify_rate,
             "max_notional_per_order": self.compute_max_notionals(

@@ -91,15 +91,18 @@ stance this is a fail-closed correctness requirement, not an optimisation.
   terminus holds for band-suppression breaches (under-band *open* legs); it does **not**
   generally hold for a masked-leg breach, since the offending leg cannot be moved —
   fail-closed is the backstop there.
-- **Gate the union; trade only the targeted (one rule).** The realized book the gate
-  evaluates spans the **union** of Manifest-targeted instruments and all currently-held
-  positions (reconciled `Cache`), so the gate always sees true exposure. The **trade set is
-  the Manifest-targeted instruments only**: a held instrument with **no** Manifest entry is
-  **quarantined** — never auto-traded, always alerted — while recognized sleeves keep
-  rebalancing. A quarantined position is still real exposure, so the gate counts it exactly
-  like a **masked leg** (remediate via tradeable legs, else fail closed). No opt-in
-  trade-out path: retiring a sleeve quarantines its residual for deliberate, operator-driven
-  wind-down.
+- **Gate the realized book; trade only the targeted (one rule).** The realized book the gate
+  evaluates spans the Manifest-targeted instruments and their reconciled `Cache` positions, so
+  the gate always sees true exposure for the book Trader runs. The **trade set is the
+  Manifest-targeted instruments only**.
+  - **Amended 2026-06-15 (aegis-rd-bwb.1): quarantine removed.** The original rule also
+    folded *held instruments with no Manifest entry* into the gate union — quarantined (never
+    auto-traded, always alerted), counted exactly like a masked leg. That is dropped: v1
+    assumes the Commingled Book holds only sleeve-covered instruments (see ADR-0001, amended),
+    so an unrecognized holding is **out of scope**, not gated. The gate union is therefore over
+    Manifest-targeted instruments and their realized positions only; there is no
+    quarantine trade-out path. Reinstating quarantine (e.g. for operator-driven sleeve
+    retirement) is a future decision.
 - **NAV staleness is bounded, not eliminated.** `w_c` uses freshest-available marks; on a
   closed-venue day the shared `NAV_base` denominator is stale and a pure FX move can
   spuriously trip an EUR leg. Because the gate is authoritative, a spurious trip costs at

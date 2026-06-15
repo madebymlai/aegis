@@ -24,7 +24,7 @@ from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.risk.config import RiskEngineConfig
-from nautilus_trader.test_kit.providers import TestInstrumentProvider
+from conftest import eur_equity
 
 from aegis_runtime import (
     BundleManifest,
@@ -106,7 +106,7 @@ _STARTING_NAV = 100_000.0
 
 
 def _make_instrument() -> Instrument:
-    return TestInstrumentProvider.equity(symbol=_SYNTH_FIGI, venue=VENUE.value)
+    return eur_equity(_SYNTH_FIGI, VENUE.value)
 
 
 def _make_bars(prices: list[float], start_ns: int = 0) -> list[Bar]:
@@ -203,7 +203,8 @@ def test_risk_engine_config_wired_from_risk_guard():
     bundle = _SyntheticBundle(weight=0.5)
     config = RebalanceStrategyConfig(book=book)
     strategy = RebalanceStrategy(config=config)
-    strategy._bundle = bundle
+    strategy.register_sleeve(book.sleeves[0].name, bundle)
+    strategy._figi_bimap = {_SYNTH_FIGI: InstrumentId.from_str(instr_id_str)}
     engine.add_strategy(strategy)
 
     engine.run()
@@ -258,7 +259,10 @@ def test_kill_switch_halts_all_trading():
 
     config = RebalanceStrategyConfig(book=book)
     strategy = RebalanceStrategy(config=config)
-    strategy._bundle = bundle
+    strategy.register_sleeve(book.sleeves[0].name, bundle)
+    strategy._figi_bimap = {
+        _SYNTH_FIGI: InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")
+    }
     engine.add_strategy(strategy)
 
     # HALT before the run processes any bar events.

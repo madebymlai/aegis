@@ -22,7 +22,6 @@ class TestRiskGuardConfig:
         assert cfg.max_notional_fraction == 0.25
         assert cfg.max_order_submit_rate == "10/00:00:01"
         assert cfg.max_order_modify_rate == "10/00:00:01"
-        assert cfg.bypass is False
 
     def test_explicit(self):
         cfg = RiskGuardConfig(
@@ -33,10 +32,6 @@ class TestRiskGuardConfig:
         assert cfg.max_notional_fraction == 0.10
         assert cfg.max_order_submit_rate == "5/00:00:01"
         assert cfg.max_order_modify_rate == "3/00:00:01"
-
-    def test_bypass_mode(self):
-        cfg = RiskGuardConfig(bypass=True)
-        assert cfg.bypass is True
 
     def test_fraction_must_be_positive(self):
         with pytest.raises(ValueError, match="must be > 0"):
@@ -159,16 +154,6 @@ class TestRiskGuardFromBook:
         # 100_001 * 0.25 = 25_000.25 → int() = 25_000
         assert result["BBG000B9XRY4.XLON"] == 25_000
 
-    def test_bypass_returns_empty(self):
-        """Bypassed guard returns empty dict (no caps)."""
-        guard = RiskGuard(config=RiskGuardConfig(bypass=True))
-        result = guard.compute_max_notionals(
-            nav=100_000.0,
-            figis=["BBG000B9XRY4"],
-            default_venue="XLON",
-        )
-        assert result == {}
-
     def test_rate_limits_preserved(self):
         """Rate limit configs are passed through."""
         guard = RiskGuard(config=RiskGuardConfig(
@@ -182,5 +167,4 @@ class TestRiskGuardFromBook:
         )
         assert cfg["max_order_submit_rate"] == "3/00:00:05"
         assert cfg["max_order_modify_rate"] == "2/00:00:05"
-        assert cfg["bypass"] is False
         assert cfg["max_notional_per_order"] == {"BBG000B9XRY4.XLON": 25_000}

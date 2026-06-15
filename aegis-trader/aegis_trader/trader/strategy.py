@@ -25,12 +25,9 @@ Slice 6 — cadence (per-sleeve timeframe + calendar-aware):
   (had a fresh bar during the completed period).
 - Drift is evaluated every period even on an unchanged target.
 
-Slice 7 — reconciliation (integrity-halt + quarantine):
-- Account-integrity check at startup: cache health, account ID, NAV/cash
-  consistency.  A failed check halts the book globally.
-- Unknown held positions (broker positions for FIGIs not in any sleeve
-  contract) are quarantined: included in the gate but never auto-traded,
-  logged as alerts.
+Slice 7 - reconciliation (integrity-halt): an account-integrity check at
+startup (cache health, account ID, NAV/cash consistency) halts the book
+globally on failure.
 """
 
 from __future__ import annotations
@@ -40,6 +37,7 @@ from typing import Any
 import pandas as pd
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
+from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.events import OrderDenied
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency, Money
@@ -53,9 +51,12 @@ from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
 from aegis_trader.domain.rebalancer import rebalance
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
-from aegis_trader.domain.sizing import InstrumentSizing
-from aegis_trader.domain.types import OrderIntent, OrderSide, RebalanceResult, SleeveName
-from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
+from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
+from aegis_trader.domain.types import OrderIntent, OrderSide, SleeveName
+from aegis_trader.execution.figi_resolver import (
+    FigiInstrumentResolver,
+    FigiResolutionError,
+)
 from aegis_trader.observability.port import (
     GateOutcome,
     ObservabilityPort,
@@ -77,6 +78,14 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     figi_resolver: FigiInstrumentResolver | None = None
     risk_guard_config: RiskGuardConfig = RiskGuardConfig()
     obs_port: ObservabilityPort | None = None
+    fill_time_in_force: TimeInForce | None = None
+    """Time-in-force for submitted orders (ADR-0001, next-close execution).
+
+    ``None`` (backtest): a plain ``MARKET`` order fills at the execution bar's
+    close — the SimulatedExchange rejects session TIFs.  ``AT_THE_CLOSE``
+    (paper/live): a Market-on-Close order into the closing auction.  Set by the
+    mode builders in ``trader/modes.py`` so backtest and live model the same
+    fill point (the close)."""
 
 
 class RebalanceStrategy(Strategy):
@@ -90,22 +99,15 @@ class RebalanceStrategy(Strategy):
       (per-sleeve-latest as-of), netted across sleeves, and orders are
       emitted only for FIGIs whose venue was open (had a fresh bar) during
       the completed period.
-
-    Backward-compatible with the Slice 1 single-sleeve ``_bundle`` attribute
-    — setting it directly is converted to the new sleeve-registry API in
-    ``on_start``.
     """
 
     def __init__(self, config: RebalanceStrategyConfig) -> None:
         super().__init__(config)
         self._book: BookConfig = config.book
-        self._bundle: ExecutionBundle | None = None  # backward compat (Slice 1)
-        self._contract: DataContract | None = None  # backward compat
         # ── Slice 6 sleeve registry ──────────────────────────────────────
         self._sleeve_to_bundle: dict[SleeveName, ExecutionBundle] = {}
         self._sleeve_to_contract: dict[SleeveName, DataContract] = {}
-        self._figi_to_venue: dict[str, str] = {}
-        self._instr_to_figi: dict[str, str] = {}  # "FIGI.VENUE" → FIGI
+        self._instr_to_figi: dict[str, str] = {}  # InstrumentId.value → FIGI (bimap inverse)
         # ── bar buffers & cadence state ──────────────────────────────────
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
         self._current_period: int | None = None
@@ -118,7 +120,7 @@ class RebalanceStrategy(Strategy):
         )
         # ── Slice 8: RiskEngine guards ───────────────────────────────────
         self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
-        # ── Slice 7: integrity + quarantine ──────────────────────────────
+        # Slice 7: account-integrity check + global halt
         self._integrity_report: IntegrityReport | None = None
         self._is_halted: bool = False
         # ── Slice 9: observability + attribution ─────────────────────────
@@ -142,12 +144,6 @@ class RebalanceStrategy(Strategy):
     # ── Nautilus lifecycle ────────────────────────────────────────────────────
 
     def on_start(self) -> None:
-        # Backward compat: Slice 1 single-sleeve via _bundle attribute
-        if self._bundle is not None and not self._sleeve_to_bundle:
-            sleeve_name = self._book.sleeves[0].name
-            self._sleeve_to_bundle[sleeve_name] = self._bundle
-            self._sleeve_to_contract[sleeve_name] = self._bundle.contract
-
         if not self._sleeve_to_bundle:
             self.log.warning("No sleeves registered; strategy will idle.")
             return
@@ -197,44 +193,31 @@ class RebalanceStrategy(Strategy):
         for sleeve in self._book.sleeves:
             self._sleeve_target_history[sleeve.name] = []
 
-        # Build FIGI → venue map from sleeve configs
-        for sleeve in self._book.sleeves:
-            venue = sleeve.venue or self._book.default_venue
-            bundle = self._sleeve_to_bundle.get(sleeve.name)
-            if bundle is None:
-                continue
-            for figi in bundle.contract.figis:
-                self._figi_to_venue[figi] = venue
-
         # Collect all unique FIGIs across all sleeves
         all_figis: set[str] = set()
         for bundle in self._sleeve_to_bundle.values():
             all_figis.update(bundle.contract.figis)
 
-        # Slice 3: resolve FIGIs via the Security Master bimap.
-        # Skip resolution if a stub bimap was injected (e2e tests).
+        # Slice 3: resolve FIGIs to venue-native InstrumentIds via the Security
+        # Master bimap.  The bimap is the SINGLE source of truth for instrument
+        # identity - every subscription, bar buffer, sizing read, order, and risk
+        # cap keys off it.  (A stub bimap may be injected by e2e tests.)
         if not self._figi_bimap:
             self._figi_bimap = self._resolve_bimap(all_figis)
 
-        # Subscribe to bars for all unique FIGI+venue combinations
-        seen: set[str] = set()
-        for name, bundle in self._sleeve_to_bundle.items():
-            for figi in bundle.contract.figis:
-                venue = self._figi_to_venue[figi]
-                instr_id_str = f"{figi}.{venue}"
-                if instr_id_str in seen:
-                    continue
-                seen.add(instr_id_str)
-                self._instr_to_figi[instr_id_str] = figi
-                bar_type = BarType.from_str(
-                    f"{instr_id_str}-1-DAY-LAST-EXTERNAL"
-                )
-                self.subscribe_bars(bar_type)
+        # Subscribe to bars on the RESOLVED InstrumentId and build the inverse
+        # (InstrumentId -> FIGI) map used for position lookups.
+        for figi in all_figis:
+            instr_id = self._figi_to_instr_id(figi)
+            self._instr_to_figi[instr_id.value] = figi
+            self.subscribe_bars(
+                BarType.from_str(f"{instr_id.value}-1-DAY-LAST-EXTERNAL")
+            )
 
         names = [s.value for s in self._sleeve_to_bundle]
         self.log.info(
             f"RebalanceStrategy starting; sleeves={names}, "
-            f"figi_venue_map={self._figi_to_venue}"
+            f"bimap={ {f: i.value for f, i in self._figi_bimap.items()} }"
         )
 
     def on_bar(self, bar: Bar) -> None:
@@ -301,10 +284,6 @@ class RebalanceStrategy(Strategy):
         FX rates from Nautilus and passes them through to the rebalancer for
         sizing (EUR notional → native share quantity with GBp pence + increment
         rounding).
-
-        Slice 7: collects held positions (broker positions for FIGIs not in any
-        sleeve contract) and passes them to the rebalancer for quarantine;
-        quarantined FIGIs are logged as alerts.
         """
         if self._is_halted:
             return
@@ -323,8 +302,7 @@ class RebalanceStrategy(Strategy):
             sleeve_closes: dict[str, pd.DataFrame] = {}
             sleeve_ok = True
             for figi in contract.figis:
-                venue = self._figi_to_venue.get(figi, self._book.default_venue)
-                instr_id = InstrumentId.from_str(f"{figi}.{venue}")
+                instr_id = self._figi_to_instr_id(figi)
                 buf = self._bars_buffer.get(instr_id, [])
                 if len(buf) < needed:
                     sleeve_ok = False
@@ -355,21 +333,21 @@ class RebalanceStrategy(Strategy):
         nav = float(equity_map[base_ccy].as_double())
 
         instrument_metas, fx_rates, prices = self._collect_sizing_params(venue)
-        held_positions = self._collect_held_positions(nav, venue)
 
-        result: RebalanceResult = rebalance(
-            pending,
+        # Two-step pipeline: the pure rebalancer decides what to trade (signed
+        # weight deltas); the sizer converts each delta into a native share count.
+        deltas = rebalance(pending, self._book)
+        orders = size_deltas(
+            deltas,
             nav,
-            self._book,
             instrument_metas=instrument_metas,
             fx_rates=fx_rates,
             prices=prices,
-            held_positions=held_positions,
         )
 
         # ── Slice 9: compute total notional for the summary ──────────────
         total_notional = sum(
-            abs(o.quantity) for o in result.orders
+            abs(o.quantity) for o in orders
             if o.figi.value in self._period_fresh_figis
         )
 
@@ -379,21 +357,13 @@ class RebalanceStrategy(Strategy):
         summary = RebalanceSummary(
             nav=nav,
             num_sleeves=len(pending),
-            num_targets=len(result.orders),
-            num_orders=len(result.orders),
-            num_quarantined=len(result.quarantined),
-            quarantined_figis=result.quarantined,
+            num_targets=len(orders),
+            num_orders=len(orders),
             gate_outcome=GateOutcome.PASS,
             total_notional=total_notional,
         )
         self._log_rebalance_summary(summary)
 
-        # Slice 7: alert on quarantined instruments
-        if result.quarantined:
-            self.log.warning(
-                f"Quarantined instruments (held but not in any sleeve): "
-                f"{', '.join(result.quarantined)}"
-            )
 
         # ── Slice 9: store per-sleeve targets & closes for attribution ───
         for sleeve_name, target_df in pending.items():
@@ -405,7 +375,7 @@ class RebalanceStrategy(Strategy):
                 cl.append(px)
 
         # Calendar-aware: only emit orders for FIGIs with a fresh bar
-        for oi in result.orders:
+        for oi in orders:
             if oi.figi.value not in self._period_fresh_figis:
                 self.log.info(
                     f"Skipping {oi.side.value} {oi.quantity:.0f} "
@@ -427,7 +397,6 @@ class RebalanceStrategy(Strategy):
                 f"sleeves={summary.num_sleeves} "
                 f"targets={summary.num_targets} "
                 f"orders={summary.num_orders} "
-                f"quarantined={summary.num_quarantined} "
                 f"gate={summary.gate_outcome.value} "
                 f"notional={summary.total_notional:.2f}"
             )
@@ -505,13 +474,17 @@ class RebalanceStrategy(Strategy):
     def _figi_to_instr_id(self, figi: str) -> InstrumentId:
         """Resolve a FIGI to a venue-specific InstrumentId.
 
-        Uses the FIGI bimap (Slice 3) when available, falling back to the
-        per-sleeve venue map (Slice 6) or the book's default_venue.
+        Fails closed (raises) when the FIGI was not resolved: the book never
+        acts on an unidentified instrument, and never reconstructs identity by
+        parsing strings (ADR-0002).
         """
-        if figi in self._figi_bimap:
-            return self._figi_bimap[figi]
-        venue = self._figi_to_venue.get(figi, self._book.default_venue)
-        return InstrumentId.from_str(f"{figi}.{venue}")
+        instr_id = self._figi_bimap.get(figi)
+        if instr_id is None:
+            raise FigiResolutionError(
+                f"FIGI {figi!r} is not in the resolved bimap; refusing to act "
+                f"on an unidentified instrument"
+            )
+        return instr_id
 
     def _resolve_bimap(self, figis: set[str]) -> dict[str, InstrumentId]:
         """Resolve *figis* to a bimap via the Security Master."""
@@ -563,60 +536,6 @@ class RebalanceStrategy(Strategy):
 
         return instrument_metas, fx_rates, prices
 
-    def _collect_held_positions(
-        self, nav: float, venue: Venue,
-    ) -> dict[str, float]:
-        """Collect broker positions for FIGIs NOT in any sleeve contract.
-
-        Returns a dict of FIGI → signed weight (position value / NAV).
-        Positions for FIGIs that are covered by at least one sleeve contract
-        are excluded — they are tracked via ``realized_weights`` instead.
-
-        An empty dict when no held positions exist or NAV ≤ 0.
-        """
-        if nav <= 0:
-            return {}
-
-        # Collect all FIGIs covered by any sleeve
-        tracked_figis: set[str] = set()
-        for contract in self._sleeve_to_contract.values():
-            tracked_figis.update(contract.figis)
-
-        held: dict[str, float] = {}
-        positions = self.cache.positions()
-        if not positions:
-            return {}
-
-        for pos in positions:
-            if not pos.is_open:
-                continue
-            instr_id = pos.instrument_id
-            # Resolve InstrumentId back to FIGI via the instr→figi map
-            figi = self._instr_to_figi.get(instr_id.value)
-            if figi is None:
-                # Fallback: strip the venue suffix to recover the FIGI
-                parts = instr_id.value.rsplit(".", 1)
-                if len(parts) == 2 and parts[0]:
-                    candidate = parts[0]
-                    if candidate in tracked_figis:
-                        continue  # tracked by some sleeve → not quarantined
-                    figi = candidate
-            elif figi in tracked_figis:
-                continue  # tracked by some sleeve → not quarantined
-
-            # Compute signed weight from net quantity
-            instrument = self.cache.instrument(instr_id)
-            if instrument is None:
-                continue
-            price = self.cache.price(instr_id)
-            if price is None:
-                continue
-
-            notional = float(pos.net_qty.as_double()) * float(price.as_double())
-            held[figi or instr_id.value] = notional / nav
-
-        return held
-
     def _get_fx_rate(self, venue: Venue, target_currency: str) -> float | None:
         """Get the FX rate in units of *target_currency* per 1 EUR.
 
@@ -667,8 +586,8 @@ class RebalanceStrategy(Strategy):
     def _submit_order_intent(self, oi: OrderIntent) -> None:
         """Translate a domain OrderIntent into a Nautilus MARKET order and submit.
 
-        Slice 5: the OrderIntent quantity is already a native share count
-        (sized by the rebalancer), so it is passed directly to ``make_qty``.
+        The quantity is already a native share count (sized by the rebalancer),
+        so it is passed directly to ``make_qty``.
         """
         instr_id = self._figi_to_instr_id(oi.figi.value)
         instrument = self.cache.instrument(instr_id)
@@ -680,11 +599,16 @@ class RebalanceStrategy(Strategy):
 
         nt_side = NtOrderSide.BUY if oi.side == OrderSide.BUY else NtOrderSide.SELL
         quantity = instrument.make_qty(oi.quantity)
-        order = self.order_factory.market(
-            instrument_id=instr_id,
-            order_side=nt_side,
-            quantity=quantity,
-        )
+        kwargs: dict[str, Any] = {
+            "instrument_id": instr_id,
+            "order_side": nt_side,
+            "quantity": quantity,
+        }
+        # NEXT-CLOSE (ADR-0001): backtest leaves the factory default (plain MARKET
+        # fills at the bar close); paper/live carry AT_THE_CLOSE (Market-on-Close).
+        if self.config.fill_time_in_force is not None:
+            kwargs["time_in_force"] = self.config.fill_time_in_force
+        order = self.order_factory.market(**kwargs)
         self.submit_order(order)
 
 

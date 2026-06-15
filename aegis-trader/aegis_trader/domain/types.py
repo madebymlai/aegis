@@ -39,8 +39,25 @@ class OrderSide(str, Enum):
 
 
 @dataclass(frozen=True)
+class WeightDelta:
+    """A signed change in target weight for one instrument (fraction of NAV).
+
+    The pure rebalancer emits these — netting, banding, and cap-gating all live
+    in dimensionless weight space.  A separate sizing step (``sizing.size_deltas``)
+    converts a WeightDelta into an :class:`OrderIntent` with a native share count.
+    """
+
+    figi: Figi
+    delta: float  # signed weight to trade; positive = buy, negative = sell
+
+    @property
+    def side(self) -> OrderSide:
+        return OrderSide.BUY if self.delta > 0 else OrderSide.SELL
+
+
+@dataclass(frozen=True)
 class OrderIntent:
-    """A provider-agnostic order request from the rebalancer.
+    """A provider-agnostic, *sized* order request from the rebalance pipeline.
 
     Carries only canonical identifiers; the execution port resolves the FIGI to
     a venue-specific instrument before submitting.
@@ -48,17 +65,4 @@ class OrderIntent:
 
     figi: Figi
     side: OrderSide
-    quantity: float  # signed-then-abs'd; positive means |weight·NAV/priceref|
-
-
-@dataclass(frozen=True)
-class RebalanceResult:
-    """Result of a rebalance: orders to submit plus quarantined FIGIs.
-
-    *quarantined* lists the FIGIs of held positions that are not covered by
-    any sleeve in the BookConfig — they are counted in the gate but excluded
-    from trading.
-    """
-
-    orders: tuple[OrderIntent, ...]
-    quarantined: tuple[str, ...]
+    quantity: float  # native share count (sized via NAV / FX / price)

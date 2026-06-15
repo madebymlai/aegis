@@ -1,16 +1,9 @@
-"""E2E test for Slice 7: reconciliation — integrity-halt + quarantine.
+"""E2E test for Slice 7: reconciliation — integrity-halt.
 
-Validates two behaviours:
-
-1. **Integrity check at startup** — the strategy performs an account-integrity
-   check in ``on_start``; when healthy the book continues trading normally.
-
-2. **Quarantine** — held positions for instruments not in any sleeve contract
-   are quarantined (logged, never traded) while still counted in the gate.
-
-The pure-domain unit tests (tests/unit/test_integrity.py and the quarantine
-section of tests/unit/test_rebalancer.py) cover the integrity and quarantine
-rules exhaustively.
+Validates the startup account-integrity check: the strategy performs an
+account-integrity check in ``on_start``; when healthy the book continues
+trading normally.  The pure-domain unit tests (tests/unit/test_integrity.py)
+cover the integrity rules exhaustively.
 
 N.B. Only one BacktestEngine per process; run this test in isolation.
 """
@@ -24,7 +17,7 @@ from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, TraderId, Venue
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
-from nautilus_trader.test_kit.providers import TestInstrumentProvider
+from conftest import eur_equity
 
 from aegis_runtime import (
     BundleManifest,
@@ -104,7 +97,7 @@ VENUE = Venue("XLON")
 
 
 def _make_instrument(figi: str = _SYNTH_FIGI) -> Instrument:
-    return TestInstrumentProvider.equity(symbol=figi, venue=VENUE.value)
+    return eur_equity(figi, VENUE.value)
 
 
 def _make_bars(prices: list[float], start_ns: int = 0) -> list[Bar]:
@@ -171,7 +164,7 @@ def _setup_engine(trader_id: str, book: BookConfig, bundle: _SyntheticBundle) ->
 
     config = RebalanceStrategyConfig(book=book)
     strategy = RebalanceStrategy(config=config)
-    strategy._bundle = bundle
+    strategy.register_sleeve(book.sleeves[0].name, bundle)
     # Inject a stub bimap so the strategy skips HTTP OpenFIGI resolution
     instr_id = InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")
     strategy._figi_bimap = {_SYNTH_FIGI: instr_id}
@@ -211,27 +204,5 @@ def test_integrity_check_passes_in_normal_backtest():
     assert len(fills) >= 2, (
         f"Expected ≥2 fills (normal trading), got {len(fills)}"
     )
-
-    engine.dispose()
-
-
-def test_normal_backtest_no_quarantine():
-    """Slice 7: in a normal backtest with only tracked FIGIs, no quarantine occurs.
-
-    All broker positions correspond to FIGIs in sleeve contracts, so
-    ``held_positions`` is empty and ``quarantined`` is empty.
-    """
-    engine, strategy = _setup_engine("NO-QUARANTINE-E2E", _make_book(), _SyntheticBundle(weight=0.5))
-    engine.run()
-
-    assert engine.get_result() is not None
-
-    # All fills should be for the tracked FIGI only
-    fills = [o for o in engine.cache.orders() if o.is_closed]
-    assert len(fills) >= 2
-    for f in fills:
-        assert _SYNTH_FIGI in f.instrument_id.value, (
-            f"Expected fills only for {_SYNTH_FIGI}, got {f.instrument_id.value}"
-        )
 
     engine.dispose()

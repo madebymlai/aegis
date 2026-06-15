@@ -25,7 +25,10 @@ from nautilus_trader.config import (
 )
 from nautilus_trader.common import Environment
 
+from nautilus_trader.model.enums import TimeInForce
+
 from aegis_trader.trader.modes import (
+    build_backtest_engine_config,
     build_paper_trading_node,
     build_paper_trading_node_config,
     build_paper_data_client_config,
@@ -34,6 +37,8 @@ from aegis_trader.trader.modes import (
     build_live_trading_node_config,
     build_live_data_client_config,
     build_live_exec_client_config,
+    build_risk_engine_config,
+    fill_time_in_force_for_mode,
     IB_CLIENT_ID,
     IB_HOST,
     IB_LIVE_ACCOUNT_ID,
@@ -41,6 +46,57 @@ from aegis_trader.trader.modes import (
     IB_PAPER_ACCOUNT_ID,
     IB_PAPER_PORT,
 )
+
+
+# --------------------------------------------------------------------------- #
+# next-close TIF per mode (A2 / ADR-0001)
+# --------------------------------------------------------------------------- #
+
+def test_backtest_mode_uses_plain_market():
+    """Backtest fills via a plain MARKET (no session TIF)."""
+    assert fill_time_in_force_for_mode("backtest") is None
+
+
+def test_paper_and_live_modes_use_market_on_close():
+    """Paper/live carry AT_THE_CLOSE (Market-on-Close) per ADR-0001."""
+    assert fill_time_in_force_for_mode("paper") == TimeInForce.AT_THE_CLOSE
+    assert fill_time_in_force_for_mode("live") == TimeInForce.AT_THE_CLOSE
+
+
+def test_unknown_mode_rejected():
+    import pytest
+    with pytest.raises(ValueError, match="unknown mode"):
+        fill_time_in_force_for_mode("sandbox")
+
+
+# --------------------------------------------------------------------------- #
+# RiskEngine wiring (A4) + backtest mode runner (A5)
+# --------------------------------------------------------------------------- #
+
+def test_risk_engine_config_carries_rate_limits_and_is_not_bypassed():
+    cfg = build_risk_engine_config()
+    assert cfg.bypass is False
+    assert cfg.max_order_submit_rate == "10/00:00:01"
+    assert cfg.max_order_modify_rate == "10/00:00:01"
+
+
+def test_paper_node_wires_risk_engine():
+    cfg = build_paper_trading_node_config()
+    assert cfg.risk_engine is not None
+    assert cfg.risk_engine.bypass is False
+
+
+def test_live_node_wires_risk_engine():
+    cfg = build_live_trading_node_config()
+    assert cfg.risk_engine is not None
+    assert cfg.risk_engine.bypass is False
+
+
+def test_backtest_engine_config_mirrors_risk_wiring():
+    cfg = build_backtest_engine_config()
+    assert cfg.risk_engine is not None
+    assert cfg.risk_engine.bypass is False
+    assert cfg.risk_engine.max_order_submit_rate == "10/00:00:01"
 
 
 # --------------------------------------------------------------------------- #

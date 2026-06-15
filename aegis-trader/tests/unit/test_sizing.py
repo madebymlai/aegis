@@ -2,7 +2,80 @@
 
 import pytest
 
-from aegis_trader.domain.sizing import InstrumentSizing, size_order
+from aegis_trader.domain.sizing import InstrumentSizing, size_deltas, size_order
+from aegis_trader.domain.types import Figi, OrderSide, WeightDelta
+
+
+class TestSizeDeltas:
+    """size_deltas: weight deltas → sized OrderIntents (the sizing half of the
+    rebalance pipeline)."""
+
+    def test_eur_delta_sized_to_shares(self):
+        """A +0.25 weight delta on a EUR instrument → BUY of |delta|·NAV/price."""
+        orders = size_deltas(
+            (WeightDelta(figi=Figi("F"), delta=0.25),),
+            nav=100_000.0,
+            instrument_metas={"F": InstrumentSizing(currency="EUR", size_increment=1.0)},
+            fx_rates={"EUR": 1.0},
+            prices={"F": 100.0},
+        )
+        assert len(orders) == 1
+        assert orders[0].figi == Figi("F")
+        assert orders[0].side == OrderSide.BUY
+        assert orders[0].quantity == pytest.approx(250.0)  # 25_000 EUR / 100
+
+    def test_negative_delta_is_sell(self):
+        orders = size_deltas(
+            (WeightDelta(figi=Figi("F"), delta=-0.25),),
+            nav=100_000.0,
+            instrument_metas={"F": InstrumentSizing(currency="EUR", size_increment=1.0)},
+            fx_rates={"EUR": 1.0},
+            prices={"F": 100.0},
+        )
+        assert orders[0].side == OrderSide.SELL
+        assert orders[0].quantity == pytest.approx(250.0)
+
+    def test_gbp_pence_instrument_applies_pence_factor(self):
+        """A GBp (pence) instrument: GBP/EUR FX, ×100 pence factor inside size_order."""
+        orders = size_deltas(
+            (WeightDelta(figi=Figi("UK"), delta=0.10),),
+            nav=100_000.0,
+            instrument_metas={"UK": InstrumentSizing(currency="GBp", size_increment=1.0)},
+            fx_rates={"GBp": 0.85},  # GBP per EUR
+            prices={"UK": 850.0},     # price in pence
+        )
+        # 10_000 EUR · 0.85 · 100 pence / 850 = 1000 shares
+        assert orders[0].quantity == pytest.approx(1000.0)
+
+    def test_missing_fx_rate_drops_delta(self):
+        """No FX rate for the instrument's currency → no order (fail-soft skip)."""
+        orders = size_deltas(
+            (WeightDelta(figi=Figi("F"), delta=0.25),),
+            nav=100_000.0,
+            instrument_metas={"F": InstrumentSizing(currency="USD", size_increment=1.0)},
+            fx_rates={},  # no USD
+            prices={"F": 100.0},
+        )
+        assert orders == ()
+
+    def test_sub_increment_delta_dropped(self):
+        """A delta whose rounded share count is zero produces no order."""
+        orders = size_deltas(
+            (WeightDelta(figi=Figi("F"), delta=0.000001),),
+            nav=100_000.0,
+            instrument_metas={"F": InstrumentSizing(currency="EUR", size_increment=1.0)},
+            fx_rates={"EUR": 1.0},
+            prices={"F": 100.0},
+        )
+        assert orders == ()
+
+    def test_nonpositive_nav_rejected(self):
+        with pytest.raises(ValueError, match="NAV must be positive"):
+            size_deltas(
+                (WeightDelta(figi=Figi("F"), delta=0.25),),
+                nav=0.0,
+                instrument_metas={}, fx_rates={}, prices={},
+            )
 
 
 class TestSizeOrderEurInstrument:

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
 from aegis_trader.observability.port import (
+    GateOutcome,
     ObservabilityPort,
     RebalanceSummary,
-    GateOutcome,
 )
 
 
@@ -17,8 +15,6 @@ def _make_summary(**overrides) -> RebalanceSummary:
         num_sleeves=2,
         num_targets=3,
         num_orders=2,
-        num_quarantined=1,
-        quarantined_figis=("FIGI_ORPHAN",),
         gate_outcome=GateOutcome.PASS,
         total_notional=22_000.0,
     )
@@ -31,29 +27,13 @@ class _FakePort(ObservabilityPort):
 
     def __init__(self) -> None:
         self.rebalance_logs: list[RebalanceSummary] = []
-        self.quarantine_alerts: list[tuple[str, ...]] = []
         self.halt_alerts: list[str] = []
-        self.info_logs: list[str] = []
-        self.warning_logs: list[str] = []
-        self.error_logs: list[str] = []
 
     def log_rebalance_decision(self, summary: RebalanceSummary) -> None:
         self.rebalance_logs.append(summary)
 
-    def alert_quarantine(self, figis: tuple[str, ...]) -> None:
-        self.quarantine_alerts.append(figis)
-
     def alert_halt(self, reason: str) -> None:
         self.halt_alerts.append(reason)
-
-    def log_info(self, message: str) -> None:
-        self.info_logs.append(message)
-
-    def log_warning(self, message: str) -> None:
-        self.warning_logs.append(message)
-
-    def log_error(self, message: str) -> None:
-        self.error_logs.append(message)
 
 
 class TestRebalanceSummary:
@@ -82,12 +62,6 @@ class TestObservabilityPort:
         assert len(port.rebalance_logs) == 1
         assert port.rebalance_logs[0] is summary
 
-    def test_alert_quarantine(self):
-        port = _FakePort()
-        figis = ("FIGI_A", "FIGI_B")
-        port.alert_quarantine(figis)
-        assert port.quarantine_alerts == [figis]
-
     def test_alert_halt(self):
         port = _FakePort()
         port.alert_halt("NAV mismatch")
@@ -102,8 +76,3 @@ class TestObservabilityPort:
         assert len(port.rebalance_logs) == 2
         assert port.rebalance_logs[0].num_orders == 1
         assert port.rebalance_logs[1].num_orders == 3
-
-    def test_empty_quarantine(self):
-        port = _FakePort()
-        port.alert_quarantine(())
-        assert port.quarantine_alerts == [()]

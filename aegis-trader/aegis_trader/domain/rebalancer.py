@@ -1,36 +1,23 @@
-"""Pure-domain rebalancer: per-sleeve target weights → OrderIntent[].
+"""Pure-domain rebalancer: per-sleeve target weights -> WeightDelta[].
 
-Zero Nautilus.  For multi-sleeve netting (Slice 2):
-- Each sleeve's target weights (latest row) are scaled by its static Sleeve Budget.
+Zero Nautilus, zero sizing.  The rebalancer works entirely in dimensionless
+weight space (fractions of NAV); turning a weight delta into a native share
+count is a separate concern (``sizing.size_deltas``).
+
+Netting (Slice 2):
+- Each sleeve's latest target weights are scaled by its static Sleeve Budget.
 - Budget-scaled weights are netted per FIGI across all sleeves.
-- A net |weight| > 0 becomes an OrderIntent; side is the sign of the net weight.
-- Two sleeves sharing an instrument collapse to a single OrderIntent for the
-  residual.
+- A non-zero net delta becomes a WeightDelta; its sign is the trade side.
+- Two sleeves sharing an instrument collapse to a single delta for the residual.
 
-Slice 4 adds the realized-book gate:
+Realized-book gate (Slice 4):
 - Asymmetric drift bands (band_up, band_down) per instrument suppress
-  unnecessary trading when the realized position is still within tolerance
-  of the target.
+  unnecessary trading when the realized position is still within tolerance.
 - The realized post-band book is gated against gross/net/per-name caps.
-- A cap breach triggers deterministic widen-to-compliance (ignore bands,
-  trade back to cap); if the breach cannot be remedied the rebalancer
-  raises (fail closed).
-- An aggregate drift threshold trips when Σ|w_realized − w_target| exceeds
-  the limit, indicating the book has drifted too far from intent.
-
-For sizing (Slice 5):
-- EUR notional = |net weight| × NAV-in-EUR → native share quantity via FX,
-  GBp pence factor, and increment rounding.
-- Sub-increment quantities are silently dropped (no OrderIntent emitted).
-
-Slice 7 adds reconciliation — integrity-halt + quarantine:
-- *held_positions* are broker positions for FIGIs not covered by any sleeve
-  contract.  They are included in the gate union (cap checks) but excluded
-  from the trade set — no orders are generated for them.
-- A quarantined position that breaches per_name_cap is unfixable and causes a
-  fail-closed error.
-- The caller receives a ``RebalanceResult`` with both the orders to submit
-  and the set of quarantined FIGIs (for alerting).
+- A per-name cap breach triggers deterministic widen-to-compliance (ignore
+  bands, trade back to the cap); an unfixable breach raises (fail closed).
+- An aggregate drift threshold trips when the book has drifted too far from
+  intent.
 """
 
 from __future__ import annotations
@@ -38,61 +25,35 @@ from __future__ import annotations
 import pandas as pd
 
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.sizing import InstrumentSizing, size_order
-from aegis_trader.domain.types import Figi, OrderIntent, OrderSide, RebalanceResult, SleeveName
+from aegis_trader.domain.types import Figi, SleeveName, WeightDelta
 
 _ZERO_GUARD = 1e-12
 
 
 def rebalance(
     sleeve_targets: dict[SleeveName, pd.DataFrame],
-    nav: float,
     book: BookConfig,
     *,
     realized_weights: dict[str, float] | None = None,
-    held_positions: dict[str, float] | None = None,
-    instrument_metas: dict[str, InstrumentSizing] | None = None,
-    fx_rates: dict[str, float] | None = None,
-    prices: dict[str, float] | None = None,
-) -> RebalanceResult:
-    """Convert per-sleeve target weights into provider-agnostic orders.
+) -> tuple[WeightDelta, ...]:
+    """Net per-sleeve target weights into signed weight deltas to trade.
 
     *sleeve_targets* maps each sleeve name to its most-recent target-weight
     DataFrame (index=time, columns=FIGI).  Only sleeves listed in *book* are
     processed; sleeves missing from the dict or with empty DataFrames are
     silently skipped.
 
-    Each sleeve's latest row is scaled by its budget, then all
-    budget-scaled weights are netted per FIGI.
+    Each sleeve's latest row is scaled by its budget, then all budget-scaled
+    weights are netted per FIGI.
 
-    *realized_weights* (Slice 4) maps FIGI string → current realized weight
-    (signed fraction of NAV) for tradeable instruments.  When supplied, the
-    realised book is gated against caps and drift bands before any orders are
-    emitted.
+    *realized_weights* maps FIGI string -> current realized weight (signed
+    fraction of NAV).  When supplied, the realised book is gated against caps and
+    drift bands before any delta is emitted.
 
-    *held_positions* (Slice 7) maps FIGI string → signed weight for broker
-    positions NOT covered by any sleeve in *book*.  These are included in the
-    gate union (cap checks, aggregate drift) but are never traded — orders are
-    only generated for FIGIs with sleeve targets.  Held FIGIs that breach
-    per_name_cap fail closed (unfixable).
-
-    *instrument_metas* maps FIGI → InstrumentSizing (currency, size_increment).
-    *fx_rates* maps currency → units of that currency per 1 EUR.
-    *prices* maps FIGI → latest close price in the instrument's native currency.
-
-    When sizing params are supplied the rebalancer converts the EUR-notional
-    target into a native share quantity rounded to the instrument's size
-    increment, dropping sub-increment orders silently.  When omitted the
-    quantity in the OrderIntent is the raw EUR notional (backward-compatible
-    with Slice 1–2 callers).
+    Returns the signed weight deltas to trade (fraction of NAV); converting a
+    delta to a share quantity is the sizing step's job (``sizing.size_deltas``).
     """
-    if nav <= 0:
-        raise ValueError(f"NAV must be positive; got {nav!r}")
-
-    held = held_positions or {}
-    quarantined: list[str] = []
-
-    # ── Step 1: net target weights across sleeves ──
+    # -- Step 1: net target weights across sleeves --
     net_target_by_figi: dict[str, float] = {}
 
     for sleeve in book.sleeves:
@@ -111,25 +72,14 @@ def rebalance(
             figi_key = str(col)
             net_target_by_figi[figi_key] = net_target_by_figi.get(figi_key, 0.0) + scaled
 
-    # ── Step 2: build the post-execution book projection ──
+    # -- Step 2: net -> band -> post-execution book projection --
     rw = realized_weights or {}
-    all_figis = net_target_by_figi.keys() | rw.keys() | held.keys()
+    all_figis = net_target_by_figi.keys() | rw.keys()
     post_book: dict[str, float] = dict(rw)  # start from realised
 
-    # Add held positions to post_book (included in gate, excluded from trading)
-    for figi_key, held_w in held.items():
-        post_book[figi_key] = post_book.get(figi_key, 0.0) + held_w
-
-    orders: list[OrderIntent] = []
+    deltas: list[WeightDelta] = []
 
     for figi_key in all_figis:
-        # ── held-only FIGIs are quarantined — no orders, but gate counts them ──
-        is_held_only = figi_key in held and figi_key not in net_target_by_figi
-        if is_held_only:
-            quarantined.append(figi_key)
-            # held positions are already in post_book → skip order generation
-            continue
-
         target_w = net_target_by_figi.get(figi_key, 0.0)
         realized_w = rw.get(figi_key, 0.0)
         has_realized = figi_key in rw
@@ -139,127 +89,60 @@ def rebalance(
 
         delta = target_w - realized_w
 
-        # ── band gate (only when we have a realised position to gate) ──
+        # -- band gate (only when we have a realised position to gate) --
         if has_realized:
             band_up, band_down = book.band_for(figi_key)
 
             if delta > 0 and delta <= band_down:
-                # realised below target but within lower band → no trade
+                # realised below target but within lower band -> no trade
                 post_book[figi_key] = realized_w
                 continue
             if delta < 0 and -delta <= band_up:
-                # realised above target but within upper band → no trade
+                # realised above target but within upper band -> no trade
                 post_book[figi_key] = realized_w
                 continue
 
-        # Outside band (or no band) → trade delta.
+        # Outside band (or no band) -> trade delta.
         if abs(delta) < _ZERO_GUARD:
             post_book[figi_key] = realized_w
             continue
 
-        notional_eur = abs(delta) * nav
-        side = OrderSide.BUY if delta > 0 else OrderSide.SELL
-
-        # Slice 5: size the EUR notional into native share quantity.
-        quantity = _size_if_configured(
-            notional_eur=notional_eur,
-            figi_key=figi_key,
-            instrument_metas=instrument_metas,
-            fx_rates=fx_rates,
-            prices=prices,
-        )
-        if quantity is None:
-            continue  # sub-increment → no order
-
-        orders.append(OrderIntent(figi=Figi(figi_key), side=side, quantity=quantity))
+        deltas.append(WeightDelta(figi=Figi(figi_key), delta=delta))
         post_book[figi_key] = target_w
 
-    # ── Step 3: cap gate on the realised book ──
-    # Per-name cap: if realised breaches and band suppressed the corrective
-    # trade, widen-to-compliance (bring to cap boundary).
-    _gate_per_name_caps(
-        rw, targets=net_target_by_figi, post_book=post_book,
-        orders=orders, book=book, nav=nav,
-        instrument_metas=instrument_metas, fx_rates=fx_rates,
-        prices=prices,
-    )
+    # -- Step 3: per-name cap gate on the realised book (widen-to-compliance) --
+    _gate_per_name_caps(rw, targets=net_target_by_figi, post_book=post_book,
+                        deltas=deltas, book=book)
 
-    # ── Step 3b: per-name cap gate for quarantined positions ──
-    if book.per_name_cap is not None and held:
-        for figi_key, held_w in held.items():
-            if abs(held_w) > book.per_name_cap + _ZERO_GUARD:
-                raise ValueError(
-                    f"FIGI {figi_key}: quarantined position "
-                    f"|weight|={abs(held_w):.6f} exceeds per-name cap "
-                    f"{book.per_name_cap:.6f} — unfixable (cannot trade "
-                    f"quarantined instrument)"
-                )
-
-    # ── Step 4: gross / net caps (always checked on post_book) ──
+    # -- Step 4: gross / net caps (always checked on post_book) --
     _gate_book_caps(post_book, book)
 
-    # ── Step 5: aggregate drift trip ──
+    # -- Step 5: aggregate drift trip --
     if rw and book.aggregate_drift_threshold is not None:
         agg_drift = sum(abs(net_target_by_figi.get(f, 0.0) - rw.get(f, 0.0))
                         for f in net_target_by_figi.keys() | rw.keys())
-        # Also include drift from held positions (held vs zero target)
-        for f, held_w in held.items():
-            agg_drift += abs(0.0 - held_w)  # held has no target
         if agg_drift > book.aggregate_drift_threshold:
             raise ValueError(
                 f"Aggregate drift {agg_drift:.6f} exceeds "
                 f"threshold {book.aggregate_drift_threshold:.6f}"
             )
 
-    return RebalanceResult(
-        orders=tuple(orders),
-        quarantined=tuple(quarantined),
-    )
-
-
-def _size_if_configured(
-    notional_eur: float,
-    figi_key: str,
-    instrument_metas: dict[str, InstrumentSizing] | None,
-    fx_rates: dict[str, float] | None,
-    prices: dict[str, float] | None,
-) -> float | None:
-    """Size to native quantity when all sizing params are available; otherwise
-    return the raw EUR notional (backward-compatible with pre-Slice 5 callers)."""
-    if instrument_metas is None or fx_rates is None or prices is None:
-        return notional_eur
-
-    meta = instrument_metas.get(figi_key)
-    price = prices.get(figi_key)
-    if meta is None or price is None:
-        return notional_eur
-
-    fx_rate = fx_rates.get(meta.currency)
-    if fx_rate is None:
-        return notional_eur
-
-    return size_order(notional_eur, price, fx_rate, meta)
+    return tuple(deltas)
 
 
 def _gate_per_name_caps(
     realized: dict[str, float],
     targets: dict[str, float],
     post_book: dict[str, float],
-    orders: list[OrderIntent],
+    deltas: list[WeightDelta],
     book: BookConfig,
-    nav: float,
-    *,
-    instrument_metas: dict[str, InstrumentSizing] | None = None,
-    fx_rates: dict[str, float] | None = None,
-    prices: dict[str, float] | None = None,
 ) -> None:
-    """Gate realised positions against per-name cap.
+    """Gate realised positions against the per-name cap.
 
-    If a realised position breaches the per-name cap and no corrective
-    order was emitted (because the band suppressed it), widen-to-compliance:
-    insert a corrective order that brings the position to the cap boundary.
-    Being at the cap is acceptable in a breach situation — we don't demand
-    the full target.
+    If a realised position breaches the per-name cap and no corrective delta was
+    emitted (because the band suppressed it), widen-to-compliance: insert a
+    corrective delta that brings the position to the cap boundary.  Being at the
+    cap is acceptable in a breach situation — we don't demand the full target.
 
     If the target itself exceeds the cap (unfixable), raise.
     """
@@ -273,17 +156,15 @@ def _gate_per_name_caps(
         # Breach: realised |weight| > per_name_cap.
         target_w = targets.get(figi_key, 0.0)
 
-        # If target itself exceeds cap → unfixable, fail closed.
+        # If target itself exceeds cap -> unfixable, fail closed.
         if abs(target_w) > book.per_name_cap + _ZERO_GUARD:
             raise ValueError(
                 f"FIGI {figi_key}: target weight {abs(target_w):.6f} exceeds "
                 f"per-name cap {book.per_name_cap:.6f} — unfixable"
             )
 
-        # Check if a corrective order already exists (from band gate).
-        already_correcting = any(
-            o.figi.value == figi_key for o in orders
-        )
+        # Check if a corrective delta already exists (from the band gate).
+        already_correcting = any(d.figi.value == figi_key for d in deltas)
         if already_correcting:
             pw = post_book.get(figi_key, 0.0)
             if abs(pw) > book.per_name_cap + _ZERO_GUARD:
@@ -294,30 +175,13 @@ def _gate_per_name_caps(
                 )
             continue
 
-        # No corrective order — widen: bring to cap boundary.
-        if real_w > 0:
-            cap_w = book.per_name_cap
-        else:
-            cap_w = -book.per_name_cap
-
+        # No corrective delta — widen: bring to the cap boundary.
+        cap_w = book.per_name_cap if real_w > 0 else -book.per_name_cap
         delta = cap_w - real_w
         if abs(delta) < _ZERO_GUARD:
             continue
-        notional_eur = abs(delta) * nav
-        side = OrderSide.BUY if delta > 0 else OrderSide.SELL
 
-        # Slice 5: size the widen-to-compliance notional into native quantity.
-        quantity = _size_if_configured(
-            notional_eur=notional_eur,
-            figi_key=figi_key,
-            instrument_metas=instrument_metas,
-            fx_rates=fx_rates,
-            prices=prices,
-        )
-        if quantity is None:
-            continue  # sub-increment → no order
-
-        orders.append(OrderIntent(figi=Figi(figi_key), side=side, quantity=quantity))
+        deltas.append(WeightDelta(figi=Figi(figi_key), delta=delta))
         post_book[figi_key] = cap_w
 
 

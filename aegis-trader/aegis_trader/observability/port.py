@@ -46,12 +46,6 @@ class RebalanceSummary:
     num_orders: int
     """Number of OrderIntents emitted (before venue-open filter)."""
 
-    num_quarantined: int
-    """Number of held-but-untracked FIGIs quarantined this period."""
-
-    quarantined_figis: tuple[str, ...]
-    """FIGIs that were quarantined (held position, no sleeve contract)."""
-
     gate_outcome: GateOutcome
     """Whether the gate passed, halted, or raised an error."""
 
@@ -72,15 +66,7 @@ class ObservabilityPort(Protocol):
         """Emit a structured log of one rebalance decision.
 
         Called by the strategy after each rebalance — includes targets,
-        trades, gate outcome, and quarantine state.
-        """
-        ...
-
-    def alert_quarantine(self, figis: tuple[str, ...]) -> None:
-        """Alert that instruments are quarantined (held, no sleeve contract).
-
-        Quarantined instruments are counted in the gate but never traded.
-        Operators must investigate and manually wind down these positions.
+        trades, and gate outcome.
         """
         ...
 
@@ -91,16 +77,4 @@ class ObservabilityPort(Protocol):
         an unfixable gate breach occurs.  The book stops trading until the
         operator clears the halt.
         """
-        ...
-
-    def log_info(self, message: str) -> None:
-        """Log an informational message."""
-        ...
-
-    def log_warning(self, message: str) -> None:
-        """Log a warning message."""
-        ...
-
-    def log_error(self, message: str) -> None:
-        """Log an error message."""
         ...

@@ -38,6 +38,10 @@ class BookConfig:
     base_currency: str = "EUR"
     default_venue: str = "XLON"
 
+    # Book gross = Σ sleeve budgets.  Defaults to 1.0 (fully invested, no
+    # leverage, ADR-0001); raise explicitly to run levered.
+    max_book_gross: float = 1.0
+
     # ── caps (all as fractions of NAV) ──
     gross_cap: float | None = None   # max Σ|w_i|
     net_cap: float | None = None     # max |Σ w_i|
@@ -58,6 +62,17 @@ class BookConfig:
         names = [s.name.value for s in self.sleeves]
         if len(names) != len(set(names)):
             raise ValueError(f"duplicate sleeve names in BookConfig: {names}")
+
+        # Book gross = Σ budgets must not exceed the configured max (ADR-0001:
+        # sleeve budgets sum to the book gross; >1.0 is leverage and must be
+        # opted into by raising max_book_gross).
+        book_gross = sum(s.budget for s in self.sleeves)
+        if book_gross > self.max_book_gross + 1e-9:
+            raise ValueError(
+                f"book gross (Σ budgets = {book_gross:.4f}) exceeds "
+                f"max_book_gross ({self.max_book_gross:.4f}); raise max_book_gross "
+                f"to run levered"
+            )
 
         # Provenance assertion: per_name_cap ≤ each sleeve's research-validated cap.
         if self.per_name_cap is not None:

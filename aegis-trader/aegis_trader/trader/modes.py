@@ -21,14 +21,76 @@ from __future__ import annotations
 
 from typing import Any
 
+from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.config import (
     CacheConfig,
     LiveExecEngineConfig,
+    LiveRiskEngineConfig,
     LoggingConfig,
     TradingNodeConfig,
 )
 from nautilus_trader.common import Environment
 from nautilus_trader.live.node import TradingNode
+from nautilus_trader.model.enums import TimeInForce
+from nautilus_trader.risk.config import RiskEngineConfig
+
+from aegis_trader.domain.risk_guard import RiskGuardConfig
+
+
+# ── next-close execution TIF per mode (ADR-0001) ──────────────────────────────
+
+
+def fill_time_in_force_for_mode(mode: str) -> TimeInForce | None:
+    """Next-close time-in-force for a run *mode* (ADR-0001).
+
+    - ``"backtest"`` → ``None``: a plain ``MARKET`` order fills at the execution
+      bar's close (the SimulatedExchange rejects session TIFs).
+    - ``"paper"`` / ``"live"`` → ``TimeInForce.AT_THE_CLOSE``: a Market-on-Close
+      order into the closing auction.
+
+    Both model the same fill point (the close), so research↔backtest↔live align.
+    Feed the result into ``RebalanceStrategyConfig.fill_time_in_force``.
+    """
+    if mode == "backtest":
+        return None
+    if mode in ("paper", "live"):
+        return TimeInForce.AT_THE_CLOSE
+    raise ValueError(f"unknown mode {mode!r}; expected 'backtest', 'paper', or 'live'")
+
+
+# ── RiskEngine wiring (ADR-0001: order-level guards are mandatory) ─────────────
+
+
+def build_risk_engine_config(
+    risk_guard_config: RiskGuardConfig | None = None,
+) -> RiskEngineConfig:
+    """Build the backtest RiskEngineConfig (``BacktestEngine`` requires the
+    non-live variant).
+
+    Carries the RiskGuard's order submit/modify rate limits and is never
+    bypassed — the RiskEngine is an always-on, defense-in-depth guard over the
+    sizing layer.  Per-instrument max-notional caps depend on live NAV and are
+    applied by the strategy at startup (``RebalanceStrategy.risk_engine_config_dict``).
+    """
+    guard = risk_guard_config or RiskGuardConfig()
+    return RiskEngineConfig(
+        bypass=False,
+        max_order_submit_rate=guard.max_order_submit_rate,
+        max_order_modify_rate=guard.max_order_modify_rate,
+    )
+
+
+def build_live_risk_engine_config(
+    risk_guard_config: RiskGuardConfig | None = None,
+) -> LiveRiskEngineConfig:
+    """Build the live/paper RiskEngine config (``TradingNode`` requires the live
+    variant).  Same always-on guard as :func:`build_risk_engine_config`."""
+    guard = risk_guard_config or RiskGuardConfig()
+    return LiveRiskEngineConfig(
+        bypass=False,
+        max_order_submit_rate=guard.max_order_submit_rate,
+        max_order_modify_rate=guard.max_order_modify_rate,
+    )
 
 # ── IBKR constants ───────────────────────────────────────────────────────────
 
@@ -156,7 +218,28 @@ def _build_trading_node_config(
         environment=environment,
         trader_id=trader_id,
         exec_engine=LiveExecEngineConfig(reconciliation=True),
+        risk_engine=build_live_risk_engine_config(),
         cache=CacheConfig(),
+        logging=LoggingConfig(),
+    )
+
+
+def build_backtest_engine_config(
+    *,
+    trader_id: str = "TRADER-001",
+    risk_guard_config: RiskGuardConfig | None = None,
+) -> BacktestEngineConfig:
+    """Build the backtest-mode engine config (ADR-0003: the third mode).
+
+    Mirrors the paper/live nodes' RiskEngine wiring so the overlay validated in
+    backtest is constructed the same way it trades — "what you backtest is what
+    you trade".  The caller adds venues, instruments, data, and the strategy to
+    the resulting ``BacktestEngine`` and pairs it with
+    ``fill_time_in_force_for_mode("backtest")`` (a plain ``MARKET``).
+    """
+    return BacktestEngineConfig(
+        trader_id=trader_id,
+        risk_engine=build_risk_engine_config(risk_guard_config),
         logging=LoggingConfig(),
     )
 
