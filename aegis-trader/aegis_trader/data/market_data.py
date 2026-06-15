@@ -17,7 +17,7 @@ from typing import Protocol, runtime_checkable
 
 from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Quantity
+from nautilus_trader.model.objects import Currency, Quantity
 
 from aegis_trader.domain.sizing import InstrumentSizing
 
@@ -34,6 +34,12 @@ class MarketDataPort(Protocol):
     def make_quantity(self, instrument_id: InstrumentId, raw_shares: float) -> Quantity | None:
         """A venue-valid order quantity from a raw share count, or ``None`` when
         the instrument is not in the reconciled cache."""
+        ...
+
+    def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
+        """FX rate as quote units per 1 base (base→quote, e.g. EUR→GBP = 0.85),
+        or ``None`` when no rate is available — the overlay fails closed rather
+        than fabricating a rate."""
         ...
 
 
@@ -57,3 +63,13 @@ class NautilusMarketData:
         if instrument is None:
             return None
         return instrument.make_qty(raw_shares)
+
+    def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
+        if base_currency == quote_currency:
+            return 1.0
+        rate = self._cache.get_mark_xrate(
+            Currency.from_str(base_currency), Currency.from_str(quote_currency)
+        )
+        if rate is None or rate <= 0.0:
+            return None
+        return float(rate)

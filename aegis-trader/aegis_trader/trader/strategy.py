@@ -45,6 +45,7 @@ from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
 from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
+from aegis_runtime.currency import major_currency
 
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data import MarketDataPort, NautilusMarketData
@@ -336,7 +337,14 @@ class RebalanceStrategy(Strategy):
                 close_df = pd.concat(sleeve_closes.values(), axis=1)
 
             bundle_data = MarketDataBundle({"Close": close_df})
-            target = bundle.compute_weights(bundle_data)
+            fx_series = self._fx_series_for(contract, close_df.index)
+            if fx_series is None:
+                self.log.warning(
+                    f"sleeve {sleeve.name.value}: required FX unavailable; "
+                    f"skipping (fail closed, no fabricated rate)"
+                )
+                continue
+            target = bundle.compute_weights(bundle_data, fx_series=fx_series)
             pending[sleeve.name] = target
 
         if not pending:
@@ -551,28 +559,48 @@ class RebalanceStrategy(Strategy):
 
         fx_rates: dict[str, float] = {}
         for currency in currencies:
-            rate = self._get_fx_rate(venue, currency)
+            rate = self._get_fx_rate(currency)
             if rate is not None:
                 fx_rates[currency] = rate
 
         return instrument_metas, fx_rates, prices
 
-    def _get_fx_rate(self, venue: Venue, target_currency: str) -> float | None:
-        """Get the FX rate in units of *target_currency* per 1 EUR.
+    def _fx_series_for(
+        self, contract: DataContract, index: pd.Index
+    ) -> dict[str, pd.Series] | None:
+        """Build the base→ccy FX series a bundle needs for its
+        ``required_fx_currencies``, sourced live from the MarketDataPort.
 
-        Returns None when the rate is unavailable (rebalancer falls back to
-        raw EUR notional).
-
-        Currently returns 1.0 for base currency, None for foreign currencies
-        (FX rate sourcing from Nautilus cache will be wired in a later slice
-        when per-venue FX data is integrated into the backtest engine).
+        Returns ``{}`` when no FX is needed, or ``None`` when a required rate is
+        unavailable — the caller then skips the sleeve (fail closed; the bundle
+        is never run on a fabricated or absent rate).
         """
-        if target_currency == self._book.base_currency:
+        needed = contract.required_fx_currencies
+        if not needed:
+            return {}
+        base = self._book.base_currency
+        series: dict[str, pd.Series] = {}
+        for ccy in needed:
+            rate = self._market_data.fx_rate(base, ccy)
+            if rate is None:
+                return None
+            series[ccy] = pd.Series(rate, index=index)
+        return series
+
+    def _get_fx_rate(self, target_currency: str) -> float | None:
+        """FX rate as the instrument's MAJOR quote currency per 1 base — e.g.
+        GBP per EUR for a GBP or GBp instrument (the GBp pence factor is applied
+        inside ``sizing.size_order``).
+
+        Sourced live from the MarketDataPort.  Returns 1.0 when the major currency
+        is the base, and None when no rate is available — the instrument is then
+        left unsized (fail closed; no fabricated FX).
+        """
+        base = self._book.base_currency
+        major = major_currency(target_currency)
+        if major == base:
             return 1.0
-        # TODO(j4a.4): query Nautilus cache for FX rates when multi-ccy data
-        # is available.  For now, foreign-currency instruments fall back to
-        # raw notional (the rebalancer will not size them).
-        return None
+        return self._market_data.fx_rate(base, major)
 
     # -- RiskEngine callbacks ---------------------------------------------------
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from nautilus_trader.model.currencies import EUR
+from nautilus_trader.model.currencies import EUR, GBP
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
@@ -43,6 +43,21 @@ def eur_equity(symbol: str, venue: str) -> Equity:
         instrument_id=InstrumentId(symbol=Symbol(symbol), venue=Venue(venue)),
         raw_symbol=Symbol(symbol),
         currency=EUR,
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )
+
+
+def gbp_equity(symbol: str, venue: str) -> Equity:
+    """A GBP-denominated equity for the Wave C cross-currency e2e (sizes against
+    an EUR book via a GBP/EUR FX rate)."""
+    return Equity(
+        instrument_id=InstrumentId(symbol=Symbol(symbol), venue=Venue(venue)),
+        raw_symbol=Symbol(symbol),
+        currency=GBP,
         price_precision=2,
         price_increment=Price.from_str("0.01"),
         lot_size=Quantity.from_int(1),
