@@ -34,6 +34,14 @@ class Allocation:
     scaled_targets: Mapping[SleeveName, Mapping[str, float]]
 
 
+@dataclass(frozen=True)
+class _GroupComposition:
+    """Within-group ERC composition in member order."""
+
+    members: tuple[SleeveName, ...]
+    weights: np.ndarray
+
+
 def allocate_diagonal_vol_target(
     *,
     sleeve_targets: Mapping[SleeveName, Mapping[str, float]],
@@ -54,10 +62,9 @@ def allocate_diagonal_vol_target(
     if not active:
         return Allocation(multipliers={}, scaled_targets={})
     if realized_vols is None:
-        multipliers = {name: float(risk_shares[name]) for name in active}
-        return Allocation(
-            multipliers=multipliers,
-            scaled_targets=_scale_targets(sleeve_targets, multipliers),
+        return _allocation_from_multipliers(
+            sleeve_targets,
+            _risk_share_multipliers(active, risk_shares),
         )
 
     vols = _validate_vols(active, realized_vols)
@@ -71,10 +78,7 @@ def allocate_diagonal_vol_target(
 
     scale = book_vol_target / raw_vol
     multipliers = {name: multiplier * scale for name, multiplier in raw.items()}
-    return Allocation(
-        multipliers=multipliers,
-        scaled_targets=_scale_targets(sleeve_targets, multipliers),
-    )
+    return _allocation_from_multipliers(sleeve_targets, multipliers)
 
 
 def allocate_covariance_vol_target(
@@ -103,17 +107,17 @@ def allocate_covariance_vol_target(
     if not active:
         return Allocation(multipliers={}, scaled_targets={})
     if realized_covariance is None:
-        multipliers = {name: float(risk_shares[name]) for name in active}
-        return Allocation(
-            multipliers=multipliers,
-            scaled_targets=_scale_targets(sleeve_targets, multipliers),
+        return _allocation_from_multipliers(
+            sleeve_targets,
+            _risk_share_multipliers(active, risk_shares),
         )
 
     covariance = _covariance_matrix(active, realized_covariance)
-    composition = (
-        _hierarchical_composition(active, covariance, risk_shares, groups)
-        if groups is not None
-        else _erc_vector(covariance, _variance_budgets([risk_shares[name] for name in active]))
+    composition = _composition_vector(
+        active=active,
+        covariance=covariance,
+        risk_shares=risk_shares,
+        groups=groups,
     )
 
     composition_by_name = {
@@ -128,10 +132,7 @@ def allocate_covariance_vol_target(
         name: multiplier * scale
         for name, multiplier in composition_by_name.items()
     }
-    return Allocation(
-        multipliers=multipliers,
-        scaled_targets=_scale_targets(sleeve_targets, multipliers),
-    )
+    return _allocation_from_multipliers(sleeve_targets, multipliers)
 
 
 def equal_risk_contribution_weights(
@@ -149,8 +150,11 @@ def equal_risk_contribution_weights(
     if not names:
         return {}
     matrix = _generic_covariance_matrix(names, covariance)
-    shares = [1.0 if risk_shares is None else float(risk_shares[name]) for name in names]
-    weights = _erc_vector(matrix, _variance_budgets(shares))
+    shares = [
+        1.0 if risk_shares is None else float(risk_shares[name])
+        for name in names
+    ]
+    weights = _risk_budgeted_composition(matrix, shares)
     return {name: float(weight) for name, weight in zip(names, weights, strict=True)}
 
 
@@ -205,6 +209,23 @@ def _validate_book_vol_target(book_vol_target: float) -> None:
         raise ValueError(f"book_vol_target must be positive, got {book_vol_target!r}")
 
 
+def _risk_share_multipliers(
+    active: tuple[SleeveName, ...],
+    risk_shares: Mapping[SleeveName, float],
+) -> dict[SleeveName, float]:
+    return {name: float(risk_shares[name]) for name in active}
+
+
+def _allocation_from_multipliers(
+    sleeve_targets: Mapping[SleeveName, Mapping[str, float]],
+    multipliers: Mapping[SleeveName, float],
+) -> Allocation:
+    return Allocation(
+        multipliers=multipliers,
+        scaled_targets=_scale_targets(sleeve_targets, multipliers),
+    )
+
+
 def _active_sleeves(
     sleeve_targets: Mapping[SleeveName, Mapping[str, float]],
     risk_shares: Mapping[SleeveName, float],
@@ -213,7 +234,9 @@ def _active_sleeves(
     for name, targets in sleeve_targets.items():
         share = float(risk_shares.get(name, 0.0))
         if share < -_EPS or not math.isfinite(share):
-            raise ValueError(f"risk share for sleeve {name.value!r} must be finite and non-negative")
+            raise ValueError(
+                f"risk share for sleeve {name.value!r} must be finite and non-negative"
+            )
         if share <= _EPS:
             continue
         if any(abs(float(weight)) > _EPS for weight in targets.values()):
@@ -265,57 +288,142 @@ def _generic_covariance_matrix(
     for i, name in enumerate(names):
         diag = matrix[i, i]
         if diag <= _EPS:
-            raise ValueError(f"degenerate realized variance for {str(name)!r}: {diag!r}")
+            raise ValueError(
+                f"degenerate realized variance for {str(name)!r}: {diag!r}"
+            )
     if not np.allclose(matrix, matrix.T, rtol=1e-8, atol=1e-12):
         raise ValueError("realized covariance matrix must be symmetric")
     return matrix
 
 
-def _hierarchical_composition(
+def _composition_vector(
+    *,
     active: tuple[SleeveName, ...],
     covariance: np.ndarray,
     risk_shares: Mapping[SleeveName, float],
     groups: Mapping[SleeveName, Hashable] | None,
 ) -> np.ndarray:
     if groups is None:
-        raise ValueError("groups must be supplied for hierarchical allocation")
+        shares = [risk_shares[name] for name in active]
+        return _risk_budgeted_composition(covariance, shares)
+    return _hierarchical_composition(active, covariance, risk_shares, groups)
 
+
+def _hierarchical_composition(
+    active: tuple[SleeveName, ...],
+    covariance: np.ndarray,
+    risk_shares: Mapping[SleeveName, float],
+    groups: Mapping[SleeveName, Hashable],
+) -> np.ndarray:
     active_index = {name: i for i, name in enumerate(active)}
+    grouped = _group_active_sleeves(active, groups)
+    within = _within_group_compositions(
+        grouped,
+        active_index,
+        covariance,
+        risk_shares,
+    )
+    group_names = tuple(grouped.keys())
+    group_covariance = _group_covariance_matrix(
+        group_names,
+        within,
+        active_index,
+        covariance,
+    )
+    group_shares = _group_risk_shares(group_names, grouped, risk_shares)
+    group_weights = _risk_budgeted_composition(group_covariance, group_shares)
+
+    composition = np.zeros(len(active), dtype=float)
+    for group_weight, group_name in zip(group_weights, group_names, strict=True):
+        group_composition = within[group_name]
+        for member_weight, member in zip(
+            group_composition.weights,
+            group_composition.members,
+            strict=True,
+        ):
+            composition[active_index[member]] = group_weight * member_weight
+    return composition / float(composition.sum())
+
+
+def _group_active_sleeves(
+    active: tuple[SleeveName, ...],
+    groups: Mapping[SleeveName, Hashable],
+) -> dict[Hashable, tuple[SleeveName, ...]]:
     grouped: dict[Hashable, list[SleeveName]] = {}
     for name in active:
         group = groups.get(name)
         if group is None:
             raise ValueError(f"missing risk group for sleeve {name.value!r}")
         grouped.setdefault(group, []).append(name)
+    return {group: tuple(members) for group, members in grouped.items()}
 
-    group_names = tuple(grouped.keys())
-    within: dict[Hashable, np.ndarray] = {}
-    for group_name, members in grouped.items():
-        member_indices = [active_index[name] for name in members]
-        sub_cov = covariance[np.ix_(member_indices, member_indices)]
-        member_shares = [risk_shares[name] for name in members]
-        within[group_name] = _erc_vector(sub_cov, _variance_budgets(member_shares))
 
+def _within_group_compositions(
+    grouped: Mapping[Hashable, tuple[SleeveName, ...]],
+    active_index: Mapping[SleeveName, int],
+    covariance: np.ndarray,
+    risk_shares: Mapping[SleeveName, float],
+) -> dict[Hashable, _GroupComposition]:
+    return {
+        group: _GroupComposition(
+            members=members,
+            weights=_risk_budgeted_composition(
+                _sub_covariance(covariance, members, members, active_index),
+                [risk_shares[name] for name in members],
+            ),
+        )
+        for group, members in grouped.items()
+    }
+
+
+def _group_covariance_matrix(
+    group_names: tuple[Hashable, ...],
+    within: Mapping[Hashable, _GroupComposition],
+    active_index: Mapping[SleeveName, int],
+    covariance: np.ndarray,
+) -> np.ndarray:
     group_covariance = np.empty((len(group_names), len(group_names)), dtype=float)
     for i, left_group in enumerate(group_names):
-        left_members = grouped[left_group]
-        left_indices = [active_index[name] for name in left_members]
-        left_weights = within[left_group]
+        left = within[left_group]
         for j, right_group in enumerate(group_names):
-            right_members = grouped[right_group]
-            right_indices = [active_index[name] for name in right_members]
-            right_weights = within[right_group]
-            block = covariance[np.ix_(left_indices, right_indices)]
-            group_covariance[i, j] = float(left_weights @ block @ right_weights)
+            right = within[right_group]
+            block = _sub_covariance(
+                covariance,
+                left.members,
+                right.members,
+                active_index,
+            )
+            group_covariance[i, j] = float(left.weights @ block @ right.weights)
+    return group_covariance
 
-    group_shares = [sum(float(risk_shares[name]) for name in grouped[group]) for group in group_names]
-    group_weights = _erc_vector(group_covariance, _variance_budgets(group_shares))
 
-    composition = np.zeros(len(active), dtype=float)
-    for group_weight, group_name in zip(group_weights, group_names, strict=True):
-        for member_weight, member in zip(within[group_name], grouped[group_name], strict=True):
-            composition[active_index[member]] = group_weight * member_weight
-    return composition / float(composition.sum())
+def _sub_covariance(
+    covariance: np.ndarray,
+    rows: tuple[SleeveName, ...],
+    columns: tuple[SleeveName, ...],
+    active_index: Mapping[SleeveName, int],
+) -> np.ndarray:
+    row_indices = [active_index[name] for name in rows]
+    column_indices = [active_index[name] for name in columns]
+    return covariance[np.ix_(row_indices, column_indices)]
+
+
+def _group_risk_shares(
+    group_names: tuple[Hashable, ...],
+    grouped: Mapping[Hashable, tuple[SleeveName, ...]],
+    risk_shares: Mapping[SleeveName, float],
+) -> list[float]:
+    return [
+        sum(float(risk_shares[name]) for name in grouped[group])
+        for group in group_names
+    ]
+
+
+def _risk_budgeted_composition(
+    covariance: np.ndarray,
+    risk_shares: list[float],
+) -> np.ndarray:
+    return _erc_vector(covariance, _variance_budgets(risk_shares))
 
 
 def _variance_budgets(risk_shares: list[float]) -> np.ndarray:

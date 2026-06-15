@@ -482,43 +482,10 @@ class RebalanceStrategy(Strategy):
             sleeve.name for sleeve in self._book.sleeves if sleeve.risk_share > 0
         )
         periods = self._attribution_periods[-(_MIN_SLEEVE_VOL_RETURNS + 1):]
-        rows: list[list[float]] = []
-        for prev, curr in zip(periods, periods[1:], strict=False):
-            row: list[float] = []
-            complete = True
-            for name in names:
-                sleeve_return = 0.0
-                has_input = False
-                for figi, weight in prev.sleeve_targets.get(name, {}).items():
-                    prev_px = prev.closes.get(figi)
-                    curr_px = curr.closes.get(figi)
-                    if prev_px is None or curr_px is None or prev_px <= 0:
-                        continue
-                    sleeve_return += float(weight) * (curr_px / prev_px - 1.0)
-                    has_input = True
-                if not has_input:
-                    complete = False
-                    break
-                row.append(sleeve_return)
-            if complete:
-                rows.append(row)
-
+        rows = _complete_sleeve_return_rows(periods, names)
         if len(rows) < _MIN_SLEEVE_VOL_RETURNS:
             return None
-        covariance = _ewma_covariance(rows, alpha=_EWMA_COVARIANCE_ALPHA)
-        covariance *= _TRADING_DAYS_PER_YEAR
-        if not np.all(np.isfinite(covariance)):
-            return None
-        if np.any(np.diag(covariance) <= 0.0):
-            return None
-
-        return {
-            left: {
-                right: float(covariance[i, j])
-                for j, right in enumerate(names)
-            }
-            for i, left in enumerate(names)
-        }
+        return _annualized_covariance_by_sleeve(names, rows)
 
     def on_stop(self) -> None:
         """Compute and log per-sleeve P&L attribution at end of run.
@@ -714,6 +681,73 @@ def _bars_to_close_series(
     index = pd.DatetimeIndex([b.ts_event for b in bars])
     values = [float(b.close.as_double()) for b in bars]
     return pd.DataFrame({figi: values}, index=index)
+
+
+def _complete_sleeve_return_rows(
+    periods: list[AttributionPeriod],
+    names: tuple[SleeveName, ...],
+) -> list[list[float]]:
+    """Return period return rows with one valid return per active sleeve."""
+    rows: list[list[float]] = []
+    for prev, curr in zip(periods, periods[1:], strict=False):
+        row = _complete_period_return_row(prev, curr, names)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _complete_period_return_row(
+    prev: AttributionPeriod,
+    curr: AttributionPeriod,
+    names: tuple[SleeveName, ...],
+) -> list[float] | None:
+    row: list[float] = []
+    for name in names:
+        sleeve_return = _sleeve_period_return(prev, curr, name)
+        if sleeve_return is None:
+            return None
+        row.append(sleeve_return)
+    return row
+
+
+def _sleeve_period_return(
+    prev: AttributionPeriod,
+    curr: AttributionPeriod,
+    name: SleeveName,
+) -> float | None:
+    sleeve_return = 0.0
+    has_input = False
+    for figi, weight in prev.sleeve_targets.get(name, {}).items():
+        prev_px = prev.closes.get(figi)
+        curr_px = curr.closes.get(figi)
+        if prev_px is None or curr_px is None or prev_px <= 0:
+            continue
+        sleeve_return += float(weight) * (curr_px / prev_px - 1.0)
+        has_input = True
+    return sleeve_return if has_input else None
+
+
+def _annualized_covariance_by_sleeve(
+    names: tuple[SleeveName, ...],
+    rows: list[list[float]],
+) -> dict[SleeveName, dict[SleeveName, float]] | None:
+    covariance = _ewma_covariance(rows, alpha=_EWMA_COVARIANCE_ALPHA)
+    covariance *= _TRADING_DAYS_PER_YEAR
+    if not np.all(np.isfinite(covariance)):
+        return None
+    if np.any(np.diag(covariance) <= 0.0):
+        return None
+    return _covariance_dict(names, covariance)
+
+
+def _covariance_dict(
+    names: tuple[SleeveName, ...],
+    covariance: np.ndarray,
+) -> dict[SleeveName, dict[SleeveName, float]]:
+    return {
+        left: {right: float(covariance[i, j]) for j, right in enumerate(names)}
+        for i, left in enumerate(names)
+    }
 
 
 def _ewma_covariance(rows: list[list[float]], *, alpha: float) -> np.ndarray:
