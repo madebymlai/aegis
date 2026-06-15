@@ -1,0 +1,55 @@
+# Aegis commingled-book spec (example).
+#
+# This is the operator-facing, version-controllable declaration of WHAT to run.
+# It is *not* where secrets go: the IBKR connection and account come from the
+# environment, never this file.
+#
+#   Run:   aegis-trader --mode {backtest,paper,live} --book book.toml
+#          (--book is optional: if omitted, book.toml is discovered by walking
+#           up from the current directory)
+#
+#   Paper/live also read the broker connection from the environment:
+#     IB_ACCOUNT_ID   (required; e.g. DU1234567 paper, U7654321 live)
+#     IB_HOST         (default 127.0.0.1)
+#     IB_PORT         (default 7497 paper / 7496 live; IB Gateway: 4002 / 4001)
+#     IB_CLIENT_ID    (default 1)
+#     TRADER_ID       (default TRADER-001)
+
+# Base currency of the book — NAV, cash, and FX sizing are expressed in it.
+base_currency = "EUR"
+
+# Book gross = sum of sleeve budgets. Defaults to 1.0 (fully invested, no
+# leverage); raise it to run levered across sleeves.
+max_book_gross = 1.0
+
+# Risk caps, all as fractions of NAV. Provenance (caps <= what research
+# validated) is checked at load against each sleeve's bundle, not declared here.
+gross_cap = 1.0       # max sum |w_i|
+net_cap = 0.5         # max |sum w_i|
+per_name_cap = 0.1    # max |w_i| per instrument
+
+# Symmetric default drift bands (no-trade region around target weights).
+default_band_up = 0.02
+default_band_down = 0.02
+
+# Book-level aggregate fidelity: max sum |w_realized - w_target| before tripping.
+aggregate_drift_threshold = 0.5
+
+# Sleeves — each a notional sub-portfolio backed by one content-addressed bundle
+# wheel. Instruments carry their own venue (resolved per FIGI); the book never
+# names a single venue.
+[[sleeves]]
+name = "trend_lse"
+wheel_filename = "trend_lse-abc123.whl"
+budget = 0.6
+
+[[sleeves]]
+name = "trend_xetra"
+wheel_filename = "trend_xetra-def456.whl"
+budget = 0.4
+
+# Per-FIGI asymmetric band overrides (optional).
+[[band_overrides]]
+figi = "BBG000B9XRY4"
+band_up = 0.05
+band_down = 0.02

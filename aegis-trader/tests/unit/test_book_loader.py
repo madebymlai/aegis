@@ -1,0 +1,186 @@
+"""Unit tests for the book.toml loader — pure, zero Nautilus.
+
+``load_book_config`` is the operator-facing surface: a declarative TOML file
+deserializes to the same ``BookConfig`` the e2e tests build by hand.  The TOML
+format lives only in this loader (information hiding); the domain ``BookConfig``
+stays a plain dataclass and keeps its own invariants (``__post_init__``).
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from aegis_trader.config import (
+    BookConfigError,
+    find_book_config,
+    load_book_config,
+)
+from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.types import SleeveName
+
+_MINIMAL = """
+[[sleeves]]
+name = "trend"
+wheel_filename = "trend.whl"
+budget = 1.0
+"""
+
+
+def _write(tmp_path, text: str):
+    path = tmp_path / "book.toml"
+    path.write_text(text)
+    return path
+
+
+def test_minimal_book_loads(tmp_path):
+    """base_currency + one sleeve -> a BookConfig with those values."""
+    path = _write(tmp_path, """
+        base_currency = "EUR"
+
+        [[sleeves]]
+        name = "trend_lse"
+        wheel_filename = "trend_lse-abc123.whl"
+        budget = 1.0
+    """)
+
+    book = load_book_config(path)
+
+    assert isinstance(book, BookConfig)
+    assert book.base_currency == "EUR"
+    assert book.sleeve_count == 1
+    assert book.sleeves[0].name == SleeveName("trend_lse")
+    assert book.sleeves[0].wheel_filename == "trend_lse-abc123.whl"
+    assert book.sleeves[0].budget == 1.0
+
+
+def test_full_book_round_trips_to_hand_built_config(tmp_path):
+    """Every field the e2e tests build by hand survives the TOML round-trip."""
+    path = _write(tmp_path, """
+        base_currency = "EUR"
+        max_book_gross = 2.0
+        gross_cap = 1.0
+        net_cap = 0.5
+        per_name_cap = 0.1
+        default_band_up = 0.03
+        default_band_down = 0.01
+        aggregate_drift_threshold = 0.5
+
+        [[sleeves]]
+        name = "trend_lse"
+        wheel_filename = "trend_lse-abc123.whl"
+        budget = 1.0
+
+        [[sleeves]]
+        name = "trend_xetra"
+        wheel_filename = "trend_xetra-def456.whl"
+        budget = 1.0
+
+        [[band_overrides]]
+        figi = "BBG000B9XRY4"
+        band_up = 0.05
+        band_down = 0.02
+    """)
+
+    book = load_book_config(path)
+
+    assert book == BookConfig(
+        sleeves=(
+            SleeveConfig(name=SleeveName("trend_lse"),
+                         wheel_filename="trend_lse-abc123.whl", budget=1.0),
+            SleeveConfig(name=SleeveName("trend_xetra"),
+                         wheel_filename="trend_xetra-def456.whl", budget=1.0),
+        ),
+        base_currency="EUR",
+        max_book_gross=2.0,
+        gross_cap=1.0,
+        net_cap=0.5,
+        per_name_cap=0.1,
+        default_band_up=0.03,
+        default_band_down=0.01,
+        band_overrides=(("BBG000B9XRY4", 0.05, 0.02),),
+        aggregate_drift_threshold=0.5,
+    )
+
+
+def test_defaults_applied_when_keys_omitted(tmp_path):
+    """Omitted optional keys fall back to BookConfig's defaults."""
+    path = _write(tmp_path, """
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        budget = 1.0
+    """)
+
+    book = load_book_config(path)
+
+    assert book.base_currency == "EUR"
+    assert book.max_book_gross == 1.0
+    assert book.gross_cap is None
+    assert book.default_band_up == 0.02
+    assert book.band_overrides == ()
+
+
+def test_missing_file_fails_closed(tmp_path):
+    with pytest.raises(BookConfigError, match="cannot read"):
+        load_book_config(tmp_path / "nope.toml")
+
+
+def test_malformed_toml_fails_closed(tmp_path):
+    path = _write(tmp_path, "this is = = not valid toml [[[")
+    with pytest.raises(BookConfigError, match="malformed"):
+        load_book_config(path)
+
+
+def test_missing_required_sleeve_key_fails_closed(tmp_path):
+    """A sleeve without wheel_filename is a malformed entry, not a silent skip."""
+    path = _write(tmp_path, """
+        [[sleeves]]
+        name = "trend"
+        budget = 1.0
+    """)
+    with pytest.raises(BookConfigError, match="malformed sleeve"):
+        load_book_config(path)
+
+
+def test_no_sleeves_surfaces_book_invariant(tmp_path):
+    """An empty book hits BookConfig's own 'at least one sleeve' guard."""
+    path = _write(tmp_path, 'base_currency = "EUR"\n')
+    with pytest.raises(ValueError, match="at least one sleeve"):
+        load_book_config(path)
+
+
+def test_over_budget_gross_surfaces_book_invariant(tmp_path):
+    """Sum of budgets over max_book_gross hits BookConfig's leverage guard."""
+    path = _write(tmp_path, """
+        [[sleeves]]
+        name = "a"
+        wheel_filename = "a.whl"
+        budget = 0.7
+
+        [[sleeves]]
+        name = "b"
+        wheel_filename = "b.whl"
+        budget = 0.7
+    """)
+    with pytest.raises(ValueError, match="max_book_gross"):
+        load_book_config(path)
+
+
+class TestFindBookConfig:
+    """Discovery: walk up from a start dir to find book.toml."""
+
+    def test_found_in_start_dir(self, tmp_path):
+        (tmp_path / "book.toml").write_text(_MINIMAL)
+        assert find_book_config(tmp_path) == tmp_path / "book.toml"
+
+    def test_walks_up_to_a_parent(self, tmp_path):
+        (tmp_path / "book.toml").write_text(_MINIMAL)
+        nested = tmp_path / "deploy" / "eu"
+        nested.mkdir(parents=True)
+        assert find_book_config(nested) == tmp_path / "book.toml"
+
+    def test_missing_everywhere_fails_closed(self, tmp_path):
+        nested = tmp_path / "a" / "b"
+        nested.mkdir(parents=True)
+        with pytest.raises(BookConfigError, match="no book.toml"):
+            find_book_config(nested)

@@ -18,6 +18,12 @@ dependencies = [
   "requests>=2.0",
 ]
 
+[project.scripts]
+# Operator entrypoint: `aegis-trader --mode {backtest,paper,live} --book book.toml`.
+# The book spec is declarative (book.toml); IBKR connection + account come from
+# the environment (IB_* / TRADER_ID), never the committed spec.
+aegis-trader = "aegis_trader.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["aegis_trader*"]
 
