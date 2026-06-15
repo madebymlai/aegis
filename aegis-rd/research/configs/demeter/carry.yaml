@@ -30,9 +30,11 @@ data:
   - OHLCV
   # ccy = each LSE line's native yfinance quote currency. Prices are converted to
   # portfolio.base_currency (EUR) before indicators/portfolio.
+  # mic = the ISO 10383 venue (provider-agnostic), used only by aerd export to
+  # resolve each ticker to one FIGI; the research runtime ignores it.
   symbols:
-  - {ticker: IHYU.L, ccy: USD}
-  - {ticker: LQDH.L, ccy: USD}
+  - {ticker: IHYU.L, ccy: USD, mic: XLON}
+  - {ticker: LQDH.L, ccy: USD, mic: XLON}
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

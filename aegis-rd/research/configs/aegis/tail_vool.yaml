@@ -30,8 +30,10 @@ data:
   - OHLCV
   # ccy = the line's native yfinance quote currency; prices are converted to
   # portfolio.base_currency (EUR) before indicators/portfolio.
+  # mic = ISO 10383 venue (provider-agnostic), used only by aerd export to
+  # resolve the ticker to one FIGI; the research runtime ignores it.
   symbols:
-  - {ticker: VOOL.DE, ccy: EUR}   # the tail leg, native EUR, held 100%
+  - {ticker: VOOL.DE, ccy: EUR, mic: XETR}   # the tail leg, native EUR, held 100%
   start: '2013-01-01'
   end: '2025-01-01'
   timeframe: 1D

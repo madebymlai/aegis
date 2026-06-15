@@ -2,6 +2,9 @@ name: atalanta_trend_ucits
 schema_version: 8
 output_dir: runs/atalanta/trend_ucits
 
+# Pinned winner of the latest sweep (role: best) for execution-bundle export.
+lock: 20260615T042521784661Z_atalanta_trend_ucits
+
 # EU-RETAIL-TRADABLE atalanta trend champion on the CURATED orthogonal-non-equity universe,
 # all single-venue London (.L) so the book shares one calendar (no cross-exchange calendar
 # mixing -> no rolling-vol poisoning, no "dropping missing data"). Champion mechanism
@@ -30,26 +33,26 @@ data:
   # ccy = each LSE line's native yfinance quote currency (GBp = pence). Prices are
   # converted to portfolio.base_currency (EUR) before indicators/portfolio.
   symbols:
-  - {ticker: IDTL.L, ccy: USD}
-  - {ticker: ITPS.L, ccy: GBP}
-  - {ticker: SEGA.L, ccy: GBP}
-  - {ticker: AIGC.L, ccy: USD}
-  - {ticker: IGLN.L, ccy: USD}
-  - {ticker: BRNT.L, ccy: USD}
-  - {ticker: COPA.L, ccy: USD}
-  - {ticker: AIGA.L, ccy: USD}
-  - {ticker: GBUS.L, ccy: GBp}
-  - {ticker: EMCP.L, ccy: GBP}
-  - {ticker: HYLD.L, ccy: USD}
-  - {ticker: SSLV.L, ccy: USD}
-  - {ticker: IEGE.L, ccy: EUR}
-  - {ticker: GILI.L, ccy: GBp}
-  - {ticker: WEAT.L, ccy: USD}
-  - {ticker: HEAT.L, ccy: USD}
-  - {ticker: COCO.L, ccy: USD}
-  - {ticker: NGAS.L, ccy: USD}
-  - {ticker: IGLO.L, ccy: USD}
-  - {ticker: IBTA.L, ccy: USD}
+  - {ticker: IDTL.L, ccy: USD, mic: XLON}
+  - {ticker: ITPS.L, ccy: GBP, mic: XLON}
+  - {ticker: SEGA.L, ccy: GBP, mic: XLON}
+  - {ticker: AIGC.L, ccy: USD, mic: XLON, figi: BBG000BLDWV1}
+  - {ticker: IGLN.L, ccy: USD, mic: XLON, figi: BBG001M8D7W0}
+  - {ticker: BRNT.L, ccy: USD, mic: XLON}
+  - {ticker: COPA.L, ccy: USD, mic: XLON, figi: BBG000BL3W79}
+  - {ticker: AIGA.L, ccy: USD, mic: XLON, figi: BBG000BLFVZ7}
+  - {ticker: GBUS.L, ccy: GBp, mic: XLON, figi: BBG000R20GS9}
+  - {ticker: EMCP.L, ccy: GBP, mic: XLON}
+  - {ticker: HYLD.L, ccy: USD, mic: XLON}
+  - {ticker: SSLV.L, ccy: USD, mic: XLON}
+  - {ticker: IEGE.L, ccy: EUR, mic: XLON, isin: IE00B3FH7618}
+  - {ticker: GILI.L, ccy: GBp, mic: XLON}
+  - {ticker: WEAT.L, ccy: USD, mic: XLON, figi: BBG000BLCP10}
+  - {ticker: HEAT.L, ccy: USD, mic: XLON, figi: BBG000BLBMN4}
+  - {ticker: COCO.L, ccy: USD, mic: XLON, figi: BBG000FPCLF1}
+  - {ticker: NGAS.L, ccy: USD, mic: XLON, figi: BBG000BLC3X4}
+  - {ticker: IGLO.L, ccy: USD, mic: XLON}
+  - {ticker: IBTA.L, ccy: USD, mic: XLON}
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D
