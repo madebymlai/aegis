@@ -140,6 +140,8 @@ def rebalance_plan(
                 continue
             net_target_by_figi[figi_key] = net_target_by_figi.get(figi_key, 0.0) + scaled
 
+    net_target_by_figi = _clamp_to_max_gross(net_target_by_figi, book)
+
     # -- Step 2: net -> band -> post-execution book projection --
     rw = realized_weights or {}
     all_figis = net_target_by_figi.keys() | rw.keys()
@@ -333,6 +335,24 @@ def _gate_per_name_caps(
 
         deltas.append(WeightDelta(figi=figi_key, delta=delta))
         post_book[figi_key] = cap_w
+
+
+def _clamp_to_max_gross(
+    net_target_by_figi: dict[Figi, float], book: BookConfig
+) -> dict[Figi, float]:
+    """Down-only vol-target clamp (ADR-0004 amendment).
+
+    Vol-targeting may over-lever an unlevered book when realized volatilities are
+    low.  Scale the netted book down so its gross does not exceed
+    ``max_book_gross``; never scale it up — when the book is already within the
+    ceiling it is returned unchanged.  The gross/net cap gate downstream remains
+    the authoritative hard backstop.
+    """
+    gross = sum(abs(w) for w in net_target_by_figi.values())
+    if gross <= book.max_book_gross:
+        return net_target_by_figi
+    clamp = book.max_book_gross / gross
+    return {figi: weight * clamp for figi, weight in net_target_by_figi.items()}
 
 
 def _gate_book_caps(

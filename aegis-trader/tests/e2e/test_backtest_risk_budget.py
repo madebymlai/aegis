@@ -31,7 +31,9 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
     input.  The rebalancer must use the allocator seam (not static capital
     budgets): the higher-vol tail receives half the capital multiplier of the
     lower-vol trend in the zero-correlation limit, the book hits the configured
-    annualized vol target, and attribution sums back to the realized NAV change.
+    annualized vol target when leverage is permitted (``max_book_gross`` headroom,
+    so the down-only clamp does not bind), and attribution sums back to the
+    realized NAV change.
     """
     days = 252 * 5
     x = np.linspace(0.0, 80.0 * np.pi, days)
@@ -60,6 +62,7 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
             ),
         ),
         book_vol_target=0.09,
+        max_book_gross=2.0,  # permit leverage so the solve hits the target (clamp tested separately)
     )
 
     target = _one_row_target
@@ -104,6 +107,44 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
     ) * nav
 
     assert sum(attribution.values()) == pytest.approx(book_pnl)
+
+
+def test_down_only_clamp_runs_unlevered_book_as_a_vol_ceiling():
+    """An unlevered book (gross_cap = max_book_gross = 1.0) whose vol-target solve
+    over-levers no longer fails closed: the down-only clamp holds gross at the cap
+    and realized vol sits below the target as a ceiling (ADR-0004 amendment)."""
+    days = 252 * 5
+    x = np.linspace(0.0, 80.0 * np.pi, days)
+    trend_returns = 0.10 / np.sqrt(252.0) * np.sin(x)
+    tail_returns = 0.20 / np.sqrt(252.0) * np.cos(x)
+    covariance = _annualized_covariance({_TREND: trend_returns, _TAIL: tail_returns})
+
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=_TREND, wheel_filename="trend.whl", risk_share=0.5, group=RiskGroup.FLOOR),
+            SleeveConfig(name=_TAIL, wheel_filename="tail.whl", risk_share=0.5, group=RiskGroup.TARGET),
+        ),
+        book_vol_target=0.09,
+        max_book_gross=1.0,
+        gross_cap=1.0,
+    )
+
+    # The solve wants ~1.35x gross to peg 9%; previously this raised
+    # "Gross exposure ... exceeds cap".  The down-only clamp now lets it run.
+    deltas = rebalance(
+        {_TREND: _one_row_target({"TREND": 1.0}), _TAIL: _one_row_target({"TAIL": 1.0})},
+        book,
+        realized_covariance=covariance,
+    )
+    weights = {d.figi.value: d.delta for d in deltas}
+    gross = sum(abs(v) for v in weights.values())
+
+    # Clamp bound at the cap -> proves the solve had over-levered past it.
+    assert gross == pytest.approx(book.max_book_gross)
+    # Realized book vol is a ceiling, below target (not pegged up via leverage).
+    assert covariance_book_vol(
+        {_TREND: weights["TREND"], _TAIL: weights["TAIL"]}, covariance
+    ) < book.book_vol_target
 
 
 def test_five_year_tail_convexity_budget_bounds_target_risk_and_zeros_expansion():

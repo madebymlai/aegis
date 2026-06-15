@@ -211,6 +211,7 @@ class TestRebalanceMultiSleeve:
             ),
             book_vol_target=0.09,
             sleeve_reversion_fraction=0.5,
+            max_book_gross=2.0,  # headroom: isolate the band logic from the gross clamp
         )
         previous = {book.sleeves[0].name: 0.6363961030678927, book.sleeves[1].name: 0.6363961030678927}
 
@@ -482,3 +483,90 @@ class TestRebalancePipeline:
         assert by_figi["US_STOCK"].quantity == pytest.approx(220.0)  # 22_000·1.10 / 110
         for o in orders:
             assert o.side == OrderSide.BUY
+
+
+class TestDownOnlyGrossClamp:
+    """ADR-0004 amendment: vol-targeting is down-only.  When the vol-target solve
+    over-levers an unlevered book, the netted book is clamped down to
+    ``max_book_gross`` instead of failing closed at the gross cap.
+    """
+
+    @staticmethod
+    def _book(**kwargs) -> BookConfig:
+        return BookConfig(
+            sleeves=(
+                SleeveConfig(name=SleeveName("low"), wheel_filename="low.whl", risk_share=0.5),
+                SleeveConfig(name=SleeveName("high"), wheel_filename="high.whl", risk_share=0.5),
+            ),
+            book_vol_target=0.09,
+            max_book_gross=1.0,
+            gross_cap=1.0,
+            **kwargs,
+        )
+
+    def test_overlevered_book_clamped_not_failed_closed(self):
+        book = self._book()
+        # Low realized vols -> diagonal vol-targeting wants gross well above 1.0.
+        plan = rebalance_plan(
+            {book.sleeves[0].name: _target({"A": 1.0}),
+             book.sleeves[1].name: _target({"B": 1.0})},
+            book,
+            realized_vols={book.sleeves[0].name: 0.03, book.sleeves[1].name: 0.03},
+        )
+        gross = sum(abs(d.delta) for d in plan.deltas)
+        assert gross <= book.max_book_gross + 1e-9
+
+    def test_underlevered_book_is_not_scaled_up_to_the_cap(self):
+        book = self._book()
+        # High realized vols -> vol-targeting de-levers below the cap; the clamp
+        # must leave it there (down-only), never peg it up to max_book_gross.
+        plan = rebalance_plan(
+            {book.sleeves[0].name: _target({"A": 1.0}),
+             book.sleeves[1].name: _target({"B": 1.0})},
+            book,
+            realized_vols={book.sleeves[0].name: 0.40, book.sleeves[1].name: 0.40},
+        )
+        gross = sum(abs(d.delta) for d in plan.deltas)
+        assert gross < book.max_book_gross
+
+    def test_clamp_lands_exactly_on_the_cap(self):
+        book = self._book()
+        plan = rebalance_plan(
+            {book.sleeves[0].name: _target({"A": 1.0}),
+             book.sleeves[1].name: _target({"B": 1.0})},
+            book,
+            realized_vols={book.sleeves[0].name: 0.03, book.sleeves[1].name: 0.03},
+        )
+        gross = sum(abs(d.delta) for d in plan.deltas)
+        assert gross == pytest.approx(book.max_book_gross)
+
+    def test_clamp_preserves_relative_weights(self):
+        book = self._book()
+        # Equal vols + shares -> equal sleeve multipliers, so the netted weights
+        # carry the raw 1.0 : 0.5 ratio.  A uniform clamp must keep that 2:1.
+        plan = rebalance_plan(
+            {book.sleeves[0].name: _target({"A": 1.0}),
+             book.sleeves[1].name: _target({"B": 0.5})},
+            book,
+            realized_vols={book.sleeves[0].name: 0.03, book.sleeves[1].name: 0.03},
+        )
+        by_figi = {d.figi.value: d.delta for d in plan.deltas}
+        assert by_figi["A"] / by_figi["B"] == pytest.approx(2.0)
+
+    def test_clamp_composes_with_drawdown_delever(self):
+        book = self._book(
+            drawdown_delever=DrawdownDeleverCurve(
+                start_drawdown=0.05, end_drawdown=0.25, floor_multiplier=0.5,
+            ),
+        )
+        # Drawdown de-lever (in the allocator) halves the book, but the solve
+        # still over-levers; the post-netting clamp brings it under the cap.
+        plan = rebalance_plan(
+            {book.sleeves[0].name: _target({"A": 1.0}),
+             book.sleeves[1].name: _target({"B": 1.0})},
+            book,
+            realized_vols={book.sleeves[0].name: 0.03, book.sleeves[1].name: 0.03},
+            realized_drawdown=0.25,
+        )
+        gross = sum(abs(d.delta) for d in plan.deltas)
+        assert gross <= book.max_book_gross + 1e-9

@@ -2,7 +2,39 @@
 
 Status: accepted (allocator implemented in `aegis-rd-bu4` slices 1–6; knob calibration +
 HITL sign-off `aegis-rd-bu4.7` pending; **amends ADR-0001's static-budget boundary** and
-feeds the netting/gate of ADR-0002)
+feeds the netting/gate of ADR-0002; **amended by `aegis-rd-ytr` — vol-targeting is down-only,
+see the amendment below**)
+
+## Amendment (`aegis-rd-ytr`): vol-targeting is down-only; the vol target is a ceiling
+
+The original decision below framed vol-targeting as a two-sided peg — scale the book up *or*
+down to hold a constant volatility. The `aegis-rd-bu4.7` re-validation on real data showed
+this is incoherent for the **unlevered** book: the Execution Bundles provenance-cap gross at
+1.0 and the operator runs under that cap, while the Floor sleeves are low-vol, so pegging a
+~9% book volatility demands ~1.1–1.8× leverage the cap forbids — and the rebalancer's cap gate
+correctly fails closed, halting the book.
+
+**Amendment:** vol-targeting is **one-sided (down-only)**. The Allocator's solve may scale the
+netted book *down* (to shed risk when realized volatility / correlations rise) but the
+rebalancer **clamps any up-scale to `max_book_gross`** — a uniform, shape-preserving,
+post-netting de-lever applied immediately before the (unchanged, still authoritative) gross /
+net cap gate. The **book volatility target is therefore a ceiling / de-lever set-point, not a
+peg**: in calm regimes realized volatility sits *below* target because the book is not levered
+to chase it (this is by design, not a miss); the target binds only when the unconstrained solve
+would otherwise exceed it. The target should be set to the book's achievable unlevered level.
+
+This is grounded in the literature, not a workaround: capping vol-target leverage is standard
+practice, and the down-only / unlevered form is a validated design that improves Sharpe and
+cuts drawdowns for constrained books (Bongaerts, Kang & van Dijk, "Conditional Volatility
+Targeting", *Financial Analysts Journal* 2020); the lever-up channel is procyclically
+destabilising (ECB *Financial Stability Review*, May 2020) and adds negligible Sharpe for
+non-equity / bond books (Harvey et al., "The Impact of Volatility Targeting"); and once a hard
+gross constraint binds, the achievable risk budget is necessarily the constrained one (Richard
+& Roncalli, "Constrained Risk Budgeting"). The clamp lives in the rebalancer (which owns
+per-FIGI netting) because it must scale the *netted* book gross, not a per-sleeve sum — a long
+in one sleeve and a short in another cancel, so the netted gross is what the cap governs.
+
+---
 
 Aegis Trader gains an **Allocator**: a pure module that turns each sleeve's signed target
 weights into the budget-scaled vector the rebalancer nets, replacing ADR-0001's static

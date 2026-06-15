@@ -254,13 +254,18 @@ class BookConfig:
 
     sleeves: tuple[SleeveConfig, ...]
     base_currency: str = "EUR"
+    # Vol-targeting is down-only (ADR-0004 amendment): this is a *ceiling* /
+    # de-lever set-point, not a two-sided peg.  The book is scaled down to hold
+    # it in stress but never levered up past max_book_gross to reach it, so in
+    # calm regimes realized vol sits below target by design.  Set it to the
+    # book's achievable unlevered level.
     book_vol_target: float = 0.09
     sleeve_reversion_fraction: float = 1.0
     drawdown_delever: DrawdownDeleverCurve | None = None
 
-    # Gross cap stays authoritative after risk-budget scaling.  It is no longer
-    # derived from static capital budgets; the allocator produces the requested
-    # weights and the rebalancer's cap gate validates the post-band book.
+    # Gross ceiling for vol-targeting.  The rebalancer clamps any vol-target
+    # up-scale down to this (down-only; ADR-0004 amendment), and the gross cap
+    # gate below stays the authoritative hard backstop on the post-band book.
     max_book_gross: float = 1.0
 
     # ── caps (all as fractions of NAV) ──
