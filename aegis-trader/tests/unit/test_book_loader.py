@@ -17,6 +17,9 @@ from aegis_trader.config import (
 )
 from aegis_trader.domain.book_config import (
     BookConfig,
+    CostModelConfig,
+    BorrowConfig,
+    MarginInterestConfig,
     ConvexityBudgetCandidate,
     DrawdownDeleverCurve,
     RiskGroup,
@@ -152,6 +155,114 @@ def test_malformed_drawdown_delever_fails_closed(tmp_path):
         group = "Floor"
     """)
     with pytest.raises(ValueError, match="drawdown"):
+        load_book_config(path)
+
+
+def test_absent_costs_block_defaults_to_zero_cost(tmp_path):
+    path = _write(tmp_path, """
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+
+    book = load_book_config(path)
+
+    assert book.costs == CostModelConfig.zero()
+
+
+def test_costs_block_loads(tmp_path):
+    path = _write(tmp_path, """
+        [costs]
+        per_share_commission = 0.0035
+        min_commission_per_order = 1.0
+        max_commission_pct = 0.01
+        slippage_probability = 0.25
+        slippage_seed = 42
+
+        [costs.borrow]
+        rate = 0.015
+
+        [costs.margin_interest]
+        GBP = 0.06
+        usd = 0.05
+
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+
+    book = load_book_config(path)
+
+    assert book.costs == CostModelConfig(
+        per_share_commission=0.0035,
+        min_commission_per_order=1.0,
+        max_commission_pct=0.01,
+        slippage_probability=0.25,
+        slippage_seed=42,
+        margin_interest=MarginInterestConfig((("GBP", 0.06), ("USD", 0.05))),
+        borrow=BorrowConfig(0.015),
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("per_share_commission", -0.01),
+        ("max_commission_pct", -0.01),
+        ("slippage_probability", 1.01),
+    ),
+)
+def test_malformed_costs_fail_closed_with_file_name(tmp_path, field, value):
+    path = _write(tmp_path, f"""
+        [costs]
+        {field} = {value}
+
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+
+    with pytest.raises(BookConfigError, match=rf"book\.toml.*{field}"):
+        load_book_config(path)
+
+
+@pytest.mark.parametrize("value", (-0.01, "nan"))
+def test_malformed_borrow_fails_closed_with_file_name(tmp_path, value):
+    path = _write(tmp_path, f"""
+        [costs.borrow]
+        rate = {value}
+
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+
+    with pytest.raises(BookConfigError, match=r"book\.toml.*borrow"):
+        load_book_config(path)
+
+
+@pytest.mark.parametrize("value", (-0.01, "nan"))
+def test_malformed_margin_interest_fails_closed_with_file_name(tmp_path, value):
+    path = _write(tmp_path, f"""
+        [costs.margin_interest]
+        GBP = {value}
+
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+
+    with pytest.raises(BookConfigError, match=r"book\.toml.*margin_interest\.GBP"):
         load_book_config(path)
 
 

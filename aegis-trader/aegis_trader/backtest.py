@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -21,11 +22,13 @@ from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.objects import Currency, Money
 
+from aegis_runtime import ExecutionBundle
 from aegis_runtime.currency import _major_currency_and_scale
 
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
+from aegis_trader.domain.types import SleeveName
 from aegis_trader.data import (
     InstrumentSpec,
     build_currency_pair,
@@ -34,6 +37,8 @@ from aegis_trader.data import (
     wrangle_bars,
     wrangle_fx_quotes,
 )
+from aegis_trader.trader.costs import build_simulated_cost_models
+from aegis_trader.trader.financing import build_financing_modules
 from aegis_trader.trader.modes import build_backtest_engine_config
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
@@ -80,7 +85,7 @@ class FxDataError(ValueError):
 
 
 def run_book_backtest(
-    book_path: str,
+    book_path: str | Path,
     *,
     start: str,
     end: str,
@@ -99,15 +104,26 @@ def run_book_backtest(
     book_timeframe = resolve_book_timeframe(
         bundle.contract.timeframe for _name, bundle in sleeves
     )
+    account_currencies = _account_currencies(book.base_currency, sleeves)
+    account_type = AccountType.MARGIN if _requires_margin_account(sleeves) else AccountType.CASH
 
     engine = BacktestEngine(build_backtest_engine_config(trader_id=trader_id))
+    cost_models = build_simulated_cost_models(book)
+    financing_modules = build_financing_modules(book.costs)
     engine.add_venue(
         Venue(venue),
         oms_type=OmsType.NETTING,
-        account_type=AccountType.MARGIN,
-        base_currency=base,
-        starting_balances=[Money(starting_cash, base)],
+        account_type=account_type,
+        base_currency=None,
+        starting_balances=[
+            Money(starting_cash if ccy == book.base_currency else 0.0, Currency.from_str(ccy))
+            for ccy in account_currencies
+        ],
+        modules=financing_modules,
+        fill_model=cost_models.fill_model,
+        fee_model=cost_models.fee_model,
         book_type=BookType.L1_MBP,
+        allow_cash_borrowing=len(account_currencies) > 1,
     )
 
     bimap: dict[str, object] = {}
@@ -176,6 +192,28 @@ def run_book_backtest(
 
     engine.run()
     return engine
+
+
+def _requires_margin_account(sleeves: list[tuple[SleeveName, ExecutionBundle]]) -> bool:
+    return any(_bundle_direction(bundle) in {"both", "shortonly"} for _name, bundle in sleeves)
+
+
+def _bundle_direction(bundle: object) -> str:
+    plan = getattr(bundle, "plan", None) or getattr(bundle, "_plan", None)
+    return str(getattr(plan, "direction", "longonly"))
+
+
+def _account_currencies(
+    base_currency: str,
+    sleeves: list[tuple[SleeveName, ExecutionBundle]],
+) -> tuple[str, ...]:
+    currencies = {base_currency}
+    for _name, bundle in sleeves:
+        currencies |= set(bundle.contract.required_fx_currencies)
+        for currency in bundle.currency_by_symbol.values():
+            major, _scale = _major_currency_and_scale(currency)
+            currencies.add(major)
+    return tuple(sorted(currencies))
 
 
 def _validate_contract_data(

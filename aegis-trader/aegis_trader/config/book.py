@@ -18,6 +18,9 @@ from pathlib import Path
 
 from aegis_trader.domain.book_config import (
     BookConfig,
+    CostModelConfig,
+    BorrowConfig,
+    MarginInterestConfig,
     ConvexityBudgetCandidate,
     DrawdownDeleverCurve,
     RiskGroup,
@@ -88,9 +91,10 @@ def load_book_config(path: str | Path) -> BookConfig:
         )
         drawdown_delever = _drawdown_delever_curve(data.get("drawdown_delever"))
         tail_convexity_budget = _parse_tail_convexity_budget(data)
+        costs = _parse_costs(data.get("costs"))
     except (KeyError, TypeError, ValueError) as exc:
         raise BookConfigError(
-            f"book config {str(path)!r} has a malformed sleeve/band/tail entry: {exc}"
+            f"book config {str(path)!r} has a malformed sleeve/band/tail/cost entry: {exc}"
         ) from exc
 
     return BookConfig(
@@ -106,8 +110,27 @@ def load_book_config(path: str | Path) -> BookConfig:
         default_band_down=float(data.get("default_band_down", 0.02)),
         band_overrides=band_overrides,
         tail_convexity_budget=tail_convexity_budget,
+        costs=costs,
         aggregate_drift_threshold=data.get("aggregate_drift_threshold"),
         drawdown_delever=drawdown_delever,
+    )
+
+
+def _parse_costs(raw: object) -> CostModelConfig:
+    if raw is None:
+        return CostModelConfig.zero()
+    if not isinstance(raw, Mapping):
+        raise TypeError("costs must be a TOML table")
+    return CostModelConfig(
+        per_share_commission=float(raw.get("per_share_commission", 0.0)),
+        min_commission_per_order=float(raw.get("min_commission_per_order", 0.0)),
+        max_commission_pct=float(raw.get("max_commission_pct", 0.0)),
+        slippage_probability=float(raw.get("slippage_probability", 0.0)),
+        slippage_seed=raw.get("slippage_seed", 0),
+        margin_interest=MarginInterestConfig.from_mapping(
+            raw.get("margin_interest", {})
+        ),
+        borrow=BorrowConfig.from_mapping(raw.get("borrow", {})),
     )
 
 

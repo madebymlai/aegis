@@ -6,8 +6,9 @@ especially — so it is *never* part of the version-controlled ``book.toml``.
 result feeds the node builders in ``trader/modes.py``; ``account_id`` is
 required and fails closed, so the live path can never run a placeholder.
 
-Port defaults follow TWS conventions per mode (paper 7497, live 7496); IB
-Gateway users override via ``IB_PORT``.
+Port defaults follow IB Gateway conventions per mode (paper 4002, live 4001) —
+the headless adapter the automated trader deploys against; TWS users (paper
+7497, live 7496) override via ``IB_PORT``.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_CLIENT_ID = 1
 _DEFAULT_TRADER_ID = "TRADER-001"
-_DEFAULT_PORT: Mapping[str, int] = {"paper": 7497, "live": 7496}
+_DEFAULT_PORT: Mapping[str, int] = {"paper": 4002, "live": 4001}
 
 
 class ConnectionConfigError(ValueError):

@@ -1,6 +1,6 @@
 """Unit tests for Slice 10 (paper-mode) and Slice 11 (live-mode) wiring.
 
-Validates that paper-mode (SANDBOX) and live-mode (LIVE) configuration
+Validates that paper-mode (IBKR paper DU, LIVE) and live-mode (LIVE) configuration
 functions build correctly configured TradingNodeConfigs with cache,
 logging, and reconciliation — all without requiring a live IBKR
 connection or the ``ibapi`` package.
@@ -27,6 +27,13 @@ from nautilus_trader.common import Environment
 
 from nautilus_trader.model.enums import TimeInForce
 
+from aegis_trader.domain.book_config import BookConfig, CostModelConfig, SleeveConfig
+from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.costs import (
+    IbkrPerShareFeeModel,
+    SimulatedFillModel,
+    build_simulated_cost_models,
+)
 from aegis_trader.trader.modes import (
     build_backtest_engine_config,
     build_paper_trading_node,
@@ -119,14 +126,50 @@ def test_backtest_engine_config_mirrors_risk_wiring():
 
 
 # --------------------------------------------------------------------------- #
+# simulated venue cost wiring helper (aegis-rd-fuu.4)
+# --------------------------------------------------------------------------- #
+
+def test_simulated_cost_model_helper_derives_fee_and_fill_models_from_the_book():
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(
+                name=SleeveName("trend"),
+                wheel_filename="trend.whl",
+                risk_share=1.0,
+            ),
+        ),
+        base_currency="EUR",
+        costs=CostModelConfig(
+            per_share_commission=0.0035,
+            min_commission_per_order=1.0,
+            max_commission_pct=0.01,
+            slippage_probability=0.25,
+            slippage_seed=42,
+        ),
+    )
+
+    models = build_simulated_cost_models(book)
+
+    assert isinstance(models.fee_model, IbkrPerShareFeeModel)
+    assert isinstance(models.fill_model, SimulatedFillModel)
+    assert models.fill_model.prob_slippage == 0.25
+    assert models.fill_model.random_seed == 42
+
+
+# --------------------------------------------------------------------------- #
 # structural config tests (no IBKR imports needed)
 # --------------------------------------------------------------------------- #
 
-def test_paper_node_config_has_sandbox_environment():
-    """The paper TradingNodeConfig MUST use Environment.SANDBOX."""
+def test_paper_node_config_has_live_environment():
+    """The paper TradingNodeConfig MUST use Environment.LIVE.
+
+    Paper trades the IBKR paper (DU) account via the IBKR adapter, which runs
+    under LIVE — Nautilus SANDBOX (local-sim execution) is intentionally not
+    used, so paper fills/commissions are broker-reported (aegis-rd-fuu.9).
+    """
     cfg = build_paper_trading_node_config()
-    assert cfg.environment == Environment.SANDBOX, (
-        f"Expected SANDBOX, got {cfg.environment}"
+    assert cfg.environment == Environment.LIVE, (
+        f"Expected LIVE, got {cfg.environment}"
     )
 
 
