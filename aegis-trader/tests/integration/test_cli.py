@@ -16,7 +16,9 @@ import types
 import pytest
 from nautilus_trader.model.enums import TimeInForce
 
-from aegis_trader.backtest import yfinance_fx, yfinance_ohlcv
+import pandas as pd
+
+from aegis_trader.backtest import BarRequest, yfinance_fx, yfinance_ohlcv
 from aegis_trader.cli import build_ib_client_configs, build_strategy_config, main
 from aegis_trader.config import ConnectionConfigError, IBConnectionSettings
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
@@ -130,6 +132,37 @@ def test_backtest_subcommand_runs_the_runner(tmp_path, monkeypatch):
     assert calls["end"] == "2020-06-01"
     assert calls["fetch_ohlcv"] is yfinance_ohlcv
     assert calls["fetch_fx"] is yfinance_fx
+
+
+def test_backtest_subcommand_data_cache_pins_fetchers(tmp_path, monkeypatch):
+    """`--data-cache DIR` hands the runner cache-wrapped fetchers that pin
+    provider responses under DIR (so identical runs become reproducible)."""
+    book_path = _write_book(tmp_path)
+    cache_dir = tmp_path / "snap"
+    captured: dict = {}
+
+    def fake_runner(path, *, start, end, fetch_ohlcv, fetch_fx, **kwargs):
+        captured["ohlcv"] = fetch_ohlcv
+        return _FakeEngine()
+
+    monkeypatch.setattr("aegis_trader.cli.run_book_backtest", fake_runner)
+    monkeypatch.setattr(
+        "aegis_trader.cli.yfinance_ohlcv",
+        lambda req: pd.DataFrame({"close": [1.0]}, index=pd.to_datetime(["2020-01-02"])),
+    )
+
+    rc = main(
+        ["backtest", "--start", "2020-01-01", "--end", "2020-06-01",
+         "--book", str(book_path), "--data-cache", str(cache_dir)]
+    )
+
+    assert rc == 0
+    # exercising the wrapped fetcher writes a pin under the requested directory
+    captured["ohlcv"](
+        BarRequest(ticker="X", required_arrays=("close",),
+                   start="2020-01-01", end="2020-06-01")
+    )
+    assert list(cache_dir.glob("*.pkl"))
 
 
 def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):

@@ -17,12 +17,19 @@ from __future__ import annotations
 import argparse
 import logging
 
-from aegis_trader.backtest import run_book_backtest, yfinance_fx, yfinance_ohlcv
+from aegis_trader.backtest import (
+    FxFetcher,
+    OhlcvFetcher,
+    run_book_backtest,
+    yfinance_fx,
+    yfinance_ohlcv,
+)
 from aegis_trader.config import (
     IBConnectionSettings,
     find_book_config,
     load_book_config,
 )
+from aegis_trader.data.snapshot import SnapshotCache
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.trader.modes import (
     build_backtest_engine_config,
@@ -84,15 +91,23 @@ def _run_backtest(args: argparse.Namespace) -> int:
     """Run an offline backtest of the book end-to-end and summarize the outcome.
 
     Fully independent of ``--mode``: it resolves the book, runs the contract-driven
-    runner with the default contract-aware fetchers, and reports the result.
+    runner with the default contract-aware fetchers, and reports the result.  With
+    ``--data-cache DIR`` the fetchers are pinned to disk so identical runs are
+    reproducible (the live providers are nondeterministic).
     """
     book_path = args.book if args.book is not None else find_book_config()
+    fetch_ohlcv: OhlcvFetcher = yfinance_ohlcv
+    fetch_fx: FxFetcher = yfinance_fx
+    if args.data_cache is not None:
+        cache = SnapshotCache(args.data_cache)
+        fetch_ohlcv = cache.ohlcv(fetch_ohlcv)
+        fetch_fx = cache.fx(fetch_fx)
     engine = run_book_backtest(
         book_path,
         start=args.start,
         end=args.end,
-        fetch_ohlcv=yfinance_ohlcv,
-        fetch_fx=yfinance_fx,
+        fetch_ohlcv=fetch_ohlcv,
+        fetch_fx=fetch_fx,
     )
     result = engine.get_result()
     fills = [order for order in engine.cache.orders() if order.is_closed]
@@ -144,6 +159,13 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="path to the book.toml spec "
         "(default: discover book.toml by walking up from the cwd)",
+    )
+    backtest_p.add_argument(
+        "--data-cache",
+        default=None,
+        metavar="DIR",
+        help="pin provider data to this directory for reproducible runs "
+        "(first run snapshots; later identical runs read the snapshot)",
     )
     args = parser.parse_args(argv)
 
