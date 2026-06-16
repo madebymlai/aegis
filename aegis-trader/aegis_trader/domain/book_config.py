@@ -12,12 +12,116 @@ in the sleeves' bundles and checked at load by
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from aegis_trader.domain.types import SleeveName
 
 _EPS = 1e-12
+
+
+@dataclass(frozen=True)
+class MarginInterestConfig:
+    """Annual debit-interest rates by cash currency for simulated margin loans."""
+
+    annual_debit_rates: tuple[tuple[str, float], ...] = ()
+
+    def __post_init__(self) -> None:
+        rates = tuple((str(currency).upper(), float(rate)) for currency, rate in self.annual_debit_rates)
+        if len({currency for currency, _rate in rates}) != len(rates):
+            raise ValueError("margin_interest currencies must be unique")
+        for currency, rate in rates:
+            if not currency:
+                raise ValueError("margin_interest currency must be non-empty")
+            if not math.isfinite(rate) or rate < 0:
+                raise ValueError(f"margin_interest.{currency} must be finite and non-negative")
+        object.__setattr__(self, "annual_debit_rates", tuple(sorted(rates)))
+
+    @classmethod
+    def zero(cls) -> MarginInterestConfig:
+        return cls()
+
+    @classmethod
+    def from_mapping(cls, rates: object) -> MarginInterestConfig:
+        if not isinstance(rates, dict):
+            raise TypeError("costs.margin_interest must be a TOML table")
+        return cls(tuple((str(currency), float(rate)) for currency, rate in rates.items()))
+
+    def annual_rate_for(self, currency: str) -> float:
+        normalized = currency.upper()
+        for rate_currency, rate in self.annual_debit_rates:
+            if rate_currency == normalized:
+                return rate
+        return 0.0
+
+
+@dataclass(frozen=True)
+class BorrowConfig:
+    """Annual general-collateral borrow fee for simulated short positions."""
+
+    annual_rate: float = 0.0
+
+    def __post_init__(self) -> None:
+        rate = float(self.annual_rate)
+        if not math.isfinite(rate) or rate < 0:
+            raise ValueError("borrow.rate must be finite and non-negative")
+        object.__setattr__(self, "annual_rate", rate)
+
+    @classmethod
+    def zero(cls) -> BorrowConfig:
+        return cls()
+
+    @classmethod
+    def from_mapping(cls, raw: object) -> BorrowConfig:
+        if not isinstance(raw, dict):
+            raise TypeError("costs.borrow must be a TOML table")
+        return cls(float(raw.get("rate", 0.0)))
+
+
+@dataclass(frozen=True)
+class CostModelConfig:
+    """Book-level transaction cost parameters for simulated runs.
+
+    Nautilus-specific fee and fill models are derived from this inert domain
+    value at the simulated venue boundary.  The zero value preserves today's
+    cost-free behaviour when a book omits ``[costs]``.
+    """
+
+    per_share_commission: float = 0.0
+    min_commission_per_order: float = 0.0
+    max_commission_pct: float = 0.0
+    slippage_probability: float = 0.0
+    slippage_seed: int = 0
+    margin_interest: MarginInterestConfig = field(default_factory=MarginInterestConfig.zero)
+    borrow: BorrowConfig = field(default_factory=BorrowConfig.zero)
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("per_share_commission", self.per_share_commission),
+            ("min_commission_per_order", self.min_commission_per_order),
+            ("max_commission_pct", self.max_commission_pct),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        if (
+            not math.isfinite(self.slippage_probability)
+            or not 0.0 <= self.slippage_probability <= 1.0
+        ):
+            raise ValueError("slippage_probability must be finite in [0, 1]")
+        if not isinstance(self.slippage_seed, int) or self.slippage_seed < 0:
+            raise ValueError("slippage_seed must be a non-negative integer")
+        if not isinstance(self.margin_interest, MarginInterestConfig):
+            object.__setattr__(
+                self,
+                "margin_interest",
+                MarginInterestConfig.from_mapping(self.margin_interest),
+            )
+        if not isinstance(self.borrow, BorrowConfig):
+            object.__setattr__(self, "borrow", BorrowConfig.from_mapping(self.borrow))
+
+    @classmethod
+    def zero(cls) -> CostModelConfig:
+        return cls()
 
 
 class RiskGroup(StrEnum):
@@ -284,6 +388,9 @@ class BookConfig:
 
     # ── Target tail convexity budget ──
     tail_convexity_budget: TailConvexityBudget | None = None
+
+    # ── simulated transaction costs ──
+    costs: CostModelConfig = CostModelConfig()
 
     # ── aggregate fidelity ──
     aggregate_drift_threshold: float | None = None  # max Σ|w_realized - w_target|

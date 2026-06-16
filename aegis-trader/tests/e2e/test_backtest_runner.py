@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+from nautilus_trader.model.currencies import EUR, GBP
+from nautilus_trader.model.objects import Money
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.instruments import CurrencyPair
 
@@ -48,6 +50,63 @@ risk_share = 1.0
 group = "Floor"
 """
 
+_COSTED_BOOK_TOML = f"""
+base_currency = "EUR"
+
+[costs]
+per_share_commission = 0.01
+min_commission_per_order = 1.0
+max_commission_pct = 0.10
+slippage_probability = 0.0
+slippage_seed = 42
+
+[[sleeves]]
+name = "trend"
+wheel_filename = "{_WHEEL}"
+risk_share = 1.0
+group = "Floor"
+"""
+
+_MARGIN_INTEREST_BOOK_TOML = f"""
+base_currency = "EUR"
+
+[costs]
+per_share_commission = 0.01
+min_commission_per_order = 0.0
+max_commission_pct = 0.10
+slippage_probability = 0.0
+slippage_seed = 42
+
+[costs.borrow]
+rate = 0.036
+
+[costs.margin_interest]
+GBP = 0.06
+
+[[sleeves]]
+name = "trend"
+wheel_filename = "{_WHEEL}"
+risk_share = 1.0
+group = "Floor"
+"""
+
+_FORCED_SLIPPAGE_BOOK_TOML = f"""
+base_currency = "EUR"
+
+[costs]
+per_share_commission = 0.0
+min_commission_per_order = 0.0
+max_commission_pct = 0.0
+slippage_probability = 1.0
+slippage_seed = 42
+
+[[sleeves]]
+name = "trend"
+wheel_filename = "{_WHEEL}"
+risk_share = 1.0
+group = "Floor"
+"""
+
 
 class _FixedWeightBundle(ExecutionBundle):
     """A bundle that always holds a fixed weight on a single EUR FIGI."""
@@ -60,6 +119,7 @@ class _FixedWeightBundle(ExecutionBundle):
         timeframe: str = "1D",
         currency: str = "EUR",
         required_fx_currencies: tuple[str, ...] = (),
+        direction: str = "longonly",
     ) -> None:
         self._figi = figi
         self._weight = weight
@@ -92,7 +152,7 @@ class _FixedWeightBundle(ExecutionBundle):
             indicators=(),
             gross_cap=1.0,
             net_cap=None,
-            direction="both",
+            direction=direction,
             symbols=(figi,),
             currency_by_symbol={figi: self._currency},
         )
@@ -139,6 +199,25 @@ def _fx_must_not_be_called(base: str, quote: str, start: str, end: str) -> float
     raise AssertionError("a pure-EUR book must not fetch FX")
 
 
+def _closed_order(engine):
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+    assert len(fills) == 1
+    return fills[0]
+
+
+def _execution_fills(order) -> tuple[tuple[str, str, str, str], ...]:
+    return tuple(
+        (
+            str(event.last_qty),
+            str(event.last_px),
+            str(event.commission),
+            str(event.ts_event),
+        )
+        for event in order.events
+        if event.__class__.__name__ == "OrderFilled"
+    )
+
+
 def test_run_book_backtest_runs_the_overlay_through_the_injected_registry(tmp_path):
     """The runner resolves the sleeve via the injected registry and runs to a fill."""
     book_path = tmp_path / "book.toml"
@@ -158,6 +237,253 @@ def test_run_book_backtest_runs_the_overlay_through_the_injected_registry(tmp_pa
     fills = [order for order in engine.cache.orders() if order.is_closed]
     assert len(fills) == 1
     engine.dispose()
+
+
+def test_absent_costs_backtest_keeps_cost_free_fills(tmp_path):
+    """The zero-cost default preserves today's simulated fill commissions."""
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)})
+    ohlcv = _synthetic_ohlcv()
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=_fx_must_not_be_called,
+        registry=registry,
+    )
+
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+    assert len(fills) == 1
+    assert fills[0].commissions() == [Money(0, EUR)]
+    engine.dispose()
+
+
+def test_cost_configured_backtest_produces_fills_with_non_zero_commission(tmp_path):
+    """The runner injects the Book's fee model into the simulated venue."""
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_COSTED_BOOK_TOML)
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)})
+    ohlcv = _synthetic_ohlcv()
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=_fx_must_not_be_called,
+        registry=registry,
+    )
+
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+    assert len(fills) == 1
+    assert fills[0].commissions() != [Money(0, EUR)]
+    engine.dispose()
+
+
+def test_foreign_sleeve_buy_creates_per_currency_margin_loan(tmp_path):
+    """A GBP buy leaves EUR cash untouched and creates a GBP debit balance."""
+    ohlcv = _synthetic_ohlcv()
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_COSTED_BOOK_TOML)
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        registry=StubBundleRegistry(
+            {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
+        ),
+    )
+
+    account = engine.cache.accounts()[0]
+    order = _closed_order(engine)
+    traded_notional = sum(
+        event.last_qty.as_double() * event.last_px.as_double()
+        for event in order.events
+        if event.__class__.__name__ == "OrderFilled"
+    )
+    commission = order.commissions()[0].as_double()
+
+    assert account.base_currency is None
+    assert account.balance_total(EUR).as_double() == pytest.approx(1_000_000.0)
+    assert account.balance_total(GBP).as_double() == pytest.approx(
+        -(traded_notional + commission)
+    )
+    engine.dispose()
+
+
+def test_short_position_accrues_borrow_as_cost_not_credit(tmp_path):
+    """A held short pays borrow; carry makes cash lower than sale proceeds less commission."""
+    ohlcv = _synthetic_ohlcv()
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        registry=StubBundleRegistry(
+            {
+                _WHEEL: _FixedWeightBundle(
+                    _FIGI,
+                    -0.5,
+                    currency="GBP",
+                    required_fx_currencies=("GBP",),
+                    direction="both",
+                )
+            }
+        ),
+    )
+
+    order = _closed_order(engine)
+    sale_proceeds = sum(
+        event.last_qty.as_double() * event.last_px.as_double()
+        for event in order.events
+        if event.__class__.__name__ == "OrderFilled"
+    )
+    commission = order.commissions()[0].as_double()
+    cash_before_borrow = sale_proceeds - commission
+
+    assert engine.cache.accounts()[0].balance_total(GBP).as_double() < cash_before_borrow
+    engine.dispose()
+
+
+def test_foreign_margin_loan_accrues_daily_interest(tmp_path):
+    """A held GBP debit accrues configured daily margin interest."""
+    ohlcv = _synthetic_ohlcv()
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        registry=StubBundleRegistry(
+            {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
+        ),
+    )
+
+    order = _closed_order(engine)
+    traded_notional = sum(
+        event.last_qty.as_double() * event.last_px.as_double()
+        for event in order.events
+        if event.__class__.__name__ == "OrderFilled"
+    )
+    commission = order.commissions()[0].as_double()
+    principal_and_commission = traded_notional + commission
+
+    assert engine.cache.accounts()[0].balance_total(GBP).as_double() < -principal_and_commission
+    engine.dispose()
+
+
+def test_foreign_leg_commission_matches_base_leg_without_fx_fee_fold(tmp_path):
+    """Commission is currency-agnostic; FX cost moves to margin interest later."""
+    ohlcv = _synthetic_ohlcv()
+    base_path = tmp_path / "base" / "book.toml"
+    base_path.parent.mkdir()
+    base_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
+    foreign_path = tmp_path / "foreign" / "book.toml"
+    foreign_path.parent.mkdir()
+    foreign_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
+
+    base_engine = run_book_backtest(
+        str(base_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=_fx_must_not_be_called,
+        registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
+    )
+    foreign_engine = run_book_backtest(
+        str(foreign_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        registry=StubBundleRegistry(
+            {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
+        ),
+    )
+
+    base_commission = _closed_order(base_engine).commissions()[0].as_double()
+    foreign_commission = _closed_order(foreign_engine).commissions()[0].as_double()
+
+    assert foreign_commission == pytest.approx(base_commission)
+    base_engine.dispose()
+    foreign_engine.dispose()
+
+
+def test_pinned_slippage_moves_fill_price_one_tick(tmp_path):
+    """With prob_slippage=1.0 a buy fill is one tick worse than zero slippage."""
+    ohlcv = _synthetic_ohlcv()
+    no_slip_path = tmp_path / "no_slip" / "book.toml"
+    no_slip_path.parent.mkdir()
+    no_slip_path.write_text(_BOOK_TOML)
+    slip_path = tmp_path / "slip" / "book.toml"
+    slip_path.parent.mkdir()
+    slip_path.write_text(_FORCED_SLIPPAGE_BOOK_TOML)
+
+    no_slip_engine = run_book_backtest(
+        str(no_slip_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=_fx_must_not_be_called,
+        registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
+    )
+    slip_engine = run_book_backtest(
+        str(slip_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=_fx_must_not_be_called,
+        registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
+    )
+
+    assert _closed_order(slip_engine).avg_px - _closed_order(no_slip_engine).avg_px == pytest.approx(0.01)
+    no_slip_engine.dispose()
+    slip_engine.dispose()
+
+
+def test_costed_backtest_fill_path_is_deterministic_with_pinned_seed(tmp_path):
+    """Same cost config, including slippage seed, yields identical fill facts."""
+    ohlcv = _synthetic_ohlcv()
+    first_path = tmp_path / "first" / "book.toml"
+    first_path.parent.mkdir()
+    first_path.write_text(_FORCED_SLIPPAGE_BOOK_TOML)
+    second_path = tmp_path / "second" / "book.toml"
+    second_path.parent.mkdir()
+    second_path.write_text(_FORCED_SLIPPAGE_BOOK_TOML)
+
+    first_engine = run_book_backtest(
+        str(first_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=_fx_must_not_be_called,
+        registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
+    )
+    second_engine = run_book_backtest(
+        str(second_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=_fx_must_not_be_called,
+        registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
+    )
+
+    assert _execution_fills(_closed_order(first_engine)) == _execution_fills(_closed_order(second_engine))
+    first_engine.dispose()
+    second_engine.dispose()
 
 
 def test_run_book_backtest_asks_the_fetcher_for_each_contracts_required_arrays(tmp_path):

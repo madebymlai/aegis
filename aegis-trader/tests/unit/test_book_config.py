@@ -4,6 +4,9 @@ import pytest
 
 from aegis_trader.domain.book_config import (
     BookConfig,
+    CostModelConfig,
+    BorrowConfig,
+    MarginInterestConfig,
     ConvexityBudgetCandidate,
     DrawdownDeleverCurve,
     RiskGroup,
@@ -29,6 +32,64 @@ def make_sleeve(
         weight_band_down=weight_band_down,
         weight_band_up=weight_band_up,
     )
+
+
+class TestCostModelConfig:
+    def test_zero_cost_default_has_no_friction(self):
+        book = BookConfig(sleeves=(make_sleeve("trend"),))
+
+        assert book.costs == CostModelConfig.zero()
+
+    def test_populated_cost_model_records_declared_friction(self):
+        costs = CostModelConfig(
+            per_share_commission=0.0035,
+            min_commission_per_order=1.0,
+            max_commission_pct=0.01,
+            slippage_probability=0.25,
+            slippage_seed=42,
+            margin_interest=MarginInterestConfig((('GBP', 0.06), ('usd', 0.05))),
+            borrow=BorrowConfig(0.015),
+        )
+
+        assert costs.per_share_commission == 0.0035
+        assert costs.min_commission_per_order == 1.0
+        assert costs.max_commission_pct == 0.01
+        assert costs.slippage_probability == 0.25
+        assert costs.slippage_seed == 42
+        assert costs.margin_interest.annual_rate_for("GBP") == 0.06
+        assert costs.margin_interest.annual_rate_for("USD") == 0.05
+        assert costs.margin_interest.annual_rate_for("EUR") == 0.0
+        assert costs.borrow.annual_rate == 0.015
+
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        (
+            ("per_share_commission", -0.01, "per_share_commission"),
+            ("min_commission_per_order", -0.01, "min_commission_per_order"),
+            ("max_commission_pct", -0.01, "max_commission_pct"),
+            ("slippage_probability", -0.01, "slippage_probability"),
+            ("slippage_probability", 1.01, "slippage_probability"),
+            ("slippage_seed", -1, "slippage_seed"),
+            ("slippage_seed", 1.5, "slippage_seed"),
+            ("borrow", {"rate": -0.01}, "borrow"),
+            ("borrow", {"rate": float("nan")}, "borrow"),
+        ),
+    )
+    def test_invalid_cost_values_rejected(self, field, value, message):
+        with pytest.raises(ValueError, match=message):
+            CostModelConfig(**{field: value})
+
+    @pytest.mark.parametrize(
+        "rates",
+        (
+            (("GBP", -0.01),),
+            (("GBP", float("nan")),),
+            (("GBP", 0.05), ("gbp", 0.06)),
+        ),
+    )
+    def test_invalid_margin_interest_rates_rejected(self, rates):
+        with pytest.raises(ValueError, match="margin_interest"):
+            MarginInterestConfig(rates)
 
 
 class TestBookConfig:

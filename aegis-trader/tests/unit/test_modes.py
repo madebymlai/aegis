@@ -27,6 +27,13 @@ from nautilus_trader.common import Environment
 
 from nautilus_trader.model.enums import TimeInForce
 
+from aegis_trader.domain.book_config import BookConfig, CostModelConfig, SleeveConfig
+from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.costs import (
+    IbkrPerShareFeeModel,
+    SimulatedFillModel,
+    build_simulated_cost_models,
+)
 from aegis_trader.trader.modes import (
     build_backtest_engine_config,
     build_paper_trading_node,
@@ -116,6 +123,37 @@ def test_backtest_engine_config_mirrors_risk_wiring():
     assert cfg.risk_engine is not None
     assert cfg.risk_engine.bypass is False
     assert cfg.risk_engine.max_order_submit_rate == "10/00:00:01"
+
+
+# --------------------------------------------------------------------------- #
+# simulated venue cost wiring helper (aegis-rd-fuu.4)
+# --------------------------------------------------------------------------- #
+
+def test_simulated_cost_model_helper_derives_fee_and_fill_models_from_the_book():
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(
+                name=SleeveName("trend"),
+                wheel_filename="trend.whl",
+                risk_share=1.0,
+            ),
+        ),
+        base_currency="EUR",
+        costs=CostModelConfig(
+            per_share_commission=0.0035,
+            min_commission_per_order=1.0,
+            max_commission_pct=0.01,
+            slippage_probability=0.25,
+            slippage_seed=42,
+        ),
+    )
+
+    models = build_simulated_cost_models(book)
+
+    assert isinstance(models.fee_model, IbkrPerShareFeeModel)
+    assert isinstance(models.fill_model, SimulatedFillModel)
+    assert models.fill_model.prob_slippage == 0.25
+    assert models.fill_model.random_seed == 42
 
 
 # --------------------------------------------------------------------------- #
