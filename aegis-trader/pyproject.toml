@@ -18,6 +18,11 @@ dependencies = [
   "requests>=2.0",
 ]
 
+# IBKR adapter (ibapi) — required only for paper/live runs and the IBKR
+# verification script (scripts/verify_paper_ibkr.py); backtests don't need it.
+[project.optional-dependencies]
+ib = ["nautilus_trader[ib]"]
+
 [project.scripts]
 # Operator entrypoint: `aegis-trader --mode {backtest,paper,live} --book book.toml`.
 # The book spec is declarative (book.toml); IBKR connection + account come from
