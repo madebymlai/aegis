@@ -26,7 +26,7 @@ Together: buy-sell churn pays commission and slippage; long foreign/leverage car
 
 ## Determinism
 
-The backtest cost path remains deterministic: same book, market data, FX data, and seeds produce the same fills and the same financing accruals. Financing accrues once per UTC date after venue settlement, reads only end-of-day account balances/positions/marks, and mutates the account through Nautilus `exchange.adjust_account(...)` like Nautilus's built-in rollover module.
+The backtest cost path remains deterministic: same book, market data, FX data, and seeds produce the same fills and the same financing accruals. Financing accrues per advancing UTC calendar day, reads only end-of-day account balances/positions/marks, and mutates the account through Nautilus `exchange.adjust_account(...)` like Nautilus's built-in rollover module. Each accrual charges the full span of calendar days elapsed since the prior one (`rate × days / 360`), so a Fri→Mon gap with no weekend bars still accrues three days of carry rather than one — financing is calendar-time, not bar-count.
 
 ## Consequences
 

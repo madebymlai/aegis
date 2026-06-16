@@ -1,7 +1,9 @@
 """Backtest financing carry module.
 
-Applies simulated broker financing once per UTC date after venue settlement:
-negative cash balances pay debit interest, and short positions pay borrow.
+Applies simulated broker financing per advancing UTC calendar day: negative cash
+balances pay debit interest, and short positions pay borrow.  Each accrual
+charges the full span of calendar days elapsed since the last one, so a Fri→Mon
+gap with no weekend bars still accrues three days of carry (IBKR-faithful).
 """
 
 from __future__ import annotations
@@ -32,30 +34,45 @@ class FinancingModule(SimulationModule):
     def __init__(self, costs: CostModelConfig) -> None:
         super().__init__(SimulationModuleConfig())
         self._costs = costs
-        self._processed_dates: set[pd.Timestamp] = set()
+        self._last_accrual_date: pd.Timestamp | None = None
         self._totals: dict[str, float] = {}
 
     def process(self, ts_now: int) -> None:
-        date = pd.Timestamp(ts_now, tz="UTC").normalize()
-        if date in self._processed_dates:
+        days = self._elapsed_days(pd.Timestamp(ts_now, tz="UTC").normalize())
+        if days <= 0:
             return
-        self._processed_dates.add(date)
-        self._charge_debit_interest()
-        self._charge_short_borrow()
+        self._charge_debit_interest(days)
+        self._charge_short_borrow(days)
+
+    def _elapsed_days(self, date: pd.Timestamp) -> int:
+        """Calendar days since the last accrual (0 on the first observed date).
+
+        Charging the elapsed span — not a flat one day per observed bar — makes a
+        Fri→Mon gap accrue 3 days of carry, matching IBKR's calendar-day
+        financing across non-trading days.  Same-date and out-of-order ticks
+        return 0, so financing accrues exactly once per advancing calendar day.
+        """
+        if self._last_accrual_date is None:
+            self._last_accrual_date = date
+            return 0
+        days = (date - self._last_accrual_date).days
+        if days > 0:
+            self._last_accrual_date = date
+        return days
 
     def log_diagnostics(self, logger) -> None:  # pragma: no cover - Nautilus hook
         totals = ", ".join(f"{amount:.2f} {currency}" for currency, amount in sorted(self._totals.items()))
         logger.info(f"Financing costs (totals): {totals}")
 
     def reset(self) -> None:
-        self._processed_dates = set()
+        self._last_accrual_date = None
         self._totals = {}
 
     @property
     def totals(self) -> FinancingCostTotals:
         return FinancingCostTotals(dict(self._totals))
 
-    def _charge_debit_interest(self) -> None:
+    def _charge_debit_interest(self, days: int) -> None:
         account = self.exchange.get_account()
         if account is None:
             return
@@ -64,9 +81,9 @@ class FinancingModule(SimulationModule):
             if cash >= 0.0:
                 continue
             rate = self._costs.margin_interest.annual_rate_for(str(balance.currency))
-            self._charge(-cash * rate / _DAYS_PER_YEAR, balance.currency)
+            self._charge(-cash * rate * days / _DAYS_PER_YEAR, balance.currency)
 
-    def _charge_short_borrow(self) -> None:
+    def _charge_short_borrow(self, days: int) -> None:
         borrow_rate = self._costs.borrow.annual_rate
         if borrow_rate == 0.0:
             return
@@ -76,7 +93,7 @@ class FinancingModule(SimulationModule):
             instrument = self.exchange.instruments[position.instrument_id]
             mark = self._mark_price(position.instrument_id)
             short_market_value = position.quantity.as_double() * mark
-            self._charge(short_market_value * borrow_rate / _DAYS_PER_YEAR, instrument.quote_currency)
+            self._charge(short_market_value * borrow_rate * days / _DAYS_PER_YEAR, instrument.quote_currency)
 
     def _mark_price(self, instrument_id) -> float:
         book = self.exchange.get_book(instrument_id)

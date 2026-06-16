@@ -185,6 +185,21 @@ def _synthetic_ohlcv() -> pd.DataFrame:
     )
 
 
+def _synthetic_gapped_ohlcv() -> pd.DataFrame:
+    """Daily bars that skip a weekend: Fri 2020-01-03 is followed by Mon 2020-01-06
+    with no Sat/Sun bar.  The Fri→Mon step is a 3-calendar-day gap with no bar in
+    between — the case a flat one-charge-per-bar financing accrual under-counts."""
+    index = pd.DatetimeIndex(
+        ["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
+    )
+    prices = [100.0, 101.0, 102.0, 103.0, 104.0]
+    return pd.DataFrame(
+        {"open": prices, "high": prices, "low": prices, "close": prices,
+         "volume": [1000] * 5},
+        index=index,
+    )
+
+
 def _synthetic_intraday_ohlcv() -> pd.DataFrame:
     index = pd.date_range("2020-01-01 09:30", periods=6, freq="15min")
     prices = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]
@@ -373,15 +388,65 @@ def test_foreign_margin_loan_accrues_daily_interest(tmp_path):
     )
 
     order = _closed_order(engine)
-    traded_notional = sum(
-        event.last_qty.as_double() * event.last_px.as_double()
-        for event in order.events
-        if event.__class__.__name__ == "OrderFilled"
-    )
+    fills = [e for e in order.events if e.__class__.__name__ == "OrderFilled"]
+    traded_notional = sum(e.last_qty.as_double() * e.last_px.as_double() for e in fills)
     commission = order.commissions()[0].as_double()
-    principal_and_commission = traded_notional + commission
+    fill_date = min(pd.Timestamp(e.ts_event) for e in fills).normalize()
+    last_date = ohlcv.index[-1].normalize()
+    interest = (
+        -engine.cache.accounts()[0].balance_total(GBP).as_double()
+        - traded_notional
+        - commission
+    )
 
-    assert engine.cache.accounts()[0].balance_total(GBP).as_double() < -principal_and_commission
+    # Held from the fill tick (01-03) to the last bar (01-06): entry day + one per
+    # calendar day after = 4 days of interest on the GBP debit (principal + the
+    # commission the loan funds), within compounding tolerance.
+    accrual_days = (last_date - fill_date).days + 1
+    expected_interest = (traded_notional + commission) * 0.06 * accrual_days / 360.0
+    assert interest == pytest.approx(expected_interest, rel=1e-3)
+    engine.dispose()
+
+
+def test_margin_interest_accrues_calendar_days_across_a_market_gap(tmp_path):
+    """Financing is a calendar-day carry, not one charge per bar: a GBP loan held
+    across a weekend (no Sat/Sun bars) accrues the full elapsed span, so the
+    Fri→Mon step counts 3 days — not 1."""
+    ohlcv = _synthetic_gapped_ohlcv()
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-08",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        registry=StubBundleRegistry(
+            {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
+        ),
+    )
+
+    order = _closed_order(engine)
+    fills = [e for e in order.events if e.__class__.__name__ == "OrderFilled"]
+    principal = sum(e.last_qty.as_double() * e.last_px.as_double() for e in fills)
+    commission = order.commissions()[0].as_double()
+    fill_date = min(pd.Timestamp(e.ts_event) for e in fills).normalize()
+    last_date = ohlcv.index[-1].normalize()
+    interest = (
+        -engine.cache.accounts()[0].balance_total(GBP).as_double() - principal - commission
+    )
+
+    # The loan opens on the fill tick (Fri 01-03) and is held to the last bar
+    # (Tue 01-07): one charge for the entry day plus one per calendar day after,
+    # weekend included. A flat per-bar accrual would skip Sat/Sun and charge 3.
+    assert fill_date.date().isoformat() == "2020-01-03"
+    accrual_days = (last_date - fill_date).days + 1  # 4 nights + entry day = 5
+    debit = principal + commission  # the loan funds the commission too
+    expected_interest = debit * 0.06 * accrual_days / 360.0
+    # rel tolerance absorbs intraday compounding of interest onto the debit; the
+    # assertion pins the calendar-day count (5), which the bug undercounts to 3.
+    assert interest == pytest.approx(expected_interest, rel=1e-3)
     engine.dispose()
 
 
