@@ -1,6 +1,6 @@
 """Unit tests for Slice 10 (paper-mode) and Slice 11 (live-mode) wiring.
 
-Validates that paper-mode (SANDBOX) and live-mode (LIVE) configuration
+Validates that paper-mode (IBKR paper DU, LIVE) and live-mode (LIVE) configuration
 functions build correctly configured TradingNodeConfigs with cache,
 logging, and reconciliation — all without requiring a live IBKR
 connection or the ``ibapi`` package.
@@ -160,11 +160,16 @@ def test_simulated_cost_model_helper_derives_fee_and_fill_models_from_the_book()
 # structural config tests (no IBKR imports needed)
 # --------------------------------------------------------------------------- #
 
-def test_paper_node_config_has_sandbox_environment():
-    """The paper TradingNodeConfig MUST use Environment.SANDBOX."""
+def test_paper_node_config_has_live_environment():
+    """The paper TradingNodeConfig MUST use Environment.LIVE.
+
+    Paper trades the IBKR paper (DU) account via the IBKR adapter, which runs
+    under LIVE — Nautilus SANDBOX (local-sim execution) is intentionally not
+    used, so paper fills/commissions are broker-reported (aegis-rd-fuu.9).
+    """
     cfg = build_paper_trading_node_config()
-    assert cfg.environment == Environment.SANDBOX, (
-        f"Expected SANDBOX, got {cfg.environment}"
+    assert cfg.environment == Environment.LIVE, (
+        f"Expected LIVE, got {cfg.environment}"
     )
 
 

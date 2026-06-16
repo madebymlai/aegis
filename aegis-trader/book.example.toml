@@ -49,9 +49,10 @@ default_band_down = 0.02
 # Book-level aggregate fidelity: max sum |w_realized - w_target| before tripping.
 aggregate_drift_threshold = 0.5
 
-# Optional simulated-run transaction costs. Backtest and paper/SANDBOX inject
-# these into Nautilus fee/fill models; live takes broker-reported costs instead.
-# Omit this block for today's zero-cost simulation behavior.
+# Optional backtest transaction costs. Only the backtest applies these (per-share
+# commission, slippage fill model, and the financing module for margin interest +
+# short borrow); paper and live take broker-reported costs from IBKR instead.
+# Omit this block for zero-cost backtest behavior.
 # [costs]
 # per_share_commission = 0.0035      # commission per share in quote currency
 # min_commission_per_order = 1.0     # per-fill/order floor

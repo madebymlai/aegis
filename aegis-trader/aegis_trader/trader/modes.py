@@ -1,8 +1,8 @@
-"""Mode wiring (Slice 10 & 11): paper (SANDBOX) and live (LIVE) TradingNodes
+"""Mode wiring (Slice 10 & 11): paper and live TradingNodes against IBKR (aegis-rd-fuu.9: paper=DU under LIVE)
 with IBKR client configs.
 
-Builds NautilusTrader TradingNodes configured for paper trading (SANDBOX)
-and live trading (LIVE) through Interactive Brokers.  Every wire is
+Builds NautilusTrader TradingNodes configured for paper (IBKR paper DU) and
+live trading, both under ``Environment.LIVE``, through Interactive Brokers.  Every wire is
 connected — data client, exec client, instrument provider, routing, cache,
 logging, reconciliation — but NO live connection is made or asserted.
 
@@ -298,9 +298,15 @@ def build_paper_trading_node_config(
     *,
     trader_id: str = "TRADER-001",
 ) -> TradingNodeConfig:
-    """Build a SANDBOX TradingNodeConfig for IBKR paper trading."""
+    """Build a LIVE TradingNodeConfig for IBKR paper (DU) trading.
+
+    Paper uses ``Environment.LIVE`` (not Nautilus SANDBOX): the IBKR adapter
+    connects to the paper-account port and IBKR reports fills/commissions on a
+    multi-currency account.  No fee/fill/financing model is injected here —
+    paper costs are broker-reported (aegis-rd-fuu.9).
+    """
     return _build_trading_node_config(
-        environment=Environment.SANDBOX,
+        environment=Environment.LIVE,
         trader_id=trader_id,
     )
 
@@ -323,7 +329,7 @@ def build_paper_trading_node(
     *,
     trader_id: str = "TRADER-001",
 ) -> TradingNode:
-    """Build a SANDBOX TradingNode for IBKR paper trading.
+    """Build a LIVE TradingNode for IBKR paper (DU) trading.
 
     Caller must add IBKR client configs, register factories, add the
     strategy, then call ``node.build()`` and ``node.run()``.

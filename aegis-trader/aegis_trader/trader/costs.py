@@ -1,8 +1,9 @@
-"""Nautilus cost models for simulated Trader venues.
+"""Nautilus cost models for the backtest Trader venue.
 
 Domain cost parameters stay in ``domain.book_config.CostModelConfig``.  This
 module is the Nautilus-layer adapter that turns them into models accepted by the
-backtest and sandbox matching engines.
+backtest matching engine.  Paper/live take broker-reported costs, not these
+(aegis-rd-fuu.9).
 """
 
 from __future__ import annotations
