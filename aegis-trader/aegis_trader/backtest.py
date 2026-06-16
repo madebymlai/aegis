@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -21,11 +22,13 @@ from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.objects import Currency, Money
 
+from aegis_runtime import ExecutionBundle
 from aegis_runtime.currency import _major_currency_and_scale
 
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
+from aegis_trader.domain.types import SleeveName
 from aegis_trader.data import (
     InstrumentSpec,
     build_currency_pair,
@@ -82,7 +85,7 @@ class FxDataError(ValueError):
 
 
 def run_book_backtest(
-    book_path: str,
+    book_path: str | Path,
     *,
     start: str,
     end: str,
@@ -191,7 +194,7 @@ def run_book_backtest(
     return engine
 
 
-def _requires_margin_account(sleeves: list[tuple[object, object]]) -> bool:
+def _requires_margin_account(sleeves: list[tuple[SleeveName, ExecutionBundle]]) -> bool:
     return any(_bundle_direction(bundle) in {"both", "shortonly"} for _name, bundle in sleeves)
 
 
@@ -202,7 +205,7 @@ def _bundle_direction(bundle: object) -> str:
 
 def _account_currencies(
     base_currency: str,
-    sleeves: list[tuple[object, object]],
+    sleeves: list[tuple[SleeveName, ExecutionBundle]],
 ) -> tuple[str, ...]:
     currencies = {base_currency}
     for _name, bundle in sleeves:
