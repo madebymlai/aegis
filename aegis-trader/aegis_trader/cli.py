@@ -94,12 +94,28 @@ def _run_backtest(args: argparse.Namespace) -> int:
         fetch_ohlcv=yfinance_ohlcv,
         fetch_fx=yfinance_fx,
     )
+    result = engine.get_result()
     fills = [order for order in engine.cache.orders() if order.is_closed]
     _log.info(
         "Backtest complete: %d fill(s) over %s..%s", len(fills), args.start, args.end
     )
+    _log_performance(result)
     engine.dispose()
     return 0
+
+
+def _log_performance(result) -> None:
+    """Report the engine's performance summary — ``stats_pnls`` (per-currency PnL
+    statistics) and ``stats_returns`` (return-based stats: Sharpe, volatility, …)."""
+    _log.info("Orders: %d | Positions: %d", result.total_orders, result.total_positions)
+    for currency, stats in (result.stats_pnls or {}).items():
+        _log.info("PnL stats [%s]:", currency)
+        for name, value in stats.items():
+            _log.info("  %s: %s", name, value)
+    if result.stats_returns:
+        _log.info("Return stats:")
+        for name, value in result.stats_returns.items():
+            _log.info("  %s: %s", name, value)
 
 
 def main(argv: list[str] | None = None) -> int:

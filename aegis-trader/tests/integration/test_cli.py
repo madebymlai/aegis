@@ -10,6 +10,9 @@ calling ``node.run()`` is the operator's runtime step.
 
 from __future__ import annotations
 
+import logging
+import types
+
 import pytest
 from nautilus_trader.model.enums import TimeInForce
 
@@ -54,6 +57,14 @@ class _FakeEngine:
     def __init__(self) -> None:
         self.cache = _FakeEngine._Cache()
         self.disposed = False
+
+    def get_result(self):
+        return types.SimpleNamespace(
+            total_orders=0,
+            total_positions=0,
+            stats_pnls={"EUR": {"PnL (total)": 12345.0}},
+            stats_returns={"Sharpe Ratio (252 days)": 1.5},
+        )
 
     def dispose(self) -> None:
         self.disposed = True
@@ -139,6 +150,26 @@ def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
 
     assert rc == 0
     assert str(seen["path"]) == str(tmp_path / "book.toml")
+
+
+def test_backtest_subcommand_reports_performance_stats(tmp_path, monkeypatch, caplog):
+    """The backtest subcommand surfaces get_result()'s stats_pnls + stats_returns,
+    not just the fill count."""
+    book_path = _write_book(tmp_path)
+    monkeypatch.setattr(
+        "aegis_trader.cli.run_book_backtest", lambda path, **kw: _FakeEngine()
+    )
+
+    with caplog.at_level(logging.INFO, logger="aegis_trader"):
+        rc = main(
+            ["backtest", "--start", "2019-01-01", "--end", "2020-01-01",
+             "--book", str(book_path)]
+        )
+
+    assert rc == 0
+    assert "PnL (total)" in caplog.text  # stats_pnls surfaced
+    assert "12345" in caplog.text
+    assert "Sharpe Ratio (252 days)" in caplog.text  # stats_returns surfaced
 
 
 def test_main_discovers_book_from_cwd_when_omitted(tmp_path, monkeypatch):
