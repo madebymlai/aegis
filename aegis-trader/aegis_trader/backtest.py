@@ -69,6 +69,16 @@ class ContractDataError(ValueError):
         super().__init__(f"sleeve {sleeve!r} ({figi}): {detail}")
 
 
+class FxDataError(ValueError):
+    """A required FX cross series does not cover the run window — the backtest
+    fails closed rather than valuing foreign legs on a fabricated rate."""
+
+    def __init__(self, base: str, quote: str, detail: str) -> None:
+        self.base = base
+        self.quote = quote
+        super().__init__(f"FX {base}/{quote}: {detail}")
+
+
 def run_book_backtest(
     book_path: str,
     *,
@@ -143,6 +153,14 @@ def run_book_backtest(
             continue
         fx_series = fetch_fx(book.base_currency, ccy, start, end)
         aligned = fx_series.reindex(fx_index).ffill()
+        if aligned.isna().any():
+            first_uncovered = aligned.index[aligned.isna()][0]
+            raise FxDataError(
+                book.base_currency,
+                ccy,
+                f"no rate at/before {first_uncovered.date()}; "
+                f"the series must cover the run window",
+            )
         pair = build_currency_pair(book.base_currency, ccy, venue)
         engine.add_instrument(pair)
         engine.add_data(wrangle_fx_quotes(pair, aligned))

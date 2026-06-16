@@ -27,7 +27,12 @@ from aegis_runtime import (
     MarketDataBundle,
 )
 
-from aegis_trader.backtest import BarRequest, ContractDataError, run_book_backtest
+from aegis_trader.backtest import (
+    BarRequest,
+    ContractDataError,
+    FxDataError,
+    run_book_backtest,
+)
 from aegis_trader.bundles.stub import StubBundleRegistry
 
 _FIGI = "BBG000B9XRY4"
@@ -355,3 +360,28 @@ def test_run_book_backtest_aligns_sparse_fx_to_the_bar_timeline(tmp_path):
 
     # one quote per bar date, forward-filled across the gap
     assert bids == [1.10, 1.10, 1.10, 1.40, 1.40, 1.40]
+
+
+def test_run_book_backtest_fails_closed_when_fx_does_not_cover_the_window(tmp_path):
+    """An FX series starting after the first bar leaves a front-edge gap ffill
+    cannot bridge; the runner fails closed instead of valuing on a fabricated rate."""
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    bundle = _FixedWeightBundle(
+        _FIGI, 0.5, currency="USD", required_fx_currencies=("USD",)
+    )
+    registry = StubBundleRegistry({_WHEEL: bundle})
+    ohlcv = _synthetic_ohlcv()  # 6 daily bars, 2020-01-01..06
+    late_fx = pd.Series([1.40, 1.50, 1.60], index=ohlcv.index[3:])  # first 3 uncovered
+
+    with pytest.raises(FxDataError) as exc:
+        run_book_backtest(
+            str(book_path),
+            start="2020-01-01",
+            end="2020-01-07",
+            fetch_ohlcv=lambda request: ohlcv,
+            fetch_fx=lambda base, quote, start, end: late_fx,
+            registry=registry,
+        )
+
+    assert "EUR/USD" in str(exc.value)
