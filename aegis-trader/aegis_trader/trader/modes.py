@@ -102,10 +102,10 @@ IB_CLIENT_ID: int = 1
 # here so the overlay can mark the cache xrates from their quotes (aegis-rd-x0a).
 IB_FX_VENUE: str = "IDEALPRO"
 
-IB_PAPER_PORT: int = 7497  # TWS paper port; IB Gateway paper default is 4002
+IB_PAPER_PORT: int = 4002  # IB Gateway paper port (TWS paper is 7497)
 IB_PAPER_ACCOUNT_ID: str = "DU0000000"  # placeholder — operator provides real one
 
-IB_LIVE_PORT: int = 7496  # TWS live port; IB Gateway live default is 4001
+IB_LIVE_PORT: int = 4001  # IB Gateway live port (TWS live is 7496)
 IB_LIVE_ACCOUNT_ID: str = "U0000000"  # placeholder — operator provides real one
 
 

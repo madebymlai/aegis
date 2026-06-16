@@ -12,7 +12,7 @@ to your Gateway and, with --submit, a real (paper) order.
 Connection is read from the environment (``IBConnectionSettings``):
 
     IB_ACCOUNT_ID   required, e.g. DUxxxxxxx
-    IB_PORT         IB Gateway paper = 4002; TWS paper = 7497
+    IB_PORT         default 4002 (IB Gateway paper); TWS paper = 7497
     IB_HOST         default 127.0.0.1
     IB_CLIENT_ID    default 1
 

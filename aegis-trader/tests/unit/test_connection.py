@@ -22,7 +22,7 @@ def test_paper_defaults_with_account_from_env():
 
     assert settings.account_id == "DU1234567"
     assert settings.host == "127.0.0.1"
-    assert settings.port == 7497  # TWS paper
+    assert settings.port == 4002  # IB Gateway paper (the deployed adapter)
     assert settings.client_id == 1
     assert settings.trader_id == "TRADER-001"
 
@@ -31,19 +31,19 @@ def test_live_mode_defaults_to_live_port():
     settings = IBConnectionSettings.from_env(
         "live", env={"IB_ACCOUNT_ID": "U7654321"},
     )
-    assert settings.port == 7496  # TWS live
+    assert settings.port == 4001  # IB Gateway live
 
 
 def test_env_overrides_are_honoured():
     settings = IBConnectionSettings.from_env("paper", env={
         "IB_ACCOUNT_ID": "DU1234567",
         "IB_HOST": "10.0.0.5",
-        "IB_PORT": "4002",  # IB Gateway paper
+        "IB_PORT": "7497",  # override the Gateway default with the TWS paper port
         "IB_CLIENT_ID": "9",
         "TRADER_ID": "BOOK-EU-01",
     })
     assert settings.host == "10.0.0.5"
-    assert settings.port == 4002
+    assert settings.port == 7497
     assert settings.client_id == 9
     assert settings.trader_id == "BOOK-EU-01"
 
