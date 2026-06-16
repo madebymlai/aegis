@@ -258,7 +258,7 @@ class RebalanceStrategy(Strategy):
         )
         self._period_ns = timeframe_to_ns(book_timeframe)
 
-        for figi in all_figis:
+        for figi in sorted(all_figis):  # stable subscription order (aegis-rd-10d)
             instr_id = self._figi_to_instr_id(figi)
             self._instr_to_figi[instr_id.value] = figi
             self.subscribe_bars(bar_type(instr_id.value, book_timeframe))

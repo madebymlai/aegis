@@ -138,7 +138,11 @@ def rebalance_plan(
 
     # -- Step 2: net -> band -> post-execution book projection --
     rw = realized_weights or {}
-    all_figis = net_target_by_figi.keys() | rw.keys()
+    # Stable, sorted iteration over the netted-vs-realised figi union: a bare
+    # set union is hash-seed-dependent, which makes the agg-drift float sum and
+    # the emitted delta order (hence order-submission sequence) vary run-to-run
+    # and the whole backtest non-reproducible (aegis-rd-10d).
+    all_figis = sorted(net_target_by_figi.keys() | rw.keys(), key=lambda f: f.value)
     post_book: dict[Figi, float] = dict(rw)  # start from realised
 
     # Book-level fidelity trip (ADR-0002): when the realised book has drifted too

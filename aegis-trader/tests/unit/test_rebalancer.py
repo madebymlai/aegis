@@ -316,6 +316,20 @@ class TestRebalanceSlice4:
         assert result[0].side == OrderSide.SELL
         assert result[0].delta == pytest.approx(-0.05)
 
+    def test_deltas_emitted_in_deterministic_figi_order(self):
+        """Reproducibility (aegis-rd-10d): deltas come out in a stable figi-sorted
+        order, not the hash-seed-dependent order of the netted-vs-realised figi
+        union — otherwise the order-submission sequence (and the backtest) varies
+        run-to-run."""
+        book = self._book(default_band_up=0.0, default_band_down=0.0)
+        target = _target({"FIGI_C": 0.20, "FIGI_A": 0.20, "FIGI_D": 0.20})
+        result = rebalance(
+            {book.sleeves[0].name: target}, book,
+            realized_weights={Figi("FIGI_B"): 0.20, Figi("FIGI_A"): 0.05},
+        )
+        figis = [d.figi.value for d in result]
+        assert figis == ["FIGI_A", "FIGI_B", "FIGI_C", "FIGI_D"]  # sorted, stable
+
     def test_asymmetric_band_tail(self):
         book = self._book(default_band_up=0.02, default_band_down=0.02,
                           band_overrides=(("FIGI_TAIL", 0.01, 0.05),))

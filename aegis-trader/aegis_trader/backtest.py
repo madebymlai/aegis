@@ -148,7 +148,10 @@ def run_book_backtest(
     # and the accounting layer values foreign legs from the same quotes — so a
     # bar-fed backtest no longer fails to compute account-state exchange rates.
     fx_index = pd.DatetimeIndex(sorted(bar_index))
-    for ccy in fx_currencies:
+    # Sorted: a bare set iteration is hash-seed-dependent, so the order FX pairs
+    # are added to the data stream — and thus same-timestamp tie-breaks against
+    # bars at valuation time — would vary run-to-run (aegis-rd-10d).
+    for ccy in sorted(fx_currencies):
         if ccy == book.base_currency:
             continue
         fx_series = fetch_fx(book.base_currency, ccy, start, end)
