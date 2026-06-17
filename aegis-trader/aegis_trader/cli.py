@@ -20,6 +20,7 @@ import logging
 from aegis_trader.backtest import (
     FxFetcher,
     OhlcvFetcher,
+    book_return_stats,
     run_book_backtest,
     yfinance_fx,
     yfinance_ohlcv,
@@ -114,22 +115,26 @@ def _run_backtest(args: argparse.Namespace) -> int:
     _log.info(
         "Backtest complete: %d fill(s) over %s..%s", len(fills), args.start, args.end
     )
-    _log_performance(result)
+    _log_performance(result, book_return_stats(engine))
     engine.dispose()
     return 0
 
 
-def _log_performance(result) -> None:
-    """Report the engine's performance summary — ``stats_pnls`` (per-currency PnL
-    statistics) and ``stats_returns`` (return-based stats: Sharpe, volatility, …)."""
+def _log_performance(result, return_stats: dict[str, float]) -> None:
+    """Report the performance summary — ``stats_pnls`` (per-currency PnL) plus the
+    base-currency return stats (Sharpe, volatility, …) computed from the NAV curve.
+
+    The book runs a multi-currency (``base_currency=None``) account, for which
+    Nautilus' native ``stats_returns`` is unusable; ``return_stats`` is the
+    base-currency series from :func:`book_return_stats` (aegis-rd-syp)."""
     _log.info("Orders: %d | Positions: %d", result.total_orders, result.total_positions)
     for currency, stats in (result.stats_pnls or {}).items():
         _log.info("PnL stats [%s]:", currency)
         for name, value in stats.items():
             _log.info("  %s: %s", name, value)
-    if result.stats_returns:
-        _log.info("Return stats:")
-        for name, value in result.stats_returns.items():
+    if return_stats:
+        _log.info("Return stats (base currency):")
+        for name, value in return_stats.items():
             _log.info("  %s: %s", name, value)
 
 

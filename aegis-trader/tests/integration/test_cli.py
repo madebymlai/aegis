@@ -56,8 +56,13 @@ class _FakeEngine:
         def orders(self):
             return []
 
+    class _Trader:
+        def actors(self):
+            return []  # no BookEquityRecorder -> book_return_stats yields {}
+
     def __init__(self) -> None:
         self.cache = _FakeEngine._Cache()
+        self.trader = _FakeEngine._Trader()
         self.disposed = False
 
     def get_result(self):
@@ -65,7 +70,9 @@ class _FakeEngine:
             total_orders=0,
             total_positions=0,
             stats_pnls={"EUR": {"PnL (total)": 12345.0}},
-            stats_returns={"Sharpe Ratio (252 days)": 1.5},
+            # Native multi-currency stats_returns is unusable (sentinel must NOT
+            # surface — the CLI reports book_return_stats instead; aegis-rd-syp).
+            stats_returns={"Sharpe Ratio (252 days)": 99.99},
         )
 
     def dispose(self) -> None:
@@ -186,11 +193,17 @@ def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
 
 
 def test_backtest_subcommand_reports_performance_stats(tmp_path, monkeypatch, caplog):
-    """The backtest subcommand surfaces get_result()'s stats_pnls + stats_returns,
-    not just the fill count."""
+    """The backtest subcommand surfaces per-currency PnL (stats_pnls) plus the
+    base-currency return stats from book_return_stats — not Nautilus' native
+    multi-currency stats_returns, which is unusable for a base_currency=None
+    account (aegis-rd-syp)."""
     book_path = _write_book(tmp_path)
     monkeypatch.setattr(
         "aegis_trader.cli.run_book_backtest", lambda path, **kw: _FakeEngine()
+    )
+    monkeypatch.setattr(
+        "aegis_trader.cli.book_return_stats",
+        lambda engine: {"Sharpe Ratio (252 days)": 0.87},
     )
 
     with caplog.at_level(logging.INFO, logger="aegis_trader"):
@@ -202,7 +215,9 @@ def test_backtest_subcommand_reports_performance_stats(tmp_path, monkeypatch, ca
     assert rc == 0
     assert "PnL (total)" in caplog.text  # stats_pnls surfaced
     assert "12345" in caplog.text
-    assert "Sharpe Ratio (252 days)" in caplog.text  # stats_returns surfaced
+    assert "Sharpe Ratio (252 days)" in caplog.text  # return stats surfaced
+    assert "0.87" in caplog.text  # the base-currency Sharpe (book_return_stats)
+    assert "99.99" not in caplog.text  # native stats_returns is NOT used
 
 
 def test_main_discovers_book_from_cwd_when_omitted(tmp_path, monkeypatch):
