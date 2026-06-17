@@ -412,3 +412,24 @@ class TestFindBookConfig:
         nested.mkdir(parents=True)
         with pytest.raises(BookConfigError, match="no book.toml"):
             find_book_config(nested)
+
+
+def test_starting_balances_table_loads(tmp_path):
+    """A [starting_balances] table maps each currency to its starting amount."""
+    path = _write(tmp_path, """
+        base_currency = "EUR"
+
+        [starting_balances]
+        EUR = 1_000_000.0
+        USD = 500_000.0
+
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+
+    book = load_book_config(path)
+
+    assert book.starting_balances == (("EUR", 1_000_000.0), ("USD", 500_000.0))

@@ -18,6 +18,16 @@
 # Base currency of the book — NAV, cash, and FX sizing are expressed in it.
 base_currency = "EUR"
 
+# Optional backtest starting balances, one amount per currency (Nautilus
+# multi-currency funding: starting_balances=[Money(.., EUR), Money(.., USD)]).
+# Omit to fund a single base_currency balance (default 1,000,000). Currencies the
+# book trades but does not fund here start at zero and are reached via per-currency
+# margin loans (the multi-currency account model). Paper/live ignore this — IBKR
+# reports the real account balances.
+# [starting_balances]
+# EUR = 1_000_000.0
+# USD = 500_000.0
+
 # Annualized book volatility target for risk-budget scaling.
 book_vol_target = 0.09
 
