@@ -124,7 +124,7 @@ def run_book_backtest(
         Venue(venue),
         oms_type=OmsType.NETTING,
         account_type=account_type,
-        base_currency=None,
+        base_currency=None,  # multi-currency account; base-currency returns come from BookEquityRecorder/return_stats
         starting_balances=starting_balances,
         modules=financing_modules,
         fill_model=cost_models.fill_model,
