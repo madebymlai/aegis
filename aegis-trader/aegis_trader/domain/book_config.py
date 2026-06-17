@@ -392,6 +392,13 @@ class BookConfig:
     # ── simulated transaction costs ──
     costs: CostModelConfig = CostModelConfig()
 
+    # ── backtest starting balances (per currency) ──
+    # Operator-declared funding of the simulated multi-currency account, e.g.
+    # (("EUR", 1_000_000.0), ("USD", 500_000.0)).  Empty -> the runner funds a
+    # single base-currency balance.  Foreign legs not funded here start at zero and
+    # are reached via per-currency margin loans (the multi-currency account model).
+    starting_balances: tuple[tuple[str, float], ...] = ()
+
     # ── aggregate fidelity ──
     aggregate_drift_threshold: float | None = None  # max Σ|w_realized - w_target|
 
@@ -418,9 +425,23 @@ class BookConfig:
                 f"max_book_gross, so a soft ceiling above the hard cap could never "
                 f"be made compliant and would always fail closed at the gross gate"
             )
+        self._validate_starting_balances()
         self._validate_tail_convexity_budget()
         if sum(self.allocator_risk_shares().values()) <= _EPS:
             raise ValueError("BookConfig must allocate positive total risk_share")
+
+    def _validate_starting_balances(self) -> None:
+        balances = tuple(
+            (str(currency).upper(), float(amount)) for currency, amount in self.starting_balances
+        )
+        if len({currency for currency, _amount in balances}) != len(balances):
+            raise ValueError("starting_balances currencies must be unique")
+        for currency, amount in balances:
+            if not currency:
+                raise ValueError("starting_balances currency must be non-empty")
+            if not math.isfinite(amount) or amount < 0:
+                raise ValueError(f"starting_balances.{currency} must be finite and non-negative")
+        object.__setattr__(self, "starting_balances", tuple(sorted(balances)))
 
     @property
     def sleeve_count(self) -> int:

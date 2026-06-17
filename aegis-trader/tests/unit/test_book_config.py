@@ -295,3 +295,28 @@ class TestBookConfigCapsAndBands:
         assert book.net_cap == 0.8
         assert book.per_name_cap == 0.15
         assert book.aggregate_drift_threshold == 0.05
+
+
+def test_starting_balances_normalize_currency_and_sort():
+    """Per-currency starting balances are upper-cased and sorted for determinism."""
+    book = BookConfig(
+        sleeves=(make_sleeve("trend"),),
+        starting_balances=(("usd", 500_000.0), ("EUR", 1_000_000.0)),
+    )
+    assert book.starting_balances == (("EUR", 1_000_000.0), ("USD", 500_000.0))
+
+
+def test_starting_balances_reject_duplicate_currency():
+    with pytest.raises(ValueError, match="unique"):
+        BookConfig(
+            sleeves=(make_sleeve("trend"),),
+            starting_balances=(("EUR", 1.0), ("eur", 2.0)),
+        )
+
+
+def test_starting_balances_reject_negative_amount():
+    with pytest.raises(ValueError, match="non-negative"):
+        BookConfig(
+            sleeves=(make_sleeve("trend"),),
+            starting_balances=(("EUR", -1.0),),
+        )

@@ -424,6 +424,39 @@ def test_multicurrency_book_backtest_reports_base_currency_return(tmp_path):
     engine.dispose()
 
 
+def test_book_starting_balances_seed_the_account(tmp_path):
+    """[starting_balances] funds the simulated multi-currency account per currency:
+    a declared USD balance is held even when the book trades only EUR."""
+    from nautilus_trader.model.currencies import USD
+
+    ohlcv = _synthetic_ohlcv()
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(f"""
+base_currency = "EUR"
+
+[starting_balances]
+EUR = 1_000_000.0
+USD = 500_000.0
+
+[[sleeves]]
+name = "trend"
+wheel_filename = "{_WHEEL}"
+risk_share = 1.0
+group = "Floor"
+""")
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=_fx_must_not_be_called,
+        registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
+    )
+    usd = engine.cache.accounts()[0].balances_total().get(USD)
+    assert usd is not None and usd.as_double() == pytest.approx(500_000.0)
+    engine.dispose()
+
+
 def test_foreign_margin_loan_accrues_daily_interest(tmp_path):
     """A held GBP debit accrues configured daily margin interest."""
     ohlcv = _synthetic_ohlcv()

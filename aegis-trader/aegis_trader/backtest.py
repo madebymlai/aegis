@@ -28,6 +28,7 @@ from aegis_runtime.currency import _major_currency_and_scale
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
+from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.data import (
     InstrumentSpec,
@@ -112,6 +113,9 @@ def run_book_backtest(
     )
     account_currencies = _account_currencies(book.base_currency, sleeves)
     account_type = AccountType.MARGIN if _requires_margin_account(sleeves) else AccountType.CASH
+    starting_balances, balance_currencies = _starting_balances(
+        book, account_currencies, starting_cash
+    )
 
     engine = BacktestEngine(build_backtest_engine_config(trader_id=trader_id))
     cost_models = build_simulated_cost_models(book)
@@ -121,15 +125,12 @@ def run_book_backtest(
         oms_type=OmsType.NETTING,
         account_type=account_type,
         base_currency=None,
-        starting_balances=[
-            Money(starting_cash if ccy == book.base_currency else 0.0, Currency.from_str(ccy))
-            for ccy in account_currencies
-        ],
+        starting_balances=starting_balances,
         modules=financing_modules,
         fill_model=cost_models.fill_model,
         fee_model=cost_models.fee_model,
         book_type=BookType.L1_MBP,
-        allow_cash_borrowing=len(account_currencies) > 1,
+        allow_cash_borrowing=len(balance_currencies) > 1,
     )
 
     bimap: dict[str, InstrumentId] = {}
@@ -228,6 +229,31 @@ def book_return_stats(engine: BacktestEngine) -> dict[str, float]:
         if isinstance(actor, BookEquityRecorder):
             return return_stats(actor.equity_curve)
     return {}
+
+
+def _starting_balances(
+    book: BookConfig,
+    account_currencies: tuple[str, ...],
+    starting_cash: float,
+) -> tuple[list[Money], tuple[str, ...]]:
+    """Per-currency venue funding, plus the funded currency set.
+
+    ``book.toml`` ``[starting_balances]`` funds the declared currencies (traded
+    currencies not declared start at zero and are reached via per-currency margin
+    loans); absent, a single ``base_currency`` balance is funded with
+    ``starting_cash``.
+    """
+    declared = dict(book.starting_balances)
+    if declared:
+        currencies = tuple(sorted(set(account_currencies) | set(declared)))
+        balances = [Money(declared.get(ccy, 0.0), Currency.from_str(ccy)) for ccy in currencies]
+    else:
+        currencies = account_currencies
+        balances = [
+            Money(starting_cash if ccy == book.base_currency else 0.0, Currency.from_str(ccy))
+            for ccy in currencies
+        ]
+    return balances, currencies
 
 
 def _requires_margin_account(sleeves: list[tuple[SleeveName, ExecutionBundle]]) -> bool:

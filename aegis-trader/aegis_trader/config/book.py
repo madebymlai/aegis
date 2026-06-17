@@ -92,6 +92,7 @@ def load_book_config(path: str | Path) -> BookConfig:
         drawdown_delever = _drawdown_delever_curve(data.get("drawdown_delever"))
         tail_convexity_budget = _parse_tail_convexity_budget(data)
         costs = _parse_costs(data.get("costs"))
+        starting_balances = _parse_starting_balances(data.get("starting_balances"))
     except (KeyError, TypeError, ValueError) as exc:
         raise BookConfigError(
             f"book config {str(path)!r} has a malformed sleeve/band/tail/cost entry: {exc}"
@@ -111,9 +112,18 @@ def load_book_config(path: str | Path) -> BookConfig:
         band_overrides=band_overrides,
         tail_convexity_budget=tail_convexity_budget,
         costs=costs,
+        starting_balances=starting_balances,
         aggregate_drift_threshold=data.get("aggregate_drift_threshold"),
         drawdown_delever=drawdown_delever,
     )
+
+
+def _parse_starting_balances(raw: object) -> tuple[tuple[str, float], ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, Mapping):
+        raise TypeError("starting_balances must be a TOML table")
+    return tuple((str(currency), float(amount)) for currency, amount in raw.items())
 
 
 def _parse_costs(raw: object) -> CostModelConfig:
