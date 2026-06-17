@@ -14,8 +14,9 @@ from pathlib import Path
 
 import pytest
 from nautilus_trader.model.currencies import EUR, GBP
+from nautilus_trader.model.enums import AssetClass
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
-from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.instruments import Equity, FuturesContract
 from nautilus_trader.model.objects import Price, Quantity
 
 _E2E_DIR = Path(__file__).parent
@@ -46,6 +47,34 @@ def eur_equity(symbol: str, venue: str) -> Equity:
         price_precision=2,
         price_increment=Price.from_str("0.01"),
         lot_size=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )
+
+
+def eur_future(symbol: str, venue: str) -> FuturesContract:
+    """A EUR-denominated, ×1-multiplier dated futures contract for e2e tests.
+
+    Mirrors ``eur_equity`` (EUR ⇒ FX=1.0, multiplier/lot 1 ⇒ sizing is
+    share-like) so the futures-roll e2e exercises the *identity + roll* path
+    without dragging in contract-multiplier or cross-currency concerns.  The
+    active window is opened wide (epoch → 2100) so the synthetic epoch-anchored
+    bars fall inside it.  ``TestInstrumentProvider.future`` is USD-only, so we
+    build our own.
+    """
+    return FuturesContract(
+        instrument_id=InstrumentId(symbol=Symbol(symbol), venue=Venue(venue)),
+        raw_symbol=Symbol(symbol),
+        asset_class=AssetClass.INDEX,
+        exchange=venue,
+        currency=EUR,
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        multiplier=Quantity.from_int(1),
+        lot_size=Quantity.from_int(1),
+        underlying=symbol[:2],
+        activation_ns=0,
+        expiration_ns=4_102_444_800_000_000_000,  # 2100-01-01
         ts_event=0,
         ts_init=0,
     )

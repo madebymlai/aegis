@@ -126,6 +126,26 @@ class SymbolSpec:
     figi: str | None = None
     isin: str | None = None
     mic: str | None = None
+    root: str | None = None
+    dataset: str | None = None
+    roll_rule: str = "calendar"
+    adjustment: str = "unadjusted"
+
+    @property
+    def is_future(self) -> bool:
+        return self.root is not None or self.dataset is not None
+
+    @model_validator(mode="after")
+    def _validate_instrument_identity(self) -> SymbolSpec:
+        if self.root is None and self.dataset is None:
+            return self
+        if self.root is None:
+            raise ValueError("root is required when dataset declares a FuturesRef")
+        if self.dataset is None:
+            raise ValueError("dataset is required when root declares a FuturesRef")
+        if self.figi is not None or self.isin is not None:
+            raise ValueError("futures fields are mutually exclusive with listed identity hints figi/isin")
+        return self
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -204,6 +224,8 @@ class DataConfig:
             raise ValueError(
                 "skip_on_error requires data.quality.allowed_degradations to include 'skipped_symbols'"
             )
+        for symbol in self.symbols:
+            _validate_future_source_support(self.source, symbol)
         if self.source in LOCAL_DATA_SOURCES:
             for key in ("wrapper_kwargs", "provider_kwargs", "execution_kwargs"):
                 if getattr(self, key):
@@ -211,6 +233,27 @@ class DataConfig:
                         f"{key} is not supported for {self.source} source"
                     )
         return self
+
+
+# Sources that can supply per-contract dated-contract data (the overlap the
+# back-adjustment needs).  Only these may declare ``adjustment: back_adjust``.
+_PER_CONTRACT_SOURCES = frozenset({"bento"})
+
+
+def _validate_future_source_support(source: str, symbol: SymbolSpec) -> None:
+    if not symbol.is_future:
+        return
+    if symbol.roll_rule != "calendar":
+        raise ValueError(
+            f"roll_rule {symbol.roll_rule!r} is not supported for {source} source"
+        )
+    if symbol.adjustment == "unadjusted":
+        return
+    if symbol.adjustment == "back_adjust" and source in _PER_CONTRACT_SOURCES:
+        return
+    raise ValueError(
+        f"adjustment {symbol.adjustment!r} is not supported for {source} source"
+    )
 
 
 def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:

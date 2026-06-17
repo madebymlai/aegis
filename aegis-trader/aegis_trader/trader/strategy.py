@@ -11,7 +11,7 @@ submitted on bar t+1 and fills at bar t+1's close — one-bar lag, no look-ahead
 
 Slice 3: FIGI→InstrumentId resolution via the Security Master (OpenFIGI +
 bounded exchange-code table).  A FIGI→InstrumentId bimap is built at
-``on_start``; netting stays in FIGI space, resolution to venue-specific
+``on_start``; netting stays in InstrumentRef space, resolution to venue-specific
 InstrumentIds only at the execution edge (order submission).
 
 RiskEngine guards (Slice 8): the ``RiskGuard`` computes per-instrument
@@ -33,6 +33,7 @@ globally on failure.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 
 import numpy as np
@@ -47,7 +48,7 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
-from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
+from aegis_runtime import DataContract, ExecutionBundle, FuturesRef, InstrumentRef, ListedRef, MarketDataBundle
 from aegis_runtime.currency import major_currency
 
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
@@ -64,8 +65,9 @@ from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
 from aegis_trader.domain.rebalancer import rebalance_plan
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
+from aegis_trader.domain.roll import HeldContract, roll_positions
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
-from aegis_trader.domain.types import Figi, OrderIntent, OrderSide, SleeveName
+from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource, ResolvedContractId, SleeveName
 from aegis_trader.execution.figi_resolver import (
     FigiInstrumentResolver,
     FigiResolutionError,
@@ -121,15 +123,18 @@ class RebalanceStrategy(Strategy):
         # ── Slice 6 sleeve registry ──────────────────────────────────────
         self._sleeve_to_bundle: dict[SleeveName, ExecutionBundle] = {}
         self._sleeve_to_contract: dict[SleeveName, DataContract] = {}
-        self._instr_to_figi: dict[str, str] = {}  # InstrumentId.value → FIGI (bimap inverse)
+        self._instr_to_figi: dict[str, InstrumentRef] = {}  # InstrumentId.value → InstrumentRef (bimap inverse)
         # ── bar buffers & cadence state ──────────────────────────────────
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
         self._current_period: int | None = None
-        self._period_fresh_figis: set[str] = set()
+        self._period_fresh_figis: set[InstrumentRef] = set()
         # Rebalance-period width in ns; set from the book timeframe in on_start.
         self._period_ns: int = _NS_PER_DAY
+        # Book bar timeframe (one across sleeves); set in on_start, reused to
+        # subscribe a contract the book rolls into mid-run.
+        self._book_timeframe: str | None = None
         # ── Slice 3: FIGI bimap ──────────────────────────────────────────
-        self._figi_bimap: dict[str, InstrumentId] = {}
+        self._figi_bimap: dict[InstrumentRef, InstrumentId] = {}
         self._figi_resolver: FigiInstrumentResolver = (
             config.figi_resolver if config.figi_resolver is not None
             else FigiInstrumentResolver()
@@ -147,6 +152,7 @@ class RebalanceStrategy(Strategy):
         self._last_attribution: dict[SleeveName, float] = {}
         self._last_book_skew: float | None = None
         self._last_sleeve_weights: dict[SleeveName, float] = {}
+        self._last_roll_check_date: date | None = None
         # ── Slice 9: observability + attribution ─────────────────────────
         self._obs_port: ObservabilityPort | None = config.obs_port
         # Per-period inputs for the realized-weight sleeve attribution (on_stop).
@@ -238,16 +244,19 @@ class RebalanceStrategy(Strategy):
         self.log.info(f"Integrity check passed: NAV={nav:.2f}, cash={cash:.2f}")
 
         # Collect all unique FIGIs across all sleeves.
-        all_figis: set[str] = set()
+        all_figis: set[InstrumentRef] = set()
         for bundle in self._sleeve_to_bundle.values():
-            all_figis.update(bundle.contract.figis)
+            all_figis.update(bundle.contract.refs)
 
-        # Slice 3: resolve FIGIs to venue-native InstrumentIds via the Security
-        # Master bimap.  The bimap is the SINGLE source of truth for instrument
-        # identity - every subscription, bar buffer, sizing read, order, and risk
-        # cap keys off it.  (A stub bimap may be injected by e2e tests.)
+        # Resolve refs to venue-native InstrumentIds via the Security Master,
+        # as-of the boot date.  The bimap is the SINGLE source of truth for
+        # instrument identity - every subscription, bar buffer, sizing read,
+        # order, and risk cap keys off it.  A ListedRef resolves date-invariantly;
+        # a FuturesRef resolves to its live contract for the boot date and is
+        # re-resolved at the roll cadence (see _refresh_resolution).  (A stub
+        # bimap may be injected by e2e tests.)
         if not self._figi_bimap:
-            self._figi_bimap = self._resolve_bimap(all_figis)
+            self._figi_bimap = self._resolve_bimap(all_figis, self._as_of())
 
         # Subscribe to bars on the RESOLVED InstrumentId and build the inverse
         # (InstrumentId -> FIGI) map used for position lookups.
@@ -256,6 +265,7 @@ class RebalanceStrategy(Strategy):
         book_timeframe = resolve_book_timeframe(
             contract.timeframe for contract in self._sleeve_to_contract.values()
         )
+        self._book_timeframe = book_timeframe
         self._period_ns = timeframe_to_ns(book_timeframe)
 
         for figi in sorted(all_figis):  # stable subscription order (aegis-rd-10d)
@@ -309,6 +319,14 @@ class RebalanceStrategy(Strategy):
             return
 
         instr_id = bar.bar_type.instrument_id
+        as_of = self._as_of()
+        if self._last_roll_check_date != as_of:
+            # Re-resolve FuturesRefs as-of today FIRST, so the bimap (and hence
+            # every drift order this tick) points at the current contract; then
+            # migrate any held position off the contract it just rolled out of.
+            self._refresh_resolution(as_of)
+            self._submit_roll_orders(as_of)
+            self._last_roll_check_date = as_of
         period = self._extract_period(bar)
 
         # ── period-advance → rebalance the completed period ──────────────
@@ -373,7 +391,7 @@ class RebalanceStrategy(Strategy):
             # Collect each FIGI's completed-period bar buffer (enough lookback).
             sleeve_bufs: dict[str, list[Bar]] = {}
             sleeve_ok = True
-            for figi in contract.figis:
+            for figi in contract.refs:
                 instr_id = self._figi_to_instr_id(figi)
                 buf = self._bars_buffer.get(instr_id, [])
                 if len(buf) < needed:
@@ -436,7 +454,7 @@ class RebalanceStrategy(Strategy):
         # ── Slice 9: compute total notional for the summary ──────────────
         total_notional = sum(
             abs(o.quantity) for o in orders
-            if o.figi.value in self._period_fresh_figis
+            if o.ref in self._period_fresh_figis
         )
 
         # ── Slice 9: build and log the rebalance summary ─────────────────
@@ -464,7 +482,7 @@ class RebalanceStrategy(Strategy):
                 realized_weights=dict(realized_weights),
                 sleeve_targets={
                     name: {
-                        Figi(str(figi)): float(weight)
+                        _column_ref(figi): float(weight)
                         for figi, weight in target_df.iloc[-1].to_dict().items()
                     }
                     for name, target_df in pending.items()
@@ -475,13 +493,83 @@ class RebalanceStrategy(Strategy):
 
         # Calendar-aware: only emit orders for FIGIs with a fresh bar
         for oi in orders:
-            if oi.figi.value not in self._period_fresh_figis:
+            if oi.ref not in self._period_fresh_figis:
                 self.log.info(
                     f"Skipping {oi.side.value} {oi.quantity:.0f} "
-                    f"{oi.figi.value}: venue closed this period"
+                    f"{oi.ref.value}: venue closed this period"
                 )
                 continue
             self._submit_order_intent(oi)
+
+    def _refresh_resolution(self, as_of: date) -> None:
+        """Re-resolve each FuturesRef as-of *as_of*; when its live contract has
+        changed, point the bimap at the new contract, map the new contract back
+        in the inverse, and subscribe its bars.
+
+        ListedRefs are date-invariant and skipped.  The inverse keeps the old
+        contract mapped so a not-yet-closed position still folds back to its ref
+        for the roll check and the realized book.
+        """
+        if self._book_timeframe is None:
+            return
+        for ref in list(self._figi_bimap):
+            if not isinstance(ref, FuturesRef):
+                continue
+            new_id = self._resolve_instrument_id(ref, as_of)
+            if new_id == self._figi_bimap[ref]:
+                continue
+            self._figi_bimap[ref] = new_id
+            self._instr_to_figi[new_id.value] = ref
+            self.subscribe_bars(bar_type(new_id.value, self._book_timeframe))
+
+    def _submit_roll_orders(self, as_of: date) -> None:
+        held = self._held_contracts_for_roll()
+        if not held:
+            return
+        orders = roll_positions(held, as_of=as_of, resolve=self._resolve_contract_id_for_roll)
+        for order in orders:
+            self._submit_order_intent(order)
+
+    def _held_contracts_for_roll(self) -> tuple[HeldContract, ...]:
+        held: list[HeldContract] = []
+        for position in self.cache.positions_open():
+            ref = self._instr_to_figi.get(position.instrument_id.value)
+            if ref is None:
+                continue
+            quantity = float(position.quantity.as_double())
+            if position.is_short:
+                quantity = -quantity
+            held.append(
+                HeldContract(
+                    ref=ref,
+                    contract_id=ResolvedContractId(position.instrument_id.value),
+                    quantity=quantity,
+                )
+            )
+        return tuple(held)
+
+    def _resolve_contract_id_for_roll(self, ref: InstrumentRef, as_of: date) -> ResolvedContractId:
+        instrument_id = self._resolve_instrument_id(ref, as_of)
+        # Keep the inverse map current as the ref rolls: a position folded onto
+        # the rolled-into contract must resolve back to its InstrumentRef, so the
+        # realized book (and the next base-tick roll check) reason in continuous
+        # space rather than re-buying the stale front contract.
+        self._instr_to_figi[instrument_id.value] = ref
+        return ResolvedContractId(instrument_id.value)
+
+    def _resolve_instrument_id(self, ref: InstrumentRef, as_of: date) -> InstrumentId:
+        """Resolve a ref to its venue-native InstrumentId as-of *as_of* via the
+        Security Master.  A ListedRef ignores ``as_of`` (date-invariant); a
+        FuturesRef selects its live dated contract for that date."""
+        instrument_id = self._figi_resolver.resolve(ref, as_of=as_of)
+        if not isinstance(instrument_id, InstrumentId):
+            raise FigiResolutionError(f"resolution for {ref!r} did not return an InstrumentId")
+        return instrument_id
+
+    def _as_of(self) -> date:
+        """The current trading date from the clock (TestClock in backtest,
+        LiveClock in paper/live) — one source for backtest=live parity."""
+        return self.clock.utc_now().date()
 
     def _log_rebalance_summary(self, summary: RebalanceSummary) -> None:
         """Emit a structured rebalance log through the observability port.
@@ -580,7 +668,7 @@ class RebalanceStrategy(Strategy):
                 f"(book total={total_book_pnl:.2f})"
             )
 
-    def _figi_to_instr_id(self, figi: str) -> InstrumentId:
+    def _figi_to_instr_id(self, figi: InstrumentRef) -> InstrumentId:
         """Resolve a FIGI to a venue-specific InstrumentId.
 
         Fails closed (raises) when the FIGI was not resolved: the book never
@@ -590,34 +678,48 @@ class RebalanceStrategy(Strategy):
         instr_id = self._figi_bimap.get(figi)
         if instr_id is None:
             raise FigiResolutionError(
-                f"FIGI {figi!r} is not in the resolved bimap; refusing to act "
+                f"InstrumentRef {figi!r} is not in the resolved bimap; refusing to act "
                 f"on an unidentified instrument"
             )
         return instr_id
 
-    def _resolve_bimap(self, figis: set[str]) -> dict[str, InstrumentId]:
-        """Resolve *figis* to a bimap via the Security Master."""
-        return self._figi_resolver.resolve(figis)
+    def _resolve_bimap(
+        self, refs: set[InstrumentRef], as_of: date
+    ) -> dict[InstrumentRef, InstrumentId]:
+        """Resolve *refs* to a bimap via the Security Master, as-of *as_of*.
+
+        ListedRefs resolve date-invariantly and are batched (one OpenFIGI round
+        trip); FuturesRefs resolve to their live dated contract for *as_of*,
+        individually (each carries its own roll calendar).
+        """
+        listed: set[InstrumentRef] = {r for r in refs if isinstance(r, ListedRef)}
+        futures = sorted(r for r in refs if isinstance(r, FuturesRef))
+        bimap: dict[InstrumentRef, InstrumentId] = {}
+        if listed:
+            bimap.update(self._figi_resolver.resolve_many(listed))  # type: ignore[arg-type]
+        for ref in futures:
+            bimap[ref] = self._resolve_instrument_id(ref, as_of)
+        return bimap
 
     def _collect_sizing_params(
         self,
-    ) -> tuple[dict[Figi, InstrumentSizing], dict[str, float], dict[Figi, float]]:
+    ) -> tuple[dict[InstrumentRef, InstrumentSizing], dict[str, float], dict[InstrumentRef, float]]:
         """Gather per-FIGI instrument metadata, FX rates, and latest close
         prices from Nautilus for sizing.
 
-        Returns three dicts keyed by :class:`Figi` (instrument_metas/prices) or
+        Returns three dicts keyed by :class:`InstrumentRef` (instrument_metas/prices) or
         currency (fx_rates).  An instrument that cannot be resolved from the
         cache is silently omitted (the rebalancer will fall back to raw
         notional for it).
         """
-        instrument_metas: dict[Figi, InstrumentSizing] = {}
-        prices: dict[Figi, float] = {}
+        instrument_metas: dict[InstrumentRef, InstrumentSizing] = {}
+        prices: dict[InstrumentRef, float] = {}
         currencies: set[str] = set()
 
         # Collect all FIGIs from all sleeves
-        all_figis: set[str] = set()
+        all_figis: set[InstrumentRef] = set()
         for bundle in self._sleeve_to_bundle.values():
-            all_figis.update(bundle.contract.figis)
+            all_figis.update(bundle.contract.refs)
 
         for figi_str in all_figis:
             instr_id = self._figi_to_instr_id(figi_str)
@@ -625,7 +727,7 @@ class RebalanceStrategy(Strategy):
             if sizing is None:
                 continue
 
-            figi = Figi(figi_str)
+            figi = figi_str
             instrument_metas[figi] = sizing
 
             buf = self._bars_buffer.get(instr_id)
@@ -704,7 +806,7 @@ class RebalanceStrategy(Strategy):
         instrument_ids: list[str] = [
             self._figi_bimap[figi].value
             for contract in self._sleeve_to_contract.values()
-            for figi in contract.figis
+            for figi in contract.refs
             if figi in self._figi_bimap
         ]
         return self._risk_guard.risk_engine_config_dict(
@@ -720,11 +822,15 @@ class RebalanceStrategy(Strategy):
         The quantity is already a native share count (sized by the rebalancer),
         so it is passed directly to ``make_qty``.
         """
-        instr_id = self._figi_to_instr_id(oi.figi.value)
+        instr_id = (
+            InstrumentId.from_str(oi.resolved_contract_id.value)
+            if oi.resolved_contract_id is not None
+            else self._figi_to_instr_id(oi.ref)
+        )
         quantity = self._require_market_data().make_quantity(instr_id, oi.quantity)
         if quantity is None:
             self.log.error(
-                f"Instrument not found for FIGI {oi.figi.value}; skipping order"
+                f"Instrument not found for InstrumentRef {oi.ref.value}; skipping order"
             )
             return
 
@@ -738,8 +844,18 @@ class RebalanceStrategy(Strategy):
         # fills at the bar close); paper/live carry AT_THE_CLOSE (Market-on-Close).
         if self.config.fill_time_in_force is not None:
             kwargs["time_in_force"] = self.config.fill_time_in_force
+        if oi.source == OrderSource.ROLL:
+            self.log.info(
+                f"Roll order: {oi.side.value} {oi.quantity:.0f} {instr_id.value} for {oi.ref.value}"
+            )
         order = self.order_factory.market(**kwargs)
         self.submit_order(order)
+
+
+def _column_ref(column: object) -> InstrumentRef:
+    if isinstance(column, ListedRef | FuturesRef):
+        return column
+    return ListedRef(str(column))
 
 
 def current_drawdown(nav_history: list[float], current_nav: float) -> float:

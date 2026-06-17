@@ -121,8 +121,8 @@ A fail-closed budget gate that runs before optimization begins. Estimates parame
 _Avoid_: dry run, validation, sanity check
 
 **FIGI**:
-The canonical, and sole, cross-boundary instrument identity (OpenFIGI / Bloomberg Global Identifier; root ADR-0002). The data-provider **ticker** is RD-internal — used only to fetch market data — and never crosses into an Execution Bundle. `aerd export` resolves each instrument's ticker to one **exchange-level** FIGI via OpenFIGI, fail-closed on ambiguous or unmapped, and bakes it into the bundle's data contract; the bundle's signed target-weight frame is keyed by FIGI. Currency and venue contract detail are derived downstream from the FIGI, not carried alongside it.
-_Avoid_: ticker, symbol, ISIN, CUSIP
+The identity of a **ListedRef** — one variant of the cross-boundary **InstrumentRef** (OpenFIGI / Bloomberg Global Identifier). It is the identity for *permanently-listed* instruments (cash equity, ETF/ETC); it is no longer the *sole* cross-boundary identity (root ADR-0002 refined: see [`InstrumentRef`](../aegis-runtime/CONTEXT.md), which futures use instead). The data-provider **ticker** is RD-internal — used only to fetch market data — and never crosses into an Execution Bundle. For a listed instrument `aerd export` resolves its ticker to one **exchange-level** FIGI via OpenFIGI, fail-closed on ambiguous or unmapped, and bakes the resulting **InstrumentRef** into the bundle's data contract. Currency and venue contract detail are derived downstream from the ref, not carried alongside it.
+_Avoid_: ticker, symbol, ISIN, CUSIP, InstrumentRef (FIGI is only the ListedRef variant)
 
 ## Example dialogue
 

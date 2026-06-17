@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any
 
 import pandas as pd
+from aegis_data.source import continuous_panel, databento_source
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
@@ -115,7 +116,8 @@ def run_strategy_sweep(
         )
         write_data_metadata_artifact(recorder, data_result, array_contract)
         data_result.assert_usable()
-        data_bundle = _to_base_currency(config, data_bundle=market_data_bundle(data_result))
+        data_bundle = _apply_futures_back_adjustment(config.data, market_data_bundle(data_result))
+        data_bundle = _to_base_currency(config, data_bundle=data_bundle)
         metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
             config,
@@ -140,6 +142,28 @@ def run_strategy_sweep(
         if on_run_refs is not None:
             on_run_refs(recorder.run_refs())
         raise
+
+
+def _apply_futures_back_adjustment(
+    data_config: DataConfig, data_bundle: MarketDataBundle
+) -> MarketDataBundle:
+    """Replace each ``back_adjust`` future's panel column with the back-adjusted
+    continuous series sourced from :mod:`aegis_data` (Nautilus databento port +
+    OS-global parquet store); a book with no back-adjust futures passes through.
+    """
+    futures = [s for s in data_config.symbols if s.is_future and s.adjustment == "back_adjust"]
+    if not futures:
+        return data_bundle
+    start = pd.Timestamp(data_config.start).date()
+    end = pd.Timestamp(data_config.end).date()
+    arrays = {name: panel.copy() for name, panel in data_bundle.arrays.items()}
+    for spec in futures:
+        fetch = databento_source(spec.dataset)
+        panel = continuous_panel(spec.root, start, end, fetch=fetch)
+        for name, frame in arrays.items():
+            if spec.ticker in frame.columns and name in panel.columns:
+                frame[spec.ticker] = panel[name].reindex(frame.index)
+    return MarketDataBundle(arrays)
 
 
 def _to_base_currency(

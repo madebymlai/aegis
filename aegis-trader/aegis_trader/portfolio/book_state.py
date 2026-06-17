@@ -29,7 +29,7 @@ from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.portfolio.base import PortfolioFacade
 
-from aegis_trader.domain.types import Figi
+from aegis_runtime import InstrumentRef, ListedRef
 
 
 @runtime_checkable
@@ -48,8 +48,8 @@ class BookStatePort(Protocol):
         """Whether the reconciled cache holds instruments (startup integrity)."""
         ...
 
-    def realized_weights(self) -> dict[Figi, float]:
-        """Signed realized weight (fraction of NAV) per covered :class:`Figi`.
+    def realized_weights(self) -> dict[InstrumentRef, float]:
+        """Signed realized weight (fraction of NAV) per covered :class:`InstrumentRef`.
 
         The marking and base-currency conversion of each open position's net
         exposure is delegated to Nautilus; the sign comes from the position.
@@ -72,7 +72,7 @@ class NautilusBookState:
         portfolio: PortfolioFacade,
         cache: CacheFacade,
         base_currency: Currency,
-        instr_to_figi: Mapping[str, str],
+        instr_to_figi: Mapping[str, InstrumentRef],
     ) -> None:
         self._portfolio = portfolio
         self._cache = cache
@@ -103,15 +103,17 @@ class NautilusBookState:
     def is_cache_healthy(self) -> bool:
         return len(self._cache.instruments()) > 0
 
-    def realized_weights(self) -> dict[Figi, float]:
+    def realized_weights(self) -> dict[InstrumentRef, float]:
         nav = self.nav()
         if nav <= 0:
             return {}
-        weights: dict[Figi, float] = {}
+        weights: dict[InstrumentRef, float] = {}
         for position in self._cache.positions_open():
-            figi_str = self._instr_to_figi.get(position.instrument_id.value)
-            if figi_str is None:
+            ref = self._instr_to_figi.get(position.instrument_id.value)
+            if ref is None:
                 continue  # holding not covered by any sleeve
+            if isinstance(ref, str):
+                ref = ListedRef(ref)
             exposure = self._portfolio.net_exposure(position.instrument_id)
             if exposure is None:
                 continue  # unpriced — no mark available
@@ -120,8 +122,7 @@ class NautilusBookState:
                 continue  # no FX rate to base — fail closed, do not fabricate
             if position.is_short:
                 signed = -signed
-            figi = Figi(figi_str)
-            weights[figi] = weights.get(figi, 0.0) + signed / nav
+            weights[ref] = weights.get(ref, 0.0) + signed / nav
         return weights
 
     def _in_base(self, exposure: Money) -> float | None:

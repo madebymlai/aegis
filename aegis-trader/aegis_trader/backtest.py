@@ -105,7 +105,6 @@ def run_book_backtest(
 ) -> BacktestEngine:
     """Build and run the commingled-book backtest; returns the finished engine."""
     book = load_book_config(book_path)
-    base = Currency.from_str(book.base_currency)
     registry = registry if registry is not None else EntryPointBundleRegistry()
     sleeves = [(s.name, registry.load(s.wheel_filename)) for s in book.sleeves]
     book_timeframe = resolve_book_timeframe(
@@ -133,17 +132,17 @@ def run_book_backtest(
         allow_cash_borrowing=len(balance_currencies) > 1,
     )
 
-    bimap: dict[str, InstrumentId] = {}
+    bimap: dict[object, InstrumentId] = {}
     fx_currencies: set[str] = set()
     bar_index: set[pd.Timestamp] = set()
     for sleeve_name, bundle in sleeves:
         fx_currencies |= set(bundle.contract.required_fx_currencies)
-        for figi, ticker in zip(bundle.contract.figis, bundle.symbols, strict=True):
+        for figi, ticker in zip(bundle.contract.refs, bundle.symbols, strict=True):
             if figi in bimap:
                 continue  # an instrument shared across sleeves is loaded once
             major, scale = _major_currency_and_scale(bundle.currency_by_symbol[ticker])
             instrument = build_equity(
-                InstrumentSpec(figi=figi, venue=venue, quote_currency=major)
+                InstrumentSpec(figi=figi.value, venue=venue, quote_currency=major)
             )
             raw = fetch_ohlcv(
                 BarRequest(
@@ -156,7 +155,7 @@ def run_book_backtest(
             _validate_contract_data(
                 raw,
                 sleeve=sleeve_name.value,
-                figi=figi,
+                figi=figi.value,
                 required_arrays=bundle.contract.required_arrays,
                 min_rows=bundle.contract.lookback_bars + 1,
             )

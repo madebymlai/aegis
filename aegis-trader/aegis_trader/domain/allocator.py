@@ -18,7 +18,9 @@ from typing import TypeVar
 import numpy as np
 
 from aegis_trader.domain.book_config import DrawdownDeleverCurve
-from aegis_trader.domain.types import Figi, SleeveName
+from aegis_runtime import InstrumentRef
+
+from aegis_trader.domain.types import SleeveName
 
 _EPS = 1e-12
 _ERC_TOLERANCE = 1e-10
@@ -32,7 +34,7 @@ class Allocation:
     """Risk-budget-scaled sleeve targets and their scalar multipliers."""
 
     multipliers: Mapping[SleeveName, float]
-    scaled_targets: Mapping[SleeveName, Mapping[Figi, float]]
+    scaled_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]]
 
 
 @dataclass(frozen=True)
@@ -59,7 +61,7 @@ class _GroupComposition:
 
 def allocate_diagonal_vol_target(
     *,
-    sleeve_targets: Mapping[SleeveName, Mapping[Figi, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
     risk_shares: Mapping[SleeveName, float],
     realized_vols: Mapping[SleeveName, float] | None,
     book_vol_target: float,
@@ -118,7 +120,7 @@ def allocate_diagonal_vol_target(
 
 def allocate_covariance_vol_target(
     *,
-    sleeve_targets: Mapping[SleeveName, Mapping[Figi, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
     risk_shares: Mapping[SleeveName, float],
     realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]],
     book_vol_target: float,
@@ -311,7 +313,7 @@ def _validate_book_vol_target(book_vol_target: float) -> None:
 
 
 def _delevered_allocation(
-    sleeve_targets: Mapping[SleeveName, Mapping[Figi, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
     multipliers: Mapping[SleeveName, float],
     *,
     realized_drawdown: float | None,
@@ -413,7 +415,7 @@ def _within_sleeve_weight_band(drift: float, band: SleeveWeightBand) -> bool:
 
 
 def _allocation_from_multipliers(
-    sleeve_targets: Mapping[SleeveName, Mapping[Figi, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
     multipliers: Mapping[SleeveName, float],
 ) -> Allocation:
     return Allocation(
@@ -423,7 +425,7 @@ def _allocation_from_multipliers(
 
 
 def _active_sleeves(
-    sleeve_targets: Mapping[SleeveName, Mapping[Figi, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
     risk_shares: Mapping[SleeveName, float],
 ) -> tuple[SleeveName, ...]:
     active: list[SleeveName] = []
@@ -683,10 +685,10 @@ def _erc_vector(covariance: np.ndarray, variance_budgets: np.ndarray) -> np.ndar
 
 
 def _scale_targets(
-    sleeve_targets: Mapping[SleeveName, Mapping[Figi, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
     multipliers: Mapping[SleeveName, float],
-) -> dict[SleeveName, dict[Figi, float]]:
-    scaled_targets: dict[SleeveName, dict[Figi, float]] = {}
+) -> dict[SleeveName, dict[InstrumentRef, float]]:
+    scaled_targets: dict[SleeveName, dict[InstrumentRef, float]] = {}
     for name, targets in sleeve_targets.items():
         if name not in multipliers:
             continue
@@ -698,11 +700,11 @@ def _scale_targets(
 
 
 def _scale_sleeve_targets(
-    targets: Mapping[Figi, float],
+    targets: Mapping[InstrumentRef, float],
     *,
     multiplier: float,
-) -> dict[Figi, float]:
-    scaled_targets: dict[Figi, float] = {}
+) -> dict[InstrumentRef, float]:
+    scaled_targets: dict[InstrumentRef, float] = {}
     for figi, weight in targets.items():
         scaled = float(weight) * multiplier
         if abs(scaled) > _EPS:

@@ -11,3 +11,14 @@ opencode.jsonc
 bundles/*
 !bundles/.gitkeep
 vbt.toml
+
+# Sandcastle agent worktrees: nested full-repo checkouts (100G+) holding run
+# data and their own nested .sandcastle/. Kept local-only and excluded from
+# indexing — codebase-memory-mcp walks .gitignore but not .git/info/exclude,
+# so listing it here is what actually keeps the indexer out (avoids OOM).
+.sandcastle/
+
+# Virtualenvs (regenerable from lockfiles). The root .venv and aegis-rd's
+# sandcastle venv aren't covered by the per-package .gitignores.
+.venv/
+.venv-sandcastle/

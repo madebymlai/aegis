@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from aegis_runtime import FuturesRef, ListedRef
 from aegis_runtime.bundle import (
     DataContract,
     MarketDataBundle,
@@ -16,9 +17,9 @@ def _index(n: int) -> pd.DatetimeIndex:
     return pd.date_range("2024-01-01", periods=n, freq="D")
 
 
-def _contract(figis=("A", "B"), required_arrays=("Close",)):
+def _contract(refs=(ListedRef("A"), ListedRef("B")), required_arrays=("Close",)):
     return DataContract(
-        figis=figis,
+        refs=refs,
         required_arrays=required_arrays,
         base_currency="EUR",
         required_fx_currencies=(),
@@ -26,9 +27,9 @@ def _contract(figis=("A", "B"), required_arrays=("Close",)):
     )
 
 
-def _close(symbols=("A", "B"), n=3) -> MarketDataBundle:
+def _close(refs=(ListedRef("A"), ListedRef("B")), n=3) -> MarketDataBundle:
     idx = _index(n)
-    return MarketDataBundle({"Close": pd.DataFrame({s: [1.0] * n for s in symbols}, index=idx)})
+    return MarketDataBundle({"Close": pd.DataFrame({ref: [1.0] * n for ref in refs}, index=idx)})
 
 
 # --- validate_exposure -------------------------------------------------------
@@ -71,16 +72,24 @@ def test_validate_market_data_accepts_matching_contract() -> None:
     _validate_market_data(_close(), _contract())  # no raise
 
 
+def test_validate_market_data_accepts_futures_ref_contract() -> None:
+    ref = FuturesRef(root="ES", dataset="cme", roll_rule="calendar", adjustment="unadjusted")
+    prices = MarketDataBundle({"Close": pd.DataFrame({ref: [1.0]}, index=_index(1))})
+
+    _validate_market_data(prices, _contract(refs=(ref,)))
+
+
 def test_validate_market_data_rejects_array_column_symbol_mismatch() -> None:
-    prices = MarketDataBundle({"Close": pd.DataFrame({"A": [1.0], "X": [1.0]}, index=_index(1))})
+    prices = MarketDataBundle({"Close": pd.DataFrame({ListedRef("A"): [1.0], ListedRef("X"): [1.0]}, index=_index(1))})
     with pytest.raises(ValueError, match="do not match"):
         _validate_market_data(prices, _contract())
 
 
 def test_validate_market_data_rejects_missing_or_extra_arrays() -> None:
+    refs = (ListedRef("A"), ListedRef("B"))
     prices = MarketDataBundle(
-        {"Close": pd.DataFrame({"A": [1.0], "B": [1.0]}, index=_index(1)),
-         "Open": pd.DataFrame({"A": [1.0], "B": [1.0]}, index=_index(1))}
+        {"Close": pd.DataFrame({refs[0]: [1.0], refs[1]: [1.0]}, index=_index(1)),
+         "Open": pd.DataFrame({refs[0]: [1.0], refs[1]: [1.0]}, index=_index(1))}
     )
     with pytest.raises(ValueError, match=r"extra=\['Open'\]"):
         _validate_market_data(prices, _contract(required_arrays=("Close",)))
@@ -88,15 +97,17 @@ def test_validate_market_data_rejects_missing_or_extra_arrays() -> None:
 
 def test_validate_market_data_rejects_nonunique_index() -> None:
     dup = pd.DatetimeIndex(["2024-01-01", "2024-01-01"])
-    prices = MarketDataBundle({"Close": pd.DataFrame({"A": [1.0, 1.0], "B": [1.0, 1.0]}, index=dup)})
+    refs = (ListedRef("A"), ListedRef("B"))
+    prices = MarketDataBundle({"Close": pd.DataFrame({refs[0]: [1.0, 1.0], refs[1]: [1.0, 1.0]}, index=dup)})
     with pytest.raises(ValueError, match="index must be unique"):
         _validate_market_data(prices, _contract())
 
 
 def test_validate_market_data_rejects_mismatched_indices_across_arrays() -> None:
+    refs = (ListedRef("A"), ListedRef("B"))
     prices = MarketDataBundle({
-        "Close": pd.DataFrame({"A": [1.0], "B": [1.0]}, index=_index(1)),
-        "Open": pd.DataFrame({"A": [1.0], "B": [1.0]}, index=pd.DatetimeIndex(["2024-02-01"])),
+        "Close": pd.DataFrame({refs[0]: [1.0], refs[1]: [1.0]}, index=_index(1)),
+        "Open": pd.DataFrame({refs[0]: [1.0], refs[1]: [1.0]}, index=pd.DatetimeIndex(["2024-02-01"])),
     })
     with pytest.raises(ValueError, match="must share one index"):
         _validate_market_data(prices, _contract(required_arrays=("Close", "Open")))

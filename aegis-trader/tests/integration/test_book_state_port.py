@@ -27,7 +27,7 @@ from nautilus_trader.model.currencies import EUR, GBP
 from nautilus_trader.model.identifiers import AccountId, InstrumentId
 from nautilus_trader.model.objects import Money
 
-from aegis_trader.domain.types import Figi
+from aegis_runtime import ListedRef
 from aegis_trader.portfolio import NautilusBookState
 
 _FIGI_A = "BBG000B9XRY4"
@@ -217,7 +217,7 @@ def test_realized_weight_long_is_exposure_over_nav():
         exposures={_IID_A: Money(22_000.0, EUR)},
         positions=[_FakePosition(_IID_A, is_short=False)],
     )
-    assert bs.realized_weights() == {Figi(_FIGI_A): 0.22}
+    assert bs.realized_weights() == {ListedRef(_FIGI_A): 0.22}
 
 
 def test_realized_weight_short_is_negative():
@@ -227,7 +227,7 @@ def test_realized_weight_short_is_negative():
         exposures={_IID_A: Money(10_000.0, EUR)},
         positions=[_FakePosition(_IID_A, is_short=True)],
     )
-    assert bs.realized_weights() == {Figi(_FIGI_A): -0.10}
+    assert bs.realized_weights() == {ListedRef(_FIGI_A): -0.10}
 
 
 def test_realized_weight_non_base_position_converts_via_mark_xrate():
@@ -239,7 +239,7 @@ def test_realized_weight_non_base_position_converts_via_mark_xrate():
         positions=[_FakePosition(_IID_A, is_short=False)],
         mark_xrates={(GBP, EUR): 1.25},
     )
-    assert bs.realized_weights() == {Figi(_FIGI_A): 0.5}
+    assert bs.realized_weights() == {ListedRef(_FIGI_A): 0.5}
 
 
 def test_realized_weight_skips_position_without_mark_rate():

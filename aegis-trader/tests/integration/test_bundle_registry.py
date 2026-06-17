@@ -15,6 +15,7 @@ from importlib.metadata import EntryPoint
 import pytest
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -35,7 +36,7 @@ _FIGI = "BBG000B9XRY4"
 def _build_bundle() -> ExecutionBundle:
     """A zero-arg bundle factory — the object an entry point resolves to."""
     contract = DataContract(
-        figis=(_FIGI,),
+        refs=(ListedRef(_FIGI),),
         required_arrays=("Close",),
         base_currency="EUR",
         required_fx_currencies=(),
@@ -44,7 +45,7 @@ def _build_bundle() -> ExecutionBundle:
     )
     manifest = BundleManifest(
         run_id="r", role="x", candidate_key="k",
-        component_source_hashes={}, figis=(_FIGI,),
+        component_source_hashes={}, refs=(ListedRef(_FIGI),),
     )
     plan = LockedExecutionPlan(
         strategy=ComponentSpec(
@@ -79,7 +80,7 @@ def test_load_discovers_bundle_from_entry_point():
     bundle = registry.load(_WHEEL)
 
     assert isinstance(bundle, ExecutionBundle)
-    assert bundle.contract.figis == (_FIGI,)
+    assert bundle.contract.refs == (ListedRef(_FIGI),)
 
 
 def test_ambiguous_wheel_fails_closed():
@@ -122,7 +123,7 @@ def test_load_contract_returns_the_data_contract():
     contract = registry.load_contract(_WHEEL)
 
     assert isinstance(contract, DataContract)
-    assert contract.figis == (_FIGI,)
+    assert contract.refs == (ListedRef(_FIGI),)
     assert contract.lookback_bars == 1
 
 

@@ -29,6 +29,7 @@ from nautilus_trader.model.objects import Currency, Money
 from conftest import eur_equity
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -61,7 +62,7 @@ class _StepWeightBundle(ExecutionBundle):
         self._figi = figi
         self._weight = weight
         contract = DataContract(
-            figis=(figi,),
+            refs=(ListedRef(figi),),
             required_arrays=("Close",),
             base_currency="EUR",
             required_fx_currencies=(),
@@ -73,7 +74,7 @@ class _StepWeightBundle(ExecutionBundle):
             role="synth",
             candidate_key=f"synth-{figi}-key",
             component_source_hashes={},
-            figis=(figi,),
+            refs=(ListedRef(figi),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(
@@ -236,8 +237,8 @@ def test_cadence_calendar_aware():
     # Inject a stub bimap (each FIGI → its venue-native InstrumentId) so the
     # strategy skips real OpenFIGI resolution.
     strategy._figi_bimap = {
-        _FIGI_VUSA: InstrumentId.from_str(f"{_FIGI_VUSA}.{VENUE_LSE.value}"),
-        _FIGI_VOOL: InstrumentId.from_str(f"{_FIGI_VOOL}.{VENUE_XETRA.value}"),
+        ListedRef(_FIGI_VUSA): InstrumentId.from_str(f"{_FIGI_VUSA}.{VENUE_LSE.value}"),
+        ListedRef(_FIGI_VOOL): InstrumentId.from_str(f"{_FIGI_VOOL}.{VENUE_XETRA.value}"),
     }
     engine.add_strategy(strategy)
 

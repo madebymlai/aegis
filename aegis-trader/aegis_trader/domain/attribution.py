@@ -18,7 +18,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from aegis_trader.domain.types import Figi, SleeveName
+from aegis_runtime import InstrumentRef
+
+from aegis_trader.domain.types import SleeveName
 
 _EPS = 1e-15
 
@@ -33,9 +35,9 @@ class AttributionPeriod:
     """
 
     nav: float
-    realized_weights: Mapping[Figi, float]
-    sleeve_targets: Mapping[SleeveName, Mapping[Figi, float]]
-    closes: Mapping[Figi, float]
+    realized_weights: Mapping[InstrumentRef, float]
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]]
+    closes: Mapping[InstrumentRef, float]
 
 
 def compute_sleeve_attribution(

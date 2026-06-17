@@ -23,6 +23,7 @@ from nautilus_trader.model.objects import Currency, Money
 from conftest import eur_equity
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -43,12 +44,12 @@ class _FixedWeightBundle(ExecutionBundle):
     def __init__(self, weight: float = 0.5) -> None:
         self._weight = weight
         contract = DataContract(
-            figis=(_FIGI,), required_arrays=("Close",), base_currency="EUR",
+            refs=(ListedRef(_FIGI),), required_arrays=("Close",), base_currency="EUR",
             required_fx_currencies=(), timeframe="1D", lookback_bars=1,
         )
         manifest = BundleManifest(
             run_id="rg-001", role="synth", candidate_key="k",
-            component_source_hashes={}, figis=(_FIGI,),
+            component_source_hashes={}, refs=(ListedRef(_FIGI),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(family="strategy", component_id="s", module="m",
@@ -109,7 +110,7 @@ def test_realized_gate_holds_after_reaching_target():
 
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _FixedWeightBundle(0.5))
-    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
     engine.add_strategy(strategy)
 
     engine.run()

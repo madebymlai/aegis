@@ -16,6 +16,7 @@ from nautilus_trader.model.objects import Currency, Money
 from conftest import eur_equity
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -39,12 +40,12 @@ class _FixedWeightBundle(ExecutionBundle):
         self._figi = figi
         self._weight = weight
         contract = DataContract(
-            figis=(figi,), required_arrays=("Close",), base_currency="EUR",
+            refs=(ListedRef(figi),), required_arrays=("Close",), base_currency="EUR",
             required_fx_currencies=(), timeframe="1D", lookback_bars=1,
         )
         manifest = BundleManifest(
             run_id=f"synth-{figi}", role="synth", candidate_key="k",
-            component_source_hashes={}, figis=(figi,),
+            component_source_hashes={}, refs=(ListedRef(figi),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(
@@ -97,7 +98,7 @@ def test_cap_violating_book_is_rejected_at_load():
 
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _FixedWeightBundle(_FIGI, 0.5))
-    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
     engine.add_strategy(strategy)
 
     engine.run()

@@ -15,6 +15,8 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
+from aegis_runtime import FuturesRef, ListedRef
+
 from research.aegis_research.cli_support.errors import (
     CliError,
     ConfigCliError,
@@ -45,7 +47,7 @@ STRATEGY_SLOT = "strategy"
 ENTRY_POINT_GROUP = "aegis.execution_bundles"
 
 ComponentSpecMap = dict[str, Any]
-# Resolves the universe's provider tickers to their canonical FIGIs (ticker -> FIGI).
+# Resolves the universe's provider tickers to their ListedRef FIGI payloads (ticker -> FIGI).
 FigiResolver = Callable[[Sequence[Any]], Mapping[str, str]]
 
 
@@ -105,7 +107,7 @@ def export_locked_bundle(
     # written: a fail-closed FIGI resolution must stop the export with no wheel.
     resolver = resolve_symbol_figis if figi_resolver is None else figi_resolver
     figi_by_ticker = resolver(config.data.symbols)
-    figis = tuple(figi_by_ticker[ticker] for ticker in config.data.tickers)
+    refs = _instrument_refs(config.data.symbols, figi_by_ticker)
     strategy_definition = component_registry.get(
         ComponentSelection("strategies", config.strategy.id)
     )
@@ -139,7 +141,7 @@ def export_locked_bundle(
             "role": _manifest_role(config.lock.candidate_id),
             "candidate_key": candidate_key,
             "component_source_hashes": components.source_hashes,
-            "figis": figis,
+            "refs": refs,
         }
         contract = _bundle_contract(config, components, figi_by_ticker)
         plan = {
@@ -299,7 +301,7 @@ def _bundle_contract(
     currency_by_symbol = config.data.currency_by_symbol
     base_currency = config.portfolio.base_currency
     return {
-        "figis": tuple(figi_by_ticker[ticker] for ticker in config.data.tickers),
+        "refs": _instrument_refs(config.data.symbols, figi_by_ticker),
         "required_arrays": tuple(_required_arrays(components)),
         "base_currency": base_currency,
         "required_fx_currencies": tuple(
@@ -308,6 +310,23 @@ def _bundle_contract(
         "timeframe": config.data.timeframe,
         "lookback_bars": components.lookback_bars,
     }
+
+
+def _instrument_refs(symbols: Sequence[Any], figi_by_ticker: Mapping[str, str]) -> tuple[ListedRef | FuturesRef, ...]:
+    refs: list[ListedRef | FuturesRef] = []
+    for symbol in symbols:
+        if getattr(symbol, "is_future", False):
+            refs.append(
+                FuturesRef(
+                    root=symbol.root,
+                    dataset=symbol.dataset,
+                    roll_rule=symbol.roll_rule,
+                    adjustment=symbol.adjustment,
+                )
+            )
+            continue
+        refs.append(ListedRef(figi_by_ticker[symbol.ticker]))
+    return tuple(refs)
 
 
 def _call_lookback(definition: ComponentDefinition, params: Mapping[str, Any]) -> int:
@@ -336,6 +355,8 @@ def _write_bundle_module(
                 ComponentSpec,
                 DataContract,
                 ExecutionBundle,
+                FuturesRef,
+                ListedRef,
                 LockedExecutionPlan,
                 MarketDataBundle,
             )

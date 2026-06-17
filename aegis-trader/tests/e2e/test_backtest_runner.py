@@ -21,6 +21,7 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.instruments import CurrencyPair
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -126,7 +127,7 @@ class _FixedWeightBundle(ExecutionBundle):
         self._currency = currency
         self.seen_arrays: tuple[str, ...] = ()
         contract = DataContract(
-            figis=(figi,),
+            refs=(ListedRef(figi),),
             required_arrays=required_arrays,
             base_currency="EUR",
             required_fx_currencies=required_fx_currencies,
@@ -138,7 +139,7 @@ class _FixedWeightBundle(ExecutionBundle):
             role="synth",
             candidate_key=f"synth-{figi}-key",
             component_source_hashes={},
-            figis=(figi,),
+            refs=(ListedRef(figi),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(

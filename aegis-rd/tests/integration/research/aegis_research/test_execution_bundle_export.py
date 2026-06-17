@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 import yaml
 from aegis_runtime import ExecutionBundle as RuntimeExecutionBundle
+from aegis_runtime import FuturesRef, ListedRef
 from aegis_runtime import MarketDataBundle as RuntimeMarketDataBundle
 
 from research.aegis_research import cli
@@ -37,10 +38,11 @@ _RUN_ID = "bundle-fidelity-run"
 _CANDIDATE_KEY = "0123456789abcdef0123456789abcdef"
 _SYMBOLS = ("SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU")
 # The provider ticker is RD-internal; the bundle crosses the boundary keyed by
-# FIGI. Export resolves ticker -> FIGI via OpenFIGI; tests stub that resolution
-# with a deterministic, well-formed (12-char) FIGI per ticker.
+# ListedRef. Export resolves ticker -> FIGI via OpenFIGI; tests stub that resolution
+# with a deterministic, well-formed (12-char) FIGI payload per ticker.
 _FIGI_BY_SYMBOL = {symbol: f"BBG000{index:06d}" for index, symbol in enumerate(_SYMBOLS)}
-_FIGIS = tuple(_FIGI_BY_SYMBOL[symbol] for symbol in _SYMBOLS)
+_REF_BY_SYMBOL = {symbol: ListedRef(figi) for symbol, figi in _FIGI_BY_SYMBOL.items()}
+_REFS = tuple(_REF_BY_SYMBOL[symbol] for symbol in _SYMBOLS)
 _MOMENTUM_PARAMS = {
     "h1": 15,
     "h2": 42,
@@ -64,15 +66,15 @@ def _stub_figi_resolution(monkeypatch) -> None:
     )
 
 
-def _figi_arrays(prices: MarketDataBundle) -> dict[str, pd.DataFrame]:
-    """Re-key supplied market-data arrays from provider ticker to FIGI."""
-    return {name: frame.rename(columns=_FIGI_BY_SYMBOL) for name, frame in prices.arrays.items()}
+def _ref_arrays(prices: MarketDataBundle) -> dict[str, pd.DataFrame]:
+    """Re-key supplied market-data arrays from provider ticker to ListedRef."""
+    return {name: frame.rename(columns=_REF_BY_SYMBOL) for name, frame in prices.arrays.items()}
 
 
-def _as_figi_weights(weights: pd.DataFrame) -> pd.DataFrame:
-    """Express RD's ticker-keyed weights in the bundle's FIGI column space."""
-    relabeled = weights.rename(columns=_FIGI_BY_SYMBOL)
-    relabeled.columns.name = "figi"
+def _as_ref_weights(weights: pd.DataFrame) -> pd.DataFrame:
+    """Express RD's ticker-keyed weights in the bundle's InstrumentRef column space."""
+    relabeled = weights.rename(columns=_REF_BY_SYMBOL)
+    relabeled.columns.name = "instrument_ref"
     return relabeled
 
 
@@ -97,7 +99,7 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
     )
 
     prices = _market_data()
-    expected = _as_figi_weights(_rd_locked_weights(config_path, prices))
+    expected = _as_ref_weights(_rd_locked_weights(config_path, prices))
     package_name = _package_name_from_wheel(wheel_path)
     import_path = str(wheel_path.resolve())
     sys.path.insert(0, import_path)
@@ -105,31 +107,61 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
     try:
         module = importlib.import_module(package_name)
         bundle = module.get_bundle()
-        actual = bundle.compute_weights(RuntimeMarketDataBundle(_figi_arrays(prices)))
+        actual = bundle.compute_weights(RuntimeMarketDataBundle(_ref_arrays(prices)))
     finally:
         sys.path.remove(import_path)
         _remove_imported_package(package_name)
         importlib.invalidate_caches()
 
-    # The bundle crosses the boundary keyed by FIGI; the provider ticker stays
+    # The bundle crosses the boundary keyed by InstrumentRef; the provider ticker stays
     # RD-internal and never appears in the contract or its weight frame.
-    assert bundle.contract.figis == _FIGIS
-    assert not set(_SYMBOLS) & set(bundle.contract.figis)
-    assert tuple(actual.columns) == _FIGIS
+    assert bundle.contract.refs == _REFS
+    assert not set(_SYMBOLS) & set(bundle.contract.refs)
+    assert tuple(actual.columns) == _REFS
     assert bundle.contract.required_arrays == ("Close",)
     assert bundle.manifest.run_id == _RUN_ID
     assert bundle.manifest.role == "best"
     assert bundle.manifest.candidate_key == _CANDIDATE_KEY
     # The resolved FIGI set is recorded in the manifest provenance.
-    assert bundle.manifest.figis == _FIGIS
+    assert bundle.manifest.refs == _REFS
     pd.testing.assert_frame_equal(actual, expected)
 
-    with pytest.raises(ValueError, match="figi"):
+    with pytest.raises(ValueError, match="refs"):
         bundle.compute_weights(
             RuntimeMarketDataBundle(
-                {"Close": prices.array("Close").rename(columns=_FIGI_BY_SYMBOL | {"SPY": "BAD"})}
+                {"Close": prices.array("Close").rename(columns=_REF_BY_SYMBOL | {"SPY": ListedRef("BAD")})}
             )
         )
+
+
+def test_exported_bundle_can_carry_declared_future_ref(tmp_path, monkeypatch) -> None:
+    _install_fixture_components(tmp_path)
+    future_symbol = _SYMBOLS[0]
+    symbol_overrides = {
+        future_symbol: {"root": "ES", "dataset": "cme", "roll_rule": "calendar", "adjustment": "unadjusted"}
+    }
+    config_path = _write_locked_config(tmp_path, symbol_overrides=symbol_overrides)
+    monkeypatch.chdir(tmp_path)
+    _seed_candidate_store(config_path)
+
+    payload = _export_bundle(config_path, out_dir="dist")
+    wheel_path = Path(payload["wheel"])
+    package_name = _package_name_from_wheel(wheel_path)
+    import_path = str(wheel_path.resolve())
+    sys.path.insert(0, import_path)
+    importlib.invalidate_caches()
+    try:
+        module = importlib.import_module(package_name)
+        bundle = module.get_bundle()
+    finally:
+        sys.path.remove(import_path)
+        _remove_imported_package(package_name)
+        importlib.invalidate_caches()
+
+    assert bundle.contract.refs[0] == FuturesRef(
+        root="ES", dataset="cme", roll_rule="calendar", adjustment="unadjusted"
+    )
+    assert bundle.contract.refs[1:] == _REFS[1:]
 
 
 def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
@@ -159,7 +191,7 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
     pd.testing.assert_series_equal(
         base_prices.array("Close")["SPY"], native_prices.array("Close")["SPY"]
     )
-    expected = _as_figi_weights(_rd_locked_weights(config_path, base_prices))
+    expected = _as_ref_weights(_rd_locked_weights(config_path, base_prices))
 
     package_name = _package_name_from_wheel(wheel_path)
     import_path = str(wheel_path.resolve())
@@ -169,7 +201,7 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
         module = importlib.import_module(package_name)
         bundle = module.get_bundle()
         actual = bundle.compute_weights(
-            RuntimeMarketDataBundle(_figi_arrays(native_prices)), fx_series=fx_series
+            RuntimeMarketDataBundle(_ref_arrays(native_prices)), fx_series=fx_series
         )
     finally:
         sys.path.remove(import_path)
@@ -184,7 +216,7 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
     pd.testing.assert_frame_equal(actual, expected)
 
     with pytest.raises(ValueError, match=r"missing=\['USD'\]"):
-        bundle.compute_weights(RuntimeMarketDataBundle(_figi_arrays(native_prices)), fx_series={})
+        bundle.compute_weights(RuntimeMarketDataBundle(_ref_arrays(native_prices)), fx_series={})
 
 
 def test_multiple_exported_bundles_are_discovered_by_entry_points(tmp_path, monkeypatch) -> None:
@@ -281,8 +313,8 @@ def test_compute_weights_raises_when_window_shorter_than_lookback_bars(
         # lookback_bars should be at least 200 (max of momentum params h4)
         assert bundle.contract.lookback_bars >= 200
 
-        # Supply fewer bars than lookback_bars (FIGI-keyed, as the boundary requires)
-        close = _market_data().array("Close").rename(columns=_FIGI_BY_SYMBOL)
+        # Supply fewer bars than lookback_bars (InstrumentRef-keyed, as the boundary requires)
+        close = _market_data().array("Close").rename(columns=_REF_BY_SYMBOL)
         with pytest.raises(ValueError, match=r"lookback"):
             bundle.compute_weights(RuntimeMarketDataBundle({"Close": close.iloc[:50]}))
     finally:
@@ -311,7 +343,7 @@ def test_compute_weights_raises_when_latest_weight_row_is_non_finite(
         lookback = bundle.contract.lookback_bars
 
         # Supply exactly lookback_bars — latest row is NaN due to warmup
-        close = _market_data().array("Close").rename(columns=_FIGI_BY_SYMBOL)
+        close = _market_data().array("Close").rename(columns=_REF_BY_SYMBOL)
         with pytest.raises(ValueError, match=r"NaN|warmup"):
             bundle.compute_weights(RuntimeMarketDataBundle({"Close": close.iloc[:lookback]}))
     finally:
@@ -425,10 +457,11 @@ def _assert_wheel_metadata(wheel_path: Path) -> None:
     assert "Requires-Dist: aegis-runtime" in metadata
     assert manifest["manifest"]["run_id"] == _RUN_ID
     assert manifest["manifest"]["component_source_hashes"]
-    # FIGI provenance is baked, and the DataContract (the cross-boundary data
-    # contract) is keyed by FIGI with no provider ticker — the ticker is RD-internal.
-    assert manifest["manifest"]["figis"] == list(_FIGIS)
-    assert manifest["contract"]["figis"] == list(_FIGIS)
+    # FIGI provenance is baked inside ListedRef, and the DataContract (the cross-boundary data
+    # contract) is keyed by InstrumentRef with no provider ticker — the ticker is RD-internal.
+    expected_refs = [{"figi": ref.figi} for ref in _REFS]
+    assert manifest["manifest"]["refs"] == expected_refs
+    assert manifest["contract"]["refs"] == expected_refs
     contract_and_provenance = json.dumps([manifest["contract"], manifest["manifest"]])
     assert not any(symbol in contract_and_provenance for symbol in _SYMBOLS)
 
@@ -578,9 +611,11 @@ def _write_locked_config(
     run_id: str = _RUN_ID,
     currency_by_symbol: dict[str, str] | None = None,
     include_lock: bool = True,
+    symbol_overrides: dict[str, dict[str, str]] | None = None,
 ) -> Path:
     path = tmp_path / path_name
     currency_by_symbol = currency_by_symbol or dict.fromkeys(_SYMBOLS, "EUR")
+    symbol_overrides = symbol_overrides or {}
     config: dict[str, object] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "locked_bundle",
@@ -589,7 +624,8 @@ def _write_locked_config(
         "data": {
             "source": "synthetic",
             "symbols": [
-                {"ticker": symbol, "ccy": currency_by_symbol[symbol]} for symbol in _SYMBOLS
+                {"ticker": symbol, "ccy": currency_by_symbol[symbol]} | symbol_overrides.get(symbol, {})
+                for symbol in _SYMBOLS
             ],
             "rows": 320,
             "seed": 7,

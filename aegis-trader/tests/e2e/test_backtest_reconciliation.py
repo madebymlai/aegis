@@ -20,6 +20,7 @@ from nautilus_trader.model.objects import Currency, Money
 from conftest import eur_equity
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -43,7 +44,7 @@ class _SyntheticBundle(ExecutionBundle):
     def __init__(self, weight: float = 0.5) -> None:
         self._weight = weight
         contract = DataContract(
-            figis=(_SYNTH_FIGI,),
+            refs=(ListedRef(_SYNTH_FIGI),),
             required_arrays=("Close",),
             base_currency="EUR",
             required_fx_currencies=(),
@@ -55,7 +56,7 @@ class _SyntheticBundle(ExecutionBundle):
             role="synth",
             candidate_key="synth-key",
             component_source_hashes={},
-            figis=(_SYNTH_FIGI,),
+            refs=(ListedRef(_SYNTH_FIGI),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(
@@ -166,7 +167,7 @@ def _setup_engine(trader_id: str, book: BookConfig, bundle: _SyntheticBundle) ->
     strategy.register_sleeve(book.sleeves[0].name, bundle)
     # Inject a stub bimap so the strategy skips HTTP OpenFIGI resolution
     instr_id = InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")
-    strategy._figi_bimap = {_SYNTH_FIGI: instr_id}
+    strategy._figi_bimap = {ListedRef(_SYNTH_FIGI): instr_id}
     engine.add_strategy(strategy)
     return engine, strategy
 

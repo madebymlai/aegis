@@ -1,8 +1,7 @@
 """Pure domain value types for Aegis Trader — no Nautilus, no I/O.
 
-All identifiers are canonical (FIGI from the DataContract, SleeveName from the
-Book Config) so the domain core never depends on venue-specific instrument
-resolution.
+All instrument identifiers are canonical InstrumentRefs from the DataContract,
+so the domain core never depends on venue-specific instrument resolution.
 """
 
 from __future__ import annotations
@@ -10,16 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-
-@dataclass(frozen=True)
-class Figi:
-    """A Financial Instrument Global Identifier (FIGI) — 12-char alphanumeric."""
-
-    value: str
-
-    def __post_init__(self) -> None:
-        if not self.value or not isinstance(self.value, str):
-            raise ValueError(f"FIGI must be a non-empty string; got {self.value!r}")
+from aegis_runtime import InstrumentRef
 
 
 @dataclass(frozen=True)
@@ -38,16 +28,32 @@ class OrderSide(str, Enum):
     SELL = "SELL"
 
 
+class OrderSource(str, Enum):
+    ALPHA = "ALPHA"
+    ROLL = "ROLL"
+
+
+@dataclass(frozen=True)
+class ResolvedContractId:
+    """Venue-native contract id as a domain string, not a Nautilus type."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str) or not self.value:
+            raise ValueError(f"ResolvedContractId must be a non-empty string; got {self.value!r}")
+
+
 @dataclass(frozen=True)
 class WeightDelta:
-    """A signed change in target weight for one instrument (fraction of NAV).
+    """A signed change in target weight for one InstrumentRef (fraction of NAV).
 
     The pure rebalancer emits these — netting, banding, and cap-gating all live
     in dimensionless weight space.  A separate sizing step (``sizing.size_deltas``)
     converts a WeightDelta into an :class:`OrderIntent` with a native share count.
     """
 
-    figi: Figi
+    ref: InstrumentRef
     delta: float  # signed weight to trade; positive = buy, negative = sell
 
     @property
@@ -59,10 +65,12 @@ class WeightDelta:
 class OrderIntent:
     """A provider-agnostic, *sized* order request from the rebalance pipeline.
 
-    Carries only canonical identifiers; the execution port resolves the FIGI to
-    a venue-specific instrument before submitting.
+    Carries only canonical identifiers; the execution port resolves the
+    InstrumentRef to a venue-specific instrument before submitting.
     """
 
-    figi: Figi
+    ref: InstrumentRef
     side: OrderSide
     quantity: float  # native share count (sized via NAV / FX / price)
+    source: OrderSource = OrderSource.ALPHA
+    resolved_contract_id: ResolvedContractId | None = None

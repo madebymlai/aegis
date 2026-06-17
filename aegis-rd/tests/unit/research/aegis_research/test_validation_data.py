@@ -118,6 +118,75 @@ def test_resolve_accepts_minimal_data(tmp_path: Path) -> None:
     assert resolved.config.data.arrays == ["OHLCV"]
 
 
+def test_resolve_accepts_declared_future_with_defaults(tmp_path: Path) -> None:
+    resolved = _resolve(
+        {
+            "source": "synthetic",
+            "arrays": ["OHLCV"],
+            "symbols": [{"ticker": "ES=F", "ccy": "USD", "root": "ES", "dataset": "cme"}],
+            "rows": 120,
+        },
+        tmp_path=tmp_path,
+    )
+
+    symbol = resolved.config.data.symbols[0]
+    assert symbol.root == "ES"
+    assert symbol.dataset == "cme"
+    assert symbol.roll_rule == "calendar"
+    assert symbol.adjustment == "unadjusted"
+
+
+def test_resolve_rejects_future_mixed_with_listed_ref_hints(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {
+                "source": "synthetic",
+                "arrays": ["OHLCV"],
+                "symbols": [
+                    {"ticker": "ES=F", "ccy": "USD", "root": "ES", "dataset": "cme", "figi": "BBG000000001"}
+                ],
+                "rows": 120,
+            },
+            tmp_path=tmp_path,
+        )
+
+    assert any("mutually exclusive" in issue.message for issue in e.value.issues)
+
+
+def test_resolve_rejects_incomplete_future_identity(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {
+                "source": "synthetic",
+                "arrays": ["OHLCV"],
+                "symbols": [{"ticker": "ES=F", "ccy": "USD", "root": "ES"}],
+                "rows": 120,
+            },
+            tmp_path=tmp_path,
+        )
+
+    assert any("dataset" in issue.message for issue in e.value.issues)
+
+
+def test_resolve_rejects_future_roll_rule_unsupported_by_source(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {
+                "source": "yf",
+                "arrays": ["OHLCV"],
+                "symbols": [
+                    {"ticker": "ES=F", "ccy": "USD", "root": "ES", "dataset": "cme", "roll_rule": "volume"}
+                ],
+                "start": "2020-01-01",
+                "end": "2020-02-01",
+                "timeframe": "1D",
+            },
+            tmp_path=tmp_path,
+        )
+
+    assert any("roll_rule" in issue.message and "yf" in issue.message for issue in e.value.issues)
+
+
 def test_resolve_rejects_missing_arrays(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(

@@ -55,10 +55,13 @@ only; it is the live counterpart of Aegis RD's **Run Config**.
 _Avoid_: book manifest, manifest, portfolio config, roster
 
 **Security Master**:
-The shared `aegis-runtime` component that resolves an instrument's canonical **FIGI** to a
+The shared `aegis-runtime` component that resolves an **InstrumentRef** *as-of* a date to a
 venue-native contract (a Nautilus `InstrumentId` / broker contract) and back, fail-closed on
-ambiguity. It is the single authority for cross-context instrument identity, so research,
-export, and live execution all agree on which instrument a target weight refers to.
+ambiguity. A `ListedRef` resolves date-invariantly (via its **FIGI**); a `FuturesRef` applies
+its roll rule to the date to pick the live dated contract — so resolution can change over time,
+and a **Roll** is detected when today's resolved contract differs from the one held. It is
+the single authority for cross-context instrument identity, so research, export, and live
+execution all agree on which instrument a target weight refers to.
 _Avoid_: symbol map, instrument map, ticker table, security database
 
 Add domain terms here as decisions crystallise — one or two sentences each,
