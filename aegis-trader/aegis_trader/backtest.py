@@ -19,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency, Money
 
 from aegis_runtime import ExecutionBundle
@@ -31,11 +31,17 @@ from aegis_trader.config import load_book_config
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.data import (
     InstrumentSpec,
+    bar_type,
     build_currency_pair,
     build_equity,
     resolve_book_timeframe,
     wrangle_bars,
     wrangle_fx_quotes,
+)
+from aegis_trader.portfolio.performance import (
+    BookEquityRecorder,
+    BookEquityRecorderConfig,
+    return_stats,
 )
 from aegis_trader.trader.costs import build_simulated_cost_models
 from aegis_trader.trader.financing import build_financing_modules
@@ -126,7 +132,7 @@ def run_book_backtest(
         allow_cash_borrowing=len(account_currencies) > 1,
     )
 
-    bimap: dict[str, object] = {}
+    bimap: dict[str, InstrumentId] = {}
     fx_currencies: set[str] = set()
     bar_index: set[pd.Timestamp] = set()
     for sleeve_name, bundle in sleeves:
@@ -184,6 +190,21 @@ def run_book_backtest(
         engine.add_instrument(pair)
         engine.add_data(wrangle_fx_quotes(pair, aligned))
 
+    # Reporting-only: sample base-currency NAV per bar so headline return stats
+    # (Sharpe, vol, PnL%) can be computed over a single-currency equity curve —
+    # Nautilus' own analyzer cannot, for a base_currency=None account (aegis-rd-syp).
+    engine.add_actor(
+        BookEquityRecorder(
+            BookEquityRecorderConfig(
+                base_currency=book.base_currency,
+                bar_types=tuple(
+                    str(bar_type(instr_id.value, book_timeframe))
+                    for instr_id in bimap.values()
+                ),
+            )
+        )
+    )
+
     strategy = RebalanceStrategy(RebalanceStrategyConfig(book=book, fill_time_in_force=None))
     for name, bundle in sleeves:
         strategy.register_sleeve(name, bundle)
@@ -192,6 +213,21 @@ def run_book_backtest(
 
     engine.run()
     return engine
+
+
+def book_return_stats(engine: BacktestEngine) -> dict[str, float]:
+    """Base-currency return statistics for a finished book backtest.
+
+    Reads the :class:`BookEquityRecorder` that :func:`run_book_backtest` installs
+    and runs the standard return stats over its base-currency NAV equity curve —
+    the multi-currency-account remedy Nautilus' native ``stats_returns`` omits
+    (aegis-rd-syp).  Returns an empty mapping when no recorder is present (nothing
+    to report), so reporting never fails closed on a stats-only concern.
+    """
+    for actor in engine.trader.actors():
+        if isinstance(actor, BookEquityRecorder):
+            return return_stats(actor.equity_curve)
+    return {}
 
 
 def _requires_margin_account(sleeves: list[tuple[SleeveName, ExecutionBundle]]) -> bool:

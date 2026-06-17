@@ -185,6 +185,18 @@ def _synthetic_ohlcv() -> pd.DataFrame:
     )
 
 
+def _flat_ohlcv() -> pd.DataFrame:
+    """Constant-price daily bars: a held position does not drift, so a fixed-weight
+    sleeve trades once and then sits — isolating carry (interest/borrow) from any
+    drift-driven rebalance now that NAV reflects foreign-currency equity correctly."""
+    index = pd.date_range("2020-01-01", periods=6, freq="D")
+    flat = [100.0] * 6
+    return pd.DataFrame(
+        {"open": flat, "high": flat, "low": flat, "close": flat, "volume": [1000] * 6},
+        index=index,
+    )
+
+
 def _synthetic_gapped_ohlcv() -> pd.DataFrame:
     """Daily bars that skip a weekend: Fri 2020-01-03 is followed by Mon 2020-01-06
     with no Sat/Sun bar.  The Fri→Mon step is a 3-calendar-day gap with no bar in
@@ -333,8 +345,11 @@ def test_foreign_sleeve_buy_creates_per_currency_margin_loan(tmp_path):
 
 
 def test_short_position_accrues_borrow_as_cost_not_credit(tmp_path):
-    """A held short pays borrow; carry makes cash lower than sale proceeds less commission."""
-    ohlcv = _synthetic_ohlcv()
+    """A held short pays borrow; carry makes cash lower than sale proceeds less commission.
+
+    Flat prices hold the short static (no drift rebalance) so the cash delta is
+    pure borrow carry."""
+    ohlcv = _flat_ohlcv()
     book_path = tmp_path / "book.toml"
     book_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
 
@@ -367,6 +382,45 @@ def test_short_position_accrues_borrow_as_cost_not_credit(tmp_path):
     cash_before_borrow = sale_proceeds - commission
 
     assert engine.cache.accounts()[0].balance_total(GBP).as_double() < cash_before_borrow
+    engine.dispose()
+
+
+def test_multicurrency_book_backtest_reports_base_currency_return(tmp_path):
+    """A multi-currency book (EUR base, GBP sleeve) reports a base-currency total
+    return equal to its actual EUR NAV change — computed from the NAV curve, since
+    Nautilus' own analyzer returns nan for a base_currency=None account.  Ties the
+    reported number to the real book NAV, not just 'is finite' (aegis-rd-syp)."""
+    from nautilus_trader.model.currencies import EUR
+
+    from aegis_trader.backtest import book_return_stats
+    from aegis_trader.portfolio import NautilusBookState
+
+    ohlcv = _synthetic_ohlcv()
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        starting_cash=1_000_000.0,
+        fetch_ohlcv=lambda request: ohlcv,
+        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        registry=StubBundleRegistry(
+            {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
+        ),
+    )
+    # The book's true end-of-run EUR NAV (cash + foreign equity, base-converted).
+    final_nav = NautilusBookState(
+        portfolio=engine.portfolio, cache=engine.cache, base_currency=EUR, instr_to_figi={}
+    ).nav()
+    expected_return_pct = (final_nav / 1_000_000.0 - 1.0) * 100.0
+
+    stats = book_return_stats(engine)
+    # Within one day's financing accrual (~8e-3 pp): the curve samples NAV on_bar,
+    # just before that bar's interest settles, so the final level leads the settled
+    # NAV by the last accrual (the day-over-day returns are unaffected).
+    assert stats["Total Return (%)"] == pytest.approx(expected_return_pct, abs=0.05)
+    assert stats["Total Return (%)"] > 0.0  # a real, base-denominated gain (not nan)
     engine.dispose()
 
 
