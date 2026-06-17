@@ -60,8 +60,12 @@ class _FakePortfolio:
         self._exposures = exposures or {}
 
     def equity(self, venue=None, account_id=None):
-        money = self._equities.get(account_id)
-        return {money.currency: money} if money is not None else {}
+        value = self._equities.get(account_id)
+        if value is None:
+            return {}
+        if isinstance(value, dict):  # a multi-currency account: {Currency: Money}
+            return value
+        return {value.currency: value}
 
     def net_exposure(self, instrument_id, price=None, account_id=None, target_currency=None):
         return self._exposures.get(instrument_id)
@@ -143,6 +147,24 @@ def test_nav_aggregates_base_currency_equity_across_accounts():
         ),
     )
     assert bs.nav() == 100_000.0
+
+
+def test_nav_converts_foreign_currency_equity_to_base_via_mark_xrate():
+    """A multi-currency account's foreign-currency equity is converted to base at
+    the cache mark xrate, not dropped — the base_currency=None account holds equity
+    in several currencies and NAV is their base-converted sum (aegis-rd-syp)."""
+    bs = _book_state(
+        portfolio=_FakePortfolio(equities={
+            _ACCT_XLON: {EUR: Money(1_000_000.0, EUR), GBP: Money(10_000.0, GBP)},
+        }),
+        cache=_FakeCache(
+            instruments=["x"],
+            positions=[],
+            accounts=[_FakeAccount(_ACCT_XLON, cash=Money(0.0, EUR))],
+            mark_xrates={(GBP, EUR): 1.25},
+        ),
+    )
+    assert bs.nav() == 1_012_500.0  # 1,000,000 EUR + 10,000 GBP × 1.25
 
 
 def test_cash_aggregates_base_currency_balance_across_accounts():

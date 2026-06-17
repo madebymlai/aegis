@@ -83,9 +83,13 @@ class NautilusBookState:
         total = 0.0
         for account in self._cache.accounts():
             equity = self._portfolio.equity(account_id=account.id)
-            money = equity.get(self._base) if equity else None
-            if money is not None:
-                total += float(money.as_double())
+            # A base_currency=None account reports equity per currency; convert
+            # every leg to base via the mark xrate (same-currency yields 1.0) so
+            # foreign equity is counted, not dropped.
+            for money in (equity or {}).values():
+                in_base = self._in_base(money)
+                if in_base is not None:
+                    total += in_base
         return total
 
     def cash(self) -> float:
