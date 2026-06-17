@@ -1,0 +1,113 @@
+name: atalanta_trend_full_ls
+schema_version: 8
+output_dir: runs/atalanta/trend_full_ls
+
+# FULLY-SHORTABLE full L/S (aegis-rd-167): the live champion mechanism
+# (atalanta.trendStraddleBuffered — single trend_score lb252 + realized_vol vw63 + turnover
+# buffer) on a full-2018-window orthogonal-non-equity London (.L) universe in which EVERY name
+# is IBKR-borrowable for retail, so the straddle's short leg is fully executable WITHOUT a short
+# mask. Style follows trend_ls_champion: bare indicators + bare strategy id -> the entry_band x
+# buffer_band grid is swept and ranked by UPI; pin the winner with a lock.
+#
+# 19 INDEPENDENT AXES, full 2018-01-01 -> 2025 window (no data gaps; the no-null-price portfolio
+# gate requires every name share one complete window — verified by smoke-test 2026-06-17).
+# 8 commodity + 11 rates/inflation/credit.
+#
+# GEMINI-REPORT TRIAGE (2026-06-17), reconciled against the verified borrow + yfinance data:
+#   APPLIED:  SGLO->IBCI (redundant global-govt blend -> EUR real yields; completes US/UK/EUR
+#             inflation triad with ITPS+INXG). Drop CNYB -> add IGLT: Gemini was right that CNYB's
+#             2019-07 listing truncates the walk-forward (our smoke-test confirmed: ~5.4y gave only
+#             4 noisy splits), but its CNYB->LQDE swap adds a REDUNDANT credit line. IGLT is the
+#             better swap — UK NOMINAL gilts complete the G3 sovereign matrix (US IDTL/IBTA +
+#             EUR SEGA/IEGE + UK IGLT), deep borrow (438k), full history. Dropping CNYB restores
+#             the full 2018 window.
+#   REJECTED: LEAD (Gemini's carbon-slot fill) — no yfinance line (LEAD.L 404), un-backtestable;
+#             and it's ~0.6 corr with copper anyway. Rhodium XRH0 (Gemini probe) — NO IBKR borrow.
+#             CO2 carbon — lists 2021-10, not backtestable on 2018 (see carbon variant note).
+#   TO-TEST:  Gemini asserts full-short BEATS shortmask on UPI. This CONTRADICTS prior evidence on
+#             this universe (shorting was NET-NEGATIVE: held-out Sharpe 0.62 L/S -> 0.89 long-only,
+#             trend_ucits header) — treat as a HYPOTHESIS, arbitrate via trend_full_ls vs
+#             trend_subst_ls on held-out UPI; do NOT assume.
+#   DEFERRED: Gemini's dynamic thin-borrow short-cap (cap_i = theta*S_i*P_i/E_t + redistribution)
+#             + per-name borrow-fee accrual. Real gap: this backtest assumes UNCONSTRAINED short
+#             size on the thin lines (SPLT 6.8k, CORN 8.1k sh) — overstates short capacity there.
+#             Needs a strategy-component change (filed as follow-up), not a config edit.
+#
+# CURATION: drops SGLO (redundant) + the un-borrowable original axes; adds CORN (only borrowable
+# ag), AIGE (broad-energy; restores natgas/distillate), SPLT platinum (PGM; palladium dead),
+# IBCI (EUR real yields), IEML (EM FX + local rates), IGLT (UK nominal gilts). UNFILLABLE (no
+# borrowable UCITS, or not backtestable on 2018): wheat, cocoa, long-USD FX, carbon(<2021), China
+# onshore (CNYB, 2019-07). A round-20 needs only a REDUNDANT fill (LQDE credit / CRUD~brent), which
+# the "one independent axis each" principle rejects -> stop at 19. If full original curation matters
+# more than full short-execution, the SHORTMASK book (trend_subst_ls) keeps the original 20 outright.
+# Carbon/China sub-studies: clone with start 2021-10 +CO2, or 2019-07 +CNYB (accept the short window).
+#
+# Borrow VERIFIED 2026-06-17 via ibapi vs the paper Gateway (:4002), tick 236 (ShortableShares):
+#   IGLT UK gilts        GBP  437,995 sh   deep   full history  (replaces CNYB)
+#   IEML EM local govt   USD  323,588 sh   deep   full history
+#   IBCI EUR inflation   GBP  306,692 sh   deep   full history (2005)
+#   AIGE WT broad energy USD  125,539 sh   deep   full history
+#   CORN WT corn         USD    8,056 sh   THIN   full history; only borrowable ag line
+#   SPLT platinum        GBP    6,819 sh   THIN   full history; USD line IPLT dead
+data:
+  source: yf
+  arrays:
+  - OHLCV
+  # ccy = each LSE line's native yfinance quote currency; converted to base_currency before
+  # indicators/portfolio. The added lines use the exact currency line IBKR shows borrow on.
+  symbols:
+  # --- 13 retained IBKR-borrowable axes (prior champion's shortable core, less SGLO) ---
+  - {ticker: IDTL.L, ccy: USD, mic: XLON}
+  - {ticker: IBTA.L, ccy: USD, mic: XLON}
+  - {ticker: ITPS.L, ccy: GBP, mic: XLON}
+  - {ticker: SEGA.L, ccy: GBP, mic: XLON}
+  - {ticker: IEGE.L, ccy: EUR, mic: XLON, isin: IE00B3FH7618}
+  - {ticker: INXG.L, ccy: GBP, mic: XLON}
+  - {ticker: EMCP.L, ccy: GBP, mic: XLON}
+  - {ticker: HYLD.L, ccy: USD, mic: XLON}
+  - {ticker: IGLN.L, ccy: USD, mic: XLON, figi: BBG001M8D7W0}
+  - {ticker: ISLN.L, ccy: USD, mic: XLON, figi: BBG001M8F4G3}
+  - {ticker: COPA.L, ccy: USD, mic: XLON, figi: BBG000BL3W79}
+  - {ticker: BRNT.L, ccy: USD, mic: XLON}
+  - {ticker: CMOD.L, ccy: USD, mic: XLON}
+  # --- 6 curated borrow-confirmed additions (3 commodity + 3 bond) ---
+  - {ticker: AIGE.L, ccy: USD, mic: XLON}                      # WisdomTree Broad Energy
+  - {ticker: CORN.L, ccy: USD, mic: XLON}                      # WisdomTree Corn (grains/ags axis)
+  - {ticker: SPLT.L, ccy: GBP, mic: XLON}                      # iShares Physical Platinum ETC
+  - {ticker: IEML.L, ccy: USD, mic: XLON, isin: IE00B5M4WH52}  # iShares JPM EM Local Govt Bond
+  - {ticker: IBCI.L, ccy: GBP, mic: XLON, isin: IE00B0M62X26}  # iShares EUR Inflation-Linked Govt Bond
+  - {ticker: IGLT.L, ccy: GBP, mic: XLON, isin: IE00B1TXLS18}  # iShares Core UK Gilts (UK nominal; replaces CNYB)
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  # single venue (LSE) -> shared calendar; all 19 lines have full history, so drop is a no-op
+  # safety net and the no-null-price portfolio gate passes cleanly.
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+- id: atalanta.realized_vol
+
+strategy:
+  id: atalanta.trendStraddleBuffered
+
+portfolio:
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003  # 0.03% IBKR auto-conversion, charged per trade on non-EUR legs
+
+ranking:
+  metric: ulcer_performance_index
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

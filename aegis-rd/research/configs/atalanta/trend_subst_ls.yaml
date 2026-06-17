@@ -1,0 +1,81 @@
+name: atalanta_trend_subst_ls
+schema_version: 8
+output_dir: runs/atalanta/trend_subst_ls
+lock: 20260616T231511405368Z_atalanta_trend_subst_ls
+
+# SUBSTITUTED full L/S (aegis-rd-167): restore the high-value un-borrowable axes with
+# borrowable-UCITS substitutes so the full-20-axis L/S is actually tradable. Swaps (2026-06-17
+# IBKR probe):
+#   AIGC -> CMOD.L (broad commodity, 157k borrow), IGLO -> SGLO.L (global govt, 239k),
+#   SSLV -> ISLN.L (silver, 29k),                  GILI -> INXG.L (UK linkers, 8.7k).
+# The other 6 un-borrowable axes (AIGA ags, WEAT wheat, HEAT heating, COCO cocoa, NGAS natgas,
+# GBUS dollar) have NO borrowable UCITS and stay long-only (shortmask borrowable policy). So this
+# book shorts 14 axes (10 original borrowable + 4 substitutes), long-only the other 6 -- the
+# tradable approximation of the full-20 L/S, vs borrowable-L/S (10-short, Sharpe 0.82 book) and
+# long-only (0.68). FORGO gross; direction both.
+data:
+  source: yf
+  arrays:
+  - OHLCV
+  symbols:
+  - {ticker: IDTL.L, ccy: USD, mic: XLON}
+  - {ticker: ITPS.L, ccy: GBP, mic: XLON}
+  - {ticker: SEGA.L, ccy: GBP, mic: XLON}
+  - {ticker: IGLN.L, ccy: USD, mic: XLON, figi: BBG001M8D7W0}
+  - {ticker: BRNT.L, ccy: USD, mic: XLON}
+  - {ticker: COPA.L, ccy: USD, mic: XLON, figi: BBG000BL3W79}
+  - {ticker: AIGA.L, ccy: USD, mic: XLON, figi: BBG000BLFVZ7}
+  - {ticker: GBUS.L, ccy: GBp, mic: XLON, figi: BBG000R20GS9}
+  - {ticker: EMCP.L, ccy: GBP, mic: XLON}
+  - {ticker: HYLD.L, ccy: USD, mic: XLON}
+  - {ticker: IEGE.L, ccy: EUR, mic: XLON, isin: IE00B3FH7618}
+  - {ticker: WEAT.L, ccy: USD, mic: XLON, figi: BBG000BLCP10}
+  - {ticker: HEAT.L, ccy: USD, mic: XLON, figi: BBG000BLBMN4}
+  - {ticker: COCO.L, ccy: USD, mic: XLON, figi: BBG000FPCLF1}
+  - {ticker: NGAS.L, ccy: USD, mic: XLON, figi: BBG000BLC3X4}
+  - {ticker: IBTA.L, ccy: USD, mic: XLON}
+  - {ticker: CMOD.L, ccy: USD, mic: XLON}
+  - {ticker: SGLO.L, ccy: GBP, mic: XLON}
+  - {ticker: ISLN.L, ccy: USD, mic: XLON, figi: BBG001M8F4G3}  # iShares Physical Silver ETC (London/LN)
+  - {ticker: INXG.L, ccy: GBP, mic: XLON}
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+  params:
+    lookback: 252
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: atalanta.trendStraddleBufferedShortMask
+  params:
+    entry_band: 0.0
+    buffer_band: 0.20
+    short_policy: borrowable
+    gross_fill: forgo
+
+portfolio:
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+ranking:
+  metric: ulcer_performance_index
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

@@ -40,10 +40,15 @@ COMPONENT_MANIFEST = {
 _MIN_VOL = 0.01
 
 # Names IBKR returned borrow inventory for on the 2026-06-16 paper-account probe
-# (DUQ455398, delayed feed). The other 10 trend names (AIGC AIGA SSLV WEAT HEAT COCO
-# NGAS IGLO GILI GBUS) returned no borrow across all listings.
+# (DUQ455398, delayed feed). The other 10 original trend names (AIGC AIGA SSLV WEAT HEAT
+# COCO NGAS IGLO GILI GBUS) returned no borrow across all listings.
+# Plus the 4 borrowable-UCITS SUBSTITUTES (2026-06-17 probe) that restore the high-value
+# un-borrowable axes with shortable lines: CMOD (broad commodity <- AIGC), SGLO (global govt
+# <- IGLO), ISLN (silver <- SSLV), INXG (UK linkers <- GILI). The remaining 6 axes (ags,
+# wheat, heating, cocoa, natgas, dollar) have no borrowable UCITS and stay long-only.
 _BORROWABLE = frozenset(
-    {"IDTL", "IBTA", "IGLN", "SEGA", "EMCP", "HYLD", "ITPS", "COPA", "BRNT", "IEGE"}
+    {"IDTL", "IBTA", "IGLN", "SEGA", "EMCP", "HYLD", "ITPS", "COPA", "BRNT", "IEGE",
+     "CMOD", "SGLO", "ISLN", "INXG"}
 )
 
 
