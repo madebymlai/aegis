@@ -10,7 +10,7 @@ boot bimap.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Protocol
 
 from aegis_runtime import InstrumentRef, ListedRef
 from aegis_runtime.currency import major_currency
@@ -27,8 +27,29 @@ IB_LISTED_SEC_ID_TYPE = "FIGI"
 # override pins those known symbols to the listing MIC returned by IB.
 IB_LISTED_MIC_OVERRIDES: dict[str, str] = {"IGLN": "XLON"}
 
+IBContractConfig = dict[str, str]
 
-def listed_ref_ib_contracts(refs: Iterable[InstrumentRef]) -> list[dict[str, str]]:
+
+class LoadedInstrument(Protocol):
+    """Cache instrument fields needed to recover a FIGI-qualified IB contract."""
+
+    id: InstrumentId
+    info: object
+
+
+class _RefContract(Protocol):
+    refs: tuple[InstrumentRef, ...]
+
+
+class BundleCurrencyPlan(Protocol):
+    """ExecutionBundle surface that carries the locked quote-currency plan."""
+
+    contract: _RefContract
+    symbols: tuple[str, ...]
+    currency_by_symbol: Mapping[str, str]
+
+
+def listed_ref_ib_contracts(refs: Iterable[InstrumentRef]) -> list[IBContractConfig]:
     """IBContract-shaped dictionaries for loading ListedRefs by FIGI."""
     listed_refs = sorted({ref for ref in refs if isinstance(ref, ListedRef)})
     return [
@@ -44,7 +65,7 @@ def listed_ref_ib_contracts(refs: Iterable[InstrumentRef]) -> list[dict[str, str
 
 def loaded_listed_ref_bimap(
     refs: Iterable[ListedRef],
-    instruments: Iterable[Any],
+    instruments: Iterable[LoadedInstrument],
 ) -> dict[ListedRef, InstrumentId]:
     """Map requested ListedRefs to the InstrumentIds IB actually loaded.
 
@@ -84,7 +105,7 @@ def loaded_listed_ref_bimap(
     return bimap
 
 
-def declared_ref_currencies(bundles: Iterable[Any]) -> dict[InstrumentRef, str]:
+def declared_ref_currencies(bundles: Iterable[BundleCurrencyPlan]) -> dict[InstrumentRef, str]:
     """Return bundle-declared quote currencies keyed by InstrumentRef.
 
     Runtime contracts carry refs only; the locked execution plan keeps the
@@ -119,11 +140,16 @@ def reconcile_quote_currency(
     factor.  A true currency mismatch fails closed.
     """
     declared = declared_currencies.get(ref)
-    if declared is None or declared == provider_currency:
-        return provider_currency if declared is None else declared
-    if major_currency(declared) == provider_currency:
+    if declared is None:
+        return provider_currency
+    if declared == provider_currency:
         return declared
-    if major_currency(provider_currency) == declared:
+
+    declared_major = major_currency(declared)
+    provider_major = major_currency(provider_currency)
+    if declared_major == provider_currency:
+        return declared
+    if provider_major == declared:
         return provider_currency
     raise FigiResolutionError(
         f"InstrumentRef {ref.value!r} bundle quote currency {declared!r} "
@@ -131,7 +157,7 @@ def reconcile_quote_currency(
     )
 
 
-def _instrument_figi(instrument: Any) -> str | None:
+def _instrument_figi(instrument: LoadedInstrument) -> str | None:
     info = getattr(instrument, "info", None)
     if not isinstance(info, Mapping):
         return None

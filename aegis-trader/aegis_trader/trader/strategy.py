@@ -721,30 +721,28 @@ class RebalanceStrategy(Strategy):
         prices: dict[InstrumentRef, float] = {}
         currencies: set[str] = set()
 
-        # Collect all FIGIs from all sleeves
-        all_figis: set[InstrumentRef] = set()
+        refs: set[InstrumentRef] = set()
         for bundle in self._sleeve_to_bundle.values():
-            all_figis.update(bundle.contract.refs)
+            refs.update(bundle.contract.refs)
         declared_currencies = declared_ref_currencies(self._sleeve_to_bundle.values())
 
-        for figi_str in all_figis:
-            instr_id = self._figi_to_instr_id(figi_str)
+        for ref in refs:
+            instr_id = self._figi_to_instr_id(ref)
             sizing = self._require_market_data().instrument_sizing(instr_id)
             if sizing is None:
                 continue
 
-            figi = figi_str
-            currency = reconcile_quote_currency(figi, sizing.currency, declared_currencies)
-            instrument_metas[figi] = InstrumentSizing(
-                currency=currency,
+            quote_currency = reconcile_quote_currency(ref, sizing.currency, declared_currencies)
+            instrument_metas[ref] = InstrumentSizing(
+                currency=quote_currency,
                 size_increment=sizing.size_increment,
             )
 
             buf = self._bars_buffer.get(instr_id)
             if buf:
-                prices[figi] = float(buf[-1].close.as_double())
+                prices[ref] = float(buf[-1].close.as_double())
 
-            currencies.add(sizing.currency)
+            currencies.add(quote_currency)
 
         fx_rates: dict[str, float] = {}
         for currency in currencies:

@@ -162,6 +162,19 @@ def _data_client_config(
         "market_data_type": market_data_type,
         "use_regular_trading_hours": True,
     }
+    return _with_instrument_provider(
+        cfg,
+        fx_instrument_ids=fx_instrument_ids,
+        listed_refs=listed_refs,
+    )
+
+
+def _with_instrument_provider(
+    cfg: dict[str, Any],
+    *,
+    fx_instrument_ids: Iterable[str],
+    listed_refs: Iterable[InstrumentRef],
+) -> dict[str, Any]:
     provider = _instrument_provider_config(
         fx_instrument_ids=fx_instrument_ids,
         listed_refs=listed_refs,
@@ -233,10 +246,11 @@ def build_paper_exec_client_config(
         "ibg_client_id": ibg_client_id,
         "account_id": account_id,
     }
-    provider = _instrument_provider_config(fx_instrument_ids=(), listed_refs=listed_refs)
-    if provider:
-        cfg["instrument_provider"] = provider
-    return cfg
+    return _with_instrument_provider(
+        cfg,
+        fx_instrument_ids=(),
+        listed_refs=listed_refs,
+    )
 
 
 # ── IBKR config dict builders (live) ─────────────────────────────────────────
@@ -286,10 +300,11 @@ def build_live_exec_client_config(
         "ibg_client_id": ibg_client_id,
         "account_id": account_id,
     }
-    provider = _instrument_provider_config(fx_instrument_ids=(), listed_refs=listed_refs)
-    if provider:
-        cfg["instrument_provider"] = provider
-    return cfg
+    return _with_instrument_provider(
+        cfg,
+        fx_instrument_ids=(),
+        listed_refs=listed_refs,
+    )
 
 
 # ── TradingNodeConfig builders ───────────────────────────────────────────────
