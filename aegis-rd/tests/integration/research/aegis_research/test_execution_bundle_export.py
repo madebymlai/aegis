@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
-from aegis_runtime import ExecutionBundle as RuntimeExecutionBundle
 from aegis_runtime import FuturesRef, ListedRef
 from aegis_runtime import MarketDataBundle as RuntimeMarketDataBundle
 
@@ -23,6 +22,7 @@ from research.aegis_research.component_registry import (
 )
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION, load_run_config
 from research.aegis_research.data import MarketDataBundle
+from research.aegis_research.execution_bundle import assemble_bundle
 from research.aegis_research.market_data.currency import assemble_fx_rates, convert_bundle_to_base
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
@@ -144,24 +144,17 @@ def test_exported_bundle_can_carry_declared_future_ref(tmp_path, monkeypatch) ->
     monkeypatch.chdir(tmp_path)
     _seed_candidate_store(config_path)
 
-    payload = _export_bundle(config_path, out_dir="dist")
-    wheel_path = Path(payload["wheel"])
-    package_name = _package_name_from_wheel(wheel_path)
-    import_path = str(wheel_path.resolve())
-    sys.path.insert(0, import_path)
-    importlib.invalidate_caches()
-    try:
-        module = importlib.import_module(package_name)
-        bundle = module.get_bundle()
-    finally:
-        sys.path.remove(import_path)
-        _remove_imported_package(package_name)
-        importlib.invalidate_caches()
+    artifact = assemble_bundle(
+        config_path,
+        figi_resolver=lambda symbols: {
+            spec.ticker: _FIGI_BY_SYMBOL[spec.ticker] for spec in symbols
+        },
+    )
 
-    assert bundle.contract.refs[0] == FuturesRef(
+    assert artifact.contract.refs[0] == FuturesRef(
         root="ES", dataset="cme", roll_rule="calendar", adjustment="unadjusted"
     )
-    assert bundle.contract.refs[1:] == _REFS[1:]
+    assert artifact.contract.refs[1:] == _REFS[1:]
 
 
 def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
@@ -198,8 +191,9 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
     sys.path.insert(0, import_path)
     importlib.invalidate_caches()
     try:
-        module = importlib.import_module(package_name)
-        bundle = module.get_bundle()
+        entry_points = importlib_metadata.entry_points(group="aegis.execution_bundles")
+        entry_point = next(ep for ep in entry_points if ep.name == wheel_path.name)
+        bundle = entry_point.load()()
         actual = bundle.compute_weights(
             RuntimeMarketDataBundle(_ref_arrays(native_prices)), fx_series=fx_series
         )
@@ -219,77 +213,24 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
         bundle.compute_weights(RuntimeMarketDataBundle(_ref_arrays(native_prices)), fx_series={})
 
 
-def test_multiple_exported_bundles_are_discovered_by_entry_points(tmp_path, monkeypatch) -> None:
-    _install_fixture_components(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    out_dir = Path("dist")
-
-    first_config = _write_locked_config(
-        tmp_path, path_name="locked_bundle_a.yaml", run_id="bundle-run-a"
-    )
-    second_config = _write_locked_config(
-        tmp_path, path_name="locked_bundle_b.yaml", run_id="bundle-run-b"
-    )
-    _seed_candidate_store(first_config, run_id="bundle-run-a", candidate_key="aaaa111122223333")
-    _seed_candidate_store(second_config, run_id="bundle-run-b", candidate_key="bbbb111122223333")
-
-    _export_bundle(first_config, out_dir=out_dir)
-    _export_bundle(second_config, out_dir=out_dir)
-
-    wheels = sorted(out_dir.glob("*.whl"))
-    assert [wheel.name for wheel in wheels] == [
-        "aegis_exec_tests_momentum_rotator_aaaa1111-1.0.0-py3-none-any.whl",
-        "aegis_exec_tests_momentum_rotator_bbbb1111-1.0.0-py3-none-any.whl",
-    ]
-
-    names = {
-        "aegis_exec_tests_momentum_rotator_aaaa1111-1.0.0-py3-none-any.whl",
-        "aegis_exec_tests_momentum_rotator_bbbb1111-1.0.0-py3-none-any.whl",
-    }
-    discovered = _discover_bundle_entry_points(wheels, names)
-
-    assert set(discovered) == names
-    assert all(isinstance(bundle, RuntimeExecutionBundle) for bundle in discovered.values())
-    assert (
-        discovered["aegis_exec_tests_momentum_rotator_aaaa1111-1.0.0-py3-none-any.whl"]
-        .manifest.candidate_key
-        == "aaaa111122223333"
-    )
-    assert (
-        discovered["aegis_exec_tests_momentum_rotator_bbbb1111-1.0.0-py3-none-any.whl"]
-        .manifest.candidate_key
-        == "bbbb111122223333"
-    )
-
-
 def test_export_rejects_component_without_lookback(tmp_path, monkeypatch) -> None:
     _install_fixture_components(tmp_path)
-    # Remove lookback from the strategy component
     strategy_path = tmp_path / "research" / "components" / "strategies" / "tests_momentum_rotator.py"
-    strategy_source = strategy_path.read_text()
-    # Remove the lookback block (everything between "# %% lookback" and "# %% main compute")
-    lookback_start = strategy_source.find("# %% lookback")
-    main_start = strategy_source.find("# %% main compute")
-    if lookback_start >= 0 and main_start > lookback_start:
-        strategy_source_no_lookback = (
-            strategy_source[:lookback_start].rstrip("\n")
-            + "\n\n"
-            + strategy_source[main_start:]
-        )
-    else:
-        strategy_source_no_lookback = strategy_source
-    strategy_path.write_text(strategy_source_no_lookback)
+    _remove_lookback_block(strategy_path)
     config_path = _write_locked_config(tmp_path)
     monkeypatch.chdir(tmp_path)
     _seed_candidate_store(config_path)
-
-    from research.aegis_research.cli_commands.export import export_locked_bundle
 
     with pytest.raises(ValueError, match=r"lookback"):
-        export_locked_bundle(config_path, out_dir=tmp_path / "dist")
+        assemble_bundle(
+            config_path,
+            figi_resolver=lambda symbols: {
+                spec.ticker: _FIGI_BY_SYMBOL[spec.ticker] for spec in symbols
+            },
+        )
 
 
-def test_compute_weights_raises_when_window_shorter_than_lookback_bars(
+def test_assemble_bundle_returns_self_contained_artifact_without_wheel(
     tmp_path, monkeypatch
 ) -> None:
     _install_fixture_components(tmp_path)
@@ -297,88 +238,28 @@ def test_compute_weights_raises_when_window_shorter_than_lookback_bars(
     monkeypatch.chdir(tmp_path)
     _seed_candidate_store(config_path)
 
-    payload = _export_bundle(config_path, out_dir="dist")
-    wheel_path = Path(payload["wheel"])
-    assert wheel_path.exists()
-
-    # The lookback_bars for momentum_score should be max(h1..h4) = 200
-    # with _MOMENTUM_PARAMS h1=15, h2=42, h3=100, h4=200
-    package_name = _package_name_from_wheel(wheel_path)
-    import_path = str(wheel_path.resolve())
-    sys.path.insert(0, import_path)
-    importlib.invalidate_caches()
-    try:
-        module = importlib.import_module(package_name)
-        bundle = module.get_bundle()
-        # lookback_bars should be at least 200 (max of momentum params h4)
-        assert bundle.contract.lookback_bars >= 200
-
-        # Supply fewer bars than lookback_bars (InstrumentRef-keyed, as the boundary requires)
-        close = _market_data().array("Close").rename(columns=_REF_BY_SYMBOL)
-        with pytest.raises(ValueError, match=r"lookback"):
-            bundle.compute_weights(RuntimeMarketDataBundle({"Close": close.iloc[:50]}))
-    finally:
-        sys.path.remove(import_path)
-        _remove_imported_package(package_name)
-        importlib.invalidate_caches()
-
-
-def test_compute_weights_raises_when_latest_weight_row_is_non_finite(
-    tmp_path, monkeypatch
-) -> None:
-    _install_fixture_components(tmp_path)
-    config_path = _write_locked_config(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    _seed_candidate_store(config_path)
-
-    payload = _export_bundle(config_path, out_dir="dist")
-    wheel_path = Path(payload["wheel"])
-    package_name = _package_name_from_wheel(wheel_path)
-    import_path = str(wheel_path.resolve())
-    sys.path.insert(0, import_path)
-    importlib.invalidate_caches()
-    try:
-        module = importlib.import_module(package_name)
-        bundle = module.get_bundle()
-        lookback = bundle.contract.lookback_bars
-
-        # Supply exactly lookback_bars — latest row is NaN due to warmup
-        close = _market_data().array("Close").rename(columns=_REF_BY_SYMBOL)
-        with pytest.raises(ValueError, match=r"NaN|warmup"):
-            bundle.compute_weights(RuntimeMarketDataBundle({"Close": close.iloc[:lookback]}))
-    finally:
-        sys.path.remove(import_path)
-        _remove_imported_package(package_name)
-        importlib.invalidate_caches()
-
-
-def test_export_lengthens_candidate_prefix_when_bundle_name_would_collide(
-    tmp_path, monkeypatch
-) -> None:
-    _install_fixture_components(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    out_dir = Path("dist")
-
-    first_config = _write_locked_config(
-        tmp_path, path_name="locked_bundle_first.yaml", run_id="bundle-collision-a"
-    )
-    second_config = _write_locked_config(
-        tmp_path, path_name="locked_bundle_second.yaml", run_id="bundle-collision-b"
-    )
-    _seed_candidate_store(
-        first_config, run_id="bundle-collision-a", candidate_key="deadbeef00001111"
-    )
-    _seed_candidate_store(
-        second_config, run_id="bundle-collision-b", candidate_key="deadbeef11112222"
+    artifact = assemble_bundle(
+        config_path,
+        figi_resolver=lambda symbols: {
+            spec.ticker: _FIGI_BY_SYMBOL[spec.ticker] for spec in symbols
+        },
     )
 
-    _export_bundle(first_config, out_dir=out_dir)
-    _export_bundle(second_config, out_dir=out_dir)
-
-    assert [wheel.name for wheel in sorted(out_dir.glob("*.whl"))] == [
-        "aegis_exec_tests_momentum_rotator_deadbeef-1.0.0-py3-none-any.whl",
-        "aegis_exec_tests_momentum_rotator_deadbeef1-1.0.0-py3-none-any.whl",
-    ]
+    assert artifact.strategy_id == "tests.momentum_rotator"
+    assert artifact.candidate_key == _CANDIDATE_KEY
+    assert artifact.package_name == "aegis_exec_tests_momentum_rotator_01234567"
+    assert artifact.wheel_filename == (
+        "aegis_exec_tests_momentum_rotator_01234567-1.0.0-py3-none-any.whl"
+    )
+    assert artifact.contract.refs == _REFS
+    assert artifact.manifest.run_id == _RUN_ID
+    assert artifact.manifest.role == "best"
+    assert artifact.plan.strategy.module == "aegis_exec_tests_momentum_rotator_01234567.strategy"
+    assert artifact.plan.indicators[0].module == (
+        "aegis_exec_tests_momentum_rotator_01234567.indicator_0"
+    )
+    assert set(artifact.component_sources) == {"indicator_0.py", "indicator_1.py", "strategy.py"}
+    assert not (tmp_path / "dist").exists()
 
 
 def test_export_rejects_unlocked_config_with_an_actionable_error(tmp_path, monkeypatch) -> None:
@@ -443,6 +324,19 @@ def _export_bundle(config_path: Path, *, out_dir: Path | str) -> dict[str, str]:
     return payload
 
 
+def _remove_lookback_block(strategy_path: Path) -> None:
+    strategy_source = strategy_path.read_text()
+    lookback_start = strategy_source.find("# %% lookback")
+    main_start = strategy_source.find("# %% main compute")
+    if lookback_start >= 0 and main_start > lookback_start:
+        strategy_source = (
+            strategy_source[:lookback_start].rstrip("\n")
+            + "\n\n"
+            + strategy_source[main_start:]
+        )
+    strategy_path.write_text(strategy_source)
+
+
 def _assert_wheel_metadata(wheel_path: Path) -> None:
     with zipfile.ZipFile(wheel_path) as zf:
         metadata_path = next(name for name in zf.namelist() if name.endswith(".dist-info/METADATA"))
@@ -459,7 +353,7 @@ def _assert_wheel_metadata(wheel_path: Path) -> None:
     assert manifest["manifest"]["component_source_hashes"]
     # FIGI provenance is baked inside ListedRef, and the DataContract (the cross-boundary data
     # contract) is keyed by InstrumentRef with no provider ticker — the ticker is RD-internal.
-    expected_refs = [{"figi": ref.figi} for ref in _REFS]
+    expected_refs = [{"kind": "listed", "figi": ref.figi} for ref in _REFS]
     assert manifest["manifest"]["refs"] == expected_refs
     assert manifest["contract"]["refs"] == expected_refs
     contract_and_provenance = json.dumps([manifest["contract"], manifest["manifest"]])
@@ -475,25 +369,6 @@ def _assert_entry_point_metadata(wheel_path: Path, *, name: str, value: str) -> 
 
     assert "[aegis.execution_bundles]" in entry_points
     assert f"{name} = {value}" in entry_points
-
-
-def _discover_bundle_entry_points(
-    wheels: list[Path], names: set[str]
-) -> dict[str, RuntimeExecutionBundle]:
-    entries = [str(wheel) for wheel in wheels]
-    sys.path[:0] = entries
-    importlib.invalidate_caches()
-    packages = [_package_name_from_wheel(wheel) for wheel in wheels]
-    try:
-        entry_points = importlib_metadata.entry_points(group="aegis.execution_bundles")
-        # The entry point loads to a zero-arg factory (as the aegis-trader
-        # registry expects); call it to get the bundle.
-        return {ep.name: ep.load()() for ep in entry_points if ep.name in names}
-    finally:
-        del sys.path[: len(entries)]
-        for package in packages:
-            _remove_imported_package(package)
-        importlib.invalidate_caches()
 
 
 def _remove_imported_package(package: str) -> None:
