@@ -114,20 +114,30 @@ def _normalize_yfinance_bars(frame: pd.DataFrame) -> pd.DataFrame:
 
 def _stored_yfinance_bars(frame: pd.DataFrame, requested_arrays: Sequence[str]) -> pd.DataFrame:
     columns = _column_lookup(frame)
-    stored_arrays = list(_available_arrays(columns, NATIVE_OHLCV_ARRAYS))
-    stored_lookup = {array.lower() for array in stored_arrays}
-    for array in requested_arrays:
-        if array.lower() in columns and array.lower() not in stored_lookup:
-            stored_arrays.append(array)
-            stored_lookup.add(array.lower())
+    stored_arrays = _stored_yfinance_array_names(columns, requested_arrays)
     selected = frame.loc[:, [columns[array.lower()] for array in stored_arrays]].copy()
-    selected.columns = stored_arrays
+    selected.columns = list(stored_arrays)
     return selected
+
+
+def _stored_yfinance_array_names(
+    columns: dict[str, str],
+    requested_arrays: Sequence[str],
+) -> tuple[str, ...]:
+    stored_arrays = list(_available_arrays(columns, NATIVE_OHLCV_ARRAYS))
+    stored_array_keys = {array.lower() for array in stored_arrays}
+    for requested_array in requested_arrays:
+        requested_key = requested_array.lower()
+        if requested_key not in columns or requested_key in stored_array_keys:
+            continue
+        stored_arrays.append(requested_array)
+        stored_array_keys.add(requested_key)
+    return tuple(stored_arrays)
 
 
 def _available_arrays(
     columns: dict[str, str],
-    arrays: tuple[str, ...],
+    arrays: Sequence[str],
 ) -> tuple[str, ...]:
     return tuple(array for array in arrays if array.lower() in columns)
 

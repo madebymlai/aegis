@@ -6,7 +6,12 @@ import pandas as pd
 import pytest
 from aegis_runtime import FuturesRef, ListedRef
 
-from aegis_data.store import NativeBarsRequest, StoreAdmissionError, StoreCoverageError, read_native_bars
+from aegis_data.store import (
+    NativeBarsRequest,
+    StoreAdmissionError,
+    StoreCoverageError,
+    read_native_bars,
+)
 from aegis_data.yfinance import YFinanceLocator, pull_yfinance_native_bars
 
 

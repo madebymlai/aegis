@@ -21,6 +21,21 @@ from research.aegis_research.market_data.contracts import (
 from tests.support.research.aegis_research.factories import make_data_config
 
 
+def _pulled_bars_with_adj_close() -> pd.DataFrame:
+    index = pd.bdate_range("2024-01-02", periods=3)
+    return pd.DataFrame(
+        {
+            "Open": [9.0, 10.0, 11.0],
+            "High": [10.0, 11.0, 12.0],
+            "Low": [8.0, 9.0, 10.0],
+            "Close": [100.0, 101.0, 102.0],
+            "Adj Close": [90.0, 91.0, 92.0],
+            "Volume": [1000, 1100, 1200],
+        },
+        index=index,
+    )
+
+
 def test_synthetic_adapter_loads_native_data_behind_the_seam() -> None:
     result = synthetic_adapter.load_synthetic_source(
         make_data_config(source="synthetic", rows=4, symbols=[{"ticker": "AAA", "ccy": "EUR"}, {"ticker": "BBB", "ccy": "EUR"}])
@@ -129,21 +144,13 @@ def test_store_adapter_reads_listed_covered_history_by_figi(monkeypatch: pytest.
     assert result.native_data.get(feature="Close")["BRK-B"].tolist() == [10.0, 11.0, 12.0]
 
 
-def test_store_adapter_reads_raw_close_not_unrequested_adj_close(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_store_adapter_reads_raw_close_not_unrequested_adj_close(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
     ref = ListedRef("BBG000B9XRY4")
-    index = pd.bdate_range("2024-01-02", periods=3)
-    pulled = pd.DataFrame(
-        {
-            "Open": [9.0, 10.0, 11.0],
-            "High": [10.0, 11.0, 12.0],
-            "Low": [8.0, 9.0, 10.0],
-            "Close": [100.0, 101.0, 102.0],
-            "Adj Close": [90.0, 91.0, 92.0],
-            "Volume": [1000, 1100, 1200],
-        },
-        index=index,
-    )
+    pulled = _pulled_bars_with_adj_close()
     request = NativeBarsRequest(
         refs=(ref,),
         arrays=("Open", "High", "Low", "Close", "Volume"),
@@ -170,21 +177,13 @@ def test_store_adapter_reads_raw_close_not_unrequested_adj_close(monkeypatch: py
     assert result.native_data.get(feature="Close")["SPY"].tolist() == [100.0, 101.0, 102.0]
 
 
-def test_store_adapter_reads_requested_adj_close_through_aegis_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_store_adapter_reads_requested_adj_close_through_aegis_data(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
     ref = ListedRef("BBG000B9XRY4")
-    index = pd.bdate_range("2024-01-02", periods=3)
-    pulled = pd.DataFrame(
-        {
-            "Open": [9.0, 10.0, 11.0],
-            "High": [10.0, 11.0, 12.0],
-            "Low": [8.0, 9.0, 10.0],
-            "Close": [100.0, 101.0, 102.0],
-            "Adj Close": [90.0, 91.0, 92.0],
-            "Volume": [1000, 1100, 1200],
-        },
-        index=index,
-    )
+    pulled = _pulled_bars_with_adj_close()
     request = NativeBarsRequest(
         refs=(ref,),
         arrays=("Close", "Adj Close"),

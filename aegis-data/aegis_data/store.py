@@ -141,12 +141,13 @@ def native_bars_path(
     """
     root = _store_root(store_dir)
     if isinstance(ref, ListedRef):
+        adjustment = _listed_adjustment_policy(listed_adjustment)
         return (
             root
             / "listed"
             / _safe_key(ref.figi)
             / "bars"
-            / _safe_key(_listed_adjustment_policy(listed_adjustment).value)
+            / _safe_key(adjustment.value)
             / f"{_safe_key(timeframe)}.parquet"
         )
     if isinstance(ref, FuturesRef):
@@ -225,12 +226,14 @@ def read_native_bars_request(
 ) -> dict[InstrumentRef, pd.DataFrame]:
     """Provider-free Store Read for a neutral native-bars request."""
     start_ts, end_ts = _window(request.start, request.end)
+    arrays = tuple(request.arrays)
+    listed_adjustment = _listed_adjustment_policy(request.listed_adjustment)
     return {
         ref: _read_one_native_bar_frame(
             ref,
-            arrays=tuple(request.arrays),
+            arrays=arrays,
             timeframe=request.timeframe,
-            listed_adjustment=_listed_adjustment_policy(request.listed_adjustment),
+            listed_adjustment=listed_adjustment,
             start=start_ts,
             end=end_ts,
             store_dir=store_dir,
