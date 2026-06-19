@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -24,16 +25,41 @@ _APP = "aegis-data"
 _DAILY_TIMEFRAMES = frozenset({"1D", "1d"})
 
 
+@dataclass(frozen=True, order=True)
+class FxPair:
+    """FX History identity: quote units per one base currency unit."""
+
+    base: str
+    quote: str
+
+    def __post_init__(self) -> None:
+        for name, value in (("base", self.base), ("quote", self.quote)):
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"FxPair {name} must be a non-empty string; got {value!r}")
+            normalized = value.upper()
+            object.__setattr__(self, name, normalized)
+        if self.base == self.quote:
+            raise ValueError(f"FxPair currencies must differ; got {self.base}/{self.quote}")
+
+    @property
+    def value(self) -> str:
+        """Stable string payload used where a human-readable label is needed."""
+        return f"{self.base}/{self.quote}"
+
+
+HistoryKey = InstrumentRef | FxPair
+
+
 class StoreAdmissionError(ValueError):
-    """Native market data cannot be admitted as Covered History."""
+    """Historical data cannot be admitted as Covered History."""
 
 
 class StoreCoverageError(ValueError):
     """A provider-free Store Read cannot satisfy the requested Covered History."""
 
-    def __init__(self, ref: InstrumentRef, detail: str) -> None:
-        self.ref = ref
-        super().__init__(f"{ref.value}: {detail}")
+    def __init__(self, key: HistoryKey, detail: str) -> None:
+        self.key = key
+        super().__init__(f"{key.value}: {detail}")
 
 
 def data_dir() -> Path:
@@ -44,6 +70,22 @@ def data_dir() -> Path:
 
 def futures_dir(dataset: str, *, store_dir: Path | None = None) -> Path:
     return _store_root(store_dir) / "futures" / dataset
+
+
+def fx_history_path(
+    pair: FxPair,
+    timeframe: str,
+    *,
+    store_dir: Path | None = None,
+) -> Path:
+    """Parquet location for an FX History Covered History slice."""
+    return (
+        _store_root(store_dir)
+        / "fx"
+        / _safe_key(pair.base)
+        / _safe_key(pair.quote)
+        / f"{_safe_key(timeframe)}.parquet"
+    )
 
 
 def native_bars_path(
@@ -130,6 +172,53 @@ def read_native_bars(
     }
 
 
+def write_fx_history(
+    pair: FxPair,
+    timeframe: str,
+    rates: pd.Series,
+    *,
+    store_dir: Path | None = None,
+) -> Path:
+    """Admit provider-normalized FX rates as Covered History.
+
+    Rates are quote-currency units per one base-currency unit, stored separately
+    from instrument native market bars so conversion inputs can be reused across
+    instruments and backtests.
+    """
+    admitted = _admit_fx_history(rates)
+    path = fx_history_path(pair, timeframe, store_dir=store_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    admitted.to_parquet(path)
+    return path
+
+
+def read_fx_history(
+    pairs: Sequence[FxPair],
+    *,
+    timeframe: str,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
+    store_dir: Path | None = None,
+) -> dict[FxPair, pd.Series]:
+    """Provider-free Store Read for FX History.
+
+    Reads Covered History for each ``FxPair`` and returns one rate series per
+    pair, sliced to ``[start, end)``. Missing files, NaNs, or expected daily FX
+    rates fail closed before Trader valuation or conversion can run.
+    """
+    start_ts, end_ts = _window(start, end)
+    return {
+        pair: _read_one_fx_series(
+            pair,
+            timeframe=timeframe,
+            start=start_ts,
+            end=end_ts,
+            store_dir=store_dir,
+        )
+        for pair in pairs
+    }
+
+
 def cached_fetcher(
     fetch: ContractFetcher, *, dataset: str, store_dir: Path | None = None
 ) -> ContractFetcher:
@@ -154,6 +243,26 @@ def _store_root(store_dir: Path | None) -> Path:
     return store_dir or data_dir()
 
 
+def _read_one_fx_series(
+    pair: FxPair,
+    *,
+    timeframe: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    store_dir: Path | None,
+) -> pd.Series:
+    path = fx_history_path(pair, timeframe, store_dir=store_dir)
+    if not path.exists():
+        raise StoreCoverageError(pair, f"no FX History for {timeframe}")
+    admitted = _load_admitted_fx_history(path)
+    sliced = _slice_window(admitted, start=start, end=end)
+    _assert_expected_daily_coverage(
+        pair, sliced, timeframe=timeframe, start=start, end=end, value_name="FX rate"
+    )
+    _assert_no_null_arrays(pair, sliced)
+    return sliced["rate"].copy()
+
+
 def _read_one_native_bar_frame(
     ref: InstrumentRef,
     *,
@@ -173,6 +282,13 @@ def _read_one_native_bar_frame(
     selected = _select_native_bar_arrays(sliced, columns, arrays)
     _assert_no_null_arrays(ref, selected)
     return selected
+
+
+def _load_admitted_fx_history(path: Path) -> pd.DataFrame:
+    frame = pd.read_parquet(path)
+    if "rate" not in frame.columns:
+        raise StoreAdmissionError("FX History must contain a rate column")
+    return _admit_fx_history(frame["rate"])
 
 
 def _load_admitted_native_bars(path: Path) -> pd.DataFrame:
@@ -210,9 +326,20 @@ def _slice_window(
     return frame.loc[(frame.index >= start) & (frame.index < end)]
 
 
-def _assert_no_null_arrays(ref: InstrumentRef, frame: pd.DataFrame) -> None:
+def _assert_no_null_arrays(key: HistoryKey, frame: pd.DataFrame) -> None:
     if frame.isna().any().any():
-        raise StoreCoverageError(ref, "requested arrays contain null values")
+        raise StoreCoverageError(key, "requested arrays contain null values")
+
+
+def _admit_fx_history(rates: pd.Series) -> pd.DataFrame:
+    if not isinstance(rates.index, pd.DatetimeIndex):
+        raise StoreAdmissionError("FX History must be indexed by DatetimeIndex")
+    if rates.index.has_duplicates:
+        raise StoreAdmissionError("FX History index contains duplicate timestamps")
+    if not rates.index.is_monotonic_increasing:
+        rates = rates.sort_index()
+    frame = rates.rename("rate").to_frame()
+    return frame
 
 
 def _admit_native_bars(bars: pd.DataFrame) -> pd.DataFrame:
@@ -228,16 +355,17 @@ def _admit_native_bars(bars: pd.DataFrame) -> pd.DataFrame:
 
 
 def _assert_expected_daily_coverage(
-    ref: InstrumentRef,
+    key: HistoryKey,
     frame: pd.DataFrame,
     *,
     timeframe: str,
     start: pd.Timestamp,
     end: pd.Timestamp,
+    value_name: str = "bar",
 ) -> None:
     if timeframe not in _DAILY_TIMEFRAMES:
         if frame.empty:
-            raise StoreCoverageError(ref, f"no bars in [{start.date()}, {end.date()})")
+            raise StoreCoverageError(key, f"no {value_name}s in [{start.date()}, {end.date()})")
         return
     expected = _business_days(start, end)
     if expected.empty:
@@ -247,7 +375,7 @@ def _assert_expected_daily_coverage(
     if missing.empty:
         return
     first = missing[0].date().isoformat()
-    raise StoreCoverageError(ref, f"missing expected {timeframe} bar on {first}")
+    raise StoreCoverageError(key, f"missing expected {timeframe} {value_name} on {first}")
 
 
 def _business_days(start: pd.Timestamp, end: pd.Timestamp) -> pd.DatetimeIndex:
@@ -286,12 +414,16 @@ def _safe_key(value: str) -> str:
 
 
 __all__ = [
+    "FxPair",
     "StoreAdmissionError",
     "StoreCoverageError",
     "cached_fetcher",
     "data_dir",
     "futures_dir",
+    "fx_history_path",
     "native_bars_path",
+    "read_fx_history",
     "read_native_bars",
+    "write_fx_history",
     "write_native_bars",
 ]

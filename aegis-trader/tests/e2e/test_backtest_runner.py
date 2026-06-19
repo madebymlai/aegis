@@ -20,7 +20,7 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.instruments import CurrencyPair
 
-from aegis_data.store import StoreCoverageError, write_native_bars
+from aegis_data.store import FxPair, StoreCoverageError, write_fx_history, write_native_bars
 from aegis_runtime import (
     ListedRef,
     BundleManifest,
@@ -650,7 +650,6 @@ def test_run_book_backtest_from_store_feeds_preseeded_listed_bars(tmp_path) -> N
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_fx=_fx_must_not_be_called,
         store_dir=tmp_path,
         registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
     )
@@ -669,12 +668,58 @@ def test_run_book_backtest_from_store_fails_closed_on_missing_listed_bars(tmp_pa
             str(book_path),
             start="2020-01-01",
             end="2020-01-07",
-            fetch_fx=_fx_must_not_be_called,
             store_dir=tmp_path,
             registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
         )
 
     assert _FIGI in str(exc.value)
+
+
+def test_run_book_backtest_from_store_reads_required_fx_history(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    ohlcv = _synthetic_ohlcv()
+    fx = pd.Series([1.10, 1.20, 1.30, 1.40], index=pd.bdate_range("2020-01-01", periods=4))
+    write_native_bars(ListedRef(_FIGI), "1D", ohlcv, store_dir=tmp_path)
+    write_fx_history(FxPair("EUR", "USD"), "1D", fx, store_dir=tmp_path)
+
+    engine = run_book_backtest_from_store(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        store_dir=tmp_path,
+        registry=StubBundleRegistry(
+            {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="USD", required_fx_currencies=("USD",))}
+        ),
+    )
+    pair = next(i for i in engine.cache.instruments() if isinstance(i, CurrencyPair))
+    bids = sorted(round(float(q.bid_price), 5) for q in engine.cache.quote_ticks(pair.id))
+    engine.dispose()
+
+    assert bids == [1.10, 1.20, 1.30, 1.30, 1.30, 1.40]
+
+
+def test_run_book_backtest_from_store_fails_closed_on_missing_fx_history(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    write_native_bars(ListedRef(_FIGI), "1D", _synthetic_ohlcv(), store_dir=tmp_path)
+
+    with pytest.raises(StoreCoverageError) as exc:
+        run_book_backtest_from_store(
+            str(book_path),
+            start="2020-01-01",
+            end="2020-01-07",
+            store_dir=tmp_path,
+            registry=StubBundleRegistry(
+                {
+                    _WHEEL: _FixedWeightBundle(
+                        _FIGI, 0.5, currency="USD", required_fx_currencies=("USD",)
+                    )
+                }
+            ),
+        )
+
+    assert "EUR/USD" in str(exc.value)
 
 
 def test_run_book_backtest_asks_the_fetcher_for_each_contracts_required_arrays(tmp_path):

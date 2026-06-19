@@ -22,7 +22,7 @@ from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency, Money
 
-from aegis_data.store import read_native_bars
+from aegis_data.store import FxPair, read_fx_history, read_native_bars
 from aegis_runtime import ExecutionBundle, InstrumentRef
 from aegis_runtime.currency import _major_currency_and_scale
 
@@ -101,20 +101,19 @@ def run_book_backtest_from_store(
     *,
     start: str,
     end: str,
-    fetch_fx: FxFetcher,
     store_dir: Path | None = None,
     registry: BundleRegistryPort | None = None,
     venue: str = "SIM",
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
 ) -> BacktestEngine:
-    """Build and run a provider-free native-bar Store Read backtest."""
+    """Build and run a provider-free Store Read backtest."""
     return run_book_backtest(
         book_path,
         start=start,
         end=end,
         fetch_ohlcv=store_ohlcv_fetcher(store_dir=store_dir),
-        fetch_fx=fetch_fx,
+        fetch_fx=store_fx_fetcher(store_dir=store_dir),
         registry=registry,
         venue=venue,
         starting_cash=starting_cash,
@@ -138,6 +137,23 @@ def store_ohlcv_fetcher(*, store_dir: Path | None = None) -> OhlcvFetcher:
             store_dir=store_dir,
         )
         return frames[ref]
+
+    return fetch
+
+
+def store_fx_fetcher(*, store_dir: Path | None = None, timeframe: str = "1D") -> FxFetcher:
+    """Return an FX fetcher backed by provider-free aegis-data Store Read."""
+
+    def fetch(base: str, quote: str, start: str, end: str) -> pd.Series:
+        pair = FxPair(base, quote)
+        history = read_fx_history(
+            (pair,),
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            store_dir=store_dir,
+        )
+        return history[pair]
 
     return fetch
 

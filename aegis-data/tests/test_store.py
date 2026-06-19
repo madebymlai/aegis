@@ -9,10 +9,13 @@ import pytest
 from aegis_runtime import ListedRef
 
 from aegis_data.store import (
+    FxPair,
     StoreCoverageError,
     cached_fetcher,
     data_dir,
+    read_fx_history,
     read_native_bars,
+    write_fx_history,
     write_native_bars,
 )
 
@@ -88,4 +91,41 @@ def test_native_bar_store_read_fails_closed_on_missing_listed_coverage(tmp_path)
         )
 
     assert "BBG000B9XRY4" in str(exc.value)
+    assert "2024-01-03" in str(exc.value)
+
+
+def test_fx_history_store_read_returns_provider_free_rates(tmp_path) -> None:
+    pair = FxPair("EUR", "USD")
+    index = pd.bdate_range("2024-01-01", periods=5)
+    rates = pd.Series([1.10, 1.11, 1.12, 1.13, 1.14], index=index)
+    write_fx_history(pair, "1D", rates, store_dir=tmp_path)
+
+    history = read_fx_history(
+        (pair,),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        store_dir=tmp_path,
+    )
+
+    assert tuple(history) == (pair,)
+    assert history[pair].tolist() == [1.11, 1.12, 1.13]
+
+
+def test_fx_history_store_read_fails_closed_on_missing_coverage(tmp_path) -> None:
+    pair = FxPair("EUR", "USD")
+    index = pd.bdate_range("2024-01-01", periods=5).delete(2)
+    rates = pd.Series([1.10, 1.11, 1.13, 1.14], index=index)
+    write_fx_history(pair, "1D", rates, store_dir=tmp_path)
+
+    with pytest.raises(StoreCoverageError) as exc:
+        read_fx_history(
+            (pair,),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            store_dir=tmp_path,
+        )
+
+    assert "EUR/USD" in str(exc.value)
     assert "2024-01-03" in str(exc.value)
