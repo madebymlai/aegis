@@ -103,9 +103,10 @@ def test_attribution_uses_real_per_period_nav():
     engine.run()
 
     # Real per-period NAV was recorded, and it moved (placeholder was constant).
-    assert len(strategy._nav_history) >= 2
-    assert len(set(strategy._nav_history)) > 1, (
-        f"NAV should vary with the held position's P&L; got {strategy._nav_history}"
+    nav_history = strategy.sleeve_ledger.nav_history
+    assert len(nav_history) >= 2
+    assert len(set(nav_history)) > 1, (
+        f"NAV should vary with the held position's P&L; got {nav_history}"
     )
     # Attribution ran on that real NAV.
     assert strategy._last_attribution

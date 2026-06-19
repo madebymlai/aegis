@@ -301,7 +301,7 @@ def test_vol_targeting_downweights_the_higher_vol_sleeve_through_the_engine():
 
     assert engine.get_result() is not None
     # Enough periods accrued to estimate a covariance: the refinement path ran.
-    assert len(strategy._attribution_periods) >= _MIN_SLEEVE_VOL_RETURNS + 1
+    assert strategy.sleeve_ledger.observation_count >= _MIN_SLEEVE_VOL_RETURNS + 1
     # The book traded end-to-end (the path is live, not merely computed).
     assert any(o.is_closed for o in engine.cache.orders())
 

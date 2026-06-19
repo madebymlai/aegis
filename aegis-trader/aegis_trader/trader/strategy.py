@@ -36,7 +36,6 @@ from collections.abc import Callable, Iterable
 from datetime import date
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from nautilus_trader.model.data import Bar, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
@@ -67,14 +66,13 @@ from aegis_trader.data import (
     resolve_book_timeframe,
     timeframe_to_ns,
 )
-from aegis_trader.domain.allocator import portfolio_skew
-from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
 from aegis_trader.domain.rebalancer import rebalance_plan
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.roll import HeldContract, roll_positions
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
+from aegis_trader.domain.sleeve_ledger import MIN_SLEEVE_VOL_RETURNS, SleeveLedger
 from aegis_trader.domain.types import (
     OrderIntent,
     OrderSide,
@@ -97,10 +95,7 @@ from aegis_trader.observability.port import (
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
 
 _NS_PER_DAY: int = 86_400_000_000_000
-_MIN_SLEEVE_VOL_RETURNS = 20
-_TRADING_DAYS_PER_YEAR = 252.0
-_EWMA_COVARIANCE_ALPHA = 0.06
-_MIN_BOOK_SKEW_RETURNS = 8
+_MIN_SLEEVE_VOL_RETURNS = MIN_SLEEVE_VOL_RETURNS
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -165,16 +160,14 @@ class RebalanceStrategy(Strategy):
         # Wave B: reconciled book state behind a port (no direct cache/portfolio reads).
         self._book_state: BookStatePort | None = None
         self._market_data: MarketDataPort | None = None
-        # Wave B (B14): real per-period NAV history feeding on_stop attribution.
-        self._nav_history: list[float] = []
+        # Pure cross-period analytics ledger (NAV, covariance, skew, attribution).
+        self._sleeve_ledger: SleeveLedger = SleeveLedger()
         self._last_attribution: dict[SleeveName, float] = {}
         self._last_book_skew: float | None = None
         self._last_sleeve_weights: dict[SleeveName, float] = {}
         self._last_roll_check_date: date | None = None
         # ── Slice 9: observability + attribution ─────────────────────────
         self._obs_port: ObservabilityPort | None = config.obs_port
-        # Per-period inputs for the realized-weight sleeve attribution (on_stop).
-        self._attribution_periods: list[AttributionPeriod] = []
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -188,6 +181,11 @@ class RebalanceStrategy(Strategy):
         """
         self._sleeve_to_bundle[name] = bundle
         self._sleeve_to_contract[name] = bundle.contract
+
+    @property
+    def sleeve_ledger(self) -> SleeveLedger:
+        """Cross-period analytics ledger owned by this strategy."""
+        return self._sleeve_ledger
 
     # ── port accessors ──────────────────────────────────────────────────────
     # The reconciled-book and market-data ports are wired in ``on_start``; every
@@ -451,14 +449,15 @@ class RebalanceStrategy(Strategy):
         # weight deltas) against the REALIZED book (so bands, the realized-book
         # gate, and the fidelity trip engage); the sizer converts each delta into
         # a native share count.
-        realized_covariance = self._realized_sleeve_covariance()
         plan = rebalance_plan(
             pending,
             self._book,
             realized_weights=realized_weights,
-            realized_covariance=realized_covariance,
+            realized_covariance=self._sleeve_ledger.realized_covariance(
+                self._positive_risk_sleeve_names()
+            ),
             previous_sleeve_weights=self._last_sleeve_weights,
-            realized_drawdown=current_drawdown(self._nav_history, nav),
+            realized_drawdown=self._sleeve_ledger.current_drawdown(nav),
         )
         self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
         orders = size_deltas(
@@ -493,20 +492,17 @@ class RebalanceStrategy(Strategy):
         # Record this period's realized weights, per-sleeve target rows, and
         # closes so on_stop can decompose the realized-weight book P&L by sleeve.
         # Each pending target is non-empty: rebalance() above took iloc[-1].
-        self._nav_history.append(nav)
-        self._attribution_periods.append(
-            AttributionPeriod(
-                nav=nav,
-                realized_weights=dict(realized_weights),
-                sleeve_targets={
-                    name: {
-                        _column_ref(figi): float(weight)
-                        for figi, weight in target_df.iloc[-1].to_dict().items()
-                    }
-                    for name, target_df in pending.items()
-                },
-                closes=dict(prices),
-            )
+        self._sleeve_ledger.record(
+            nav=nav,
+            realized_weights=dict(realized_weights),
+            sleeve_targets={
+                name: {
+                    _column_ref(figi): float(weight)
+                    for figi, weight in target_df.iloc[-1].to_dict().items()
+                }
+                for name, target_df in pending.items()
+            },
+            closes=dict(prices),
         )
 
         # Calendar-aware: only emit orders for FIGIs with a fresh bar
@@ -611,26 +607,6 @@ class RebalanceStrategy(Strategy):
                 f"notional={summary.total_notional:.2f}"
             )
 
-    def _realized_sleeve_covariance(self) -> dict[SleeveName, dict[SleeveName, float]] | None:
-        """Estimate annualized sleeve covariance from recorded period data.
-
-        The estimate uses only bars already consumed by the strategy: each
-        sleeve's raw target weights held from period t to t+1 are multiplied by
-        the observed instrument returns over that same interval.  Until every
-        positive-risk sleeve has enough complete, non-degenerate returns, return
-        ``None`` so the rebalancer sizes from the configured risk budget (the
-        base allocation) rather than solving on an undefined covariance matrix.
-        """
-        if len(self._attribution_periods) < _MIN_SLEEVE_VOL_RETURNS + 1:
-            return None
-
-        names = self._positive_risk_sleeve_names()
-        periods = self._attribution_periods[-(_MIN_SLEEVE_VOL_RETURNS + 1):]
-        rows = _complete_sleeve_return_rows(periods, names)
-        if len(rows) < _MIN_SLEEVE_VOL_RETURNS:
-            return None
-        return _annualized_covariance_by_sleeve(names, rows)
-
     def _positive_risk_sleeve_names(self) -> tuple[SleeveName, ...]:
         """Return the sleeve universe shared by covariance and skew estimates."""
         risk_shares = self._book.allocator_risk_shares()
@@ -648,15 +624,10 @@ class RebalanceStrategy(Strategy):
         define a skew.
         """
         names = self._positive_risk_sleeve_names()
-        rows = _complete_sleeve_return_rows(self._attribution_periods, names)
-        if len(rows) < _MIN_BOOK_SKEW_RETURNS:
-            return
-        realized_returns = {
-            name: tuple(row[index] for row in rows)
-            for index, name in enumerate(names)
-        }
         weights = {name: self._last_sleeve_weights.get(name, 0.0) for name in names}
-        self._last_book_skew = portfolio_skew(weights, realized_returns)
+        self._last_book_skew = self._sleeve_ledger.realized_book_skew(weights, names)
+        if self._last_book_skew is None:
+            return
         convexity = "convex" if self._last_book_skew >= 0.0 else "concave"
         self.log.info(
             f"Realized book skew: {self._last_book_skew:+.3f} (net-{convexity})"
@@ -672,13 +643,11 @@ class RebalanceStrategy(Strategy):
         """
         self._record_book_skew()
 
-        if len(self._attribution_periods) < 2:
+        if self._sleeve_ledger.observation_count < 2:
             return
 
         risk_shares = self._book.allocator_risk_shares()
-        attribution = compute_sleeve_attribution(
-            self._attribution_periods, budgets=risk_shares
-        )
+        attribution = self._sleeve_ledger.attribution(risk_shares)
         self._last_attribution = attribution
 
         if attribution:
@@ -900,17 +869,6 @@ def _column_ref(column: object) -> InstrumentRef:
     return ListedRef(str(column))
 
 
-def current_drawdown(nav_history: list[float], current_nav: float) -> float:
-    """Return current drawdown from the running NAV peak as a fraction."""
-    if not np.isfinite(current_nav):
-        raise ValueError("current NAV must be finite")
-    peak = max([float(current_nav), *(float(nav) for nav in nav_history)])
-    if peak <= 0.0:
-        return 0.0
-    drawdown = 1.0 - float(current_nav) / peak
-    return min(max(drawdown, 0.0), 1.0)
-
-
 _BAR_ARRAY_ACCESSORS: dict[str, Callable[[Bar], float]] = {
     "Open": lambda b: float(b.open.as_double()),
     "High": lambda b: float(b.high.as_double()),
@@ -941,82 +899,3 @@ def _combine_array_series(
     if len(series) == 1:
         return next(iter(series.values()))
     return pd.concat(series.values(), axis=1)
-
-
-def _complete_sleeve_return_rows(
-    periods: list[AttributionPeriod],
-    names: tuple[SleeveName, ...],
-) -> list[list[float]]:
-    """Return period return rows with one valid return per active sleeve."""
-    rows: list[list[float]] = []
-    for prev, curr in zip(periods, periods[1:], strict=False):
-        row = _complete_period_return_row(prev, curr, names)
-        if row is not None:
-            rows.append(row)
-    return rows
-
-
-def _complete_period_return_row(
-    prev: AttributionPeriod,
-    curr: AttributionPeriod,
-    names: tuple[SleeveName, ...],
-) -> list[float] | None:
-    row: list[float] = []
-    for name in names:
-        sleeve_return = _sleeve_period_return(prev, curr, name)
-        if sleeve_return is None:
-            return None
-        row.append(sleeve_return)
-    return row
-
-
-def _sleeve_period_return(
-    prev: AttributionPeriod,
-    curr: AttributionPeriod,
-    name: SleeveName,
-) -> float | None:
-    sleeve_return = 0.0
-    has_input = False
-    for figi, weight in prev.sleeve_targets.get(name, {}).items():
-        prev_px = prev.closes.get(figi)
-        curr_px = curr.closes.get(figi)
-        if prev_px is None or curr_px is None or prev_px <= 0:
-            continue
-        sleeve_return += float(weight) * (curr_px / prev_px - 1.0)
-        has_input = True
-    return sleeve_return if has_input else None
-
-
-def _annualized_covariance_by_sleeve(
-    names: tuple[SleeveName, ...],
-    rows: list[list[float]],
-) -> dict[SleeveName, dict[SleeveName, float]] | None:
-    covariance = _ewma_covariance(rows, alpha=_EWMA_COVARIANCE_ALPHA)
-    covariance *= _TRADING_DAYS_PER_YEAR
-    if not np.all(np.isfinite(covariance)):
-        return None
-    if np.any(np.diag(covariance) <= 0.0):
-        return None
-    return _covariance_dict(names, covariance)
-
-
-def _covariance_dict(
-    names: tuple[SleeveName, ...],
-    covariance: np.ndarray,
-) -> dict[SleeveName, dict[SleeveName, float]]:
-    return {
-        left: {right: float(covariance[i, j]) for j, right in enumerate(names)}
-        for i, left in enumerate(names)
-    }
-
-
-def _ewma_covariance(rows: list[list[float]], *, alpha: float) -> np.ndarray:
-    """Return an EWMA covariance matrix for complete return rows."""
-    values = np.array(rows, dtype=float)
-    mean = values[0].copy()
-    covariance = np.zeros((values.shape[1], values.shape[1]), dtype=float)
-    for row in values[1:]:
-        diff = row - mean
-        covariance = (1.0 - alpha) * covariance + alpha * np.outer(diff, diff)
-        mean = (1.0 - alpha) * mean + alpha * row
-    return (covariance + covariance.T) / 2.0
