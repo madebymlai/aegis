@@ -59,7 +59,6 @@ dependencies = [
     { name = "aegis-runtime" },
     { name = "nautilus-trader" },
     { name = "pydantic" },
-    { name = "requests" },
 ]
 
 [package.optional-dependencies]
@@ -81,7 +80,6 @@ requires-dist = [
     { name = "nautilus-trader" },
     { name = "nautilus-trader", extras = ["ib"], marker = "extra == 'ib'" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "requests", specifier = ">=2.0" },
 ]
 provides-extras = ["ib"]
 

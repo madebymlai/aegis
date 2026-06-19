@@ -35,7 +35,12 @@ from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.risk.config import RiskEngineConfig
 
+from aegis_runtime import InstrumentRef
 from aegis_trader.domain.risk_guard import RiskGuardConfig
+from aegis_trader.trader.instrument_provider import (
+    IB_LISTED_MIC_OVERRIDES,
+    listed_ref_ib_contracts,
+)
 
 
 # ── next-close execution TIF per mode (ADR-0001) ──────────────────────────────
@@ -145,10 +150,11 @@ def _data_client_config(
     ibg_client_id: int,
     market_data_type: str,
     fx_instrument_ids: Iterable[str],
+    listed_refs: Iterable[InstrumentRef],
 ) -> dict[str, Any]:
     """Shared data-client dict; embeds an InstrumentProvider that loads the FX
-    reference pairs (``load_ids``) when any are given, so Nautilus resolves them
-    into the cache for the overlay to mark from."""
+    reference pairs (``load_ids``) and listed FIGI contracts (``load_contracts``)
+    so Nautilus resolves them into the cache before the overlay starts."""
     cfg: dict[str, Any] = {
         "ibg_host": ibg_host,
         "ibg_port": ibg_port,
@@ -156,10 +162,43 @@ def _data_client_config(
         "market_data_type": market_data_type,
         "use_regular_trading_hours": True,
     }
+    return _with_instrument_provider(
+        cfg,
+        fx_instrument_ids=fx_instrument_ids,
+        listed_refs=listed_refs,
+    )
+
+
+def _with_instrument_provider(
+    cfg: dict[str, Any],
+    *,
+    fx_instrument_ids: Iterable[str],
+    listed_refs: Iterable[InstrumentRef],
+) -> dict[str, Any]:
+    provider = _instrument_provider_config(
+        fx_instrument_ids=fx_instrument_ids,
+        listed_refs=listed_refs,
+    )
+    if provider:
+        cfg["instrument_provider"] = provider
+    return cfg
+
+
+def _instrument_provider_config(
+    *,
+    fx_instrument_ids: Iterable[str],
+    listed_refs: Iterable[InstrumentRef],
+) -> dict[str, Any]:
+    provider: dict[str, Any] = {}
     load_ids = list(fx_instrument_ids)
     if load_ids:
-        cfg["instrument_provider"] = {"load_ids": load_ids}
-    return cfg
+        provider["load_ids"] = load_ids
+    load_contracts = listed_ref_ib_contracts(listed_refs)
+    if load_contracts:
+        provider["load_contracts"] = load_contracts
+        provider["convert_exchange_to_mic_venue"] = True
+        provider["symbol_to_mic_venue"] = dict(IB_LISTED_MIC_OVERRIDES)
+    return provider
 
 
 def build_paper_data_client_config(
@@ -169,18 +208,21 @@ def build_paper_data_client_config(
     ibg_client_id: int = IB_CLIENT_ID,
     market_data_type: str = "realtime",
     fx_instrument_ids: Iterable[str] = (),
+    listed_refs: Iterable[InstrumentRef] = (),
 ) -> dict[str, Any]:
     """Build an IBKR paper-mode data client config dict.
 
     ``market_data_type`` defaults to ``"realtime"`` (IBMarketDataTypeEnum.REALTIME):
     IDEALPRO spot FX streams real-time quotes the overlay needs to maintain its
     mark xrates, and DELAYED_FROZEN delivers none of them (live-validated). Pass
-    *fx_instrument_ids* (see :func:`fx_reference_instrument_ids`) to have the
-    InstrumentProvider load the book's FX reference pairs.
+    *fx_instrument_ids* (see :func:`fx_reference_instrument_ids`) and
+    *listed_refs* to have the InstrumentProvider load the book's FX reference
+    pairs and listed FIGI contracts.
     """
     return _data_client_config(
         ibg_host=ibg_host, ibg_port=ibg_port, ibg_client_id=ibg_client_id,
         market_data_type=market_data_type, fx_instrument_ids=fx_instrument_ids,
+        listed_refs=listed_refs,
     )
 
 
@@ -190,6 +232,7 @@ def build_paper_exec_client_config(
     ibg_port: int = IB_PAPER_PORT,
     ibg_client_id: int = IB_CLIENT_ID,
     account_id: str = IB_PAPER_ACCOUNT_ID,
+    listed_refs: Iterable[InstrumentRef] = (),
 ) -> dict[str, Any]:
     """Build an IBKR paper-mode execution client config dict.
 
@@ -197,12 +240,17 @@ def build_paper_exec_client_config(
     (DU-prefixed).  The actual account ID is provided by the operator,
     not hard-coded here.
     """
-    return {
+    cfg: dict[str, Any] = {
         "ibg_host": ibg_host,
         "ibg_port": ibg_port,
         "ibg_client_id": ibg_client_id,
         "account_id": account_id,
     }
+    return _with_instrument_provider(
+        cfg,
+        fx_instrument_ids=(),
+        listed_refs=listed_refs,
+    )
 
 
 # ── IBKR config dict builders (live) ─────────────────────────────────────────
@@ -215,17 +263,20 @@ def build_live_data_client_config(
     ibg_client_id: int = IB_CLIENT_ID,
     market_data_type: str = "realtime",
     fx_instrument_ids: Iterable[str] = (),
+    listed_refs: Iterable[InstrumentRef] = (),
 ) -> dict[str, Any]:
     """Build an IBKR live-mode data client config dict.
 
     ``market_data_type`` defaults to ``"realtime"`` (IBMarketDataTypeEnum.REALTIME)
     for live market data.  Pass *fx_instrument_ids* (see
-    :func:`fx_reference_instrument_ids`) to have the InstrumentProvider load the
-    book's FX reference pairs so the overlay can mark FX from their quotes.
+    :func:`fx_reference_instrument_ids`) and *listed_refs* to have the
+    InstrumentProvider load the book's FX reference pairs and listed FIGI
+    contracts.
     """
     return _data_client_config(
         ibg_host=ibg_host, ibg_port=ibg_port, ibg_client_id=ibg_client_id,
         market_data_type=market_data_type, fx_instrument_ids=fx_instrument_ids,
+        listed_refs=listed_refs,
     )
 
 
@@ -235,6 +286,7 @@ def build_live_exec_client_config(
     ibg_port: int = IB_LIVE_PORT,
     ibg_client_id: int = IB_CLIENT_ID,
     account_id: str = IB_LIVE_ACCOUNT_ID,
+    listed_refs: Iterable[InstrumentRef] = (),
 ) -> dict[str, Any]:
     """Build an IBKR live-mode execution client config dict.
 
@@ -242,12 +294,17 @@ def build_live_exec_client_config(
     (non-DU-prefixed).  The actual account ID is provided by the
     operator, not hard-coded here.
     """
-    return {
+    cfg: dict[str, Any] = {
         "ibg_host": ibg_host,
         "ibg_port": ibg_port,
         "ibg_client_id": ibg_client_id,
         "account_id": account_id,
     }
+    return _with_instrument_provider(
+        cfg,
+        fx_instrument_ids=(),
+        listed_refs=listed_refs,
+    )
 
 
 # ── TradingNodeConfig builders ───────────────────────────────────────────────

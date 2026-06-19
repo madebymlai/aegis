@@ -235,7 +235,7 @@ def test_cadence_calendar_aware():
     strategy.register_sleeve(book.sleeves[0].name, vusa_bundle)
     strategy.register_sleeve(book.sleeves[1].name, vool_bundle)
     # Inject a stub bimap (each FIGI → its venue-native InstrumentId) so the
-    # strategy skips real OpenFIGI resolution.
+    # strategy uses the backtest's local InstrumentSpec identity.
     strategy._figi_bimap = {
         ListedRef(_FIGI_VUSA): InstrumentId.from_str(f"{_FIGI_VUSA}.{VENUE_LSE.value}"),
         ListedRef(_FIGI_VOOL): InstrumentId.from_str(f"{_FIGI_VOOL}.{VENUE_XETRA.value}"),

@@ -14,6 +14,7 @@ import logging
 import types
 
 import pytest
+from aegis_runtime import ListedRef
 from nautilus_trader.model.enums import TimeInForce
 
 from aegis_trader.cli import build_ib_client_configs, build_strategy_config, main
@@ -96,8 +97,21 @@ def test_ib_client_configs_wire_account_from_settings():
         account_id="DU1234567", trader_id="BOOK-EU-01",
     )
 
-    data, execution = build_ib_client_configs(settings, "paper")
+    data, execution = build_ib_client_configs(
+        settings,
+        "paper",
+        listed_refs=(ListedRef("BBG000R20GS9"),),
+    )
 
+    assert data["instrument_provider"]["load_contracts"] == [
+        {
+            "secType": "STK",
+            "secIdType": "FIGI",
+            "secId": "BBG000R20GS9",
+            "exchange": "SMART",
+        }
+    ]
+    assert execution["instrument_provider"] == data["instrument_provider"]
     assert execution["account_id"] == "DU1234567"
     assert execution["ibg_host"] == "10.0.0.5"
     assert execution["ibg_port"] == 4002

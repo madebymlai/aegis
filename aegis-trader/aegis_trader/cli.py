@@ -24,6 +24,8 @@ from aegis_trader.config import (
     find_book_config,
     load_book_config,
 )
+from aegis_runtime import InstrumentRef
+
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.trader.modes import (
     build_backtest_engine_config,
@@ -51,7 +53,10 @@ def build_strategy_config(book: BookConfig, mode: str) -> RebalanceStrategyConfi
 
 
 def build_ib_client_configs(
-    settings: IBConnectionSettings, mode: str,
+    settings: IBConnectionSettings,
+    mode: str,
+    *,
+    listed_refs: tuple[InstrumentRef, ...] = (),
 ) -> tuple[dict, dict]:
     """Map resolved connection settings onto the IBKR data/exec client dicts.
 
@@ -62,19 +67,23 @@ def build_ib_client_configs(
         data = build_paper_data_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id,
+            listed_refs=listed_refs,
         )
         execution = build_paper_exec_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id, account_id=settings.account_id,
+            listed_refs=listed_refs,
         )
     elif mode == "live":
         data = build_live_data_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id,
+            listed_refs=listed_refs,
         )
         execution = build_live_exec_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id, account_id=settings.account_id,
+            listed_refs=listed_refs,
         )
     else:
         raise ValueError(f"mode {mode!r} has no IBKR connection (backtest is offline)")
