@@ -52,14 +52,14 @@ _BUSINESS_DAY: dict[TradingCalendar, BaseOffset] = {
 }
 
 # Regular session span as (open, close) offsets from each active day's midnight.
-# XNYS uses regular RTH; early-close half-days are not modelled yet, so XNYS
-# intraday coverage over-expects bars on ~3 half-days/year (see aegis-rd-70x.16).
+# XNYS early-close half-days are handled by _session_offsets.
 # WEEKDAY (FX) and CONTINUOUS (crypto) run the full calendar day.
 _SESSION: dict[TradingCalendar, tuple[pd.Timedelta, pd.Timedelta]] = {
     TradingCalendar.XNYS: (pd.Timedelta(hours=9, minutes=30), pd.Timedelta(hours=16)),
     TradingCalendar.WEEKDAY: (pd.Timedelta(0), pd.Timedelta(days=1)),
     TradingCalendar.CONTINUOUS: (pd.Timedelta(0), pd.Timedelta(days=1)),
 }
+_XNYS_EARLY_CLOSE = pd.Timedelta(hours=13)
 
 
 def as_trading_calendar(calendar: TradingCalendar | str) -> TradingCalendar:
@@ -78,6 +78,32 @@ def business_day_offset(calendar: TradingCalendar | str) -> BaseOffset:
     return _BUSINESS_DAY[as_trading_calendar(calendar)]
 
 
+def _nth_weekday(year: int, month: int, weekday: int, occurrence: int) -> pd.Timestamp:
+    first = pd.Timestamp(year=year, month=month, day=1)
+    days_until_weekday = (weekday - first.weekday()) % 7
+    return first + pd.Timedelta(days=days_until_weekday + (occurrence - 1) * 7)
+
+
+def _is_xnys_early_close(day: pd.Timestamp) -> bool:
+    thanksgiving = _nth_weekday(day.year, 11, weekday=3, occurrence=4)
+    normalized = day.normalize()
+    return (
+        normalized == thanksgiving + pd.Timedelta(days=1)
+        or (normalized.month == 7 and normalized.day == 3)
+        or (normalized.month == 12 and normalized.day == 24)
+    )
+
+
+def _session_offsets(
+    calendar: TradingCalendar,
+    day: pd.Timestamp,
+) -> tuple[pd.Timedelta, pd.Timedelta]:
+    open_off, close_off = _SESSION[calendar]
+    if calendar == TradingCalendar.XNYS and _is_xnys_early_close(day):
+        return open_off, _XNYS_EARLY_CLOSE
+    return open_off, close_off
+
+
 def intraday_session_bars(
     calendar: TradingCalendar | str,
     timeframe: str,
@@ -92,10 +118,10 @@ def intraday_session_bars(
     in the calendar's local clock.
     """
     cal = as_trading_calendar(calendar)
-    open_off, close_off = _SESSION[cal]
     days = pd.date_range(start.normalize(), end.normalize(), freq=_BUSINESS_DAY[cal])
     bars = pd.DatetimeIndex([])
     for day in days:
+        open_off, close_off = _session_offsets(cal, day)
         bars = bars.append(
             pd.date_range(day + open_off, day + close_off, freq=timeframe, inclusive="left")
         )

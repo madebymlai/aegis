@@ -184,6 +184,39 @@ def test_intraday_store_read_passes_with_a_complete_session(tmp_path) -> None:
     assert len(frames[ref]) == 26
 
 
+@pytest.mark.parametrize(
+    "session_day",
+    [
+        pytest.param("2024-07-03", id="july-third"),
+        pytest.param("2024-11-29", id="day-after-thanksgiving"),
+        pytest.param("2024-12-24", id="christmas-eve"),
+    ],
+)
+def test_intraday_store_read_accepts_xnys_standard_early_closes(tmp_path, session_day: str) -> None:
+    ref = ListedRef("BBG000B9XRY4")
+    session = pd.date_range(
+        f"{session_day} 09:30",
+        f"{session_day} 13:00",
+        freq="15min",
+        inclusive="left",
+    )
+    bars = pd.DataFrame({"close": [float(i) for i in range(len(session))]}, index=session)
+    write_native_bars(ref, "15min", bars, store_dir=tmp_path)
+
+    frames = read_native_bars(
+        (ref,),
+        arrays=("close",),
+        timeframe="15min",
+        start=f"{session_day} 09:30",
+        end=f"{session_day} 16:00",
+        calendar=TradingCalendar.XNYS,
+        store_dir=tmp_path,
+    )
+
+    assert len(frames[ref]) == 14
+    assert frames[ref].index[-1] == pd.Timestamp(f"{session_day} 12:45")
+
+
 def test_merge_native_bars_keeps_existing_covered_history_on_overlap(tmp_path) -> None:
     # Additive merge is idempotent: a re-Pull of overlapping dates must not rewrite
     # already-admitted bars.
