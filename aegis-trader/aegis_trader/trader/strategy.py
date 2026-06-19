@@ -404,13 +404,14 @@ class RebalanceStrategy(Strategy):
         if self._is_halted:
             return
 
-        result = self._require_pipeline().rebalance_period(
+        pipeline = self._require_pipeline()
+        result = pipeline.rebalance_period(
             CompletedRebalancePeriod(
                 bars_by_ref=self._market_bars_by_ref(),
                 fresh_refs=frozenset(self._period_fresh_figis),
             )
         )
-        self._last_sleeve_weights = self._require_pipeline().last_sleeve_weights
+        self._last_sleeve_weights = pipeline.last_sleeve_weights
         if result.summary.num_sleeves == 0:
             return
 

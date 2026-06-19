@@ -118,8 +118,22 @@ def _period() -> CompletedRebalancePeriod:
     return CompletedRebalancePeriod(
         bars_by_ref={
             _FIGI: (
-                MarketBar(ts_event=0, open=100.0, high=100.0, low=100.0, close=100.0, volume=1_000.0),
-                MarketBar(ts_event=86_400_000_000_000, open=100.0, high=100.0, low=100.0, close=100.0, volume=1_000.0),
+                MarketBar(
+                    ts_event=0,
+                    open=100.0,
+                    high=100.0,
+                    low=100.0,
+                    close=100.0,
+                    volume=1_000.0,
+                ),
+                MarketBar(
+                    ts_event=86_400_000_000_000,
+                    open=100.0,
+                    high=100.0,
+                    low=100.0,
+                    close=100.0,
+                    volume=1_000.0,
+                ),
             )
         },
         fresh_refs=frozenset({_FIGI}),

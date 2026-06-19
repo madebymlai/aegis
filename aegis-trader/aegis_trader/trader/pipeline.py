@@ -25,10 +25,10 @@ from aegis_runtime import (
 from aegis_runtime.currency import major_currency
 
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.rebalancer import rebalance_plan
+from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
-from aegis_trader.domain.types import OrderIntent, SleeveName
+from aegis_trader.domain.types import OrderIntent, SleeveName, WeightDelta
 from aegis_trader.observability.port import GateOutcome, RebalanceSummary
 
 if TYPE_CHECKING:
@@ -112,20 +112,14 @@ class RebalancePipeline:
         pending = self._compute_sleeve_targets(period)
         nav = self._book_state.nav()
         if not pending:
-            return RebalanceResult(orders=(), summary=_summary(nav, 0, 0, 0, GateOutcome.PASS, 0.0))
+            return RebalanceResult(
+                orders=(),
+                summary=_summary(nav, 0, 0, 0, GateOutcome.PASS, 0.0),
+            )
 
         realized_weights = self._book_state.realized_weights()
         try:
-            plan = rebalance_plan(
-                pending,
-                self._book,
-                realized_weights=realized_weights,
-                realized_covariance=self._ledger.realized_covariance(
-                    self._positive_risk_sleeve_names()
-                ),
-                previous_sleeve_weights=self._last_sleeve_weights,
-                realized_drawdown=self._ledger.current_drawdown(nav),
-            )
+            plan = self._build_rebalance_plan(pending, nav, realized_weights)
         except ValueError as exc:
             return RebalanceResult(
                 orders=(),
@@ -134,29 +128,11 @@ class RebalancePipeline:
             )
 
         self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
-        instrument_metas, fx_rates, prices = self._collect_sizing_params(period.bars_by_ref)
-        sized_orders = size_deltas(
-            plan.deltas,
-            nav,
-            instrument_metas=instrument_metas,
-            fx_rates=fx_rates,
-            prices=prices,
-        )
-        executable_orders = tuple(o for o in sized_orders if o.ref in period.fresh_refs)
-        total_notional = sum(abs(o.quantity) for o in executable_orders)
+        sized_orders, prices = self._size_plan(plan.deltas, nav, period.bars_by_ref)
+        executable_orders = _orders_for_fresh_refs(sized_orders, period.fresh_refs)
+        total_notional = sum(abs(order.quantity) for order in executable_orders)
 
-        self._ledger.record(
-            nav=nav,
-            realized_weights=dict(realized_weights),
-            sleeve_targets={
-                name: {
-                    _column_ref(ref): float(weight)
-                    for ref, weight in target_df.iloc[-1].to_dict().items()
-                }
-                for name, target_df in pending.items()
-            },
-            closes=dict(prices),
-        )
+        self._record_period(nav, realized_weights, pending, prices)
 
         return RebalanceResult(
             orders=executable_orders,
@@ -193,6 +169,53 @@ class RebalancePipeline:
                 MarketDataBundle(arrays), fx_series=fx_series
             )
         return pending
+
+    def _build_rebalance_plan(
+        self,
+        pending: dict[SleeveName, pd.DataFrame],
+        nav: float,
+        realized_weights: dict[InstrumentRef, float],
+    ) -> RebalancePlan:
+        return rebalance_plan(
+            pending,
+            self._book,
+            realized_weights=realized_weights,
+            realized_covariance=self._ledger.realized_covariance(
+                self._positive_risk_sleeve_names()
+            ),
+            previous_sleeve_weights=self._last_sleeve_weights,
+            realized_drawdown=self._ledger.current_drawdown(nav),
+        )
+
+    def _size_plan(
+        self,
+        deltas: tuple[WeightDelta, ...],
+        nav: float,
+        bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]],
+    ) -> tuple[tuple[OrderIntent, ...], dict[InstrumentRef, float]]:
+        instrument_metas, fx_rates, prices = self._collect_sizing_params(bars_by_ref)
+        orders = size_deltas(
+            deltas,
+            nav,
+            instrument_metas=instrument_metas,
+            fx_rates=fx_rates,
+            prices=prices,
+        )
+        return orders, prices
+
+    def _record_period(
+        self,
+        nav: float,
+        realized_weights: Mapping[InstrumentRef, float],
+        pending: Mapping[SleeveName, pd.DataFrame],
+        prices: Mapping[InstrumentRef, float],
+    ) -> None:
+        self._ledger.record(
+            nav=nav,
+            realized_weights=dict(realized_weights),
+            sleeve_targets=_sleeve_target_snapshot(pending),
+            closes=dict(prices),
+        )
 
     def _collect_sizing_params(
         self,
@@ -288,15 +311,33 @@ def _bars_to_array_series(
 
 
 def _combine_array_series(
-    buffers_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]], array_name: str
+    bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]], array_name: str
 ) -> pd.DataFrame:
-    series = {
+    frames = {
         ref: _bars_to_array_series(bars, ref, array_name)
-        for ref, bars in buffers_by_ref.items()
+        for ref, bars in bars_by_ref.items()
     }
-    if len(series) == 1:
-        return next(iter(series.values()))
-    return pd.concat(series.values(), axis=1)
+    if len(frames) == 1:
+        return next(iter(frames.values()))
+    return pd.concat(frames.values(), axis=1)
+
+
+def _orders_for_fresh_refs(
+    orders: Sequence[OrderIntent], fresh_refs: frozenset[InstrumentRef]
+) -> tuple[OrderIntent, ...]:
+    return tuple(order for order in orders if order.ref in fresh_refs)
+
+
+def _sleeve_target_snapshot(
+    pending: Mapping[SleeveName, pd.DataFrame],
+) -> dict[SleeveName, dict[InstrumentRef, float]]:
+    return {
+        name: {
+            _column_ref(ref): float(weight)
+            for ref, weight in target_df.iloc[-1].to_dict().items()
+        }
+        for name, target_df in pending.items()
+    }
 
 
 def _column_ref(column: object) -> InstrumentRef:

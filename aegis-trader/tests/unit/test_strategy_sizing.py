@@ -13,8 +13,8 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
-from aegis_trader.domain.types import SleeveName
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.instrument_provider import (
     declared_ref_currencies,
     reconcile_quote_currency,
@@ -92,9 +92,15 @@ class _PenceBundle(ExecutionBundle):
         raise AssertionError("weight computation is not part of this test")
 
 
-def test_pipeline_sizing_uses_declared_pence_currency_with_major_fx_rate():
+def test_pipeline_sizing_uses_declared_pence_currency_with_major_fx_rate() -> None:
     book = BookConfig(
-        sleeves=(SleeveConfig(name=SleeveName("uk"), wheel_filename="uk.whl", risk_share=1.0),),
+        sleeves=(
+            SleeveConfig(
+                name=SleeveName("uk"),
+                wheel_filename="uk.whl",
+                risk_share=1.0,
+            ),
+        ),
         base_currency="EUR",
     )
     bundle = _PenceBundle()
