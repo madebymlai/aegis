@@ -299,14 +299,7 @@ class RebalancePipeline:
         needed = contract.lookback_bars + 1
         sleeve_bars: dict[InstrumentRef, Sequence[MarketBar]] = {}
         for ref in contract.refs:
-            bars = self._market_data.lookback_window(
-                ref,
-                self.instrument_id_for_ref(ref),
-                contract.timeframe,
-                period=period.period,
-                period_ns=period.period_ns,
-                limit=needed,
-            )
+            bars = self._lookback_window(ref, contract.timeframe, period, limit=needed)
             if len(bars) < needed:
                 return None
             sleeve_bars[ref] = bars
@@ -314,15 +307,35 @@ class RebalancePipeline:
 
     def _fresh_refs(self, period: CompletedRebalancePeriod) -> frozenset[InstrumentRef]:
         return frozenset(
-            ref
-            for ref in self._all_refs
-            if self._market_data.has_bar_in_period(
-                ref,
-                self.instrument_id_for_ref(ref),
-                self._timeframe_by_ref[ref],
-                period=period.period,
-                period_ns=period.period_ns,
-            )
+            ref for ref in self._all_refs if self._has_bar_in_period(ref, period)
+        )
+
+    def _lookback_window(
+        self,
+        ref: InstrumentRef,
+        timeframe: str,
+        period: CompletedRebalancePeriod,
+        *,
+        limit: int,
+    ) -> tuple[MarketBar, ...]:
+        return self._market_data.lookback_window(
+            ref,
+            self.instrument_id_for_ref(ref),
+            timeframe,
+            period=period.period,
+            period_ns=period.period_ns,
+            limit=limit,
+        )
+
+    def _has_bar_in_period(
+        self, ref: InstrumentRef, period: CompletedRebalancePeriod
+    ) -> bool:
+        return self._market_data.has_bar_in_period(
+            ref,
+            self.instrument_id_for_ref(ref),
+            self._timeframe_by_ref[ref],
+            period=period.period,
+            period_ns=period.period_ns,
         )
 
     def _collect_sizing_params(
@@ -343,14 +356,7 @@ class RebalancePipeline:
                 currency=quote_currency,
                 size_increment=sizing.size_increment,
             )
-            bars = self._market_data.lookback_window(
-                ref,
-                resolved_id,
-                self._timeframe_by_ref[ref],
-                period=period.period,
-                period_ns=period.period_ns,
-                limit=1,
-            )
+            bars = self._lookback_window(ref, self._timeframe_by_ref[ref], period, limit=1)
             if bars:
                 prices[ref] = float(bars[-1].close)
             currencies.add(quote_currency)

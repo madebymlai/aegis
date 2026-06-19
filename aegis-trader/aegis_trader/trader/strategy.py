@@ -328,11 +328,11 @@ class RebalanceStrategy(Strategy):
         self.cache.set_mark_xrate(instrument.base_currency, instrument.quote_currency, mid)
 
     def on_bar(self, bar: Bar) -> None:
-        """Buffer bar and trigger a period-level rebalance when the period advances.
+        """Trigger a period-level rebalance when the period advances.
 
         Debounce (Slice 6): only one re-net per completed period, not
         per-instrument.  When the first bar of a new period arrives the
-        strategy rebalances using all bars from the *completed* period and
+        strategy rebalances from the Cache-backed completed-period window and
         submits orders that will fill at the *new* period's close — one-bar
         execution lag.
         """

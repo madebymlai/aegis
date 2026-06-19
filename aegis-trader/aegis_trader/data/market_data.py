@@ -129,9 +129,9 @@ class NautilusMarketData:
         period_ns: int,
         limit: int,
     ) -> tuple[MarketBar, ...]:
-        period_end = (period + 1) * period_ns
+        period_end = _period_end(period, period_ns)
         bars = _completed_bars(
-            self._cache.bars(bar_type(instrument_id.value, timeframe)),
+            self._cache_bars(instrument_id, timeframe),
             period_end=period_end,
         )
         return tuple(_to_market_bar(bar) for bar in bars[-limit:])
@@ -145,12 +145,23 @@ class NautilusMarketData:
         period: int,
         period_ns: int,
     ) -> bool:
-        period_start = period * period_ns
-        period_end = (period + 1) * period_ns
+        period_start, period_end = _period_bounds(period, period_ns)
         return any(
             period_start <= bar.ts_event < period_end
-            for bar in self._cache.bars(bar_type(instrument_id.value, timeframe))
+            for bar in self._cache_bars(instrument_id, timeframe)
         )
+
+    def _cache_bars(self, instrument_id: InstrumentId, timeframe: str) -> list[Bar]:
+        return self._cache.bars(bar_type(instrument_id.value, timeframe))
+
+
+def _period_bounds(period: int, period_ns: int) -> tuple[int, int]:
+    period_start = period * period_ns
+    return period_start, _period_end(period, period_ns)
+
+
+def _period_end(period: int, period_ns: int) -> int:
+    return (period + 1) * period_ns
 
 
 def _completed_bars(bars: list[Bar], *, period_end: int) -> list[Bar]:

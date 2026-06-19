@@ -47,7 +47,10 @@ from aegis_trader.portfolio.performance import (
 )
 from aegis_trader.trader.costs import build_simulated_cost_models
 from aegis_trader.trader.financing import build_financing_modules
-from aegis_trader.trader.modes import build_backtest_engine_config
+from aegis_trader.trader.modes import (
+    DEFAULT_BACKTEST_BAR_CAPACITY,
+    build_backtest_engine_config,
+)
 from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
@@ -193,7 +196,7 @@ def run_book_backtest(
 
 def _cache_bar_capacity(sleeves: _SleeveBundles) -> int:
     required = max(bundle.contract.lookback_bars for _name, bundle in sleeves) + 1
-    return max(10_000, required)
+    return max(DEFAULT_BACKTEST_BAR_CAPACITY, required)
 
 
 def book_return_stats(engine: BacktestEngine) -> dict[str, float]:

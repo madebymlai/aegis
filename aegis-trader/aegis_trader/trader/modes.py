@@ -382,6 +382,9 @@ def build_live_exec_client_config(
 # ── TradingNodeConfig builders ───────────────────────────────────────────────
 
 
+DEFAULT_BACKTEST_BAR_CAPACITY = 10_000
+
+
 def _build_trading_node_config(
     *,
     environment: Environment,
@@ -407,7 +410,7 @@ def build_backtest_engine_config(
     *,
     trader_id: str = "TRADER-001",
     risk_guard_config: RiskGuardConfig | None = None,
-    bar_capacity: int = 10_000,
+    bar_capacity: int = DEFAULT_BACKTEST_BAR_CAPACITY,
 ) -> BacktestEngineConfig:
     """Build the backtest-mode engine config (ADR-0003: the third mode).
 
