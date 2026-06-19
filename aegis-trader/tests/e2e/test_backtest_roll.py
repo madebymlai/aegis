@@ -23,6 +23,7 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
+from aegis_data.roll import DatedContract
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
@@ -43,7 +44,6 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.execution.figi_resolver import FigiInstrumentResolver, FuturesContract
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 VENUE = Venue("XCME")
@@ -160,21 +160,14 @@ def _make_bars(instrument: Instrument, prices: list[float], start_day: int = 0) 
     return bars
 
 
-def _roll_resolver() -> FigiInstrumentResolver:
-    """Security Master whose calendar advances the front→next contract at the
-    roll boundary; the contract resolver maps each dated symbol onto XCME."""
-
-    def calendar(ref: FuturesRef, as_of: date) -> FuturesContract:
-        symbol = "ESZ4" if as_of < _ROLL_DATE else "ESH5"
-        return FuturesContract(symbol=symbol, exchange="GLBX")  # GLBX → XCME
-
-    def contract_resolver(contract: FuturesContract) -> InstrumentId:
-        return InstrumentId.from_str(f"{contract.symbol}.XCME")
-
-    return FigiInstrumentResolver(
-        futures_calendar=calendar,
-        futures_contract_resolver=contract_resolver,
-    )
+def _contract_chains() -> dict[str, tuple[DatedContract, ...]]:
+    """Provider-loaded dated contracts whose expiry rule rolls on _ROLL_DATE."""
+    return {
+        "ES": (
+            DatedContract("ESZ4", date(1970, 1, 12)),
+            DatedContract("ESH5", date(1970, 1, 30)),
+        )
+    }
 
 
 def _make_book() -> BookConfig:
@@ -208,11 +201,13 @@ def test_futures_sleeve_rolls_across_boundary():
     engine.add_instrument(nxt)
     engine.add_data(bars)
 
-    config = RebalanceStrategyConfig(book=_make_book(), figi_resolver=_roll_resolver())
+    config = RebalanceStrategyConfig(
+        book=_make_book(), futures_contract_chains=_contract_chains()
+    )
     strategy = RebalanceStrategy(config=config)
     strategy.register_sleeve(_make_book().sleeves[0].name, _ConstantWeightBundle(weight=0.5))
-    # No injected bimap: on_start resolves the FuturesRef as-of the boot date to
-    # the live front contract (the as-of resolver advances it at the roll).
+    # No injected bimap: on_start resolves the FuturesRef from provider-loaded
+    # dated contracts, then the same chain advances it at the roll.
     engine.add_strategy(strategy)
 
     engine.run()
@@ -281,7 +276,9 @@ def test_drift_follows_rolled_contract():
     engine.add_instrument(nxt)
     engine.add_data(bars)
 
-    config = RebalanceStrategyConfig(book=_make_book(), figi_resolver=_roll_resolver())
+    config = RebalanceStrategyConfig(
+        book=_make_book(), futures_contract_chains=_contract_chains()
+    )
     strategy = RebalanceStrategy(config=config)
     strategy.register_sleeve(_make_book().sleeves[0].name, _StepWeightBundle())
     engine.add_strategy(strategy)

@@ -18,7 +18,6 @@ from nautilus_trader.model.identifiers import InstrumentId
 from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS, DatedContract, front_contract
 from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 from aegis_runtime.currency import major_currency
-from aegis_trader.execution.figi_resolver import FigiResolutionError
 
 IB_LISTED_EXCHANGE = "SMART"
 IB_LISTED_SEC_TYPE = "STK"
@@ -35,6 +34,10 @@ IB_FUTURES_MIC_OVERRIDES: dict[str, str] = {"COMEX": "XCEC"}
 
 IBContractConfig = dict[str, str]
 FuturesContractChains = Mapping[str, Sequence[DatedContract]]
+
+
+class InstrumentResolutionError(ValueError):
+    """An InstrumentRef could not be resolved to a Nautilus InstrumentId."""
 
 
 class LoadedInstrument(Protocol):
@@ -86,15 +89,15 @@ def select_front_futures_contract(
     reproduces on both sides without a per-root month table.
     """
     if ref.roll_rule != "calendar":
-        raise FigiResolutionError(
+        raise InstrumentResolutionError(
             f"unsupported futures roll rule {ref.roll_rule!r}; expected 'calendar'"
         )
     if not contracts:
-        raise FigiResolutionError(f"FuturesRef root {ref.root!r} has no dated contracts")
+        raise InstrumentResolutionError(f"FuturesRef root {ref.root!r} has no dated contracts")
 
     selected = front_contract(contracts, as_of, roll_lead_days=roll_lead_days)
     if selected is None:
-        raise FigiResolutionError(
+        raise InstrumentResolutionError(
             f"FuturesRef root {ref.root!r} has no dated contract active on {as_of}"
         )
     return selected
@@ -156,12 +159,12 @@ def loaded_listed_ref_bimap(
 
     if duplicates:
         joined = ", ".join(sorted(set(duplicates)))
-        raise FigiResolutionError(f"ListedRef FIGI(s) {joined} loaded more than once by IB")
+        raise InstrumentResolutionError(f"ListedRef FIGI(s) {joined} loaded more than once by IB")
 
     missing = sorted(ref.figi for ref in requested if ref not in bimap)
     if missing:
         joined = ", ".join(missing)
-        raise FigiResolutionError(
+        raise InstrumentResolutionError(
             f"ListedRef FIGI(s) {joined} were not loaded by the IB InstrumentProvider"
         )
     return bimap
@@ -194,7 +197,7 @@ def loaded_futures_ref_bimap(
     for ref, contract in selected.items():
         previous = by_local_symbol.get(contract.symbol)
         if previous is not None and previous != ref:
-            raise FigiResolutionError(
+            raise InstrumentResolutionError(
                 f"FuturesRefs {previous.value!r} and {ref.value!r} both resolve to "
                 f"{contract.symbol!r}; inverse mapping would be ambiguous"
             )
@@ -214,7 +217,7 @@ def loaded_futures_ref_bimap(
 
     if duplicates:
         joined = ", ".join(sorted(set(duplicates)))
-        raise FigiResolutionError(
+        raise InstrumentResolutionError(
             f"Futures contract(s) {joined} loaded more than once by IB"
         )
 
@@ -223,7 +226,7 @@ def loaded_futures_ref_bimap(
     )
     if missing:
         joined = ", ".join(missing)
-        raise FigiResolutionError(
+        raise InstrumentResolutionError(
             f"Futures contract(s) {joined} were not loaded by the IB InstrumentProvider"
         )
     return bimap
@@ -243,7 +246,7 @@ def declared_ref_currencies(bundles: Iterable[BundleCurrencyPlan]) -> dict[Instr
             currency = bundle.currency_by_symbol[symbol]
             previous = currencies.get(ref)
             if previous is not None and previous != currency:
-                raise FigiResolutionError(
+                raise InstrumentResolutionError(
                     f"InstrumentRef {ref.value!r} has conflicting bundle quote currencies "
                     f"{previous!r} and {currency!r}"
                 )
@@ -275,7 +278,7 @@ def reconcile_quote_currency(
         return declared
     if provider_major == declared:
         return provider_currency
-    raise FigiResolutionError(
+    raise InstrumentResolutionError(
         f"InstrumentRef {ref.value!r} bundle quote currency {declared!r} "
         f"disagrees with provider currency {provider_currency!r}"
     )
@@ -315,7 +318,7 @@ def _contract_chain_for(
     try:
         return contract_chains[ref.root]
     except KeyError:
-        raise FigiResolutionError(
+        raise InstrumentResolutionError(
             f"FuturesRef root {ref.root!r} has no IBKR contract chain"
         ) from None
 
