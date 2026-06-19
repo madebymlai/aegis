@@ -16,9 +16,11 @@ from aegis_data.store import (
     data_dir,
     ListedAdjustmentPolicy,
     NativeBarsRequest,
+    merge_native_bars,
     native_bars_path,
     read_fx_history,
     read_native_bars,
+    replace_native_bars,
     write_fx_history,
     write_native_bars,
 )
@@ -139,6 +141,58 @@ def test_native_bar_store_read_does_not_require_exchange_holiday_bars(tmp_path) 
     )
 
     assert frames[ref]["close"].tolist() == [100.0, 101.0]
+
+
+def test_merge_native_bars_keeps_existing_covered_history_on_overlap(tmp_path) -> None:
+    # Additive merge is idempotent: a re-Pull of overlapping dates must not rewrite
+    # already-admitted bars.
+    ref = ListedRef("BBG000B9XRY4")
+    write_native_bars(ref, "1D", _listed_bars(), store_dir=tmp_path)
+    restated = _listed_bars()
+    restated["close"] = restated["close"] + 1000.0
+
+    merge_native_bars(ref, "1D", restated, store_dir=tmp_path)
+
+    frames = read_native_bars(
+        (ref,),
+        arrays=("close",),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
+        store_dir=tmp_path,
+    )
+    assert frames[ref]["close"].tolist() == [101.0, 102.0, 103.0]
+
+
+def test_replace_native_bars_overwrites_overlap_and_keeps_outside(tmp_path) -> None:
+    # Replace wins across its own span (re-derived history) but retains bars outside it.
+    ref = ListedRef("BBG000B9XRY4")
+    write_native_bars(ref, "1D", _listed_bars(), store_dir=tmp_path)
+    replacement = pd.DataFrame(
+        {
+            "open": [9990.0, 9991.0],
+            "high": [9990.0, 9991.0],
+            "low": [9990.0, 9991.0],
+            "close": [9990.0, 9991.0],
+            "volume": [1, 1],
+        },
+        index=pd.DatetimeIndex(["2024-01-03", "2024-01-04"]),
+    )
+
+    replace_native_bars(ref, "1D", replacement, store_dir=tmp_path)
+
+    frames = read_native_bars(
+        (ref,),
+        arrays=("close",),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
+        store_dir=tmp_path,
+    )
+    # 2024-01-02 retained from the original; 2024-01-03/04 overwritten.
+    assert frames[ref]["close"].tolist() == [101.0, 9990.0, 9991.0]
 
 
 def test_native_bars_request_requires_a_trading_calendar() -> None:

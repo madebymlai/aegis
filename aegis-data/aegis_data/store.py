@@ -242,7 +242,13 @@ def merge_native_bars(
     required_arrays: Sequence[str] = (),
     store_dir: Path | None = None,
 ) -> Path:
-    """Add provider-normalized native market bars to existing Covered History."""
+    """Add provider-normalized native market bars to existing Covered History.
+
+    Additive and idempotent: on an overlapping timestamp the already-admitted
+    Covered History wins, so a re-Pull never silently rewrites admitted bars. Use
+    :func:`replace_native_bars` to overwrite an existing window (e.g. to repair a
+    bad bar or re-derive a continuous panel).
+    """
     admitted = _admit_native_bars(bars)
     _assert_admitted_native_bar_arrays(admitted, required_arrays)
     path = native_bars_path(
@@ -264,7 +270,12 @@ def replace_native_bars(
     required_arrays: Sequence[str] = (),
     store_dir: Path | None = None,
 ) -> Path:
-    """Replace an overlapping Covered History window with provider-normalized bars."""
+    """Replace an overlapping Covered History window with provider-normalized bars.
+
+    The new bars win across their own ``[min, max]`` span (so a re-derived
+    continuous panel can change historical values); admitted bars outside that
+    span are retained. Unlike :func:`merge_native_bars`, this overwrites overlap.
+    """
     admitted = _admit_native_bars(bars)
     _assert_admitted_native_bar_arrays(admitted, required_arrays)
     path = native_bars_path(

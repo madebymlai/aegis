@@ -5,6 +5,12 @@ and the `DataContract` from issue #40 / `aegis-rd-qcj`). **Refined by ADR-0003**
 canonical cross-boundary identity is generalised from a bare FIGI to an asset-agnostic
 `InstrumentRef` (FIGI becomes the `ListedRef` variant), and the Security Master resolves
 *as-of* a date. The FIGI/`ListedRef` path below is unchanged; futures use `FuturesRef`.
+**Placement rationale corrected by ADR-0005**: the Security Master stays in `aegis-runtime`, but
+*not* because "export must resolve ticker→FIGI as well" (export *mints* the ref; it does not
+*resolve* it). It belongs in runtime because per-variant resolution is sealed with the
+`InstrumentRef` variant definitions. ADR-0005 also splits the resolution target: the Security Master
+resolves to a venue-neutral `VenueContract`, and a Trader adapter — not the Nautilus-free kernel —
+binds that to a Nautilus `InstrumentId` / IBKR `conId`.
 
 An **Execution Bundle**, **Aegis Trader**, and the live venue (Interactive Brokers via
 **NautilusTrader**) must agree on *which instrument* a signed target weight refers to.
