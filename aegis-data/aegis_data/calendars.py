@@ -51,6 +51,16 @@ _BUSINESS_DAY: dict[TradingCalendar, BaseOffset] = {
     TradingCalendar.CONTINUOUS: pd.offsets.Day(),
 }
 
+# Regular session span as (open, close) offsets from each active day's midnight.
+# XNYS uses regular RTH; early-close half-days are not modelled yet, so XNYS
+# intraday coverage over-expects bars on ~3 half-days/year (see aegis-rd-70x.16).
+# WEEKDAY (FX) and CONTINUOUS (crypto) run the full calendar day.
+_SESSION: dict[TradingCalendar, tuple[pd.Timedelta, pd.Timedelta]] = {
+    TradingCalendar.XNYS: (pd.Timedelta(hours=9, minutes=30), pd.Timedelta(hours=16)),
+    TradingCalendar.WEEKDAY: (pd.Timedelta(0), pd.Timedelta(days=1)),
+    TradingCalendar.CONTINUOUS: (pd.Timedelta(0), pd.Timedelta(days=1)),
+}
+
 
 def as_trading_calendar(calendar: TradingCalendar | str) -> TradingCalendar:
     """Coerce a value to a :class:`TradingCalendar`, failing closed on unknowns."""
@@ -68,4 +78,33 @@ def business_day_offset(calendar: TradingCalendar | str) -> BaseOffset:
     return _BUSINESS_DAY[as_trading_calendar(calendar)]
 
 
-__all__ = ["TradingCalendar", "as_trading_calendar", "business_day_offset"]
+def intraday_session_bars(
+    calendar: TradingCalendar | str,
+    timeframe: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DatetimeIndex:
+    """Expected intraday bar timestamps for ``calendar`` over ``[start, end)``.
+
+    Each active session day contributes ``date_range(open, close, freq=timeframe,
+    inclusive="left")`` (a bar is stamped at its interval start), concatenated
+    across active days and clipped to the half-open window. Timestamps are naive,
+    in the calendar's local clock.
+    """
+    cal = as_trading_calendar(calendar)
+    open_off, close_off = _SESSION[cal]
+    days = pd.date_range(start.normalize(), end.normalize(), freq=_BUSINESS_DAY[cal])
+    bars = pd.DatetimeIndex([])
+    for day in days:
+        bars = bars.append(
+            pd.date_range(day + open_off, day + close_off, freq=timeframe, inclusive="left")
+        )
+    return bars[(bars >= start) & (bars < end)]
+
+
+__all__ = [
+    "TradingCalendar",
+    "as_trading_calendar",
+    "business_day_offset",
+    "intraday_session_bars",
+]

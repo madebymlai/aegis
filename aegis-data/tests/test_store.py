@@ -143,6 +143,47 @@ def test_native_bar_store_read_does_not_require_exchange_holiday_bars(tmp_path) 
     assert frames[ref]["close"].tolist() == [100.0, 101.0]
 
 
+def test_intraday_store_read_fails_closed_on_missing_mid_session_bar(tmp_path) -> None:
+    # XNYS 15min RTH session 2024-01-02 09:30..15:45, minus one mid-session bar.
+    ref = ListedRef("BBG000B9XRY4")
+    session = pd.date_range("2024-01-02 09:30", "2024-01-02 16:00", freq="15min", inclusive="left")
+    gapped = session.delete(list(session).index(pd.Timestamp("2024-01-02 11:00")))
+    bars = pd.DataFrame({"close": [float(i) for i in range(len(gapped))]}, index=gapped)
+    write_native_bars(ref, "15min", bars, store_dir=tmp_path)
+
+    with pytest.raises(StoreCoverageError) as exc:
+        read_native_bars(
+            (ref,),
+            arrays=("close",),
+            timeframe="15min",
+            start="2024-01-02 09:30",
+            end="2024-01-02 16:00",
+            calendar=TradingCalendar.XNYS,
+            store_dir=tmp_path,
+        )
+
+    assert "11:00" in str(exc.value)
+
+
+def test_intraday_store_read_passes_with_a_complete_session(tmp_path) -> None:
+    ref = ListedRef("BBG000B9XRY4")
+    session = pd.date_range("2024-01-02 09:30", "2024-01-02 16:00", freq="15min", inclusive="left")
+    bars = pd.DataFrame({"close": [float(i) for i in range(len(session))]}, index=session)
+    write_native_bars(ref, "15min", bars, store_dir=tmp_path)
+
+    frames = read_native_bars(
+        (ref,),
+        arrays=("close",),
+        timeframe="15min",
+        start="2024-01-02 09:30",
+        end="2024-01-02 16:00",
+        calendar=TradingCalendar.XNYS,
+        store_dir=tmp_path,
+    )
+
+    assert len(frames[ref]) == 26
+
+
 def test_merge_native_bars_keeps_existing_covered_history_on_overlap(tmp_path) -> None:
     # Additive merge is idempotent: a re-Pull of overlapping dates must not rewrite
     # already-admitted bars.

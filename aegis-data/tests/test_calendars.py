@@ -5,7 +5,12 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from aegis_data.calendars import TradingCalendar, as_trading_calendar, business_day_offset
+from aegis_data.calendars import (
+    TradingCalendar,
+    as_trading_calendar,
+    business_day_offset,
+    intraday_session_bars,
+)
 
 
 def test_weekday_calendar_expects_a_us_holiday_that_xnys_skips() -> None:
@@ -37,6 +42,28 @@ def test_continuous_calendar_expects_a_weekend_day_that_weekday_skips() -> None:
     assert sunday in continuous
     assert saturday not in weekday
     assert sunday not in weekday
+
+
+def test_intraday_session_bars_xnys_uses_regular_rth_window() -> None:
+    bars = intraday_session_bars(
+        TradingCalendar.XNYS,
+        "15min",
+        pd.Timestamp("2024-01-02 00:00"),
+        pd.Timestamp("2024-01-03 00:00"),
+    )
+    assert bars[0] == pd.Timestamp("2024-01-02 09:30")
+    assert bars[-1] == pd.Timestamp("2024-01-02 15:45")  # 16:00 close excluded (interval start)
+    assert len(bars) == 26
+
+
+def test_intraday_session_bars_continuous_covers_a_weekend_that_weekday_skips() -> None:
+    saturday = pd.Timestamp("2024-01-13 00:00")
+    sunday = pd.Timestamp("2024-01-14 00:00")
+    continuous = intraday_session_bars(TradingCalendar.CONTINUOUS, "1h", saturday, sunday)
+    weekday = intraday_session_bars(TradingCalendar.WEEKDAY, "1h", saturday, sunday)
+
+    assert len(continuous) == 24  # full 24h on a Saturday
+    assert len(weekday) == 0  # Saturday is not a WEEKDAY session
 
 
 def test_unknown_calendar_fails_closed() -> None:

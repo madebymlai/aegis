@@ -4,6 +4,15 @@ Status: accepted (design; implementation pending). Refines ADR-0002 (FIGI / Secu
 before its own implementation; extends Aegis Trader ADR-0003 (deep modules) with a second
 order source. Depends on the `aegis-runtime` `DataContract`.
 
+**Amended by ADR-0005** (spike-validated, 2026-06-19): the `resolve(ref, as_of) → InstrumentId`
+step is **not** a bespoke runtime module. For a `FuturesRef`, the roll/continuity is owned by
+**Aegis Data** (its Databento contract chain + Panama back-adjustment); given `as_of` it yields the
+front dated contract's Databento definition, which Aegis Trader qualifies at IB — never IB
+`CONTFUT` (that would substitute IB's roll for Aegis Data's). For a `ListedRef`, IB's
+`InstrumentProvider` resolves the FIGI directly. The **Roll** step below is unchanged — it fires
+when Aegis Data advances the front contract — but no per-root map and no runtime resolver are
+built.
+
 ADR-0002 made the **FIGI** the sole cross-boundary instrument identity, resolved once at boot
 into a static `FIGI → InstrumentId` bimap, with the overlay netting "in canonical FIGI space".
 That is equity-shaped and breaks for futures at every hop: a continuous futures exposure has

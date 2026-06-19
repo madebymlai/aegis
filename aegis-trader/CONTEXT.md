@@ -61,15 +61,17 @@ failure, not a multi-timeframe simulation.
 _Avoid_: per-sleeve timeframe, mixed cadence backtest, implicit resampling
 
 **Security Master**:
-The shared `aegis-runtime` component that resolves an **InstrumentRef** *as-of* a date to a
-**VenueContract** and back, fail-closed on ambiguity. It stays broker-neutral and
-Nautilus-free; a Trader-side adapter binds the **VenueContract** to a Nautilus
-`InstrumentId` / IBKR `conId`. A `ListedRef` resolves date-invariantly (via its **FIGI**); a `FuturesRef` applies
-its roll rule to the date to pick the live dated contract — so resolution can change over time,
-and a **Roll** is detected when today's resolved contract differs from the one held. It is
-the single authority for cross-context instrument identity, so research, export, and live
-execution all agree on which instrument a target weight refers to.
-_Avoid_: symbol map, instrument map, ticker table, security database, FIGI resolver (it is asset-agnostic — FIGI is only the ListedRef variant)
+The resolution of an **InstrumentRef** to its live, tradable venue contract — a
+*responsibility fulfilled by vendor-native services, not a bespoke Aegis module* (ADR-0005).
+A **ListedRef** is resolved by handing its **FIGI** to Interactive Brokers'
+`InstrumentProvider` (`secIdType='FIGI'` + `convert_exchange_to_mic_venue`), which returns the
+qualified listing and MIC venue. A **FuturesRef** is resolved from the dated-contract
+definition **Aegis Data** already loads from Databento (it owns the contract chain + roll);
+Aegis Trader qualifies that concrete contract at IB — never IB `CONTFUT`. Resolution is
+fail-closed, and a **Roll** is detected when Aegis Data advances the front contract. The
+cross-context *identity* (the **InstrumentRef**) is still single and authoritative; only its
+*resolution* is vendor-native.
+_Avoid_: symbol map, instrument map, ticker table, security database, FIGI resolver, VenueContract (resolution is vendor-native — no bespoke resolver or intermediate contract type)
 
 Add domain terms here as decisions crystallise — one or two sentences each,
 defining what the term **is** (not what it does), with an `_Avoid_:` line

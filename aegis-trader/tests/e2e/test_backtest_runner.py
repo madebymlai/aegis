@@ -211,11 +211,13 @@ def _synthetic_gapped_ohlcv() -> pd.DataFrame:
 
 
 def _synthetic_intraday_ohlcv() -> pd.DataFrame:
-    index = pd.date_range("2020-01-01 09:30", periods=6, freq="15min")
-    prices = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0]
+    # A complete XNYS 15min RTH session (09:30..15:45) on a trading day, so the
+    # store's session-aware coverage is satisfied.
+    index = pd.date_range("2020-01-02 09:30", "2020-01-02 16:00", freq="15min", inclusive="left")
+    prices = [100.0 + i for i in range(len(index))]
     return pd.DataFrame(
         {"open": prices, "high": prices, "low": prices, "close": prices,
-         "volume": [1000] * 6},
+         "volume": [1000] * len(index)},
         index=index,
     )
 
@@ -794,12 +796,16 @@ def test_run_book_backtest_loads_and_subscribes_at_the_contract_timeframe(tmp_pa
         {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, timeframe="15min")}
     )
     ohlcv = _synthetic_intraday_ohlcv()
-    _seed_native_bars(tmp_path, ohlcv, timeframe="15min")
+    write_native_bars(ListedRef(_FIGI), "15min", ohlcv, store_dir=tmp_path)
+    # FX trades 24h on weekdays, so intraday FX History needs the full-day grid.
+    fx_index = pd.date_range("2020-01-02 00:00", "2020-01-03 00:00", freq="15min", inclusive="left")
+    write_fx_history(FxPair("EUR", "GBP"), "15min", _flat_fx(fx_index), store_dir=tmp_path)
+    write_fx_history(FxPair("EUR", "USD"), "15min", _flat_fx(fx_index, 1.10), store_dir=tmp_path)
 
     engine = run_book_backtest(
         str(book_path),
-        start="2020-01-01",
-        end="2020-01-02",
+        start="2020-01-02",
+        end="2020-01-03",
         store_dir=tmp_path,
         registry=registry,
     )

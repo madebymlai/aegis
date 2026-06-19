@@ -20,7 +20,12 @@ import pandas as pd
 import platformdirs
 from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 
-from aegis_data.calendars import TradingCalendar, as_trading_calendar, business_day_offset
+from aegis_data.calendars import (
+    TradingCalendar,
+    as_trading_calendar,
+    business_day_offset,
+    intraday_session_bars,
+)
 from aegis_data.chain import ContractFetcher
 
 _APP = "aegis-data"
@@ -546,7 +551,9 @@ def fx_history_coverage_gaps(
     if not path.exists():
         return _coverage_gaps(expected, expected)
     admitted = _load_admitted_fx_history(path)
-    missing = _missing_fx_rate_index(admitted, expected=expected, start=start_ts, end=end_ts)
+    missing = _missing_fx_rate_index(
+        admitted, timeframe=timeframe, expected=expected, start=start_ts, end=end_ts
+    )
     return _coverage_gaps(missing, expected)
 
 
@@ -563,7 +570,7 @@ def assert_fx_history_coverage(
     start_ts, end_ts = _window(start, end)
     admitted = _admit_fx_history(rates)
     selected = _slice_window(admitted, start=start_ts, end=end_ts)
-    _assert_expected_daily_coverage(
+    _assert_expected_bar_coverage(
         pair,
         selected,
         timeframe=timeframe,
@@ -673,7 +680,7 @@ def _read_one_fx_series(
         raise StoreCoverageError(pair, f"no FX History for {timeframe}")
     admitted = _load_admitted_fx_history(path)
     sliced = _slice_window(admitted, start=start, end=end)
-    _assert_expected_daily_coverage(
+    _assert_expected_bar_coverage(
         pair,
         sliced,
         timeframe=timeframe,
@@ -768,7 +775,7 @@ def _covered_native_bar_slice(
     end: pd.Timestamp,
 ) -> pd.DataFrame:
     selected = _required_native_bar_slice(key, frame, arrays=arrays, start=start, end=end)
-    _assert_expected_daily_coverage(
+    _assert_expected_bar_coverage(
         key, selected, timeframe=timeframe, calendar=calendar, start=start, end=end
     )
     _assert_no_null_arrays(key, selected)
@@ -815,6 +822,7 @@ def _history_coverage_gaps(
     missing = _missing_required_bar_index(
         admitted,
         arrays=arrays,
+        timeframe=timeframe,
         expected=expected,
         start=start,
         end=end,
@@ -826,6 +834,7 @@ def _missing_required_bar_index(
     frame: pd.DataFrame,
     *,
     arrays: tuple[str, ...],
+    timeframe: str,
     expected: pd.DatetimeIndex,
     start: pd.Timestamp,
     end: pd.Timestamp,
@@ -840,13 +849,14 @@ def _missing_required_bar_index(
     if selected.empty:
         return expected
     complete_bars = selected.loc[~selected.isna().any(axis=1)]
-    observed_dates = pd.DatetimeIndex(complete_bars.index).tz_localize(None).normalize()
-    return expected.difference(observed_dates)
+    observed = _observed_index(complete_bars.index, timeframe)
+    return expected.difference(observed)
 
 
 def _missing_fx_rate_index(
     frame: pd.DataFrame,
     *,
+    timeframe: str,
     expected: pd.DatetimeIndex,
     start: pd.Timestamp,
     end: pd.Timestamp,
@@ -855,8 +865,8 @@ def _missing_fx_rate_index(
     if sliced.empty:
         return expected
     complete_rates = sliced.loc[sliced["rate"].notna()]
-    observed_dates = pd.DatetimeIndex(complete_rates.index).tz_localize(None).normalize()
-    return expected.difference(observed_dates)
+    observed = _observed_index(complete_rates.index, timeframe)
+    return expected.difference(observed)
 
 
 def _required_native_bar_slice(
@@ -945,7 +955,7 @@ def _admit_datetime_indexed_history(
     return history.sort_index()
 
 
-def _assert_expected_daily_coverage(
+def _assert_expected_bar_coverage(
     key: HistoryKey,
     frame: pd.DataFrame,
     *,
@@ -955,19 +965,23 @@ def _assert_expected_daily_coverage(
     end: pd.Timestamp,
     value_name: str = "bar",
 ) -> None:
-    if timeframe not in _DAILY_TIMEFRAMES:
-        if frame.empty:
-            raise StoreCoverageError(key, f"no {value_name}s in [{start.date()}, {end.date()})")
-        return
-    expected = _business_days(start, end, calendar=calendar)
+    expected = _expected_bar_index(timeframe, calendar=calendar, start=start, end=end)
     if expected.empty:
         return
-    observed = pd.DatetimeIndex(frame.index).tz_localize(None).normalize()
+    observed = _observed_index(frame.index, timeframe)
     missing = expected.difference(observed)
     if missing.empty:
         return
-    first = missing[0].date().isoformat()
-    raise StoreCoverageError(key, f"missing expected {timeframe} {value_name} on {first}")
+    raise StoreCoverageError(
+        key, f"missing expected {timeframe} {value_name} on {missing[0].isoformat()}"
+    )
+
+
+def _observed_index(index: pd.Index, timeframe: str) -> pd.DatetimeIndex:
+    """Observed timestamps at the timeframe's resolution: daily collapses to the
+    session date; intraday keeps the full naive timestamp."""
+    observed = pd.DatetimeIndex(index).tz_localize(None)
+    return observed.normalize() if timeframe in _DAILY_TIMEFRAMES else observed
 
 
 def _business_days(
@@ -990,7 +1004,7 @@ def _expected_bar_index(
     end: pd.Timestamp,
 ) -> pd.DatetimeIndex:
     if timeframe not in _DAILY_TIMEFRAMES:
-        return pd.DatetimeIndex([start])
+        return intraday_session_bars(calendar, timeframe, start, end)
     return _business_days(start, end, calendar=calendar)
 
 
