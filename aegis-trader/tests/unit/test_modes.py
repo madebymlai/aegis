@@ -17,8 +17,10 @@ are tested separately in an integration environment.
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 
-from aegis_runtime import ListedRef
+from aegis_data.roll import DatedContract
+from aegis_runtime import FuturesRef, ListedRef
 from nautilus_trader.config import (
     CacheConfig,
     LoggingConfig,
@@ -264,7 +266,7 @@ def test_data_client_loads_listed_refs_as_ib_figi_contracts():
             }
         ],
         "convert_exchange_to_mic_venue": True,
-        "symbol_to_mic_venue": {"IGLN": "XLON"},
+        "symbol_to_mic_venue": {"IGLN": "XLON", "COMEX": "XCEC"},
     }
 
 
@@ -284,6 +286,21 @@ def test_data_client_merges_fx_ids_and_listed_figi_contracts():
         }
     ]
     assert cfg["instrument_provider"]["convert_exchange_to_mic_venue"] is True
+
+
+def test_data_client_loads_futures_refs_as_ib_local_symbol_contracts():
+    ref = FuturesRef("6E", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
+    chains = {"6E": (DatedContract("6EU6", date(2026, 9, 14)),)}
+
+    cfg = build_paper_data_client_config(
+        futures_refs=[ref], futures_as_of=date(2026, 8, 1), futures_contract_chains=chains
+    )
+
+    assert cfg["instrument_provider"] == {
+        "load_contracts": [{"secType": "FUT", "localSymbol": "6EU6", "exchange": "CME"}],
+        "convert_exchange_to_mic_venue": True,
+        "symbol_to_mic_venue": {"IGLN": "XLON", "COMEX": "XCEC"},
+    }
 
 
 def test_data_client_omits_instrument_provider_when_no_fx_pairs():

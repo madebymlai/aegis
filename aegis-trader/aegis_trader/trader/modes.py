@@ -20,6 +20,7 @@ dicts into the full IBKR config classes at node-build time.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import date
 from typing import Any
 
 from nautilus_trader.backtest.config import BacktestEngineConfig
@@ -37,8 +38,12 @@ from nautilus_trader.risk.config import RiskEngineConfig
 
 from aegis_runtime import InstrumentRef
 from aegis_trader.domain.risk_guard import RiskGuardConfig
+from aegis_trader.execution.figi_resolver import FigiResolutionError
 from aegis_trader.trader.instrument_provider import (
+    FuturesContractChains,
+    IB_FUTURES_MIC_OVERRIDES,
     IB_LISTED_MIC_OVERRIDES,
+    futures_ref_ib_contracts,
     listed_ref_ib_contracts,
 )
 
@@ -151,10 +156,13 @@ def _data_client_config(
     market_data_type: str,
     fx_instrument_ids: Iterable[str],
     listed_refs: Iterable[InstrumentRef],
+    futures_refs: Iterable[InstrumentRef],
+    futures_as_of: date | None,
+    futures_contract_chains: FuturesContractChains,
 ) -> dict[str, Any]:
     """Shared data-client dict; embeds an InstrumentProvider that loads the FX
-    reference pairs (``load_ids``) and listed FIGI contracts (``load_contracts``)
-    so Nautilus resolves them into the cache before the overlay starts."""
+    reference pairs (``load_ids``), listed FIGI contracts, and selected dated
+    futures contracts (``load_contracts``) before the overlay starts."""
     cfg: dict[str, Any] = {
         "ibg_host": ibg_host,
         "ibg_port": ibg_port,
@@ -166,6 +174,9 @@ def _data_client_config(
         cfg,
         fx_instrument_ids=fx_instrument_ids,
         listed_refs=listed_refs,
+        futures_refs=futures_refs,
+        futures_as_of=futures_as_of,
+        futures_contract_chains=futures_contract_chains,
     )
 
 
@@ -174,10 +185,16 @@ def _with_instrument_provider(
     *,
     fx_instrument_ids: Iterable[str],
     listed_refs: Iterable[InstrumentRef],
+    futures_refs: Iterable[InstrumentRef],
+    futures_as_of: date | None,
+    futures_contract_chains: FuturesContractChains,
 ) -> dict[str, Any]:
     provider = _instrument_provider_config(
         fx_instrument_ids=fx_instrument_ids,
         listed_refs=listed_refs,
+        futures_refs=futures_refs,
+        futures_as_of=futures_as_of,
+        futures_contract_chains=futures_contract_chains,
     )
     if provider:
         cfg["instrument_provider"] = provider
@@ -188,16 +205,35 @@ def _instrument_provider_config(
     *,
     fx_instrument_ids: Iterable[str],
     listed_refs: Iterable[InstrumentRef],
+    futures_refs: Iterable[InstrumentRef],
+    futures_as_of: date | None,
+    futures_contract_chains: FuturesContractChains,
 ) -> dict[str, Any]:
     provider: dict[str, Any] = {}
     load_ids = list(fx_instrument_ids)
     if load_ids:
         provider["load_ids"] = load_ids
     load_contracts = listed_ref_ib_contracts(listed_refs)
+    future_refs = list(futures_refs)
+    if future_refs:
+        if futures_as_of is None:
+            raise FigiResolutionError(
+                "futures_as_of is required to load FuturesRefs at IBKR"
+            )
+        load_contracts.extend(
+            futures_ref_ib_contracts(
+                future_refs,
+                as_of=futures_as_of,
+                contract_chains=futures_contract_chains,
+            )
+        )
     if load_contracts:
         provider["load_contracts"] = load_contracts
         provider["convert_exchange_to_mic_venue"] = True
-        provider["symbol_to_mic_venue"] = dict(IB_LISTED_MIC_OVERRIDES)
+        provider["symbol_to_mic_venue"] = {
+            **IB_LISTED_MIC_OVERRIDES,
+            **IB_FUTURES_MIC_OVERRIDES,
+        }
     return provider
 
 
@@ -209,20 +245,24 @@ def build_paper_data_client_config(
     market_data_type: str = "realtime",
     fx_instrument_ids: Iterable[str] = (),
     listed_refs: Iterable[InstrumentRef] = (),
+    futures_refs: Iterable[InstrumentRef] = (),
+    futures_as_of: date | None = None,
+    futures_contract_chains: FuturesContractChains | None = None,
 ) -> dict[str, Any]:
     """Build an IBKR paper-mode data client config dict.
 
     ``market_data_type`` defaults to ``"realtime"`` (IBMarketDataTypeEnum.REALTIME):
     IDEALPRO spot FX streams real-time quotes the overlay needs to maintain its
     mark xrates, and DELAYED_FROZEN delivers none of them (live-validated). Pass
-    *fx_instrument_ids* (see :func:`fx_reference_instrument_ids`) and
-    *listed_refs* to have the InstrumentProvider load the book's FX reference
-    pairs and listed FIGI contracts.
+    *fx_instrument_ids* (see :func:`fx_reference_instrument_ids`), *listed_refs*,
+    and selected *futures_refs* to preload the book's provider-native contracts.
     """
     return _data_client_config(
         ibg_host=ibg_host, ibg_port=ibg_port, ibg_client_id=ibg_client_id,
         market_data_type=market_data_type, fx_instrument_ids=fx_instrument_ids,
-        listed_refs=listed_refs,
+        listed_refs=listed_refs, futures_refs=futures_refs,
+        futures_as_of=futures_as_of,
+        futures_contract_chains=futures_contract_chains or {},
     )
 
 
@@ -233,6 +273,9 @@ def build_paper_exec_client_config(
     ibg_client_id: int = IB_CLIENT_ID,
     account_id: str = IB_PAPER_ACCOUNT_ID,
     listed_refs: Iterable[InstrumentRef] = (),
+    futures_refs: Iterable[InstrumentRef] = (),
+    futures_as_of: date | None = None,
+    futures_contract_chains: FuturesContractChains | None = None,
 ) -> dict[str, Any]:
     """Build an IBKR paper-mode execution client config dict.
 
@@ -250,6 +293,9 @@ def build_paper_exec_client_config(
         cfg,
         fx_instrument_ids=(),
         listed_refs=listed_refs,
+        futures_refs=futures_refs,
+        futures_as_of=futures_as_of,
+        futures_contract_chains=futures_contract_chains or {},
     )
 
 
@@ -264,19 +310,24 @@ def build_live_data_client_config(
     market_data_type: str = "realtime",
     fx_instrument_ids: Iterable[str] = (),
     listed_refs: Iterable[InstrumentRef] = (),
+    futures_refs: Iterable[InstrumentRef] = (),
+    futures_as_of: date | None = None,
+    futures_contract_chains: FuturesContractChains | None = None,
 ) -> dict[str, Any]:
     """Build an IBKR live-mode data client config dict.
 
     ``market_data_type`` defaults to ``"realtime"`` (IBMarketDataTypeEnum.REALTIME)
     for live market data.  Pass *fx_instrument_ids* (see
-    :func:`fx_reference_instrument_ids`) and *listed_refs* to have the
-    InstrumentProvider load the book's FX reference pairs and listed FIGI
+    :func:`fx_reference_instrument_ids`), *listed_refs*, and selected
+    *futures_refs* to have the InstrumentProvider load provider-native
     contracts.
     """
     return _data_client_config(
         ibg_host=ibg_host, ibg_port=ibg_port, ibg_client_id=ibg_client_id,
         market_data_type=market_data_type, fx_instrument_ids=fx_instrument_ids,
-        listed_refs=listed_refs,
+        listed_refs=listed_refs, futures_refs=futures_refs,
+        futures_as_of=futures_as_of,
+        futures_contract_chains=futures_contract_chains or {},
     )
 
 
@@ -287,6 +338,9 @@ def build_live_exec_client_config(
     ibg_client_id: int = IB_CLIENT_ID,
     account_id: str = IB_LIVE_ACCOUNT_ID,
     listed_refs: Iterable[InstrumentRef] = (),
+    futures_refs: Iterable[InstrumentRef] = (),
+    futures_as_of: date | None = None,
+    futures_contract_chains: FuturesContractChains | None = None,
 ) -> dict[str, Any]:
     """Build an IBKR live-mode execution client config dict.
 
@@ -304,6 +358,9 @@ def build_live_exec_client_config(
         cfg,
         fx_instrument_ids=(),
         listed_refs=listed_refs,
+        futures_refs=futures_refs,
+        futures_as_of=futures_as_of,
+        futures_contract_chains=futures_contract_chains or {},
     )
 
 
