@@ -6,8 +6,8 @@ resolve each sleeve's bundle (registry) -> derive each instrument's identity
 provider-agnostic) -> build instruments and bars via the data/ load side ->
 feed the engine, set FX marks, register the sleeves, and run the overlay.
 
-The fetchers are injected so the core is provider-agnostic and testable; the
-defaults pull daily bars and a latest FX mark from yfinance.
+The fetchers are injected so the core is provider-agnostic and testable. Store
+and yfinance adapters live at the edge of the module.
 """
 
 from __future__ import annotations
@@ -142,7 +142,10 @@ def store_ohlcv_fetcher(*, store_dir: Path | None = None) -> OhlcvFetcher:
 
 
 def store_fx_fetcher(*, store_dir: Path | None = None, timeframe: str = "1D") -> FxFetcher:
-    """Return an FX fetcher backed by provider-free aegis-data Store Read."""
+    """Return an FX fetcher backed by provider-free aegis-data Store Read.
+
+    Backtests default to daily FX History, matching the store-backed bar runner.
+    """
 
     def fetch(base: str, quote: str, start: str, end: str) -> pd.Series:
         pair = FxPair(base, quote)

@@ -225,7 +225,7 @@ def _synthetic_intraday_ohlcv() -> pd.DataFrame:
     )
 
 
-def _fx_must_not_be_called(base: str, quote: str, start: str, end: str) -> float:
+def _fx_must_not_be_called(base: str, quote: str, start: str, end: str) -> pd.Series:
     raise AssertionError("a pure-EUR book must not fetch FX")
 
 

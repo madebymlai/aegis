@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import TypeVar
 
 import pandas as pd
 import platformdirs
@@ -23,6 +24,7 @@ from aegis_data.chain import ContractFetcher
 
 _APP = "aegis-data"
 _DAILY_TIMEFRAMES = frozenset({"1D", "1d"})
+_HistoryFrame = TypeVar("_HistoryFrame", pd.Series, pd.DataFrame)
 
 
 @dataclass(frozen=True, order=True)
@@ -332,26 +334,29 @@ def _assert_no_null_arrays(key: HistoryKey, frame: pd.DataFrame) -> None:
 
 
 def _admit_fx_history(rates: pd.Series) -> pd.DataFrame:
-    if not isinstance(rates.index, pd.DatetimeIndex):
-        raise StoreAdmissionError("FX History must be indexed by DatetimeIndex")
-    if rates.index.has_duplicates:
-        raise StoreAdmissionError("FX History index contains duplicate timestamps")
-    if not rates.index.is_monotonic_increasing:
-        rates = rates.sort_index()
-    frame = rates.rename("rate").to_frame()
-    return frame
+    admitted = _admit_datetime_indexed_history(rates, label="FX History")
+    return admitted.rename("rate").to_frame()
 
 
 def _admit_native_bars(bars: pd.DataFrame) -> pd.DataFrame:
-    if not isinstance(bars.index, pd.DatetimeIndex):
-        raise StoreAdmissionError("native bars must be indexed by DatetimeIndex")
-    if bars.index.has_duplicates:
-        raise StoreAdmissionError("native bars index contains duplicate timestamps")
-    if not bars.index.is_monotonic_increasing:
-        bars = bars.sort_index()
-    if bars.columns.has_duplicates:
+    admitted = _admit_datetime_indexed_history(bars, label="native bars")
+    if admitted.columns.has_duplicates:
         raise StoreAdmissionError("native bars contain duplicate columns")
-    return bars
+    return admitted
+
+
+def _admit_datetime_indexed_history(
+    history: _HistoryFrame,
+    *,
+    label: str,
+) -> _HistoryFrame:
+    if not isinstance(history.index, pd.DatetimeIndex):
+        raise StoreAdmissionError(f"{label} must be indexed by DatetimeIndex")
+    if history.index.has_duplicates:
+        raise StoreAdmissionError(f"{label} index contains duplicate timestamps")
+    if history.index.is_monotonic_increasing:
+        return history
+    return history.sort_index()
 
 
 def _assert_expected_daily_coverage(
