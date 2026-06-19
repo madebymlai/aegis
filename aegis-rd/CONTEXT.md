@@ -113,8 +113,23 @@ The lineage metadata attached to a **Candidate** that traces its parameters back
 _Avoid_: lineage, history, audit trail
 
 **Run Config**:
-A declarative YAML specification that fully defines a **Run**: data source, **Components**, ranking criteria, portfolio settings, and optimization parameters. Configs are inert — they select trusted IDs and parameters only; they cannot execute code or reference generated artifacts.
+A declarative YAML specification that fully defines a **Run**: **Data Source Mode**, **Components**, ranking criteria, portfolio settings, and optimization parameters. Configs are inert — they select trusted IDs and parameters only; they cannot execute code or reference generated artifacts.
 _Avoid_: spec, recipe, template
+
+**Data Source Mode**:
+The **Run Config** choice for how market data enters a **Run**. `store` selects
+the shared **Historical Store** path that may **Ensure Coverage** by filling
+gaps through a configured **Gap-Fill Provider** and requires each symbol to
+declare its canonical **InstrumentRef**. Other source values select RD-owned
+sourcing. It is not the identity under which historical data is stored or
+traded.
+_Avoid_: InstrumentRef, store key, execution source, Trader source mode
+
+**RD Symbol Name**:
+The column/display name RD uses for one instrument inside a **Run**. For futures
+on the `store` path, the RD Symbol Name is the `FuturesRef` root; it is not
+authored as a separate label, ticker, or locator.
+_Avoid_: InstrumentRef, provider locator, store identity, execution identity
 
 **Preflight**:
 A fail-closed budget gate that runs before optimization begins. Estimates parameter combinations, output cell counts, and memory cost, and rejects the **Run** if any limit is exceeded.

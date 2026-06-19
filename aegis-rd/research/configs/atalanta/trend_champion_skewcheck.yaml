@@ -1,19 +1,14 @@
-name: atalanta_trend_ucits
+name: atalanta_trend_champion_skewcheck
 schema_version: 8
-output_dir: runs/atalanta/trend_ucits
+output_dir: runs/atalanta/trend_champion_skewcheck
 
-# CHAMPION — long-only atalanta trend pole (FORGO convention), promoted 2026-06-17 per
-# aegis-rd-167, superseding the long/short straddle champion (now archive/trend_ls_champion.yaml).
-# Same 20-name orthogonal non-equity LSE universe, indicators and params (trend_score lb252 +
-# realized_vol vw63 + turnover buffer bb0.20, eb0.0) as the prior champion, but long-only:
-# downtrends take no position (budget held as cash; gross <= 1). Evidence (aegis-rd-167): on this
-# non-equity universe shorting is NET-NEGATIVE (held-out Sharpe 0.62 L/S -> 0.89 long-only) and
-# half the names are un-borrowable for retail (IBKR probe); the crisis convexity (qskew 2.67
-# full-sample) comes from the long legs, not the shorts. FORGO (cash-when-flat) beats gross-1
-# redeploy on Sharpe/UPI/qskew and halves the tail drawdown; the multi-horizon 63/252 barbell was
-# tested and REJECTED out-of-sample (dominated: held-out Sharpe 0.79 / UPI 2.21 vs 0.89 / 3.27).
-# Pinned winner (role: best) for execution-bundle export.
-lock: 20260616T224011973358Z_atalanta_trend_ucits
+# SKEW-CHECK of the live long-only champion: identical universe (CORN.L, no cocoa), signal params
+# (trend_score lb252 + realized_vol vw63) and strategy (atalanta.trendStraddleBufferedLongOnly,
+# eb0.0/bb0.20) as the locked champion `trend.yaml` - the ONLY changes are ranking.metric ->
+# quarterly_return_skew (so the engine computes/emits held-out skew, which UPI ranking does not) and
+# no lock. Single pinned candidate, so best == the champion and its held-out skew/sharpe are reported
+# apples-to-apples with the L/S pyramid held-out skew (ramp1 0.54 / ramp21 0.65). Answers: what is the
+# long-only champion's HELD-OUT (per-split) quarterly skew, vs its full-sample 2.48 and the L/S book?
 data:
   source: yf
   arrays:
@@ -35,7 +30,7 @@ data:
   - {ticker: GILI.L, ccy: GBp, mic: XLON}
   - {ticker: WEAT.L, ccy: USD, mic: XLON, figi: BBG000BLCP10}
   - {ticker: HEAT.L, ccy: USD, mic: XLON, figi: BBG000BLBMN4}
-  - {ticker: CORN.L, ccy: USD, mic: XLON}  # was COCO.L (cocoa) — replaced: cocoa-long was 62% of sleeve (2024 spike, aegis-rd-167)
+  - {ticker: CORN.L, ccy: USD, mic: XLON}
   - {ticker: NGAS.L, ccy: USD, mic: XLON, figi: BBG000BLC3X4}
   - {ticker: IGLO.L, ccy: USD, mic: XLON}
   - {ticker: IBTA.L, ccy: USD, mic: XLON}
@@ -66,7 +61,7 @@ portfolio:
   fx_conversion_cost: 0.0003
 
 ranking:
-  metric: ulcer_performance_index
+  metric: quarterly_return_skew
 
 optimization:
   search: grid

@@ -1,19 +1,18 @@
-name: atalanta_trend_ucits
+name: atalanta_trend_pyramid_ls
 schema_version: 8
-output_dir: runs/atalanta/trend_ucits
+output_dir: runs/atalanta/trend_pyramid_ls
 
-# CHAMPION — long-only atalanta trend pole (FORGO convention), promoted 2026-06-17 per
-# aegis-rd-167, superseding the long/short straddle champion (now archive/trend_ls_champion.yaml).
-# Same 20-name orthogonal non-equity LSE universe, indicators and params (trend_score lb252 +
-# realized_vol vw63 + turnover buffer bb0.20, eb0.0) as the prior champion, but long-only:
-# downtrends take no position (budget held as cash; gross <= 1). Evidence (aegis-rd-167): on this
-# non-equity universe shorting is NET-NEGATIVE (held-out Sharpe 0.62 L/S -> 0.89 long-only) and
-# half the names are un-borrowable for retail (IBKR probe); the crisis convexity (qskew 2.67
-# full-sample) comes from the long legs, not the shorts. FORGO (cash-when-flat) beats gross-1
-# redeploy on Sharpe/UPI/qskew and halves the tail drawdown; the multi-horizon 63/252 barbell was
-# tested and REJECTED out-of-sample (dominated: held-out Sharpe 0.79 / UPI 2.21 vs 0.89 / 3.27).
-# Pinned winner (role: best) for execution-bundle export.
-lock: 20260616T224011973358Z_atalanta_trend_ucits
+# PYRAMIDING on the usual London ETF/ETC book, FULL L/S in backtest (yfinance =F futures are broken;
+# the .L ETF data is clean, and we allow shorting in the backtest regardless of real borrowability).
+# Tests [[what-makes-a-trend-sleeve-convex]] hypothesis #2 with atalanta.trendStraddleBufferedPyramid:
+# each name builds 0->full over `ramp_steps` bars of trend persistence, so gross floats up as trends
+# mature (convex - builds the right tail) and down in chop. Same 20-name universe + champion signal
+# params (trend_score lb252 + realized_vol vw63) as trend.yaml, so the only changes vs the live champion
+# are: strategy (pyramid vs buffered), direction (both vs longonly), ranking (skew vs UPI). ramp_steps 1
+# == the buffered champion exactly (no-pyramid baseline) vs 21/63/126, with/without the 0.20 buffer.
+# Ranked by quarterly_return_skew (the shape pyramiding should deepen); sharpe + UPI emitted for the
+# held-out gate. CAVEAT: per-split window ~1y (~4 quarters) -> per-split skew is noisy; the authoritative
+# skew read is full-sample (post-hoc), the held-out skew gate is directional.
 data:
   source: yf
   arrays:
@@ -35,7 +34,7 @@ data:
   - {ticker: GILI.L, ccy: GBp, mic: XLON}
   - {ticker: WEAT.L, ccy: USD, mic: XLON, figi: BBG000BLCP10}
   - {ticker: HEAT.L, ccy: USD, mic: XLON, figi: BBG000BLBMN4}
-  - {ticker: CORN.L, ccy: USD, mic: XLON}  # was COCO.L (cocoa) — replaced: cocoa-long was 62% of sleeve (2024 spike, aegis-rd-167)
+  - {ticker: CORN.L, ccy: USD, mic: XLON}
   - {ticker: NGAS.L, ccy: USD, mic: XLON, figi: BBG000BLC3X4}
   - {ticker: IGLO.L, ccy: USD, mic: XLON}
   - {ticker: IBTA.L, ccy: USD, mic: XLON}
@@ -53,20 +52,17 @@ indicators:
     vol_window: 63
 
 strategy:
-  id: atalanta.trendStraddleBufferedLongOnly
-  params:
-    entry_band: 0.0
-    buffer_band: 0.20
+  id: atalanta.trendStraddleBufferedPyramid
 
 portfolio:
   gross_cap: 1.0
-  direction: longonly
+  direction: both
   fees: 0.0005
   slippage: 0.0005
   fx_conversion_cost: 0.0003
 
 ranking:
-  metric: ulcer_performance_index
+  metric: quarterly_return_skew
 
 optimization:
   search: grid

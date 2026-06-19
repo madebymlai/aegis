@@ -1,0 +1,94 @@
+name: atalanta_trend_futures_pyramid_yf
+schema_version: 8
+output_dir: runs/atalanta/trend_futures_pyramid_yf
+
+# PYRAMIDING test on the futures substrate, YFINANCE source (the bento GLBX pull drops energy/metals/
+# grains on concurrent/threadpool fetches; futures via Databento are deferred to paper/preload). Tests
+# [[what-makes-a-trend-sleeve-convex]] hypothesis #2 (pyramiding - the one shape lever the codebase
+# lacked) with atalanta.trendStraddleBufferedPyramid: each name builds 0->full over `ramp_steps` bars of
+# trend persistence, so gross floats up as trends mature (convex, builds the right tail) and down in chop.
+# Champion signal params pinned (trend_score lb252 + realized_vol vw63), small strategy grid isolates the
+# lever: ramp_steps 1 == the buffered champion exactly (no-pyramid baseline) vs 21/63/126, with/without
+# the 0.20 buffer. Ranked by quarterly_return_skew (the shape pyramiding should deepen); sharpe + UPI
+# emitted for every candidate so the held-out Sharpe gate is read alongside.
+#
+# CAVEAT: yfinance "=F" are NAIVE non-back-adjusted front-month series (roll seams, and the 2020-04
+# negative-WTI print) that a trend signal can misread - an upside-scoping probe, not a roll-clean
+# backtest; a positive result here is re-validated on the (deferred) Databento continuous source.
+# 28 contracts: 5 rates + 6 FX + 5 energy + 5 metals + 7 ags (yfinance covers the ICE softs + Brent
+# that the bento GLBX cut omits).
+data:
+  source: yf
+  arrays:
+  - OHLCV
+  symbols:
+  # --- rates: US curve (2y/5y/10y/30y/ultra) ---
+  - {ticker: ZT=F, ccy: USD}
+  - {ticker: ZF=F, ccy: USD}
+  - {ticker: ZN=F, ccy: USD}
+  - {ticker: ZB=F, ccy: USD}
+  - {ticker: UB=F, ccy: USD}
+  # --- FX ---
+  - {ticker: 6E=F, ccy: USD}
+  - {ticker: 6J=F, ccy: USD}
+  - {ticker: 6B=F, ccy: USD}
+  - {ticker: 6A=F, ccy: USD}
+  - {ticker: 6C=F, ccy: USD}
+  - {ticker: 6S=F, ccy: USD}
+  # --- energy ---
+  - {ticker: CL=F, ccy: USD}
+  - {ticker: BZ=F, ccy: USD}
+  - {ticker: NG=F, ccy: USD}
+  - {ticker: RB=F, ccy: USD}
+  - {ticker: HO=F, ccy: USD}
+  # --- metals ---
+  - {ticker: GC=F, ccy: USD}
+  - {ticker: SI=F, ccy: USD}
+  - {ticker: HG=F, ccy: USD}
+  - {ticker: PL=F, ccy: USD}
+  - {ticker: PA=F, ccy: USD}
+  # --- ags ---
+  - {ticker: ZC=F, ccy: USD}
+  - {ticker: ZW=F, ccy: USD}
+  - {ticker: ZS=F, ccy: USD}
+  - {ticker: KC=F, ccy: USD}
+  - {ticker: SB=F, ccy: USD}
+  - {ticker: CC=F, ccy: USD}
+  - {ticker: CT=F, ccy: USD}
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+  params:
+    lookback: 252
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: atalanta.trendStraddleBufferedPyramid
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+ranking:
+  metric: quarterly_return_skew
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
