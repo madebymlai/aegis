@@ -72,7 +72,7 @@ from aegis_trader.domain.rebalancer import rebalance_plan
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.roll import HeldContract, roll_positions
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
-from aegis_trader.domain.sleeve_ledger import MIN_SLEEVE_VOL_RETURNS, SleeveLedger
+from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import (
     OrderIntent,
     OrderSide,
@@ -95,7 +95,6 @@ from aegis_trader.observability.port import (
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
 
 _NS_PER_DAY: int = 86_400_000_000_000
-_MIN_SLEEVE_VOL_RETURNS = MIN_SLEEVE_VOL_RETURNS
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -486,7 +485,6 @@ class RebalanceStrategy(Strategy):
             total_notional=total_notional,
         )
         self._log_rebalance_summary(summary)
-
 
         # ── Slice 9: store per-sleeve targets & closes for attribution ───
         # Record this period's realized weights, per-sleeve target rows, and

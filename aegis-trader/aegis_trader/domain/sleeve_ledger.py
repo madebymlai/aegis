@@ -49,14 +49,13 @@ class SleeveLedger:
         closes: Mapping[InstrumentRef, float],
     ) -> None:
         """Record one completed rebalance period's observation."""
-        self._observations.append(
-            AttributionPeriod(
-                nav=float(nav),
-                realized_weights=dict(realized_weights),
-                sleeve_targets={name: dict(targets) for name, targets in sleeve_targets.items()},
-                closes=dict(closes),
-            )
+        observation = AttributionPeriod(
+            nav=float(nav),
+            realized_weights=dict(realized_weights),
+            sleeve_targets={name: dict(targets) for name, targets in sleeve_targets.items()},
+            closes=dict(closes),
         )
+        self._observations.append(observation)
 
     def realized_covariance(
         self,
@@ -92,11 +91,7 @@ class SleeveLedger:
         rows = _complete_sleeve_return_rows(self._observations, sleeve_names)
         if len(rows) < min_returns:
             return None
-        realized_returns = {
-            name: tuple(row[index] for row in rows)
-            for index, name in enumerate(sleeve_names)
-        }
-        return portfolio_skew(weights, realized_returns)
+        return portfolio_skew(weights, _return_series_by_sleeve(sleeve_names, rows))
 
     def attribution(self, budgets: Mapping[SleeveName, float]) -> dict[SleeveName, float]:
         """Per-sleeve P&L attribution over the recorded observations."""
@@ -106,7 +101,7 @@ class SleeveLedger:
         """Current drawdown from the recorded NAV peak plus *current_nav*."""
         if not math.isfinite(current_nav):
             raise ValueError("current NAV must be finite")
-        peak = max([float(current_nav), *(float(nav) for nav in self.nav_history)])
+        peak = max([float(current_nav), *(float(period.nav) for period in self._observations)])
         if peak <= 0.0:
             return 0.0
         drawdown = 1.0 - float(current_nav) / peak
@@ -147,19 +142,29 @@ def _sleeve_period_return(
 ) -> float | None:
     sleeve_return = 0.0
     has_input = False
-    for figi, weight in prev.sleeve_targets.get(name, {}).items():
-        prev_px = prev.closes.get(figi)
-        curr_px = curr.closes.get(figi)
-        if prev_px is None or curr_px is None or prev_px <= 0:
+    for ref, weight in prev.sleeve_targets.get(name, {}).items():
+        prev_price = prev.closes.get(ref)
+        curr_price = curr.closes.get(ref)
+        if prev_price is None or curr_price is None or prev_price <= 0:
             continue
-        sleeve_return += float(weight) * (curr_px / prev_px - 1.0)
+        sleeve_return += float(weight) * (curr_price / prev_price - 1.0)
         has_input = True
     return sleeve_return if has_input else None
 
 
+def _return_series_by_sleeve(
+    names: tuple[SleeveName, ...],
+    rows: Sequence[Sequence[float]],
+) -> dict[SleeveName, tuple[float, ...]]:
+    return {
+        name: tuple(row[index] for row in rows)
+        for index, name in enumerate(names)
+    }
+
+
 def _annualized_covariance_by_sleeve(
     names: tuple[SleeveName, ...],
-    rows: list[list[float]],
+    rows: Sequence[Sequence[float]],
 ) -> dict[SleeveName, dict[SleeveName, float]] | None:
     covariance = _ewma_covariance(rows, alpha=EWMA_COVARIANCE_ALPHA)
     covariance *= TRADING_DAYS_PER_YEAR
@@ -180,7 +185,7 @@ def _covariance_dict(
     }
 
 
-def _ewma_covariance(rows: list[list[float]], *, alpha: float) -> np.ndarray:
+def _ewma_covariance(rows: Sequence[Sequence[float]], *, alpha: float) -> np.ndarray:
     """Return an EWMA covariance matrix for complete return rows."""
     values = np.array(rows, dtype=float)
     mean = values[0].copy()

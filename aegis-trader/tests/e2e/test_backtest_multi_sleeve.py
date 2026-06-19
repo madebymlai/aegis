@@ -36,12 +36,9 @@ from aegis_runtime import (
 )
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.sleeve_ledger import MIN_SLEEVE_VOL_RETURNS
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.trader.strategy import (
-    _MIN_SLEEVE_VOL_RETURNS,
-    RebalanceStrategy,
-    RebalanceStrategyConfig,
-)
+from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 # ── synthetic bundles ─────────────────────────────────────────────────────────
 
@@ -241,7 +238,7 @@ def test_vol_targeting_downweights_the_higher_vol_sleeve_through_the_engine():
     Two Floor sleeves on distinct EUR instruments carry EQUAL risk shares
     (0.5 / 0.5) but realize very different volatilities: one instrument drifts
     quietly, the other swings ~12x harder.  Fed enough daily bars to estimate a
-    covariance (``>= _MIN_SLEEVE_VOL_RETURNS + 1`` recorded periods), the
+    covariance (``>= MIN_SLEEVE_VOL_RETURNS + 1`` recorded periods), the
     strategy estimates the realized sleeve covariance from its own buffered bars
     and the allocator vol-targets: the higher-vol sleeve receives a STRICTLY
     SMALLER capital multiplier than the calmer one.
@@ -301,7 +298,7 @@ def test_vol_targeting_downweights_the_higher_vol_sleeve_through_the_engine():
 
     assert engine.get_result() is not None
     # Enough periods accrued to estimate a covariance: the refinement path ran.
-    assert strategy.sleeve_ledger.observation_count >= _MIN_SLEEVE_VOL_RETURNS + 1
+    assert strategy.sleeve_ledger.observation_count >= MIN_SLEEVE_VOL_RETURNS + 1
     # The book traded end-to-end (the path is live, not merely computed).
     assert any(o.is_closed for o in engine.cache.orders())
 

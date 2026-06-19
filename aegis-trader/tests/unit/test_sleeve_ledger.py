@@ -65,13 +65,36 @@ def test_realized_covariance_returns_none_until_history_is_sufficient():
 
 def test_realized_book_skew_measures_the_weighted_return_stream():
     ledger = SleeveLedger()
-    for close in (100.0, 101.0, 102.01, 103.0301, 82.42408):
-        ledger.record(
-            nav=100_000.0,
-            realized_weights={},
-            sleeve_targets={_TREND: {_A: 1.0}},
-            closes={_A: close},
-        )
+    ledger.record(
+        nav=100_000.0,
+        realized_weights={},
+        sleeve_targets={_TREND: {_A: 1.0}},
+        closes={_A: 100.0},
+    )
+    ledger.record(
+        nav=100_000.0,
+        realized_weights={},
+        sleeve_targets={_TREND: {_A: 1.0}},
+        closes={_A: 101.0},
+    )
+    ledger.record(
+        nav=100_000.0,
+        realized_weights={},
+        sleeve_targets={_TREND: {_A: 1.0}},
+        closes={_A: 102.01},
+    )
+    ledger.record(
+        nav=100_000.0,
+        realized_weights={},
+        sleeve_targets={_TREND: {_A: 1.0}},
+        closes={_A: 103.0301},
+    )
+    ledger.record(
+        nav=100_000.0,
+        realized_weights={},
+        sleeve_targets={_TREND: {_A: 1.0}},
+        closes={_A: 82.42408},
+    )
 
     skew = ledger.realized_book_skew({_TREND: 1.0}, (_TREND,), min_returns=4)
 
