@@ -138,7 +138,7 @@ class RebalanceStrategy(Strategy):
         # ── bar buffers & cadence state ──────────────────────────────────
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
         self._current_period: int | None = None
-        self._period_fresh_figis: set[InstrumentRef] = set()
+        self._period_fresh_refs: set[InstrumentRef] = set()
         # Rebalance-period width in ns; set from the book timeframe in on_start.
         self._period_ns: int = _NS_PER_DAY
         # Book bar timeframe (one across sleeves); set in on_start, reused to
@@ -266,21 +266,12 @@ class RebalanceStrategy(Strategy):
             )
             self._is_halted = True
             if self._obs_port is not None:
-                self._obs_port.alert_halt(self._integrity_report.reason or "Unknown integrity failure")
+                reason = self._integrity_report.reason or "Unknown integrity failure"
+                self._obs_port.alert_halt(reason)
             return
 
         self.log.info(f"Integrity check passed: NAV={nav:.2f}, cash={cash:.2f}")
 
-        # Collect all unique InstrumentRefs across all sleeves.
-        all_refs: set[InstrumentRef] = set()
-        for bundle in self._sleeve_to_bundle.values():
-            all_refs.update(bundle.contract.refs)
-
-        # Resolve refs through the pipeline-owned identity map from the single
-        # injected resolver. Live defaults to the provider-loaded cache resolver;
-        # backtests/e2e inject a FixtureInstrumentResolver.
-
-        # Subscribe to bars on the RESOLVED InstrumentId.
         # The book runs on one timeframe (all sleeves agree); resolve it once for
         # the bar subscription and the rebalance-period width.
         book_timeframe = resolve_book_timeframe(
@@ -290,6 +281,7 @@ class RebalanceStrategy(Strategy):
         self._period_ns = timeframe_to_ns(book_timeframe)
 
         resolver = self._instrument_resolver or self._provider_instrument_resolver()
+        declared_currencies = declared_ref_currencies(self._sleeve_to_bundle.values())
         self._pipeline = RebalancePipeline(
             book_state=self._require_book_state(),
             market_data=self._require_market_data(),
@@ -298,13 +290,13 @@ class RebalanceStrategy(Strategy):
             ledger=self._sleeve_ledger,
             resolve_instrument=resolver,
             reconcile_ref_currency=lambda ref, currency: reconcile_quote_currency(
-                ref, currency, declared_ref_currencies(self._sleeve_to_bundle.values())
+                ref, currency, declared_currencies
             ),
         )
         self._pipeline.initialize_identity(self._as_of())
 
-        for ref in sorted(all_refs):  # stable subscription order (aegis-rd-10d)
-            instr_id = self._instrument_id_for_ref(ref)
+        identity = self._pipeline.resolved_identity_snapshot()
+        for ref, instr_id in identity.items():
             self.subscribe_bars(bar_type(instr_id.value, book_timeframe))
 
         # Subscribe to FX reference-pair quotes so the cache mark xrates stay
@@ -319,7 +311,6 @@ class RebalanceStrategy(Strategy):
                 self.subscribe_quote_ticks(instrument.id)
 
         names = [s.value for s in self._sleeve_to_bundle]
-        identity = self._require_pipeline().resolved_identity_snapshot()
         self.log.info(
             f"RebalanceStrategy starting; sleeves={names}, "
             f"identity={ {f: i.value for f, i in identity.items()} }"
@@ -367,7 +358,7 @@ class RebalanceStrategy(Strategy):
         # ── period-advance → rebalance the completed period ──────────────
         if self._current_period is not None and period != self._current_period:
             self._rebalance_for_period()
-            self._period_fresh_figis = set()
+            self._period_fresh_refs = set()
 
         # ── buffer the bar AFTER the rebalance (so rebalance only sees
         #    completed-period bars — no same-bar look-ahead) ──────────────
@@ -389,7 +380,7 @@ class RebalanceStrategy(Strategy):
 
         ref = self._require_pipeline().ref_for_instrument_value(instr_id.value)
         if ref:
-            self._period_fresh_figis.add(ref)
+            self._period_fresh_refs.add(ref)
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
@@ -407,7 +398,7 @@ class RebalanceStrategy(Strategy):
         result = pipeline.rebalance_period(
             CompletedRebalancePeriod(
                 bars_by_ref=self._market_bars_by_ref(),
-                fresh_refs=frozenset(self._period_fresh_figis),
+                fresh_refs=frozenset(self._period_fresh_refs),
             )
         )
         self._last_sleeve_weights = pipeline.last_sleeve_weights
@@ -427,13 +418,8 @@ class RebalanceStrategy(Strategy):
             self._submit_order_intent(oi)
 
     def _market_bars_by_ref(self) -> dict[InstrumentRef, tuple[MarketBar, ...]]:
-        refs = {
-            ref
-            for bundle in self._sleeve_to_bundle.values()
-            for ref in bundle.contract.refs
-        }
         bars_by_ref: dict[InstrumentRef, tuple[MarketBar, ...]] = {}
-        for ref in refs:
+        for ref in self._require_pipeline().resolved_identity_snapshot():
             instr_id = self._instrument_id_for_ref(ref)
             bars = self._bars_buffer.get(instr_id, [])
             if bars:
@@ -607,9 +593,9 @@ class RebalanceStrategy(Strategy):
         """Return a dict suitable for ``RiskEngineConfig`` kwargs.
 
         Computes per-instrument max notionals from the current NAV, keyed by each
-        FIGI's *resolved* InstrumentId (so every instrument carries its own
-        venue).  FIGIs absent from pipeline identity are skipped — the caps are only as
-        complete as the resolution.
+        InstrumentRef's *resolved* InstrumentId (so every instrument carries its own
+        venue). InstrumentRefs absent from pipeline identity are skipped — the caps
+        are only as complete as the resolution.
         """
         identity = self._require_pipeline().resolved_identity_snapshot()
         instrument_ids: list[str] = [

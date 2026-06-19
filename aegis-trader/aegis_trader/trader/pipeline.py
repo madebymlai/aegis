@@ -142,7 +142,7 @@ class RebalancePipeline:
 
     def initialize_identity(self, as_of: date) -> None:
         """Resolve every sleeve InstrumentRef for the boot date."""
-        for ref in sorted(self._all_refs):
+        for ref in sorted(self._all_refs, key=_ref_sort_key):
             self._record_resolution(ref, self._resolve_instrument(ref, as_of))
 
     def instrument_id_for_ref(self, ref: InstrumentRef) -> InstrumentId:
@@ -162,7 +162,11 @@ class RebalancePipeline:
     def refresh_resolution(self, as_of: date) -> tuple[IdentityResolutionChange, ...]:
         """Re-resolve FuturesRefs and retain inverse mappings for old contracts."""
         changes: list[IdentityResolutionChange] = []
-        for ref in sorted(r for r in self._all_refs if isinstance(r, FuturesRef)):
+        futures_refs = sorted(
+            (ref for ref in self._all_refs if isinstance(ref, FuturesRef)),
+            key=_ref_sort_key,
+        )
+        for ref in futures_refs:
             previous = self.instrument_id_for_ref(ref)
             current = self._resolve_instrument(ref, as_of)
             if current == previous:
@@ -351,6 +355,12 @@ class RebalancePipeline:
         return tuple(
             sleeve.name for sleeve in self._book.sleeves if risk_shares[sleeve.name] > 0
         )
+
+
+def _ref_sort_key(ref: InstrumentRef) -> tuple[int, str]:
+    if isinstance(ref, ListedRef):
+        return (0, ref.value)
+    return (1, ref.value)
 
 
 def _bars_for_contract(

@@ -119,6 +119,42 @@ class _FuturesBundle(ExecutionBundle):
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
 
+class _MixedRefBundle(ExecutionBundle):
+    def __init__(self) -> None:
+        contract = DataContract(
+            refs=(_FIGI, _FUT),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            required_fx_currencies=(),
+            timeframe="1D",
+            lookback_bars=1,
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-mixed-ref-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            refs=(_FIGI, _FUT),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+            symbols=(_FIGI.value, "ES"),
+            currency_by_symbol={_FIGI.value: "EUR", "ES": "EUR"},
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+
 class _BookState:
     def __init__(self, realized_weights: dict[ListedRef, float] | None = None) -> None:
         self._realized_weights = realized_weights or {}
@@ -205,6 +241,25 @@ def test_rebalance_pipeline_returns_sized_orders_and_summary() -> None:
     assert result.summary.gate_outcome == GateOutcome.PASS
     assert result.summary.num_sleeves == 1
     assert result.summary.num_orders == 1
+
+
+def test_pipeline_initializes_mixed_ref_identity() -> None:
+    resolver = FixtureInstrumentResolver({_FIGI: _INSTRUMENT_ID, _FUT: _FRONT_ID})
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(),
+        book=_book(),
+        sleeve_to_bundle={_SLEEVE: _MixedRefBundle()},
+        ledger=SleeveLedger(),
+        resolve_instrument=resolver,
+    )
+
+    pipeline.initialize_identity(date(2026, 6, 11))
+
+    identity = pipeline.resolved_identity_snapshot()
+    assert identity == {_FUT: _FRONT_ID, _FIGI: _INSTRUMENT_ID}
+    assert pipeline.ref_for_instrument_value(_FRONT_ID.value) == _FUT
+    assert pipeline.ref_for_instrument_value(_INSTRUMENT_ID.value) == _FIGI
 
 
 def test_pipeline_refresh_keeps_old_contract_inverse_for_roll() -> None:
