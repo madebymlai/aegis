@@ -110,7 +110,9 @@ def test_futures_ref_ib_contracts_request_globex_local_symbol_only():
     ref = FuturesRef("GC", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
     chains = {"GC": (DatedContract("GCQ6", date(2026, 8, 27)),)}
 
-    contracts = futures_ref_ib_contracts({ref}, as_of=date(2026, 7, 1), contract_chains=chains)
+    contracts = futures_ref_ib_contracts(
+        {ref}, as_of=date(2026, 7, 1), contract_chains=chains
+    )
 
     assert contracts == [{"secType": "FUT", "localSymbol": "GCQ6", "exchange": "CME"}]
 

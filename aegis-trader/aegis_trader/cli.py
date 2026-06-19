@@ -16,20 +16,19 @@ from __future__ import annotations
 
 import argparse
 import logging
-from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
-from aegis_data.roll import DatedContract
+from aegis_runtime import InstrumentRef
+
 from aegis_trader.backtest import book_return_stats, run_book_backtest
 from aegis_trader.config import (
     IBConnectionSettings,
     find_book_config,
     load_book_config,
 )
-from aegis_runtime import InstrumentRef
-
 from aegis_trader.domain.book_config import BookConfig
+from aegis_trader.trader.instrument_provider import FuturesContractChains
 from aegis_trader.trader.modes import (
     build_backtest_engine_config,
     build_live_data_client_config,
@@ -62,7 +61,7 @@ def build_ib_client_configs(
     listed_refs: tuple[InstrumentRef, ...] = (),
     futures_refs: tuple[InstrumentRef, ...] = (),
     futures_as_of: date | None = None,
-    futures_contract_chains: dict[str, Sequence[DatedContract]] | None = None,
+    futures_contract_chains: FuturesContractChains | None = None,
 ) -> tuple[dict, dict]:
     """Map resolved connection settings onto the IBKR data/exec client dicts.
 

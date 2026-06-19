@@ -32,10 +32,8 @@ globally on failure.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import date
-
-from aegis_data.roll import DatedContract
 from typing import Any
 
 import numpy as np
@@ -50,7 +48,15 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
-from aegis_runtime import DataContract, ExecutionBundle, FuturesRef, InstrumentRef, ListedRef, MarketDataBundle
+from aegis_data.roll import DatedContract
+from aegis_runtime import (
+    DataContract,
+    ExecutionBundle,
+    FuturesRef,
+    InstrumentRef,
+    ListedRef,
+    MarketDataBundle,
+)
 from aegis_runtime.currency import major_currency
 
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
@@ -69,7 +75,13 @@ from aegis_trader.domain.rebalancer import rebalance_plan
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.roll import HeldContract, roll_positions
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
-from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource, ResolvedContractId, SleeveName
+from aegis_trader.domain.types import (
+    OrderIntent,
+    OrderSide,
+    OrderSource,
+    ResolvedContractId,
+    SleeveName,
+)
 from aegis_trader.execution.figi_resolver import (
     FigiInstrumentResolver,
     FigiResolutionError,
@@ -574,13 +586,7 @@ class RebalanceStrategy(Strategy):
         Security Master.  A ListedRef ignores ``as_of`` (date-invariant); a
         FuturesRef selects its live dated contract for that date."""
         if isinstance(ref, FuturesRef) and self._futures_contract_chains:
-            bimap = loaded_futures_ref_bimap(
-                {ref},
-                self.cache.instruments(),
-                as_of=as_of,
-                contract_chains=self._futures_contract_chains,
-            )
-            return bimap[ref]
+            return self._loaded_futures_bimap((ref,), as_of)[ref]
         instrument_id = self._figi_resolver.resolve(ref, as_of=as_of)
         if not isinstance(instrument_id, InstrumentId):
             raise FigiResolutionError(f"resolution for {ref!r} did not return an InstrumentId")
@@ -718,18 +724,21 @@ class RebalanceStrategy(Strategy):
         if listed:
             bimap.update(loaded_listed_ref_bimap(listed, self.cache.instruments()))
         if futures and self._futures_contract_chains:
-            bimap.update(
-                loaded_futures_ref_bimap(
-                    futures,
-                    self.cache.instruments(),
-                    as_of=as_of,
-                    contract_chains=self._futures_contract_chains,
-                )
-            )
+            bimap.update(self._loaded_futures_bimap(futures, as_of))
         else:
             for ref in futures:
                 bimap[ref] = self._resolve_instrument_id(ref, as_of)
         return bimap
+
+    def _loaded_futures_bimap(
+        self, refs: Iterable[FuturesRef], as_of: date
+    ) -> dict[FuturesRef, InstrumentId]:
+        return loaded_futures_ref_bimap(
+            refs,
+            self.cache.instruments(),
+            as_of=as_of,
+            contract_chains=self._futures_contract_chains,
+        )
 
     def _collect_sizing_params(
         self,

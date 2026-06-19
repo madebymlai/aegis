@@ -1,10 +1,10 @@
-"""IB InstrumentProvider wiring for live/paper listed-instrument identity.
+"""IB InstrumentProvider wiring for live/paper instrument identity.
 
-ListedRef resolution is vendor-native: the mode layer asks IB's
-InstrumentProvider to load each FIGI, then the strategy records the returned
-Nautilus InstrumentId from the reconciled cache.  This module owns the small
-IB-shaped config dictionaries and the cache metadata read needed to build that
-boot bimap.
+ListedRef and FuturesRef resolution is vendor-native: the mode layer asks IB's
+InstrumentProvider to load provider-qualified contracts, then the strategy
+records the returned Nautilus InstrumentId from the reconciled cache.  This
+module owns the small IB-shaped config dictionaries and the cache metadata read
+needed to build that boot bimap.
 """
 
 from __future__ import annotations
@@ -13,11 +13,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from typing import Protocol
 
+from nautilus_trader.model.identifiers import InstrumentId
+
 from aegis_data.roll import DatedContract, roll_schedule
 from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 from aegis_runtime.currency import major_currency
-from nautilus_trader.model.identifiers import InstrumentId
-
 from aegis_trader.execution.figi_resolver import FigiResolutionError
 
 IB_LISTED_EXCHANGE = "SMART"
@@ -119,18 +119,17 @@ def futures_ref_ib_contracts(
     The contracts intentionally use IB's exchange-native Globex ``localSymbol``
     and do not mention Databento/yfinance identifiers.
     """
-    selected: dict[str, IBContractConfig] = {}
-    for ref in sorted({ref for ref in refs if isinstance(ref, FuturesRef)}):
-        chain = _contract_chain_for(ref, contract_chains)
-        contract = select_front_futures_contract(
-            ref, as_of, chain, roll_lead_days=roll_lead_days
-        )
-        selected[contract.symbol] = {
-            "secType": IB_FUTURES_SEC_TYPE,
-            "localSymbol": contract.symbol,
-            "exchange": IB_FUTURES_EXCHANGE,
-        }
-    return [selected[symbol] for symbol in sorted(selected)]
+    selected = _selected_futures_contracts(
+        _unique_futures_refs(refs),
+        as_of=as_of,
+        contract_chains=contract_chains,
+        roll_lead_days=roll_lead_days,
+    )
+    contracts_by_symbol = {
+        contract.symbol: _ib_futures_contract(contract)
+        for contract in selected.values()
+    }
+    return [contracts_by_symbol[symbol] for symbol in sorted(contracts_by_symbol)]
 
 
 def loaded_listed_ref_bimap(
@@ -192,12 +191,14 @@ def loaded_futures_ref_bimap(
     if not requested:
         return {}
 
+    selected = _selected_futures_contracts(
+        sorted(requested),
+        as_of=as_of,
+        contract_chains=contract_chains,
+        roll_lead_days=roll_lead_days,
+    )
     by_local_symbol: dict[str, FuturesRef] = {}
-    for ref in requested:
-        chain = _contract_chain_for(ref, contract_chains)
-        contract = select_front_futures_contract(
-            ref, as_of, chain, roll_lead_days=roll_lead_days
-        )
+    for ref, contract in selected.items():
         previous = by_local_symbol.get(contract.symbol)
         if previous is not None and previous != ref:
             raise FigiResolutionError(
@@ -285,6 +286,34 @@ def reconcile_quote_currency(
         f"InstrumentRef {ref.value!r} bundle quote currency {declared!r} "
         f"disagrees with provider currency {provider_currency!r}"
     )
+
+
+def _selected_futures_contracts(
+    refs: Iterable[FuturesRef],
+    *,
+    as_of: date,
+    contract_chains: FuturesContractChains,
+    roll_lead_days: int,
+) -> dict[FuturesRef, DatedContract]:
+    selected: dict[FuturesRef, DatedContract] = {}
+    for ref in refs:
+        chain = _contract_chain_for(ref, contract_chains)
+        selected[ref] = select_front_futures_contract(
+            ref, as_of, chain, roll_lead_days=roll_lead_days
+        )
+    return selected
+
+
+def _unique_futures_refs(refs: Iterable[InstrumentRef]) -> tuple[FuturesRef, ...]:
+    return tuple(sorted({ref for ref in refs if isinstance(ref, FuturesRef)}))
+
+
+def _ib_futures_contract(contract: DatedContract) -> IBContractConfig:
+    return {
+        "secType": IB_FUTURES_SEC_TYPE,
+        "localSymbol": contract.symbol,
+        "exchange": IB_FUTURES_EXCHANGE,
+    }
 
 
 def _contract_chain_for(
