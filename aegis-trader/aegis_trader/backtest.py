@@ -50,6 +50,7 @@ from aegis_trader.trader.financing import build_financing_modules
 from aegis_trader.trader.modes import build_backtest_engine_config
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
+
 @dataclass(frozen=True)
 class BarRequest:
     """What the backtest asks for one instrument, derived from the sleeve's
@@ -107,7 +108,7 @@ def run_book_backtest_from_store(
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
 ) -> BacktestEngine:
-    """Build and run a provider-free listed-bar Store Read backtest."""
+    """Build and run a provider-free native-bar Store Read backtest."""
     return run_book_backtest(
         book_path,
         start=start,
@@ -125,17 +126,18 @@ def store_ohlcv_fetcher(*, store_dir: Path | None = None) -> OhlcvFetcher:
     """Return an OHLCV fetcher backed by provider-free aegis-data Store Read."""
 
     def fetch(request: BarRequest) -> pd.DataFrame:
-        if request.ref is None:
+        ref = request.ref
+        if ref is None:
             raise ValueError("Store Read requires BarRequest.ref")
         frames = read_native_bars(
-            (request.ref,),
+            (ref,),
             arrays=_store_read_arrays(request.required_arrays),
             timeframe=request.timeframe,
             start=request.start,
             end=request.end,
             store_dir=store_dir,
         )
-        return frames[request.ref]
+        return frames[ref]
 
     return fetch
 

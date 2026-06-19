@@ -43,7 +43,7 @@ def data_dir() -> Path:
 
 
 def futures_dir(dataset: str, *, store_dir: Path | None = None) -> Path:
-    return (store_dir or data_dir()) / "futures" / dataset
+    return _store_root(store_dir) / "futures" / dataset
 
 
 def native_bars_path(
@@ -54,13 +54,15 @@ def native_bars_path(
 ) -> Path:
     """Parquet location for a native-market-bar Covered History slice.
 
-    Listed instruments are keyed by ``ListedRef`` (FIGI), not by provider ticker.
-    The path is intentionally exposed so tests can fixture-seed the Historical
-    Store without introducing a provider.
+    Listed instruments are keyed by ``ListedRef`` (FIGI), and futures are keyed
+    by their continuous ``FuturesRef`` contract, never by provider ticker.  The
+    path is intentionally exposed so tests can fixture-seed the Historical Store
+    without introducing a provider.
     """
+    root = _store_root(store_dir)
     if isinstance(ref, ListedRef):
         return (
-            (store_dir or data_dir())
+            root
             / "listed"
             / _safe_key(ref.figi)
             / "bars"
@@ -68,7 +70,7 @@ def native_bars_path(
         )
     if isinstance(ref, FuturesRef):
         return (
-            (store_dir or data_dir())
+            root
             / "futures-ref"
             / _safe_key(ref.dataset)
             / _safe_key(ref.root)
@@ -114,14 +116,14 @@ def read_native_bars(
     NaNs, or expected daily bars fail closed before a backtest can run.
     """
     requested_arrays = _validated_arrays(arrays)
-    window = _window(start, end)
+    start_ts, end_ts = _window(start, end)
     return {
         ref: _read_one_native_bar_frame(
             ref,
             arrays=requested_arrays,
             timeframe=timeframe,
-            start=window[0],
-            end=window[1],
+            start=start_ts,
+            end=end_ts,
             store_dir=store_dir,
         )
         for ref in refs
@@ -148,6 +150,10 @@ def cached_fetcher(
     return cached
 
 
+def _store_root(store_dir: Path | None) -> Path:
+    return store_dir or data_dir()
+
+
 def _read_one_native_bar_frame(
     ref: InstrumentRef,
     *,
@@ -160,19 +166,53 @@ def _read_one_native_bar_frame(
     path = native_bars_path(ref, timeframe, store_dir=store_dir)
     if not path.exists():
         raise StoreCoverageError(ref, f"no Covered History for {timeframe}")
-    stored = pd.read_parquet(path)
-    admitted = _admit_native_bars(stored)
-    columns = _column_lookup(admitted)
+    admitted = _load_admitted_native_bars(path)
+    columns = _require_native_bar_columns(ref, admitted, arrays)
+    sliced = _slice_window(admitted, start=start, end=end)
+    _assert_expected_daily_coverage(ref, sliced, timeframe=timeframe, start=start, end=end)
+    selected = _select_native_bar_arrays(sliced, columns, arrays)
+    _assert_no_null_arrays(ref, selected)
+    return selected
+
+
+def _load_admitted_native_bars(path: Path) -> pd.DataFrame:
+    return _admit_native_bars(pd.read_parquet(path))
+
+
+def _require_native_bar_columns(
+    ref: InstrumentRef,
+    frame: pd.DataFrame,
+    arrays: tuple[str, ...],
+) -> dict[str, str]:
+    columns = _column_lookup(frame)
     missing_arrays = tuple(array for array in arrays if array.lower() not in columns)
     if missing_arrays:
         raise StoreCoverageError(ref, f"missing arrays {list(missing_arrays)}")
-    sliced = admitted.loc[(admitted.index >= start) & (admitted.index < end)]
-    _assert_expected_daily_coverage(ref, sliced, timeframe=timeframe, start=start, end=end)
-    selected = sliced[[columns[array.lower()] for array in arrays]].copy()
+    return columns
+
+
+def _select_native_bar_arrays(
+    frame: pd.DataFrame,
+    columns: dict[str, str],
+    arrays: tuple[str, ...],
+) -> pd.DataFrame:
+    selected = frame.loc[:, [columns[array.lower()] for array in arrays]].copy()
     selected.columns = list(arrays)
-    if selected.isna().any().any():
-        raise StoreCoverageError(ref, "requested arrays contain null values")
     return selected
+
+
+def _slice_window(
+    frame: pd.DataFrame,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DataFrame:
+    return frame.loc[(frame.index >= start) & (frame.index < end)]
+
+
+def _assert_no_null_arrays(ref: InstrumentRef, frame: pd.DataFrame) -> None:
+    if frame.isna().any().any():
+        raise StoreCoverageError(ref, "requested arrays contain null values")
 
 
 def _admit_native_bars(bars: pd.DataFrame) -> pd.DataFrame:

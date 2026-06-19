@@ -641,7 +641,7 @@ def test_costed_backtest_fill_path_is_deterministic_with_pinned_seed(tmp_path):
     second_engine.dispose()
 
 
-def test_run_book_backtest_from_store_feeds_preseeded_listed_bars(tmp_path):
+def test_run_book_backtest_from_store_feeds_preseeded_listed_bars(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     write_native_bars(ListedRef(_FIGI), "1D", _synthetic_ohlcv(), store_dir=tmp_path)
@@ -660,7 +660,7 @@ def test_run_book_backtest_from_store_feeds_preseeded_listed_bars(tmp_path):
     assert len(fills) == 1
 
 
-def test_run_book_backtest_from_store_fails_closed_on_missing_listed_bars(tmp_path):
+def test_run_book_backtest_from_store_fails_closed_on_missing_listed_bars(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
 
