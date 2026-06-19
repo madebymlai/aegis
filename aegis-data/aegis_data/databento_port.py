@@ -22,6 +22,10 @@ from aegis_data.roll import DatedContract
 # databento publisher venue for the GLBX.MDP3 dataset (CME Globex).
 _GLBX_VENUE = "GLBX"
 
+# When a window outruns the listed forward curve and nothing at all is listed at an anchor
+# (a brand-new or dormant root), step ahead by this much before snapshotting again.
+_UNLISTED_STEP = timedelta(days=180)
+
 
 def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> ContractCalendar:
     """List a root's outright dated futures (``raw_symbol`` + expiration) from Databento
@@ -29,30 +33,66 @@ def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> C
 
     These supply the expiry-driven roll, so a monthly product lists its monthly contracts
     and a serial/odd-cycle product lists whatever it actually trades — no hardcoded cycle.
-    ``client`` is injectable for tests; production constructs a Databento historical client
-    from ``DATABENTO_API_KEY``.
+
+    A single definition snapshot returns *all* instruments active that day, and CME lists the
+    whole forward curve years out, so one snapshot near ``start`` usually already enumerates
+    every contract expiring in the window.  Coverage is read back from each snapshot (its
+    furthest expiration): only when the window outruns the listed curve — a multi-decade
+    backtest beyond the listing horizon — does the calendar resample at the frontier to pick
+    up contracts that list later.  Anchors are nudged onto a weekday (definitions snapshot
+    Mon–Fri).  ``client`` is injectable for tests; production constructs a Databento
+    historical client from ``DATABENTO_API_KEY``.
     """
 
     def list_contracts(root: str, start: date, end: date) -> list[DatedContract]:
         api = client if client is not None else _databento_historical_client()
-        store = api.timeseries.get_range(
-            dataset=dataset,
-            schema="definition",
-            symbols=[f"{root}.FUT"],
-            stype_in="parent",
-            start=str(start),
-            end=str(end + timedelta(days=1)),  # end-exclusive guard
-        )
-        frame = store.to_df()
-        if frame.empty:
-            return []
-        outright = frame[frame["instrument_class"] == "F"].drop_duplicates("raw_symbol")
+        contracts: dict[str, date] = {}
+        anchor = start
+        while anchor <= end:
+            snapshot_day = _to_weekday(anchor)
+            _collect_outrights(_definition_snapshot(api, dataset, root, snapshot_day), contracts)
+            covered = max(contracts.values(), default=None)
+            if covered is not None and covered >= end:
+                break  # the listed forward curve already spans the window
+            anchor = (
+                max(covered, snapshot_day) + timedelta(days=1)
+                if covered is not None
+                else snapshot_day + _UNLISTED_STEP
+            )
         return [
-            DatedContract(str(row["raw_symbol"]), pd.Timestamp(row["expiration"]).date())
-            for _, row in outright.iterrows()
+            DatedContract(symbol, expiry)
+            for symbol, expiry in sorted(contracts.items(), key=lambda item: item[1])
         ]
 
     return list_contracts
+
+
+def _to_weekday(day: date) -> date:
+    """Nudge a weekend anchor onto the next weekday (definitions snapshot Mon–Fri)."""
+    while day.weekday() >= 5:  # Saturday (5) or Sunday (6)
+        day += timedelta(days=1)
+    return day
+
+
+def _collect_outrights(frame: pd.DataFrame, into: dict[str, date]) -> None:
+    """Merge a snapshot's outright futures (dropping spreads) into ``into``, keyed by symbol."""
+    if frame.empty:
+        return
+    outright = frame[frame["instrument_class"] == "F"]
+    for _, row in outright.iterrows():
+        into.setdefault(str(row["raw_symbol"]), pd.Timestamp(row["expiration"]).date())
+
+
+def _definition_snapshot(api: Any, dataset: str, root: str, day: date) -> pd.DataFrame:
+    store = api.timeseries.get_range(
+        dataset=dataset,
+        schema="definition",
+        symbols=[f"{root}.FUT"],
+        stype_in="parent",
+        start=str(day),
+        end=str(day + timedelta(days=1)),  # one 24h-from-midnight snapshot
+    )
+    return store.to_df()
 
 
 def _databento_historical_client() -> Any:

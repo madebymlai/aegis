@@ -6,7 +6,7 @@ client; the live call is covered by the env-gated smoke test.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -26,16 +26,37 @@ class _FakeDefStore:
 
 
 class _FakeDatabento:
-    """Stub Databento historical client capturing the definition query and replaying a frame."""
+    """Stub Databento historical client replaying one ``frame`` and recording every query."""
 
     def __init__(self, frame: pd.DataFrame) -> None:
         self._frame = frame
         self.timeseries = self
-        self.kwargs: dict = {}
+        self.queries: list[dict] = []
 
     def get_range(self, **kwargs) -> _FakeDefStore:
-        self.kwargs = kwargs
+        self.queries.append(kwargs)
         return _FakeDefStore(self._frame)
+
+    @property
+    def kwargs(self) -> dict:
+        return self.queries[-1] if self.queries else {}
+
+
+class _SequencedDatabento:
+    """Stub replaying a queue of frames, one per successive query (last frame repeats).
+
+    Models a window that outruns the listed forward curve: the first snapshot lists only the
+    near contracts, a later snapshot (taken at the coverage frontier) shows ones that list later.
+    """
+
+    def __init__(self, frames: list[pd.DataFrame]) -> None:
+        self._frames = frames
+        self.timeseries = self
+        self.queries: list[dict] = []
+
+    def get_range(self, **kwargs) -> _FakeDefStore:
+        self.queries.append(kwargs)
+        return _FakeDefStore(self._frames[min(len(self.queries) - 1, len(self._frames) - 1)])
 
 
 def test_contract_calendar_lists_outright_futures_from_definitions() -> None:
@@ -59,7 +80,7 @@ def test_contract_calendar_lists_outright_futures_from_definitions() -> None:
     client = _FakeDatabento(frame)
 
     contracts = databento_contract_calendar("GLBX.MDP3", client=client)(
-        "CL", date(2026, 6, 1), date(2026, 8, 1)
+        "CL", date(2026, 6, 1), date(2026, 7, 21)
     )
 
     assert [c.symbol for c in contracts] == ["CLN6", "CLQ6"]  # spread dropped, duplicate collapsed
@@ -77,6 +98,90 @@ def test_contract_calendar_empty_definitions_is_empty() -> None:
     )
 
     assert contracts == []
+
+
+def test_contract_calendar_single_snapshot_covers_window() -> None:
+    # A definition snapshot returns the whole forward curve CME lists (years out), so one
+    # snapshot whose furthest expiry already reaches past the window end suffices — a single
+    # bounded query, not a scan of every day in the panel.
+    frame = pd.DataFrame(
+        {
+            "raw_symbol": ["CLN6", "CLQ6", "CLZ6"],
+            "instrument_class": ["F", "F", "F"],
+            "expiration": pd.to_datetime(
+                [
+                    "2026-06-22 18:30:00+00:00",
+                    "2026-07-21 18:30:00+00:00",
+                    "2026-12-21 18:30:00+00:00",  # furthest listed expiry — past the window end
+                ]
+            ),
+        }
+    )
+    client = _FakeDatabento(frame)
+
+    contracts = databento_contract_calendar("GLBX.MDP3", client=client)(
+        "CL", date(2026, 6, 1), date(2026, 8, 1)
+    )
+
+    # One bounded 24h snapshot — not the 61-day panel — because the curve already covers the window.
+    assert len(client.queries) == 1
+    q = client.queries[0]
+    assert (date.fromisoformat(q["end"]) - date.fromisoformat(q["start"])).days == 1
+    # The snapshot enumerates the whole forward chain, including far-dated CLZ6, sorted by expiry.
+    assert [c.symbol for c in contracts] == ["CLN6", "CLQ6", "CLZ6"]
+
+
+def test_contract_calendar_resamples_when_window_outruns_listed_curve() -> None:
+    # A window longer than the listing horizon outruns the curve listed at the start: the
+    # first snapshot reaches only 2026-06-22, so the calendar resamples at the frontier, where
+    # the deferred CLZ6 has since listed, and unions it in with no duplicate CLN6.
+    near = pd.DataFrame(
+        {
+            "raw_symbol": ["CLN6"],
+            "instrument_class": ["F"],
+            "expiration": pd.to_datetime(["2026-06-22 18:30:00+00:00"]),
+        }
+    )
+    far = pd.DataFrame(
+        {
+            "raw_symbol": ["CLN6", "CLZ6"],
+            "instrument_class": ["F", "F"],
+            "expiration": pd.to_datetime(
+                ["2026-06-22 18:30:00+00:00", "2026-12-21 18:30:00+00:00"]
+            ),
+        }
+    )
+    client = _SequencedDatabento([near, far])
+
+    contracts = databento_contract_calendar("GLBX.MDP3", client=client)(
+        "CL", date(2026, 6, 1), date(2026, 9, 1)
+    )
+
+    # Two bounded 24h snapshots: the second is the resample at the coverage frontier.
+    assert len(client.queries) == 2
+    for q in client.queries:
+        assert (date.fromisoformat(q["end"]) - date.fromisoformat(q["start"])).days == 1
+    assert sorted(c.symbol for c in contracts) == ["CLN6", "CLZ6"]
+
+
+def test_contract_calendar_snaps_a_weekend_anchor_to_a_weekday() -> None:
+    # Definitions snapshot only Mon–Fri.  2024-06-01 is a Saturday, so the query must move to
+    # the next weekday (Monday 2024-06-03) — otherwise a weekend anchor returns nothing.
+    frame = pd.DataFrame(
+        {
+            "raw_symbol": ["CLZ6"],
+            "instrument_class": ["F"],
+            "expiration": pd.to_datetime(["2026-12-21 18:30:00+00:00"]),
+        }
+    )
+    client = _FakeDatabento(frame)
+
+    databento_contract_calendar("GLBX.MDP3", client=client)(
+        "CL", date(2024, 6, 1), date(2024, 6, 20)
+    )
+
+    assert client.queries[0]["start"] == "2024-06-03"  # Saturday -> Monday
+    assert date.fromisoformat(client.queries[0]["start"]).weekday() < 5
 
 
 class _Px:
