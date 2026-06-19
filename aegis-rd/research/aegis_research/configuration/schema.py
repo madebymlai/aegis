@@ -226,17 +226,18 @@ class DataConfig:
         for symbol in self.symbols:
             _validate_future_source_support(self.source, symbol)
         if self.source in LOCAL_DATA_SOURCES:
-            local_kwargs = ("wrapper_kwargs", "execution_kwargs") if self.source == "store" else (
-                "wrapper_kwargs",
-                "provider_kwargs",
-                "execution_kwargs",
-            )
-            for key in local_kwargs:
+            for key in _unsupported_local_kwarg_names(self.source):
                 if getattr(self, key):
                     raise ValueError(
                         f"{key} is not supported for {self.source} source"
                     )
         return self
+
+
+def _unsupported_local_kwarg_names(source: str) -> tuple[str, ...]:
+    if source == "store":
+        return ("wrapper_kwargs", "execution_kwargs")
+    return ("wrapper_kwargs", "provider_kwargs", "execution_kwargs")
 
 
 def _require_symbols_for_source(source: str, symbols: list[SymbolSpec]) -> None:

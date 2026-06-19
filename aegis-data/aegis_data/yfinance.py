@@ -1,4 +1,4 @@
-"""YFinance Pull provider for listed native market bars."""
+"""YFinance Pull provider for listed native market bars and FX History."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from aegis_data.store import (
 )
 
 _MULTIPLE_SYMBOLS_ERROR = "yfinance Pull for one ListedRef returned multiple symbols"
+_FX_HISTORY_REQUEST_REF = ListedRef("FX_HISTORY_REQUEST")
 _YFINANCE_PRICE_FIELDS = frozenset({"Open", "Close"})
 
 
@@ -103,7 +104,7 @@ def pull_yfinance_native_bars(
         listed_adjustment=request.listed_adjustment,
         store_dir=store_dir,
     )
-    return PullResult(ref=ref, locator=locator, path=path, bars=_covered_bar_count(path))
+    return PullResult(ref=ref, locator=locator, path=path, bars=_covered_row_count(path))
 
 
 def pull_yfinance_fx_history(
@@ -118,19 +119,18 @@ def pull_yfinance_fx_history(
 ) -> PullFxResult:
     """Fetch one FX History series from yfinance and write Covered History."""
     fetch = fetcher or _fetch_yfinance
-    for gap in fx_history_coverage_gaps(
+    for gap_request in _uncovered_fx_gap_requests(
         pair,
         timeframe=timeframe,
         start=start,
         end=end,
         store_dir=store_dir,
     ):
-        request = _fx_gap_request(gap, timeframe=timeframe)
-        rates = _fetch_fx_gap_rates(fetch, locator, request)
-        _assert_pulled_fx_gap_coverage(pair, rates, request)
+        rates = _fetch_fx_gap_rates(fetch, locator, gap_request)
+        _assert_pulled_fx_gap_coverage(pair, rates, gap_request)
         merge_fx_history(pair, timeframe, rates, store_dir=store_dir)
     path = fx_history_path(pair, timeframe, store_dir=store_dir)
-    return PullFxResult(pair=pair, locator=locator, path=path, rates=_covered_rate_count(path))
+    return PullFxResult(pair=pair, locator=locator, path=path, rates=_covered_row_count(path))
 
 
 def _uncovered_gap_requests(
@@ -166,9 +166,27 @@ def _gap_request(
     )
 
 
+def _uncovered_fx_gap_requests(
+    pair: FxPair,
+    *,
+    timeframe: str,
+    start: str | pd.Timestamp,
+    end: str | pd.Timestamp,
+    store_dir: Path | None,
+) -> tuple[NativeBarsRequest, ...]:
+    gaps = fx_history_coverage_gaps(
+        pair,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        store_dir=store_dir,
+    )
+    return tuple(_fx_gap_request(gap, timeframe=timeframe) for gap in gaps)
+
+
 def _fx_gap_request(gap: CoverageGap, *, timeframe: str) -> NativeBarsRequest:
     return NativeBarsRequest(
-        refs=(ListedRef("FX_HISTORY_REQUEST"),),
+        refs=(_FX_HISTORY_REQUEST_REF,),
         arrays=("Close",),
         timeframe=timeframe,
         start=gap.start,
@@ -243,13 +261,7 @@ def _assert_pulled_fx_gap_coverage(
         raise StoreAdmissionError(str(error)) from error
 
 
-def _covered_bar_count(path: Path) -> int:
-    if not path.exists():
-        return 0
-    return len(pd.read_parquet(path))
-
-
-def _covered_rate_count(path: Path) -> int:
+def _covered_row_count(path: Path) -> int:
     if not path.exists():
         return 0
     return len(pd.read_parquet(path))

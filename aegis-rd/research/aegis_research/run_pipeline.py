@@ -200,8 +200,8 @@ def _load_fx_rates(
 ) -> pd.DataFrame:
     """Fetch the ``base->ccy`` FX series (the native ``EUR<ccy>=X`` quotes) and
     align them to the price ``index``."""
-    pair_by_currency = {ccy: f"{base_currency}{ccy}=X" for ccy in currencies}
-    if not pair_by_currency:
+    fx_ticker_by_currency = {ccy: f"{base_currency}{ccy}=X" for ccy in currencies}
+    if not fx_ticker_by_currency:
         # No foreign legs: there is nothing to fetch (an empty symbol set cannot
         # be pulled), and the empty rates frame makes the conversion an identity.
         return pd.DataFrame(index=index)
@@ -209,21 +209,21 @@ def _load_fx_rates(
         return _load_store_fx_rates(
             data_config,
             base_currency=base_currency,
-            pair_by_currency=pair_by_currency,
+            fx_ticker_by_currency=fx_ticker_by_currency,
             index=index,
         )
     fx_config = replace(
         data_config,
         symbols=[
-            SymbolSpec(ticker=pair, ccy=base_currency)
-            for pair in pair_by_currency.values()
+            SymbolSpec(ticker=fx_ticker, ccy=base_currency)
+            for fx_ticker in fx_ticker_by_currency.values()
         ],
     )
     fx_result = load_market_data_result(fx_config, required_arrays=("Close",))
     fx_result.assert_usable()
     fx_close = market_data_bundle(fx_result).array("Close")
     return assemble_fx_rates(
-        {ccy: fx_close[pair] for ccy, pair in pair_by_currency.items()},
+        {ccy: fx_close[fx_ticker] for ccy, fx_ticker in fx_ticker_by_currency.items()},
         index=index,
     )
 
@@ -232,28 +232,33 @@ def _load_store_fx_rates(
     data_config: DataConfig,
     *,
     base_currency: str,
-    pair_by_currency: dict[str, str],
+    fx_ticker_by_currency: dict[str, str],
     index: pd.Index,
 ) -> pd.DataFrame:
     provider = store_gap_fill_provider(data_config.provider_kwargs)
     if provider != "yfinance":
         raise ValueError(f"unsupported store FX gap-fill provider {provider!r}")
-    pairs = {ccy: FxPair(base_currency, ccy) for ccy in pair_by_currency}
-    for ccy, pair in pairs.items():
+    start = _required_data_window_edge(data_config.start, "start")
+    end = _required_data_window_edge(data_config.end, "end")
+    fx_pair_by_currency = {ccy: FxPair(base_currency, ccy) for ccy in fx_ticker_by_currency}
+    for ccy, fx_pair in fx_pair_by_currency.items():
         pull_yfinance_fx_history(
-            pair,
+            fx_pair,
             timeframe=data_config.timeframe,
-            start=_required_data_window_edge(data_config.start, "start"),
-            end=_required_data_window_edge(data_config.end, "end"),
-            locator=YFinanceLocator(pair_by_currency[ccy]),
+            start=start,
+            end=end,
+            locator=YFinanceLocator(fx_ticker_by_currency[ccy]),
         )
     histories = read_fx_history(
-        tuple(pairs.values()),
+        tuple(fx_pair_by_currency.values()),
         timeframe=data_config.timeframe,
-        start=_required_data_window_edge(data_config.start, "start"),
-        end=_required_data_window_edge(data_config.end, "end"),
+        start=start,
+        end=end,
     )
-    return assemble_fx_rates({ccy: histories[pair] for ccy, pair in pairs.items()}, index=index)
+    return assemble_fx_rates(
+        {ccy: histories[fx_pair] for ccy, fx_pair in fx_pair_by_currency.items()},
+        index=index,
+    )
 
 
 def _required_data_window_edge(value: str | None, name: str) -> str:
