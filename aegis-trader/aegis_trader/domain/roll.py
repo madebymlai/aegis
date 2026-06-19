@@ -31,7 +31,7 @@ def roll_positions(
 
     ListedRefs never roll. A FuturesRef rolls only when the currently held dated
     contract differs from the contract resolved for ``as_of``. The emitted pair
-    is labelled ``ROLL`` so execution/observability can distinguish it from
+    is labelled ``ROLL`` so the Strategy can log and submit it distinctly from
     alpha drift orders; drift bands never participate in this pure step.
     """
     orders: list[OrderIntent] = []

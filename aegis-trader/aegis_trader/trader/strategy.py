@@ -55,7 +55,6 @@ from aegis_runtime import (
     ListedRef,
 )
 
-from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data import (
     MarketDataPort,
     NautilusMarketData,
@@ -64,7 +63,6 @@ from aegis_trader.data import (
     timeframe_to_ns,
 )
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.roll import HeldContract, roll_positions
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
@@ -82,14 +80,12 @@ from aegis_trader.trader.instrument_provider import (
     loaded_listed_ref_bimap,
     reconcile_quote_currency,
 )
-from aegis_trader.observability.port import (
-    GateOutcome,
-    ObservabilityPort,
-    RebalanceSummary,
-)
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
+    GateOutcome,
     RebalancePipeline,
+    RebalanceSummary,
+    StartupResult,
 )
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
 
@@ -102,7 +98,6 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     book: BookConfig
     bundle_label: str = "synthetic"
     risk_guard_config: RiskGuardConfig = RiskGuardConfig()
-    obs_port: ObservabilityPort | None = None
     futures_contract_chains: dict[str, tuple[DatedContract, ...]] | None = None
     futures_roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS
     fill_time_in_force: TimeInForce | None = None
@@ -147,8 +142,8 @@ class RebalanceStrategy(Strategy):
         self._futures_roll_lead_days: int = config.futures_roll_lead_days
         # ── Slice 8: RiskEngine guards ───────────────────────────────────
         self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
-        # Slice 7: account-integrity check + global halt
-        self._integrity_report: IntegrityReport | None = None
+        # Slice 7: startup gates + global halt
+        self._startup_result: StartupResult | None = None
         self._is_halted: bool = False
         # Wave B: reconciled book state behind a port (no direct cache/portfolio reads).
         self._book_state: BookStatePort | None = None
@@ -160,8 +155,6 @@ class RebalanceStrategy(Strategy):
         self._last_book_skew: float | None = None
         self._last_sleeve_weights: dict[SleeveName, float] = {}
         self._last_roll_check_date: date | None = None
-        # ── Slice 9: observability + attribution ─────────────────────────
-        self._obs_port: ObservabilityPort | None = config.obs_port
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -216,18 +209,6 @@ class RebalanceStrategy(Strategy):
             self.log.warning("No sleeves registered; strategy will idle.")
             return
 
-        # Wave B (B13): reject at load if any book cap exceeds its sleeve
-        # bundle's research-validated cap.  A misconfigured book never trades.
-        try:
-            check_cap_provenance(self._book, self._sleeve_to_bundle)
-        except CapProvenanceError as exc:
-            self.log.error(f"Cap provenance FAILED: {exc}. HALTING the book.")
-            self._is_halted = True
-            if self._obs_port is not None:
-                self._obs_port.alert_halt(str(exc))
-            return
-
-        # ── Slice 7: account-integrity check at startup ──────────────────
         base_ccy = Currency.from_str(self._book.base_currency)
         self._book_state = NautilusBookState(
             portfolio=self.portfolio,
@@ -236,44 +217,6 @@ class RebalanceStrategy(Strategy):
             instrument_ref_for_id=self._ref_for_instrument_value,
         )
         self._market_data = NautilusMarketData(cache=self.cache)
-
-        try:
-            nav = self._book_state.nav()
-            cash = self._book_state.cash()
-        except Exception as exc:
-            self.log.error(
-                f"Failed to query book state for integrity check: {exc}. "
-                f"Marking NAV/cash as zero."
-            )
-            nav = 0.0
-            cash = 0.0
-
-        cache_healthy = self._book_state.is_cache_healthy()
-        self._integrity_report = check_account_integrity(
-            nav=nav,
-            cash=cash,
-            cache_healthy=cache_healthy,
-        )
-        if not self._integrity_report.healthy:
-            self.log.error(
-                f"Integrity check FAILED: {self._integrity_report.reason}. "
-                f"HALTING the book."
-            )
-            self._is_halted = True
-            if self._obs_port is not None:
-                reason = self._integrity_report.reason or "Unknown integrity failure"
-                self._obs_port.alert_halt(reason)
-            return
-
-        self.log.info(f"Integrity check passed: NAV={nav:.2f}, cash={cash:.2f}")
-
-        # The book runs on one timeframe (all sleeves agree); resolve it once for
-        # the bar subscription and the rebalance-period width.
-        book_timeframe = resolve_book_timeframe(
-            contract.timeframe for contract in self._sleeve_to_contract.values()
-        )
-        self._book_timeframe = book_timeframe
-        self._period_ns = timeframe_to_ns(book_timeframe)
 
         resolver = self._instrument_resolver or self._provider_instrument_resolver()
         declared_currencies = declared_ref_currencies(self._sleeve_to_bundle.values())
@@ -288,6 +231,21 @@ class RebalanceStrategy(Strategy):
                 ref, currency, declared_currencies
             ),
         )
+        self._startup_result = self._pipeline.startup_check()
+        if self._startup_result.should_halt:
+            self._is_halted = True
+            self._log_startup_halt(self._startup_result)
+            return
+
+        self._log_startup_pass(self._startup_result)
+
+        # The book runs on one timeframe (all sleeves agree); resolve it once for
+        # the bar subscription and the rebalance-period width.
+        book_timeframe = resolve_book_timeframe(
+            contract.timeframe for contract in self._sleeve_to_contract.values()
+        )
+        self._book_timeframe = book_timeframe
+        self._period_ns = timeframe_to_ns(book_timeframe)
         self._pipeline.initialize_identity(self._as_of())
 
         identity = self._pipeline.resolved_identity_snapshot()
@@ -385,8 +343,6 @@ class RebalanceStrategy(Strategy):
             self._is_halted = True
             reason = result.halt_reason or "rebalance gate failed"
             self.log.error(f"Rebalance gate FAILED: {reason}. HALTING the book.")
-            if self._obs_port is not None:
-                self._obs_port.alert_halt(reason)
             return
 
         for oi in result.orders:
@@ -438,22 +394,26 @@ class RebalanceStrategy(Strategy):
         LiveClock in paper/live) — one source for backtest=live parity."""
         return self.clock.utc_now().date()
 
-    def _log_rebalance_summary(self, summary: RebalanceSummary) -> None:
-        """Emit a structured rebalance log through the observability port.
+    def _log_startup_halt(self, result: StartupResult) -> None:
+        gate = result.halt_gate.value if result.halt_gate is not None else "unknown"
+        reason = result.halt_reason or "unknown startup failure"
+        self.log.error(f"Startup gate FAILED: gate={gate} reason={reason}. HALTING the book.")
 
-        Falls back to ``self.log.info`` when no port is configured.
-        """
-        if self._obs_port is not None:
-            self._obs_port.log_rebalance_decision(summary)
-        else:
-            self.log.info(
-                f"Rebalance: NAV={summary.nav:.2f} "
-                f"sleeves={summary.num_sleeves} "
-                f"targets={summary.num_targets} "
-                f"orders={summary.num_orders} "
-                f"gate={summary.gate_outcome.value} "
-                f"notional={summary.total_notional:.2f}"
-            )
+    def _log_startup_pass(self, result: StartupResult) -> None:
+        nav = 0.0 if result.nav is None else result.nav
+        cash = 0.0 if result.cash is None else result.cash
+        self.log.info(f"Startup checks passed: NAV={nav:.2f}, cash={cash:.2f}")
+
+    def _log_rebalance_summary(self, summary: RebalanceSummary) -> None:
+        """Emit a structured rebalance log through Nautilus's native logger."""
+        self.log.info(
+            f"Rebalance: NAV={summary.nav:.2f} "
+            f"sleeves={summary.num_sleeves} "
+            f"targets={summary.num_targets} "
+            f"orders={summary.num_orders} "
+            f"gate={summary.gate_outcome.value} "
+            f"notional={summary.total_notional:.2f}"
+        )
 
     def _positive_risk_sleeve_names(self) -> tuple[SleeveName, ...]:
         """Return the sleeve universe shared by covariance and skew estimates."""

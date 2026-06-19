@@ -1,9 +1,9 @@
 """E2E test for Slice 7: reconciliation — integrity-halt.
 
-Validates the startup account-integrity check: the strategy performs an
-account-integrity check in ``on_start``; when healthy the book continues
-trading normally.  The pure-domain unit tests (tests/unit/test_integrity.py)
-cover the integrity rules exhaustively.
+Validates the startup account-integrity check: the Strategy asks the pipeline
+for a ``StartupResult`` in ``on_start``; when healthy the book continues trading
+normally.  The pure-domain unit tests (tests/unit/test_integrity.py) cover the
+integrity rules exhaustively.
 
 N.B. Only one BacktestEngine per process; run this test in isolation.
 """
@@ -179,9 +179,9 @@ def _setup_engine(trader_id: str, book: BookConfig, bundle: _SyntheticBundle) ->
 def test_integrity_check_passes_in_normal_backtest():
     """Slice 7: account-integrity check passes at startup in a normal backtest.
 
-    The strategy performs an integrity check in ``on_start``.  With a healthy
-    cache and valid NAV/cash, the check passes and the strategy continues to
-    trade normally.
+    The strategy logs the pipeline's startup result in ``on_start``. With a
+    healthy cache and valid NAV/cash, the check passes and the strategy
+    continues to trade normally.
     """
     engine, strategy = _setup_engine("INTEGRITY-E2E", _make_book(), _SyntheticBundle(weight=0.5))
     engine.run()
@@ -191,13 +191,13 @@ def test_integrity_check_passes_in_normal_backtest():
     # Verify the integrity check passed (strategy did NOT halt)
     assert not strategy._is_halted, (
         f"Expected integrity check to pass, but strategy halted: "
-        f"{strategy._integrity_report}"
+        f"{strategy._startup_result}"
     )
-    assert strategy._integrity_report is not None, (
-        "Expected integrity report to be populated at startup"
+    assert strategy._startup_result is not None, (
+        "Expected startup result to be populated at startup"
     )
-    assert strategy._integrity_report.healthy, (
-        f"Integrity check failed: {strategy._integrity_report.reason}"
+    assert strategy._startup_result.trading_enabled is True, (
+        f"Startup check failed: {strategy._startup_result.halt_reason}"
     )
 
     # Verify trading continued normally

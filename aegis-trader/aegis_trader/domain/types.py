@@ -65,8 +65,8 @@ class WeightDelta:
 class OrderIntent:
     """A provider-agnostic, *sized* order request from the rebalance pipeline.
 
-    Carries only canonical identifiers; the execution port resolves the
-    InstrumentRef to a venue-specific instrument before submitting.
+    Carries canonical identifiers; the Strategy asks the pipeline for the
+    current venue-specific instrument before submitting through Nautilus.
     """
 
     ref: InstrumentRef

@@ -1,8 +1,8 @@
 """E2E: a Book Config cap above its bundle's research-validated cap is rejected
 at load (Wave B / B13).
 
-The provenance check runs in ``on_start``; a violation halts the book, so the
-backtest produces zero fills even though the bundle would otherwise trade.
+The pipeline startup check runs from ``on_start``; a violation halts the book,
+so the backtest produces zero fills even though the bundle would otherwise trade.
 """
 
 from __future__ import annotations

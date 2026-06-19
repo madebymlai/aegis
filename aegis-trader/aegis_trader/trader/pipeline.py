@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from enum import Enum
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -26,13 +27,14 @@ from aegis_runtime import (
 )
 from aegis_runtime.currency import major_currency
 
+from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig
+from aegis_trader.domain.integrity import check_account_integrity
 from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import OrderIntent, ResolvedContractId, SleeveName, WeightDelta
-from aegis_trader.observability.port import GateOutcome, RebalanceSummary
 
 if TYPE_CHECKING:
     from aegis_trader.data.market_data import MarketDataPort
@@ -41,6 +43,49 @@ if TYPE_CHECKING:
 
 InstrumentResolver = Callable[[InstrumentRef, date], InstrumentId]
 RefCurrencyReconciler = Callable[[InstrumentRef, str], str]
+
+
+class GateOutcome(str, Enum):
+    """Outcome of the cap/band gate during a rebalance."""
+
+    PASS = "pass"
+    HALT = "halt"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class RebalanceSummary:
+    """Structured summary of one rebalance decision."""
+
+    nav: float
+    num_sleeves: int
+    num_targets: int
+    num_orders: int
+    gate_outcome: GateOutcome
+    total_notional: float
+
+
+class StartupGate(str, Enum):
+    """Startup gate responsible for a startup halt."""
+
+    CAP_PROVENANCE = "cap_provenance"
+    ACCOUNT_INTEGRITY = "account_integrity"
+
+
+@dataclass(frozen=True)
+class StartupResult:
+    """Result of the startup checks that decide whether the book may trade."""
+
+    trading_enabled: bool
+    halt_gate: StartupGate | None = None
+    halt_reason: str | None = None
+    nav: float | None = None
+    cash: float | None = None
+
+    @property
+    def should_halt(self) -> bool:
+        """Whether the Strategy must idle instead of trading."""
+        return not self.trading_enabled
 
 
 @dataclass(frozen=True)
@@ -174,6 +219,41 @@ class RebalancePipeline:
     def resolved_identity_snapshot(self) -> dict[InstrumentRef, InstrumentId]:
         """Current pipeline-owned identity map for logging and risk wiring."""
         return dict(self._ref_to_instrument_id)
+
+    def startup_check(self) -> StartupResult:
+        """Run startup gates and return the decision as a value object."""
+        try:
+            check_cap_provenance(self._book, self._sleeve_to_bundle)
+        except CapProvenanceError as exc:
+            return StartupResult(
+                trading_enabled=False,
+                halt_gate=StartupGate.CAP_PROVENANCE,
+                halt_reason=str(exc),
+            )
+
+        try:
+            nav = self._book_state.nav()
+            cash = self._book_state.cash()
+        except Exception as exc:
+            return StartupResult(
+                trading_enabled=False,
+                halt_gate=StartupGate.ACCOUNT_INTEGRITY,
+                halt_reason=f"Failed to query book state for integrity check: {exc}",
+            )
+        report = check_account_integrity(
+            nav=nav,
+            cash=cash,
+            cache_healthy=self._book_state.is_cache_healthy(),
+        )
+        if not report.healthy:
+            return StartupResult(
+                trading_enabled=False,
+                halt_gate=StartupGate.ACCOUNT_INTEGRITY,
+                halt_reason=report.reason or "Unknown integrity failure",
+                nav=nav,
+                cash=cash,
+            )
+        return StartupResult(trading_enabled=True, nav=nav, cash=cash)
 
     def _record_resolution(self, ref: InstrumentRef, instrument_id: InstrumentId) -> None:
         self._ref_to_instrument_id[ref] = instrument_id

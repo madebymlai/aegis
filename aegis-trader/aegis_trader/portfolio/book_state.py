@@ -16,8 +16,8 @@ the venue-agnostic mark xrate keeps valuation working on every venue and uses
 exactly the rate the sizer already trades against.
 
 One concern, one Nautilus implementation — so the Protocol and its adapter live
-in one module.  The port/adapter file split is reserved for multi-impl concerns
-(``bundles/``, ``observability/``).
+in one module.  The port/adapter file split is reserved for the multi-impl
+bundle registry.
 """
 
 from __future__ import annotations

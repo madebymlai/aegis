@@ -22,12 +22,13 @@ from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import OrderSide, SleeveName
-from aegis_trader.observability.port import GateOutcome
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
     FixtureInstrumentResolver,
+    GateOutcome,
     MarketBar,
     RebalancePipeline,
+    StartupGate,
 )
 
 _FIGI = ListedRef("BBG000PIPE01")
@@ -156,17 +157,27 @@ class _MixedRefBundle(ExecutionBundle):
 
 
 class _BookState:
-    def __init__(self, realized_weights: dict[ListedRef, float] | None = None) -> None:
+    def __init__(
+        self,
+        realized_weights: dict[ListedRef, float] | None = None,
+        *,
+        nav: float = 100_000.0,
+        cash: float = 100_000.0,
+        cache_healthy: bool = True,
+    ) -> None:
         self._realized_weights = realized_weights or {}
+        self._nav = nav
+        self._cash = cash
+        self._cache_healthy = cache_healthy
 
     def nav(self) -> float:
-        return 100_000.0
+        return self._nav
 
     def cash(self) -> float:
-        return 100_000.0
+        return self._cash
 
     def is_cache_healthy(self) -> bool:
-        return True
+        return self._cache_healthy
 
     def realized_weights(self) -> dict[ListedRef, float]:
         return dict(self._realized_weights)
@@ -360,4 +371,43 @@ def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
     assert result.summary.gate_outcome == GateOutcome.ERROR
     assert result.halt_reason == (
         "FIGI BBG000PIPE01: target weight 0.800000 exceeds per-name cap 0.500000 — unfixable"
+    )
+
+
+def test_startup_check_halts_when_book_cap_exceeds_bundle_cap() -> None:
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(),
+        book=_book(per_name_cap=1.5),
+        sleeve_to_bundle={_SLEEVE: _FixedWeightBundle(0.5)},
+        ledger=SleeveLedger(),
+        resolve_instrument=FixtureInstrumentResolver({_FIGI: _INSTRUMENT_ID}),
+    )
+
+    result = pipeline.startup_check()
+
+    assert result.should_halt is True
+    assert result.halt_gate == StartupGate.CAP_PROVENANCE
+    assert result.halt_reason == (
+        "book per_name_cap (1.5) exceeds sleeve 'trend' bundle gross_cap (1.0)"
+    )
+
+
+def test_startup_check_halts_when_account_integrity_fails() -> None:
+    pipeline = RebalancePipeline(
+        book_state=_BookState(nav=100_000.0, cash=90_000.0),
+        market_data=_MarketData(),
+        book=_book(),
+        sleeve_to_bundle={_SLEEVE: _FixedWeightBundle(0.5)},
+        ledger=SleeveLedger(),
+        resolve_instrument=FixtureInstrumentResolver({_FIGI: _INSTRUMENT_ID}),
+    )
+
+    result = pipeline.startup_check()
+
+    assert result.should_halt is True
+    assert result.halt_gate == StartupGate.ACCOUNT_INTEGRITY
+    assert result.halt_reason == (
+        "NAV/cash mismatch: NAV=100000.00, cash=90000.00, "
+        "gap=10000.00 exceeds tolerance 0.00 (fraction=0.0)"
     )
