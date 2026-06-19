@@ -116,21 +116,36 @@ def databento_port_fetcher(
     def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
         api = client if client is not None else _nautilus_databento_client()
         instrument_id = _instrument_id(f"{symbol}.{venue}")
-        start_ns = pd.Timestamp(start).value
-        end_ns = (pd.Timestamp(end) + pd.Timedelta(days=1)).value  # end-exclusive guard
-        bars = asyncio.run(_pull(api, dataset, instrument_id, start_ns, end_ns))
+        bars_start_ns = pd.Timestamp(start).value
+        bars_end_ns = (pd.Timestamp(end) + pd.Timedelta(days=1)).value  # end-exclusive guard
+        # Price precision is static, so definitions load over a single weekday (the contract is
+        # active at the window start) — a full-window load pulls a per-day snapshot for every day.
+        defs_day = _to_weekday(start)
+        defs_start_ns = pd.Timestamp(defs_day).value
+        defs_end_ns = (pd.Timestamp(defs_day) + pd.Timedelta(days=1)).value
+        bars = asyncio.run(
+            _pull(api, dataset, instrument_id, defs_start_ns, defs_end_ns, bars_start_ns, bars_end_ns)
+        )
         return bars_to_ohlcv(bars)
 
     return fetch
 
 
-async def _pull(api: Any, dataset: str, instrument_id: Any, start_ns: int, end_ns: int) -> list[Any]:
+async def _pull(
+    api: Any,
+    dataset: str,
+    instrument_id: Any,
+    defs_start_ns: int,
+    defs_end_ns: int,
+    bars_start_ns: int,
+    bars_end_ns: int,
+) -> list[Any]:
     from nautilus_trader.core.nautilus_pyo3 import BarAggregation
 
     # Load definitions first so the port resolves price precision itself.
-    await api.get_range_instruments(dataset, [instrument_id], start_ns, end_ns)
+    await api.get_range_instruments(dataset, [instrument_id], defs_start_ns, defs_end_ns)
     return await api.get_range_bars(
-        dataset, [instrument_id], BarAggregation.DAY, start_ns, end_ns, timestamp_on_close=False
+        dataset, [instrument_id], BarAggregation.DAY, bars_start_ns, bars_end_ns, timestamp_on_close=False
     )
 
 

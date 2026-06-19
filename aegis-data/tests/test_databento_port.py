@@ -184,6 +184,29 @@ def test_contract_calendar_snaps_a_weekend_anchor_to_a_weekday() -> None:
     assert date.fromisoformat(client.queries[0]["start"]).weekday() < 5
 
 
+def test_contract_calendar_query_volume_is_coverage_bounded_not_window_proportional() -> None:
+    # REGRESSION GUARD: the calendar once scanned the whole panel window, pulling a per-day
+    # definition snapshot for every day.  Query volume must track the listed curve's coverage,
+    # not the window length: a 10x-longer window the curve already covers fetches no more, and
+    # no query ever spans more than a single 24h snapshot.
+    frame = pd.DataFrame(
+        {
+            "raw_symbol": ["CLG26", "CLZ45"],
+            "instrument_class": ["F", "F"],
+            "expiration": pd.to_datetime(
+                ["2026-02-20 18:30:00+00:00", "2045-12-19 18:30:00+00:00"]  # curve reaches 2045
+            ),
+        }
+    )
+    short, long = _FakeDatabento(frame), _FakeDatabento(frame)
+    databento_contract_calendar("GLBX.MDP3", client=short)("CL", date(2026, 1, 1), date(2026, 2, 1))
+    databento_contract_calendar("GLBX.MDP3", client=long)("CL", date(2026, 1, 1), date(2036, 1, 1))
+
+    assert len(short.queries) == len(long.queries) == 1  # window length does not add queries
+    for q in (*short.queries, *long.queries):
+        assert (date.fromisoformat(q["end"]) - date.fromisoformat(q["start"])).days == 1
+
+
 class _Px:
     def __init__(self, value: float) -> None:
         self._value = value
@@ -204,13 +227,17 @@ class _FakeClient:
     def __init__(self, bars: list[_Bar]) -> None:
         self._bars = bars
         self.calls: list[str] = []
+        self.instr_window: tuple[int, int] | None = None
+        self.bars_window: tuple[int, int] | None = None
 
-    async def get_range_instruments(self, *args, **kwargs) -> list:
+    async def get_range_instruments(self, dataset, ids, start_ns, end_ns, *a, **k) -> list:
         self.calls.append("instruments")
+        self.instr_window = (start_ns, end_ns)
         return []
 
-    async def get_range_bars(self, *args, **kwargs) -> list[_Bar]:
+    async def get_range_bars(self, dataset, ids, agg, start_ns, end_ns, *a, **k) -> list[_Bar]:
         self.calls.append("bars")
+        self.bars_window = (start_ns, end_ns)
         return self._bars
 
 
@@ -234,3 +261,38 @@ def test_fetcher_loads_definitions_before_bars() -> None:
     # Definitions must be fetched before bars (so the port resolves precision).
     assert client.calls == ["instruments", "bars"]
     assert df.loc[pd.Timestamp("2024-09-13"), "Close"] == 1.5
+
+
+def test_fetcher_loads_definitions_over_a_single_weekday_not_the_bars_window() -> None:
+    # Price precision is static, so loading definitions over the whole bars window pulls a
+    # per-day snapshot for every day and dominates the fetch.  The definition load is one day,
+    # snapped onto a weekday (a weekend anchor returns no snapshot); the bars keep the full span.
+    client = _FakeClient([_Bar(pd.Timestamp("2024-09-13").value, 1.0, 2.0, 0.5, 1.5, 100)])
+    fetch = databento_port_fetcher("GLBX.MDP3", client=client)
+
+    fetch("ESU4", date(2024, 6, 1), date(2024, 9, 25))  # 2024-06-01 is a Saturday
+
+    one_day = pd.Timedelta(days=1).value
+    instr_start, instr_end = client.instr_window
+    bars_start, bars_end = client.bars_window
+    assert instr_end - instr_start == one_day              # definitions: a single day
+    assert instr_start == pd.Timestamp("2024-06-03").value  # Saturday start snapped to Monday
+    assert bars_start == pd.Timestamp("2024-06-01").value   # bars keep the true window start
+    assert bars_end - bars_start > one_day                  # bars: the full multi-month span
+
+
+def test_fetcher_definition_load_is_constant_regardless_of_bars_window() -> None:
+    # REGRESSION GUARD: the port once loaded definitions over the whole bars window, pulling a
+    # per-day snapshot for every day (99s cold for a multi-month contract).  Precision is static,
+    # so the definition load stays one day no matter how long the bars span — only bars scale.
+    bar = [_Bar(pd.Timestamp("2024-06-03").value, 1.0, 2.0, 0.5, 1.5, 100)]
+    short, long = _FakeClient(list(bar)), _FakeClient(list(bar))
+    databento_port_fetcher("GLBX.MDP3", client=short)("ESU4", date(2024, 6, 3), date(2024, 6, 10))
+    databento_port_fetcher("GLBX.MDP3", client=long)("ESU4", date(2024, 6, 3), date(2034, 6, 10))
+
+    one_day = pd.Timedelta(days=1).value
+    short_defs = short.instr_window[1] - short.instr_window[0]
+    long_defs = long.instr_window[1] - long.instr_window[0]
+    assert short_defs == long_defs == one_day  # definition volume does not grow with the window
+    # ...while the bars window does scale, proving the contrast is real, not both pinned to one day.
+    assert (long.bars_window[1] - long.bars_window[0]) > (short.bars_window[1] - short.bars_window[0])
