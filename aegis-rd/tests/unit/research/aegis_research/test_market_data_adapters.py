@@ -283,7 +283,7 @@ def test_store_adapter_folds_block_dataset_into_futures_request(
     ref = FuturesRef("ES", "GLBX.MDP3", "calendar", "unadjusted")
     requests: list[NativeBarsRequest] = []
 
-    def pull_futures(request: NativeBarsRequest) -> object:
+    def pull_futures(request: NativeBarsRequest, *, store_dir=None) -> object:
         requests.append(request)
         write_native_bars(
             ref,
@@ -293,11 +293,12 @@ def test_store_adapter_folds_block_dataset_into_futures_request(
                 index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
             ),
             required_arrays=("Close",),
+            store_dir=store_dir,
         )
         return object()
 
     monkeypatch.setattr(
-        "research.aegis_research.market_data.adapters.store.pull_databento_futures_bars",
+        "aegis_data.coverage.pull_databento_futures_bars",
         pull_futures,
     )
     config = make_data_config(

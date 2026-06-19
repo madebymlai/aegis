@@ -44,6 +44,14 @@ absent or incomplete.
   missing gaps through the configured Gap-Fill Provider, admit them into the
   store, then return the covered range. Store Read never calls providers and
   fails closed unless the requested window has covered history.
+- **Ensure Coverage owns the asset-class Pull dispatch.** The
+  `(InstrumentRef, Gap-Fill Provider) -> Pull` matrix lives in one `aegis-data`
+  module (`aegis_data.coverage`), not in callers. A caller declares the refs, the
+  block-level Gap-Fill Provider, and the per-ref Provider Locators; Ensure Coverage
+  decides which Pull runs (yfinance for `ListedRef`, Databento for `FuturesRef`) and
+  fails closed on an unsupported pair. Aegis RD's `source: store` adapter therefore
+  builds the Data Request and gap-fill intent but never branches on ref type or
+  provider, and a new Pull provider is a one-module change in `aegis-data`.
 - **RD `source: store` opts into the Historical Store path.** Non-store RD
   sources keep RD's existing provider/source resolution. Only the store path
   crosses into Aegis Data, and it does so through a neutral **Data Request**

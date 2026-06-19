@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 from aegis_data.calendars import TradingCalendar
-from aegis_data.databento_pull import pull_databento_futures_bars
+from aegis_data.coverage import GapFillProvider, ensure_native_bar_coverage
 from aegis_data.store import NativeBarsRequest, read_native_bars_request
-from aegis_data.yfinance import YFinanceLocator, pull_yfinance_native_bars
 from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 
 from research.aegis_research.configuration import (
@@ -28,7 +27,11 @@ def load_store_source(config: DataConfig) -> MarketDataAdapterResult:
     refs = tuple(_instrument_ref(config, symbol) for symbol in config.symbols)
     request = _native_bars_request(config, refs)
     provider = store_gap_fill_provider(config.provider)
-    _pull_missing_native_bars(config, refs=refs, provider=provider)
+    ensure_native_bar_coverage(
+        request,
+        provider=GapFillProvider(provider),
+        locators=_provider_locators(config, refs),
+    )
     frames = read_native_bars_request(request)
     arrays = _array_panels(config, refs=refs, frames=frames)
     native_data = native_from_array_dict(arrays, config)
@@ -40,21 +43,14 @@ def load_store_source(config: DataConfig) -> MarketDataAdapterResult:
     )
 
 
-def _pull_missing_native_bars(
+def _provider_locators(
     config: DataConfig,
-    *,
     refs: tuple[InstrumentRef, ...],
-    provider: str,
-) -> None:
-    for symbol, ref in zip(config.symbols, refs, strict=True):
-        request = _native_bars_request(config, (ref,))
-        if isinstance(ref, ListedRef) and provider == "yfinance":
-            pull_yfinance_native_bars(request, YFinanceLocator(symbol.symbol_name))
-            continue
-        if isinstance(ref, FuturesRef) and provider == "databento":
-            pull_databento_futures_bars(request)
-            continue
-        raise ValueError(f"unsupported store gap-fill provider {provider!r} for {ref!r}")
+) -> dict[InstrumentRef, str]:
+    return {
+        ref: symbol.symbol_name
+        for symbol, ref in zip(config.symbols, refs, strict=True)
+    }
 
 
 def _native_bars_request(config: DataConfig, refs: tuple[InstrumentRef, ...]) -> NativeBarsRequest:
