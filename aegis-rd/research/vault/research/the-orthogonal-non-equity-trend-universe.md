@@ -10,7 +10,7 @@ tags:
 # The Orthogonal Non-Equity Trend Universe
 
 > [!abstract] One-line takeaway
-> A trend sleeve's edge is bounded by the number of *independent* macro trends its universe spans, not by its ticker count: an equity-dominated book collapses to roughly one such bet, a book rebuilt around rates, currencies and commodities restores several, and the liquid non-equity ETF universe saturates near 15-22 independent macro axes (about 25 names) past which more tickers add correlation and cost, not breadth.
+> A trend sleeve's edge is bounded by the number of *independent* macro trends its universe spans, not by its ticker count: an equity-dominated book collapses to roughly one such bet, a book rebuilt around rates, currencies and commodities restores several, and the liquid non-equity ETF universe saturates near 15-22 independent macro axes (about 25 names) past which more tickers add correlation and cost, not breadth. On an EU/IBKR retail account the tradeable form of that book is a cross-asset *futures* long/short sleeve - the US-ETF tiers are KID-blocked and the UCITS single-commodity ETCs un-shortable, both verified live - while the breadth ceiling is identical in any wrapper.
 
 ## Breadth is the binding constraint
 
@@ -60,7 +60,7 @@ The second is roll cost. A commodity ETF's trend is only as clean as its futures
 
 ## The tiered universe
 
-The construction below is the candidate universe to validate, ordered by marginal orthogonality and nested so each tier contains the previous one plus its additions. It is a design to be tested on our own pipeline, not a verified result; where two funds give near-identical exposure the more liquid one is kept.
+The construction below is the candidate universe to validate, ordered by marginal orthogonality and nested so each tier contains the previous one plus its additions. It is a design to be tested on our own pipeline, not a verified result; where two funds give near-identical exposure the more liquid one is kept. **Update (June 2026): these US-listed lines are a backtest proxy with no live execution path.** An IBKR audit confirmed an EU-retail account cannot even *buy* them (PRIIPs/KID rejection, error 201), so they map the axes only; the tradeable form is the futures / UCITS split in [[#The IBKR-tradable reality: futures for the short side, UCITS for the long]] below.
 
 - **Tier 0 - Essentials (10):** `TLT, GLD, UUP, PDBC, USL, DBB, DBA, FXY, TIP, BWX`
 - **Tier 1 - First expansion (20):** `+ EDV, EMLC, SLV, UNG, FXE, CORN, CPER, SHY, LQD, FXA`
@@ -80,7 +80,7 @@ The tiers above are US-listed. An EU retail investor cannot buy them: PRIIPs req
 The corrected construction below is a native UCITS universe of fifty instruments, ordered by marginal orthogonality and nested so each tier contains the previous one plus its additions - the same shape as the US design.[^report] All instruments sit on the London Stock Exchange (`.L`) so the book shares one trading calendar. 
 
 - **Tier 0 - Essentials (10):** `IDTL.L, ITPS.L, SEGA.L, AIGC.L, IGLN.L, BRNT.L, COPA.L, AIGA.L, GBUS.L, EMCP.L`
-- **Tier 1 - First expansion (20):** `+ HYLD.L, SSLV.L, IEGE.L, GILI.L, WEAT.L, HEAT.L, COCO.L, NGAS.L, IGLO.L, IBTA.L`
+- **Tier 1 - First expansion (20):** `+ HYLD.L, SSLV.L, IEGE.L, GILI.L, WEAT.L, HEAT.L, CORN.L, NGAS.L, IGLO.L, IBTA.L`
 - **Tier 2 - Refinement (25):** `+ SUGA.L, COFF.L, PHPD.L, IEMB.L, IBCI.L`
 - **Tier 3 - Refinement (30):** `+ NICK.L, ALUM.L, IGLT.L, SEUR.L, CORN.L`
 - **Tier 4 - Refinement (35):** `+ SOYB.L, COTN.L, SJPY.L, ZINC.L, SDHY.L`
@@ -100,6 +100,37 @@ What does not change is the empirical anchor. An earlier 18-name single-calendar
 
 A material caveat carries over: these London UCITS are **USD-denominated**, so the universe tests whether the UCITS *instruments* (their roll, tracking and liquidity) preserve the edge in USD; the EUR-investor currency overlay is a separate question, since an earlier EUR-listed probe found a USD Treasury held in EUR correlates only about 0.6 to US-`TLT`. Converting the book to EUR returns is a distinct test, not covered here.
 
+## The IBKR-tradable reality: futures for the short side, UCITS for the long
+
+Both ETF books above are *backtest* universes. A live audit against an IBKR account (paper gateway, June 2026, what-if order previews - no market data required) shows that neither can be the *executed* convex pole, and that the substrate this article describes is reachable in only one wrapper for a long/short sleeve: futures.
+
+Three findings, each verified on the gateway:
+
+- **The US-listed tiers are untradeable, not merely un-shortable.** A what-if order on `TLT`, `DBB`, `UNG` is rejected outright with IBKR error 201 - the US ETFs publish no PRIIPs KID, so an EU-retail account is blocked from *buying* them, never mind shorting. This turns the PRIIPs intuition above into a hard, account-level block: the US tiers map which axes pay, but have no execution path, so their backtest results are evidence about the axes, never a tradeable book.
+- **The UCITS book is buyable but realistically long-only.** Every UCITS line previews a clean *buy* margin, so the long legs and the carry-pole wrapper are fine. Short *permission* exists too, but the single-commodity ETCs (`IGLN.L`, `SSLV.L`, `BRNT.L`, `NGAS.L`, ...) carry little-to-no borrow inventory - the instrument-level cause of the campaign's measured short penalty (held-out Sharpe **0.62 L/S -> 0.89 long-only**, aegis-rd-167; the short-legs kill in [[graveyard]]). The exact per-name shortable-share and fee read was blocked at audit time by a competing market-data session (IBKR error 10197), but the structural conclusion holds: UCITS ETCs are not a viable short substrate.
+- **Futures clear both constraints.** A futures what-if (front gold `GC`) prices a *short* cleanly - margin returned, no KID rejection, no borrow line. Shorting a future is symmetric with going long, and futures are MiFID instruments rather than PRIIPs packaged products, so the KID block that kills the US ETFs does not apply. Futures are tradeable *and* shortable where each ETF wrapper fails one.
+
+The construction consequence is a two-book split, not one universe:
+
+- the **convex (trend) pole** runs as a **CME / CBOT / NYMEX / COMEX / ICE futures long/short book**, and
+- the **UCITS ETF/ETC book** is kept as the **long-only** wrapper - for the trend pole's long legs when futures are not desired, and as the home of the carry pole, where short inventory is not required.
+
+The futures book occupies the same orthogonal macro axes as the ETF design, root for root:
+
+| Axis | Candidate futures roots (IBKR listing exchange) |
+|---|---|
+| Sovereign rate curve | `ZT` 2y, `ZF` 5y, `ZN` 10y, `TN` ultra-10y, `ZB` 30y, `UB` ultra-bond (CBOT); `SR3` 3M SOFR (CME) |
+| Currencies - dollar and crosses | `6E` EUR, `6J` JPY, `6B` GBP, `6A` AUD, `6C` CAD, `6S` CHF (CME); `DX` dollar index (ICE US) |
+| Energy | `CL` WTI, `BZ` Brent, `NG` natural gas, `RB` gasoline, `HO` heating oil (NYMEX) |
+| Metals | `GC` gold, `SI` silver, `HG` copper (COMEX); `PL` platinum, `PA` palladium (NYMEX) |
+| Agriculture | `ZC` corn, `ZW` wheat, `ZS` soybeans (CBOT); `SB` sugar, `KC` coffee, `CC` cocoa, `CT` cotton (ICE US) |
+
+Two axes from the ETF design do not carry cleanly into liquid futures. **Real rates** has no liquid TIPS future - proxy it as nominal duration minus breakeven, or accept its loss (the one genuine substrate gap). **Carbon** trades as an ICE EUA future, with the same permission-and-liquidity caveat the UCITS `CARB.L` leg already carries. Equity-index futures stay excluded by the substrate rule.
+
+The table is the *executable* L/S book, not a candidate: a per-root what-if sweep (June 2026, paper gateway) confirmed **30 of 31 roots short-tradeable on the account**, spanning every axis - all six Treasury-curve futures (`ZT`-`UB`), the full G6 FX complex plus the dollar index (`6E`-`6S`, `DX`), energy (`CL/BZ/NG/RB/HO`), metals (`GC/SI/HG/PL/PA`) and ags (`ZC/ZW/ZS` plus the ICE softs `SB/KC/CC/CT`) - **with no exchange-permission gaps** (the NYMEX-energy and ICE-softs permissions that were the obvious risk both clear). The lone exception is `SR3` 3M SOFR, which does not surface as a futures contract on the account at all (a CME short-rate data/permission gap, not a tradeability block) and is redundant with the front of the Treasury curve, so the short-rate leg is dropped rather than lost.
+
+Breadth binds identically: the saturation analysis is wrapper-agnostic, so the futures book is sized to the same mid-teens-to-twenty independent-axis core, not stretched to all ~30 roots. The open engineering item is the data path - a clean back-adjusted continuous-contract panel, since the Databento `GLBX.MDP3` pull dropped the energy/metals/grains roots (see [[runs/atalanta/2026-06-17]]).
+
 ## Limitations
 
 - **The single-$\rho$ count is an idealization.** Effective breadth depends on the correlation matrix's eigenvalue spread (participation ratio), not one average correlation; the worked $N_{\text{eff}}$ numbers illustrate the mechanism, they do not measure this book.
@@ -114,6 +145,8 @@ A material caveat carries over: these London UCITS are **USD-denominated**, so t
 - **The carbon axis may be untradeable at size.** `CARB.L` (~EUR 50M) and the California sibling (~USD 8M, post-2018) are orthogonal but thin; the axis is real on paper but the position it can carry is small, and the California ticker (`WCCA` on the LSE) differs from the `CLCO.L` the source build names.
 - **Some deeper-tier UCITS lack clean history.** `IB01.L`, `USFR.L` and `CLCO.L` are post-2018 inceptions with short out-of-sample windows; `HJGB.L` (the JGB leg) and the `SCHF.L` / `LAUD.L` / `SCAD.L` currency lines return no usable yfinance history in a 2018-2024 pull. All sit in Tier 3+, outside the Tier 0-2 working book, but each needs a tradeable-data check before any extended run. (`SEUR.L` and `SJPY.L`, by contrast, do price from 2018 - they correctly replace the older `USEU.L` / `USJP.L` symbols, which return no data.)
 - **The PCA factor structure is a single-source estimate.** The 70-80%-in-three-components and 12-15-axes figures come from the universe-construction report, not from a decomposition run on our own data.
+- **The futures permission map is verified, bar the short-rate leg.** The June-2026 what-if sweep confirmed 30 of 31 roots short-tradeable on the account; only `SR3` (3M SOFR) failed to surface as a futures contract (a CME short-rate data/permission gap, redundant with the 2-30y Treasury futures). What is *not* yet measured live is the borrow-free assumption end to end - real margins, roll and financing on a back-adjusted panel - which the next limitation covers.
+- **Futures change the return contract.** A futures L/S book is collateralised-margin, daily-marked and rolled, not a buy-and-hold ETF series; its costs (roll, commissions, financing on margin) and its numeraire P&L differ from the ETF backtest, so the breadth result transfers but the net-of-cost edge must be re-measured on the futures panel.
 
 ## Strategy hypotheses this could seed
 
@@ -123,6 +156,7 @@ A material caveat carries over: these London UCITS are **USD-denominated**, so t
 - [ ] **Survivorship discipline is free.** Restricting to currently listed, liquid funds (excluding redeemed ETNs) avoids backtest bias without materially reducing the spanned macro axes versus a history-maximizing book.
 - [ ] **The corrected native UCITS universe reproduces the US knee.** Re-running the breadth-saturation sweep on the fifty-name native UCITS universe should locate the same ~20-25 name peak and confirm a +0.126-class held-out edge at the corrected breadth, now with the restored AUD axis (`LAUD.L`) and the Eurozone-sovereign legs on their London lines (`SEGA.L`, `IEGE.L`) for a single-calendar book.
 - [ ] **Carbon is a genuinely orthogonal axis.** Emissions-allowance ETCs (`CARB.L`, `WCCA`/`CLCO.L`) trend on cap-and-trade policy, decoupled from rates, the dollar and growth, so adding them should lift effective breadth more than another correlated commodity or credit name - conditional on their thin liquidity supporting a position.
+- [ ] **The futures L/S book reclaims the short side.** On a clean back-adjusted cross-asset futures panel (symmetric shorting, no borrow), the full long/short trend sleeve beats the UCITS long-only champion on held-out crisis-conditional return - reversing the 0.62 L/S -> 0.89 long-only verdict the ETF/ETC borrow constraint forced (aegis-rd-167). Pre-register: held-out `crisis_quarter_return` (L/S futures) > long-only at matched volatility. Blocked on the back-adjusted futures panel (see [[runs/atalanta/2026-06-17]]) and the per-root IBKR permission sweep.
 
 ## Sources
 

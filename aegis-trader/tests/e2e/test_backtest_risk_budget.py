@@ -22,7 +22,8 @@ from aegis_trader.domain.book_config import (
     TailConvexityBudget,
 )
 from aegis_trader.domain.rebalancer import rebalance, rebalance_plan
-from aegis_trader.domain.types import Figi, SleeveName
+from aegis_runtime import ListedRef
+from aegis_trader.domain.types import SleeveName
 
 _TREND = SleeveName("trend")
 _CARRY = SleeveName("carry")
@@ -80,7 +81,7 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
         book,
         realized_covariance=covariance,
     )
-    weights = {delta.figi.value: delta.delta for delta in deltas}
+    weights = {delta.ref.value: delta.delta for delta in deltas}
 
     assert weights["TAIL"] == pytest.approx(weights["TREND"] / 2.0, rel=0.02)
     assert covariance_book_vol(
@@ -92,15 +93,15 @@ def test_five_year_covariance_risk_budget_hits_vol_target_and_attribution_reconc
     periods = [
         AttributionPeriod(
             nav=nav,
-            realized_weights={Figi(k): v for k, v in weights.items()},
-            sleeve_targets={_TREND: {Figi("TREND"): 1.0}, _TAIL: {Figi("TAIL"): 1.0}},
-            closes={Figi("TREND"): 100.0, Figi("TAIL"): 100.0},
+            realized_weights={ListedRef(k): v for k, v in weights.items()},
+            sleeve_targets={_TREND: {ListedRef("TREND"): 1.0}, _TAIL: {ListedRef("TAIL"): 1.0}},
+            closes={ListedRef("TREND"): 100.0, ListedRef("TAIL"): 100.0},
         ),
         AttributionPeriod(
             nav=nav,
-            realized_weights={Figi(k): v for k, v in weights.items()},
-            sleeve_targets={_TREND: {Figi("TREND"): 1.0}, _TAIL: {Figi("TAIL"): 1.0}},
-            closes={Figi("TREND"): 101.0, Figi("TAIL"): 98.0},
+            realized_weights={ListedRef(k): v for k, v in weights.items()},
+            sleeve_targets={_TREND: {ListedRef("TREND"): 1.0}, _TAIL: {ListedRef("TAIL"): 1.0}},
+            closes={ListedRef("TREND"): 101.0, ListedRef("TAIL"): 98.0},
         ),
     ]
     attribution = compute_sleeve_attribution(
@@ -142,7 +143,7 @@ def test_down_only_clamp_runs_unlevered_book_as_a_vol_ceiling():
         book,
         realized_covariance=covariance,
     )
-    weights = {d.figi.value: d.delta for d in deltas}
+    weights = {d.ref.value: d.delta for d in deltas}
     gross = sum(abs(v) for v in weights.values())
 
     # Clamp bound at the cap -> proves the solve had over-levered past it.
@@ -214,7 +215,7 @@ def test_five_year_tail_convexity_budget_bounds_target_risk_and_zeros_expansion(
         book,
         realized_covariance=covariance,
     )
-    weights = {delta.figi.value: delta.delta for delta in deltas}
+    weights = {delta.ref.value: delta.delta for delta in deltas}
 
     assert "EXPANSION" not in weights
     realized_risk = risk_contribution_shares(
@@ -350,7 +351,7 @@ def test_all_concave_floor_allocates_by_conviction_tilt_with_no_skew_enforcement
             _CARRY: {_TREND: 0.0, _CARRY: 0.10**2},
         },
     )
-    weights = {delta.figi.value: delta.delta for delta in deltas}
+    weights = {delta.ref.value: delta.delta for delta in deltas}
 
     # Completed (no infeasibility) and kept the conviction tilt: trend > carry.
     assert weights["TREND"] > weights["CARRY"]
@@ -388,7 +389,7 @@ def test_backtest_drawdown_delever_engages_in_worst_window_and_returns_are_measu
         realized_vols={_TREND: 0.10},
         realized_drawdown=0.0,
     )
-    weights = {delta.figi.value: delta.delta for delta in deltas}
+    weights = {delta.ref.value: delta.delta for delta in deltas}
 
     # Deep drawdown: scaled allocation.
     stressed = rebalance(
@@ -397,7 +398,7 @@ def test_backtest_drawdown_delever_engages_in_worst_window_and_returns_are_measu
         realized_vols={_TREND: 0.10},
         realized_drawdown=0.25,
     )
-    stressed_weights = {delta.figi.value: delta.delta for delta in stressed}
+    stressed_weights = {delta.ref.value: delta.delta for delta in stressed}
     assert stressed_weights["TREND"] == pytest.approx(weights["TREND"] * 0.50)
 
     # Recovery returns to full.
@@ -407,7 +408,7 @@ def test_backtest_drawdown_delever_engages_in_worst_window_and_returns_are_measu
         realized_vols={_TREND: 0.10},
         realized_drawdown=0.04,
     )
-    recovered_weights = {delta.figi.value: delta.delta for delta in recovered}
+    recovered_weights = {delta.ref.value: delta.delta for delta in recovered}
     assert recovered_weights["TREND"] == pytest.approx(weights["TREND"])
 
 
@@ -577,7 +578,7 @@ def _run_five_year_down_only_book() -> _BookRun:
         # multipliers, matching production (ytr.1 clamps net positions).
         w = {name: 0.0 for name in names}
         for delta in plan.deltas:
-            w[SleeveName(delta.figi.value.lower())] = float(delta.delta)
+            w[SleeveName(delta.ref.value.lower())] = float(delta.delta)
         last_weights = w
         prev_weights = dict(plan.applied_sleeve_weights)
 
@@ -588,9 +589,9 @@ def _run_five_year_down_only_book() -> _BookRun:
         attribution_periods.append(
             AttributionPeriod(
                 nav=nav,
-                realized_weights={Figi(name.value): w[name] for name in names},
-                sleeve_targets={name: {Figi(name.value): 1.0} for name in names},
-                closes={Figi(name.value): float(prices[name][t]) for name in names},
+                realized_weights={ListedRef(name.value): w[name] for name in names},
+                sleeve_targets={name: {ListedRef(name.value): 1.0} for name in names},
+                closes={ListedRef(name.value): float(prices[name][t]) for name in names},
             )
         )
 
@@ -612,9 +613,9 @@ def _run_five_year_down_only_book() -> _BookRun:
     attribution_periods.append(
         AttributionPeriod(
             nav=nav,
-            realized_weights={Figi(name.value): last_weights[name] for name in names},
-            sleeve_targets={name: {Figi(name.value): 1.0} for name in names},
-            closes={Figi(name.value): float(prices[name][t_last]) for name in names},
+            realized_weights={ListedRef(name.value): last_weights[name] for name in names},
+            sleeve_targets={name: {ListedRef(name.value): 1.0} for name in names},
+            closes={ListedRef(name.value): float(prices[name][t_last]) for name in names},
         )
     )
 

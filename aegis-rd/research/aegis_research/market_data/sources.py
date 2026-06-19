@@ -5,7 +5,7 @@ from typing import Any
 
 from vectorbtpro import vbt
 
-LOCAL_DATA_SOURCES = {"synthetic", "csv"}
+LOCAL_DATA_SOURCES = {"synthetic", "csv", "store"}
 EXCLUDED_VBT_DATA_CLASSES = {"Data", "SyntheticData", "CSVData"}
 
 

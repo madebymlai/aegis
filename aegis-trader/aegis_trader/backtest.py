@@ -1,18 +1,17 @@
-"""Commingled-book backtest runner (closes finding a5 for real).
+"""Commingled-book Store Read backtest runner.
 
 Composes the pieces into a runnable ``BacktestEngine``: load ``book.toml`` ->
-resolve each sleeve's bundle (registry) -> derive each instrument's identity
-(FIGI) + native quote currency from the bundle -> fetch OHLCV + FX (injected,
-provider-agnostic) -> build instruments and bars via the data/ load side ->
-feed the engine, set FX marks, register the sleeves, and run the overlay.
+resolve each sleeve's bundle (registry) -> derive each instrument's baked
+``InstrumentRef`` + native quote currency from the bundle -> read Native Market
+Bars and FX History from ``aegis-data`` -> adapt those frames to Nautilus bars and
+quotes at the Trader boundary -> register the sleeves and run the overlay.
 
-The fetchers are injected so the core is provider-agnostic and testable; the
-defaults pull daily bars and a latest FX mark from yfinance.
+Trader backtests never Pull and never fetch remote history. Missing Covered
+History fails closed before the Nautilus engine runs.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,7 +21,9 @@ from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency, Money
 
-from aegis_runtime import ExecutionBundle
+from aegis_data.calendars import TradingCalendar
+from aegis_data.store import FxPair, read_fx_history, read_native_bars
+from aegis_runtime import ExecutionBundle, InstrumentRef
 from aegis_runtime.currency import _major_currency_and_scale
 
 from aegis_trader.bundles.port import BundleRegistryPort
@@ -49,36 +50,21 @@ from aegis_trader.trader.financing import build_financing_modules
 from aegis_trader.trader.modes import build_backtest_engine_config
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
-@dataclass(frozen=True)
-class BarRequest:
-    """What the backtest asks a provider for one instrument, derived from the
-    sleeve's ``DataContract``: the provider ticker, the arrays the contract
-    declares, and the date window.  A provider adapter returns those arrays;
-    the runner keys identity off the contract's FIGI, not the ticker."""
-
-    ticker: str
-    required_arrays: tuple[str, ...]
-    start: str
-    end: str
-
-
-# BarRequest -> OHLCV frame (native quote) with open/high/low/close/volume.
-OhlcvFetcher = Callable[[BarRequest], pd.DataFrame]
-# (base, quote, start, end) -> per-date FX series, quote units per 1 base
-# (e.g. EUR,USD -> a daily series around ~1.08).
-FxFetcher = Callable[[str, str, str, str], pd.Series]
-
 _PRICE_COLS = ("open", "high", "low", "close")
+_STORE_OHLCV_ARRAYS = (*_PRICE_COLS, "volume")
+
+_SleeveBundles = list[tuple[SleeveName, ExecutionBundle]]
 
 
 class ContractDataError(ValueError):
-    """Fetched data does not satisfy a sleeve's DataContract — the backtest fails
-    closed rather than running the overlay on data that wouldn't pass research."""
+    """Store Read data does not satisfy a sleeve's DataContract — the backtest
+    fails closed rather than running the overlay on data that would not pass the
+    bundle contract."""
 
-    def __init__(self, sleeve: str, figi: str, detail: str) -> None:
+    def __init__(self, sleeve: str, ref: str, detail: str) -> None:
         self.sleeve = sleeve
-        self.figi = figi
-        super().__init__(f"sleeve {sleeve!r} ({figi}): {detail}")
+        self.ref = ref
+        super().__init__(f"sleeve {sleeve!r} ({ref}): {detail}")
 
 
 class FxDataError(ValueError):
@@ -96,16 +82,19 @@ def run_book_backtest(
     *,
     start: str,
     end: str,
-    fetch_ohlcv: OhlcvFetcher,
-    fetch_fx: FxFetcher,
+    store_dir: Path | None = None,
     registry: BundleRegistryPort | None = None,
     venue: str = "SIM",
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
 ) -> BacktestEngine:
-    """Build and run the commingled-book backtest; returns the finished engine."""
+    """Build and run the commingled-book backtest from ``aegis-data`` Store Read.
+
+    ``store_dir`` is a test/deployment override for the Historical Store root;
+    absent, ``aegis-data`` uses its OS-global store. There is deliberately no
+    remote-fetch, Pull, source, or ``DataConfig`` parameter on this path.
+    """
     book = load_book_config(book_path)
-    base = Currency.from_str(book.base_currency)
     registry = registry if registry is not None else EntryPointBundleRegistry()
     sleeves = [(s.name, registry.load(s.wheel_filename)) for s in book.sleeves]
     book_timeframe = resolve_book_timeframe(
@@ -117,6 +106,23 @@ def run_book_backtest(
         book, account_currencies, starting_cash
     )
 
+    instrument_inputs = _read_instrument_inputs(
+        sleeves,
+        timeframe=book_timeframe,
+        start=start,
+        end=end,
+        store_dir=store_dir,
+    )
+    fx_inputs = _read_fx_inputs(
+        book,
+        sleeves,
+        timeframe=book_timeframe,
+        start=start,
+        end=end,
+        bar_index=instrument_inputs.bar_index,
+        store_dir=store_dir,
+    )
+
     engine = BacktestEngine(build_backtest_engine_config(trader_id=trader_id))
     cost_models = build_simulated_cost_models(book)
     financing_modules = build_financing_modules(book.costs)
@@ -124,7 +130,7 @@ def run_book_backtest(
         Venue(venue),
         oms_type=OmsType.NETTING,
         account_type=account_type,
-        base_currency=None,
+        base_currency=None,  # multi-currency account; base-currency returns come from BookEquityRecorder/return_stats
         starting_balances=starting_balances,
         modules=financing_modules,
         fill_model=cost_models.fill_model,
@@ -133,60 +139,23 @@ def run_book_backtest(
         allow_cash_borrowing=len(balance_currencies) > 1,
     )
 
-    bimap: dict[str, InstrumentId] = {}
-    fx_currencies: set[str] = set()
-    bar_index: set[pd.Timestamp] = set()
-    for sleeve_name, bundle in sleeves:
-        fx_currencies |= set(bundle.contract.required_fx_currencies)
-        for figi, ticker in zip(bundle.contract.figis, bundle.symbols, strict=True):
-            if figi in bimap:
-                continue  # an instrument shared across sleeves is loaded once
-            major, scale = _major_currency_and_scale(bundle.currency_by_symbol[ticker])
-            instrument = build_equity(
-                InstrumentSpec(figi=figi, venue=venue, quote_currency=major)
+    bimap: dict[object, InstrumentId] = {}
+    for bars in instrument_inputs.bars:
+        instrument = build_equity(
+            InstrumentSpec(
+                figi=bars.ref.value,
+                venue=venue,
+                quote_currency=bars.quote_currency,
             )
-            raw = fetch_ohlcv(
-                BarRequest(
-                    ticker=ticker,
-                    required_arrays=bundle.contract.required_arrays,
-                    start=start,
-                    end=end,
-                )
-            )
-            _validate_contract_data(
-                raw,
-                sleeve=sleeve_name.value,
-                figi=figi,
-                required_arrays=bundle.contract.required_arrays,
-                min_rows=bundle.contract.lookback_bars + 1,
-            )
-            ohlcv = _normalize(raw, scale)
-            bar_index |= set(ohlcv.index)
-            engine.add_instrument(instrument)
-            engine.add_data(wrangle_bars(instrument, ohlcv, book_timeframe))
-            bimap[figi] = instrument.id
+        )
+        engine.add_instrument(instrument)
+        engine.add_data(wrangle_bars(instrument, bars.ohlcv, book_timeframe))
+        bimap[bars.ref] = instrument.id
 
     # FX as quote-tick'd CurrencyPair instruments (same path as live): the
     # overlay's on_quote_tick mirrors these into cache mark xrates for sizing,
-    # and the accounting layer values foreign legs from the same quotes — so a
-    # bar-fed backtest no longer fails to compute account-state exchange rates.
-    fx_index = pd.DatetimeIndex(sorted(bar_index))
-    # Sorted: a bare set iteration is hash-seed-dependent, so the order FX pairs
-    # are added to the data stream — and thus same-timestamp tie-breaks against
-    # bars at valuation time — would vary run-to-run (aegis-rd-10d).
-    for ccy in sorted(fx_currencies):
-        if ccy == book.base_currency:
-            continue
-        fx_series = fetch_fx(book.base_currency, ccy, start, end)
-        aligned = fx_series.reindex(fx_index).ffill()
-        if aligned.isna().any():
-            first_uncovered = aligned.index[aligned.isna()][0]
-            raise FxDataError(
-                book.base_currency,
-                ccy,
-                f"no rate at/before {first_uncovered.date()}; "
-                f"the series must cover the run window",
-            )
+    # and the accounting layer values foreign legs from the same quotes.
+    for ccy, aligned in fx_inputs.items():
         pair = build_currency_pair(book.base_currency, ccy, venue)
         engine.add_instrument(pair)
         engine.add_data(wrangle_fx_quotes(pair, aligned))
@@ -231,6 +200,152 @@ def book_return_stats(engine: BacktestEngine) -> dict[str, float]:
     return {}
 
 
+@dataclass(frozen=True)
+class _InstrumentBars:
+    ref: InstrumentRef
+    quote_currency: str
+    ohlcv: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class _InstrumentInputs:
+    bars: tuple[_InstrumentBars, ...]
+    bar_index: frozenset[pd.Timestamp]
+
+
+def _read_instrument_inputs(
+    sleeves: _SleeveBundles,
+    *,
+    timeframe: str,
+    start: str,
+    end: str,
+    store_dir: Path | None,
+) -> _InstrumentInputs:
+    loaded: set[InstrumentRef] = set()
+    bars: list[_InstrumentBars] = []
+    bar_index: set[pd.Timestamp] = set()
+    for sleeve_name, bundle in sleeves:
+        for ref, symbol in zip(bundle.contract.refs, bundle.symbols, strict=True):
+            if ref in loaded:
+                continue
+            major, scale = _major_currency_and_scale(bundle.currency_by_symbol[symbol])
+            raw = _read_native_market_bars(
+                ref,
+                required_arrays=bundle.contract.required_arrays,
+                timeframe=timeframe,
+                start=start,
+                end=end,
+                store_dir=store_dir,
+            )
+            _validate_contract_data(
+                raw,
+                sleeve=sleeve_name.value,
+                ref=ref.value,
+                required_arrays=bundle.contract.required_arrays,
+                min_rows=bundle.contract.lookback_bars + 1,
+            )
+            normalized = _normalize(raw, scale)
+            bars.append(_InstrumentBars(ref=ref, quote_currency=major, ohlcv=normalized))
+            bar_index.update(normalized.index)
+            loaded.add(ref)
+    return _InstrumentInputs(bars=tuple(bars), bar_index=frozenset(bar_index))
+
+
+def _read_native_market_bars(
+    ref: InstrumentRef,
+    *,
+    required_arrays: tuple[str, ...],
+    timeframe: str,
+    start: str,
+    end: str,
+    store_dir: Path | None,
+) -> pd.DataFrame:
+    # Trader's book universe is US-listed (yfinance) and CME futures (GLBX); both
+    # expect bars on the XNYS calendar.
+    frames = read_native_bars(
+        (ref,),
+        arrays=_store_read_arrays(required_arrays),
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        calendar=TradingCalendar.XNYS,
+        store_dir=store_dir,
+    )
+    return frames[ref]
+
+
+def _read_fx_inputs(
+    book: BookConfig,
+    sleeves: _SleeveBundles,
+    *,
+    timeframe: str,
+    start: str,
+    end: str,
+    bar_index: frozenset[pd.Timestamp],
+    store_dir: Path | None,
+) -> dict[str, pd.Series]:
+    fx_index = pd.DatetimeIndex(sorted(bar_index))
+    aligned: dict[str, pd.Series] = {}
+    for ccy in sorted(_required_fx_currencies(sleeves)):
+        if ccy == book.base_currency:
+            continue
+        pair = FxPair(book.base_currency, ccy)
+        history = read_fx_history(
+            (pair,),
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            calendar=TradingCalendar.WEEKDAY,
+            store_dir=store_dir,
+        )
+        fx_series = history[pair]
+        aligned[ccy] = _align_fx_to_bars(
+            fx_series,
+            fx_index=fx_index,
+            base=book.base_currency,
+            quote=ccy,
+        )
+    return aligned
+
+
+def _align_fx_to_bars(
+    fx_series: pd.Series,
+    *,
+    fx_index: pd.DatetimeIndex,
+    base: str,
+    quote: str,
+) -> pd.Series:
+    aligned = fx_series.reindex(fx_index).ffill()
+    if aligned.isna().any():
+        first_uncovered = aligned.index[aligned.isna()][0]
+        raise FxDataError(
+            base,
+            quote,
+            f"no rate at/before {first_uncovered.date()}; "
+            f"the series must cover the run window",
+        )
+    return aligned
+
+
+def _required_fx_currencies(sleeves: _SleeveBundles) -> set[str]:
+    currencies: set[str] = set()
+    for _name, bundle in sleeves:
+        currencies.update(bundle.contract.required_fx_currencies)
+    return currencies
+
+
+def _store_read_arrays(required_arrays: tuple[str, ...]) -> tuple[str, ...]:
+    arrays: list[str] = []
+    seen: set[str] = set()
+    for array in (*_STORE_OHLCV_ARRAYS, *required_arrays):
+        key = array.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        arrays.append(array)
+    return tuple(arrays)
+
+
 def _starting_balances(
     book: BookConfig,
     account_currencies: tuple[str, ...],
@@ -256,7 +371,7 @@ def _starting_balances(
     return balances, currencies
 
 
-def _requires_margin_account(sleeves: list[tuple[SleeveName, ExecutionBundle]]) -> bool:
+def _requires_margin_account(sleeves: _SleeveBundles) -> bool:
     return any(_bundle_direction(bundle) in {"both", "shortonly"} for _name, bundle in sleeves)
 
 
@@ -267,7 +382,7 @@ def _bundle_direction(bundle: object) -> str:
 
 def _account_currencies(
     base_currency: str,
-    sleeves: list[tuple[SleeveName, ExecutionBundle]],
+    sleeves: _SleeveBundles,
 ) -> tuple[str, ...]:
     currencies = {base_currency}
     for _name, bundle in sleeves:
@@ -282,21 +397,21 @@ def _validate_contract_data(
     ohlcv: pd.DataFrame,
     *,
     sleeve: str,
-    figi: str,
+    ref: str,
     required_arrays: tuple[str, ...],
     min_rows: int,
 ) -> None:
     """Fail closed unless *ohlcv* satisfies the contract: every required array is
-    present (matched case-insensitively against the provider's columns) and at
-    least *min_rows* (lookback + 1) rows are available."""
+    present (matched case-insensitively against the Store Read frame's columns)
+    and at least *min_rows* (lookback + 1) rows are available."""
     columns = {str(c).lower() for c in ohlcv.columns}
     missing = tuple(a for a in required_arrays if a.lower() not in columns)
     if missing:
-        raise ContractDataError(sleeve, figi, f"missing required arrays {list(missing)}")
+        raise ContractDataError(sleeve, ref, f"missing required arrays {list(missing)}")
     if len(ohlcv) < min_rows:
         raise ContractDataError(
-            sleeve, figi,
-            f"{len(ohlcv)} rows fetched, need at least {min_rows} (lookback + 1)",
+            sleeve, ref,
+            f"{len(ohlcv)} rows read, need at least {min_rows} (lookback + 1)",
         )
 
 
@@ -312,35 +427,3 @@ def _normalize(ohlcv: pd.DataFrame, scale: float) -> pd.DataFrame:
     df["high"] = df[list(_PRICE_COLS)].max(axis=1)
     df["low"] = df[list(_PRICE_COLS)].min(axis=1)
     return df
-
-
-# -- default yfinance fetchers (provider-specific; injected, not core) -----------
-#
-# ``threads=False`` on every download: each call pulls a single ticker, so the
-# download pool buys nothing, and its worker threads each open a connection to
-# yfinance's peewee/sqlite timezone cache that yfinance's atexit hook never
-# closes (it only closes the main thread's) — those leaked connections surface
-# as ``ResourceWarning: unclosed database`` at GC time. Single-threaded downloads
-# keep every tz-cache connection on the main thread, where it is closed cleanly.
-
-
-def yfinance_ohlcv(request: BarRequest) -> pd.DataFrame:
-    import yfinance as yf
-
-    df = yf.download(
-        request.ticker, start=request.start, end=request.end,
-        auto_adjust=True, progress=False, threads=False,
-    )
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    return df
-
-
-def yfinance_fx(base: str, quote: str, start: str, end: str) -> pd.Series:
-    import yfinance as yf
-
-    df = yf.download(f"{base}{quote}=X", start=start, end=end, progress=False, threads=False)
-    close = df["Close"]
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
-    return close.dropna()

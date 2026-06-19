@@ -9,6 +9,7 @@ description = "VectorBT PRO-first research loop for strategy evidence and backte
 requires-python = ">=3.12"
 dependencies = [
   "aegis-runtime",
+  "aegis-data",
   "dill",
   "numpy",
   "pandas",
@@ -38,6 +39,7 @@ filterwarnings = [
 
 [tool.uv.sources]
 aegis-runtime = { path = "../aegis-runtime", editable = true }
+aegis-data = { path = "../aegis-data", editable = true }
 vectorbtpro = { git = "https://github.com/polakowo/vectorbt.pro.git", branch = "develop" }
 
 [tool.mypy]
@@ -47,7 +49,16 @@ files = ["research"]
 # These third-party libraries ship no type stubs; suppress the missing-import
 # noise without weakening checks on our own code.
 [[tool.mypy.overrides]]
-module = ["vectorbtpro.*", "pandas", "pandas.*", "yaml"]
+module = [
+  "vectorbtpro.*",
+  "pandas",
+  "pandas.*",
+  "yaml",
+  "aegis_runtime",
+  "aegis_runtime.*",
+  "aegis_data",
+  "aegis_data.*",
+]
 ignore_missing_imports = true
 
 [tool.ruff]

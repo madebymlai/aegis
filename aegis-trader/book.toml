@@ -32,7 +32,7 @@ EUR = 1_000_000.0
 # this non-equity universe and half the names are un-borrowable for retail. Bundle direction=longonly.
 [[sleeves]]
 name = "atalanta_trend"
-wheel_filename = "aegis_exec_atalanta_trendstraddlebufferedshortmask_cand_6f6-1.0.0-py3-none-any.whl"
+wheel_filename = "aegis_exec_atalanta_trendstraddlebufferedlongonly_cand_5ea-1.0.0-py3-none-any.whl"
 risk_share = 0.42
 group = "Floor"
 weight_band_down = 0.02

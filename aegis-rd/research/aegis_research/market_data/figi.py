@@ -79,25 +79,27 @@ def resolve_figis(
     *,
     client: OpenFigiClient,
 ) -> dict[str, str]:
-    """Map each symbol's provider ticker to its unique exchange-level FIGI.
+    """Map each listed symbol's provider ticker to its unique exchange-level FIGI.
 
-    Returns a ticker -> FIGI map in declared order. Fail-closed: an unmapped or
-    ambiguous ticker raises :class:`FigiResolutionError`.
+    Returns a ticker -> FIGI map in declared order. Futures refs carry their own
+    identity and are skipped. Fail-closed: an unmapped or ambiguous listed ticker
+    raises :class:`FigiResolutionError`.
     """
-    # An explicit figi pins the identity verbatim; only the rest are looked up.
-    resolved: dict[str, str] = {spec.ticker: spec.figi for spec in symbols if spec.figi}
-    to_map = [spec for spec in symbols if not spec.figi]
+    # An explicit figi pins the identity verbatim; only listed instruments are looked up.
+    listed = [spec for spec in symbols if not spec.is_future]
+    resolved: dict[str, str] = {spec.symbol_name: spec.figi for spec in listed if spec.figi}
+    to_map = [spec for spec in listed if not spec.figi]
     responses = client.map([_mapping_job(spec) for spec in to_map]) if to_map else []
     unmapped: list[str] = []
     ambiguous: list[str] = []
     for spec, response in zip(to_map, responses, strict=True):
         figis = _figis_of(response)
         if not figis:
-            unmapped.append(spec.ticker)
+            unmapped.append(spec.symbol_name)
         elif len(figis) > 1:
-            ambiguous.append(spec.ticker)
+            ambiguous.append(spec.symbol_name)
         else:
-            resolved[spec.ticker] = next(iter(figis))
+            resolved[spec.symbol_name] = next(iter(figis))
     _fail_closed(unmapped=unmapped, ambiguous=ambiguous, collisions=_collisions(resolved))
     return resolved
 
@@ -149,7 +151,7 @@ def _mapping_job(spec: SymbolSpec) -> dict[str, str]:
     if spec.isin:
         job: dict[str, str] = {"idType": "ID_ISIN", "idValue": spec.isin, "currency": spec.ccy}
     else:
-        job = {"idType": "TICKER", "idValue": _bare_symbol(spec.ticker), "currency": spec.ccy}
+        job = {"idType": "TICKER", "idValue": _bare_symbol(spec.symbol_name), "currency": spec.ccy}
     if spec.mic:
         job["micCode"] = spec.mic
     return job

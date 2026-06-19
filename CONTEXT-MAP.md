@@ -12,6 +12,9 @@ records what the contexts are and how they relate.
 - [Aegis Trader](./aegis-trader/CONTEXT.md) — live execution context that
   trades strategies promoted by Aegis RD against real venues. _(stub — only the
   handoff contract is designed; see ADR-0001)_
+- [Aegis Data](./aegis-data/CONTEXT.md) — shared historical market-data context
+  that stores bars by cross-boundary **InstrumentRef** rather than provider
+  ticker, and serves both research sourcing and Trader backtests.
 - **`aegis-runtime`** — shared runtime (shared kernel) that executes one Locked
   **Candidate**: component loading, the single-candidate (`force_locked`,
   `n_candidates=1`) orchestration, currency conversion, and **Exposure
@@ -37,3 +40,11 @@ records what the contexts are and how they relate.
   supplying native-currency market data and FX series; the bundle converts to
   base currency, computes, and gates — with no **Candidate Store** access at
   runtime.
+
+- **Aegis RD → Aegis Data**: Aegis RD asks Aegis Data for historical market
+  data when building evidence. RD may translate its **Run Config** into a data
+  request, but provider ticker/source details remain inside the data context.
+
+- **Aegis Trader → Aegis Data**: Aegis Trader backtests read historical bars for
+  the **InstrumentRef** values baked into each **Execution Bundle**. Trader does
+  not select a universe by provider ticker.

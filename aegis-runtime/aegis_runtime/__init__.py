@@ -7,6 +7,7 @@ from aegis_runtime.bundle import (
     LockedExecutionPlan,
     MarketDataBundle,
 )
+from aegis_runtime.instruments import FuturesRef, InstrumentRef, ListedRef
 
 __all__ = [
     "BundleManifest",
@@ -15,5 +16,8 @@ __all__ = [
     "DataContract",
     "ExecutionBundle",
     "LockedExecutionPlan",
+    "FuturesRef",
+    "InstrumentRef",
+    "ListedRef",
     "MarketDataBundle",
 ]

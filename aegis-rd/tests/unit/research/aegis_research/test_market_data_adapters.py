@@ -5,6 +5,10 @@ from typing import ClassVar
 
 import pandas as pd
 import pytest
+from aegis_data.calendars import TradingCalendar
+from aegis_data.store import NativeBarsRequest, write_native_bars
+from aegis_data.yfinance import FetchWindow, YFinanceLocator, pull_yfinance_native_bars
+from aegis_runtime import FuturesRef, ListedRef
 from vectorbtpro import vbt
 
 from research.aegis_research.data import load_market_data_result
@@ -15,7 +19,23 @@ from research.aegis_research.market_data.contracts import (
     MarketDataAdapterResult,
     RemoteDataPullError,
 )
+from research.aegis_research.run_pipeline import _load_fx_rates
 from tests.support.research.aegis_research.factories import make_data_config
+
+
+def _pulled_bars_with_adj_close() -> pd.DataFrame:
+    index = pd.bdate_range("2024-01-02", periods=3)
+    return pd.DataFrame(
+        {
+            "Open": [9.0, 10.0, 11.0],
+            "High": [10.0, 11.0, 12.0],
+            "Low": [8.0, 9.0, 10.0],
+            "Close": [100.0, 101.0, 102.0],
+            "Adj Close": [90.0, 91.0, 92.0],
+            "Volume": [1000, 1100, 1200],
+        },
+        index=index,
+    )
 
 
 def test_synthetic_adapter_loads_native_data_behind_the_seam() -> None:
@@ -83,6 +103,264 @@ def test_remote_adapter_projects_allowlisted_provider_mappings() -> None:
         "fetch_kwargs.cache_path",
         "returned_kwargs.auth",
     }
+
+
+def test_store_adapter_pulls_missing_yfinance_gap_then_reads_by_figi(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    ref = ListedRef("BBG000B9XRY4")
+    write_native_bars(
+        ref,
+        "1D",
+        pd.DataFrame(
+            {"Open": [10.0], "High": [10.0], "Low": [10.0], "Close": [10.0], "Volume": [1000]},
+            index=pd.DatetimeIndex(["2024-01-02"]),
+        ),
+        required_arrays=("Close",),
+    )
+    requests: list[tuple[str, str, str]] = []
+
+    def fetch_gap(locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
+        requests.append(
+            (
+                locator.ticker,
+                pd.Timestamp(window.start).date().isoformat(),
+                pd.Timestamp(window.end).date().isoformat(),
+            )
+        )
+        return pd.DataFrame(
+            {
+                "Open": [11.0, 12.0],
+                "High": [11.0, 12.0],
+                "Low": [11.0, 12.0],
+                "Close": [11.0, 12.0],
+                "Volume": [1100, 1200],
+            },
+            index=pd.DatetimeIndex(["2024-01-03", "2024-01-04"]),
+        )
+
+    monkeypatch.setattr("aegis_data.yfinance._fetch_yfinance", fetch_gap)
+    config = make_data_config(
+        source="store",
+        provider="yfinance",
+        symbols=[{"ticker": "BRK-B", "ccy": "USD", "figi": ref.figi}],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+    result = load_market_data_result(config)
+
+    assert requests == [("BRK-B", "2024-01-03", "2024-01-05")]
+    assert result.metadata.provenance.index_evidence["source"] == "aegis_data_store"
+    assert list(result.native_data.get(feature="Close").columns) == ["BRK-B"]
+    assert result.native_data.get(feature="Close")["BRK-B"].tolist() == [10.0, 11.0, 12.0]
+
+
+def test_store_adapter_reads_listed_covered_history_by_figi(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    ref = ListedRef("BBG000B9XRY4")
+    index = pd.bdate_range("2024-01-02", periods=3)
+    pulled = pd.DataFrame(
+        {
+            "Open": [10.0, 11.0, 12.0],
+            "High": [10.0, 11.0, 12.0],
+            "Low": [10.0, 11.0, 12.0],
+            "Close": [10.0, 11.0, 12.0],
+            "Volume": [1000, 1100, 1200],
+        },
+        index=index,
+    )
+    request = NativeBarsRequest(
+        refs=(ref,),
+        arrays=("Close",),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
+    )
+    pull_yfinance_native_bars(
+        request,
+        YFinanceLocator("BRK-B"),
+        fetcher=lambda _locator, _window: pulled,
+    )
+    config = make_data_config(
+        source="store",
+        provider="yfinance",
+        symbols=[{"ticker": "BRK-B", "ccy": "USD", "figi": ref.figi}],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+    result = load_market_data_result(config)
+
+    assert result.metadata.provenance.index_evidence["source"] == "aegis_data_store"
+    assert list(result.native_data.get(feature="Close").columns) == ["BRK-B"]
+    assert result.native_data.get(feature="Close")["BRK-B"].tolist() == [10.0, 11.0, 12.0]
+
+
+def test_store_adapter_reads_raw_close_not_unrequested_adj_close(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    ref = ListedRef("BBG000B9XRY4")
+    pulled = _pulled_bars_with_adj_close()
+    request = NativeBarsRequest(
+        refs=(ref,),
+        arrays=("Open", "High", "Low", "Close", "Volume"),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
+    )
+    pull_yfinance_native_bars(
+        request,
+        YFinanceLocator("SPY"),
+        fetcher=lambda _locator, _window: pulled,
+    )
+    config = make_data_config(
+        source="store",
+        provider="yfinance",
+        symbols=[{"ticker": "SPY", "ccy": "USD", "figi": ref.figi}],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+    result = load_market_data_result(config)
+
+    assert list(result.native_data.get(feature="Close").columns) == ["SPY"]
+    assert result.native_data.get(feature="Close")["SPY"].tolist() == [100.0, 101.0, 102.0]
+
+
+def test_store_adapter_reads_requested_adj_close_through_aegis_data(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    ref = ListedRef("BBG000B9XRY4")
+    pulled = _pulled_bars_with_adj_close()
+    request = NativeBarsRequest(
+        refs=(ref,),
+        arrays=("Close", "Adj Close"),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
+    )
+    pull_yfinance_native_bars(
+        request,
+        YFinanceLocator("SPY"),
+        fetcher=lambda _locator, _window: pulled,
+    )
+    config = make_data_config(
+        source="store",
+        provider="yfinance",
+        symbols=[{"ticker": "SPY", "ccy": "USD", "figi": ref.figi}],
+        arrays=["Close", "Adj Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+    result = load_market_data_result(config)
+
+    assert result.native_data.get(feature="Close")["SPY"].tolist() == [100.0, 101.0, 102.0]
+    assert result.native_data.get(feature="Adj Close")["SPY"].tolist() == [90.0, 91.0, 92.0]
+
+
+def test_store_adapter_folds_block_dataset_into_futures_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    ref = FuturesRef("ES", "GLBX.MDP3", "calendar", "unadjusted")
+    requests: list[NativeBarsRequest] = []
+
+    def pull_futures(request: NativeBarsRequest) -> object:
+        requests.append(request)
+        write_native_bars(
+            ref,
+            "1D",
+            pd.DataFrame(
+                {"Close": [5010.0, 5020.0, 5030.0]},
+                index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
+            ),
+            required_arrays=("Close",),
+        )
+        return object()
+
+    monkeypatch.setattr(
+        "research.aegis_research.market_data.adapters.store.pull_databento_futures_bars",
+        pull_futures,
+    )
+    config = make_data_config(
+        source="store",
+        provider="databento",
+        dataset="GLBX.MDP3",
+        symbols=[{"root": "ES", "ccy": "USD", "adjustment": "unadjusted"}],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+    result = load_market_data_result(config)
+
+    assert requests == [
+        NativeBarsRequest(
+            refs=(ref,),
+            arrays=("Close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
+        )
+    ]
+    assert list(result.native_data.get(feature="Close").columns) == ["ES"]
+    assert result.native_data.get(feature="Close")["ES"].tolist() == [5010.0, 5020.0, 5030.0]
+
+
+def test_store_fx_rates_pull_through_aegis_data_fx_history(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    requests: list[tuple[str, str, str]] = []
+
+    def fetch_fx(locator: YFinanceLocator, request) -> pd.DataFrame:
+        requests.append(
+            (
+                locator.ticker,
+                pd.Timestamp(request.start).date().isoformat(),
+                pd.Timestamp(request.end).date().isoformat(),
+            )
+        )
+        return pd.DataFrame(
+            {"Close": [1.10, 1.11, 1.12]},
+            index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
+        )
+
+    monkeypatch.setattr("aegis_data.yfinance._fetch_yfinance", fetch_fx)
+    config = make_data_config(
+        source="store",
+        provider="yfinance",
+        symbols=[{"ticker": "SPY", "ccy": "USD", "figi": "BBG000B9XRY4"}],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+    index = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"])
+
+    rates = _load_fx_rates(config, base_currency="EUR", currencies={"USD"}, index=index)
+
+    assert requests == [("EURUSD=X", "2024-01-02", "2024-01-05")]
+    assert rates["USD"].tolist() == [1.10, 1.11, 1.12]
 
 
 def test_remote_adapter_collapses_cross_venue_daily_indices_to_shared_dates() -> None:

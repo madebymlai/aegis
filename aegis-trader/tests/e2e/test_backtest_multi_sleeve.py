@@ -26,6 +26,7 @@ from nautilus_trader.model.objects import Currency, Money
 from conftest import eur_equity
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -56,7 +57,7 @@ class _FixedWeightBundle(ExecutionBundle):
         self._figi = figi
         self._weight = weight
         contract = DataContract(
-            figis=(figi,),
+            refs=(ListedRef(figi),),
             required_arrays=("Close",),
             base_currency="EUR",
             required_fx_currencies=(),
@@ -68,7 +69,7 @@ class _FixedWeightBundle(ExecutionBundle):
             role="synth",
             candidate_key=f"synth-{figi}-key",
             component_source_hashes={},
-            figis=(figi,),
+            refs=(ListedRef(figi),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(
@@ -164,9 +165,9 @@ def _make_book(budgets: tuple[float, float]) -> BookConfig:
     )
 
 
-def _stub_bimap(figis: set[str]) -> dict[str, "InstrumentId"]:
-    """Stub FIGI→InstrumentId bimap for e2e tests."""
-    return {figi: InstrumentId.from_str(f"{figi}.{VENUE.value}") for figi in figis}
+def _stub_bimap(figis: set[str]) -> dict[ListedRef, "InstrumentId"]:
+    """Stub ListedRef→InstrumentId bimap for e2e tests."""
+    return {ListedRef(figi): InstrumentId.from_str(f"{figi}.{VENUE.value}") for figi in figis}
 
 
 # ── e2e test ──────────────────────────────────────────────────────────────────

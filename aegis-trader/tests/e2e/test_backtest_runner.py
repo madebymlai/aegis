@@ -1,11 +1,10 @@
 """End-to-end test for the commingled-book backtest runner.
 
 ``run_book_backtest`` composes the whole offline path: resolve each sleeve's
-bundle through the registry, build instruments + bars from injected fetchers,
-feed a ``BacktestEngine``, and run the overlay.  The registry and fetchers are
-injected, so the run is exercised here without a real wheel or the network: a
-``StubBundleRegistry`` owns a synthetic single-sleeve bundle and the OHLCV is a
-fixed in-memory frame.
+bundle through the registry, read Native Market Bars and FX History from the
+Historical Store, feed a ``BacktestEngine``, and run the overlay.  The registry
+is injected and the store is pre-seeded, so the run is exercised here without a
+real wheel or the network.
 
 One BacktestEngine per process (Rust runtime global state) — the e2e conftest
 forks each test, so this builds its own engine freely.
@@ -20,7 +19,9 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.instruments import CurrencyPair
 
+from aegis_data.store import FxPair, StoreCoverageError, write_fx_history, write_native_bars
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -29,12 +30,7 @@ from aegis_runtime import (
     MarketDataBundle,
 )
 
-from aegis_trader.backtest import (
-    BarRequest,
-    ContractDataError,
-    FxDataError,
-    run_book_backtest,
-)
+from aegis_trader.backtest import run_book_backtest
 from aegis_trader.bundles.stub import StubBundleRegistry
 
 _FIGI = "BBG000B9XRY4"
@@ -120,13 +116,15 @@ class _FixedWeightBundle(ExecutionBundle):
         currency: str = "EUR",
         required_fx_currencies: tuple[str, ...] = (),
         direction: str = "longonly",
+        symbol: str | None = None,
     ) -> None:
         self._figi = figi
+        symbol = symbol or figi
         self._weight = weight
         self._currency = currency
         self.seen_arrays: tuple[str, ...] = ()
         contract = DataContract(
-            figis=(figi,),
+            refs=(ListedRef(figi),),
             required_arrays=required_arrays,
             base_currency="EUR",
             required_fx_currencies=required_fx_currencies,
@@ -138,7 +136,7 @@ class _FixedWeightBundle(ExecutionBundle):
             role="synth",
             candidate_key=f"synth-{figi}-key",
             component_source_hashes={},
-            figis=(figi,),
+            refs=(ListedRef(figi),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(
@@ -153,8 +151,8 @@ class _FixedWeightBundle(ExecutionBundle):
             gross_cap=1.0,
             net_cap=None,
             direction=direction,
-            symbols=(figi,),
-            currency_by_symbol={figi: self._currency},
+            symbols=(symbol,),
+            currency_by_symbol={symbol: self._currency},
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
@@ -222,8 +220,30 @@ def _synthetic_intraday_ohlcv() -> pd.DataFrame:
     )
 
 
-def _fx_must_not_be_called(base: str, quote: str, start: str, end: str) -> float:
-    raise AssertionError("a pure-EUR book must not fetch FX")
+def _seed_native_bars(
+    store_dir,
+    bars: pd.DataFrame,
+    *,
+    figi: str = _FIGI,
+    timeframe: str = "1D",
+) -> None:
+    write_native_bars(ListedRef(figi), timeframe, bars, store_dir=store_dir)
+    write_fx_history(FxPair("EUR", "GBP"), timeframe, _flat_fx(bars.index), store_dir=store_dir)
+    write_fx_history(FxPair("EUR", "USD"), timeframe, _flat_fx(bars.index, 1.10), store_dir=store_dir)
+
+
+def _seed_fx_history(
+    store_dir,
+    rates: pd.Series,
+    *,
+    quote: str,
+    timeframe: str = "1D",
+) -> None:
+    write_fx_history(FxPair("EUR", quote), timeframe, rates, store_dir=store_dir)
+
+
+def _flat_fx(index: pd.DatetimeIndex, rate: float = 1.0) -> pd.Series:
+    return pd.Series(rate, index=index)
 
 
 def _closed_order(engine):
@@ -251,13 +271,13 @@ def test_run_book_backtest_runs_the_overlay_through_the_injected_registry(tmp_pa
     book_path.write_text(_BOOK_TOML)
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)})
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
 
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=registry,
     )
 
@@ -272,13 +292,13 @@ def test_absent_costs_backtest_keeps_cost_free_fills(tmp_path):
     book_path.write_text(_BOOK_TOML)
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)})
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
 
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=registry,
     )
 
@@ -294,13 +314,13 @@ def test_cost_configured_backtest_produces_fills_with_non_zero_commission(tmp_pa
     book_path.write_text(_COSTED_BOOK_TOML)
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)})
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
 
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=registry,
     )
 
@@ -313,6 +333,7 @@ def test_cost_configured_backtest_produces_fills_with_non_zero_commission(tmp_pa
 def test_foreign_sleeve_buy_creates_per_currency_margin_loan(tmp_path):
     """A GBP buy leaves EUR cash untouched and creates a GBP debit balance."""
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
     book_path = tmp_path / "book.toml"
     book_path.write_text(_COSTED_BOOK_TOML)
 
@@ -320,8 +341,7 @@ def test_foreign_sleeve_buy_creates_per_currency_margin_loan(tmp_path):
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        store_dir=tmp_path,
         registry=StubBundleRegistry(
             {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
         ),
@@ -350,6 +370,7 @@ def test_short_position_accrues_borrow_as_cost_not_credit(tmp_path):
     Flat prices hold the short static (no drift rebalance) so the cash delta is
     pure borrow carry."""
     ohlcv = _flat_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
     book_path = tmp_path / "book.toml"
     book_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
 
@@ -357,8 +378,7 @@ def test_short_position_accrues_borrow_as_cost_not_credit(tmp_path):
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        store_dir=tmp_path,
         registry=StubBundleRegistry(
             {
                 _WHEEL: _FixedWeightBundle(
@@ -396,15 +416,15 @@ def test_multicurrency_book_backtest_reports_base_currency_return(tmp_path):
     from aegis_trader.portfolio import NautilusBookState
 
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
     book_path = tmp_path / "book.toml"
     book_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
+        store_dir=tmp_path,
         starting_cash=1_000_000.0,
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
         registry=StubBundleRegistry(
             {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
         ),
@@ -430,6 +450,7 @@ def test_book_starting_balances_seed_the_account(tmp_path):
     from nautilus_trader.model.currencies import USD
 
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
     book_path = tmp_path / "book.toml"
     book_path.write_text(f"""
 base_currency = "EUR"
@@ -448,8 +469,7 @@ group = "Floor"
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
     )
     usd = engine.cache.accounts()[0].balances_total().get(USD)
@@ -460,6 +480,7 @@ group = "Floor"
 def test_foreign_margin_loan_accrues_daily_interest(tmp_path):
     """A held GBP debit accrues configured daily margin interest."""
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
     book_path = tmp_path / "book.toml"
     book_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
 
@@ -467,8 +488,7 @@ def test_foreign_margin_loan_accrues_daily_interest(tmp_path):
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        store_dir=tmp_path,
         registry=StubBundleRegistry(
             {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
         ),
@@ -500,6 +520,7 @@ def test_margin_interest_accrues_calendar_days_across_a_market_gap(tmp_path):
     across a weekend (no Sat/Sun bars) accrues the full elapsed span, so the
     Fri→Mon step counts 3 days — not 1."""
     ohlcv = _synthetic_gapped_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
     book_path = tmp_path / "book.toml"
     book_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
 
@@ -507,8 +528,7 @@ def test_margin_interest_accrues_calendar_days_across_a_market_gap(tmp_path):
         str(book_path),
         start="2020-01-01",
         end="2020-01-08",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        store_dir=tmp_path,
         registry=StubBundleRegistry(
             {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
         ),
@@ -540,6 +560,7 @@ def test_margin_interest_accrues_calendar_days_across_a_market_gap(tmp_path):
 def test_foreign_leg_commission_matches_base_leg_without_fx_fee_fold(tmp_path):
     """Commission is currency-agnostic; FX cost moves to margin interest later."""
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
     base_path = tmp_path / "base" / "book.toml"
     base_path.parent.mkdir()
     base_path.write_text(_MARGIN_INTEREST_BOOK_TOML)
@@ -551,16 +572,14 @@ def test_foreign_leg_commission_matches_base_leg_without_fx_fee_fold(tmp_path):
         str(base_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
     )
     foreign_engine = run_book_backtest(
         str(foreign_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: pd.Series(1.0, index=ohlcv.index),
+        store_dir=tmp_path,
         registry=StubBundleRegistry(
             {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="GBP", required_fx_currencies=("GBP",))}
         ),
@@ -577,6 +596,7 @@ def test_foreign_leg_commission_matches_base_leg_without_fx_fee_fold(tmp_path):
 def test_pinned_slippage_moves_fill_price_one_tick(tmp_path):
     """With prob_slippage=1.0 a buy fill is one tick worse than zero slippage."""
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
     no_slip_path = tmp_path / "no_slip" / "book.toml"
     no_slip_path.parent.mkdir()
     no_slip_path.write_text(_BOOK_TOML)
@@ -588,16 +608,14 @@ def test_pinned_slippage_moves_fill_price_one_tick(tmp_path):
         str(no_slip_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
     )
     slip_engine = run_book_backtest(
         str(slip_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
     )
 
@@ -609,6 +627,7 @@ def test_pinned_slippage_moves_fill_price_one_tick(tmp_path):
 def test_costed_backtest_fill_path_is_deterministic_with_pinned_seed(tmp_path):
     """Same cost config, including slippage seed, yields identical fill facts."""
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
     first_path = tmp_path / "first" / "book.toml"
     first_path.parent.mkdir()
     first_path.write_text(_FORCED_SLIPPAGE_BOOK_TOML)
@@ -620,16 +639,14 @@ def test_costed_backtest_fill_path_is_deterministic_with_pinned_seed(tmp_path):
         str(first_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
     )
     second_engine = run_book_backtest(
         str(second_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
     )
 
@@ -638,31 +655,111 @@ def test_costed_backtest_fill_path_is_deterministic_with_pinned_seed(tmp_path):
     second_engine.dispose()
 
 
-def test_run_book_backtest_asks_the_fetcher_for_each_contracts_required_arrays(tmp_path):
-    """The runner builds each fetch request from the sleeve's DataContract:
-    the provider ticker and exactly the arrays the contract declares."""
+def test_run_book_backtest_feeds_preseeded_listed_bars(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)})
-    ohlcv = _synthetic_ohlcv()
-    seen: list[BarRequest] = []
-
-    def spy(request: BarRequest) -> pd.DataFrame:
-        seen.append(request)
-        return ohlcv
+    write_native_bars(ListedRef(_FIGI), "1D", _synthetic_ohlcv(), store_dir=tmp_path)
 
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=spy,
-        fetch_fx=_fx_must_not_be_called,
-        registry=registry,
+        store_dir=tmp_path,
+        registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
     )
+
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+    engine.dispose()
+    assert len(fills) == 1
+
+
+def test_run_book_backtest_fails_closed_on_missing_listed_bars(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+
+    with pytest.raises(StoreCoverageError) as exc:
+        run_book_backtest(
+            str(book_path),
+            start="2020-01-01",
+            end="2020-01-07",
+            store_dir=tmp_path,
+            registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
+        )
+
+    assert _FIGI in str(exc.value)
+
+
+def test_run_book_backtest_reads_required_fx_history(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
+    fx = pd.Series([1.10, 1.20, 1.30, 1.40], index=pd.bdate_range("2020-01-01", periods=4))
+    write_native_bars(ListedRef(_FIGI), "1D", ohlcv, store_dir=tmp_path)
+    write_fx_history(FxPair("EUR", "USD"), "1D", fx, store_dir=tmp_path)
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        store_dir=tmp_path,
+        registry=StubBundleRegistry(
+            {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, currency="USD", required_fx_currencies=("USD",))}
+        ),
+    )
+    pair = next(i for i in engine.cache.instruments() if isinstance(i, CurrencyPair))
+    bids = sorted(round(float(q.bid_price), 5) for q in engine.cache.quote_ticks(pair.id))
     engine.dispose()
 
-    assert [r.ticker for r in seen] == [_FIGI]
-    assert seen[0].required_arrays == ("Close",)
+    assert bids == [1.10, 1.20, 1.30, 1.30, 1.30, 1.40]
+
+
+def test_run_book_backtest_fails_closed_on_missing_fx_history(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    write_native_bars(ListedRef(_FIGI), "1D", _synthetic_ohlcv(), store_dir=tmp_path)
+
+    with pytest.raises(StoreCoverageError) as exc:
+        run_book_backtest(
+            str(book_path),
+            start="2020-01-01",
+            end="2020-01-07",
+            store_dir=tmp_path,
+            registry=StubBundleRegistry(
+                {
+                    _WHEEL: _FixedWeightBundle(
+                        _FIGI, 0.5, currency="USD", required_fx_currencies=("USD",)
+                    )
+                }
+            ),
+        )
+
+    assert "EUR/USD" in str(exc.value)
+
+
+def test_run_book_backtest_store_read_uses_baked_ref_and_required_arrays(tmp_path):
+    """The runner reads Store History by InstrumentRef, not bundle symbol label."""
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    bundle = _FixedWeightBundle(
+        _FIGI, 0.5, required_arrays=("Close", "Volume"), symbol="PROVIDER-LABEL"
+    )
+    registry = StubBundleRegistry({_WHEEL: bundle})
+    ohlcv = _synthetic_ohlcv()
+    write_native_bars(ListedRef(_FIGI), "1D", ohlcv, store_dir=tmp_path)
+
+    engine = run_book_backtest(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        store_dir=tmp_path,
+        registry=registry,
+    )
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+    engine.dispose()
+
+    assert len(fills) == 1
+    assert set(bundle.seen_arrays) == {"Close", "Volume"}
 
 
 def test_overlay_feeds_compute_weights_every_contract_required_array(tmp_path):
@@ -673,13 +770,13 @@ def test_overlay_feeds_compute_weights_every_contract_required_array(tmp_path):
     bundle = _FixedWeightBundle(_FIGI, 0.5, required_arrays=("Close", "Volume"))
     registry = StubBundleRegistry({_WHEEL: bundle})
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
 
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=registry,
     )
     engine.dispose()
@@ -697,13 +794,13 @@ def test_run_book_backtest_loads_and_subscribes_at_the_contract_timeframe(tmp_pa
         {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, timeframe="15min")}
     )
     ohlcv = _synthetic_intraday_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv, timeframe="15min")
 
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-02",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
         registry=registry,
     )
 
@@ -715,43 +812,43 @@ def test_run_book_backtest_loads_and_subscribes_at_the_contract_timeframe(tmp_pa
 
 
 def test_run_book_backtest_fails_closed_when_a_required_array_is_missing(tmp_path):
-    """Fetched data missing a contract-required array fails closed, naming the
+    """Store data missing a contract-required array fails closed, naming the
     sleeve/FIGI and the missing array; no engine run proceeds."""
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     bundle = _FixedWeightBundle(_FIGI, 0.5, required_arrays=("Close", "Volume"))
     registry = StubBundleRegistry({_WHEEL: bundle})
     no_volume = _synthetic_ohlcv().drop(columns=["volume"])
+    _seed_native_bars(tmp_path, no_volume)
 
-    with pytest.raises(ContractDataError) as exc:
+    with pytest.raises(StoreCoverageError) as exc:
         run_book_backtest(
             str(book_path),
             start="2020-01-01",
             end="2020-01-07",
-            fetch_ohlcv=lambda request: no_volume,
-            fetch_fx=_fx_must_not_be_called,
+            store_dir=tmp_path,
             registry=registry,
         )
 
     assert _FIGI in str(exc.value)
-    assert "Volume" in str(exc.value)
+    assert "volume" in str(exc.value).lower()
 
 
 def test_run_book_backtest_fails_closed_when_lookback_is_not_satisfied(tmp_path):
-    """Fewer than lookback_bars + 1 fetched rows fails closed (no partial run)."""
+    """Fewer than lookback_bars + 1 Store Read rows fails closed (no partial run)."""
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     bundle = _FixedWeightBundle(_FIGI, 0.5)  # lookback_bars=1 -> needs >= 2 rows
     registry = StubBundleRegistry({_WHEEL: bundle})
     one_row = _synthetic_ohlcv().iloc[:1]
+    _seed_native_bars(tmp_path, one_row)
 
-    with pytest.raises(ContractDataError) as exc:
+    with pytest.raises(StoreCoverageError) as exc:
         run_book_backtest(
             str(book_path),
             start="2020-01-01",
             end="2020-01-07",
-            fetch_ohlcv=lambda request: one_row,
-            fetch_fx=_fx_must_not_be_called,
+            store_dir=tmp_path,
             registry=registry,
         )
 
@@ -769,13 +866,13 @@ def test_run_book_backtest_values_foreign_positions_without_xrate_noise(capfd, t
     )
     registry = StubBundleRegistry({_WHEEL: bundle})
     ohlcv = _synthetic_ohlcv()
+    _seed_native_bars(tmp_path, ohlcv)
 
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: pd.Series(1.10, index=ohlcv.index),
+        store_dir=tmp_path,
         registry=registry,
     )
     engine.dispose()
@@ -785,8 +882,7 @@ def test_run_book_backtest_values_foreign_positions_without_xrate_noise(capfd, t
 
 
 def test_run_book_backtest_feeds_time_varying_fx_quotes(tmp_path):
-    """An FxFetcher returning a per-date series produces FX quotes whose rate
-    changes over time — not one flat rate held across the whole window."""
+    """A Store Read FX History series produces quotes whose rate changes over time."""
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     bundle = _FixedWeightBundle(
@@ -794,14 +890,15 @@ def test_run_book_backtest_feeds_time_varying_fx_quotes(tmp_path):
     )
     registry = StubBundleRegistry({_WHEEL: bundle})
     ohlcv = _synthetic_ohlcv()  # 6 daily bars, 2020-01-01..06
+    _seed_native_bars(tmp_path, ohlcv)
     fx = pd.Series([1.10, 1.20, 1.30, 1.40, 1.50, 1.60], index=ohlcv.index)
+    _seed_fx_history(tmp_path, fx, quote="USD")
 
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: fx,
+        store_dir=tmp_path,
         registry=registry,
     )
     pairs = [i for i in engine.cache.instruments() if isinstance(i, CurrencyPair)]
@@ -812,9 +909,8 @@ def test_run_book_backtest_feeds_time_varying_fx_quotes(tmp_path):
     assert bids == {1.10, 1.20, 1.30, 1.40, 1.50, 1.60}
 
 
-def test_run_book_backtest_aligns_sparse_fx_to_the_bar_timeline(tmp_path):
-    """A coarse FX series is forward-filled onto the bar timeline, so every bar
-    date resolves a current rate — not only the dates the FX provider quoted."""
+def test_run_book_backtest_aligns_fx_history_to_the_bar_timeline(tmp_path):
+    """Store FX History is adapted to one Nautilus quote per native bar timestamp."""
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     bundle = _FixedWeightBundle(
@@ -822,21 +918,21 @@ def test_run_book_backtest_aligns_sparse_fx_to_the_bar_timeline(tmp_path):
     )
     registry = StubBundleRegistry({_WHEEL: bundle})
     ohlcv = _synthetic_ohlcv()  # 6 daily bars, 2020-01-01..06
-    sparse = pd.Series([1.10, 1.40], index=ohlcv.index[[0, 3]])  # quoted on 2 of 6
+    _seed_native_bars(tmp_path, ohlcv)
+    rates = pd.Series([1.10, 1.10, 1.10, 1.40, 1.40, 1.40], index=ohlcv.index)
+    _seed_fx_history(tmp_path, rates, quote="USD")
 
     engine = run_book_backtest(
         str(book_path),
         start="2020-01-01",
         end="2020-01-07",
-        fetch_ohlcv=lambda request: ohlcv,
-        fetch_fx=lambda base, quote, start, end: sparse,
+        store_dir=tmp_path,
         registry=registry,
     )
     pair = next(i for i in engine.cache.instruments() if isinstance(i, CurrencyPair))
     bids = sorted(round(float(q.bid_price), 5) for q in engine.cache.quote_ticks(pair.id))
     engine.dispose()
 
-    # one quote per bar date, forward-filled across the gap
     assert bids == [1.10, 1.10, 1.10, 1.40, 1.40, 1.40]
 
 
@@ -850,15 +946,16 @@ def test_run_book_backtest_fails_closed_when_fx_does_not_cover_the_window(tmp_pa
     )
     registry = StubBundleRegistry({_WHEEL: bundle})
     ohlcv = _synthetic_ohlcv()  # 6 daily bars, 2020-01-01..06
+    write_native_bars(ListedRef(_FIGI), "1D", ohlcv, store_dir=tmp_path)
     late_fx = pd.Series([1.40, 1.50, 1.60], index=ohlcv.index[3:])  # first 3 uncovered
+    write_fx_history(FxPair("EUR", "USD"), "1D", late_fx, store_dir=tmp_path)
 
-    with pytest.raises(FxDataError) as exc:
+    with pytest.raises(StoreCoverageError) as exc:
         run_book_backtest(
             str(book_path),
             start="2020-01-01",
             end="2020-01-07",
-            fetch_ohlcv=lambda request: ohlcv,
-            fetch_fx=lambda base, quote, start, end: late_fx,
+            store_dir=tmp_path,
             registry=registry,
         )
 

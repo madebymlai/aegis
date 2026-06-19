@@ -1,14 +1,14 @@
 """Backtest data loading — the LOAD side of the data concern (ADR-0003).
 
 ``MarketDataPort`` is the runtime READ side over the reconciled cache; this is
-its complement for backtests: it turns provider-agnostic OHLCV frames into the
+its complement for backtests: it turns Store Read OHLCV frames into the
 Nautilus instruments and ``Bar`` objects a ``BacktestEngine`` consumes, built on
 the kernel's own ``BarDataWrangler`` (the DataEngine ingestion path) rather than
 hand-rolled bar loops.
 
 An instrument is keyed ``FIGI.venue`` so it matches the overlay's FIGI->
 InstrumentId bimap; OHLCV is a frame with ``open/high/low/close/volume`` columns
-on a ``DatetimeIndex`` (whatever provider produced it — the loader never fetches).
+on a ``DatetimeIndex``. The loader adapts frames only; it never reads history.
 """
 
 from __future__ import annotations

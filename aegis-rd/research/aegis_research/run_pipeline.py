@@ -5,6 +5,10 @@ from dataclasses import replace
 from typing import Any
 
 import pandas as pd
+from aegis_data.calendars import TradingCalendar
+from aegis_data.source import continuous_panel, databento_source
+from aegis_data.store import FxPair, read_fx_history
+from aegis_data.yfinance import YFinanceLocator, pull_yfinance_fx_history
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
@@ -17,6 +21,8 @@ from research.aegis_research.configuration import (
     ResolvedRunConfig,
     RunConfig,
     SymbolSpec,
+    required_store_window_edge,
+    store_gap_fill_provider,
 )
 from research.aegis_research.data import (
     MarketDataBundle,
@@ -115,7 +121,8 @@ def run_strategy_sweep(
         )
         write_data_metadata_artifact(recorder, data_result, array_contract)
         data_result.assert_usable()
-        data_bundle = _to_base_currency(config, data_bundle=market_data_bundle(data_result))
+        data_bundle = _apply_futures_back_adjustment(config.data, market_data_bundle(data_result))
+        data_bundle = _to_base_currency(config, data_bundle=data_bundle)
         metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
             config,
@@ -140,6 +147,30 @@ def run_strategy_sweep(
         if on_run_refs is not None:
             on_run_refs(recorder.run_refs())
         raise
+
+
+def _apply_futures_back_adjustment(
+    data_config: DataConfig, data_bundle: MarketDataBundle
+) -> MarketDataBundle:
+    """Replace each ``back_adjust`` future's panel column with the back-adjusted
+    continuous series sourced from :mod:`aegis_data` (Nautilus databento port +
+    OS-global parquet store); a book with no back-adjust futures passes through.
+    """
+    if data_config.source == "store":
+        return data_bundle
+    futures = [s for s in data_config.symbols if s.is_future and s.adjustment == "back_adjust"]
+    if not futures:
+        return data_bundle
+    start = pd.Timestamp(data_config.start).date()
+    end = pd.Timestamp(data_config.end).date()
+    arrays = {name: panel.copy() for name, panel in data_bundle.arrays.items()}
+    for spec in futures:
+        fetch = databento_source(spec.dataset)
+        panel = continuous_panel(spec.root, start, end, fetch=fetch)
+        for name, frame in arrays.items():
+            if spec.ticker in frame.columns and name in panel.columns:
+                frame[spec.ticker] = panel[name].reindex(frame.index)
+    return MarketDataBundle(arrays)
 
 
 def _to_base_currency(
@@ -173,23 +204,65 @@ def _load_fx_rates(
 ) -> pd.DataFrame:
     """Fetch the ``base->ccy`` FX series (the native ``EUR<ccy>=X`` quotes) and
     align them to the price ``index``."""
-    pair_by_currency = {ccy: f"{base_currency}{ccy}=X" for ccy in currencies}
-    if not pair_by_currency:
+    fx_ticker_by_currency = {ccy: f"{base_currency}{ccy}=X" for ccy in currencies}
+    if not fx_ticker_by_currency:
         # No foreign legs: there is nothing to fetch (an empty symbol set cannot
         # be pulled), and the empty rates frame makes the conversion an identity.
         return pd.DataFrame(index=index)
+    if data_config.source == "store":
+        return _load_store_fx_rates(
+            data_config,
+            base_currency=base_currency,
+            fx_ticker_by_currency=fx_ticker_by_currency,
+            index=index,
+        )
     fx_config = replace(
         data_config,
         symbols=[
-            SymbolSpec(ticker=pair, ccy=base_currency)
-            for pair in pair_by_currency.values()
+            SymbolSpec(ticker=fx_ticker, ccy=base_currency)
+            for fx_ticker in fx_ticker_by_currency.values()
         ],
     )
     fx_result = load_market_data_result(fx_config, required_arrays=("Close",))
     fx_result.assert_usable()
     fx_close = market_data_bundle(fx_result).array("Close")
     return assemble_fx_rates(
-        {ccy: fx_close[pair] for ccy, pair in pair_by_currency.items()},
+        {ccy: fx_close[fx_ticker] for ccy, fx_ticker in fx_ticker_by_currency.items()},
+        index=index,
+    )
+
+
+def _load_store_fx_rates(
+    data_config: DataConfig,
+    *,
+    base_currency: str,
+    fx_ticker_by_currency: dict[str, str],
+    index: pd.Index,
+) -> pd.DataFrame:
+    provider = store_gap_fill_provider(data_config.provider)
+    if provider != "yfinance":
+        raise ValueError(f"unsupported store FX gap-fill provider {provider!r}")
+    start = required_store_window_edge(data_config.start, "start")
+    end = required_store_window_edge(data_config.end, "end")
+    fx_pair_by_currency = {ccy: FxPair(base_currency, ccy) for ccy in fx_ticker_by_currency}
+    for ccy, fx_pair in fx_pair_by_currency.items():
+        pull_yfinance_fx_history(
+            fx_pair,
+            timeframe=data_config.timeframe,
+            start=start,
+            end=end,
+            calendar=TradingCalendar.WEEKDAY,
+            locator=YFinanceLocator(fx_ticker_by_currency[ccy]),
+        )
+    histories = read_fx_history(
+        tuple(fx_pair_by_currency.values()),
+        timeframe=data_config.timeframe,
+        start=start,
+        end=end,
+        calendar=TradingCalendar.WEEKDAY,
+    )
+    return assemble_fx_rates(
+        {ccy: histories[fx_pair] for ccy, fx_pair in fx_pair_by_currency.items()},
         index=index,
     )
 

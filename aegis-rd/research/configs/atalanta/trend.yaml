@@ -35,7 +35,7 @@ data:
   - {ticker: GILI.L, ccy: GBp, mic: XLON}
   - {ticker: WEAT.L, ccy: USD, mic: XLON, figi: BBG000BLCP10}
   - {ticker: HEAT.L, ccy: USD, mic: XLON, figi: BBG000BLBMN4}
-  - {ticker: COCO.L, ccy: USD, mic: XLON, figi: BBG000FPCLF1}
+  - {ticker: CORN.L, ccy: USD, mic: XLON}  # was COCO.L (cocoa) — replaced: cocoa-long was 62% of sleeve (2024 spike, aegis-rd-167)
   - {ticker: NGAS.L, ccy: USD, mic: XLON, figi: BBG000BLC3X4}
   - {ticker: IGLO.L, ccy: USD, mic: XLON}
   - {ticker: IBTA.L, ccy: USD, mic: XLON}

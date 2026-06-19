@@ -1,0 +1,99 @@
+name: atalanta_trend_futures_bento
+schema_version: 8
+output_dir: runs/atalanta/trend_futures_bento
+
+# FUTURES trend sleeve on DATABENTO (source: bento -> vbt.BentoData), now that account-level
+# derivatives + free shorting are allowed (2026-06-17). This supersedes the yfinance "=F" probe
+# (trend_futures_ls.yaml): yfinance front-month "=F" are NAIVE non-back-adjusted series with roll
+# gaps a trend signal misreads; Databento continuous symbology (stype_in: continuous, ROOT.c.0 =
+# calendar-rolled front month) gives a roll-handled series. NO custom adapter: the research engine
+# auto-discovers vbt.BentoData as source "bento"; the API key + pull params flow through
+# provider_kwargs (key read from $DATABENTO_API_KEY, never committed).
+#
+# MECHANISM unchanged and already validated (2026-06-14 diary): atalanta.trendStraddleBuffered
+# (conviction/magnitude-weighted inverse-vol straddle + turnover buffer) on atalanta.trend_score +
+# atalanta.realized_vol. With free shorting the FULL L/S straddle (direction both, short_policy "all"
+# by construction) is the right variant — no borrow mask, no un-borrowable substitutions. This tests
+# the roster's substrate claim directly: futures reach rates+FX+energy+metals+ags two-sided at far
+# higher independent-bet breadth than the borrow-constrained London ETC book.
+#
+# UNIVERSE: 23 CME-family continuous front-month futures on GLBX.MDP3 (one dataset, all two-sided,
+# equity-index DELIBERATELY excluded per the non-equity substrate requirement). ICE softs
+# (KC/SB/CC/CT cocoa-etc.) and Brent live on ICE datasets (IFUS/IFEU), not GLBX.MDP3 — a second-
+# dataset extension once this GLBX cut is validated.
+#   rates (CBOT)  5 : ZT ZF ZN ZB UB     (2y/5y/10y/30y/ultra-bond)
+#   FX   (CME)    6 : 6E 6J 6B 6A 6C 6S   (EUR JPY GBP AUD CAD CHF)
+#   energy(NYMEX) 4 : CL NG RB HO         (WTI/natgas/gasoline/heating oil)
+#   metals(CMX/NY)5 : GC SI HG PL PA      (gold/silver/copper/platinum/palladium)
+#   ags  (CBOT)   3 : ZC ZW ZS            (corn/wheat/soybean)
+data:
+  source: bento
+  arrays:
+  - OHLCV
+  provider_kwargs:
+    client_config:
+      key: {env: DATABENTO_API_KEY}   # resolve_env_refs -> $DATABENTO_API_KEY; key stays out of git
+    dataset: GLBX.MDP3
+    stype_in: continuous              # ROOT.c.0 = calendar-rolled front month
+  symbols:
+  # --- rates: US curve (CBOT) ---
+  - {ticker: "ZT.c.0", ccy: USD}
+  - {ticker: "ZF.c.0", ccy: USD}
+  - {ticker: "ZN.c.0", ccy: USD}
+  - {ticker: "ZB.c.0", ccy: USD}
+  - {ticker: "UB.c.0", ccy: USD}
+  # --- FX (CME) ---
+  - {ticker: "6E.c.0", ccy: USD}
+  - {ticker: "6J.c.0", ccy: USD}
+  - {ticker: "6B.c.0", ccy: USD}
+  - {ticker: "6A.c.0", ccy: USD}
+  - {ticker: "6C.c.0", ccy: USD}
+  - {ticker: "6S.c.0", ccy: USD}
+  # --- energy (NYMEX) ---
+  - {ticker: "CL.c.0", ccy: USD}
+  - {ticker: "NG.c.0", ccy: USD}
+  - {ticker: "RB.c.0", ccy: USD}
+  - {ticker: "HO.c.0", ccy: USD}
+  # --- metals (COMEX/NYMEX) ---
+  - {ticker: "GC.c.0", ccy: USD}
+  - {ticker: "SI.c.0", ccy: USD}
+  - {ticker: "HG.c.0", ccy: USD}
+  - {ticker: "PL.c.0", ccy: USD}
+  - {ticker: "PA.c.0", ccy: USD}
+  # --- ags (CBOT) ---
+  - {ticker: "ZC.c.0", ccy: USD}
+  - {ticker: "ZW.c.0", ccy: USD}
+  - {ticker: "ZS.c.0", ccy: USD}
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+- id: atalanta.realized_vol
+
+strategy:
+  id: atalanta.trendStraddleBuffered
+
+portfolio:
+  base_currency: EUR          # EUR investor: USD-quoted legs convert to EUR (realized P&L carries USD/EUR)
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+ranking:
+  metric: ulcer_performance_index
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

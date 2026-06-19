@@ -13,20 +13,22 @@ from aegis_runtime import (
     ComponentSpec,
     DataContract,
     ExecutionBundle,
+    ListedRef,
     LockedExecutionPlan,
 )
 
 _FIGI = "BBG000B9XRY4"
+_REF = ListedRef(_FIGI)
 
 
 def _bundle(*, gross_cap: float, net_cap: float | None) -> ExecutionBundle:
     contract = DataContract(
-        figis=(_FIGI,), required_arrays=("Close",), base_currency="EUR",
+        refs=(_REF,), required_arrays=("Close",), base_currency="EUR",
         required_fx_currencies=(), timeframe="1D", lookback_bars=1,
     )
     manifest = BundleManifest(
         run_id="r", role="x", candidate_key="k",
-        component_source_hashes={}, figis=(_FIGI,),
+        component_source_hashes={}, refs=(_REF,),
     )
     plan = LockedExecutionPlan(
         strategy=ComponentSpec(

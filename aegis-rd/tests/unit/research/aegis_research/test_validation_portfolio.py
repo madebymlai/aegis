@@ -84,8 +84,8 @@ def _get_issues(path: str, error: ValidationError) -> list[dict[str, Any]]:
 # ── smoke tests (constants, defaults, calculator) ────────────────────────────
 
 
-def test_schema_version_is_eight() -> None:
-    assert CONFIG_SCHEMA_VERSION == 8
+def test_schema_version_is_nine() -> None:
+    assert CONFIG_SCHEMA_VERSION == 9
 
 
 def test_portfolio_directions_admit_signed_book() -> None:

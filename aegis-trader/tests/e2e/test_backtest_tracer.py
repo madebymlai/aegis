@@ -22,6 +22,7 @@ from nautilus_trader.model.objects import Currency, Money
 from conftest import eur_equity
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -46,7 +47,7 @@ class _SyntheticBundle(ExecutionBundle):
     def __init__(self, weight: float = 0.5) -> None:
         self._weight = weight
         contract = DataContract(
-            figis=(_SYNTH_FIGI,),
+            refs=(ListedRef(_SYNTH_FIGI),),
             required_arrays=("Close",),
             base_currency="EUR",
             required_fx_currencies=(),
@@ -58,7 +59,7 @@ class _SyntheticBundle(ExecutionBundle):
             role="synth",
             candidate_key="synth-key",
             component_source_hashes={},
-            figis=(_SYNTH_FIGI,),
+            refs=(ListedRef(_SYNTH_FIGI),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(
@@ -142,8 +143,8 @@ def _make_book() -> BookConfig:
 class _StubFigiResolver(FigiInstrumentResolver):
     """Resolver that returns convention-based InstrumentIds for testing."""
 
-    def resolve(self, figis, *, transport=None):
-        return {figi: InstrumentId.from_str(f"{figi}.{VENUE.value}") for figi in figis}
+    def resolve_many(self, figis, *, transport=None):
+        return {figi: InstrumentId.from_str(f"{figi.value}.{VENUE.value}") for figi in figis}
 
 
 # ── test ──────────────────────────────────────────────────────────────────────

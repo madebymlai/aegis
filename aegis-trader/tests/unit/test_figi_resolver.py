@@ -8,13 +8,16 @@ on unmapped/ambiguous FIGIs, and bimap correctness.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 
 import pytest
+from aegis_runtime import FuturesRef, ListedRef
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.execution.figi_resolver import (
     FigiInstrumentResolver,
     FigiResolutionError,
+    FuturesContract,
     _bloomberg_exch_to_mic,
 )
 
@@ -84,6 +87,47 @@ def resolver():
 
 class TestSuccessfulResolution:
     """Happy path: FIGI → InstrumentId for various exchange codes."""
+
+    def test_futures_ref_resolves_as_of_and_records_inverse(self):
+        """FuturesRef uses the injected calendar and contract resolver as-of."""
+        ref = FuturesRef(root="ES", dataset="cme", roll_rule="calendar", adjustment="unadjusted")
+
+        def calendar(futures_ref: FuturesRef, as_of: date) -> FuturesContract:
+            assert futures_ref == ref
+            symbol = "ESZ4" if as_of < date(2024, 12, 15) else "ESH5"
+            return FuturesContract(symbol=symbol, exchange="GLBX")
+
+        def contract_resolver(contract: FuturesContract) -> InstrumentId:
+            venue = _bloomberg_exch_to_mic[contract.exchange]
+            return InstrumentId.from_str(f"{contract.symbol}.{venue}")
+
+        resolver = FigiInstrumentResolver(
+            futures_calendar=calendar,
+            futures_contract_resolver=contract_resolver,
+        )
+
+        before_roll = resolver.resolve(ref, as_of=date(2024, 12, 14))
+        after_roll = resolver.resolve(ref, as_of=date(2024, 12, 15))
+
+        assert before_roll == InstrumentId.from_str("ESZ4.XCME")
+        assert after_roll == InstrumentId.from_str("ESH5.XCME")
+        assert resolver.ref_for(InstrumentId.from_str("ESH5.XCME")) == ref
+
+    def test_listed_ref_resolves_date_invariantly(self, resolver):
+        """ListedRef resolves through its FIGI payload and ignores as_of."""
+        ref = ListedRef(_FIGI_VUSA)
+        transport = _mock_transport({
+            _FIGI_VUSA: _openfigi_response(
+                _FIGI_VUSA, ticker="VUSA", exch_code="LN",
+                security_type="ETF", currency="GBP",
+            ),
+        })
+
+        first = resolver.resolve(ref, as_of=date(2024, 1, 1), transport=transport)
+        second = resolver.resolve(ref, as_of=date(2025, 1, 1), transport=transport)
+
+        assert first == InstrumentId.from_str("VUSA.XLON")
+        assert second == first
 
     def test_single_figi_lse(self, resolver):
         """VUSA.L on LSE → VUSA.XLON."""

@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -31,12 +32,12 @@ _FIGI = "BBG000B9XRY4"
 
 def _bundle(*, gross_cap: float, net_cap: float | None = None) -> ExecutionBundle:
     contract = DataContract(
-        figis=(_FIGI,), required_arrays=("Close",), base_currency="EUR",
+        refs=(ListedRef(_FIGI),), required_arrays=("Close",), base_currency="EUR",
         required_fx_currencies=(), timeframe="1D", lookback_bars=1,
     )
     manifest = BundleManifest(
         run_id="r", role="x", candidate_key="k",
-        component_source_hashes={}, figis=(_FIGI,),
+        component_source_hashes={}, refs=(ListedRef(_FIGI),),
     )
     plan = LockedExecutionPlan(
         strategy=ComponentSpec(

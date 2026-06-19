@@ -1,0 +1,75 @@
+name: atalanta_trend_subst_ls_noccoco
+schema_version: 8
+output_dir: runs/atalanta/trend_subst_ls_noccoco
+
+# ROBUSTNESS CHECK (aegis-rd-167): trend_subst_ls (shortmask, held-out UPI 1.981) MINUS COCO.L.
+# subst_ls's held-out win was concentrated in the last split (s5 +43.3% return / +7.15 UPI), which
+# coincides with the 2024 cocoa supercycle — and COCO is held LONG-ONLY (un-borrowable) in the
+# shortmask book. This drops cocoa (19 names) to test whether the win is a single idiosyncratic
+# long-only commodity leg or a broad-based edge. Everything else identical to trend_subst_ls
+# (same shortmask strategy, params lb252/vw63/bb0.20, short_policy borrowable, forgo, 2018 window).
+data:
+  source: yf
+  arrays:
+  - OHLCV
+  symbols:
+  - {ticker: IDTL.L, ccy: USD, mic: XLON}
+  - {ticker: ITPS.L, ccy: GBP, mic: XLON}
+  - {ticker: SEGA.L, ccy: GBP, mic: XLON}
+  - {ticker: IGLN.L, ccy: USD, mic: XLON, figi: BBG001M8D7W0}
+  - {ticker: BRNT.L, ccy: USD, mic: XLON}
+  - {ticker: COPA.L, ccy: USD, mic: XLON, figi: BBG000BL3W79}
+  - {ticker: AIGA.L, ccy: USD, mic: XLON, figi: BBG000BLFVZ7}
+  - {ticker: GBUS.L, ccy: GBp, mic: XLON, figi: BBG000R20GS9}
+  - {ticker: EMCP.L, ccy: GBP, mic: XLON}
+  - {ticker: HYLD.L, ccy: USD, mic: XLON}
+  - {ticker: IEGE.L, ccy: EUR, mic: XLON, isin: IE00B3FH7618}
+  - {ticker: WEAT.L, ccy: USD, mic: XLON, figi: BBG000BLCP10}
+  - {ticker: HEAT.L, ccy: USD, mic: XLON, figi: BBG000BLBMN4}
+  - {ticker: NGAS.L, ccy: USD, mic: XLON, figi: BBG000BLC3X4}
+  - {ticker: IBTA.L, ccy: USD, mic: XLON}
+  - {ticker: CMOD.L, ccy: USD, mic: XLON}
+  - {ticker: SGLO.L, ccy: GBP, mic: XLON}
+  - {ticker: ISLN.L, ccy: USD, mic: XLON, figi: BBG001M8F4G3}
+  - {ticker: INXG.L, ccy: GBP, mic: XLON}
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+  params:
+    lookback: 252
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: atalanta.trendStraddleBufferedShortMask
+  params:
+    entry_band: 0.0
+    buffer_band: 0.20
+    short_policy: borrowable
+    gross_fill: forgo
+
+portfolio:
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+ranking:
+  metric: ulcer_performance_index
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

@@ -13,6 +13,7 @@ requires-python = ">=3.12"
 # Execution Bundle wheel — never declared here.
 dependencies = [
   "aegis-runtime",
+  "aegis-data",
   "nautilus_trader",
   "pydantic>=2.0",
   "requests>=2.0",
@@ -56,12 +57,14 @@ module = [
     "pandas.*",
     "aegis_runtime",
     "aegis_runtime.*",
-    "yfinance",
+    "aegis_data",
+    "aegis_data.*",
 ]
 ignore_missing_imports = true
 
 [tool.uv.sources]
 aegis-runtime = { path = "../aegis-runtime", editable = true }
+aegis-data = { path = "../aegis-data", editable = true }
 
 [dependency-groups]
 dev = [

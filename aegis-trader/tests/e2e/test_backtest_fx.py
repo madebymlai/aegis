@@ -21,6 +21,7 @@ from nautilus_trader.model.objects import Money, Price, Quantity
 from conftest import gbp_equity
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -30,7 +31,7 @@ from aegis_runtime import (
 )
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
-from aegis_trader.domain.types import Figi, SleeveName
+from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _FIGI = "BBG000C6K6G9"  # a London-listed name (GBP)
@@ -45,12 +46,12 @@ class _GbpBundle(ExecutionBundle):
     def __init__(self, weight: float = 0.5) -> None:
         self._weight = weight
         contract = DataContract(
-            figis=(_FIGI,), required_arrays=("Close",), base_currency="EUR",
+            refs=(ListedRef(_FIGI),), required_arrays=("Close",), base_currency="EUR",
             required_fx_currencies=(), timeframe="1D", lookback_bars=1,
         )
         manifest = BundleManifest(
             run_id="fx-001", role="synth", candidate_key="k",
-            component_source_hashes={}, figis=(_FIGI,),
+            component_source_hashes={}, refs=(ListedRef(_FIGI),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(family="strategy", component_id="s", module="m",
@@ -120,7 +121,7 @@ def test_gbp_instrument_sizes_with_live_fx():
     book = _make_book()
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _GbpBundle(0.5))
-    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
     engine.add_strategy(strategy)
 
     engine.run()
@@ -142,12 +143,12 @@ class _FxRequiringBundle(ExecutionBundle):
         self._weight = weight
         self.received_fx_series: dict | None = "UNCALLED"  # type: ignore[assignment]
         contract = DataContract(
-            figis=(_FIGI,), required_arrays=("Close",), base_currency="EUR",
+            refs=(ListedRef(_FIGI),), required_arrays=("Close",), base_currency="EUR",
             required_fx_currencies=("GBP",), timeframe="1D", lookback_bars=1,
         )
         manifest = BundleManifest(
             run_id="fx-002", role="synth", candidate_key="k",
-            component_source_hashes={}, figis=(_FIGI,),
+            component_source_hashes={}, refs=(ListedRef(_FIGI),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(family="strategy", component_id="s", module="m",
@@ -178,7 +179,7 @@ def _run_with_bundle(bundle: ExecutionBundle, *, set_fx: bool) -> tuple[Backtest
     book = _make_book()
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, bundle)
-    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
     engine.add_strategy(strategy)
     engine.run()
     fills = [o for o in engine.cache.orders() if o.is_closed]
@@ -231,7 +232,7 @@ def test_held_gbp_position_surfaces_in_realized_weights_via_mark_xrate():
     book = _make_book()
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _GbpBundle(0.5))
-    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
     engine.add_strategy(strategy)
     engine.run()
 
@@ -242,8 +243,8 @@ def test_held_gbp_position_surfaces_in_realized_weights_via_mark_xrate():
     )
 
     weights = book_state.realized_weights()
-    assert Figi(_FIGI) in weights, "The held GBP sleeve must surface in realized_weights"
-    assert weights[Figi(_FIGI)] == pytest.approx(0.5, rel=5e-2)
+    assert ListedRef(_FIGI) in weights, "The held GBP sleeve must surface in realized_weights"
+    assert weights[ListedRef(_FIGI)] == pytest.approx(0.5, rel=5e-2)
     engine.dispose()
 
 
@@ -298,7 +299,7 @@ def test_overlay_marks_fx_from_quotes_so_non_base_sleeve_trades_and_surfaces():
     book = _make_book()
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _GbpBundle(0.5))
-    strategy._figi_bimap = {_FIGI: InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
     engine.add_strategy(strategy)
     engine.run()
 
@@ -310,7 +311,7 @@ def test_overlay_marks_fx_from_quotes_so_non_base_sleeve_trades_and_surfaces():
         portfolio=engine.portfolio, cache=engine.cache,
         base_currency=EUR, instr_to_figi={gbp_id.value: _FIGI},
     )
-    assert Figi(_FIGI) in book_state.realized_weights(), (
+    assert ListedRef(_FIGI) in book_state.realized_weights(), (
         "The GBP sleeve must surface in realized_weights from the FX-quote-derived mark"
     )
     engine.dispose()

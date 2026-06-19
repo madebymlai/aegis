@@ -18,7 +18,9 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 
+from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 from nautilus_trader.model.identifiers import InstrumentId
 
 OPENFIGI_MAPPING_URL = "https://api.openfigi.com/v3/mapping"
@@ -68,6 +70,7 @@ _bloomberg_exch_to_mic: dict[str, str] = {
     "SJ": "XJSE",      # Johannesburg
     "TA": "XTAE",      # Tel Aviv
     "IN": "XBOM",      # Bombay Stock Exchange / NSE
+    "GLBX": "XCME",    # CME Globex
 }
 
 
@@ -82,6 +85,18 @@ class _FigiMetadata:
     figi: str
     ticker: str
     exch_code: str
+
+
+@dataclass(frozen=True)
+class FuturesContract:
+    """Dated futures contract selected by the roll calendar."""
+
+    symbol: str
+    exchange: str
+
+
+FuturesCalendar = Callable[[FuturesRef, date], FuturesContract]
+FuturesContractResolver = Callable[[FuturesContract], InstrumentId]
 
 
 # ── transport ─────────────────────────────────────────────────────────────────
@@ -137,39 +152,108 @@ def _http_transport(*, headers: dict[str, str], jobs: list[dict]) -> list[dict]:
 
 
 class FigiInstrumentResolver:
-    """Resolves FIGIs to Nautilus InstrumentIds via OpenFIGI + exchange table.
+    """Resolves ListedRefs to Nautilus InstrumentIds via OpenFIGI + exchange table.
 
-    Produces a FIGI→InstrumentId bimap.  Resolution is atomic: if any FIGI
-    fails, the whole book refuses to start.
+    A ListedRef resolution ignores ``as_of``: permanently listed instruments are
+    date-invariant. Resolution is atomic when preloading a set of refs.
     """
+
+    def __init__(
+        self,
+        *,
+        futures_calendar: FuturesCalendar | None = None,
+        futures_contract_resolver: FuturesContractResolver | None = None,
+    ) -> None:
+        self._bimap: dict[ListedRef, InstrumentId] = {}
+        self._futures_calendar = futures_calendar
+        self._futures_contract_resolver = futures_contract_resolver
+        self._contract_to_ref: dict[InstrumentId, InstrumentRef] = {}
 
     def resolve(
         self,
-        figis: set[str],
+        ref: InstrumentRef | str | set[InstrumentRef | str],
+        as_of: date | None = None,
         *,
         transport: OpenFigiTransport | None = None,
-    ) -> dict[str, InstrumentId]:
-        """Resolve *figis* to a FIGI→InstrumentId bimap.
+    ) -> InstrumentId | dict[InstrumentRef | str, InstrumentId]:
+        """Resolve one InstrumentRef as-of a date, or preload a set of refs.
 
-        If *transport* is provided it is used instead of the real OpenFIGI
-        HTTP client (for testing).  Raises :class:`FigiResolutionError` on
-        any unmapped, ambiguous, or unresolvable FIGI.
+        ``as_of`` is accepted for the asset-agnostic Security Master interface;
+        ListedRef ignores it and resolves date-invariantly.
         """
-        if not figis:
-            return {}
+        if isinstance(ref, set):
+            return self.resolve_many(ref, transport=transport)
+        if isinstance(ref, FuturesRef):
+            if as_of is None:
+                raise FigiResolutionError("as_of is required to resolve a FuturesRef")
+            return self._resolve_future(ref, as_of)
+        listed = _listed_ref(ref)
+        if listed not in self._bimap:
+            self._bimap.update(self._resolve_listed({listed}, transport=transport))
+        instrument_id = self._bimap[listed]
+        self._contract_to_ref[instrument_id] = listed
+        return instrument_id
 
+    def resolve_many(
+        self,
+        refs: set[InstrumentRef | str],
+        *,
+        transport: OpenFigiTransport | None = None,
+    ) -> dict[InstrumentRef | str, InstrumentId]:
+        """Resolve refs to an InstrumentRef→InstrumentId bimap atomically."""
+        if not refs:
+            return {}
+        if any(isinstance(ref, FuturesRef) for ref in refs):
+            raise FigiResolutionError("resolve_many cannot resolve FuturesRef without as_of")
+        originals = {_listed_ref(ref): ref for ref in refs}
+        missing = set(originals) - set(self._bimap)
+        if missing:
+            self._bimap.update(self._resolve_listed(missing, transport=transport))
+        resolved = {original: self._bimap[listed] for listed, original in originals.items()}
+        for original, instrument_id in resolved.items():
+            self._contract_to_ref[instrument_id] = _listed_ref(original)
+        return resolved
+
+    def ref_for(self, instrument_id: InstrumentId) -> InstrumentRef:
+        """Fold a resolved dated/listed contract back to its canonical InstrumentRef."""
+        try:
+            return self._contract_to_ref[instrument_id]
+        except KeyError:
+            raise FigiResolutionError(
+                f"InstrumentId {instrument_id!r} has no resolved InstrumentRef inverse"
+            ) from None
+
+    def _resolve_future(self, ref: FuturesRef, as_of: date) -> InstrumentId:
+        if self._futures_calendar is None or self._futures_contract_resolver is None:
+            raise FigiResolutionError("FuturesRef resolution requires injected futures adapters")
+        contract = self._futures_calendar(ref, as_of)
+        if contract.exchange not in _bloomberg_exch_to_mic:
+            raise FigiResolutionError(
+                f"Futures contract {contract.symbol!r}: unknown exchange code {contract.exchange!r}"
+            )
+        instrument_id = self._futures_contract_resolver(contract)
+        self._contract_to_ref[instrument_id] = ref
+        return instrument_id
+
+    def _resolve_listed(
+        self,
+        refs: set[ListedRef],
+        *,
+        transport: OpenFigiTransport | None,
+    ) -> dict[ListedRef, InstrumentId]:
         client = _OpenFigiClient(transport=transport) if transport else _OpenFigiClient.from_env()
 
-        jobs = [{"idType": "FIGI", "idValue": figi} for figi in sorted(figis)]
+        ordered = sorted(refs)
+        jobs = [{"idType": "FIGI", "idValue": ref.figi} for ref in ordered]
         responses = client.map(jobs)
 
-        bimap: dict[str, InstrumentId] = {}
+        bimap: dict[ListedRef, InstrumentId] = {}
         errors: list[str] = []
-        for figi, response in zip(sorted(figis), responses, strict=True):
+        for ref, response in zip(ordered, responses, strict=True):
             try:
-                metadata = _extract_metadata(figi, response)
+                metadata = _extract_metadata(ref.figi, response)
                 instrument_id = _to_instrument_id(metadata)
-                bimap[figi] = instrument_id
+                bimap[ref] = instrument_id
             except FigiResolutionError as e:
                 errors.append(str(e))
 
@@ -181,6 +265,14 @@ class FigiInstrumentResolver:
             )
 
         return bimap
+
+
+def _listed_ref(ref: InstrumentRef | str) -> ListedRef:
+    if isinstance(ref, ListedRef):
+        return ref
+    if isinstance(ref, str):
+        return ListedRef(ref)
+    raise FigiResolutionError(f"unsupported InstrumentRef variant {type(ref).__name__}")
 
 
 def _extract_metadata(figi: str, response: dict) -> _FigiMetadata:

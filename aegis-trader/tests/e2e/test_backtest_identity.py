@@ -26,6 +26,7 @@ from nautilus_trader.model.objects import Currency, Money
 from conftest import eur_equity
 
 from aegis_runtime import (
+    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -49,7 +50,7 @@ class _SyntheticBundle(ExecutionBundle):
     def __init__(self, weight: float = 0.5) -> None:
         self._weight = weight
         contract = DataContract(
-            figis=(_FIGI,),
+            refs=(ListedRef(_FIGI),),
             required_arrays=("Close",),
             base_currency="EUR",
             required_fx_currencies=(),
@@ -58,7 +59,7 @@ class _SyntheticBundle(ExecutionBundle):
         )
         manifest = BundleManifest(
             run_id="id-synth-001", role="synth", candidate_key="synth-key",
-            component_source_hashes={}, figis=(_FIGI,),
+            component_source_hashes={}, refs=(ListedRef(_FIGI),),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(
@@ -133,7 +134,7 @@ def test_strategy_follows_resolved_instrument_id():
         _make_book().sleeves[0].name, _SyntheticBundle(weight=0.5)
     )
     # Bimap resolves the FIGI to a DIFFERENT id than f"{figi}.{venue}".
-    strategy._figi_bimap = {_FIGI: _RESOLVED}
+    strategy._figi_bimap = {ListedRef(_FIGI): _RESOLVED}
     engine.add_strategy(strategy)
 
     engine.run()

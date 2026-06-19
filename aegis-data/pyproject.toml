@@ -1,0 +1,52 @@
+[project]
+name = "aegis-data"
+version = "0.1.0"
+description = "Shared historical market-data package: per-contract futures sourcing via the Nautilus databento port, an OS-global parquet store, and back-adjusted continuous series. Used by Aegis RD and Aegis Trader."
+requires-python = ">=3.12"
+dependencies = [
+  "aegis-runtime",
+  "numpy",
+  "pandas",
+  "pyarrow",
+  "platformdirs",
+  "nautilus_trader",
+  "databento",
+  "yfinance>=0.2.56",
+]
+
+[project.scripts]
+aegis-data = "aegis_data.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["aegis_data*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["aegis_data"]
+
+[[tool.mypy.overrides]]
+module = [
+  "aegis_runtime",
+  "aegis_runtime.*",
+  "databento.*",
+  "nautilus_trader.*",
+  "pandas",
+  "pandas.*",
+  "yfinance",
+]
+ignore_missing_imports = true
+
+[tool.uv.sources]
+aegis-runtime = { path = "../aegis-runtime", editable = true }
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1.0",
+]

@@ -1,4 +1,4 @@
-schema_version: 8
+schema_version: 9
 name: tests_tune_lock_vol
 output_dir: runs/etf_vanguard_tune
 

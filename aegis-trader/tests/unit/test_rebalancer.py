@@ -12,7 +12,8 @@ import pytest
 from aegis_trader.domain.book_config import BookConfig, DrawdownDeleverCurve, SleeveConfig
 from aegis_trader.domain.rebalancer import _gate_book_caps, rebalance, rebalance_plan
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
-from aegis_trader.domain.types import Figi, OrderSide, SleeveName, WeightDelta
+from aegis_runtime import ListedRef
+from aegis_trader.domain.types import OrderSide, SleeveName, WeightDelta
 
 
 def make_book(sleeves: list[tuple[str, str, float]], **kwargs) -> BookConfig:
@@ -46,7 +47,7 @@ class TestRebalanceSingleSleeve:
         book = make_book([("trend", "trend_lse-abc123.whl", 1.0)])
         result = self._call(_target({"BBG000B9XRY4": 0.5}), book)
         assert len(result) == 1
-        assert result[0].figi == Figi("BBG000B9XRY4")
+        assert result[0].ref == ListedRef("BBG000B9XRY4")
         assert result[0].side == OrderSide.BUY
         assert result[0].delta == pytest.approx(0.5)
 
@@ -74,7 +75,7 @@ class TestRebalanceSingleSleeve:
         book = make_book([("trend", "trend_lse-abc123.whl", 1.0)])
         result = self._call(_target({"FIGI_A": 0.4, "FIGI_B": -0.2}), book)
         assert len(result) == 2
-        by_figi = {d.figi.value: d for d in result}
+        by_figi = {d.ref.value: d for d in result}
         assert by_figi["FIGI_A"].side == OrderSide.BUY
         assert by_figi["FIGI_A"].delta == pytest.approx(0.4)
         assert by_figi["FIGI_B"].side == OrderSide.SELL
@@ -113,7 +114,7 @@ class TestRebalanceMultiSleeve:
             book,
         )
         assert len(result) == 1
-        assert result[0].figi == Figi("FIGI_A")
+        assert result[0].ref == ListedRef("FIGI_A")
         assert result[0].side == OrderSide.BUY
         assert result[0].delta == pytest.approx(0.22)
 
@@ -145,7 +146,7 @@ class TestRebalanceMultiSleeve:
             book,
         )
         assert len(result) == 2
-        by_figi = {d.figi.value: d for d in result}
+        by_figi = {d.ref.value: d for d in result}
         assert by_figi["FIGI_A"].delta == pytest.approx(0.30)
         assert by_figi["FIGI_B"].delta == pytest.approx(-0.12)
 
@@ -157,7 +158,7 @@ class TestRebalanceMultiSleeve:
             book,
         )
         assert len(result) == 3
-        by_figi = {d.figi.value: d for d in result}
+        by_figi = {d.ref.value: d for d in result}
         assert by_figi["FIGI_A"].delta == pytest.approx(0.15)
         assert by_figi["FIGI_B"].delta == pytest.approx(0.10)
         assert by_figi["FIGI_C"].delta == pytest.approx(0.15)
@@ -188,7 +189,7 @@ class TestRebalanceMultiSleeve:
             book,
             realized_vols={book.sleeves[0].name: 0.10, book.sleeves[1].name: 0.20},
         )
-        by_figi = {d.figi.value: d.delta for d in result}
+        by_figi = {d.ref.value: d.delta for d in result}
         assert by_figi["HIGH"] == pytest.approx(by_figi["LOW"] / 2.0)
 
     def test_sleeve_weight_bands_use_previous_applied_weight(self):
@@ -225,7 +226,7 @@ class TestRebalanceMultiSleeve:
 
         assert plan.applied_sleeve_weights[book.sleeves[0].name] == pytest.approx(previous[book.sleeves[0].name])
         assert plan.applied_sleeve_weights[book.sleeves[1].name] == pytest.approx(0.630156925586835)
-        by_figi = {d.figi.value: d.delta for d in plan.deltas}
+        by_figi = {d.ref.value: d.delta for d in plan.deltas}
         assert by_figi["TREND"] == pytest.approx(previous[book.sleeves[0].name])
         assert by_figi["CARRY"] == pytest.approx(0.630156925586835)
 
@@ -266,7 +267,7 @@ class TestRebalanceMultiSleeve:
              book.sleeves[2].name: _target({"Y": 0.3, "Z": -0.1})},
             book,
         )
-        by_figi = {d.figi.value: d for d in result}
+        by_figi = {d.ref.value: d for d in result}
         assert by_figi["X"].delta == pytest.approx(0.11)
         assert by_figi["Y"].delta == pytest.approx(0.01)
         assert by_figi["Z"].delta == pytest.approx(0.09)
@@ -305,13 +306,13 @@ class TestRebalanceSlice4:
     def test_band_gate_suppresses_small_drift(self):
         book = self._book(default_band_up=0.02, default_band_down=0.02)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50})}, book,
-                           realized_weights={Figi("FIGI_A"): 0.51})
+                           realized_weights={ListedRef("FIGI_A"): 0.51})
         assert result == ()
 
     def test_band_gate_trades_when_outside_band(self):
         book = self._book(default_band_up=0.02, default_band_down=0.02)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50})}, book,
-                           realized_weights={Figi("FIGI_A"): 0.55})
+                           realized_weights={ListedRef("FIGI_A"): 0.55})
         assert len(result) == 1
         assert result[0].side == OrderSide.SELL
         assert result[0].delta == pytest.approx(-0.05)
@@ -325,9 +326,9 @@ class TestRebalanceSlice4:
         target = _target({"FIGI_C": 0.20, "FIGI_A": 0.20, "FIGI_D": 0.20})
         result = rebalance(
             {book.sleeves[0].name: target}, book,
-            realized_weights={Figi("FIGI_B"): 0.20, Figi("FIGI_A"): 0.05},
+            realized_weights={ListedRef("FIGI_B"): 0.20, ListedRef("FIGI_A"): 0.05},
         )
-        figis = [d.figi.value for d in result]
+        figis = [d.ref.value for d in result]
         assert figis == ["FIGI_A", "FIGI_B", "FIGI_C", "FIGI_D"]  # sorted, stable
 
     def test_asymmetric_band_tail(self):
@@ -335,11 +336,11 @@ class TestRebalanceSlice4:
                           band_overrides=(("FIGI_TAIL", 0.01, 0.05),))
         target = _target({"FIGI_TAIL": 0.50})
         result_up = rebalance({book.sleeves[0].name: target}, book,
-                              realized_weights={Figi("FIGI_TAIL"): 0.52})
+                              realized_weights={ListedRef("FIGI_TAIL"): 0.52})
         assert len(result_up) == 1
         assert result_up[0].side == OrderSide.SELL
         result_down = rebalance({book.sleeves[0].name: target}, book,
-                                realized_weights={Figi("FIGI_TAIL"): 0.48})
+                                realized_weights={ListedRef("FIGI_TAIL"): 0.48})
         assert result_down == ()
 
     def test_band_only_applied_when_realized_present(self):
@@ -352,7 +353,7 @@ class TestRebalanceSlice4:
     def test_per_name_cap_breach_band_creates_corrective_verified(self):
         book = self._book(per_name_cap=0.10, default_band_up=0.02, default_band_down=0.02)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.08})}, book,
-                           realized_weights={Figi("FIGI_A"): 0.12})
+                           realized_weights={ListedRef("FIGI_A"): 0.12})
         assert len(result) == 1
         assert result[0].side == OrderSide.SELL
         assert result[0].delta == pytest.approx(-0.04)
@@ -360,7 +361,7 @@ class TestRebalanceSlice4:
     def test_per_name_cap_breach_band_suppressed_corrective_order(self):
         book = self._book(per_name_cap=0.10, default_band_up=0.10, default_band_down=0.10)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.08})}, book,
-                           realized_weights={Figi("FIGI_A"): 0.12})
+                           realized_weights={ListedRef("FIGI_A"): 0.12})
         assert len(result) == 1
         assert result[0].side == OrderSide.SELL
         assert result[0].delta == pytest.approx(-0.02)  # widen to cap 0.10
@@ -369,12 +370,12 @@ class TestRebalanceSlice4:
         book = self._book(per_name_cap=0.10, default_band_up=0.10, default_band_down=0.10)
         with pytest.raises(ValueError, match="unfixable"):
             rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.15})}, book,
-                      realized_weights={Figi("FIGI_A"): 0.15})
+                      realized_weights={ListedRef("FIGI_A"): 0.15})
 
     def test_per_name_cap_breach_short_position(self):
         book = self._book(per_name_cap=0.10, default_band_up=0.10, default_band_down=0.10)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": -0.08})}, book,
-                           realized_weights={Figi("FIGI_A"): -0.12})
+                           realized_weights={ListedRef("FIGI_A"): -0.12})
         assert len(result) == 1
         assert result[0].side == OrderSide.BUY
         assert result[0].delta == pytest.approx(0.02)  # -0.10 - (-0.12)
@@ -413,7 +414,7 @@ class TestRebalanceSlice4:
         clamp).  Exercised directly because rebalance() can no longer reach it."""
         book = self._book(max_book_gross=0.50, gross_cap=0.50)
         with pytest.raises(ValueError, match="Gross exposure"):
-            _gate_book_caps({Figi("FIGI_A"): 0.6, Figi("FIGI_B"): 0.6}, book)
+            _gate_book_caps({ListedRef("FIGI_A"): 0.6, ListedRef("FIGI_B"): 0.6}, book)
 
     def test_within_band_drift_over_ceiling_clamped_not_failed(self):
         """Within-band drift can push the projected book over max_book_gross even
@@ -426,12 +427,12 @@ class TestRebalanceSlice4:
         result = rebalance(
             {book.sleeves[0].name: _target({"FIGI_A": 0.5, "FIGI_B": 0.5})},
             book,
-            realized_weights={Figi("FIGI_A"): 0.53, Figi("FIGI_B"): 0.53},
+            realized_weights={ListedRef("FIGI_A"): 0.53, ListedRef("FIGI_B"): 0.53},
         )
         # Drift 0.03 <= band 0.05, so without the projected clamp the book sits at
         # gross 1.06 and fails closed.  With it, both names get a corrective sell
         # and the resulting book lands on the ceiling.
-        after = {d.figi.value: 0.53 + d.delta for d in result}
+        after = {d.ref.value: 0.53 + d.delta for d in result}
         gross_after = sum(abs(w) for w in after.values())
         assert gross_after == pytest.approx(1.0)
         assert gross_after <= book.gross_cap + 1e-9
@@ -444,7 +445,7 @@ class TestRebalanceSlice4:
     def test_aggregate_drift_within_threshold_no_error(self):
         book = self._book(aggregate_drift_threshold=0.05, default_band_up=0.10, default_band_down=0.10)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50, "FIGI_B": 0.30})}, book,
-                           realized_weights={Figi("FIGI_A"): 0.52, Figi("FIGI_B"): 0.28})
+                           realized_weights={ListedRef("FIGI_A"): 0.52, ListedRef("FIGI_B"): 0.28})
         assert result == ()
 
     def test_aggregate_drift_triggers_full_cleanup(self):
@@ -453,8 +454,8 @@ class TestRebalanceSlice4:
         # Drift = |0.50-0.52| + |0.30-0.28| = 0.04 > 0.03.  Bands (0.10) would
         # normally suppress both; the trip forces a fuller cleanup.
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50, "FIGI_B": 0.30})}, book,
-                           realized_weights={Figi("FIGI_A"): 0.52, Figi("FIGI_B"): 0.28})
-        by_figi = {d.figi.value: d for d in result}
+                           realized_weights={ListedRef("FIGI_A"): 0.52, ListedRef("FIGI_B"): 0.28})
+        by_figi = {d.ref.value: d for d in result}
         assert by_figi["FIGI_A"].delta == pytest.approx(-0.02)
         assert by_figi["FIGI_B"].delta == pytest.approx(0.02)
 
@@ -467,10 +468,10 @@ class TestRebalanceSlice4:
                           default_band_up=0.10, default_band_down=0.10)
         # Drift trips; cleanup targets 0.40+0.30 (gross 0.70) > ceiling 0.50 -> clamped.
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.40, "FIGI_B": 0.30})}, book,
-                           realized_weights={Figi("FIGI_A"): 0.36, Figi("FIGI_B"): 0.26})
-        after = {Figi("FIGI_A"): 0.36, Figi("FIGI_B"): 0.26}
+                           realized_weights={ListedRef("FIGI_A"): 0.36, ListedRef("FIGI_B"): 0.26})
+        after = {ListedRef("FIGI_A"): 0.36, ListedRef("FIGI_B"): 0.26}
         for d in result:
-            after[d.figi] = after.get(d.figi, 0.0) + d.delta
+            after[d.ref] = after.get(d.ref, 0.0) + d.delta
         gross = sum(abs(w) for w in after.values())
         assert gross == pytest.approx(0.50)
         assert gross <= book.gross_cap + 1e-9
@@ -484,7 +485,7 @@ class TestRebalanceSlice4:
             {book.sleeves[0].name: _target(
                 {"FIGI_A": 0.20, "FIGI_B": 0.20, "FIGI_C": 0.20, "FIGI_D": 0.20})},
             book,
-            realized_weights={Figi("FIGI_A"): 0.21, Figi("FIGI_B"): 0.21, Figi("FIGI_C"): 0.21, Figi("FIGI_D"): 0.21},
+            realized_weights={ListedRef("FIGI_A"): 0.21, ListedRef("FIGI_B"): 0.21, ListedRef("FIGI_C"): 0.21, ListedRef("FIGI_D"): 0.21},
         )
         assert len(result) == 4
         for d in result:
@@ -493,7 +494,7 @@ class TestRebalanceSlice4:
     def test_cap_gate_sees_realized_not_target(self):
         book = self._book(per_name_cap=0.10, default_band_up=0.10, default_band_down=0.10)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.08})}, book,
-                           realized_weights={Figi("FIGI_A"): 0.12})
+                           realized_weights={ListedRef("FIGI_A"): 0.12})
         assert len(result) == 1
         assert result[0].side == OrderSide.SELL
         assert result[0].delta == pytest.approx(-0.02)
@@ -511,9 +512,9 @@ class TestRebalancePipeline:
         deltas = rebalance({book.sleeves[0].name: _target({"EUR_ETF": 0.5})}, book)
         orders = size_deltas(
             deltas, nav=100_000.0,
-            instrument_metas={Figi("EUR_ETF"): InstrumentSizing(currency="EUR", size_increment=1.0)},
+            instrument_metas={ListedRef("EUR_ETF"): InstrumentSizing(currency="EUR", size_increment=1.0)},
             fx_rates={"EUR": 1.0},
-            prices={Figi("EUR_ETF"): 100.0},
+            prices={ListedRef("EUR_ETF"): 100.0},
         )
         assert len(orders) == 1
         assert orders[0].quantity == pytest.approx(500.0)  # 50_000 / 100
@@ -530,13 +531,13 @@ class TestRebalancePipeline:
         orders = size_deltas(
             deltas, nav=100_000.0,
             instrument_metas={
-                Figi("EUR_ETF"): InstrumentSizing(currency="EUR", size_increment=1.0),
-                Figi("US_STOCK"): InstrumentSizing(currency="USD", size_increment=1.0),
+                ListedRef("EUR_ETF"): InstrumentSizing(currency="EUR", size_increment=1.0),
+                ListedRef("US_STOCK"): InstrumentSizing(currency="USD", size_increment=1.0),
             },
             fx_rates={"EUR": 1.0, "USD": 1.10},
-            prices={Figi("EUR_ETF"): 100.0, Figi("US_STOCK"): 110.0},
+            prices={ListedRef("EUR_ETF"): 100.0, ListedRef("US_STOCK"): 110.0},
         )
-        by_figi = {o.figi.value: o for o in orders}
+        by_figi = {o.ref.value: o for o in orders}
         assert by_figi["EUR_ETF"].quantity == pytest.approx(220.0)   # 22_000 / 100
         assert by_figi["US_STOCK"].quantity == pytest.approx(220.0)  # 22_000·1.10 / 110
         for o in orders:
@@ -608,7 +609,7 @@ class TestDownOnlyGrossClamp:
             book,
             realized_vols={book.sleeves[0].name: 0.03, book.sleeves[1].name: 0.03},
         )
-        by_figi = {d.figi.value: d.delta for d in plan.deltas}
+        by_figi = {d.ref.value: d.delta for d in plan.deltas}
         assert by_figi["A"] / by_figi["B"] == pytest.approx(2.0)
 
     def test_clamp_composes_with_drawdown_delever(self):
