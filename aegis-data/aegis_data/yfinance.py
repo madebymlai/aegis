@@ -11,6 +11,7 @@ import pandas as pd
 from aegis_runtime import ListedRef
 
 from aegis_data.store import (
+    CoverageGap,
     NATIVE_OHLCV_ARRAYS,
     NativeBarsRequest,
     StoreAdmissionError,
@@ -69,26 +70,9 @@ def pull_yfinance_native_bars(
 ) -> PullResult:
     """Fetch one listed instrument from yfinance and write native-bar Covered History."""
     ref = _single_listed_ref(request)
-    gaps = native_bar_coverage_gaps(
-        ref,
-        arrays=request.arrays,
-        timeframe=request.timeframe,
-        start=request.start,
-        end=request.end,
-        listed_adjustment=request.listed_adjustment,
-        store_dir=store_dir,
-    )
-    for gap in gaps:
-        gap_request = NativeBarsRequest(
-            refs=(ref,),
-            arrays=request.arrays,
-            timeframe=request.timeframe,
-            start=gap.start,
-            end=gap.end,
-            listed_adjustment=request.listed_adjustment,
-        )
-        raw = (fetcher or _fetch_yfinance)(locator, gap_request)
-        bars = _stored_yfinance_bars(_normalize_yfinance_bars(raw), request.arrays)
+    fetch = fetcher or _fetch_yfinance
+    for gap_request in _uncovered_gap_requests(ref, request, store_dir=store_dir):
+        bars = _fetch_gap_bars(fetch, locator, gap_request)
         _assert_pulled_gap_coverage(ref, bars, gap_request)
         merge_native_bars(
             ref,
@@ -105,6 +89,49 @@ def pull_yfinance_native_bars(
         store_dir=store_dir,
     )
     return PullResult(ref=ref, locator=locator, path=path, bars=_covered_bar_count(path))
+
+
+def _uncovered_gap_requests(
+    ref: ListedRef,
+    request: NativeBarsRequest,
+    *,
+    store_dir: Path | None,
+) -> tuple[NativeBarsRequest, ...]:
+    gaps = native_bar_coverage_gaps(
+        ref,
+        arrays=request.arrays,
+        timeframe=request.timeframe,
+        start=request.start,
+        end=request.end,
+        listed_adjustment=request.listed_adjustment,
+        store_dir=store_dir,
+    )
+    return tuple(_gap_request(ref, request, gap) for gap in gaps)
+
+
+def _gap_request(
+    ref: ListedRef,
+    request: NativeBarsRequest,
+    gap: CoverageGap,
+) -> NativeBarsRequest:
+    return NativeBarsRequest(
+        refs=(ref,),
+        arrays=request.arrays,
+        timeframe=request.timeframe,
+        start=gap.start,
+        end=gap.end,
+        listed_adjustment=request.listed_adjustment,
+    )
+
+
+def _fetch_gap_bars(
+    fetch: YFinanceFetcher,
+    locator: YFinanceLocator,
+    request: NativeBarsRequest,
+) -> pd.DataFrame:
+    raw = fetch(locator, request)
+    normalized = _normalize_yfinance_bars(raw)
+    return _stored_yfinance_bars(normalized, request.arrays)
 
 
 def _single_listed_ref(request: NativeBarsRequest) -> ListedRef:

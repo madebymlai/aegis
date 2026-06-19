@@ -327,7 +327,7 @@ def native_bar_coverage_gaps(
     missing = _missing_required_bar_index(
         admitted,
         arrays=required,
-        timeframe=timeframe,
+        expected=expected,
         start=start_ts,
         end=end_ts,
     )
@@ -347,9 +347,13 @@ def assert_native_bar_coverage(
     start_ts, end_ts = _window(start, end)
     required = _validated_arrays(arrays)
     admitted = _admit_native_bars(frame)
-    columns = _require_native_bar_columns(ref, admitted, required)
-    sliced = _slice_window(admitted, start=start_ts, end=end_ts)
-    selected = _select_native_bar_arrays(sliced, columns, required)
+    selected = _required_native_bar_slice(
+        ref,
+        admitted,
+        arrays=required,
+        start=start_ts,
+        end=end_ts,
+    )
     _assert_expected_daily_coverage(ref, selected, timeframe=timeframe, start=start_ts, end=end_ts)
     _assert_no_null_arrays(ref, selected)
 
@@ -464,9 +468,7 @@ def _read_one_native_bar_frame(
     if not path.exists():
         raise StoreCoverageError(ref, f"no Covered History for {timeframe}")
     admitted = _load_admitted_native_bars(path)
-    columns = _require_native_bar_columns(ref, admitted, arrays)
-    sliced = _slice_window(admitted, start=start, end=end)
-    selected = _select_native_bar_arrays(sliced, columns, arrays)
+    selected = _required_native_bar_slice(ref, admitted, arrays=arrays, start=start, end=end)
     _assert_expected_daily_coverage(ref, selected, timeframe=timeframe, start=start, end=end)
     _assert_no_null_arrays(ref, selected)
     return selected
@@ -493,11 +495,10 @@ def _missing_required_bar_index(
     frame: pd.DataFrame,
     *,
     arrays: tuple[str, ...],
-    timeframe: str,
+    expected: pd.DatetimeIndex,
     start: pd.Timestamp,
     end: pd.Timestamp,
 ) -> pd.DatetimeIndex:
-    expected = _expected_bar_index(timeframe, start=start, end=end)
     if expected.empty:
         return expected
     columns = _column_lookup(frame)
@@ -507,9 +508,22 @@ def _missing_required_bar_index(
     selected = _select_native_bar_arrays(sliced, columns, arrays)
     if selected.empty:
         return expected
-    complete = selected.loc[~selected.isna().any(axis=1)]
-    observed = pd.DatetimeIndex(complete.index).tz_localize(None).normalize()
-    return expected.difference(observed)
+    complete_bars = selected.loc[~selected.isna().any(axis=1)]
+    observed_dates = pd.DatetimeIndex(complete_bars.index).tz_localize(None).normalize()
+    return expected.difference(observed_dates)
+
+
+def _required_native_bar_slice(
+    ref: InstrumentRef,
+    frame: pd.DataFrame,
+    *,
+    arrays: tuple[str, ...],
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DataFrame:
+    columns = _require_native_bar_columns(ref, frame, arrays)
+    sliced = _slice_window(frame, start=start, end=end)
+    return _select_native_bar_arrays(sliced, columns, arrays)
 
 
 def _require_native_bar_columns(
