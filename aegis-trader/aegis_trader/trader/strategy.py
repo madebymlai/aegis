@@ -220,7 +220,7 @@ class RebalanceStrategy(Strategy):
 
         resolver = self._instrument_resolver or self._provider_instrument_resolver()
         declared_currencies = declared_ref_currencies(self._sleeve_to_bundle.values())
-        self._pipeline = RebalancePipeline(
+        pipeline = RebalancePipeline(
             book_state=self._require_book_state(),
             market_data=self._require_market_data(),
             book=self._book,
@@ -231,13 +231,16 @@ class RebalanceStrategy(Strategy):
                 ref, currency, declared_currencies
             ),
         )
-        self._startup_result = self._pipeline.startup_check()
-        if self._startup_result.should_halt:
+        self._pipeline = pipeline
+
+        startup_result = pipeline.startup_check()
+        self._startup_result = startup_result
+        if startup_result.should_halt:
             self._is_halted = True
-            self._log_startup_halt(self._startup_result)
+            self._log_startup_halt(startup_result)
             return
 
-        self._log_startup_pass(self._startup_result)
+        self._log_startup_pass(startup_result)
 
         # The book runs on one timeframe (all sleeves agree); resolve it once for
         # the bar subscription and the rebalance-period width.
@@ -246,9 +249,9 @@ class RebalanceStrategy(Strategy):
         )
         self._book_timeframe = book_timeframe
         self._period_ns = timeframe_to_ns(book_timeframe)
-        self._pipeline.initialize_identity(self._as_of())
+        pipeline.initialize_identity(self._as_of())
 
-        identity = self._pipeline.resolved_identity_snapshot()
+        identity = pipeline.resolved_identity_snapshot()
         for ref, instr_id in identity.items():
             self.subscribe_bars(bar_type(instr_id.value, book_timeframe))
 

@@ -1,8 +1,8 @@
-"""Nautilus-free per-period rebalance orchestration.
+"""Strategy-free per-period rebalance orchestration over injected ports.
 
-The pipeline owns the pure rebalance path: build each sleeve's runtime market
-bundle from a completed-period bar snapshot, run the sleeve Execution Bundles,
-net through the rebalancer, size into OrderIntents, record the SleeveLedger, and
+The pipeline owns the rebalance path: build each sleeve's runtime market bundle
+from a completed-period bar snapshot, run the sleeve Execution Bundles, net
+through the rebalancer, size into OrderIntents, record the SleeveLedger, and
 return value objects for the Strategy to log and submit.
 """
 
@@ -130,11 +130,11 @@ class FixtureInstrumentResolver:
 
 
 class RebalancePipeline:
-    """Pure per-period rebalance orchestrator.
+    """Per-period rebalance orchestrator behind a value-object API.
 
-    Constructor injection keeps Nautilus at the edge: the Strategy supplies the
-    cache-backed ports and an identity resolver; the pipeline only sees canonical
-    InstrumentRefs, plain market bars, and domain value objects.
+    Constructor injection keeps the Nautilus lifecycle at the edge: the Strategy
+    supplies cache-backed ports and an identity resolver; the pipeline only sees
+    canonical InstrumentRefs, plain market bars, and value-object requests.
     """
 
     def __init__(
@@ -222,6 +222,12 @@ class RebalancePipeline:
 
     def startup_check(self) -> StartupResult:
         """Run startup gates and return the decision as a value object."""
+        cap_result = self._cap_provenance_startup_result()
+        if cap_result is not None:
+            return cap_result
+        return self._account_integrity_startup_result()
+
+    def _cap_provenance_startup_result(self) -> StartupResult | None:
         try:
             check_cap_provenance(self._book, self._sleeve_to_bundle)
         except CapProvenanceError as exc:
@@ -230,7 +236,9 @@ class RebalancePipeline:
                 halt_gate=StartupGate.CAP_PROVENANCE,
                 halt_reason=str(exc),
             )
+        return None
 
+    def _account_integrity_startup_result(self) -> StartupResult:
         try:
             nav = self._book_state.nav()
             cash = self._book_state.cash()
@@ -240,6 +248,7 @@ class RebalancePipeline:
                 halt_gate=StartupGate.ACCOUNT_INTEGRITY,
                 halt_reason=f"Failed to query book state for integrity check: {exc}",
             )
+
         report = check_account_integrity(
             nav=nav,
             cash=cash,

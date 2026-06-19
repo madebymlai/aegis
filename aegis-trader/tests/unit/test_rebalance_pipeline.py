@@ -1,4 +1,4 @@
-"""Unit tests for the Nautilus-free RebalancePipeline."""
+"""Unit tests for the Strategy-free RebalancePipeline."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from aegis_runtime import (
     MarketDataBundle,
 )
 
+from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
@@ -26,7 +27,6 @@ from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
     FixtureInstrumentResolver,
     GateOutcome,
-    MarketBar,
     RebalancePipeline,
     StartupGate,
 )
@@ -181,6 +181,11 @@ class _BookState:
 
     def realized_weights(self) -> dict[ListedRef, float]:
         return dict(self._realized_weights)
+
+
+class _FailingNavBookState(_BookState):
+    def nav(self) -> float:
+        raise RuntimeError("portfolio offline")
 
 
 class _MarketData:
@@ -374,6 +379,26 @@ def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
     )
 
 
+def test_startup_check_passes_when_cap_and_integrity_gates_pass() -> None:
+    pipeline = RebalancePipeline(
+        book_state=_BookState(nav=100_000.0, cash=100_000.0),
+        market_data=_MarketData(),
+        book=_book(),
+        sleeve_to_bundle={_SLEEVE: _FixedWeightBundle(0.5)},
+        ledger=SleeveLedger(),
+        resolve_instrument=FixtureInstrumentResolver({_FIGI: _INSTRUMENT_ID}),
+    )
+
+    result = pipeline.startup_check()
+
+    assert result.trading_enabled is True
+    assert result.should_halt is False
+    assert result.halt_gate is None
+    assert result.halt_reason is None
+    assert result.nav == 100_000.0
+    assert result.cash == 100_000.0
+
+
 def test_startup_check_halts_when_book_cap_exceeds_bundle_cap() -> None:
     pipeline = RebalancePipeline(
         book_state=_BookState(),
@@ -390,6 +415,25 @@ def test_startup_check_halts_when_book_cap_exceeds_bundle_cap() -> None:
     assert result.halt_gate == StartupGate.CAP_PROVENANCE
     assert result.halt_reason == (
         "book per_name_cap (1.5) exceeds sleeve 'trend' bundle gross_cap (1.0)"
+    )
+
+
+def test_startup_check_halts_when_book_state_query_fails() -> None:
+    pipeline = RebalancePipeline(
+        book_state=_FailingNavBookState(),
+        market_data=_MarketData(),
+        book=_book(),
+        sleeve_to_bundle={_SLEEVE: _FixedWeightBundle(0.5)},
+        ledger=SleeveLedger(),
+        resolve_instrument=FixtureInstrumentResolver({_FIGI: _INSTRUMENT_ID}),
+    )
+
+    result = pipeline.startup_check()
+
+    assert result.should_halt is True
+    assert result.halt_gate == StartupGate.ACCOUNT_INTEGRITY
+    assert result.halt_reason == (
+        "Failed to query book state for integrity check: portfolio offline"
     )
 
 
