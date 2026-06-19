@@ -82,11 +82,8 @@ from aegis_trader.domain.types import (
     ResolvedContractId,
     SleeveName,
 )
-from aegis_trader.execution.figi_resolver import (
-    FigiInstrumentResolver,
-    FigiResolutionError,
-)
 from aegis_trader.trader.instrument_provider import (
+    InstrumentResolutionError,
     declared_ref_currencies,
     loaded_futures_ref_bimap,
     loaded_listed_ref_bimap,
@@ -111,7 +108,6 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
 
     book: BookConfig
     bundle_label: str = "synthetic"
-    figi_resolver: FigiInstrumentResolver | None = None
     risk_guard_config: RiskGuardConfig = RiskGuardConfig()
     obs_port: ObservabilityPort | None = None
     futures_contract_chains: dict[str, tuple[DatedContract, ...]] | None = None
@@ -154,12 +150,8 @@ class RebalanceStrategy(Strategy):
         # Book bar timeframe (one across sleeves); set in on_start, reused to
         # subscribe a contract the book rolls into mid-run.
         self._book_timeframe: str | None = None
-        # ── Slice 3: FIGI bimap ──────────────────────────────────────────
+        # ── Slice 3: InstrumentRef → InstrumentId bimap ──────────────────
         self._figi_bimap: dict[InstrumentRef, InstrumentId] = {}
-        self._figi_resolver: FigiInstrumentResolver = (
-            config.figi_resolver if config.figi_resolver is not None
-            else FigiInstrumentResolver()
-        )
         self._futures_contract_chains: dict[str, tuple[DatedContract, ...]] = (
             config.futures_contract_chains or {}
         )
@@ -272,9 +264,9 @@ class RebalanceStrategy(Strategy):
         for bundle in self._sleeve_to_bundle.values():
             all_figis.update(bundle.contract.refs)
 
-        # Resolve refs to venue-native InstrumentIds via the Security Master,
-        # as-of the boot date.  The bimap is the SINGLE source of truth for
-        # instrument identity - every subscription, bar buffer, sizing read,
+        # Resolve refs to venue-native InstrumentIds from the provider-loaded
+        # cache, as-of the boot date.  The bimap is the SINGLE source of truth
+        # for instrument identity - every subscription, bar buffer, sizing read,
         # order, and risk cap keys off it.  A ListedRef resolves date-invariantly;
         # a FuturesRef resolves to its live contract for the boot date and is
         # re-resolved at the roll cadence (see _refresh_resolution).  (A stub
@@ -582,15 +574,18 @@ class RebalanceStrategy(Strategy):
         return ResolvedContractId(instrument_id.value)
 
     def _resolve_instrument_id(self, ref: InstrumentRef, as_of: date) -> InstrumentId:
-        """Resolve a ref to its venue-native InstrumentId as-of *as_of* via the
-        Security Master.  A ListedRef ignores ``as_of`` (date-invariant); a
-        FuturesRef selects its live dated contract for that date."""
-        if isinstance(ref, FuturesRef) and self._futures_contract_chains:
+        """Resolve a ref to its venue-native InstrumentId as-of *as_of* from the
+        provider-loaded bimap.  A ListedRef ignores ``as_of`` (date-invariant);
+        a FuturesRef selects its live dated contract for that date."""
+        if isinstance(ref, ListedRef):
+            return self._figi_to_instr_id(ref)
+        if isinstance(ref, FuturesRef):
+            if not self._futures_contract_chains:
+                raise InstrumentResolutionError(
+                    f"FuturesRef root {ref.root!r} has no provider-loaded contract chain"
+                )
             return self._loaded_futures_bimap((ref,), as_of)[ref]
-        instrument_id = self._figi_resolver.resolve(ref, as_of=as_of)
-        if not isinstance(instrument_id, InstrumentId):
-            raise FigiResolutionError(f"resolution for {ref!r} did not return an InstrumentId")
-        return instrument_id
+        raise InstrumentResolutionError(f"unsupported InstrumentRef variant {type(ref).__name__}")
 
     def _as_of(self) -> date:
         """The current trading date from the clock (TestClock in backtest,
@@ -703,7 +698,7 @@ class RebalanceStrategy(Strategy):
         """
         instr_id = self._figi_bimap.get(figi)
         if instr_id is None:
-            raise FigiResolutionError(
+            raise InstrumentResolutionError(
                 f"InstrumentRef {figi!r} is not in the resolved bimap; refusing to act "
                 f"on an unidentified instrument"
             )
@@ -712,7 +707,7 @@ class RebalanceStrategy(Strategy):
     def _resolve_bimap(
         self, refs: set[InstrumentRef], as_of: date
     ) -> dict[InstrumentRef, InstrumentId]:
-        """Resolve *refs* to a bimap via the Security Master, as-of *as_of*.
+        """Resolve *refs* to a bimap from provider-loaded cache instruments.
 
         ListedRefs resolve from the IB InstrumentProvider-loaded cache;
         FuturesRefs resolve to their live dated contract for *as_of*,
@@ -723,11 +718,13 @@ class RebalanceStrategy(Strategy):
         bimap: dict[InstrumentRef, InstrumentId] = {}
         if listed:
             bimap.update(loaded_listed_ref_bimap(listed, self.cache.instruments()))
-        if futures and self._futures_contract_chains:
+        if futures:
+            if not self._futures_contract_chains:
+                roots = ", ".join(sorted({ref.root for ref in futures}))
+                raise InstrumentResolutionError(
+                    f"FuturesRef root(s) {roots} have no provider-loaded contract chains"
+                )
             bimap.update(self._loaded_futures_bimap(futures, as_of))
-        else:
-            for ref in futures:
-                bimap[ref] = self._resolve_instrument_id(ref, as_of)
         return bimap
 
     def _loaded_futures_bimap(

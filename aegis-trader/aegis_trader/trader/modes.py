@@ -38,8 +38,8 @@ from nautilus_trader.risk.config import RiskEngineConfig
 
 from aegis_runtime import InstrumentRef
 from aegis_trader.domain.risk_guard import RiskGuardConfig
-from aegis_trader.execution.figi_resolver import FigiResolutionError
 from aegis_trader.trader.instrument_provider import (
+    InstrumentResolutionError,
     FuturesContractChains,
     IB_FUTURES_MIC_OVERRIDES,
     IB_LISTED_MIC_OVERRIDES,
@@ -217,7 +217,7 @@ def _instrument_provider_config(
     future_refs = list(futures_refs)
     if future_refs:
         if futures_as_of is None:
-            raise FigiResolutionError(
+            raise InstrumentResolutionError(
                 "futures_as_of is required to load FuturesRefs at IBKR"
             )
         load_contracts.extend(

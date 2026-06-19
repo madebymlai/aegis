@@ -8,8 +8,8 @@ from aegis_data.roll import DatedContract
 from aegis_runtime import FuturesRef, ListedRef
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_trader.execution.figi_resolver import FigiResolutionError
 from aegis_trader.trader.instrument_provider import (
+    InstrumentResolutionError,
     IB_FUTURES_MIC_OVERRIDES,
     IB_LISTED_MIC_OVERRIDES,
     declared_ref_currencies,
@@ -132,7 +132,7 @@ def test_loaded_futures_ref_bimap_records_provider_returned_contract_id():
 def test_loaded_listed_ref_bimap_fails_closed_when_provider_did_not_load_ref():
     ref = ListedRef("BBG000R20GS9")
 
-    with pytest.raises(FigiResolutionError, match="not loaded by the IB InstrumentProvider"):
+    with pytest.raises(InstrumentResolutionError, match="not loaded by the IB InstrumentProvider"):
         loaded_listed_ref_bimap({ref}, [])
 
 
@@ -143,7 +143,7 @@ def test_loaded_listed_ref_bimap_fails_closed_on_duplicate_figi_loads():
         _loaded_equity(ref.figi, "GBUS.LSEETF"),
     ]
 
-    with pytest.raises(FigiResolutionError, match="loaded more than once"):
+    with pytest.raises(InstrumentResolutionError, match="loaded more than once"):
         loaded_listed_ref_bimap({ref}, instruments)
 
 
@@ -158,7 +158,7 @@ def test_reconcile_quote_currency_keeps_declared_pence_when_ib_reports_major_gbp
 def test_reconcile_quote_currency_fails_closed_on_real_currency_disagreement():
     ref = ListedRef("BBG000R20GS9")
 
-    with pytest.raises(FigiResolutionError, match="disagrees"):
+    with pytest.raises(InstrumentResolutionError, match="disagrees"):
         reconcile_quote_currency(ref, "USD", {ref: "GBp"})
 
 
