@@ -22,7 +22,8 @@ from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency, Money
 
-from aegis_runtime import ExecutionBundle
+from aegis_data.store import read_native_bars
+from aegis_runtime import ExecutionBundle, InstrumentRef
 from aegis_runtime.currency import _major_currency_and_scale
 
 from aegis_trader.bundles.port import BundleRegistryPort
@@ -51,15 +52,17 @@ from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyCon
 
 @dataclass(frozen=True)
 class BarRequest:
-    """What the backtest asks a provider for one instrument, derived from the
-    sleeve's ``DataContract``: the provider ticker, the arrays the contract
-    declares, and the date window.  A provider adapter returns those arrays;
-    the runner keys identity off the contract's FIGI, not the ticker."""
+    """What the backtest asks for one instrument, derived from the sleeve's
+    ``DataContract``: canonical ref, provider label, arrays, timeframe, and date
+    window.  Store-backed reads key identity off ``ref``; legacy fetchers may use
+    ``ticker`` as their locator."""
 
     ticker: str
     required_arrays: tuple[str, ...]
     start: str
     end: str
+    ref: InstrumentRef | None = None
+    timeframe: str = "1D"
 
 
 # BarRequest -> OHLCV frame (native quote) with open/high/low/close/volume.
@@ -69,6 +72,7 @@ OhlcvFetcher = Callable[[BarRequest], pd.DataFrame]
 FxFetcher = Callable[[str, str, str, str], pd.Series]
 
 _PRICE_COLS = ("open", "high", "low", "close")
+_STORE_OHLCV_ARRAYS = (*_PRICE_COLS, "volume")
 
 
 class ContractDataError(ValueError):
@@ -89,6 +93,51 @@ class FxDataError(ValueError):
         self.base = base
         self.quote = quote
         super().__init__(f"FX {base}/{quote}: {detail}")
+
+
+def run_book_backtest_from_store(
+    book_path: str | Path,
+    *,
+    start: str,
+    end: str,
+    fetch_fx: FxFetcher,
+    store_dir: Path | None = None,
+    registry: BundleRegistryPort | None = None,
+    venue: str = "SIM",
+    starting_cash: float = 1_000_000.0,
+    trader_id: str = "BACKTEST-001",
+) -> BacktestEngine:
+    """Build and run a provider-free listed-bar Store Read backtest."""
+    return run_book_backtest(
+        book_path,
+        start=start,
+        end=end,
+        fetch_ohlcv=store_ohlcv_fetcher(store_dir=store_dir),
+        fetch_fx=fetch_fx,
+        registry=registry,
+        venue=venue,
+        starting_cash=starting_cash,
+        trader_id=trader_id,
+    )
+
+
+def store_ohlcv_fetcher(*, store_dir: Path | None = None) -> OhlcvFetcher:
+    """Return an OHLCV fetcher backed by provider-free aegis-data Store Read."""
+
+    def fetch(request: BarRequest) -> pd.DataFrame:
+        if request.ref is None:
+            raise ValueError("Store Read requires BarRequest.ref")
+        frames = read_native_bars(
+            (request.ref,),
+            arrays=_store_read_arrays(request.required_arrays),
+            timeframe=request.timeframe,
+            start=request.start,
+            end=request.end,
+            store_dir=store_dir,
+        )
+        return frames[request.ref]
+
+    return fetch
 
 
 def run_book_backtest(
@@ -150,6 +199,8 @@ def run_book_backtest(
                     required_arrays=bundle.contract.required_arrays,
                     start=start,
                     end=end,
+                    ref=figi,
+                    timeframe=book_timeframe,
                 )
             )
             _validate_contract_data(
@@ -228,6 +279,18 @@ def book_return_stats(engine: BacktestEngine) -> dict[str, float]:
         if isinstance(actor, BookEquityRecorder):
             return return_stats(actor.equity_curve)
     return {}
+
+
+def _store_read_arrays(required_arrays: tuple[str, ...]) -> tuple[str, ...]:
+    arrays: list[str] = []
+    seen: set[str] = set()
+    for array in (*_STORE_OHLCV_ARRAYS, *required_arrays):
+        key = array.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        arrays.append(array)
+    return tuple(arrays)
 
 
 def _starting_balances(

@@ -20,6 +20,7 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.instruments import CurrencyPair
 
+from aegis_data.store import StoreCoverageError, write_native_bars
 from aegis_runtime import (
     ListedRef,
     BundleManifest,
@@ -35,6 +36,7 @@ from aegis_trader.backtest import (
     ContractDataError,
     FxDataError,
     run_book_backtest,
+    run_book_backtest_from_store,
 )
 from aegis_trader.bundles.stub import StubBundleRegistry
 
@@ -637,6 +639,42 @@ def test_costed_backtest_fill_path_is_deterministic_with_pinned_seed(tmp_path):
     assert _execution_fills(_closed_order(first_engine)) == _execution_fills(_closed_order(second_engine))
     first_engine.dispose()
     second_engine.dispose()
+
+
+def test_run_book_backtest_from_store_feeds_preseeded_listed_bars(tmp_path):
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    write_native_bars(ListedRef(_FIGI), "1D", _synthetic_ohlcv(), store_dir=tmp_path)
+
+    engine = run_book_backtest_from_store(
+        str(book_path),
+        start="2020-01-01",
+        end="2020-01-07",
+        fetch_fx=_fx_must_not_be_called,
+        store_dir=tmp_path,
+        registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
+    )
+
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+    engine.dispose()
+    assert len(fills) == 1
+
+
+def test_run_book_backtest_from_store_fails_closed_on_missing_listed_bars(tmp_path):
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+
+    with pytest.raises(StoreCoverageError) as exc:
+        run_book_backtest_from_store(
+            str(book_path),
+            start="2020-01-01",
+            end="2020-01-07",
+            fetch_fx=_fx_must_not_be_called,
+            store_dir=tmp_path,
+            registry=StubBundleRegistry({_WHEEL: _FixedWeightBundle(_FIGI, 0.5)}),
+        )
+
+    assert _FIGI in str(exc.value)
 
 
 def test_run_book_backtest_asks_the_fetcher_for_each_contracts_required_arrays(tmp_path):

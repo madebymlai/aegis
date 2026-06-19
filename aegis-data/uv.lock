@@ -7,6 +7,7 @@ name = "aegis-data"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aegis-runtime" },
     { name = "databento" },
     { name = "nautilus-trader" },
     { name = "numpy" },
@@ -22,12 +23,31 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aegis-runtime", editable = "../aegis-runtime" },
     { name = "databento" },
     { name = "nautilus-trader" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "platformdirs" },
     { name = "pyarrow" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.0" }]
+
+[[package]]
+name = "aegis-runtime"
+version = "0.1.0"
+source = { editable = "../aegis-runtime" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pandas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy" },
+    { name = "pandas" },
 ]
 
 [package.metadata.requires-dev]
