@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from aegis_data.store import NativeBarsRequest, write_native_bars
 from aegis_data.yfinance import YFinanceLocator, pull_yfinance_native_bars
-from aegis_runtime import ListedRef
+from aegis_runtime import FuturesRef, ListedRef
 from vectorbtpro import vbt
 
 from research.aegis_research.data import load_market_data_result
@@ -143,7 +143,7 @@ def test_store_adapter_pulls_missing_yfinance_gap_then_reads_by_figi(
     monkeypatch.setattr("aegis_data.yfinance._fetch_yfinance", fetch_gap)
     config = make_data_config(
         source="store",
-        provider_kwargs={"provider": "yfinance"},
+        provider="yfinance",
         symbols=[{"ticker": "BRK-B", "ccy": "USD", "figi": ref.figi}],
         arrays=["Close"],
         start="2024-01-02",
@@ -189,7 +189,7 @@ def test_store_adapter_reads_listed_covered_history_by_figi(
     )
     config = make_data_config(
         source="store",
-        provider_kwargs={"provider": "yfinance"},
+        provider="yfinance",
         symbols=[{"ticker": "BRK-B", "ccy": "USD", "figi": ref.figi}],
         arrays=["Close"],
         start="2024-01-02",
@@ -224,7 +224,7 @@ def test_store_adapter_reads_raw_close_not_unrequested_adj_close(
     )
     config = make_data_config(
         source="store",
-        provider_kwargs={"provider": "yfinance"},
+        provider="yfinance",
         symbols=[{"ticker": "SPY", "ccy": "USD", "figi": ref.figi}],
         arrays=["Close"],
         start="2024-01-02",
@@ -258,7 +258,7 @@ def test_store_adapter_reads_requested_adj_close_through_aegis_data(
     )
     config = make_data_config(
         source="store",
-        provider_kwargs={"provider": "yfinance"},
+        provider="yfinance",
         symbols=[{"ticker": "SPY", "ccy": "USD", "figi": ref.figi}],
         arrays=["Close", "Adj Close"],
         start="2024-01-02",
@@ -269,6 +269,56 @@ def test_store_adapter_reads_requested_adj_close_through_aegis_data(
 
     assert result.native_data.get(feature="Close")["SPY"].tolist() == [100.0, 101.0, 102.0]
     assert result.native_data.get(feature="Adj Close")["SPY"].tolist() == [90.0, 91.0, 92.0]
+
+
+def test_store_adapter_folds_block_dataset_into_futures_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    ref = FuturesRef("ES", "GLBX.MDP3", "calendar", "unadjusted")
+    requests: list[NativeBarsRequest] = []
+
+    def pull_futures(request: NativeBarsRequest) -> object:
+        requests.append(request)
+        write_native_bars(
+            ref,
+            "1D",
+            pd.DataFrame(
+                {"Close": [5010.0, 5020.0, 5030.0]},
+                index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
+            ),
+            required_arrays=("Close",),
+        )
+        return object()
+
+    monkeypatch.setattr(
+        "research.aegis_research.market_data.adapters.store.pull_databento_futures_bars",
+        pull_futures,
+    )
+    config = make_data_config(
+        source="store",
+        provider="databento",
+        dataset="GLBX.MDP3",
+        symbols=[{"root": "ES", "ccy": "USD", "adjustment": "unadjusted"}],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+    result = load_market_data_result(config)
+
+    assert requests == [
+        NativeBarsRequest(
+            refs=(ref,),
+            arrays=("Close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+        )
+    ]
+    assert list(result.native_data.get(feature="Close").columns) == ["ES"]
+    assert result.native_data.get(feature="Close")["ES"].tolist() == [5010.0, 5020.0, 5030.0]
 
 
 def test_store_fx_rates_pull_through_aegis_data_fx_history(
@@ -294,7 +344,7 @@ def test_store_fx_rates_pull_through_aegis_data_fx_history(
     monkeypatch.setattr("aegis_data.yfinance._fetch_yfinance", fetch_fx)
     config = make_data_config(
         source="store",
-        provider_kwargs={"provider": "yfinance"},
+        provider="yfinance",
         symbols=[{"ticker": "SPY", "ccy": "USD", "figi": "BBG000B9XRY4"}],
         arrays=["Close"],
         start="2024-01-02",

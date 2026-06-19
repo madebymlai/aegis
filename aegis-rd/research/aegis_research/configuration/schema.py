@@ -20,7 +20,7 @@ from research.aegis_research.configuration.field_types import (
     UnitInterval,
 )
 
-CONFIG_SCHEMA_VERSION = 8
+CONFIG_SCHEMA_VERSION = 9
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
 # Full VBT feature names are source-specific and discovered from native_data.features.
@@ -104,9 +104,11 @@ ArrayToken = Annotated[str, AfterValidator(_validate_array_token)]
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class SymbolSpec:
-    """One universe member: its ticker and the currency it quotes in.
+    """One universe member: its RD symbol identity and quote currency.
 
-    Currency is instrument identity, declared inline beside the ticker (never
+    Listed symbols use ``ticker`` as their RD name and provider locator. Futures
+    store symbols use ``root`` as their RD name and take dataset semantics from
+    the data block. Currency is instrument identity, declared inline (never
     sniffed from a data provider). ``ccy`` is the literal quote token, including
     minor units such as ``GBp`` (pence); the converter owns the minor-unit math.
 
@@ -122,8 +124,8 @@ class SymbolSpec:
       ticker lookup, replacing any provider-specific exchange suffix.
     """
 
-    ticker: str
     ccy: str
+    ticker: str | None = None
     figi: str | None = None
     isin: str | None = None
     mic: str | None = None
@@ -134,24 +136,36 @@ class SymbolSpec:
 
     @property
     def is_future(self) -> bool:
-        return self.root is not None or self.dataset is not None
+        return self.root is not None
+
+    @property
+    def symbol_name(self) -> str:
+        if self.root is not None:
+            return self.root
+        if self.ticker is None:
+            raise ValueError("ticker is required for listed symbol")
+        return self.ticker
 
     @model_validator(mode="after")
     def _validate_instrument_identity(self) -> SymbolSpec:
-        if self.root is None and self.dataset is None:
-            return self
         if self.root is None:
-            raise ValueError("root is required when dataset declares a FuturesRef")
-        if self.dataset is None:
-            raise ValueError("dataset is required when root declares a FuturesRef")
-        if self.figi is not None or self.isin is not None:
-            raise ValueError("futures fields are mutually exclusive with listed identity hints figi/isin")
+            if self.dataset is not None:
+                raise ValueError("root is required when dataset declares a FuturesRef")
+            if self.ticker is None:
+                raise ValueError("ticker is required for listed symbol")
+            return self
+        if self.figi is not None or self.isin is not None or self.mic is not None:
+            raise ValueError(
+                "futures fields are mutually exclusive with listed identity hints figi/isin/mic"
+            )
         return self
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DataConfig:
     source: str = "synthetic"
+    provider: str | None = None
+    dataset: str | None = None
     # No schema default — required. Keyword-only so a required field can sit among
     # defaulted ones — every construction site splats **raw anyway.
     arrays: Annotated[list[ArrayToken], Field(min_length=1)] = field(kw_only=True)
@@ -181,13 +195,13 @@ class DataConfig:
 
     @property
     def tickers(self) -> list[str]:
-        """The universe tickers, in declared order."""
-        return [spec.ticker for spec in self.symbols]
+        """The RD symbol names, in declared order."""
+        return [spec.symbol_name for spec in self.symbols]
 
     @property
     def currency_by_symbol(self) -> dict[str, str]:
-        """Map ticker -> declared quote currency."""
-        return {spec.ticker: spec.ccy for spec in self.symbols}
+        """Map RD symbol name -> declared quote currency."""
+        return {spec.symbol_name: spec.ccy for spec in self.symbols}
 
     @model_validator(mode="after")
     def _validate_conditional_requireds(self) -> DataConfig:
@@ -217,8 +231,9 @@ class DataConfig:
         if self.source == "store":
             _require_symbols_for_source(self.source, self.symbols)
             _require_window_for_source(self.source, self)
-            _require_listed_store_symbols(self.symbols)
-            _require_store_gap_fill_provider(self.provider_kwargs)
+            _require_store_symbols(self.symbols, provider=self.provider, dataset=self.dataset)
+        elif self.provider is not None or self.dataset is not None:
+            raise ValueError("data.provider and data.dataset are only supported for store source")
         if self.skip_on_error and "skipped_symbols" not in self.quality.allowed_degradations:
             raise ValueError(
                 "skip_on_error requires data.quality.allowed_degradations to include 'skipped_symbols'"
@@ -235,8 +250,6 @@ class DataConfig:
 
 
 def _unsupported_local_kwarg_names(source: str) -> tuple[str, ...]:
-    if source == "store":
-        return ("wrapper_kwargs", "execution_kwargs")
     return ("wrapper_kwargs", "provider_kwargs", "execution_kwargs")
 
 
@@ -251,18 +264,48 @@ def _require_window_for_source(source: str, config: DataConfig) -> None:
             raise ValueError(f"{field_name} is required for {source} source")
 
 
-def _require_listed_store_symbols(symbols: list[SymbolSpec]) -> None:
+def _require_store_symbols(
+    symbols: list[SymbolSpec],
+    *,
+    provider: str | None,
+    dataset: str | None,
+) -> None:
+    normalized_provider = store_gap_fill_provider(provider)
+    if normalized_provider == "yfinance" and dataset is not None:
+        raise ValueError("dataset is not supported for store provider 'yfinance'")
+    if normalized_provider == "databento" and dataset is None:
+        raise ValueError("dataset is required for store provider 'databento'")
+    futures_roots: set[str] = set()
     for symbol in symbols:
         if symbol.is_future:
-            raise ValueError("store source currently supports listed instruments only")
-        if symbol.figi is None:
-            raise ValueError(f"figi is required for store source symbol {symbol.ticker!r}")
+            _require_store_future_symbol(symbol, provider=normalized_provider)
+            root = symbol.symbol_name
+            if root in futures_roots:
+                raise ValueError(f"duplicate futures root {root!r} in store data block")
+            futures_roots.add(root)
+            continue
+        _require_store_listed_symbol(symbol, provider=normalized_provider)
 
 
-def store_gap_fill_provider(provider_kwargs: dict[str, Any]) -> str:
-    provider = provider_kwargs.get("provider")
-    if set(provider_kwargs) != {"provider"}:
-        raise ValueError("store source requires exactly one data.provider_kwargs.provider")
+def _require_store_listed_symbol(symbol: SymbolSpec, *, provider: str) -> None:
+    if provider != "yfinance":
+        raise ValueError("listed store symbols require provider 'yfinance'")
+    if symbol.figi is None:
+        raise ValueError(f"figi is required for store source symbol {symbol.symbol_name!r}")
+
+
+def _require_store_future_symbol(symbol: SymbolSpec, *, provider: str) -> None:
+    if provider != "databento":
+        raise ValueError("futures store symbols require provider 'databento'")
+    if symbol.ticker is not None:
+        raise ValueError("futures store symbols must not declare ticker")
+    if symbol.dataset is not None:
+        raise ValueError("futures store symbols use block-level data.dataset, not per-symbol dataset")
+
+
+def store_gap_fill_provider(provider: str | None) -> str:
+    if provider is None:
+        raise ValueError("provider is required for store source")
     normalized = _STORE_PROVIDER_ALIASES.get(str(provider).lower())
     if normalized is None:
         allowed = sorted(_STORE_GAP_FILL_PROVIDERS)
@@ -272,20 +315,23 @@ def store_gap_fill_provider(provider_kwargs: dict[str, Any]) -> str:
     return normalized
 
 
-def _require_store_gap_fill_provider(provider_kwargs: dict[str, Any]) -> None:
-    store_gap_fill_provider(provider_kwargs)
-
-
 # Sources that can supply per-contract dated-contract data (the overlap the
 # back-adjustment needs).  Only these may declare ``adjustment: back_adjust``.
-_PER_CONTRACT_SOURCES = frozenset({"bento"})
-_STORE_GAP_FILL_PROVIDERS = frozenset({"yfinance"})
-_STORE_PROVIDER_ALIASES = {"yf": "yfinance", "yfinance": "yfinance"}
+_PER_CONTRACT_SOURCES = frozenset({"bento", "store"})
+_STORE_GAP_FILL_PROVIDERS = frozenset({"databento", "yfinance"})
+_STORE_PROVIDER_ALIASES = {
+    "bento": "databento",
+    "databento": "databento",
+    "yf": "yfinance",
+    "yfinance": "yfinance",
+}
 
 
 def _validate_future_source_support(source: str, symbol: SymbolSpec) -> None:
     if not symbol.is_future:
         return
+    if source != "store" and symbol.dataset is None:
+        raise ValueError("dataset is required when root declares a FuturesRef")
     if symbol.roll_rule != "calendar":
         raise ValueError(
             f"roll_rule {symbol.roll_rule!r} is not supported for {source} source"

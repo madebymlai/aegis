@@ -37,6 +37,44 @@ Strategy runs require Open and Close data so bar-aligned entry/exit signals can 
 
 Non-standard local columns must be normalized before ingestion or inside a source adapter; run configs do not provide feature mapping. Market-data symbols are not normalized: configs must use the provider's exact symbol format, such as `BTC-USD` for Yahoo Finance, `BTCUSDT` for Binance, or `BTC/USDT` for CCXT. This is intentional; hidden alias mapping would make evidence ambiguous.
 
+### Historical Store configs
+
+`data.source: store` reads cache-backed Covered History through `aegis-data` and may gap-fill through exactly one block-level `provider`. Required FX history uses the same provider; there is no `fx_provider`.
+
+Listed instruments keep `ticker` only as the provider locator and must declare the canonical `ListedRef` FIGI explicitly:
+
+```yaml
+data:
+  source: store
+  provider: yfinance
+  start: "2024-01-02"
+  end: "2024-03-01"
+  timeframe: 1D
+  arrays: [Close]
+  symbols:
+    - ticker: SPY
+      ccy: USD
+      figi: BBG000BDTBL9
+```
+
+Futures store configs use block-level Databento request semantics. The symbol authoring surface is the `FuturesRef.root`; RD columns/display names derive from that root, and per-symbol `ticker`, `locator`, `label`, and `dataset` are rejected:
+
+```yaml
+data:
+  source: store
+  provider: databento
+  dataset: GLBX.MDP3
+  start: "2024-01-02"
+  end: "2024-03-01"
+  timeframe: 1D
+  arrays: [Close]
+  symbols:
+    - root: ES
+      ccy: USD
+      roll_rule: calendar
+      adjustment: unadjusted
+```
+
 ## Why It Exists
 
 Most strategy research fails because the idea is weak, the evidence is incomplete, or the experiment cannot be repeated. Aegis RD is designed to make those failures cheap and obvious.

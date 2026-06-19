@@ -208,13 +208,15 @@ def _render_data_section() -> str:
             "Any VBT feature name works; no surrounding whitespace or control characters.",
             f"**Allowed sources**: {', '.join(f'`{s}`' for s in sorted(_allowed_data_sources()))}.",
             "",
-            "**`symbols`** — each entry is a `{ticker, ccy}` record (a bare string ticker is "
+            "**`symbols`** — listed entries are `{ticker, ccy}` records (a bare string ticker is "
             "rejected). `ccy` is the literal quote token declared inline beside the ticker — "
             "`EUR`, `USD`, or a minor unit such as `GBp` (pence). Currency is instrument "
             "identity and is never sniffed from the data provider. Prices are converted to "
             "`portfolio.base_currency` (default `EUR`) before indicators and the portfolio "
             "run; a non-base-currency leg additionally pays `portfolio.fx_conversion_cost` "
-            "per trade.",
+            "per trade. For `source: store`, listed symbols require `figi` and use `ticker` "
+            "only as the provider locator; futures symbols use `root` as the RD symbol name, "
+            "take block-level `data.dataset`, and reject per-symbol provider locators.",
             "",
             _render_field_table(SymbolSpec),
             "",

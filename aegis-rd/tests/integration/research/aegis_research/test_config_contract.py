@@ -210,6 +210,162 @@ def test_run_config_requires_explicit_data_arrays(tmp_path: Path) -> None:
     assert "required" in str(error.value)
 
 
+def test_store_source_requires_block_level_provider(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "symbols": [{"ticker": "SPY", "ccy": "USD", "figi": "BBG000BDTBL9"}],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert "data" in str(error.value)
+    assert "provider is required for store source" in str(error.value)
+
+
+def test_store_source_rejects_fx_provider(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "yfinance",
+        "fx_provider": "yfinance",
+        "symbols": [{"ticker": "SPY", "ccy": "USD", "figi": "BBG000BDTBL9"}],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert "data.fx_provider" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
+
+
+def test_store_listed_symbol_rejects_locator_alias(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "yfinance",
+        "symbols": [
+            {
+                "ticker": "BRK-B",
+                "locator": "BRK-B",
+                "ccy": "USD",
+                "figi": "BBG000B9XRY4",
+            }
+        ],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert "data.symbols[0].locator" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
+
+
+def test_store_listed_symbol_requires_explicit_listed_ref(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "yfinance",
+        "symbols": [{"ticker": "SPY", "ccy": "USD"}],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert "data" in str(error.value)
+    assert "figi is required for store source symbol 'SPY'" in str(error.value)
+
+
+def test_store_futures_symbols_derive_names_from_root(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "databento",
+        "dataset": "GLBX.MDP3",
+        "symbols": [{"root": "ES", "ccy": "USD", "adjustment": "unadjusted"}],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert resolved.config.data.tickers == ["ES"]
+    assert resolved.config.data.currency_by_symbol == {"ES": "USD"}
+
+
+def test_store_futures_symbols_reject_provider_locators(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "databento",
+        "dataset": "GLBX.MDP3",
+        "symbols": [{"root": "ES", "ticker": "ES.FUT", "ccy": "USD"}],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert "data" in str(error.value)
+    assert "futures store symbols must not declare ticker" in str(error.value)
+
+
+def test_store_futures_duplicate_roots_fail_closed(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "databento",
+        "dataset": "GLBX.MDP3",
+        "symbols": [
+            {"root": "ES", "ccy": "USD"},
+            {"root": "ES", "ccy": "USD", "adjustment": "back_adjust"},
+        ],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert "data" in str(error.value)
+    assert "duplicate futures root 'ES'" in str(error.value)
+
+
+def test_databento_store_requires_block_level_dataset(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "databento",
+        "symbols": [{"root": "ES", "ccy": "USD"}],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert "data" in str(error.value)
+    assert "dataset is required for store provider 'databento'" in str(error.value)
+
+
 def test_run_config_rejects_removed_feature_map(tmp_path: Path) -> None:
     raw = _run_config()
     raw["data"] = {

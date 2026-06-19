@@ -154,6 +154,8 @@ def _apply_futures_back_adjustment(
     continuous series sourced from :mod:`aegis_data` (Nautilus databento port +
     OS-global parquet store); a book with no back-adjust futures passes through.
     """
+    if data_config.source == "store":
+        return data_bundle
     futures = [s for s in data_config.symbols if s.is_future and s.adjustment == "back_adjust"]
     if not futures:
         return data_bundle
@@ -235,7 +237,7 @@ def _load_store_fx_rates(
     fx_ticker_by_currency: dict[str, str],
     index: pd.Index,
 ) -> pd.DataFrame:
-    provider = store_gap_fill_provider(data_config.provider_kwargs)
+    provider = store_gap_fill_provider(data_config.provider)
     if provider != "yfinance":
         raise ValueError(f"unsupported store FX gap-fill provider {provider!r}")
     start = _required_data_window_edge(data_config.start, "start")

@@ -107,7 +107,7 @@ def export_locked_bundle(
     # written: a fail-closed FIGI resolution must stop the export with no wheel.
     resolver = resolve_symbol_figis if figi_resolver is None else figi_resolver
     figi_by_ticker = resolver(config.data.symbols)
-    refs = _instrument_refs(config.data.symbols, figi_by_ticker)
+    refs = _instrument_refs(config.data, figi_by_ticker)
     strategy_definition = component_registry.get(
         ComponentSelection("strategies", config.strategy.id)
     )
@@ -301,7 +301,7 @@ def _bundle_contract(
     currency_by_symbol = config.data.currency_by_symbol
     base_currency = config.portfolio.base_currency
     return {
-        "refs": _instrument_refs(config.data.symbols, figi_by_ticker),
+        "refs": _instrument_refs(config.data, figi_by_ticker),
         "required_arrays": tuple(_required_arrays(components)),
         "base_currency": base_currency,
         "required_fx_currencies": tuple(
@@ -312,20 +312,23 @@ def _bundle_contract(
     }
 
 
-def _instrument_refs(symbols: Sequence[Any], figi_by_ticker: Mapping[str, str]) -> tuple[ListedRef | FuturesRef, ...]:
+def _instrument_refs(data_config: Any, figi_by_ticker: Mapping[str, str]) -> tuple[ListedRef | FuturesRef, ...]:
     refs: list[ListedRef | FuturesRef] = []
-    for symbol in symbols:
+    for symbol in data_config.symbols:
         if getattr(symbol, "is_future", False):
+            dataset = symbol.dataset or data_config.dataset
+            if dataset is None:
+                raise ValueError(f"dataset is required for futures symbol {symbol.root!r}")
             refs.append(
                 FuturesRef(
                     root=symbol.root,
-                    dataset=symbol.dataset,
+                    dataset=dataset,
                     roll_rule=symbol.roll_rule,
                     adjustment=symbol.adjustment,
                 )
             )
             continue
-        refs.append(ListedRef(figi_by_ticker[symbol.ticker]))
+        refs.append(ListedRef(figi_by_ticker[symbol.symbol_name]))
     return tuple(refs)
 
 
