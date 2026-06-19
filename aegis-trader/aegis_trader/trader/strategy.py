@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date
+
+from aegis_data.roll import DatedContract
 from typing import Any
 
 import numpy as np
@@ -74,6 +76,7 @@ from aegis_trader.execution.figi_resolver import (
 )
 from aegis_trader.trader.instrument_provider import (
     declared_ref_currencies,
+    loaded_futures_ref_bimap,
     loaded_listed_ref_bimap,
     reconcile_quote_currency,
 )
@@ -99,6 +102,7 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     figi_resolver: FigiInstrumentResolver | None = None
     risk_guard_config: RiskGuardConfig = RiskGuardConfig()
     obs_port: ObservabilityPort | None = None
+    futures_contract_chains: dict[str, tuple[DatedContract, ...]] | None = None
     fill_time_in_force: TimeInForce | None = None
     """Time-in-force for submitted orders (ADR-0001, next-close execution).
 
@@ -143,6 +147,9 @@ class RebalanceStrategy(Strategy):
         self._figi_resolver: FigiInstrumentResolver = (
             config.figi_resolver if config.figi_resolver is not None
             else FigiInstrumentResolver()
+        )
+        self._futures_contract_chains: dict[str, tuple[DatedContract, ...]] = (
+            config.futures_contract_chains or {}
         )
         # ── Slice 8: RiskEngine guards ───────────────────────────────────
         self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
@@ -566,6 +573,14 @@ class RebalanceStrategy(Strategy):
         """Resolve a ref to its venue-native InstrumentId as-of *as_of* via the
         Security Master.  A ListedRef ignores ``as_of`` (date-invariant); a
         FuturesRef selects its live dated contract for that date."""
+        if isinstance(ref, FuturesRef) and self._futures_contract_chains:
+            bimap = loaded_futures_ref_bimap(
+                {ref},
+                self.cache.instruments(),
+                as_of=as_of,
+                contract_chains=self._futures_contract_chains,
+            )
+            return bimap[ref]
         instrument_id = self._figi_resolver.resolve(ref, as_of=as_of)
         if not isinstance(instrument_id, InstrumentId):
             raise FigiResolutionError(f"resolution for {ref!r} did not return an InstrumentId")
@@ -702,8 +717,18 @@ class RebalanceStrategy(Strategy):
         bimap: dict[InstrumentRef, InstrumentId] = {}
         if listed:
             bimap.update(loaded_listed_ref_bimap(listed, self.cache.instruments()))
-        for ref in futures:
-            bimap[ref] = self._resolve_instrument_id(ref, as_of)
+        if futures and self._futures_contract_chains:
+            bimap.update(
+                loaded_futures_ref_bimap(
+                    futures,
+                    self.cache.instruments(),
+                    as_of=as_of,
+                    contract_chains=self._futures_contract_chains,
+                )
+            )
+        else:
+            for ref in futures:
+                bimap[ref] = self._resolve_instrument_id(ref, as_of)
         return bimap
 
     def _collect_sizing_params(

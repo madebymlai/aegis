@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Sequence
+from datetime import date
 from pathlib import Path
 
+from aegis_data.roll import DatedContract
 from aegis_trader.backtest import book_return_stats, run_book_backtest
 from aegis_trader.config import (
     IBConnectionSettings,
@@ -57,6 +60,9 @@ def build_ib_client_configs(
     mode: str,
     *,
     listed_refs: tuple[InstrumentRef, ...] = (),
+    futures_refs: tuple[InstrumentRef, ...] = (),
+    futures_as_of: date | None = None,
+    futures_contract_chains: dict[str, Sequence[DatedContract]] | None = None,
 ) -> tuple[dict, dict]:
     """Map resolved connection settings onto the IBKR data/exec client dicts.
 
@@ -68,22 +74,34 @@ def build_ib_client_configs(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id,
             listed_refs=listed_refs,
+            futures_refs=futures_refs,
+            futures_as_of=futures_as_of,
+            futures_contract_chains=futures_contract_chains,
         )
         execution = build_paper_exec_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id, account_id=settings.account_id,
             listed_refs=listed_refs,
+            futures_refs=futures_refs,
+            futures_as_of=futures_as_of,
+            futures_contract_chains=futures_contract_chains,
         )
     elif mode == "live":
         data = build_live_data_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id,
             listed_refs=listed_refs,
+            futures_refs=futures_refs,
+            futures_as_of=futures_as_of,
+            futures_contract_chains=futures_contract_chains,
         )
         execution = build_live_exec_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id, account_id=settings.account_id,
             listed_refs=listed_refs,
+            futures_refs=futures_refs,
+            futures_as_of=futures_as_of,
+            futures_contract_chains=futures_contract_chains,
         )
     else:
         raise ValueError(f"mode {mode!r} has no IBKR connection (backtest is offline)")
