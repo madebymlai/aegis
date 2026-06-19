@@ -32,11 +32,10 @@ globally on failure.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from datetime import date
 from typing import Any
 
-import pandas as pd
 from nautilus_trader.model.data import Bar, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
@@ -54,9 +53,7 @@ from aegis_runtime import (
     FuturesRef,
     InstrumentRef,
     ListedRef,
-    MarketDataBundle,
 )
-from aegis_runtime.currency import major_currency
 
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data import (
@@ -68,10 +65,8 @@ from aegis_trader.data import (
 )
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import IntegrityReport, check_account_integrity
-from aegis_trader.domain.rebalancer import rebalance_plan
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.roll import HeldContract, roll_positions
-from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import (
     OrderIntent,
@@ -91,6 +86,11 @@ from aegis_trader.observability.port import (
     GateOutcome,
     ObservabilityPort,
     RebalanceSummary,
+)
+from aegis_trader.trader.pipeline import (
+    CompletedRebalancePeriod,
+    MarketBar,
+    RebalancePipeline,
 )
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
 
@@ -159,8 +159,9 @@ class RebalanceStrategy(Strategy):
         # Wave B: reconciled book state behind a port (no direct cache/portfolio reads).
         self._book_state: BookStatePort | None = None
         self._market_data: MarketDataPort | None = None
-        # Pure cross-period analytics ledger (NAV, covariance, skew, attribution).
+        # Pure cross-period analytics ledger is injected into the per-period pipeline.
         self._sleeve_ledger: SleeveLedger = SleeveLedger()
+        self._pipeline: RebalancePipeline | None = None
         self._last_attribution: dict[SleeveName, float] = {}
         self._last_book_skew: float | None = None
         self._last_sleeve_weights: dict[SleeveName, float] = {}
@@ -183,7 +184,9 @@ class RebalanceStrategy(Strategy):
 
     @property
     def sleeve_ledger(self) -> SleeveLedger:
-        """Cross-period analytics ledger owned by this strategy."""
+        """Cross-period analytics ledger owned by the rebalance pipeline."""
+        if self._pipeline is not None:
+            return self._pipeline.sleeve_ledger
         return self._sleeve_ledger
 
     # ── port accessors ──────────────────────────────────────────────────────
@@ -200,6 +203,11 @@ class RebalanceStrategy(Strategy):
         if self._market_data is None:
             raise RuntimeError("market-data port queried before on_start wired it")
         return self._market_data
+
+    def _require_pipeline(self) -> RebalancePipeline:
+        if self._pipeline is None:
+            raise RuntimeError("rebalance pipeline queried before on_start wired it")
+        return self._pipeline
 
     # ── Nautilus lifecycle ────────────────────────────────────────────────────
 
@@ -299,6 +307,19 @@ class RebalanceStrategy(Strategy):
             if isinstance(instrument, CurrencyPair):
                 self.subscribe_quote_ticks(instrument.id)
 
+        declared_currencies = declared_ref_currencies(self._sleeve_to_bundle.values())
+        self._pipeline = RebalancePipeline(
+            book_state=self._require_book_state(),
+            market_data=self._require_market_data(),
+            book=self._book,
+            sleeve_to_bundle=self._sleeve_to_bundle,
+            ledger=self._sleeve_ledger,
+            resolve_instrument=self._instrument_id_for_ref,
+            reconcile_ref_currency=lambda ref, currency: reconcile_quote_currency(
+                ref, currency, declared_currencies
+            ),
+        )
+
         names = [s.value for s in self._sleeve_to_bundle]
         self.log.info(
             f"RebalanceStrategy starting; sleeves={names}, "
@@ -379,139 +400,45 @@ class RebalanceStrategy(Strategy):
         return bar.ts_event // self._period_ns
 
     def _rebalance_for_period(self) -> None:
-        """Compute per-sleeve targets from buffered bars, net, and submit.
-
-        Each sleeve computes on its own most-recent completed bars
-        (per-sleeve-latest as-of).  Orders are filtered to only FIGIs whose
-        venue was open during the completed period (calendar-aware).
-
-        Slice 5: collects per-FIGI instrument metadata, close prices, and
-        FX rates from Nautilus and passes them through to the rebalancer for
-        sizing (EUR notional → native share quantity with GBp pence + increment
-        rounding).
-        """
+        """Delegate completed-period orchestration to RebalancePipeline."""
         if self._is_halted:
             return
 
-        pending: dict[SleeveName, pd.DataFrame] = {}
-
-        for sleeve in self._book.sleeves:
-            bundle = self._sleeve_to_bundle.get(sleeve.name)
-            if bundle is None:
-                continue
-            contract = bundle.contract
-            lookback = contract.lookback_bars
-            needed = lookback + 1
-
-            # Collect each ref's completed-period bar buffer (enough lookback).
-            sleeve_bufs: dict[InstrumentRef, list[Bar]] = {}
-            sleeve_ok = True
-            for ref in contract.refs:
-                instr_id = self._instrument_id_for_ref(ref)
-                buf = self._bars_buffer.get(instr_id, [])
-                if len(buf) < needed:
-                    sleeve_ok = False
-                    break
-                sleeve_bufs[ref] = buf
-
-            if not sleeve_ok or not sleeve_bufs:
-                continue
-
-            # Assemble one DataFrame per array the contract declares (a column per
-            # FIGI), sourced from the buffered bars — the overlay feeds
-            # compute_weights exactly the arrays the bundle asked for.
-            arrays = {
-                name: _combine_array_series(sleeve_bufs, name)
-                for name in contract.required_arrays
-            }
-            bundle_data = MarketDataBundle(arrays)
-            fx_series = self._fx_series_for(contract, next(iter(arrays.values())).index)
-            if fx_series is None:
-                self.log.warning(
-                    f"sleeve {sleeve.name.value}: required FX unavailable; "
-                    f"skipping (fail closed, no fabricated rate)"
-                )
-                continue
-            target = bundle.compute_weights(bundle_data, fx_series=fx_series)
-            pending[sleeve.name] = target
-
-        if not pending:
+        result = self._require_pipeline().rebalance_period(
+            CompletedRebalancePeriod(
+                bars_by_ref=self._market_bars_by_ref(),
+                fresh_refs=frozenset(self._period_fresh_figis),
+            )
+        )
+        self._last_sleeve_weights = self._require_pipeline().last_sleeve_weights
+        if result.summary.num_sleeves == 0:
             return
 
-        # Net all sleeve targets and submit
-        nav = self._require_book_state().nav()
+        self._log_rebalance_summary(result.summary)
+        if result.summary.gate_outcome == GateOutcome.ERROR:
+            self._is_halted = True
+            reason = result.halt_reason or "rebalance gate failed"
+            self.log.error(f"Rebalance gate FAILED: {reason}. HALTING the book.")
+            if self._obs_port is not None:
+                self._obs_port.alert_halt(reason)
+            return
 
-        instrument_metas, fx_rates, prices = self._collect_sizing_params()
-        realized_weights = self._require_book_state().realized_weights()
-
-        # Two-step pipeline: the pure rebalancer decides what to trade (signed
-        # weight deltas) against the REALIZED book (so bands, the realized-book
-        # gate, and the fidelity trip engage); the sizer converts each delta into
-        # a native share count.
-        plan = rebalance_plan(
-            pending,
-            self._book,
-            realized_weights=realized_weights,
-            realized_covariance=self._sleeve_ledger.realized_covariance(
-                self._positive_risk_sleeve_names()
-            ),
-            previous_sleeve_weights=self._last_sleeve_weights,
-            realized_drawdown=self._sleeve_ledger.current_drawdown(nav),
-        )
-        self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
-        orders = size_deltas(
-            plan.deltas,
-            nav,
-            instrument_metas=instrument_metas,
-            fx_rates=fx_rates,
-            prices=prices,
-        )
-
-        # ── Slice 9: compute total notional for the summary ──────────────
-        total_notional = sum(
-            abs(o.quantity) for o in orders
-            if o.ref in self._period_fresh_figis
-        )
-
-        # ── Slice 9: build and log the rebalance summary ─────────────────
-        # After netting there is at most one OrderIntent per FIGI, so
-        # num_targets (distinct FIGIs with non-zero net) equals num_orders.
-        summary = RebalanceSummary(
-            nav=nav,
-            num_sleeves=len(pending),
-            num_targets=len(orders),
-            num_orders=len(orders),
-            gate_outcome=GateOutcome.PASS,
-            total_notional=total_notional,
-        )
-        self._log_rebalance_summary(summary)
-
-        # ── Slice 9: store per-sleeve targets & closes for attribution ───
-        # Record this period's realized weights, per-sleeve target rows, and
-        # closes so on_stop can decompose the realized-weight book P&L by sleeve.
-        # Each pending target is non-empty: rebalance() above took iloc[-1].
-        self._sleeve_ledger.record(
-            nav=nav,
-            realized_weights=dict(realized_weights),
-            sleeve_targets={
-                name: {
-                    _column_ref(figi): float(weight)
-                    for figi, weight in target_df.iloc[-1].to_dict().items()
-                }
-                for name, target_df in pending.items()
-            },
-            closes=dict(prices),
-        )
-
-        # Calendar-aware: only emit orders for FIGIs with a fresh bar
-        for oi in orders:
-            if oi.ref not in self._period_fresh_figis:
-                self.log.info(
-                    f"Skipping {oi.side.value} {oi.quantity:.0f} "
-                    f"{oi.ref.value}: venue closed this period"
-                )
-                continue
+        for oi in result.orders:
             self._submit_order_intent(oi)
+
+    def _market_bars_by_ref(self) -> dict[InstrumentRef, tuple[MarketBar, ...]]:
+        refs = {
+            ref
+            for bundle in self._sleeve_to_bundle.values()
+            for ref in bundle.contract.refs
+        }
+        bars_by_ref: dict[InstrumentRef, tuple[MarketBar, ...]] = {}
+        for ref in refs:
+            instr_id = self._instrument_id_for_ref(ref)
+            bars = self._bars_buffer.get(instr_id, [])
+            if bars:
+                bars_by_ref[ref] = tuple(_to_market_bar(bar) for bar in bars)
+        return bars_by_ref
 
     def _refresh_resolution(self, as_of: date) -> None:
         """Re-resolve each FuturesRef as-of *as_of*; when its live contract has
@@ -623,7 +550,7 @@ class RebalanceStrategy(Strategy):
         """
         names = self._positive_risk_sleeve_names()
         weights = {name: self._last_sleeve_weights.get(name, 0.0) for name in names}
-        self._last_book_skew = self._sleeve_ledger.realized_book_skew(weights, names)
+        self._last_book_skew = self.sleeve_ledger.realized_book_skew(weights, names)
         if self._last_book_skew is None:
             return
         convexity = "convex" if self._last_book_skew >= 0.0 else "concave"
@@ -641,11 +568,11 @@ class RebalanceStrategy(Strategy):
         """
         self._record_book_skew()
 
-        if self._sleeve_ledger.observation_count < 2:
+        if self.sleeve_ledger.observation_count < 2:
             return
 
         risk_shares = self._book.allocator_risk_shares()
-        attribution = self._sleeve_ledger.attribution(risk_shares)
+        attribution = self.sleeve_ledger.attribution(risk_shares)
         self._last_attribution = attribution
 
         if attribution:
@@ -706,89 +633,6 @@ class RebalanceStrategy(Strategy):
             contract_chains=self._futures_contract_chains,
             roll_lead_days=self._futures_roll_lead_days,
         )
-
-    def _collect_sizing_params(
-        self,
-    ) -> tuple[dict[InstrumentRef, InstrumentSizing], dict[str, float], dict[InstrumentRef, float]]:
-        """Gather per-FIGI instrument metadata, FX rates, and latest close
-        prices from Nautilus for sizing.
-
-        Returns three dicts keyed by :class:`InstrumentRef` (instrument_metas/prices) or
-        currency (fx_rates).  An instrument that cannot be resolved from the
-        cache is silently omitted (the rebalancer will fall back to raw
-        notional for it).
-        """
-        instrument_metas: dict[InstrumentRef, InstrumentSizing] = {}
-        prices: dict[InstrumentRef, float] = {}
-        currencies: set[str] = set()
-
-        refs: set[InstrumentRef] = set()
-        for bundle in self._sleeve_to_bundle.values():
-            refs.update(bundle.contract.refs)
-        declared_currencies = declared_ref_currencies(self._sleeve_to_bundle.values())
-
-        for ref in refs:
-            instr_id = self._instrument_id_for_ref(ref)
-            sizing = self._require_market_data().instrument_sizing(instr_id)
-            if sizing is None:
-                continue
-
-            quote_currency = reconcile_quote_currency(ref, sizing.currency, declared_currencies)
-            instrument_metas[ref] = InstrumentSizing(
-                currency=quote_currency,
-                size_increment=sizing.size_increment,
-            )
-
-            buf = self._bars_buffer.get(instr_id)
-            if buf:
-                prices[ref] = float(buf[-1].close.as_double())
-
-            currencies.add(quote_currency)
-
-        fx_rates: dict[str, float] = {}
-        for currency in currencies:
-            rate = self._get_fx_rate(currency)
-            if rate is not None:
-                fx_rates[currency] = rate
-
-        return instrument_metas, fx_rates, prices
-
-    def _fx_series_for(
-        self, contract: DataContract, index: pd.Index
-    ) -> dict[str, pd.Series] | None:
-        """Build the base→ccy FX series a bundle needs for its
-        ``required_fx_currencies``, sourced live from the MarketDataPort.
-
-        Returns ``{}`` when no FX is needed, or ``None`` when a required rate is
-        unavailable — the caller then skips the sleeve (fail closed; the bundle
-        is never run on a fabricated or absent rate).
-        """
-        needed = contract.required_fx_currencies
-        if not needed:
-            return {}
-        base = self._book.base_currency
-        series: dict[str, pd.Series] = {}
-        for ccy in needed:
-            rate = self._require_market_data().fx_rate(base, ccy)
-            if rate is None:
-                return None
-            series[ccy] = pd.Series(rate, index=index)
-        return series
-
-    def _get_fx_rate(self, target_currency: str) -> float | None:
-        """FX rate as the instrument's MAJOR quote currency per 1 base — e.g.
-        GBP per EUR for a GBP or GBp instrument (the GBp pence factor is applied
-        inside ``sizing.size_order``).
-
-        Sourced live from the MarketDataPort.  Returns 1.0 when the major currency
-        is the base, and None when no rate is available — the instrument is then
-        left unsized (fail closed; no fabricated FX).
-        """
-        base = self._book.base_currency
-        major = major_currency(target_currency)
-        if major == base:
-            return 1.0
-        return self._require_market_data().fx_rate(base, major)
 
     # -- RiskEngine callbacks ---------------------------------------------------
 
@@ -861,39 +705,12 @@ class RebalanceStrategy(Strategy):
         self.submit_order(order)
 
 
-def _column_ref(column: object) -> InstrumentRef:
-    if isinstance(column, ListedRef | FuturesRef):
-        return column
-    return ListedRef(str(column))
-
-
-_BAR_ARRAY_ACCESSORS: dict[str, Callable[[Bar], float]] = {
-    "Open": lambda b: float(b.open.as_double()),
-    "High": lambda b: float(b.high.as_double()),
-    "Low": lambda b: float(b.low.as_double()),
-    "Close": lambda b: float(b.close.as_double()),
-    "Volume": lambda b: float(b.volume.as_double()),
-}
-
-
-def _bars_to_array_series(
-    bars: list[Bar], ref: InstrumentRef, array_name: str
-) -> pd.DataFrame:
-    """Convert buffered bars into a single-column DataFrame keyed by ref."""
-    accessor = _BAR_ARRAY_ACCESSORS[array_name]
-    index = pd.DatetimeIndex([b.ts_event for b in bars])
-    values = [accessor(b) for b in bars]
-    return pd.DataFrame({ref: values}, index=index)
-
-
-def _combine_array_series(
-    buffers_by_ref: dict[InstrumentRef, list[Bar]], array_name: str
-) -> pd.DataFrame:
-    """One DataFrame for *array_name* with a column per InstrumentRef."""
-    series = {
-        ref: _bars_to_array_series(buf, ref, array_name)
-        for ref, buf in buffers_by_ref.items()
-    }
-    if len(series) == 1:
-        return next(iter(series.values()))
-    return pd.concat(series.values(), axis=1)
+def _to_market_bar(bar: Bar) -> MarketBar:
+    return MarketBar(
+        ts_event=bar.ts_event,
+        open=float(bar.open.as_double()),
+        high=float(bar.high.as_double()),
+        low=float(bar.low.as_double()),
+        close=float(bar.close.as_double()),
+        volume=float(bar.volume.as_double()),
+    )

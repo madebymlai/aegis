@@ -1,0 +1,327 @@
+"""Nautilus-free per-period rebalance orchestration.
+
+The pipeline owns the pure rebalance path: build each sleeve's runtime market
+bundle from a completed-period bar snapshot, run the sleeve Execution Bundles,
+net through the rebalancer, size into OrderIntents, record the SleeveLedger, and
+return value objects for the Strategy to log and submit.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+import pandas as pd
+
+from aegis_runtime import (
+    DataContract,
+    ExecutionBundle,
+    FuturesRef,
+    InstrumentRef,
+    ListedRef,
+    MarketDataBundle,
+)
+from aegis_runtime.currency import major_currency
+
+from aegis_trader.domain.book_config import BookConfig
+from aegis_trader.domain.rebalancer import rebalance_plan
+from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
+from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.types import OrderIntent, SleeveName
+from aegis_trader.observability.port import GateOutcome, RebalanceSummary
+
+if TYPE_CHECKING:
+    from aegis_trader.data.market_data import MarketDataPort
+    from aegis_trader.portfolio import BookStatePort
+
+
+InstrumentResolver = Callable[[InstrumentRef], Any]
+RefCurrencyReconciler = Callable[[InstrumentRef, str], str]
+
+
+@dataclass(frozen=True)
+class MarketBar:
+    """One completed native market bar in pure value form."""
+
+    ts_event: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+@dataclass(frozen=True)
+class CompletedRebalancePeriod:
+    """Snapshot of the completed period consumed by the rebalance pipeline."""
+
+    bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]]
+    fresh_refs: frozenset[InstrumentRef]
+
+
+@dataclass(frozen=True)
+class RebalanceResult:
+    """Plain output of one rebalance period."""
+
+    orders: tuple[OrderIntent, ...]
+    summary: RebalanceSummary
+    halt_reason: str | None = None
+
+
+class RebalancePipeline:
+    """Pure per-period rebalance orchestrator.
+
+    Constructor injection keeps Nautilus at the edge: the Strategy supplies the
+    cache-backed ports and an identity resolver; the pipeline only sees canonical
+    InstrumentRefs, plain market bars, and domain value objects.
+    """
+
+    def __init__(
+        self,
+        *,
+        book_state: BookStatePort,
+        market_data: MarketDataPort,
+        book: BookConfig,
+        sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle],
+        ledger: SleeveLedger,
+        resolve_instrument: InstrumentResolver,
+        reconcile_ref_currency: RefCurrencyReconciler | None = None,
+    ) -> None:
+        self._book_state = book_state
+        self._market_data = market_data
+        self._book = book
+        self._sleeve_to_bundle = sleeve_to_bundle
+        self._ledger = ledger
+        self._resolve_instrument = resolve_instrument
+        self._reconcile_ref_currency = reconcile_ref_currency or _identity_currency
+        self._last_sleeve_weights: dict[SleeveName, float] = {}
+
+    @property
+    def sleeve_ledger(self) -> SleeveLedger:
+        """Cross-period analytics ledger owned by the pipeline."""
+        return self._ledger
+
+    @property
+    def last_sleeve_weights(self) -> dict[SleeveName, float]:
+        """Last allocator-applied sleeve multipliers, for evidence/backtest seams."""
+        return dict(self._last_sleeve_weights)
+
+    def rebalance_period(self, period: CompletedRebalancePeriod) -> RebalanceResult:
+        """Run one completed-period rebalance and return orders plus summary."""
+        pending = self._compute_sleeve_targets(period)
+        nav = self._book_state.nav()
+        if not pending:
+            return RebalanceResult(orders=(), summary=_summary(nav, 0, 0, 0, GateOutcome.PASS, 0.0))
+
+        realized_weights = self._book_state.realized_weights()
+        try:
+            plan = rebalance_plan(
+                pending,
+                self._book,
+                realized_weights=realized_weights,
+                realized_covariance=self._ledger.realized_covariance(
+                    self._positive_risk_sleeve_names()
+                ),
+                previous_sleeve_weights=self._last_sleeve_weights,
+                realized_drawdown=self._ledger.current_drawdown(nav),
+            )
+        except ValueError as exc:
+            return RebalanceResult(
+                orders=(),
+                summary=_summary(nav, len(pending), 0, 0, GateOutcome.ERROR, 0.0),
+                halt_reason=str(exc),
+            )
+
+        self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
+        instrument_metas, fx_rates, prices = self._collect_sizing_params(period.bars_by_ref)
+        sized_orders = size_deltas(
+            plan.deltas,
+            nav,
+            instrument_metas=instrument_metas,
+            fx_rates=fx_rates,
+            prices=prices,
+        )
+        executable_orders = tuple(o for o in sized_orders if o.ref in period.fresh_refs)
+        total_notional = sum(abs(o.quantity) for o in executable_orders)
+
+        self._ledger.record(
+            nav=nav,
+            realized_weights=dict(realized_weights),
+            sleeve_targets={
+                name: {
+                    _column_ref(ref): float(weight)
+                    for ref, weight in target_df.iloc[-1].to_dict().items()
+                }
+                for name, target_df in pending.items()
+            },
+            closes=dict(prices),
+        )
+
+        return RebalanceResult(
+            orders=executable_orders,
+            summary=_summary(
+                nav,
+                len(pending),
+                len(sized_orders),
+                len(executable_orders),
+                GateOutcome.PASS,
+                total_notional,
+            ),
+        )
+
+    def _compute_sleeve_targets(
+        self, period: CompletedRebalancePeriod
+    ) -> dict[SleeveName, pd.DataFrame]:
+        pending: dict[SleeveName, pd.DataFrame] = {}
+        for sleeve in self._book.sleeves:
+            bundle = self._sleeve_to_bundle.get(sleeve.name)
+            if bundle is None:
+                continue
+            contract = bundle.contract
+            sleeve_bars = _bars_for_contract(contract, period.bars_by_ref)
+            if sleeve_bars is None:
+                continue
+            arrays = {
+                name: _combine_array_series(sleeve_bars, name)
+                for name in contract.required_arrays
+            }
+            fx_series = self._fx_series_for(contract, next(iter(arrays.values())).index)
+            if fx_series is None:
+                continue
+            pending[sleeve.name] = bundle.compute_weights(
+                MarketDataBundle(arrays), fx_series=fx_series
+            )
+        return pending
+
+    def _collect_sizing_params(
+        self,
+        bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]],
+    ) -> tuple[dict[InstrumentRef, InstrumentSizing], dict[str, float], dict[InstrumentRef, float]]:
+        instrument_metas: dict[InstrumentRef, InstrumentSizing] = {}
+        prices: dict[InstrumentRef, float] = {}
+        currencies: set[str] = set()
+
+        refs = {
+            ref
+            for bundle in self._sleeve_to_bundle.values()
+            for ref in bundle.contract.refs
+        }
+        for ref in refs:
+            resolved_id = self._resolve_instrument(ref)
+            sizing = self._market_data.instrument_sizing(resolved_id)
+            if sizing is None:
+                continue
+            quote_currency = self._reconcile_ref_currency(ref, sizing.currency)
+            instrument_metas[ref] = InstrumentSizing(
+                currency=quote_currency,
+                size_increment=sizing.size_increment,
+            )
+            bars = bars_by_ref.get(ref)
+            if bars:
+                prices[ref] = float(bars[-1].close)
+            currencies.add(quote_currency)
+
+        fx_rates: dict[str, float] = {}
+        for currency in currencies:
+            rate = self._get_fx_rate(currency)
+            if rate is not None:
+                fx_rates[currency] = rate
+        return instrument_metas, fx_rates, prices
+
+    def _fx_series_for(
+        self, contract: DataContract, index: pd.Index
+    ) -> dict[str, pd.Series] | None:
+        if not contract.required_fx_currencies:
+            return {}
+        series: dict[str, pd.Series] = {}
+        for currency in contract.required_fx_currencies:
+            rate = self._market_data.fx_rate(self._book.base_currency, currency)
+            if rate is None:
+                return None
+            series[currency] = pd.Series(rate, index=index)
+        return series
+
+    def _get_fx_rate(self, target_currency: str) -> float | None:
+        major = major_currency(target_currency)
+        if major == self._book.base_currency:
+            return 1.0
+        return self._market_data.fx_rate(self._book.base_currency, major)
+
+    def _positive_risk_sleeve_names(self) -> tuple[SleeveName, ...]:
+        risk_shares = self._book.allocator_risk_shares()
+        return tuple(
+            sleeve.name for sleeve in self._book.sleeves if risk_shares[sleeve.name] > 0
+        )
+
+
+def _bars_for_contract(
+    contract: DataContract,
+    bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]],
+) -> dict[InstrumentRef, Sequence[MarketBar]] | None:
+    needed = contract.lookback_bars + 1
+    sleeve_bars: dict[InstrumentRef, Sequence[MarketBar]] = {}
+    for ref in contract.refs:
+        bars = bars_by_ref.get(ref, ())
+        if len(bars) < needed:
+            return None
+        sleeve_bars[ref] = bars
+    return sleeve_bars
+
+
+_BAR_ARRAY_ACCESSORS: dict[str, Callable[[MarketBar], float]] = {
+    "Open": lambda b: b.open,
+    "High": lambda b: b.high,
+    "Low": lambda b: b.low,
+    "Close": lambda b: b.close,
+    "Volume": lambda b: b.volume,
+}
+
+
+def _bars_to_array_series(
+    bars: Sequence[MarketBar], ref: InstrumentRef, array_name: str
+) -> pd.DataFrame:
+    accessor = _BAR_ARRAY_ACCESSORS[array_name]
+    index = pd.DatetimeIndex([bar.ts_event for bar in bars])
+    values = [accessor(bar) for bar in bars]
+    return pd.DataFrame({ref: values}, index=index)
+
+
+def _combine_array_series(
+    buffers_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]], array_name: str
+) -> pd.DataFrame:
+    series = {
+        ref: _bars_to_array_series(bars, ref, array_name)
+        for ref, bars in buffers_by_ref.items()
+    }
+    if len(series) == 1:
+        return next(iter(series.values()))
+    return pd.concat(series.values(), axis=1)
+
+
+def _column_ref(column: object) -> InstrumentRef:
+    if isinstance(column, ListedRef | FuturesRef):
+        return column
+    return ListedRef(str(column))
+
+
+def _identity_currency(_ref: InstrumentRef, currency: str) -> str:
+    return currency
+
+
+def _summary(
+    nav: float,
+    num_sleeves: int,
+    num_targets: int,
+    num_orders: int,
+    gate_outcome: GateOutcome,
+    total_notional: float,
+) -> RebalanceSummary:
+    return RebalanceSummary(
+        nav=nav,
+        num_sleeves=num_sleeves,
+        num_targets=num_targets,
+        num_orders=num_orders,
+        gate_outcome=gate_outcome,
+        total_notional=total_notional,
+    )

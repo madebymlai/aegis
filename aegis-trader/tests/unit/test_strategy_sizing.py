@@ -14,7 +14,12 @@ from nautilus_trader.model.identifiers import InstrumentId
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
+from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.trader.instrument_provider import (
+    declared_ref_currencies,
+    reconcile_quote_currency,
+)
+from aegis_trader.trader.pipeline import RebalancePipeline
 
 _FIGI = "BBG000R20GS9"
 _REF = ListedRef(_FIGI)
@@ -32,6 +37,20 @@ class _MarketData:
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         assert (base_currency, quote_currency) == ("EUR", "GBP")
         return 0.85
+
+
+class _BookState:
+    def nav(self) -> float:
+        return 100_000.0
+
+    def cash(self) -> float:
+        return 100_000.0
+
+    def is_cache_healthy(self) -> bool:
+        return True
+
+    def realized_weights(self) -> dict[ListedRef, float]:
+        return {}
 
 
 class _PenceBundle(ExecutionBundle):
@@ -73,17 +92,26 @@ class _PenceBundle(ExecutionBundle):
         raise AssertionError("weight computation is not part of this test")
 
 
-def test_strategy_sizing_uses_declared_pence_currency_with_major_fx_rate():
+def test_pipeline_sizing_uses_declared_pence_currency_with_major_fx_rate():
     book = BookConfig(
         sleeves=(SleeveConfig(name=SleeveName("uk"), wheel_filename="uk.whl", risk_share=1.0),),
         base_currency="EUR",
     )
-    strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
-    strategy.register_sleeve(book.sleeves[0].name, _PenceBundle())
-    strategy._figi_bimap = {_REF: _INSTRUMENT_ID}
-    strategy._market_data = _MarketData()
+    bundle = _PenceBundle()
+    declared_currencies = declared_ref_currencies((bundle,))
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(),
+        book=book,
+        sleeve_to_bundle={book.sleeves[0].name: bundle},
+        ledger=SleeveLedger(),
+        resolve_instrument=lambda ref: _INSTRUMENT_ID,
+        reconcile_ref_currency=lambda ref, currency: reconcile_quote_currency(
+            ref, currency, declared_currencies
+        ),
+    )
 
-    instrument_metas, fx_rates, prices = strategy._collect_sizing_params()
+    instrument_metas, fx_rates, prices = pipeline._collect_sizing_params({})
 
     assert instrument_metas == {_REF: InstrumentSizing(currency="GBp", size_increment=1.0)}
     assert fx_rates == {"GBp": 0.85}
