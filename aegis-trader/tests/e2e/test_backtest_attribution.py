@@ -28,6 +28,7 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 VENUE = Venue("XLON")
@@ -97,7 +98,9 @@ def test_attribution_uses_real_per_period_nav():
 
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _FixedWeightBundle(_FIGI, 0.5))
-    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver({ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")})
+    )
     engine.add_strategy(strategy)
 
     engine.run()
@@ -152,7 +155,9 @@ def test_realized_book_skew_is_recorded_as_evidence():
 
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _FixedWeightBundle(_FIGI, 0.5))
-    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver({ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")})
+    )
     engine.add_strategy(strategy)
 
     engine.run()

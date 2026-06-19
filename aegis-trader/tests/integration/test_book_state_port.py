@@ -104,11 +104,12 @@ class _FakeCache:
 
 def _book_state(*, portfolio: _FakePortfolio, cache: _FakeCache,
                 instr_to_figi: dict[str, str] | None = None) -> NautilusBookState:
+    refs = instr_to_figi if instr_to_figi is not None else {_IID_A.value: _FIGI_A}
     return NautilusBookState(
         portfolio=portfolio,
         cache=cache,
         base_currency=EUR,
-        instr_to_figi=instr_to_figi if instr_to_figi is not None else {_IID_A.value: _FIGI_A},
+        instrument_ref_for_id=refs.get,
     )
 
 

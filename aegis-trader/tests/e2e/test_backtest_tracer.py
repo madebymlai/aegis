@@ -33,6 +33,7 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 # ── synthetic bundle ──────────────────────────────────────────────────────────
@@ -177,7 +178,9 @@ def test_tracer_e2e():
 
     config = RebalanceStrategyConfig(book=book)
     strategy = RebalanceStrategy(config=config)
-    strategy._figi_bimap = {ListedRef(_SYNTH_FIGI): InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")}
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver({ListedRef(_SYNTH_FIGI): InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")})
+    )
     strategy.register_sleeve(book.sleeves[0].name, bundle)
     engine.add_strategy(strategy)
 

@@ -32,6 +32,7 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _FIGI = "BBG000C6K6G9"  # a London-listed name (GBP)
@@ -121,7 +122,9 @@ def test_gbp_instrument_sizes_with_live_fx():
     book = _make_book()
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _GbpBundle(0.5))
-    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver({ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")})
+    )
     engine.add_strategy(strategy)
 
     engine.run()
@@ -179,7 +182,9 @@ def _run_with_bundle(bundle: ExecutionBundle, *, set_fx: bool) -> tuple[Backtest
     book = _make_book()
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, bundle)
-    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver({ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")})
+    )
     engine.add_strategy(strategy)
     engine.run()
     fills = [o for o in engine.cache.orders() if o.is_closed]
@@ -232,14 +237,19 @@ def test_held_gbp_position_surfaces_in_realized_weights_via_mark_xrate():
     book = _make_book()
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _GbpBundle(0.5))
-    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver({ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")})
+    )
     engine.add_strategy(strategy)
     engine.run()
 
     gbp_id = engine.cache.positions_open()[0].instrument_id
+    refs = {gbp_id.value: _FIGI}
     book_state = NautilusBookState(
-        portfolio=engine.portfolio, cache=engine.cache,
-        base_currency=EUR, instr_to_figi={gbp_id.value: _FIGI},
+        portfolio=engine.portfolio,
+        cache=engine.cache,
+        base_currency=EUR,
+        instrument_ref_for_id=refs.get,
     )
 
     weights = book_state.realized_weights()
@@ -299,7 +309,9 @@ def test_overlay_marks_fx_from_quotes_so_non_base_sleeve_trades_and_surfaces():
     book = _make_book()
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _GbpBundle(0.5))
-    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver({ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")})
+    )
     engine.add_strategy(strategy)
     engine.run()
 
@@ -307,9 +319,12 @@ def test_overlay_marks_fx_from_quotes_so_non_base_sleeve_trades_and_surfaces():
     assert fills, "FX-quote-derived mark must let the GBP sleeve size and fill"
 
     gbp_id = engine.cache.positions_open()[0].instrument_id
+    refs = {gbp_id.value: _FIGI}
     book_state = NautilusBookState(
-        portfolio=engine.portfolio, cache=engine.cache,
-        base_currency=EUR, instr_to_figi={gbp_id.value: _FIGI},
+        portfolio=engine.portfolio,
+        cache=engine.cache,
+        base_currency=EUR,
+        instrument_ref_for_id=refs.get,
     )
     assert ListedRef(_FIGI) in book_state.realized_weights(), (
         "The GBP sleeve must surface in realized_weights from the FX-quote-derived mark"

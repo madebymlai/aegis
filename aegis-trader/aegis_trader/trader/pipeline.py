@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from datetime import date
+from typing import TYPE_CHECKING
 
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import (
     DataContract,
@@ -28,7 +30,7 @@ from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
-from aegis_trader.domain.types import OrderIntent, SleeveName, WeightDelta
+from aegis_trader.domain.types import OrderIntent, ResolvedContractId, SleeveName, WeightDelta
 from aegis_trader.observability.port import GateOutcome, RebalanceSummary
 
 if TYPE_CHECKING:
@@ -36,8 +38,17 @@ if TYPE_CHECKING:
     from aegis_trader.portfolio import BookStatePort
 
 
-InstrumentResolver = Callable[[InstrumentRef], Any]
+InstrumentResolver = Callable[[InstrumentRef, date], InstrumentId]
 RefCurrencyReconciler = Callable[[InstrumentRef, str], str]
+
+
+@dataclass(frozen=True)
+class IdentityResolutionChange:
+    """A ref whose current resolved InstrumentId changed as-of a date."""
+
+    ref: InstrumentRef
+    previous: InstrumentId
+    current: InstrumentId
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,21 @@ class RebalanceResult:
     halt_reason: str | None = None
 
 
+class FixtureInstrumentResolver:
+    """Deterministic InstrumentRef→InstrumentId resolver for tests/backtests."""
+
+    def __init__(self, mapping: Mapping[InstrumentRef, InstrumentId]) -> None:
+        self._mapping = dict(mapping)
+
+    def __call__(self, ref: InstrumentRef, _as_of: date) -> InstrumentId:
+        try:
+            return self._mapping[ref]
+        except KeyError:
+            raise ValueError(
+                f"InstrumentRef {ref.value!r} is not in the fixture resolver"
+            ) from None
+
+
 class RebalancePipeline:
     """Pure per-period rebalance orchestrator.
 
@@ -96,6 +122,13 @@ class RebalancePipeline:
         self._resolve_instrument = resolve_instrument
         self._reconcile_ref_currency = reconcile_ref_currency or _identity_currency
         self._last_sleeve_weights: dict[SleeveName, float] = {}
+        self._all_refs = frozenset(
+            ref
+            for bundle in self._sleeve_to_bundle.values()
+            for ref in bundle.contract.refs
+        )
+        self._ref_to_instrument_id: dict[InstrumentRef, InstrumentId] = {}
+        self._instrument_id_to_ref: dict[str, InstrumentRef] = {}
 
     @property
     def sleeve_ledger(self) -> SleeveLedger:
@@ -106,6 +139,53 @@ class RebalancePipeline:
     def last_sleeve_weights(self) -> dict[SleeveName, float]:
         """Last allocator-applied sleeve multipliers, for evidence/backtest seams."""
         return dict(self._last_sleeve_weights)
+
+    def initialize_identity(self, as_of: date) -> None:
+        """Resolve every sleeve InstrumentRef for the boot date."""
+        for ref in sorted(self._all_refs):
+            self._record_resolution(ref, self._resolve_instrument(ref, as_of))
+
+    def instrument_id_for_ref(self, ref: InstrumentRef) -> InstrumentId:
+        """Current venue-specific InstrumentId for an InstrumentRef."""
+        instr_id = self._ref_to_instrument_id.get(ref)
+        if instr_id is None:
+            raise ValueError(
+                f"InstrumentRef {ref!r} is not resolved; refusing to act on "
+                f"an unidentified instrument"
+            )
+        return instr_id
+
+    def ref_for_instrument_value(self, instrument_id_value: str) -> InstrumentRef | None:
+        """InstrumentRef previously resolved for a Nautilus InstrumentId value."""
+        return self._instrument_id_to_ref.get(instrument_id_value)
+
+    def refresh_resolution(self, as_of: date) -> tuple[IdentityResolutionChange, ...]:
+        """Re-resolve FuturesRefs and retain inverse mappings for old contracts."""
+        changes: list[IdentityResolutionChange] = []
+        for ref in sorted(r for r in self._all_refs if isinstance(r, FuturesRef)):
+            previous = self.instrument_id_for_ref(ref)
+            current = self._resolve_instrument(ref, as_of)
+            if current == previous:
+                continue
+            self._record_resolution(ref, current)
+            changes.append(IdentityResolutionChange(ref=ref, previous=previous, current=current))
+        return tuple(changes)
+
+    def resolve_contract_id_for_roll(self, ref: InstrumentRef, as_of: date) -> ResolvedContractId:
+        """Resolve a roll target and fold the resolved id back to its ref."""
+        instrument_id = self._resolve_instrument(ref, as_of)
+        self._record_resolution(ref, instrument_id)
+        return ResolvedContractId(instrument_id.value)
+
+    def resolved_identity_snapshot(self) -> dict[InstrumentRef, InstrumentId]:
+        """Current pipeline-owned identity map for logging and risk wiring."""
+        return dict(self._ref_to_instrument_id)
+
+    def _record_resolution(self, ref: InstrumentRef, instrument_id: InstrumentId) -> None:
+        self._ref_to_instrument_id[ref] = instrument_id
+        # Deliberately do not delete old inverse entries: a held stale futures
+        # contract must still fold back to its continuous FuturesRef for Roll.
+        self._instrument_id_to_ref[instrument_id.value] = ref
 
     def rebalance_period(self, period: CompletedRebalancePeriod) -> RebalanceResult:
         """Run one completed-period rebalance and return orders plus summary."""
@@ -225,13 +305,8 @@ class RebalancePipeline:
         prices: dict[InstrumentRef, float] = {}
         currencies: set[str] = set()
 
-        refs = {
-            ref
-            for bundle in self._sleeve_to_bundle.values()
-            for ref in bundle.contract.refs
-        }
-        for ref in refs:
-            resolved_id = self._resolve_instrument(ref)
+        for ref in self._all_refs:
+            resolved_id = self.instrument_id_for_ref(ref)
             sizing = self._market_data.instrument_sizing(resolved_id)
             if sizing is None:
                 continue

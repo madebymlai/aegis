@@ -59,7 +59,7 @@ class BookEquityRecorder(Actor):
             portfolio=self.portfolio,
             cache=self.cache,
             base_currency=Currency.from_str(self._base_currency),
-            instr_to_figi={},
+            instrument_ref_for_id=lambda _instrument_id: None,
         )
         for raw in self._bar_types:
             self.subscribe_bars(BarType.from_str(raw))

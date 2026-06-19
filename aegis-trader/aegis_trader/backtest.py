@@ -48,6 +48,7 @@ from aegis_trader.portfolio.performance import (
 from aegis_trader.trader.costs import build_simulated_cost_models
 from aegis_trader.trader.financing import build_financing_modules
 from aegis_trader.trader.modes import build_backtest_engine_config
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _PRICE_COLS = ("open", "high", "low", "close")
@@ -178,7 +179,7 @@ def run_book_backtest(
     strategy = RebalanceStrategy(RebalanceStrategyConfig(book=book, fill_time_in_force=None))
     for name, bundle in sleeves:
         strategy.register_sleeve(name, bundle)
-    strategy._figi_bimap = bimap  # backtest assigns InstrumentIds directly
+    strategy.set_instrument_resolver(FixtureInstrumentResolver(bimap))
     engine.add_strategy(strategy)
 
     engine.run()

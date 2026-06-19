@@ -22,7 +22,7 @@ in one module.  The port/adapter file split is reserved for multi-impl concerns
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 from nautilus_trader.cache.base import CacheFacade
@@ -72,12 +72,12 @@ class NautilusBookState:
         portfolio: PortfolioFacade,
         cache: CacheFacade,
         base_currency: Currency,
-        instr_to_figi: Mapping[str, InstrumentRef],
+        instrument_ref_for_id: Callable[[str], InstrumentRef | None],
     ) -> None:
         self._portfolio = portfolio
         self._cache = cache
         self._base = base_currency
-        self._instr_to_figi = instr_to_figi
+        self._instrument_ref_for_id = instrument_ref_for_id
 
     def nav(self) -> float:
         total = 0.0
@@ -109,7 +109,7 @@ class NautilusBookState:
             return {}
         weights: dict[InstrumentRef, float] = {}
         for position in self._cache.positions_open():
-            ref = self._instr_to_figi.get(position.instrument_id.value)
+            ref = self._instrument_ref_for_id(position.instrument_id.value)
             if ref is None:
                 continue  # holding not covered by any sleeve
             if isinstance(ref, str):

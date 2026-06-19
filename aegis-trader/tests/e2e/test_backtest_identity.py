@@ -1,14 +1,14 @@
 """E2E regression for the identity linchpin (Wave A / aegis-rd-bwb.1, finding c1).
 
-The FIGI→InstrumentId bimap (Security Master, Slice 3) must be the SINGLE source
-of truth for instrument identity: the strategy subscribes, buffers, sizes, and
-orders on the *resolved* InstrumentId — NOT on a naive ``f"{figi}.{venue}"``.
+The pipeline-owned FIGI→InstrumentId identity (Security Master, Slice 3) must be
+the SINGLE source of truth: the strategy subscribes, buffers, sizes, and orders
+on the *resolved* InstrumentId — NOT on a naive ``f"{figi}.{venue}"``.
 
 This is proven by making the resolved ticker DIFFERENT from the FIGI: the
 instrument and its bars live under ``VUSA.XLON`` while the FIGI is the opaque
 ``BBG...`` string.  Before the fix the strategy subscribed to ``BBG....XLON``
 (which has no instrument/bars) and never traded; after the fix it follows the
-bimap to ``VUSA.XLON`` and fills.
+fixture resolver to ``VUSA.XLON`` and fills.
 
 N.B. all e2e use ``logging=None``; one BacktestEngine per test.
 """
@@ -37,6 +37,7 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 # FIGI and venue-native ticker are DELIBERATELY different.
@@ -111,7 +112,7 @@ def _make_book() -> BookConfig:
 
 
 def test_strategy_follows_resolved_instrument_id():
-    """The strategy must trade the bimap's resolved InstrumentId (VUSA.XLON),
+    """The strategy must trade the resolver's InstrumentId (VUSA.XLON),
     not a FIGI-shaped id (BBG....XLON) — proving Slice 3 is live, not dead."""
     instrument = _make_instrument()
     bars = _make_bars([100.0, 101.0, 102.0, 103.0, 104.0])
@@ -133,8 +134,8 @@ def test_strategy_follows_resolved_instrument_id():
     strategy.register_sleeve(
         _make_book().sleeves[0].name, _SyntheticBundle(weight=0.5)
     )
-    # Bimap resolves the FIGI to a DIFFERENT id than f"{figi}.{venue}".
-    strategy._figi_bimap = {ListedRef(_FIGI): _RESOLVED}
+    # Fixture resolver maps the FIGI to a DIFFERENT id than f"{figi}.{venue}".
+    strategy.set_instrument_resolver(FixtureInstrumentResolver({ListedRef(_FIGI): _RESOLVED}))
     engine.add_strategy(strategy)
 
     engine.run()

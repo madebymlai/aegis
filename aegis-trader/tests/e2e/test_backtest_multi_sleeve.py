@@ -38,6 +38,7 @@ from aegis_runtime import (
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sleeve_ledger import MIN_SLEEVE_VOL_RETURNS
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 # ── synthetic bundles ─────────────────────────────────────────────────────────
@@ -162,8 +163,8 @@ def _make_book(budgets: tuple[float, float]) -> BookConfig:
     )
 
 
-def _stub_bimap(figis: set[str]) -> dict[ListedRef, "InstrumentId"]:
-    """Stub ListedRef→InstrumentId bimap for e2e tests."""
+def _fixture_identity(figis: set[str]) -> dict[ListedRef, "InstrumentId"]:
+    """Fixture ListedRef→InstrumentId mapping for e2e tests."""
     return {ListedRef(figi): InstrumentId.from_str(f"{figi}.{VENUE.value}") for figi in figis}
 
 
@@ -208,7 +209,7 @@ def test_multi_sleeve_e2e():
     strategy = TwoSleeveStrategy(config=config)
     strategy.register_sleeve(book.sleeves[0].name, trend_bundle)
     strategy.register_sleeve(book.sleeves[1].name, carry_bundle)
-    strategy._figi_bimap = _stub_bimap({_FIGI_VUSA})
+    strategy.set_instrument_resolver(FixtureInstrumentResolver(_fixture_identity({_FIGI_VUSA})))
     engine.add_strategy(strategy)
 
     engine.run()
@@ -291,7 +292,7 @@ def test_vol_targeting_downweights_the_higher_vol_sleeve_through_the_engine():
     strategy = TwoSleeveStrategy(config=config)
     strategy.register_sleeve(calm_name, _FixedWeightBundle(_FIGI_CALM, 0.5))
     strategy.register_sleeve(vol_name, _FixedWeightBundle(_FIGI_VOL, 0.5))
-    strategy._figi_bimap = _stub_bimap({_FIGI_CALM, _FIGI_VOL})
+    strategy.set_instrument_resolver(FixtureInstrumentResolver(_fixture_identity({_FIGI_CALM, _FIGI_VOL})))
     engine.add_strategy(strategy)
 
     engine.run()

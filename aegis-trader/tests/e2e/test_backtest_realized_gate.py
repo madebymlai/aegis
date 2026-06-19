@@ -34,6 +34,7 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _FIGI = "BBG000B9XRY4"
@@ -110,7 +111,9 @@ def test_realized_gate_holds_after_reaching_target():
 
     strategy = RebalanceStrategy(config=RebalanceStrategyConfig(book=book))
     strategy.register_sleeve(book.sleeves[0].name, _FixedWeightBundle(0.5))
-    strategy._figi_bimap = {ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")}
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver({ListedRef(_FIGI): InstrumentId.from_str(f"{_FIGI}.{VENUE.value}")})
+    )
     engine.add_strategy(strategy)
 
     engine.run()

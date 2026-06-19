@@ -38,6 +38,7 @@ from aegis_runtime import (
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.risk_guard import compute_risk_engine_max_notionals
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 # ── synthetic bundle ──────────────────────────────────────────────────────────
@@ -202,7 +203,9 @@ def test_risk_engine_config_wired_from_risk_guard():
     config = RebalanceStrategyConfig(book=book)
     strategy = RebalanceStrategy(config=config)
     strategy.register_sleeve(book.sleeves[0].name, bundle)
-    strategy._figi_bimap = {ListedRef(_SYNTH_FIGI): InstrumentId.from_str(instr_id_str)}
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver({ListedRef(_SYNTH_FIGI): InstrumentId.from_str(instr_id_str)})
+    )
     engine.add_strategy(strategy)
 
     engine.run()
@@ -258,9 +261,11 @@ def test_kill_switch_halts_all_trading():
     config = RebalanceStrategyConfig(book=book)
     strategy = RebalanceStrategy(config=config)
     strategy.register_sleeve(book.sleeves[0].name, bundle)
-    strategy._figi_bimap = {
-        ListedRef(_SYNTH_FIGI): InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")
-    }
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver(
+            {ListedRef(_SYNTH_FIGI): InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")}
+        )
+    )
     engine.add_strategy(strategy)
 
     # HALT before the run processes any bar events.

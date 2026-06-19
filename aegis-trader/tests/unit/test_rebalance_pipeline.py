@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
     ExecutionBundle,
+    FuturesRef,
     ListedRef,
     LockedExecutionPlan,
     MarketDataBundle,
@@ -21,11 +25,16 @@ from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.observability.port import GateOutcome
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
+    FixtureInstrumentResolver,
     MarketBar,
     RebalancePipeline,
 )
 
 _FIGI = ListedRef("BBG000PIPE01")
+_FUT = FuturesRef("ES", "cme")
+_INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")
+_FRONT_ID = InstrumentId.from_str("ESZ4.XCME")
+_NEXT_ID = InstrumentId.from_str("ESH5.XCME")
 _SLEEVE = SleeveName("trend")
 
 
@@ -72,6 +81,42 @@ class _FixedWeightBundle(ExecutionBundle):
         target = pd.DataFrame({_FIGI: [self._weight, self._weight]}, index=close.index)
         target.columns.name = "figi"
         return target
+
+
+class _FuturesBundle(ExecutionBundle):
+    def __init__(self) -> None:
+        contract = DataContract(
+            refs=(_FUT,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            required_fx_currencies=(),
+            timeframe="1D",
+            lookback_bars=1,
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-futures-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            refs=(_FUT,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+            symbols=("ES",),
+            currency_by_symbol={"ES": "EUR"},
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
 
 
 class _BookState:
@@ -148,8 +193,9 @@ def test_rebalance_pipeline_returns_sized_orders_and_summary() -> None:
         book=book,
         sleeve_to_bundle={_SLEEVE: _FixedWeightBundle(0.5)},
         ledger=SleeveLedger(),
-        resolve_instrument=lambda ref: ref.value,
+        resolve_instrument=FixtureInstrumentResolver({_FIGI: _INSTRUMENT_ID}),
     )
+    pipeline.initialize_identity(pd.Timestamp("2026-01-01").date())
 
     result = pipeline.rebalance_period(_period())
 
@@ -161,6 +207,33 @@ def test_rebalance_pipeline_returns_sized_orders_and_summary() -> None:
     assert result.summary.num_orders == 1
 
 
+def test_pipeline_refresh_keeps_old_contract_inverse_for_roll() -> None:
+    def resolver(_ref: object, as_of: date) -> InstrumentId:
+        if as_of < date(2026, 6, 12):
+            return _FRONT_ID
+        return _NEXT_ID
+
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(),
+        book=_book(),
+        sleeve_to_bundle={_SLEEVE: _FuturesBundle()},
+        ledger=SleeveLedger(),
+        resolve_instrument=resolver,
+    )
+
+    pipeline.initialize_identity(date(2026, 6, 11))
+    changes = pipeline.refresh_resolution(date(2026, 6, 12))
+    roll_contract_id = pipeline.resolve_contract_id_for_roll(_FUT, date(2026, 6, 12))
+
+    assert changes[0].previous == _FRONT_ID
+    assert changes[0].current == _NEXT_ID
+    assert pipeline.instrument_id_for_ref(_FUT) == _NEXT_ID
+    assert pipeline.ref_for_instrument_value(_FRONT_ID.value) == _FUT
+    assert pipeline.ref_for_instrument_value(_NEXT_ID.value) == _FUT
+    assert roll_contract_id.value == _NEXT_ID.value
+
+
 def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
     book = _book(per_name_cap=0.5)
     pipeline = RebalancePipeline(
@@ -169,8 +242,9 @@ def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
         book=book,
         sleeve_to_bundle={_SLEEVE: _FixedWeightBundle(0.8)},
         ledger=SleeveLedger(),
-        resolve_instrument=lambda ref: ref.value,
+        resolve_instrument=FixtureInstrumentResolver({_FIGI: _INSTRUMENT_ID}),
     )
+    pipeline.initialize_identity(pd.Timestamp("2026-01-01").date())
 
     result = pipeline.rebalance_period(_period())
 

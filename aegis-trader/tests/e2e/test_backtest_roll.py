@@ -206,7 +206,7 @@ def test_futures_sleeve_rolls_across_boundary():
     )
     strategy = RebalanceStrategy(config=config)
     strategy.register_sleeve(_make_book().sleeves[0].name, _ConstantWeightBundle(weight=0.5))
-    # No injected bimap: on_start resolves the FuturesRef from provider-loaded
+    # No fixture resolver: on_start resolves the FuturesRef from provider-loaded
     # dated contracts, then the same chain advances it at the roll.
     engine.add_strategy(strategy)
 
@@ -253,7 +253,7 @@ def test_drift_follows_rolled_contract():
     """After the roll, a target change drifts onto the rolled-into contract
     (resolved-contract space) — never the stale front (gap A of v0j.4).
 
-    The bimap is refreshed at the roll, so a post-roll drift order resolves the
+    Pipeline identity is refreshed at the roll, so a post-roll drift order resolves the
     FuturesRef to the *current* contract.  Without the refresh, drift would
     re-buy the front contract the position was just rolled out of.
     """
@@ -296,7 +296,7 @@ def test_drift_follows_rolled_contract():
     # Front: established once, rolled out once, NEVER re-bought (no stale-contract drift).
     assert len(front_buys) == 1, (
         f"front contract must not be re-bought after the roll; got "
-        f"{[_qty(f) for f in front_buys]} (stale-bimap drift)"
+        f"{[_qty(f) for f in front_buys]} (stale-identity drift)"
     )
     assert len(front_sells) == 1, f"expected one front SELL (roll exit), got {len(front_sells)}"
 

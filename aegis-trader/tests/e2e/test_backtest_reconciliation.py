@@ -31,6 +31,7 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 # ── synthetic bundle ──────────────────────────────────────────────────────────
@@ -165,9 +166,9 @@ def _setup_engine(trader_id: str, book: BookConfig, bundle: _SyntheticBundle) ->
     config = RebalanceStrategyConfig(book=book)
     strategy = RebalanceStrategy(config=config)
     strategy.register_sleeve(book.sleeves[0].name, bundle)
-    # Inject a stub bimap so the backtest uses its local InstrumentSpec identity.
+    # Inject a fixture resolver so the backtest uses its local InstrumentSpec identity.
     instr_id = InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")
-    strategy._figi_bimap = {ListedRef(_SYNTH_FIGI): instr_id}
+    strategy.set_instrument_resolver(FixtureInstrumentResolver({ListedRef(_SYNTH_FIGI): instr_id}))
     engine.add_strategy(strategy)
     return engine, strategy
 

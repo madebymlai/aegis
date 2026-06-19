@@ -433,7 +433,10 @@ def test_multicurrency_book_backtest_reports_base_currency_return(tmp_path):
     )
     # The book's true end-of-run EUR NAV (cash + foreign equity, base-converted).
     final_nav = NautilusBookState(
-        portfolio=engine.portfolio, cache=engine.cache, base_currency=EUR, instr_to_figi={}
+        portfolio=engine.portfolio,
+        cache=engine.cache,
+        base_currency=EUR,
+        instrument_ref_for_id=lambda _instrument_id: None,
     ).nav()
     expected_return_pct = (final_nav / 1_000_000.0 - 1.0) * 100.0
 

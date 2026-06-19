@@ -10,9 +10,9 @@ NEXT-CLOSE execution (ADR-0001): the target decided at bar t's close is
 submitted on bar t+1 and fills at bar t+1's close — one-bar lag, no look-ahead.
 
 Slice 3: InstrumentRef→InstrumentId resolution via the venue-native provider.
-A bimap is built at ``on_start``; netting stays in InstrumentRef space,
-resolution to venue-specific InstrumentIds only at the execution edge (order
-submission).
+The pipeline builds identity at ``on_start``; netting stays in InstrumentRef
+space, resolution to venue-specific InstrumentIds only at the execution edge
+(order submission).
 
 RiskEngine guards (Slice 8): the ``RiskGuard`` computes per-instrument
 max-notional caps from NAV; the strategy logs every ``OrderDenied`` event
@@ -32,7 +32,7 @@ globally on failure.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable
 from datetime import date
 from typing import Any
 
@@ -135,7 +135,6 @@ class RebalanceStrategy(Strategy):
         # ── Slice 6 sleeve registry ──────────────────────────────────────
         self._sleeve_to_bundle: dict[SleeveName, ExecutionBundle] = {}
         self._sleeve_to_contract: dict[SleeveName, DataContract] = {}
-        self._instr_to_figi: dict[str, InstrumentRef] = {}  # InstrumentId.value → InstrumentRef (bimap inverse)
         # ── bar buffers & cadence state ──────────────────────────────────
         self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
         self._current_period: int | None = None
@@ -145,8 +144,8 @@ class RebalanceStrategy(Strategy):
         # Book bar timeframe (one across sleeves); set in on_start, reused to
         # subscribe a contract the book rolls into mid-run.
         self._book_timeframe: str | None = None
-        # ── Slice 3: InstrumentRef → InstrumentId bimap ──────────────────
-        self._figi_bimap: dict[InstrumentRef, InstrumentId] = {}
+        # ── Slice 3: InstrumentRef → InstrumentId resolution ─────────────
+        self._instrument_resolver: Callable[[InstrumentRef, date], InstrumentId] | None = None
         self._futures_contract_chains: dict[str, tuple[DatedContract, ...]] = (
             config.futures_contract_chains or {}
         )
@@ -181,6 +180,12 @@ class RebalanceStrategy(Strategy):
         """
         self._sleeve_to_bundle[name] = bundle
         self._sleeve_to_contract[name] = bundle.contract
+
+    def set_instrument_resolver(
+        self, resolver: Callable[[InstrumentRef, date], InstrumentId]
+    ) -> None:
+        """Inject the single resolver the pipeline uses to own identity."""
+        self._instrument_resolver = resolver
 
     @property
     def sleeve_ledger(self) -> SleeveLedger:
@@ -233,7 +238,7 @@ class RebalanceStrategy(Strategy):
             portfolio=self.portfolio,
             cache=self.cache,
             base_currency=base_ccy,
-            instr_to_figi=self._instr_to_figi,
+            instrument_ref_for_id=self._ref_for_instrument_value,
         )
         self._market_data = NautilusMarketData(cache=self.cache)
 
@@ -271,18 +276,11 @@ class RebalanceStrategy(Strategy):
         for bundle in self._sleeve_to_bundle.values():
             all_refs.update(bundle.contract.refs)
 
-        # Resolve refs to venue-native InstrumentIds from the provider-loaded
-        # cache, as-of the boot date.  The bimap is the SINGLE source of truth
-        # for instrument identity - every subscription, bar buffer, sizing read,
-        # order, and risk cap keys off it.  A ListedRef resolves date-invariantly;
-        # a FuturesRef resolves to its live contract for the boot date and is
-        # re-resolved at the roll cadence (see _refresh_resolution).  (A stub
-        # bimap may be injected by e2e tests.)
-        if not self._figi_bimap:
-            self._figi_bimap = self._resolve_bimap(all_refs, self._as_of())
+        # Resolve refs through the pipeline-owned identity map from the single
+        # injected resolver. Live defaults to the provider-loaded cache resolver;
+        # backtests/e2e inject a FixtureInstrumentResolver.
 
-        # Subscribe to bars on the RESOLVED InstrumentId and build the inverse
-        # (InstrumentId -> FIGI) map used for position lookups.
+        # Subscribe to bars on the RESOLVED InstrumentId.
         # The book runs on one timeframe (all sleeves agree); resolve it once for
         # the bar subscription and the rebalance-period width.
         book_timeframe = resolve_book_timeframe(
@@ -291,9 +289,22 @@ class RebalanceStrategy(Strategy):
         self._book_timeframe = book_timeframe
         self._period_ns = timeframe_to_ns(book_timeframe)
 
+        resolver = self._instrument_resolver or self._provider_instrument_resolver()
+        self._pipeline = RebalancePipeline(
+            book_state=self._require_book_state(),
+            market_data=self._require_market_data(),
+            book=self._book,
+            sleeve_to_bundle=self._sleeve_to_bundle,
+            ledger=self._sleeve_ledger,
+            resolve_instrument=resolver,
+            reconcile_ref_currency=lambda ref, currency: reconcile_quote_currency(
+                ref, currency, declared_ref_currencies(self._sleeve_to_bundle.values())
+            ),
+        )
+        self._pipeline.initialize_identity(self._as_of())
+
         for ref in sorted(all_refs):  # stable subscription order (aegis-rd-10d)
             instr_id = self._instrument_id_for_ref(ref)
-            self._instr_to_figi[instr_id.value] = ref
             self.subscribe_bars(bar_type(instr_id.value, book_timeframe))
 
         # Subscribe to FX reference-pair quotes so the cache mark xrates stay
@@ -307,23 +318,11 @@ class RebalanceStrategy(Strategy):
             if isinstance(instrument, CurrencyPair):
                 self.subscribe_quote_ticks(instrument.id)
 
-        declared_currencies = declared_ref_currencies(self._sleeve_to_bundle.values())
-        self._pipeline = RebalancePipeline(
-            book_state=self._require_book_state(),
-            market_data=self._require_market_data(),
-            book=self._book,
-            sleeve_to_bundle=self._sleeve_to_bundle,
-            ledger=self._sleeve_ledger,
-            resolve_instrument=self._instrument_id_for_ref,
-            reconcile_ref_currency=lambda ref, currency: reconcile_quote_currency(
-                ref, currency, declared_currencies
-            ),
-        )
-
         names = [s.value for s in self._sleeve_to_bundle]
+        identity = self._require_pipeline().resolved_identity_snapshot()
         self.log.info(
             f"RebalanceStrategy starting; sleeves={names}, "
-            f"bimap={ {f: i.value for f, i in self._figi_bimap.items()} }"
+            f"identity={ {f: i.value for f, i in identity.items()} }"
         )
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
@@ -357,8 +356,8 @@ class RebalanceStrategy(Strategy):
         instr_id = bar.bar_type.instrument_id
         as_of = self._as_of()
         if self._last_roll_check_date != as_of:
-            # Re-resolve FuturesRefs as-of today FIRST, so the bimap (and hence
-            # every drift order this tick) points at the current contract; then
+            # Re-resolve FuturesRefs as-of today FIRST, so pipeline identity
+            # (and hence every drift order this tick) points at the current contract; then
             # migrate any held position off the contract it just rolled out of.
             self._refresh_resolution(as_of)
             self._submit_roll_orders(as_of)
@@ -388,9 +387,9 @@ class RebalanceStrategy(Strategy):
         else:
             self._current_period = period
 
-        figi = self._instr_to_figi.get(instr_id.value)
-        if figi:
-            self._period_fresh_figis.add(figi)
+        ref = self._require_pipeline().ref_for_instrument_value(instr_id.value)
+        if ref:
+            self._period_fresh_figis.add(ref)
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
@@ -442,25 +441,16 @@ class RebalanceStrategy(Strategy):
         return bars_by_ref
 
     def _refresh_resolution(self, as_of: date) -> None:
-        """Re-resolve each FuturesRef as-of *as_of*; when its live contract has
-        changed, point the bimap at the new contract, map the new contract back
-        in the inverse, and subscribe its bars.
+        """Re-resolve FuturesRefs and subscribe contracts that rolled in.
 
-        ListedRefs are date-invariant and skipped.  The inverse keeps the old
-        contract mapped so a not-yet-closed position still folds back to its ref
-        for the roll check and the realized book.
+        The pipeline keeps old inverse entries so a not-yet-closed position still
+        folds back to its continuous ref for the roll check and realized book.
         """
         if self._book_timeframe is None:
             return
-        for ref in list(self._figi_bimap):
-            if not isinstance(ref, FuturesRef):
-                continue
-            new_id = self._resolve_instrument_id(ref, as_of)
-            if new_id == self._figi_bimap[ref]:
-                continue
-            self._figi_bimap[ref] = new_id
-            self._instr_to_figi[new_id.value] = ref
-            self.subscribe_bars(bar_type(new_id.value, self._book_timeframe))
+        changes = self._require_pipeline().refresh_resolution(as_of)
+        for change in changes:
+            self.subscribe_bars(bar_type(change.current.value, self._book_timeframe))
 
     def _submit_roll_orders(self, as_of: date) -> None:
         held = self._held_contracts_for_roll()
@@ -473,7 +463,7 @@ class RebalanceStrategy(Strategy):
     def _held_contracts_for_roll(self) -> tuple[HeldContract, ...]:
         held: list[HeldContract] = []
         for position in self.cache.positions_open():
-            ref = self._instr_to_figi.get(position.instrument_id.value)
+            ref = self._require_pipeline().ref_for_instrument_value(position.instrument_id.value)
             if ref is None:
                 continue
             quantity = float(position.quantity.as_double())
@@ -489,27 +479,7 @@ class RebalanceStrategy(Strategy):
         return tuple(held)
 
     def _resolve_contract_id_for_roll(self, ref: InstrumentRef, as_of: date) -> ResolvedContractId:
-        instrument_id = self._resolve_instrument_id(ref, as_of)
-        # Keep the inverse map current as the ref rolls: a position folded onto
-        # the rolled-into contract must resolve back to its InstrumentRef, so the
-        # realized book (and the next base-tick roll check) reason in continuous
-        # space rather than re-buying the stale front contract.
-        self._instr_to_figi[instrument_id.value] = ref
-        return ResolvedContractId(instrument_id.value)
-
-    def _resolve_instrument_id(self, ref: InstrumentRef, as_of: date) -> InstrumentId:
-        """Resolve a ref to its venue-native InstrumentId as-of *as_of* from the
-        provider-loaded bimap.  A ListedRef ignores ``as_of`` (date-invariant);
-        a FuturesRef selects its live dated contract for that date."""
-        if isinstance(ref, ListedRef):
-            return self._instrument_id_for_ref(ref)
-        if isinstance(ref, FuturesRef):
-            if not self._futures_contract_chains:
-                raise InstrumentResolutionError(
-                    f"FuturesRef root {ref.root!r} has no provider-loaded contract chain"
-                )
-            return self._loaded_futures_bimap((ref,), as_of)[ref]
-        raise InstrumentResolutionError(f"unsupported InstrumentRef variant {type(ref).__name__}")
+        return self._require_pipeline().resolve_contract_id_for_roll(ref, as_of)
 
     def _as_of(self) -> date:
         """The current trading date from the clock (TestClock in backtest,
@@ -587,53 +557,37 @@ class RebalanceStrategy(Strategy):
             )
 
     def _instrument_id_for_ref(self, ref: InstrumentRef) -> InstrumentId:
-        """Return the venue-specific InstrumentId resolved for an InstrumentRef.
+        """Return the pipeline-owned current InstrumentId for an InstrumentRef."""
+        return self._require_pipeline().instrument_id_for_ref(ref)
 
-        Fails closed (raises) when the ref was not resolved: the book never acts
-        on an unidentified instrument, and never reconstructs identity by parsing
-        strings (ADR-0002).
-        """
-        instr_id = self._figi_bimap.get(ref)
-        if instr_id is None:
+    def _ref_for_instrument_value(self, instrument_id_value: str) -> InstrumentRef | None:
+        if self._pipeline is None:
+            return None
+        return self._pipeline.ref_for_instrument_value(instrument_id_value)
+
+    def _provider_instrument_resolver(self) -> Callable[[InstrumentRef, date], InstrumentId]:
+        """Live resolver backed by provider-loaded cache instruments."""
+
+        def resolve(ref: InstrumentRef, as_of: date) -> InstrumentId:
+            if isinstance(ref, ListedRef):
+                return loaded_listed_ref_bimap((ref,), self.cache.instruments())[ref]
+            if isinstance(ref, FuturesRef):
+                if not self._futures_contract_chains:
+                    raise InstrumentResolutionError(
+                        f"FuturesRef root {ref.root!r} has no provider-loaded contract chain"
+                    )
+                return loaded_futures_ref_bimap(
+                    (ref,),
+                    self.cache.instruments(),
+                    as_of=as_of,
+                    contract_chains=self._futures_contract_chains,
+                    roll_lead_days=self._futures_roll_lead_days,
+                )[ref]
             raise InstrumentResolutionError(
-                f"InstrumentRef {ref!r} is not in the resolved bimap; refusing to act "
-                f"on an unidentified instrument"
+                f"unsupported InstrumentRef variant {type(ref).__name__}"
             )
-        return instr_id
 
-    def _resolve_bimap(
-        self, refs: set[InstrumentRef], as_of: date
-    ) -> dict[InstrumentRef, InstrumentId]:
-        """Resolve *refs* to a bimap from provider-loaded cache instruments.
-
-        ListedRefs resolve from the IB InstrumentProvider-loaded cache;
-        FuturesRefs resolve to their live dated contract for *as_of*,
-        individually (each carries its own roll calendar).
-        """
-        listed: set[ListedRef] = {r for r in refs if isinstance(r, ListedRef)}
-        futures = sorted(r for r in refs if isinstance(r, FuturesRef))
-        bimap: dict[InstrumentRef, InstrumentId] = {}
-        if listed:
-            bimap.update(loaded_listed_ref_bimap(listed, self.cache.instruments()))
-        if futures:
-            if not self._futures_contract_chains:
-                roots = ", ".join(sorted({ref.root for ref in futures}))
-                raise InstrumentResolutionError(
-                    f"FuturesRef root(s) {roots} have no provider-loaded contract chains"
-                )
-            bimap.update(self._loaded_futures_bimap(futures, as_of))
-        return bimap
-
-    def _loaded_futures_bimap(
-        self, refs: Iterable[FuturesRef], as_of: date
-    ) -> dict[FuturesRef, InstrumentId]:
-        return loaded_futures_ref_bimap(
-            refs,
-            self.cache.instruments(),
-            as_of=as_of,
-            contract_chains=self._futures_contract_chains,
-            roll_lead_days=self._futures_roll_lead_days,
-        )
+        return resolve
 
     # -- RiskEngine callbacks ---------------------------------------------------
 
@@ -654,14 +608,15 @@ class RebalanceStrategy(Strategy):
 
         Computes per-instrument max notionals from the current NAV, keyed by each
         FIGI's *resolved* InstrumentId (so every instrument carries its own
-        venue).  FIGIs absent from the bimap are skipped — the caps are only as
+        venue).  FIGIs absent from pipeline identity are skipped — the caps are only as
         complete as the resolution.
         """
+        identity = self._require_pipeline().resolved_identity_snapshot()
         instrument_ids: list[str] = [
-            self._figi_bimap[figi].value
+            identity[figi].value
             for contract in self._sleeve_to_contract.values()
             for figi in contract.refs
-            if figi in self._figi_bimap
+            if figi in identity
         ]
         return self._risk_guard.risk_engine_config_dict(
             nav=nav,

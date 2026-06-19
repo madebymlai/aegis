@@ -40,6 +40,7 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 # ── synthetic bundles ─────────────────────────────────────────────────────────
@@ -234,12 +235,16 @@ def test_cadence_calendar_aware():
     strategy = RebalanceStrategy(config=config)
     strategy.register_sleeve(book.sleeves[0].name, vusa_bundle)
     strategy.register_sleeve(book.sleeves[1].name, vool_bundle)
-    # Inject a stub bimap (each FIGI → its venue-native InstrumentId) so the
-    # strategy uses the backtest's local InstrumentSpec identity.
-    strategy._figi_bimap = {
-        ListedRef(_FIGI_VUSA): InstrumentId.from_str(f"{_FIGI_VUSA}.{VENUE_LSE.value}"),
-        ListedRef(_FIGI_VOOL): InstrumentId.from_str(f"{_FIGI_VOOL}.{VENUE_XETRA.value}"),
-    }
+    # Inject a fixture resolver (each FIGI → its venue-native InstrumentId) so
+    # the pipeline uses the backtest's local InstrumentSpec identity.
+    strategy.set_instrument_resolver(
+        FixtureInstrumentResolver(
+            {
+                ListedRef(_FIGI_VUSA): InstrumentId.from_str(f"{_FIGI_VUSA}.{VENUE_LSE.value}"),
+                ListedRef(_FIGI_VOOL): InstrumentId.from_str(f"{_FIGI_VOOL}.{VENUE_XETRA.value}"),
+            }
+        )
+    )
     engine.add_strategy(strategy)
 
     engine.run()
