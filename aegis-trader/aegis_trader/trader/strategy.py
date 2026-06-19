@@ -259,10 +259,10 @@ class RebalanceStrategy(Strategy):
 
         self.log.info(f"Integrity check passed: NAV={nav:.2f}, cash={cash:.2f}")
 
-        # Collect all unique FIGIs across all sleeves.
-        all_figis: set[InstrumentRef] = set()
+        # Collect all unique InstrumentRefs across all sleeves.
+        all_refs: set[InstrumentRef] = set()
         for bundle in self._sleeve_to_bundle.values():
-            all_figis.update(bundle.contract.refs)
+            all_refs.update(bundle.contract.refs)
 
         # Resolve refs to venue-native InstrumentIds from the provider-loaded
         # cache, as-of the boot date.  The bimap is the SINGLE source of truth
@@ -272,7 +272,7 @@ class RebalanceStrategy(Strategy):
         # re-resolved at the roll cadence (see _refresh_resolution).  (A stub
         # bimap may be injected by e2e tests.)
         if not self._figi_bimap:
-            self._figi_bimap = self._resolve_bimap(all_figis, self._as_of())
+            self._figi_bimap = self._resolve_bimap(all_refs, self._as_of())
 
         # Subscribe to bars on the RESOLVED InstrumentId and build the inverse
         # (InstrumentId -> FIGI) map used for position lookups.
@@ -284,9 +284,9 @@ class RebalanceStrategy(Strategy):
         self._book_timeframe = book_timeframe
         self._period_ns = timeframe_to_ns(book_timeframe)
 
-        for figi in sorted(all_figis):  # stable subscription order (aegis-rd-10d)
-            instr_id = self._figi_to_instr_id(figi)
-            self._instr_to_figi[instr_id.value] = figi
+        for ref in sorted(all_refs):  # stable subscription order (aegis-rd-10d)
+            instr_id = self._instrument_id_for_ref(ref)
+            self._instr_to_figi[instr_id.value] = ref
             self.subscribe_bars(bar_type(instr_id.value, book_timeframe))
 
         # Subscribe to FX reference-pair quotes so the cache mark xrates stay
@@ -404,16 +404,16 @@ class RebalanceStrategy(Strategy):
             lookback = contract.lookback_bars
             needed = lookback + 1
 
-            # Collect each FIGI's completed-period bar buffer (enough lookback).
-            sleeve_bufs: dict[str, list[Bar]] = {}
+            # Collect each ref's completed-period bar buffer (enough lookback).
+            sleeve_bufs: dict[InstrumentRef, list[Bar]] = {}
             sleeve_ok = True
-            for figi in contract.refs:
-                instr_id = self._figi_to_instr_id(figi)
+            for ref in contract.refs:
+                instr_id = self._instrument_id_for_ref(ref)
                 buf = self._bars_buffer.get(instr_id, [])
                 if len(buf) < needed:
                     sleeve_ok = False
                     break
-                sleeve_bufs[figi] = buf
+                sleeve_bufs[ref] = buf
 
             if not sleeve_ok or not sleeve_bufs:
                 continue
@@ -578,7 +578,7 @@ class RebalanceStrategy(Strategy):
         provider-loaded bimap.  A ListedRef ignores ``as_of`` (date-invariant);
         a FuturesRef selects its live dated contract for that date."""
         if isinstance(ref, ListedRef):
-            return self._figi_to_instr_id(ref)
+            return self._instrument_id_for_ref(ref)
         if isinstance(ref, FuturesRef):
             if not self._futures_contract_chains:
                 raise InstrumentResolutionError(
@@ -689,17 +689,17 @@ class RebalanceStrategy(Strategy):
                 f"(book total={total_book_pnl:.2f})"
             )
 
-    def _figi_to_instr_id(self, figi: InstrumentRef) -> InstrumentId:
-        """Resolve a FIGI to a venue-specific InstrumentId.
+    def _instrument_id_for_ref(self, ref: InstrumentRef) -> InstrumentId:
+        """Return the venue-specific InstrumentId resolved for an InstrumentRef.
 
-        Fails closed (raises) when the FIGI was not resolved: the book never
-        acts on an unidentified instrument, and never reconstructs identity by
-        parsing strings (ADR-0002).
+        Fails closed (raises) when the ref was not resolved: the book never acts
+        on an unidentified instrument, and never reconstructs identity by parsing
+        strings (ADR-0002).
         """
-        instr_id = self._figi_bimap.get(figi)
+        instr_id = self._figi_bimap.get(ref)
         if instr_id is None:
             raise InstrumentResolutionError(
-                f"InstrumentRef {figi!r} is not in the resolved bimap; refusing to act "
+                f"InstrumentRef {ref!r} is not in the resolved bimap; refusing to act "
                 f"on an unidentified instrument"
             )
         return instr_id
@@ -758,7 +758,7 @@ class RebalanceStrategy(Strategy):
         declared_currencies = declared_ref_currencies(self._sleeve_to_bundle.values())
 
         for ref in refs:
-            instr_id = self._figi_to_instr_id(ref)
+            instr_id = self._instrument_id_for_ref(ref)
             sizing = self._require_market_data().instrument_sizing(instr_id)
             if sizing is None:
                 continue
@@ -864,7 +864,7 @@ class RebalanceStrategy(Strategy):
         instr_id = (
             InstrumentId.from_str(oi.resolved_contract_id.value)
             if oi.resolved_contract_id is not None
-            else self._figi_to_instr_id(oi.ref)
+            else self._instrument_id_for_ref(oi.ref)
         )
         quantity = self._require_market_data().make_quantity(instr_id, oi.quantity)
         if quantity is None:
@@ -917,22 +917,23 @@ _BAR_ARRAY_ACCESSORS: dict[str, Callable[[Bar], float]] = {
 }
 
 
-def _bars_to_array_series(bars: list[Bar], figi: str, array_name: str) -> pd.DataFrame:
-    """Convert buffered bars into a single-column DataFrame of the named OHLCV
-    array (Open/High/Low/Close/Volume) keyed by *figi*."""
+def _bars_to_array_series(
+    bars: list[Bar], ref: InstrumentRef, array_name: str
+) -> pd.DataFrame:
+    """Convert buffered bars into a single-column DataFrame keyed by ref."""
     accessor = _BAR_ARRAY_ACCESSORS[array_name]
     index = pd.DatetimeIndex([b.ts_event for b in bars])
     values = [accessor(b) for b in bars]
-    return pd.DataFrame({figi: values}, index=index)
+    return pd.DataFrame({ref: values}, index=index)
 
 
 def _combine_array_series(
-    bufs_by_figi: dict[str, list[Bar]], array_name: str
+    buffers_by_ref: dict[InstrumentRef, list[Bar]], array_name: str
 ) -> pd.DataFrame:
-    """One DataFrame for *array_name* with a column per FIGI, from each FIGI's bars."""
+    """One DataFrame for *array_name* with a column per InstrumentRef."""
     series = {
-        figi: _bars_to_array_series(buf, figi, array_name)
-        for figi, buf in bufs_by_figi.items()
+        ref: _bars_to_array_series(buf, ref, array_name)
+        for ref, buf in buffers_by_ref.items()
     }
     if len(series) == 1:
         return next(iter(series.values()))
