@@ -21,6 +21,7 @@ from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency, Money
 
+from aegis_data.calendars import TradingCalendar
 from aegis_data.store import FxPair, read_fx_history, read_native_bars
 from aegis_runtime import ExecutionBundle, InstrumentRef
 from aegis_runtime.currency import _major_currency_and_scale
@@ -259,12 +260,15 @@ def _read_native_market_bars(
     end: str,
     store_dir: Path | None,
 ) -> pd.DataFrame:
+    # Trader's book universe is US-listed (yfinance) and CME futures (GLBX); both
+    # expect bars on the XNYS calendar.
     frames = read_native_bars(
         (ref,),
         arrays=_store_read_arrays(required_arrays),
         timeframe=timeframe,
         start=start,
         end=end,
+        calendar=TradingCalendar.XNYS,
         store_dir=store_dir,
     )
     return frames[ref]
@@ -291,6 +295,7 @@ def _read_fx_inputs(
             timeframe=timeframe,
             start=start,
             end=end,
+            calendar=TradingCalendar.WEEKDAY,
             store_dir=store_dir,
         )
         fx_series = history[pair]

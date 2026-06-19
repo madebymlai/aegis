@@ -241,7 +241,7 @@ class DataConfig:
         for symbol in self.symbols:
             _validate_future_source_support(self.source, symbol)
         if self.source in LOCAL_DATA_SOURCES:
-            for key in _unsupported_local_kwarg_names(self.source):
+            for key in _UNSUPPORTED_LOCAL_KWARG_NAMES:
                 if getattr(self, key):
                     raise ValueError(
                         f"{key} is not supported for {self.source} source"
@@ -249,8 +249,7 @@ class DataConfig:
         return self
 
 
-def _unsupported_local_kwarg_names(source: str) -> tuple[str, ...]:
-    return ("wrapper_kwargs", "provider_kwargs", "execution_kwargs")
+_UNSUPPORTED_LOCAL_KWARG_NAMES = ("wrapper_kwargs", "provider_kwargs", "execution_kwargs")
 
 
 def _require_symbols_for_source(source: str, symbols: list[SymbolSpec]) -> None:
@@ -301,6 +300,13 @@ def _require_store_future_symbol(symbol: SymbolSpec, *, provider: str) -> None:
         raise ValueError("futures store symbols must not declare ticker")
     if symbol.dataset is not None:
         raise ValueError("futures store symbols use block-level data.dataset, not per-symbol dataset")
+
+
+def required_store_window_edge(value: str | None, name: str) -> str:
+    """Return a required store-source window edge, failing closed when absent."""
+    if value is None:
+        raise ValueError(f"{name} is required for store source")
+    return value
 
 
 def store_gap_fill_provider(provider: str | None) -> str:

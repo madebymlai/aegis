@@ -8,12 +8,14 @@ import pandas as pd
 import pytest
 from aegis_runtime import ListedRef
 
+from aegis_data.calendars import TradingCalendar
 from aegis_data.store import (
     FxPair,
     StoreCoverageError,
     cached_fetcher,
     data_dir,
     ListedAdjustmentPolicy,
+    NativeBarsRequest,
     native_bars_path,
     read_fx_history,
     read_native_bars,
@@ -82,6 +84,7 @@ def test_native_bar_store_read_returns_provider_free_listed_frames(tmp_path) -> 
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
         store_dir=tmp_path,
     )
 
@@ -102,6 +105,7 @@ def test_native_bar_store_read_fails_closed_on_missing_listed_coverage(tmp_path)
             timeframe="1D",
             start="2024-01-02",
             end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
             store_dir=tmp_path,
         )
 
@@ -123,16 +127,69 @@ def test_native_bar_store_read_does_not_require_exchange_holiday_bars(tmp_path) 
     )
     write_native_bars(ref, "1D", bars, store_dir=tmp_path)
 
+    # Good Friday 2024-03-29 is an XNYS holiday, so XNYS must not expect a bar there.
     frames = read_native_bars(
         (ref,),
         arrays=("close",),
         timeframe="1D",
         start="2024-03-28",
         end="2024-04-02",
+        calendar=TradingCalendar.XNYS,
         store_dir=tmp_path,
     )
 
     assert frames[ref]["close"].tolist() == [100.0, 101.0]
+
+
+def test_native_bars_request_requires_a_trading_calendar() -> None:
+    # No silent default: a Store Read must name its expected-bar calendar.
+    with pytest.raises(TypeError):
+        NativeBarsRequest(
+            refs=(ListedRef("BBG000B9XRY4"),),
+            arrays=("Close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+        )
+
+
+def test_store_read_fails_closed_on_unknown_calendar(tmp_path) -> None:
+    ref = ListedRef("BBG000B9XRY4")
+    write_native_bars(ref, "1D", _listed_bars(), store_dir=tmp_path)
+
+    with pytest.raises(ValueError, match="unsupported trading calendar"):
+        read_native_bars(
+            (ref,),
+            arrays=("close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar="lse",
+            store_dir=tmp_path,
+        )
+
+
+def test_fx_history_weekday_calendar_expects_a_us_holiday_weekday(tmp_path) -> None:
+    # MLK Day 2024-01-15 (Mon) is an XNYS holiday, but FX trades that weekday, so
+    # a WEEKDAY calendar must expect a rate there and fail closed when it is absent.
+    pair = FxPair("EUR", "USD")
+    rates = pd.Series(
+        [1.10, 1.11, 1.12],
+        index=pd.DatetimeIndex(["2024-01-12", "2024-01-16", "2024-01-17"]),
+    )
+    write_fx_history(pair, "1D", rates, store_dir=tmp_path)
+
+    with pytest.raises(StoreCoverageError) as exc:
+        read_fx_history(
+            (pair,),
+            timeframe="1D",
+            start="2024-01-12",
+            end="2024-01-18",
+            calendar=TradingCalendar.WEEKDAY,
+            store_dir=tmp_path,
+        )
+
+    assert "2024-01-15" in str(exc.value)
 
 
 def test_fx_history_store_read_returns_provider_free_rates(tmp_path) -> None:
@@ -146,6 +203,7 @@ def test_fx_history_store_read_returns_provider_free_rates(tmp_path) -> None:
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.WEEKDAY,
         store_dir=tmp_path,
     )
 
@@ -165,6 +223,7 @@ def test_fx_history_store_read_fails_closed_on_missing_coverage(tmp_path) -> Non
             timeframe="1D",
             start="2024-01-02",
             end="2024-01-05",
+            calendar=TradingCalendar.WEEKDAY,
             store_dir=tmp_path,
         )
 

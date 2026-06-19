@@ -17,9 +17,8 @@ from aegis_data.store import (
     CoverageGap,
     NativeBarsRequest,
     RawFuturesLeg,
-    StoreAdmissionError,
-    StoreCoverageError,
-    assert_native_bar_coverage,
+    assert_admissible_native_bars,
+    covered_row_count,
     merge_raw_futures_leg,
     native_bar_coverage_gaps,
     native_bars_path,
@@ -69,7 +68,15 @@ def pull_databento_futures_bars(
             store_dir=store_dir,
             roll_lead_days=roll_lead_days,
         )
-        _assert_continuous_coverage(ref, panel, request)
+        assert_admissible_native_bars(
+            ref,
+            panel,
+            arrays=request.arrays,
+            timeframe=request.timeframe,
+            start=request.start,
+            end=request.end,
+            calendar=request.calendar,
+        )
         replace_native_bars(
             ref,
             request.timeframe,
@@ -78,7 +85,7 @@ def pull_databento_futures_bars(
             store_dir=store_dir,
         )
     path = native_bars_path(ref, request.timeframe, store_dir=store_dir)
-    return DatabentoPullResult(ref=ref, path=path, bars=_covered_bar_count(path), raw_legs=raw_legs)
+    return DatabentoPullResult(ref=ref, path=path, bars=covered_row_count(path), raw_legs=raw_legs)
 
 
 def _derive_continuous_history(
@@ -111,6 +118,7 @@ def _derive_continuous_history(
             timeframe=request.timeframe,
             start=leg_start,
             end=_exclusive_date_end(leg_end),
+            calendar=request.calendar,
             store_dir=store_dir,
         )
 
@@ -136,7 +144,15 @@ def _fill_raw_leg_gaps(
 ) -> None:
     for gap in _raw_leg_gaps(leg, request, arrays=arrays, start=start, end=end, store_dir=store_dir):
         bars = fetch(leg.symbol, gap.start.date(), _inclusive_gap_end(gap))
-        _assert_raw_leg_coverage(leg, bars, request, arrays=arrays, gap=gap)
+        assert_admissible_native_bars(
+            leg,
+            bars,
+            arrays=arrays,
+            timeframe=request.timeframe,
+            start=gap.start,
+            end=gap.end,
+            calendar=request.calendar,
+        )
         merge_raw_futures_leg(
             leg,
             request.timeframe,
@@ -184,6 +200,7 @@ def _continuous_gaps(
         timeframe=request.timeframe,
         start=request.start,
         end=request.end,
+        calendar=request.calendar,
         store_dir=store_dir,
     )
 
@@ -203,47 +220,9 @@ def _raw_leg_gaps(
         timeframe=request.timeframe,
         start=start,
         end=_exclusive_date_end(end),
+        calendar=request.calendar,
         store_dir=store_dir,
     )
-
-
-def _assert_raw_leg_coverage(
-    leg: RawFuturesLeg,
-    bars: pd.DataFrame,
-    request: NativeBarsRequest,
-    *,
-    arrays: tuple[str, ...],
-    gap: CoverageGap,
-) -> None:
-    try:
-        assert_native_bar_coverage(
-            leg,
-            bars,
-            arrays=arrays,
-            timeframe=request.timeframe,
-            start=gap.start,
-            end=gap.end,
-        )
-    except StoreCoverageError as error:
-        raise StoreAdmissionError(str(error)) from error
-
-
-def _assert_continuous_coverage(
-    ref: FuturesRef,
-    bars: pd.DataFrame,
-    request: NativeBarsRequest,
-) -> None:
-    try:
-        assert_native_bar_coverage(
-            ref,
-            bars,
-            arrays=request.arrays,
-            timeframe=request.timeframe,
-            start=request.start,
-            end=request.end,
-        )
-    except StoreCoverageError as error:
-        raise StoreAdmissionError(str(error)) from error
 
 
 def _raw_required_arrays(ref: FuturesRef, request: NativeBarsRequest) -> tuple[str, ...]:
@@ -284,12 +263,6 @@ def _single_futures_ref(request: NativeBarsRequest) -> FuturesRef:
 def _require_supported_roll_rule(ref: FuturesRef) -> None:
     if ref.roll_rule != "calendar":
         raise ValueError(f"unsupported futures roll rule {ref.roll_rule!r}; expected calendar")
-
-
-def _covered_bar_count(path: Path) -> int:
-    if not path.exists():
-        return 0
-    return len(pd.read_parquet(path))
 
 
 __all__ = ["DatabentoPullResult", "pull_databento_futures_bars"]

@@ -10,15 +10,15 @@ from typing import Protocol
 import pandas as pd
 from aegis_runtime import ListedRef
 
+from aegis_data.calendars import TradingCalendar
 from aegis_data.store import (
-    CoverageGap,
     FxPair,
     NATIVE_OHLCV_ARRAYS,
     NativeBarsRequest,
-    StoreAdmissionError,
-    StoreCoverageError,
-    assert_fx_history_coverage,
-    assert_native_bar_coverage,
+    _column_lookup,
+    assert_admissible_fx_history,
+    assert_admissible_native_bars,
+    covered_row_count,
     fx_history_coverage_gaps,
     fx_history_path,
     merge_fx_history,
@@ -28,7 +28,6 @@ from aegis_data.store import (
 )
 
 _MULTIPLE_SYMBOLS_ERROR = "yfinance Pull for one ListedRef returned multiple symbols"
-_FX_HISTORY_REQUEST_REF = ListedRef("FX_HISTORY_REQUEST")
 _YFINANCE_PRICE_FIELDS = frozenset({"Open", "Close"})
 
 
@@ -49,11 +48,26 @@ class YFinanceLocator:
             )
 
 
+@dataclass(frozen=True)
+class FetchWindow:
+    """Provider fetch window for one Pull request.
+
+    Fetch input only: the window names the bars to download, never Historical
+    Store identity. FX and listed Pulls share it so neither has to borrow a store
+    request (or fabricate an identity) to express "fetch this span".
+    """
+
+    timeframe: str
+    start: str | pd.Timestamp
+    end: str | pd.Timestamp
+    arrays: Sequence[str]
+
+
 class YFinanceFetcher(Protocol):
     def __call__(
         self,
         locator: YFinanceLocator,
-        request: NativeBarsRequest,
+        window: FetchWindow,
     ) -> pd.DataFrame: ...
 
 
@@ -87,9 +101,33 @@ def pull_yfinance_native_bars(
     """Fetch one listed instrument from yfinance and write native-bar Covered History."""
     ref = _single_listed_ref(request)
     fetch = fetcher or _fetch_yfinance
-    for gap_request in _uncovered_gap_requests(ref, request, store_dir=store_dir):
-        bars = _fetch_gap_bars(fetch, locator, gap_request)
-        _assert_pulled_gap_coverage(ref, bars, gap_request)
+    gaps = native_bar_coverage_gaps(
+        ref,
+        arrays=request.arrays,
+        timeframe=request.timeframe,
+        start=request.start,
+        end=request.end,
+        calendar=request.calendar,
+        listed_adjustment=request.listed_adjustment,
+        store_dir=store_dir,
+    )
+    for gap in gaps:
+        window = FetchWindow(
+            timeframe=request.timeframe,
+            start=gap.start,
+            end=gap.end,
+            arrays=request.arrays,
+        )
+        bars = _fetch_gap_bars(fetch, locator, window)
+        assert_admissible_native_bars(
+            ref,
+            bars,
+            arrays=window.arrays,
+            timeframe=window.timeframe,
+            start=window.start,
+            end=window.end,
+            calendar=request.calendar,
+        )
         merge_native_bars(
             ref,
             request.timeframe,
@@ -104,7 +142,7 @@ def pull_yfinance_native_bars(
         listed_adjustment=request.listed_adjustment,
         store_dir=store_dir,
     )
-    return PullResult(ref=ref, locator=locator, path=path, bars=_covered_row_count(path))
+    return PullResult(ref=ref, locator=locator, path=path, bars=covered_row_count(path))
 
 
 def pull_yfinance_fx_history(
@@ -113,103 +151,53 @@ def pull_yfinance_fx_history(
     timeframe: str,
     start: str | pd.Timestamp,
     end: str | pd.Timestamp,
+    calendar: TradingCalendar | str,
     locator: YFinanceLocator,
     fetcher: YFinanceFetcher | None = None,
     store_dir: Path | None = None,
 ) -> PullFxResult:
     """Fetch one FX History series from yfinance and write Covered History."""
     fetch = fetcher or _fetch_yfinance
-    for gap_request in _uncovered_fx_gap_requests(
-        pair,
-        timeframe=timeframe,
-        start=start,
-        end=end,
-        store_dir=store_dir,
-    ):
-        rates = _fetch_fx_gap_rates(fetch, locator, gap_request)
-        _assert_pulled_fx_gap_coverage(pair, rates, gap_request)
-        merge_fx_history(pair, timeframe, rates, store_dir=store_dir)
-    path = fx_history_path(pair, timeframe, store_dir=store_dir)
-    return PullFxResult(pair=pair, locator=locator, path=path, rates=_covered_row_count(path))
-
-
-def _uncovered_gap_requests(
-    ref: ListedRef,
-    request: NativeBarsRequest,
-    *,
-    store_dir: Path | None,
-) -> tuple[NativeBarsRequest, ...]:
-    gaps = native_bar_coverage_gaps(
-        ref,
-        arrays=request.arrays,
-        timeframe=request.timeframe,
-        start=request.start,
-        end=request.end,
-        listed_adjustment=request.listed_adjustment,
-        store_dir=store_dir,
-    )
-    return tuple(_gap_request(ref, request, gap) for gap in gaps)
-
-
-def _gap_request(
-    ref: ListedRef,
-    request: NativeBarsRequest,
-    gap: CoverageGap,
-) -> NativeBarsRequest:
-    return NativeBarsRequest(
-        refs=(ref,),
-        arrays=request.arrays,
-        timeframe=request.timeframe,
-        start=gap.start,
-        end=gap.end,
-        listed_adjustment=request.listed_adjustment,
-    )
-
-
-def _uncovered_fx_gap_requests(
-    pair: FxPair,
-    *,
-    timeframe: str,
-    start: str | pd.Timestamp,
-    end: str | pd.Timestamp,
-    store_dir: Path | None,
-) -> tuple[NativeBarsRequest, ...]:
     gaps = fx_history_coverage_gaps(
         pair,
         timeframe=timeframe,
         start=start,
         end=end,
+        calendar=calendar,
         store_dir=store_dir,
     )
-    return tuple(_fx_gap_request(gap, timeframe=timeframe) for gap in gaps)
-
-
-def _fx_gap_request(gap: CoverageGap, *, timeframe: str) -> NativeBarsRequest:
-    return NativeBarsRequest(
-        refs=(_FX_HISTORY_REQUEST_REF,),
-        arrays=("Close",),
-        timeframe=timeframe,
-        start=gap.start,
-        end=gap.end,
-    )
+    for gap in gaps:
+        window = FetchWindow(timeframe=timeframe, start=gap.start, end=gap.end, arrays=("Close",))
+        rates = _fetch_fx_gap_rates(fetch, locator, window)
+        assert_admissible_fx_history(
+            pair,
+            rates,
+            timeframe=window.timeframe,
+            start=window.start,
+            end=window.end,
+            calendar=calendar,
+        )
+        merge_fx_history(pair, timeframe, rates, store_dir=store_dir)
+    path = fx_history_path(pair, timeframe, store_dir=store_dir)
+    return PullFxResult(pair=pair, locator=locator, path=path, rates=covered_row_count(path))
 
 
 def _fetch_gap_bars(
     fetch: YFinanceFetcher,
     locator: YFinanceLocator,
-    request: NativeBarsRequest,
+    window: FetchWindow,
 ) -> pd.DataFrame:
-    raw = fetch(locator, request)
+    raw = fetch(locator, window)
     normalized = _normalize_yfinance_bars(raw)
-    return _stored_yfinance_bars(normalized, request.arrays)
+    return _stored_yfinance_bars(normalized, window.arrays)
 
 
 def _fetch_fx_gap_rates(
     fetch: YFinanceFetcher,
     locator: YFinanceLocator,
-    request: NativeBarsRequest,
+    window: FetchWindow,
 ) -> pd.Series:
-    raw = fetch(locator, request)
+    raw = fetch(locator, window)
     normalized = _normalize_yfinance_bars(raw)
     columns = _column_lookup(normalized)
     if "close" not in columns:
@@ -226,60 +214,19 @@ def _single_listed_ref(request: NativeBarsRequest) -> ListedRef:
     return ref
 
 
-def _assert_pulled_gap_coverage(
-    ref: ListedRef,
-    bars: pd.DataFrame,
-    request: NativeBarsRequest,
-) -> None:
-    try:
-        assert_native_bar_coverage(
-            ref,
-            bars,
-            arrays=request.arrays,
-            timeframe=request.timeframe,
-            start=request.start,
-            end=request.end,
-        )
-    except StoreCoverageError as error:
-        raise StoreAdmissionError(str(error)) from error
-
-
-def _assert_pulled_fx_gap_coverage(
-    pair: FxPair,
-    rates: pd.Series,
-    request: NativeBarsRequest,
-) -> None:
-    try:
-        assert_fx_history_coverage(
-            pair,
-            rates,
-            timeframe=request.timeframe,
-            start=request.start,
-            end=request.end,
-        )
-    except StoreCoverageError as error:
-        raise StoreAdmissionError(str(error)) from error
-
-
-def _covered_row_count(path: Path) -> int:
-    if not path.exists():
-        return 0
-    return len(pd.read_parquet(path))
-
-
-def _fetch_yfinance(locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame:
+def _fetch_yfinance(locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
     try:
         import yfinance as yf
     except ImportError as error:  # pragma: no cover - exercised only without optional package
         raise RuntimeError("yfinance is required to Pull yfinance native bars") from error
 
-    start = pd.Timestamp(request.start).date().isoformat()
-    end = pd.Timestamp(request.end).date().isoformat()
+    start = pd.Timestamp(window.start).date().isoformat()
+    end = pd.Timestamp(window.end).date().isoformat()
     return yf.download(
         locator.ticker,
         start=start,
         end=end,
-        interval=_yfinance_interval(request.timeframe),
+        interval=_yfinance_interval(window.timeframe),
         auto_adjust=False,
         actions=False,
         progress=False,
@@ -327,10 +274,6 @@ def _available_arrays(
     return tuple(array for array in arrays if array.lower() in columns)
 
 
-def _column_lookup(frame: pd.DataFrame) -> dict[str, str]:
-    return {str(column).lower(): str(column) for column in frame.columns}
-
-
 def _single_symbol_yfinance_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.columns.nlevels != 2:
         raise ValueError("yfinance returned an unsupported multi-index column layout")
@@ -360,6 +303,7 @@ def _yfinance_interval(timeframe: str) -> str:
 
 
 __all__ = [
+    "FetchWindow",
     "PullFxResult",
     "PullResult",
     "YFinanceFetcher",

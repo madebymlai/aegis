@@ -5,8 +5,9 @@ from typing import ClassVar
 
 import pandas as pd
 import pytest
+from aegis_data.calendars import TradingCalendar
 from aegis_data.store import NativeBarsRequest, write_native_bars
-from aegis_data.yfinance import YFinanceLocator, pull_yfinance_native_bars
+from aegis_data.yfinance import FetchWindow, YFinanceLocator, pull_yfinance_native_bars
 from aegis_runtime import FuturesRef, ListedRef
 from vectorbtpro import vbt
 
@@ -121,12 +122,12 @@ def test_store_adapter_pulls_missing_yfinance_gap_then_reads_by_figi(
     )
     requests: list[tuple[str, str, str]] = []
 
-    def fetch_gap(locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame:
+    def fetch_gap(locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
         requests.append(
             (
                 locator.ticker,
-                pd.Timestamp(request.start).date().isoformat(),
-                pd.Timestamp(request.end).date().isoformat(),
+                pd.Timestamp(window.start).date().isoformat(),
+                pd.Timestamp(window.end).date().isoformat(),
             )
         )
         return pd.DataFrame(
@@ -181,11 +182,12 @@ def test_store_adapter_reads_listed_covered_history_by_figi(
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
     )
     pull_yfinance_native_bars(
         request,
         YFinanceLocator("BRK-B"),
-        fetcher=lambda _locator, _request: pulled,
+        fetcher=lambda _locator, _window: pulled,
     )
     config = make_data_config(
         source="store",
@@ -216,11 +218,12 @@ def test_store_adapter_reads_raw_close_not_unrequested_adj_close(
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
     )
     pull_yfinance_native_bars(
         request,
         YFinanceLocator("SPY"),
-        fetcher=lambda _locator, _request: pulled,
+        fetcher=lambda _locator, _window: pulled,
     )
     config = make_data_config(
         source="store",
@@ -250,11 +253,12 @@ def test_store_adapter_reads_requested_adj_close_through_aegis_data(
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
     )
     pull_yfinance_native_bars(
         request,
         YFinanceLocator("SPY"),
-        fetcher=lambda _locator, _request: pulled,
+        fetcher=lambda _locator, _window: pulled,
     )
     config = make_data_config(
         source="store",
@@ -315,6 +319,7 @@ def test_store_adapter_folds_block_dataset_into_futures_request(
             timeframe="1D",
             start="2024-01-02",
             end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
         )
     ]
     assert list(result.native_data.get(feature="Close").columns) == ["ES"]

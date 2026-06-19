@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from aegis_data.calendars import TradingCalendar
 from aegis_data.databento_pull import pull_databento_futures_bars
 from aegis_data.store import NativeBarsRequest, read_native_bars_request
 from aegis_data.yfinance import YFinanceLocator, pull_yfinance_native_bars
@@ -11,6 +12,7 @@ from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 from research.aegis_research.configuration import (
     DataConfig,
     SymbolSpec,
+    required_store_window_edge,
     store_gap_fill_provider,
 )
 from research.aegis_research.market_data.adapters._support import (
@@ -56,12 +58,15 @@ def _pull_missing_native_bars(
 
 
 def _native_bars_request(config: DataConfig, refs: tuple[InstrumentRef, ...]) -> NativeBarsRequest:
+    # RD's listed universe is US-listed (yfinance) and its futures are CME (GLBX);
+    # both expect bars on the XNYS calendar.
     return NativeBarsRequest(
         refs=refs,
         arrays=config.effective_arrays,
         timeframe=config.timeframe,
-        start=_required_window_edge(config.start, "start"),
-        end=_required_window_edge(config.end, "end"),
+        start=required_store_window_edge(config.start, "start"),
+        end=required_store_window_edge(config.end, "end"),
+        calendar=TradingCalendar.XNYS,
     )
 
 
@@ -88,12 +93,6 @@ def _futures_ref(config: DataConfig, symbol: SymbolSpec) -> FuturesRef:
         roll_rule=symbol.roll_rule,
         adjustment=symbol.adjustment,
     )
-
-
-def _required_window_edge(value: str | None, name: str) -> str:
-    if value is None:
-        raise ValueError(f"{name} is required for store source")
-    return value
 
 
 def _array_panels(

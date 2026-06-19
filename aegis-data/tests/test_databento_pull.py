@@ -7,6 +7,7 @@ from datetime import date
 import pandas as pd
 from aegis_runtime import FuturesRef
 
+from aegis_data.calendars import TradingCalendar
 from aegis_data.databento_pull import pull_databento_futures_bars
 from aegis_data.store import (
     NATIVE_OHLCV_ARRAYS,
@@ -41,6 +42,7 @@ def _request(ref: FuturesRef) -> NativeBarsRequest:
         timeframe="1D",
         start="2024-01-02",
         end="2025-01-01",
+        calendar=TradingCalendar.XNYS,
     )
 
 
@@ -64,6 +66,7 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
         start="2024-01-02",
         end="2025-01-01",
         store_dir=tmp_path,
+        calendar=TradingCalendar.XNYS,
     )
 
     native_bars_path(ref, "1D", store_dir=tmp_path).unlink()
@@ -79,6 +82,7 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
         start="2024-01-02",
         end="2025-01-01",
         store_dir=tmp_path,
+        calendar=TradingCalendar.XNYS,
     )
 
     assert fetched == ["ESH4", "ESM4", "ESU4", "ESZ4"]
@@ -104,6 +108,7 @@ def test_databento_pull_derives_alternate_adjustment_from_same_raw_legs(tmp_path
         start="2024-01-02",
         end="2025-01-01",
         store_dir=tmp_path,
+        calendar=TradingCalendar.XNYS,
     )
 
     assert native_bars_path(ratio_ref, "1D", store_dir=tmp_path) != native_bars_path(

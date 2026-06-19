@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 from aegis_runtime import FuturesRef, ListedRef
 
+from aegis_data.calendars import TradingCalendar
 from aegis_data.store import (
     FxPair,
     NativeBarsRequest,
@@ -18,7 +19,12 @@ from aegis_data.store import (
     write_fx_history,
     write_native_bars,
 )
-from aegis_data.yfinance import YFinanceLocator, pull_yfinance_fx_history, pull_yfinance_native_bars
+from aegis_data.yfinance import (
+    FetchWindow,
+    YFinanceLocator,
+    pull_yfinance_fx_history,
+    pull_yfinance_native_bars,
+)
 
 
 def _bars(base: float) -> pd.DataFrame:
@@ -45,7 +51,7 @@ def test_yfinance_pull_writes_native_bars_under_listed_ref_not_locator(tmp_path)
     ref = ListedRef("BBG000B9XRY4")
     calls: list[str] = []
 
-    def fetch(locator: YFinanceLocator, _request: NativeBarsRequest) -> pd.DataFrame:
+    def fetch(locator: YFinanceLocator, _window: FetchWindow) -> pd.DataFrame:
         calls.append(locator.ticker)
         return _bars(100.0)
 
@@ -55,6 +61,7 @@ def test_yfinance_pull_writes_native_bars_under_listed_ref_not_locator(tmp_path)
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
     )
 
     pull_yfinance_native_bars(
@@ -71,6 +78,7 @@ def test_yfinance_pull_writes_native_bars_under_listed_ref_not_locator(tmp_path)
         start="2024-01-02",
         end="2024-01-05",
         store_dir=tmp_path,
+        calendar=TradingCalendar.XNYS,
     )
 
     assert calls == ["BRK-B"]
@@ -102,8 +110,8 @@ def test_yfinance_pull_fetches_only_uncovered_calendar_gaps(tmp_path) -> None:
     )
     calls: list[tuple[str, str]] = []
 
-    def fetch(_locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame:
-        calls.append((str(request.start), str(request.end)))
+    def fetch(_locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
+        calls.append((str(window.start), str(window.end)))
         return fetched
 
     write_native_bars(ref, "1D", existing, store_dir=tmp_path)
@@ -113,6 +121,7 @@ def test_yfinance_pull_fetches_only_uncovered_calendar_gaps(tmp_path) -> None:
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-09",
+        calendar=TradingCalendar.XNYS,
     )
 
     pull_yfinance_native_bars(request, YFinanceLocator("SPY"), fetcher=fetch, store_dir=tmp_path)
@@ -123,6 +132,7 @@ def test_yfinance_pull_fetches_only_uncovered_calendar_gaps(tmp_path) -> None:
         start="2024-01-02",
         end="2024-01-09",
         store_dir=tmp_path,
+        calendar=TradingCalendar.XNYS,
     )
 
     assert calls == [("2024-01-05 00:00:00", "2024-01-09 00:00:00")]
@@ -133,8 +143,8 @@ def test_yfinance_pull_fetches_existing_dates_when_requested_array_is_uncovered(
     ref = ListedRef("BBG000B9XRY4")
     calls: list[tuple[str, str]] = []
 
-    def fetch(_locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame:
-        calls.append((str(request.start), str(request.end)))
+    def fetch(_locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
+        calls.append((str(window.start), str(window.end)))
         return _bars_with_adj_close()
 
     write_native_bars(ref, "1D", _bars(100.0), store_dir=tmp_path)
@@ -144,6 +154,7 @@ def test_yfinance_pull_fetches_existing_dates_when_requested_array_is_uncovered(
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
     )
 
     pull_yfinance_native_bars(request, YFinanceLocator("SPY"), fetcher=fetch, store_dir=tmp_path)
@@ -154,6 +165,7 @@ def test_yfinance_pull_fetches_existing_dates_when_requested_array_is_uncovered(
         start="2024-01-02",
         end="2024-01-05",
         store_dir=tmp_path,
+        calendar=TradingCalendar.XNYS,
     )
 
     assert calls == [("2024-01-02 00:00:00", "2024-01-05 00:00:00")]
@@ -179,13 +191,14 @@ def test_yfinance_pull_rejects_missing_expected_session_before_writing(tmp_path)
         timeframe="1D",
         start="2024-03-28",
         end="2024-04-02",
+        calendar=TradingCalendar.XNYS,
     )
 
     with pytest.raises(StoreAdmissionError, match="2024-04-01"):
         pull_yfinance_native_bars(
             request,
             YFinanceLocator("SPY"),
-            fetcher=lambda _locator, _request: incomplete,
+            fetcher=lambda _locator, _window: incomplete,
             store_dir=tmp_path,
         )
 
@@ -200,12 +213,13 @@ def test_yfinance_pull_keeps_close_raw_and_stores_adj_close_only_when_requested(
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
     )
 
     pull_yfinance_native_bars(
         request,
         YFinanceLocator("SPY"),
-        fetcher=lambda _locator, _request: _bars_with_adj_close(),
+        fetcher=lambda _locator, _window: _bars_with_adj_close(),
         store_dir=tmp_path,
     )
     frames = read_native_bars(
@@ -215,6 +229,7 @@ def test_yfinance_pull_keeps_close_raw_and_stores_adj_close_only_when_requested(
         start="2024-01-02",
         end="2024-01-05",
         store_dir=tmp_path,
+        calendar=TradingCalendar.XNYS,
     )
 
     assert frames[ref]["Close"].tolist() == [100.0, 101.0, 102.0]
@@ -226,6 +241,7 @@ def test_yfinance_pull_keeps_close_raw_and_stores_adj_close_only_when_requested(
             start="2024-01-02",
             end="2024-01-05",
             store_dir=tmp_path,
+            calendar=TradingCalendar.XNYS,
         )
 
 
@@ -237,12 +253,13 @@ def test_yfinance_pull_stores_requested_adj_close_as_separate_array(tmp_path) ->
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
     )
 
     pull_yfinance_native_bars(
         request,
         YFinanceLocator("SPY"),
-        fetcher=lambda _locator, _request: _bars_with_adj_close(),
+        fetcher=lambda _locator, _window: _bars_with_adj_close(),
         store_dir=tmp_path,
     )
     frames = read_native_bars(
@@ -252,6 +269,7 @@ def test_yfinance_pull_stores_requested_adj_close_as_separate_array(tmp_path) ->
         start="2024-01-02",
         end="2024-01-05",
         store_dir=tmp_path,
+        calendar=TradingCalendar.XNYS,
     )
 
     assert frames[ref]["Close"].tolist() == [100.0, 101.0, 102.0]
@@ -266,13 +284,14 @@ def test_yfinance_pull_rejects_missing_requested_adj_close(tmp_path) -> None:
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
     )
 
     with pytest.raises(StoreAdmissionError, match="Adj Close"):
         pull_yfinance_native_bars(
             request,
             YFinanceLocator("SPY"),
-            fetcher=lambda _locator, _request: _bars(100.0),
+            fetcher=lambda _locator, _window: _bars(100.0),
             store_dir=tmp_path,
         )
 
@@ -283,8 +302,8 @@ def test_yfinance_fx_pull_writes_fx_history_under_pair_identity(tmp_path) -> Non
     pair = FxPair("EUR", "USD")
     calls: list[tuple[str, str, str]] = []
 
-    def fetch(locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame:
-        calls.append((locator.ticker, str(request.start), str(request.end)))
+    def fetch(locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
+        calls.append((locator.ticker, str(window.start), str(window.end)))
         return pd.DataFrame(
             {"Close": [1.10, 1.11, 1.12]},
             index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
@@ -298,6 +317,7 @@ def test_yfinance_fx_pull_writes_fx_history_under_pair_identity(tmp_path) -> Non
         locator=YFinanceLocator("EURUSD=X"),
         fetcher=fetch,
         store_dir=tmp_path,
+        calendar=TradingCalendar.WEEKDAY,
     )
     rates = read_fx_history(
         (pair,),
@@ -305,6 +325,7 @@ def test_yfinance_fx_pull_writes_fx_history_under_pair_identity(tmp_path) -> Non
         start="2024-01-02",
         end="2024-01-05",
         store_dir=tmp_path,
+        calendar=TradingCalendar.WEEKDAY,
     )
 
     assert calls == [("EURUSD=X", "2024-01-02 00:00:00", "2024-01-05 00:00:00")]
@@ -321,8 +342,8 @@ def test_yfinance_fx_pull_fetches_only_uncovered_rate_gaps(tmp_path) -> None:
         store_dir=tmp_path,
     )
 
-    def fetch(_locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame:
-        calls.append((str(request.start), str(request.end)))
+    def fetch(_locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
+        calls.append((str(window.start), str(window.end)))
         return pd.DataFrame(
             {"Close": [1.11, 1.12]},
             index=pd.DatetimeIndex(["2024-01-03", "2024-01-04"]),
@@ -336,6 +357,7 @@ def test_yfinance_fx_pull_fetches_only_uncovered_rate_gaps(tmp_path) -> None:
         locator=YFinanceLocator("EURUSD=X"),
         fetcher=fetch,
         store_dir=tmp_path,
+        calendar=TradingCalendar.WEEKDAY,
     )
     rates = read_fx_history(
         (pair,),
@@ -343,6 +365,7 @@ def test_yfinance_fx_pull_fetches_only_uncovered_rate_gaps(tmp_path) -> None:
         start="2024-01-02",
         end="2024-01-05",
         store_dir=tmp_path,
+        calendar=TradingCalendar.WEEKDAY,
     )
 
     assert calls == [("2024-01-03 00:00:00", "2024-01-05 00:00:00")]
@@ -360,8 +383,9 @@ def test_yfinance_fx_pull_rejects_missing_expected_rate_before_writing(tmp_path)
             start="2024-01-02",
             end="2024-01-05",
             locator=YFinanceLocator("EURUSD=X"),
-            fetcher=lambda _locator, _request: incomplete,
+            fetcher=lambda _locator, _window: incomplete,
             store_dir=tmp_path,
+            calendar=TradingCalendar.WEEKDAY,
         )
 
     assert not fx_history_path(pair, "1D", store_dir=tmp_path).exists()
@@ -374,12 +398,13 @@ def test_yfinance_pull_requires_one_explicit_listed_ref(tmp_path) -> None:
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
+        calendar=TradingCalendar.XNYS,
     )
 
     with pytest.raises(TypeError, match="ListedRef"):
         pull_yfinance_native_bars(
             request,
             YFinanceLocator("ES=F"),
-            fetcher=lambda _locator, _request: _bars(100.0),
+            fetcher=lambda _locator, _window: _bars(100.0),
             store_dir=tmp_path,
         )

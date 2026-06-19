@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any
 
 import pandas as pd
+from aegis_data.calendars import TradingCalendar
 from aegis_data.source import continuous_panel, databento_source
 from aegis_data.store import FxPair, read_fx_history
 from aegis_data.yfinance import YFinanceLocator, pull_yfinance_fx_history
@@ -20,6 +21,7 @@ from research.aegis_research.configuration import (
     ResolvedRunConfig,
     RunConfig,
     SymbolSpec,
+    required_store_window_edge,
     store_gap_fill_provider,
 )
 from research.aegis_research.data import (
@@ -240,8 +242,8 @@ def _load_store_fx_rates(
     provider = store_gap_fill_provider(data_config.provider)
     if provider != "yfinance":
         raise ValueError(f"unsupported store FX gap-fill provider {provider!r}")
-    start = _required_data_window_edge(data_config.start, "start")
-    end = _required_data_window_edge(data_config.end, "end")
+    start = required_store_window_edge(data_config.start, "start")
+    end = required_store_window_edge(data_config.end, "end")
     fx_pair_by_currency = {ccy: FxPair(base_currency, ccy) for ccy in fx_ticker_by_currency}
     for ccy, fx_pair in fx_pair_by_currency.items():
         pull_yfinance_fx_history(
@@ -249,6 +251,7 @@ def _load_store_fx_rates(
             timeframe=data_config.timeframe,
             start=start,
             end=end,
+            calendar=TradingCalendar.WEEKDAY,
             locator=YFinanceLocator(fx_ticker_by_currency[ccy]),
         )
     histories = read_fx_history(
@@ -256,17 +259,12 @@ def _load_store_fx_rates(
         timeframe=data_config.timeframe,
         start=start,
         end=end,
+        calendar=TradingCalendar.WEEKDAY,
     )
     return assemble_fx_rates(
         {ccy: histories[fx_pair] for ccy, fx_pair in fx_pair_by_currency.items()},
         index=index,
     )
-
-
-def _required_data_window_edge(value: str | None, name: str) -> str:
-    if value is None:
-        raise ValueError(f"{name} is required for store source")
-    return value
 
 
 def _failure_diagnostic(error: Exception) -> dict[str, str]:
