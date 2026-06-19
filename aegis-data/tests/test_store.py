@@ -109,6 +109,32 @@ def test_native_bar_store_read_fails_closed_on_missing_listed_coverage(tmp_path)
     assert "2024-01-03" in str(exc.value)
 
 
+def test_native_bar_store_read_does_not_require_exchange_holiday_bars(tmp_path) -> None:
+    ref = ListedRef("BBG000B9XRY4")
+    bars = pd.DataFrame(
+        {
+            "open": [100.0, 101.0],
+            "high": [100.0, 101.0],
+            "low": [100.0, 101.0],
+            "close": [100.0, 101.0],
+            "volume": [1000, 1100],
+        },
+        index=pd.DatetimeIndex(["2024-03-28", "2024-04-01"]),
+    )
+    write_native_bars(ref, "1D", bars, store_dir=tmp_path)
+
+    frames = read_native_bars(
+        (ref,),
+        arrays=("close",),
+        timeframe="1D",
+        start="2024-03-28",
+        end="2024-04-02",
+        store_dir=tmp_path,
+    )
+
+    assert frames[ref]["close"].tolist() == [100.0, 101.0]
+
+
 def test_fx_history_store_read_returns_provider_free_rates(tmp_path) -> None:
     pair = FxPair("EUR", "USD")
     index = pd.bdate_range("2024-01-01", periods=5)

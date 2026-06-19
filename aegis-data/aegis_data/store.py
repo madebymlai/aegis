@@ -1,10 +1,9 @@
 """OS-global parquet store for historical market data.
 
-Per-contract pulls are cached as parquet under the OS user-data directory
-(``platformdirs``), overridable with ``AEGIS_DATA_DIR``.  A repeated identical
-request reads the parquet instead of re-hitting the provider — this is the
-"``source:`` omitted means the cache path" default, shared by Aegis RD and Aegis
-Trader (both read the same store).
+Provider-normalized history is stored as a reusable corpus under the OS
+user-data directory (``platformdirs``), overridable with ``AEGIS_DATA_DIR``.
+Store Reads are coverage-based, and Pulls can fill only instrument-calendar Gaps
+instead of re-fetching already covered intervals.
 """
 
 from __future__ import annotations
@@ -19,6 +18,14 @@ from typing import TypeAlias, TypeVar
 
 import pandas as pd
 import platformdirs
+from pandas.tseries.holiday import (
+    AbstractHolidayCalendar,
+    GoodFriday,
+    Holiday,
+    MO,
+    TH,
+    nearest_workday,
+)
 from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 
 from aegis_data.chain import ContractFetcher
@@ -27,6 +34,24 @@ _APP = "aegis-data"
 _DAILY_TIMEFRAMES = frozenset({"1D", "1d"})
 NATIVE_OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 _HistoryFrame = TypeVar("_HistoryFrame", pd.Series, pd.DataFrame)
+
+
+class _XNYSHolidayCalendar(AbstractHolidayCalendar):
+    rules = [
+        Holiday("New Year's Day", month=1, day=1, observance=nearest_workday),
+        Holiday("Martin Luther King Jr. Day", month=1, day=1, offset=pd.DateOffset(weekday=MO(3))),
+        Holiday("Washington's Birthday", month=2, day=1, offset=pd.DateOffset(weekday=MO(3))),
+        GoodFriday,
+        Holiday("Memorial Day", month=5, day=31, offset=pd.DateOffset(weekday=MO(-1))),
+        Holiday("Juneteenth", month=6, day=19, observance=nearest_workday),
+        Holiday("Independence Day", month=7, day=4, observance=nearest_workday),
+        Holiday("Labor Day", month=9, day=1, offset=pd.DateOffset(weekday=MO(1))),
+        Holiday("Thanksgiving Day", month=11, day=1, offset=pd.DateOffset(weekday=TH(4))),
+        Holiday("Christmas Day", month=12, day=25, observance=nearest_workday),
+    ]
+
+
+_XNYS_BUSINESS_DAY = pd.offsets.CustomBusinessDay(calendar=_XNYSHolidayCalendar())
 
 
 class ListedAdjustmentPolicy(StrEnum):
@@ -70,6 +95,14 @@ class StoreCoverageError(ValueError):
     def __init__(self, key: HistoryKey, detail: str) -> None:
         self.key = key
         super().__init__(f"{key.value}: {detail}")
+
+
+@dataclass(frozen=True)
+class CoverageGap:
+    """Uncovered half-open interval of expected instrument-calendar bars."""
+
+    start: pd.Timestamp
+    end: pd.Timestamp
 
 
 @dataclass(frozen=True)
@@ -190,6 +223,30 @@ def write_native_bars(
     return path
 
 
+def merge_native_bars(
+    ref: InstrumentRef,
+    timeframe: str,
+    bars: pd.DataFrame,
+    *,
+    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
+    required_arrays: Sequence[str] = (),
+    store_dir: Path | None = None,
+) -> Path:
+    """Add provider-normalized native market bars to existing Covered History."""
+    admitted = _admit_native_bars(bars)
+    _assert_admitted_native_bar_arrays(admitted, required_arrays)
+    path = native_bars_path(
+        ref,
+        timeframe,
+        listed_adjustment=listed_adjustment,
+        store_dir=store_dir,
+    )
+    merged = _merge_admitted_native_bars(path, admitted) if path.exists() else admitted
+    path.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_parquet(path)
+    return path
+
+
 def read_native_bars(
     refs: Sequence[InstrumentRef],
     *,
@@ -240,6 +297,61 @@ def read_native_bars_request(
         )
         for ref in request.refs
     }
+
+
+def native_bar_coverage_gaps(
+    ref: InstrumentRef,
+    *,
+    arrays: Sequence[str],
+    timeframe: str,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
+    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
+    store_dir: Path | None = None,
+) -> tuple[CoverageGap, ...]:
+    """Return uncovered expected-bar intervals for a native-bars request."""
+    start_ts, end_ts = _window(start, end)
+    required = _validated_arrays(arrays)
+    path = native_bars_path(
+        ref,
+        timeframe,
+        listed_adjustment=listed_adjustment,
+        store_dir=store_dir,
+    )
+    expected = _expected_bar_index(timeframe, start=start_ts, end=end_ts)
+    if expected.empty:
+        return ()
+    if not path.exists():
+        return _coverage_gaps(expected, expected)
+    admitted = _load_admitted_native_bars(path)
+    missing = _missing_required_bar_index(
+        admitted,
+        arrays=required,
+        timeframe=timeframe,
+        start=start_ts,
+        end=end_ts,
+    )
+    return _coverage_gaps(missing, expected)
+
+
+def assert_native_bar_coverage(
+    ref: InstrumentRef,
+    frame: pd.DataFrame,
+    *,
+    arrays: Sequence[str],
+    timeframe: str,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
+) -> None:
+    """Fail when a provider frame cannot cover the requested native-bar window."""
+    start_ts, end_ts = _window(start, end)
+    required = _validated_arrays(arrays)
+    admitted = _admit_native_bars(frame)
+    columns = _require_native_bar_columns(ref, admitted, required)
+    sliced = _slice_window(admitted, start=start_ts, end=end_ts)
+    selected = _select_native_bar_arrays(sliced, columns, required)
+    _assert_expected_daily_coverage(ref, selected, timeframe=timeframe, start=start_ts, end=end_ts)
+    _assert_no_null_arrays(ref, selected)
 
 
 def write_fx_history(
@@ -354,8 +466,8 @@ def _read_one_native_bar_frame(
     admitted = _load_admitted_native_bars(path)
     columns = _require_native_bar_columns(ref, admitted, arrays)
     sliced = _slice_window(admitted, start=start, end=end)
-    _assert_expected_daily_coverage(ref, sliced, timeframe=timeframe, start=start, end=end)
     selected = _select_native_bar_arrays(sliced, columns, arrays)
+    _assert_expected_daily_coverage(ref, selected, timeframe=timeframe, start=start, end=end)
     _assert_no_null_arrays(ref, selected)
     return selected
 
@@ -369,6 +481,35 @@ def _load_admitted_fx_history(path: Path) -> pd.DataFrame:
 
 def _load_admitted_native_bars(path: Path) -> pd.DataFrame:
     return _admit_native_bars(pd.read_parquet(path))
+
+
+def _merge_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.DataFrame:
+    existing = _load_admitted_native_bars(path)
+    merged = existing.combine_first(admitted)
+    return _admit_native_bars(merged)
+
+
+def _missing_required_bar_index(
+    frame: pd.DataFrame,
+    *,
+    arrays: tuple[str, ...],
+    timeframe: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DatetimeIndex:
+    expected = _expected_bar_index(timeframe, start=start, end=end)
+    if expected.empty:
+        return expected
+    columns = _column_lookup(frame)
+    if any(array.lower() not in columns for array in arrays):
+        return expected
+    sliced = _slice_window(frame, start=start, end=end)
+    selected = _select_native_bar_arrays(sliced, columns, arrays)
+    if selected.empty:
+        return expected
+    complete = selected.loc[~selected.isna().any(axis=1)]
+    observed = pd.DatetimeIndex(complete.index).tz_localize(None).normalize()
+    return expected.difference(observed)
 
 
 def _require_native_bar_columns(
@@ -472,7 +613,40 @@ def _business_days(start: pd.Timestamp, end: pd.Timestamp) -> pd.DatetimeIndex:
     last_inclusive = (end - pd.Timedelta(days=1)).normalize()
     if last_inclusive < start.normalize():
         return pd.DatetimeIndex([])
-    return pd.bdate_range(start.normalize(), last_inclusive)
+    return pd.date_range(start.normalize(), last_inclusive, freq=_XNYS_BUSINESS_DAY)
+
+
+def _expected_bar_index(
+    timeframe: str,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DatetimeIndex:
+    if timeframe not in _DAILY_TIMEFRAMES:
+        return pd.DatetimeIndex([start])
+    return _business_days(start, end)
+
+
+def _coverage_gaps(
+    missing: pd.DatetimeIndex,
+    expected: pd.DatetimeIndex,
+) -> tuple[CoverageGap, ...]:
+    if missing.empty:
+        return ()
+    positions = expected.get_indexer(missing)
+    gaps: list[CoverageGap] = []
+    group_start = 0
+    for offset in range(1, len(positions)):
+        if positions[offset] == positions[offset - 1] + 1:
+            continue
+        gaps.append(_coverage_gap(missing[group_start], missing[offset - 1]))
+        group_start = offset
+    gaps.append(_coverage_gap(missing[group_start], missing[-1]))
+    return tuple(gaps)
+
+
+def _coverage_gap(first: pd.Timestamp, last: pd.Timestamp) -> CoverageGap:
+    return CoverageGap(start=first.normalize(), end=(last + pd.Timedelta(days=1)).normalize())
 
 
 def _column_lookup(frame: pd.DataFrame) -> dict[str, str]:
@@ -516,16 +690,20 @@ def _safe_key(value: str) -> str:
 
 
 __all__ = [
+    "CoverageGap",
     "FxPair",
     "ListedAdjustmentPolicy",
     "NATIVE_OHLCV_ARRAYS",
     "NativeBarsRequest",
     "StoreAdmissionError",
     "StoreCoverageError",
+    "assert_native_bar_coverage",
     "cached_fetcher",
     "data_dir",
     "futures_dir",
     "fx_history_path",
+    "merge_native_bars",
+    "native_bar_coverage_gaps",
     "native_bars_path",
     "read_fx_history",
     "read_native_bars",

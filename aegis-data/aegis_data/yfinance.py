@@ -10,7 +10,16 @@ from typing import Protocol
 import pandas as pd
 from aegis_runtime import ListedRef
 
-from aegis_data.store import NATIVE_OHLCV_ARRAYS, NativeBarsRequest, write_native_bars
+from aegis_data.store import (
+    NATIVE_OHLCV_ARRAYS,
+    NativeBarsRequest,
+    StoreAdmissionError,
+    StoreCoverageError,
+    assert_native_bar_coverage,
+    merge_native_bars,
+    native_bar_coverage_gaps,
+    native_bars_path,
+)
 
 _MULTIPLE_SYMBOLS_ERROR = "yfinance Pull for one ListedRef returned multiple symbols"
 _YFINANCE_PRICE_FIELDS = frozenset({"Open", "Close"})
@@ -60,17 +69,42 @@ def pull_yfinance_native_bars(
 ) -> PullResult:
     """Fetch one listed instrument from yfinance and write native-bar Covered History."""
     ref = _single_listed_ref(request)
-    raw = (fetcher or _fetch_yfinance)(locator, request)
-    bars = _stored_yfinance_bars(_normalize_yfinance_bars(raw), request.arrays)
-    path = write_native_bars(
+    gaps = native_bar_coverage_gaps(
         ref,
-        request.timeframe,
-        bars,
+        arrays=request.arrays,
+        timeframe=request.timeframe,
+        start=request.start,
+        end=request.end,
         listed_adjustment=request.listed_adjustment,
-        required_arrays=request.arrays,
         store_dir=store_dir,
     )
-    return PullResult(ref=ref, locator=locator, path=path, bars=len(bars))
+    for gap in gaps:
+        gap_request = NativeBarsRequest(
+            refs=(ref,),
+            arrays=request.arrays,
+            timeframe=request.timeframe,
+            start=gap.start,
+            end=gap.end,
+            listed_adjustment=request.listed_adjustment,
+        )
+        raw = (fetcher or _fetch_yfinance)(locator, gap_request)
+        bars = _stored_yfinance_bars(_normalize_yfinance_bars(raw), request.arrays)
+        _assert_pulled_gap_coverage(ref, bars, gap_request)
+        merge_native_bars(
+            ref,
+            request.timeframe,
+            bars,
+            listed_adjustment=request.listed_adjustment,
+            required_arrays=request.arrays,
+            store_dir=store_dir,
+        )
+    path = native_bars_path(
+        ref,
+        request.timeframe,
+        listed_adjustment=request.listed_adjustment,
+        store_dir=store_dir,
+    )
+    return PullResult(ref=ref, locator=locator, path=path, bars=_covered_bar_count(path))
 
 
 def _single_listed_ref(request: NativeBarsRequest) -> ListedRef:
@@ -80,6 +114,30 @@ def _single_listed_ref(request: NativeBarsRequest) -> ListedRef:
     if not isinstance(ref, ListedRef):
         raise TypeError(f"yfinance Pull requires a ListedRef; got {ref!r}")
     return ref
+
+
+def _assert_pulled_gap_coverage(
+    ref: ListedRef,
+    bars: pd.DataFrame,
+    request: NativeBarsRequest,
+) -> None:
+    try:
+        assert_native_bar_coverage(
+            ref,
+            bars,
+            arrays=request.arrays,
+            timeframe=request.timeframe,
+            start=request.start,
+            end=request.end,
+        )
+    except StoreCoverageError as error:
+        raise StoreAdmissionError(str(error)) from error
+
+
+def _covered_bar_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return len(pd.read_parquet(path))
 
 
 def _fetch_yfinance(locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame:
