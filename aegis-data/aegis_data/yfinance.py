@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -9,7 +10,7 @@ from typing import Protocol
 import pandas as pd
 from aegis_runtime import ListedRef
 
-from aegis_data.store import NativeBarsRequest, write_native_bars
+from aegis_data.store import NATIVE_OHLCV_ARRAYS, NativeBarsRequest, write_native_bars
 
 _MULTIPLE_SYMBOLS_ERROR = "yfinance Pull for one ListedRef returned multiple symbols"
 _YFINANCE_PRICE_FIELDS = frozenset({"Open", "Close"})
@@ -60,8 +61,15 @@ def pull_yfinance_native_bars(
     """Fetch one listed instrument from yfinance and write native-bar Covered History."""
     ref = _single_listed_ref(request)
     raw = (fetcher or _fetch_yfinance)(locator, request)
-    bars = _normalize_yfinance_bars(raw)
-    path = write_native_bars(ref, request.timeframe, bars, store_dir=store_dir)
+    bars = _stored_yfinance_bars(_normalize_yfinance_bars(raw), request.arrays)
+    path = write_native_bars(
+        ref,
+        request.timeframe,
+        bars,
+        listed_adjustment=request.listed_adjustment,
+        required_arrays=request.arrays,
+        store_dir=store_dir,
+    )
     return PullResult(ref=ref, locator=locator, path=path, bars=len(bars))
 
 
@@ -102,6 +110,30 @@ def _normalize_yfinance_bars(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = frame.copy()
     normalized.index = pd.DatetimeIndex(normalized.index).tz_localize(None).normalize()
     return normalized
+
+
+def _stored_yfinance_bars(frame: pd.DataFrame, requested_arrays: Sequence[str]) -> pd.DataFrame:
+    columns = _column_lookup(frame)
+    stored_arrays = list(_available_arrays(columns, NATIVE_OHLCV_ARRAYS))
+    stored_lookup = {array.lower() for array in stored_arrays}
+    for array in requested_arrays:
+        if array.lower() in columns and array.lower() not in stored_lookup:
+            stored_arrays.append(array)
+            stored_lookup.add(array.lower())
+    selected = frame.loc[:, [columns[array.lower()] for array in stored_arrays]].copy()
+    selected.columns = stored_arrays
+    return selected
+
+
+def _available_arrays(
+    columns: dict[str, str],
+    arrays: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(array for array in arrays if array.lower() in columns)
+
+
+def _column_lookup(frame: pd.DataFrame) -> dict[str, str]:
+    return {str(column).lower(): str(column) for column in frame.columns}
 
 
 def _single_symbol_yfinance_frame(frame: pd.DataFrame) -> pd.DataFrame:

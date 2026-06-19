@@ -13,8 +13,9 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
+from enum import StrEnum
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeAlias, TypeVar
 
 import pandas as pd
 import platformdirs
@@ -24,7 +25,14 @@ from aegis_data.chain import ContractFetcher
 
 _APP = "aegis-data"
 _DAILY_TIMEFRAMES = frozenset({"1D", "1d"})
+NATIVE_OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 _HistoryFrame = TypeVar("_HistoryFrame", pd.Series, pd.DataFrame)
+
+
+class ListedAdjustmentPolicy(StrEnum):
+    """Listed native-bar adjustment policy in the Historical Store identity."""
+
+    RAW = "raw"
 
 
 @dataclass(frozen=True, order=True)
@@ -49,7 +57,7 @@ class FxPair:
         return f"{self.base}/{self.quote}"
 
 
-HistoryKey = InstrumentRef | FxPair
+HistoryKey: TypeAlias = InstrumentRef | FxPair
 
 
 class StoreAdmissionError(ValueError):
@@ -73,6 +81,7 @@ class NativeBarsRequest:
     timeframe: str
     start: str | date | pd.Timestamp
     end: str | date | pd.Timestamp
+    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW
 
     def __post_init__(self) -> None:
         refs = tuple(self.refs)
@@ -82,6 +91,11 @@ class NativeBarsRequest:
         object.__setattr__(self, "arrays", _validated_arrays(self.arrays))
         if not self.timeframe:
             raise ValueError("NativeBarsRequest timeframe must be a non-empty string")
+        object.__setattr__(
+            self,
+            "listed_adjustment",
+            _listed_adjustment_policy(self.listed_adjustment),
+        )
         _window(self.start, self.end)
 
 
@@ -115,6 +129,7 @@ def native_bars_path(
     ref: InstrumentRef,
     timeframe: str,
     *,
+    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
     store_dir: Path | None = None,
 ) -> Path:
     """Parquet location for a native-market-bar Covered History slice.
@@ -131,6 +146,7 @@ def native_bars_path(
             / "listed"
             / _safe_key(ref.figi)
             / "bars"
+            / _safe_key(_listed_adjustment_policy(listed_adjustment).value)
             / f"{_safe_key(timeframe)}.parquet"
         )
     if isinstance(ref, FuturesRef):
@@ -150,6 +166,8 @@ def write_native_bars(
     timeframe: str,
     bars: pd.DataFrame,
     *,
+    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
+    required_arrays: Sequence[str] = (),
     store_dir: Path | None = None,
 ) -> Path:
     """Admit provider-normalized native market bars as Covered History.
@@ -159,7 +177,13 @@ def write_native_bars(
     never Nautilus engine objects.
     """
     admitted = _admit_native_bars(bars)
-    path = native_bars_path(ref, timeframe, store_dir=store_dir)
+    _assert_admitted_native_bar_arrays(admitted, required_arrays)
+    path = native_bars_path(
+        ref,
+        timeframe,
+        listed_adjustment=listed_adjustment,
+        store_dir=store_dir,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     admitted.to_parquet(path)
     return path
@@ -172,6 +196,7 @@ def read_native_bars(
     timeframe: str,
     start: str | date | pd.Timestamp,
     end: str | date | pd.Timestamp,
+    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
     store_dir: Path | None = None,
 ) -> dict[InstrumentRef, pd.DataFrame]:
     """Provider-free Store Read for native market bars.
@@ -187,6 +212,7 @@ def read_native_bars(
             timeframe=timeframe,
             start=start,
             end=end,
+            listed_adjustment=listed_adjustment,
         ),
         store_dir=store_dir,
     )
@@ -204,6 +230,7 @@ def read_native_bars_request(
             ref,
             arrays=tuple(request.arrays),
             timeframe=request.timeframe,
+            listed_adjustment=_listed_adjustment_policy(request.listed_adjustment),
             start=start_ts,
             end=end_ts,
             store_dir=store_dir,
@@ -308,11 +335,17 @@ def _read_one_native_bar_frame(
     *,
     arrays: tuple[str, ...],
     timeframe: str,
+    listed_adjustment: ListedAdjustmentPolicy,
     start: pd.Timestamp,
     end: pd.Timestamp,
     store_dir: Path | None,
 ) -> pd.DataFrame:
-    path = native_bars_path(ref, timeframe, store_dir=store_dir)
+    path = native_bars_path(
+        ref,
+        timeframe,
+        listed_adjustment=listed_adjustment,
+        store_dir=store_dir,
+    )
     if not path.exists():
         raise StoreCoverageError(ref, f"no Covered History for {timeframe}")
     admitted = _load_admitted_native_bars(path)
@@ -345,6 +378,17 @@ def _require_native_bar_columns(
     if missing_arrays:
         raise StoreCoverageError(ref, f"missing arrays {list(missing_arrays)}")
     return columns
+
+
+def _assert_admitted_native_bar_arrays(
+    frame: pd.DataFrame,
+    required_arrays: Sequence[str],
+) -> None:
+    required = _validated_arrays(required_arrays) if required_arrays else ()
+    columns = _column_lookup(frame)
+    missing_arrays = tuple(array for array in required if array.lower() not in columns)
+    if missing_arrays:
+        raise StoreAdmissionError(f"native bars missing required arrays {list(missing_arrays)}")
 
 
 def _select_native_bar_arrays(
@@ -432,6 +476,18 @@ def _column_lookup(frame: pd.DataFrame) -> dict[str, str]:
     return {str(column).lower(): str(column) for column in frame.columns}
 
 
+def _listed_adjustment_policy(
+    value: ListedAdjustmentPolicy | str,
+) -> ListedAdjustmentPolicy:
+    try:
+        return ListedAdjustmentPolicy(value)
+    except ValueError as error:
+        allowed = [policy.value for policy in ListedAdjustmentPolicy]
+        raise ValueError(
+            f"unsupported listed adjustment policy {value!r}; expected one of {allowed}"
+        ) from error
+
+
 def _validated_arrays(arrays: Sequence[str]) -> tuple[str, ...]:
     values = tuple(str(array) for array in arrays)
     if not values:
@@ -458,6 +514,8 @@ def _safe_key(value: str) -> str:
 
 __all__ = [
     "FxPair",
+    "ListedAdjustmentPolicy",
+    "NATIVE_OHLCV_ARRAYS",
     "NativeBarsRequest",
     "StoreAdmissionError",
     "StoreCoverageError",

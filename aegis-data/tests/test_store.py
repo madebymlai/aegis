@@ -13,6 +13,8 @@ from aegis_data.store import (
     StoreCoverageError,
     cached_fetcher,
     data_dir,
+    ListedAdjustmentPolicy,
+    native_bars_path,
     read_fx_history,
     read_native_bars,
     write_fx_history,
@@ -55,6 +57,19 @@ def _listed_bars() -> pd.DataFrame:
         },
         index=index,
     )
+
+
+def test_listed_native_bar_identity_includes_adjustment_policy(tmp_path) -> None:
+    ref = ListedRef("BBG000B9XRY4")
+
+    path = native_bars_path(
+        ref,
+        "1D",
+        listed_adjustment=ListedAdjustmentPolicy.RAW,
+        store_dir=tmp_path,
+    )
+
+    assert path == tmp_path / "listed" / "BBG000B9XRY4" / "bars" / "raw" / "1D.parquet"
 
 
 def test_native_bar_store_read_returns_provider_free_listed_frames(tmp_path) -> None:
