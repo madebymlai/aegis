@@ -124,7 +124,12 @@ def run_book_backtest(
         store_dir=store_dir,
     )
 
-    engine = BacktestEngine(build_backtest_engine_config(trader_id=trader_id))
+    engine = BacktestEngine(
+        build_backtest_engine_config(
+            trader_id=trader_id,
+            bar_capacity=_cache_bar_capacity(sleeves),
+        )
+    )
     cost_models = build_simulated_cost_models(book)
     financing_modules = build_financing_modules(book.costs)
     engine.add_venue(
@@ -184,6 +189,11 @@ def run_book_backtest(
 
     engine.run()
     return engine
+
+
+def _cache_bar_capacity(sleeves: _SleeveBundles) -> int:
+    required = max(bundle.contract.lookback_bars for _name, bundle in sleeves) + 1
+    return max(10_000, required)
 
 
 def book_return_stats(engine: BacktestEngine) -> dict[str, float]:

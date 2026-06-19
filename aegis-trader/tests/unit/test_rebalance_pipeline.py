@@ -173,6 +173,14 @@ class _BookState:
 
 
 class _MarketData:
+    def __init__(
+        self,
+        bars_by_ref: dict[object, tuple[MarketBar, ...]] | None = None,
+        fresh_refs: frozenset[object] | None = None,
+    ) -> None:
+        self._bars_by_ref = bars_by_ref or _bars_by_ref()
+        self._fresh_refs = frozenset({_FIGI}) if fresh_refs is None else fresh_refs
+
     def instrument_sizing(self, _instrument_id: object) -> InstrumentSizing:
         return InstrumentSizing(currency="EUR", size_increment=1.0)
 
@@ -183,6 +191,31 @@ class _MarketData:
         if base_currency == quote_currency:
             return 1.0
         return None
+
+    def lookback_window(
+        self,
+        ref: object,
+        _instrument_id: object,
+        _timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+        limit: int,
+    ) -> tuple[MarketBar, ...]:
+        _ = (period, period_ns)
+        return self._bars_by_ref.get(ref, ())[-limit:]
+
+    def has_bar_in_period(
+        self,
+        ref: object,
+        _instrument_id: object,
+        _timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+    ) -> bool:
+        _ = (period, period_ns)
+        return ref in self._fresh_refs
 
 
 def _book(*, per_name_cap: float | None = None) -> BookConfig:
@@ -195,30 +228,31 @@ def _book(*, per_name_cap: float | None = None) -> BookConfig:
     )
 
 
+def _bars_by_ref() -> dict[object, tuple[MarketBar, ...]]:
+    return {
+        _FIGI: (
+            MarketBar(
+                ts_event=0,
+                open=100.0,
+                high=100.0,
+                low=100.0,
+                close=100.0,
+                volume=1_000.0,
+            ),
+            MarketBar(
+                ts_event=86_400_000_000_000,
+                open=100.0,
+                high=100.0,
+                low=100.0,
+                close=100.0,
+                volume=1_000.0,
+            ),
+        )
+    }
+
+
 def _period() -> CompletedRebalancePeriod:
-    return CompletedRebalancePeriod(
-        bars_by_ref={
-            _FIGI: (
-                MarketBar(
-                    ts_event=0,
-                    open=100.0,
-                    high=100.0,
-                    low=100.0,
-                    close=100.0,
-                    volume=1_000.0,
-                ),
-                MarketBar(
-                    ts_event=86_400_000_000_000,
-                    open=100.0,
-                    high=100.0,
-                    low=100.0,
-                    close=100.0,
-                    volume=1_000.0,
-                ),
-            )
-        },
-        fresh_refs=frozenset({_FIGI}),
-    )
+    return CompletedRebalancePeriod(period=1, period_ns=86_400_000_000_000)
 
 
 def test_rebalance_pipeline_returns_sized_orders_and_summary() -> None:
@@ -241,6 +275,25 @@ def test_rebalance_pipeline_returns_sized_orders_and_summary() -> None:
     assert result.summary.gate_outcome == GateOutcome.PASS
     assert result.summary.num_sleeves == 1
     assert result.summary.num_orders == 1
+
+
+def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_ref() -> None:
+    book = _book()
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(fresh_refs=frozenset()),
+        book=book,
+        sleeve_to_bundle={_SLEEVE: _FixedWeightBundle(0.5)},
+        ledger=SleeveLedger(),
+        resolve_instrument=FixtureInstrumentResolver({_FIGI: _INSTRUMENT_ID}),
+    )
+    pipeline.initialize_identity(pd.Timestamp("2026-01-01").date())
+
+    result = pipeline.rebalance_period(_period())
+
+    assert result.orders == ()
+    assert result.summary.num_targets == 1
+    assert result.summary.num_orders == 0
 
 
 def test_pipeline_initializes_mixed_ref_identity() -> None:

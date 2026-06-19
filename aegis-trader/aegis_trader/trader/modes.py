@@ -407,6 +407,7 @@ def build_backtest_engine_config(
     *,
     trader_id: str = "TRADER-001",
     risk_guard_config: RiskGuardConfig | None = None,
+    bar_capacity: int = 10_000,
 ) -> BacktestEngineConfig:
     """Build the backtest-mode engine config (ADR-0003: the third mode).
 
@@ -418,6 +419,7 @@ def build_backtest_engine_config(
     """
     return BacktestEngineConfig(
         trader_id=trader_id,
+        cache=CacheConfig(bar_capacity=bar_capacity),
         risk_engine=build_risk_engine_config(risk_guard_config),
         logging=LoggingConfig(),
     )

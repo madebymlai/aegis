@@ -13,6 +13,7 @@ from aegis_runtime import (
 )
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_trader.data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
@@ -21,7 +22,11 @@ from aegis_trader.trader.instrument_provider import (
     declared_ref_currencies,
     reconcile_quote_currency,
 )
-from aegis_trader.trader.pipeline import FixtureInstrumentResolver, RebalancePipeline
+from aegis_trader.trader.pipeline import (
+    CompletedRebalancePeriod,
+    FixtureInstrumentResolver,
+    RebalancePipeline,
+)
 
 _FIGI = "BBG000R20GS9"
 _REF = ListedRef(_FIGI)
@@ -39,6 +44,31 @@ class _MarketData:
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         assert (base_currency, quote_currency) == ("EUR", "GBP")
         return 0.85
+
+    def lookback_window(
+        self,
+        ref: object,
+        instrument_id: InstrumentId,
+        timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+        limit: int,
+    ) -> tuple[MarketBar, ...]:
+        assert (ref, instrument_id, timeframe) == (_REF, _INSTRUMENT_ID, "1D")
+        assert (period, period_ns, limit) == (1, 86_400_000_000_000, 1)
+        return ()
+
+    def has_bar_in_period(
+        self,
+        ref: object,
+        instrument_id: InstrumentId,
+        timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+    ) -> bool:
+        raise AssertionError("freshness is not part of this test")
 
 
 class _BookState:
@@ -120,7 +150,9 @@ def test_pipeline_sizing_uses_declared_pence_currency_with_major_fx_rate() -> No
     )
     pipeline.initialize_identity(date(2026, 1, 1))
 
-    instrument_metas, fx_rates, prices = pipeline._collect_sizing_params({})
+    instrument_metas, fx_rates, prices = pipeline._collect_sizing_params(
+        CompletedRebalancePeriod(period=1, period_ns=86_400_000_000_000)
+    )
 
     assert instrument_metas == {_REF: InstrumentSizing(currency="GBp", size_increment=1.0)}
     assert fx_rates == {"GBp": 0.85}

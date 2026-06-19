@@ -89,7 +89,6 @@ from aegis_trader.observability.port import (
 )
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
-    MarketBar,
     RebalancePipeline,
 )
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
@@ -120,13 +119,11 @@ class RebalanceStrategy(Strategy):
     """Commingled-book rebalance overlay — submits orders NEXT-CLOSE.
 
     Per-sleeve timeframe cadence (Slice 6):
-    - Bars are buffered per instrument as they arrive.
     - When the period (day) changes, a rebalance is triggered for the
-      *completed* period using all bars buffered up to that point.
-    - Each sleeve's bundle computes targets from its own buffered bars
-      (per-sleeve-latest as-of), netted across sleeves, and orders are
-      emitted only for FIGIs whose venue was open (had a fresh bar) during
-      the completed period.
+      *completed* period using the Cache-backed rolling bar window.
+    - Each sleeve's bundle computes targets from its own Cache-backed bars,
+      netted across sleeves, and orders are emitted only for FIGIs whose
+      venue was open (had a Cache bar) during the completed period.
     """
 
     def __init__(self, config: RebalanceStrategyConfig) -> None:
@@ -135,10 +132,8 @@ class RebalanceStrategy(Strategy):
         # ── Slice 6 sleeve registry ──────────────────────────────────────
         self._sleeve_to_bundle: dict[SleeveName, ExecutionBundle] = {}
         self._sleeve_to_contract: dict[SleeveName, DataContract] = {}
-        # ── bar buffers & cadence state ──────────────────────────────────
-        self._bars_buffer: dict[InstrumentId, list[Bar]] = {}
+        # ── bar-driven cadence state ─────────────────────────────────────
         self._current_period: int | None = None
-        self._period_fresh_refs: set[InstrumentRef] = set()
         # Rebalance-period width in ns; set from the book timeframe in on_start.
         self._period_ns: int = _NS_PER_DAY
         # Book bar timeframe (one across sleeves); set in on_start, reused to
@@ -344,7 +339,6 @@ class RebalanceStrategy(Strategy):
         if not self._sleeve_to_bundle or self._is_halted:
             return
 
-        instr_id = bar.bar_type.instrument_id
         as_of = self._as_of()
         if self._last_roll_check_date != as_of:
             # Re-resolve FuturesRefs as-of today FIRST, so pipeline identity
@@ -358,29 +352,8 @@ class RebalanceStrategy(Strategy):
         # ── period-advance → rebalance the completed period ──────────────
         if self._current_period is not None and period != self._current_period:
             self._rebalance_for_period()
-            self._period_fresh_refs = set()
 
-        # ── buffer the bar AFTER the rebalance (so rebalance only sees
-        #    completed-period bars — no same-bar look-ahead) ──────────────
-        buf = self._bars_buffer.setdefault(instr_id, [])
-        buf.append(bar)
-
-        # Trim to lookback_needed bars (use max lookback across sleeves)
-        max_lookback = max(
-            c.lookback_bars for c in self._sleeve_to_contract.values()
-        )
-        needed = max_lookback + 1
-        if len(buf) > needed:
-            buf[:] = buf[-needed:]
-
-        if self._current_period is None:
-            self._current_period = period
-        else:
-            self._current_period = period
-
-        ref = self._require_pipeline().ref_for_instrument_value(instr_id.value)
-        if ref:
-            self._period_fresh_refs.add(ref)
+        self._current_period = period
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
@@ -395,10 +368,12 @@ class RebalanceStrategy(Strategy):
             return
 
         pipeline = self._require_pipeline()
+        if self._current_period is None:
+            return
         result = pipeline.rebalance_period(
             CompletedRebalancePeriod(
-                bars_by_ref=self._market_bars_by_ref(),
-                fresh_refs=frozenset(self._period_fresh_refs),
+                period=self._current_period,
+                period_ns=self._period_ns,
             )
         )
         self._last_sleeve_weights = pipeline.last_sleeve_weights
@@ -416,15 +391,6 @@ class RebalanceStrategy(Strategy):
 
         for oi in result.orders:
             self._submit_order_intent(oi)
-
-    def _market_bars_by_ref(self) -> dict[InstrumentRef, tuple[MarketBar, ...]]:
-        bars_by_ref: dict[InstrumentRef, tuple[MarketBar, ...]] = {}
-        for ref in self._require_pipeline().resolved_identity_snapshot():
-            instr_id = self._instrument_id_for_ref(ref)
-            bars = self._bars_buffer.get(instr_id, [])
-            if bars:
-                bars_by_ref[ref] = tuple(_to_market_bar(bar) for bar in bars)
-        return bars_by_ref
 
     def _refresh_resolution(self, as_of: date) -> None:
         """Re-resolve FuturesRefs and subscribe contracts that rolled in.
@@ -645,14 +611,3 @@ class RebalanceStrategy(Strategy):
             )
         order = self.order_factory.market(**kwargs)
         self.submit_order(order)
-
-
-def _to_market_bar(bar: Bar) -> MarketBar:
-    return MarketBar(
-        ts_event=bar.ts_event,
-        open=float(bar.open.as_double()),
-        high=float(bar.high.as_double()),
-        low=float(bar.low.as_double()),
-        close=float(bar.close.as_double()),
-        volume=float(bar.volume.as_double()),
-    )

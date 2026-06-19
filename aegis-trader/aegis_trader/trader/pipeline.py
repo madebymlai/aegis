@@ -26,6 +26,7 @@ from aegis_runtime import (
 )
 from aegis_runtime.currency import major_currency
 
+from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
@@ -52,23 +53,11 @@ class IdentityResolutionChange:
 
 
 @dataclass(frozen=True)
-class MarketBar:
-    """One completed native market bar in pure value form."""
-
-    ts_event: int
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-
-
-@dataclass(frozen=True)
 class CompletedRebalancePeriod:
-    """Snapshot of the completed period consumed by the rebalance pipeline."""
+    """Completed rebalance-period coordinates for Cache-backed bar reads."""
 
-    bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]]
-    fresh_refs: frozenset[InstrumentRef]
+    period: int
+    period_ns: int
 
 
 @dataclass(frozen=True)
@@ -127,6 +116,7 @@ class RebalancePipeline:
             for bundle in self._sleeve_to_bundle.values()
             for ref in bundle.contract.refs
         )
+        self._timeframe_by_ref = _timeframe_by_ref(self._sleeve_to_bundle)
         self._ref_to_instrument_id: dict[InstrumentRef, InstrumentId] = {}
         self._instrument_id_to_ref: dict[str, InstrumentRef] = {}
 
@@ -212,8 +202,8 @@ class RebalancePipeline:
             )
 
         self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
-        sized_orders, prices = self._size_plan(plan.deltas, nav, period.bars_by_ref)
-        executable_orders = _orders_for_fresh_refs(sized_orders, period.fresh_refs)
+        sized_orders, prices = self._size_plan(plan.deltas, nav, period)
+        executable_orders = _orders_for_fresh_refs(sized_orders, self._fresh_refs(period))
         total_notional = sum(abs(order.quantity) for order in executable_orders)
 
         self._record_period(nav, realized_weights, pending, prices)
@@ -239,7 +229,7 @@ class RebalancePipeline:
             if bundle is None:
                 continue
             contract = bundle.contract
-            sleeve_bars = _bars_for_contract(contract, period.bars_by_ref)
+            sleeve_bars = self._bars_for_contract(contract, period)
             if sleeve_bars is None:
                 continue
             arrays = {
@@ -275,9 +265,9 @@ class RebalancePipeline:
         self,
         deltas: tuple[WeightDelta, ...],
         nav: float,
-        bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]],
+        period: CompletedRebalancePeriod,
     ) -> tuple[tuple[OrderIntent, ...], dict[InstrumentRef, float]]:
-        instrument_metas, fx_rates, prices = self._collect_sizing_params(bars_by_ref)
+        instrument_metas, fx_rates, prices = self._collect_sizing_params(period)
         orders = size_deltas(
             deltas,
             nav,
@@ -301,9 +291,43 @@ class RebalancePipeline:
             closes=dict(prices),
         )
 
+    def _bars_for_contract(
+        self,
+        contract: DataContract,
+        period: CompletedRebalancePeriod,
+    ) -> dict[InstrumentRef, Sequence[MarketBar]] | None:
+        needed = contract.lookback_bars + 1
+        sleeve_bars: dict[InstrumentRef, Sequence[MarketBar]] = {}
+        for ref in contract.refs:
+            bars = self._market_data.lookback_window(
+                ref,
+                self.instrument_id_for_ref(ref),
+                contract.timeframe,
+                period=period.period,
+                period_ns=period.period_ns,
+                limit=needed,
+            )
+            if len(bars) < needed:
+                return None
+            sleeve_bars[ref] = bars
+        return sleeve_bars
+
+    def _fresh_refs(self, period: CompletedRebalancePeriod) -> frozenset[InstrumentRef]:
+        return frozenset(
+            ref
+            for ref in self._all_refs
+            if self._market_data.has_bar_in_period(
+                ref,
+                self.instrument_id_for_ref(ref),
+                self._timeframe_by_ref[ref],
+                period=period.period,
+                period_ns=period.period_ns,
+            )
+        )
+
     def _collect_sizing_params(
         self,
-        bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]],
+        period: CompletedRebalancePeriod,
     ) -> tuple[dict[InstrumentRef, InstrumentSizing], dict[str, float], dict[InstrumentRef, float]]:
         instrument_metas: dict[InstrumentRef, InstrumentSizing] = {}
         prices: dict[InstrumentRef, float] = {}
@@ -319,7 +343,14 @@ class RebalancePipeline:
                 currency=quote_currency,
                 size_increment=sizing.size_increment,
             )
-            bars = bars_by_ref.get(ref)
+            bars = self._market_data.lookback_window(
+                ref,
+                resolved_id,
+                self._timeframe_by_ref[ref],
+                period=period.period,
+                period_ns=period.period_ns,
+                limit=1,
+            )
             if bars:
                 prices[ref] = float(bars[-1].close)
             currencies.add(quote_currency)
@@ -363,18 +394,14 @@ def _ref_sort_key(ref: InstrumentRef) -> tuple[int, str]:
     return (1, ref.value)
 
 
-def _bars_for_contract(
-    contract: DataContract,
-    bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]],
-) -> dict[InstrumentRef, Sequence[MarketBar]] | None:
-    needed = contract.lookback_bars + 1
-    sleeve_bars: dict[InstrumentRef, Sequence[MarketBar]] = {}
-    for ref in contract.refs:
-        bars = bars_by_ref.get(ref, ())
-        if len(bars) < needed:
-            return None
-        sleeve_bars[ref] = bars
-    return sleeve_bars
+def _timeframe_by_ref(
+    sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle]
+) -> dict[InstrumentRef, str]:
+    timeframes: dict[InstrumentRef, str] = {}
+    for bundle in sleeve_to_bundle.values():
+        for ref in bundle.contract.refs:
+            timeframes.setdefault(ref, bundle.contract.timeframe)
+    return timeframes
 
 
 _BAR_ARRAY_ACCESSORS: dict[str, Callable[[MarketBar], float]] = {

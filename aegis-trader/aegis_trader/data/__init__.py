@@ -17,10 +17,11 @@ from aegis_trader.data.bar_type import (
     resolve_book_timeframe,
     timeframe_to_ns,
 )
-from aegis_trader.data.market_data import MarketDataPort, NautilusMarketData
+from aegis_trader.data.market_data import MarketBar, MarketDataPort, NautilusMarketData
 
 __all__ = [
     "InstrumentSpec",
+    "MarketBar",
     "MarketDataPort",
     "MixedTimeframeError",
     "NautilusMarketData",

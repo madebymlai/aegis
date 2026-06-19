@@ -128,6 +128,12 @@ def test_backtest_engine_config_mirrors_risk_wiring():
     assert cfg.risk_engine.max_order_submit_rate == "10/00:00:01"
 
 
+def test_backtest_engine_config_accepts_bar_capacity_for_cache_window():
+    cfg = build_backtest_engine_config(bar_capacity=64)
+    assert cfg.cache is not None
+    assert cfg.cache.bar_capacity == 64
+
+
 # --------------------------------------------------------------------------- #
 # simulated venue cost wiring helper (aegis-rd-fuu.4)
 # --------------------------------------------------------------------------- #
