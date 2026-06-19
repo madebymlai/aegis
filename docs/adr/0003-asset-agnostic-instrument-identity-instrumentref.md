@@ -4,14 +4,18 @@ Status: accepted (design; implementation pending). Refines ADR-0002 (FIGI / Secu
 before its own implementation; extends Aegis Trader ADR-0003 (deep modules) with a second
 order source. Depends on the `aegis-runtime` `DataContract`.
 
-**Amended by ADR-0005** (spike-validated, 2026-06-19): the `resolve(ref, as_of) → InstrumentId`
-step is **not** a bespoke runtime module. For a `FuturesRef`, the roll/continuity is owned by
-**Aegis Data** (its Databento contract chain + Panama back-adjustment); given `as_of` it yields the
-front dated contract's Databento definition, which Aegis Trader qualifies at IB — never IB
-`CONTFUT` (that would substitute IB's roll for Aegis Data's). For a `ListedRef`, IB's
-`InstrumentProvider` resolves the FIGI directly. The **Roll** step below is unchanged — it fires
-when Aegis Data advances the front contract — but no per-root map and no runtime resolver are
-built.
+**Amended by ADR-0005** (spike-validated against IB paper, 2026-06-19): resolution is **not** a
+bespoke runtime module, and **live/paper resolution is IBKR-only**. `Databento` and `yfinance` are
+*both research-only* substrates that define and validate a `FuturesRef`'s continuous series for
+backtesting (`FuturesRef.dataset` is a research-source tag, not in the live loop). At live/paper,
+market data is an **IBKR delayed subscription** and the `roll_rule` picks the front dated contract,
+qualified at IB by its exchange-native Globex `localSymbol` (e.g. `6EU6`, `GCQ6`). The `roll_rule`
+is the research↔live bridge: it must select the same front contract on the research series and at
+IBKR. For a `ListedRef`, IB's `InstrumentProvider` resolves the FIGI directly. A spike resolved all
+23 roots of the futures universe at IB (20 to a clean MIC venue; the 3 COMEX metals need a one-line
+`COMEX→XCEC` override; FX resolves by `localSymbol`, so no `6E→EUR` symbol map). The **Roll** step
+below fires when the `roll_rule` advances the front contract — no per-root map and no runtime
+resolver are built.
 
 ADR-0002 made the **FIGI** the sole cross-boundary instrument identity, resolved once at boot
 into a static `FIGI → InstrumentId` bimap, with the overlay netting "in canonical FIGI space".
@@ -97,6 +101,15 @@ We refine the identity model to be asset-agnostic:
   a future variant.)
 - **Execution precondition.** Live futures trades require a futures-capable account (not the UCITS
   wrapper); the roll step only ever fires real orders where the account permits them.
-- **Deferred.** `FuturesRef`'s exact `roll_rule` representation, and whether `RollRule` becomes an
-  internal seam of the Security Master (only once a second roll rule exists), are left to
-  implementation.
+- **Roll rule (decided; spike-validated 2026-06-19, tracked: `aegis-rd-rwe.4`).** The roll is
+  **expiry-driven**: roll the front contract `N` business days before its **last-trade date**, with
+  eligible contracts and expiries read from the data source's **instrument definitions** (Databento
+  at research, the IBKR chain at live) — *not* a hardcoded per-root month/expiry table. A spike
+  confirmed Databento `.c.0` and the IBKR chain carry the same contract sets, so identical
+  last-trade dates give identical roll dates for the same `N`; one shared `N` (lead business days,
+  ≥ base-tick cadence + next-close latency) and one shared roll module serve both research and live,
+  so they pick the same contract by construction. This **replaces** `aegis_data.roll.quarterly_roll_schedule`
+  (quarterly `{H,M,U,Z}` / 3rd-Friday / lead-5), which is wrong on months, expiry anchor, and lead
+  for the monthly/serial/cycle products (CL/GC roll monthly, ZC on the corn cycle, ZN at its actual
+  expiry, not the 3rd Friday). Whether `RollRule` becomes a pluggable seam is deferred until a
+  non-calendar (volume/open-interest) rule is actually needed.

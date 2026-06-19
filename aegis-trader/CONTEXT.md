@@ -65,10 +65,11 @@ The resolution of an **InstrumentRef** to its live, tradable venue contract — 
 *responsibility fulfilled by vendor-native services, not a bespoke Aegis module* (ADR-0005).
 A **ListedRef** is resolved by handing its **FIGI** to Interactive Brokers'
 `InstrumentProvider` (`secIdType='FIGI'` + `convert_exchange_to_mic_venue`), which returns the
-qualified listing and MIC venue. A **FuturesRef** is resolved from the dated-contract
-definition **Aegis Data** already loads from Databento (it owns the contract chain + roll);
-Aegis Trader qualifies that concrete contract at IB — never IB `CONTFUT`. Resolution is
-fail-closed, and a **Roll** is detected when Aegis Data advances the front contract. The
+qualified listing and MIC venue. A **FuturesRef** is resolved at **IBKR** (live/paper is
+IBKR-only, on a delayed subscription): the **roll rule** picks the front dated contract, qualified
+by its exchange-native Globex `localSymbol` — never IB `CONTFUT`. **Databento** and **yfinance**
+are research-only substrates (`dataset` is a research tag, not in the live loop). Resolution is
+fail-closed, and a **Roll** is detected when the roll rule advances the front contract. The
 cross-context *identity* (the **InstrumentRef**) is still single and authoritative; only its
 *resolution* is vendor-native.
 _Avoid_: symbol map, instrument map, ticker table, security database, FIGI resolver, VenueContract (resolution is vendor-native — no bespoke resolver or intermediate contract type)

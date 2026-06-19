@@ -18,13 +18,16 @@ what Aegis RD **mints** at export. What changes is *resolution* at Trader:
    `convert_exchange_to_mic_venue=True`. IB returns the qualified listing, the MIC venue, the
    conId, currency, and tick. Spike: `BBG000B9XRY4 → AAPL.XNAS`, plus `SPY.ARCX`, `IBM.XNYS`,
    `AIGC.XLON`, `GBUS.XLON` — including the non-obvious `ARCA→ARCX`.
-2. **`FuturesRef` → Databento definition + IB qualify.** Aegis Data already owns the contract
-   chain and the roll (Panama back-adjustment, `aegis-data/aegis_data/continuous.py`) and loads
-   Databento instrument **definitions** (`databento_port.get_range_instruments`). Given
-   `FuturesRef + as_of` it yields the front dated contract's definition (symbol, month, venue);
-   Aegis Trader qualifies *that concrete dated contract* at IB. **No IB `CONTFUT`** (that would
-   substitute IB's roll for Aegis Data's), and **no per-root map** — the identity is read from the
-   vendor definition, not hand-maintained.
+2. **`FuturesRef` → IBKR, via the `roll_rule`.** Live/paper resolution is **IBKR-only**:
+   `Databento` and `yfinance` are *both research-only* substrates that define/validate the
+   continuous series a futures strategy is backtested on (`FuturesRef.dataset` is a research tag,
+   not in the live loop). At live, the `roll_rule` picks the front dated contract — from IB's chain
+   expiries or a deterministic CME calendar — and Aegis Trader qualifies it at IB by its
+   exchange-native Globex `localSymbol` (`6EU6`, `GCQ6`), on a delayed IBKR market-data
+   subscription. **No IB `CONTFUT`** (historical-only at IB, and would substitute IB's roll for the
+   research roll) and **no per-root map**. The `roll_rule` is the research↔live bridge: it must pick
+   the same front contract on the research series and at IBKR. Spike: all 23 universe roots resolve
+   at IB.
 3. **The `InstrumentId ↔ InstrumentRef` inverse** (so the rebalancer reasons in continuous
    `InstrumentRef` space, per ADR-0003) is built from the provider's load results — we requested a
    known ref and record which `InstrumentId` came back.
@@ -44,12 +47,19 @@ what Aegis RD **mints** at export. What changes is *resolution* at Trader:
 
 ## Consequences
 
-- **Two bounded residuals, both vendor-owned.** (1) A small **MIC-override** set for IB exchange
-  codes Nautilus does not map — spike: `IGLN → IGLN.LSEETF` needs `LSEETF→XLON` — via the
-  provider's per-symbol override. (2) **GBp/GBP** (pence) reconciliation for LSE instruments quoted
-  in pence (spike: `GBUS` config says `GBp`, IB reports `GBP`). These are ADR-0002's "one bounded
-  table" residual, now layered on Nautilus's maintained exchange→MIC map: one line per *exchange*,
-  zero per *instrument*.
+- **Bounded residuals, all vendor-owned.** (1) Equities: a small **MIC-override** set for IB
+  exchange codes Nautilus does not map — spike: `IGLN → IGLN.LSEETF` needs `LSEETF→XLON` — via the
+  provider's `symbol_to_mic_venue`. (2) Equities: **GBp/GBP** (pence) reconciliation for LSE
+  instruments quoted in pence (spike: `GBUS` says `GBp`, IB reports `GBP`). (3) Futures: the **3
+  COMEX metals** (`GC/SI/HG`) resolve on raw `COMEX` and need a one-line `COMEX→XCEC` override; the
+  other 20 of 23 roots get a clean MIC venue automatically, and **FX resolves by `localSymbol`
+  (`6EU6`)** so no `6E→EUR` symbol map is needed. All ride Nautilus's `VENUE_MEMBERS` — one line per
+  *exchange*, zero per *instrument*.
+- **Futures are provider-class-coupled by nature; equities are provider-agnostic.** Equities have a
+  universal key (FIGI). Futures have none, so a `FuturesRef`'s continuity is bound to its `dataset`
+  — but **live/paper is IBKR-only** (delayed market data + execution), so Databento/yfinance never
+  enter the live loop. yfinance `=F` stitched front-months expose no dated contract and are
+  **research-only, non-promotable**; any Globex-symbology dated-chain research source is swappable.
 - **Backtest is unaffected.** It builds Nautilus instruments locally from definitions (resolution-
   via-IB is a live-boot concern). Definitions should increasingly come from Aegis Data's stored
   Databento definitions rather than hand-specified specs.
