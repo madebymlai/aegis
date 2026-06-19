@@ -12,6 +12,7 @@ History fails closed before the Nautilus engine runs.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -50,6 +51,8 @@ from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyCon
 
 _PRICE_COLS = ("open", "high", "low", "close")
 _STORE_OHLCV_ARRAYS = (*_PRICE_COLS, "volume")
+
+_SleeveBundles = list[tuple[SleeveName, ExecutionBundle]]
 
 
 class ContractDataError(ValueError):
@@ -136,17 +139,17 @@ def run_book_backtest(
     )
 
     bimap: dict[object, InstrumentId] = {}
-    for input_ in instrument_inputs.values:
+    for bars in instrument_inputs.bars:
         instrument = build_equity(
             InstrumentSpec(
-                figi=input_.ref.value,
+                figi=bars.ref.value,
                 venue=venue,
-                quote_currency=input_.quote_currency,
+                quote_currency=bars.quote_currency,
             )
         )
         engine.add_instrument(instrument)
-        engine.add_data(wrangle_bars(instrument, input_.ohlcv, book_timeframe))
-        bimap[input_.ref] = instrument.id
+        engine.add_data(wrangle_bars(instrument, bars.ohlcv, book_timeframe))
+        bimap[bars.ref] = instrument.id
 
     # FX as quote-tick'd CurrencyPair instruments (same path as live): the
     # overlay's on_quote_tick mirrors these into cache mark xrates for sizing,
@@ -196,31 +199,21 @@ def book_return_stats(engine: BacktestEngine) -> dict[str, float]:
     return {}
 
 
+@dataclass(frozen=True)
+class _InstrumentBars:
+    ref: InstrumentRef
+    quote_currency: str
+    ohlcv: pd.DataFrame
+
+
+@dataclass(frozen=True)
 class _InstrumentInputs:
-    def __init__(self) -> None:
-        self.values: list[_InstrumentInput] = []
-        self.bar_index: set[pd.Timestamp] = set()
-
-    def append(self, input_: _InstrumentInput) -> None:
-        self.values.append(input_)
-        self.bar_index |= set(input_.ohlcv.index)
-
-
-class _InstrumentInput:
-    def __init__(
-        self,
-        *,
-        ref: InstrumentRef,
-        quote_currency: str,
-        ohlcv: pd.DataFrame,
-    ) -> None:
-        self.ref = ref
-        self.quote_currency = quote_currency
-        self.ohlcv = ohlcv
+    bars: tuple[_InstrumentBars, ...]
+    bar_index: frozenset[pd.Timestamp]
 
 
 def _read_instrument_inputs(
-    sleeves: list[tuple[SleeveName, ExecutionBundle]],
+    sleeves: _SleeveBundles,
     *,
     timeframe: str,
     start: str,
@@ -228,7 +221,8 @@ def _read_instrument_inputs(
     store_dir: Path | None,
 ) -> _InstrumentInputs:
     loaded: set[InstrumentRef] = set()
-    inputs = _InstrumentInputs()
+    bars: list[_InstrumentBars] = []
+    bar_index: set[pd.Timestamp] = set()
     for sleeve_name, bundle in sleeves:
         for ref, symbol in zip(bundle.contract.refs, bundle.symbols, strict=True):
             if ref in loaded:
@@ -249,15 +243,11 @@ def _read_instrument_inputs(
                 required_arrays=bundle.contract.required_arrays,
                 min_rows=bundle.contract.lookback_bars + 1,
             )
-            inputs.append(
-                _InstrumentInput(
-                    ref=ref,
-                    quote_currency=major,
-                    ohlcv=_normalize(raw, scale),
-                )
-            )
+            normalized = _normalize(raw, scale)
+            bars.append(_InstrumentBars(ref=ref, quote_currency=major, ohlcv=normalized))
+            bar_index.update(normalized.index)
             loaded.add(ref)
-    return inputs
+    return _InstrumentInputs(bars=tuple(bars), bar_index=frozenset(bar_index))
 
 
 def _read_native_market_bars(
@@ -282,12 +272,12 @@ def _read_native_market_bars(
 
 def _read_fx_inputs(
     book: BookConfig,
-    sleeves: list[tuple[SleeveName, ExecutionBundle]],
+    sleeves: _SleeveBundles,
     *,
     timeframe: str,
     start: str,
     end: str,
-    bar_index: set[pd.Timestamp],
+    bar_index: frozenset[pd.Timestamp],
     store_dir: Path | None,
 ) -> dict[str, pd.Series]:
     fx_index = pd.DatetimeIndex(sorted(bar_index))
@@ -295,14 +285,15 @@ def _read_fx_inputs(
     for ccy in sorted(_required_fx_currencies(sleeves)):
         if ccy == book.base_currency:
             continue
+        pair = FxPair(book.base_currency, ccy)
         history = read_fx_history(
-            (FxPair(book.base_currency, ccy),),
+            (pair,),
             timeframe=timeframe,
             start=start,
             end=end,
             store_dir=store_dir,
         )
-        fx_series = history[FxPair(book.base_currency, ccy)]
+        fx_series = history[pair]
         aligned[ccy] = _align_fx_to_bars(
             fx_series,
             fx_index=fx_index,
@@ -331,12 +322,10 @@ def _align_fx_to_bars(
     return aligned
 
 
-def _required_fx_currencies(
-    sleeves: list[tuple[SleeveName, ExecutionBundle]],
-) -> set[str]:
+def _required_fx_currencies(sleeves: _SleeveBundles) -> set[str]:
     currencies: set[str] = set()
     for _name, bundle in sleeves:
-        currencies |= set(bundle.contract.required_fx_currencies)
+        currencies.update(bundle.contract.required_fx_currencies)
     return currencies
 
 
@@ -377,7 +366,7 @@ def _starting_balances(
     return balances, currencies
 
 
-def _requires_margin_account(sleeves: list[tuple[SleeveName, ExecutionBundle]]) -> bool:
+def _requires_margin_account(sleeves: _SleeveBundles) -> bool:
     return any(_bundle_direction(bundle) in {"both", "shortonly"} for _name, bundle in sleeves)
 
 
@@ -388,7 +377,7 @@ def _bundle_direction(bundle: object) -> str:
 
 def _account_currencies(
     base_currency: str,
-    sleeves: list[tuple[SleeveName, ExecutionBundle]],
+    sleeves: _SleeveBundles,
 ) -> tuple[str, ...]:
     currencies = {base_currency}
     for _name, bundle in sleeves:
