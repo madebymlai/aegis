@@ -13,9 +13,11 @@ Pure: no I/O, no provider.  Holiday calendars are out of scope (business-day = M
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
+
+DEFAULT_ROLL_LEAD_DAYS = 5
 
 
 @dataclass(frozen=True)
@@ -41,8 +43,26 @@ class DatedContract:
     last_trade: date
 
 
+@dataclass(frozen=True)
+class RollAgreement:
+    """A root whose research and live contract calendars produce one roll schedule."""
+
+    root: str
+    symbols: tuple[str, ...]
+    expiries: tuple[date, ...]
+    roll_dates: tuple[date, ...]
+
+
+class RollAgreementError(ValueError):
+    """Research and live contract calendars disagree for a futures roll rule."""
+
+
 def roll_schedule(
-    contracts: Sequence[DatedContract], start: date, end: date, *, roll_lead_days: int = 5
+    contracts: Sequence[DatedContract],
+    start: date,
+    end: date,
+    *,
+    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
 ) -> FuturesChainSchedule:
     """Chain over ``[start, end]`` from *supplied* contracts.
 
@@ -51,6 +71,7 @@ def roll_schedule(
     definitions) — there is no hardcoded month cycle, so a monthly product rolls
     monthly and a serial/odd-cycle product rolls on whatever it actually lists.
     """
+    _require_non_negative_roll_lead(roll_lead_days)
     in_window = [
         c for c in sorted(contracts, key=lambda c: c.last_trade) if start <= c.last_trade <= end
     ]
@@ -59,6 +80,91 @@ def roll_schedule(
         expiries=tuple(c.last_trade for c in in_window),
         roll_dates=tuple(_minus_business_days(c.last_trade, roll_lead_days) for c in in_window[:-1]),
     )
+
+
+def front_contract(
+    contracts: Sequence[DatedContract],
+    as_of: date,
+    *,
+    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+) -> DatedContract | None:
+    """Return the dated contract active on ``as_of`` under the expiry rule.
+
+    This is the shared research/live selection seam: the caller supplies a provider
+    contract calendar, and the rule switches on ``last_trade - roll_lead_days``
+    business days.  ``None`` means the supplied calendar has no contract covering
+    ``as_of``.
+    """
+    _require_non_negative_roll_lead(roll_lead_days)
+    ordered = tuple(sorted(contracts, key=lambda contract: contract.last_trade))
+    if not ordered:
+        return None
+
+    schedule = roll_schedule(
+        ordered, as_of, ordered[-1].last_trade, roll_lead_days=roll_lead_days
+    )
+    if not schedule.symbols:
+        return None
+
+    symbol_to_contract = {contract.symbol: contract for contract in ordered}
+    for symbol, roll_date in zip(schedule.symbols, schedule.roll_dates, strict=False):
+        if as_of < roll_date:
+            return symbol_to_contract[symbol]
+    return symbol_to_contract[schedule.symbols[-1]]
+
+
+def assert_roll_agreement(
+    root: str,
+    research_contracts: Sequence[DatedContract],
+    live_contracts: Sequence[DatedContract],
+    start: date,
+    end: date,
+    *,
+    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+) -> RollAgreement:
+    """Assert one root's research and live calendars produce the same schedule."""
+    research = roll_schedule(
+        research_contracts, start, end, roll_lead_days=roll_lead_days
+    )
+    live = roll_schedule(live_contracts, start, end, roll_lead_days=roll_lead_days)
+    if research != live:
+        raise RollAgreementError(
+            f"roll schedule mismatch for {root}: research={research!r} live={live!r}"
+        )
+    return RollAgreement(
+        root=root,
+        symbols=research.symbols,
+        expiries=research.expiries,
+        roll_dates=research.roll_dates,
+    )
+
+
+def assert_universe_roll_agreement(
+    roots: Sequence[str],
+    research_contracts_by_root: Mapping[str, Sequence[DatedContract]],
+    live_contracts_by_root: Mapping[str, Sequence[DatedContract]],
+    start: date,
+    end: date,
+    *,
+    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+) -> tuple[RollAgreement, ...]:
+    """Assert roll-schedule parity for every root in a futures universe."""
+    return tuple(
+        assert_roll_agreement(
+            root,
+            research_contracts_by_root[root],
+            live_contracts_by_root[root],
+            start,
+            end,
+            roll_lead_days=roll_lead_days,
+        )
+        for root in roots
+    )
+
+
+def _require_non_negative_roll_lead(roll_lead_days: int) -> None:
+    if roll_lead_days < 0:
+        raise ValueError("roll_lead_days must be non-negative")
 
 
 def _minus_business_days(day: date, count: int) -> date:
@@ -71,4 +177,14 @@ def _minus_business_days(day: date, count: int) -> date:
     return current
 
 
-__all__ = ["DatedContract", "FuturesChainSchedule", "roll_schedule"]
+__all__ = [
+    "DEFAULT_ROLL_LEAD_DAYS",
+    "DatedContract",
+    "FuturesChainSchedule",
+    "RollAgreement",
+    "RollAgreementError",
+    "assert_roll_agreement",
+    "assert_universe_roll_agreement",
+    "front_contract",
+    "roll_schedule",
+]

@@ -48,7 +48,7 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
-from aegis_data.roll import DatedContract
+from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS, DatedContract
 from aegis_runtime import (
     DataContract,
     ExecutionBundle,
@@ -115,6 +115,7 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     risk_guard_config: RiskGuardConfig = RiskGuardConfig()
     obs_port: ObservabilityPort | None = None
     futures_contract_chains: dict[str, tuple[DatedContract, ...]] | None = None
+    futures_roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS
     fill_time_in_force: TimeInForce | None = None
     """Time-in-force for submitted orders (ADR-0001, next-close execution).
 
@@ -163,6 +164,7 @@ class RebalanceStrategy(Strategy):
         self._futures_contract_chains: dict[str, tuple[DatedContract, ...]] = (
             config.futures_contract_chains or {}
         )
+        self._futures_roll_lead_days: int = config.futures_roll_lead_days
         # ── Slice 8: RiskEngine guards ───────────────────────────────────
         self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
         # Slice 7: account-integrity check + global halt
@@ -738,6 +740,7 @@ class RebalanceStrategy(Strategy):
             self.cache.instruments(),
             as_of=as_of,
             contract_chains=self._futures_contract_chains,
+            roll_lead_days=self._futures_roll_lead_days,
         )
 
     def _collect_sizing_params(

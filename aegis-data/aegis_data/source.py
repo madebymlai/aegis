@@ -15,6 +15,7 @@ import pandas as pd
 from aegis_data.back_adjust import back_adjust_chain
 from aegis_data.chain import ContractCalendar, ContractFetcher, fetch_contract_chain
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
+from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS
 from aegis_data.store import cached_fetcher
 
 
@@ -35,7 +36,7 @@ def continuous_panel(
     fetch: ContractFetcher,
     list_contracts: ContractCalendar,
     method: str = "ratio",
-    roll_lead_days: int = 5,
+    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
 ) -> pd.DataFrame:
     """Back-adjusted continuous OHLCV panel for ``root`` over ``[start, end]``.
 

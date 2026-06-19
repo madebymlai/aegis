@@ -303,6 +303,27 @@ def test_data_client_loads_futures_refs_as_ib_local_symbol_contracts():
     }
 
 
+def test_data_client_uses_configured_futures_roll_lead_days():
+    ref = FuturesRef("6E", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
+    chains = {
+        "6E": (
+            DatedContract("6EM6", date(2026, 6, 15)),
+            DatedContract("6EU6", date(2026, 9, 14)),
+        )
+    }
+
+    cfg = build_paper_data_client_config(
+        futures_refs=[ref],
+        futures_as_of=date(2026, 6, 10),
+        futures_contract_chains=chains,
+        futures_roll_lead_days=2,
+    )
+
+    assert cfg["instrument_provider"]["load_contracts"] == [
+        {"secType": "FUT", "localSymbol": "6EM6", "exchange": "CME"}
+    ]
+
+
 def test_data_client_omits_instrument_provider_when_no_fx_pairs():
     """A base-only book needs no FX pairs → no InstrumentProvider override."""
     assert "instrument_provider" not in build_paper_data_client_config()

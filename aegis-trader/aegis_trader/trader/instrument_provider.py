@@ -15,7 +15,7 @@ from typing import Protocol
 
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data.roll import DatedContract, roll_schedule
+from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS, DatedContract, front_contract
 from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 from aegis_runtime.currency import major_currency
 from aegis_trader.execution.figi_resolver import FigiResolutionError
@@ -75,7 +75,7 @@ def select_front_futures_contract(
     as_of: date,
     contracts: Sequence[DatedContract],
     *,
-    roll_lead_days: int = 5,
+    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
 ) -> DatedContract:
     """Select the dated contract a FuturesRef represents on *as_of*.
 
@@ -92,19 +92,12 @@ def select_front_futures_contract(
     if not contracts:
         raise FigiResolutionError(f"FuturesRef root {ref.root!r} has no dated contracts")
 
-    ordered = tuple(sorted(contracts, key=lambda contract: contract.last_trade))
-    end = ordered[-1].last_trade
-    schedule = roll_schedule(ordered, as_of, end, roll_lead_days=roll_lead_days)
-    if not schedule.symbols:
+    selected = front_contract(contracts, as_of, roll_lead_days=roll_lead_days)
+    if selected is None:
         raise FigiResolutionError(
             f"FuturesRef root {ref.root!r} has no dated contract active on {as_of}"
         )
-
-    symbol_to_contract = {contract.symbol: contract for contract in ordered}
-    for symbol, roll_date in zip(schedule.symbols, schedule.roll_dates, strict=False):
-        if as_of < roll_date:
-            return symbol_to_contract[symbol]
-    return symbol_to_contract[schedule.symbols[-1]]
+    return selected
 
 
 def futures_ref_ib_contracts(
@@ -112,7 +105,7 @@ def futures_ref_ib_contracts(
     *,
     as_of: date,
     contract_chains: FuturesContractChains,
-    roll_lead_days: int = 5,
+    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
 ) -> list[IBContractConfig]:
     """IBContract-shaped dictionaries for loading FuturesRefs by localSymbol.
 
@@ -180,7 +173,7 @@ def loaded_futures_ref_bimap(
     *,
     as_of: date,
     contract_chains: FuturesContractChains,
-    roll_lead_days: int = 5,
+    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
 ) -> dict[FuturesRef, InstrumentId]:
     """Map requested FuturesRefs to the IB-loaded dated contracts.
 

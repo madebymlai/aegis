@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 from datetime import date
 
+from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS
 from aegis_data.source import continuous_panel, databento_contract_calendar, databento_source
 from aegis_data.store import data_dir, futures_dir
 
@@ -31,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     p_pull.add_argument("--start", required=True, help="YYYY-MM-DD")
     p_pull.add_argument("--end", required=True, help="YYYY-MM-DD")
     p_pull.add_argument("--method", default="ratio", choices=["ratio", "difference"])
-    p_pull.add_argument("--roll-lead-days", type=int, default=5)
+    p_pull.add_argument("--roll-lead-days", type=int, default=DEFAULT_ROLL_LEAD_DAYS)
 
     args = parser.parse_args(argv)
 

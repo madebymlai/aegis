@@ -11,7 +11,15 @@ from __future__ import annotations
 
 from datetime import date
 
-from aegis_data.roll import DatedContract, roll_schedule
+import pytest
+
+from aegis_data.roll import (
+    DatedContract,
+    RollAgreementError,
+    assert_roll_agreement,
+    front_contract,
+    roll_schedule,
+)
 
 
 def test_monthly_contracts_roll_monthly() -> None:
@@ -125,3 +133,62 @@ def test_roll_lead_zero_rolls_on_the_last_trade_date() -> None:
         roll_lead_days=0,
     )
     assert sched.roll_dates == (date(2026, 6, 22),)
+
+
+def test_front_contract_uses_the_shared_expiry_driven_roll_rule() -> None:
+    contracts = [
+        DatedContract("CLN6", date(2026, 6, 22)),
+        DatedContract("CLQ6", date(2026, 7, 21)),
+        DatedContract("CLU6", date(2026, 8, 20)),
+    ]
+
+    before_roll = front_contract(contracts, date(2026, 6, 12), roll_lead_days=5)
+    on_roll = front_contract(contracts, date(2026, 6, 15), roll_lead_days=5)
+
+    assert before_roll == DatedContract("CLN6", date(2026, 6, 22))
+    assert on_roll == DatedContract("CLQ6", date(2026, 7, 21))
+
+
+def test_roll_agreement_harness_returns_the_shared_schedule() -> None:
+    research_contracts = [
+        DatedContract("CLN6", date(2026, 6, 22)),
+        DatedContract("CLQ6", date(2026, 7, 21)),
+    ]
+    live_contracts = [
+        DatedContract("CLN6", date(2026, 6, 22)),
+        DatedContract("CLQ6", date(2026, 7, 21)),
+    ]
+
+    agreement = assert_roll_agreement(
+        "CL",
+        research_contracts,
+        live_contracts,
+        date(2026, 6, 1),
+        date(2026, 7, 31),
+        roll_lead_days=5,
+    )
+
+    assert agreement.root == "CL"
+    assert agreement.symbols == ("CLN6", "CLQ6")
+    assert agreement.roll_dates == (date(2026, 6, 15),)
+
+
+def test_roll_agreement_harness_fails_closed_on_live_research_mismatch() -> None:
+    research_contracts = [
+        DatedContract("CLN6", date(2026, 6, 22)),
+        DatedContract("CLQ6", date(2026, 7, 21)),
+    ]
+    live_contracts = [
+        DatedContract("CLN6", date(2026, 6, 22)),
+        DatedContract("CLU6", date(2026, 8, 20)),
+    ]
+
+    with pytest.raises(RollAgreementError, match="CL"):
+        assert_roll_agreement(
+            "CL",
+            research_contracts,
+            live_contracts,
+            date(2026, 6, 1),
+            date(2026, 8, 31),
+            roll_lead_days=5,
+        )

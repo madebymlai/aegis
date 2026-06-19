@@ -13,6 +13,7 @@ from aegis_data.back_adjust import back_adjust_chain
 from aegis_data.chain import ContractCalendar, ContractChain, ContractFetcher, fetch_contract_chain
 from aegis_data.continuous import apply_adjustment_factors
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
+from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS
 from aegis_data.store import (
     CoverageGap,
     NativeBarsRequest,
@@ -49,7 +50,7 @@ def pull_databento_futures_bars(
     contract_calendar: ContractCalendar | None = None,
     client=None,
     store_dir: Path | None = None,
-    roll_lead_days: int = 5,
+    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
 ) -> DatabentoPullResult:
     """Pull one ``FuturesRef`` and materialize Continuous Futures History.
 
