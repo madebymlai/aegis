@@ -253,9 +253,7 @@ def write_native_bars(
         listed_adjustment=listed_adjustment,
         store_dir=store_dir,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    admitted.to_parquet(path)
-    return path
+    return _write_admitted_native_bars(path, admitted)
 
 
 def merge_native_bars(
@@ -277,9 +275,7 @@ def merge_native_bars(
         store_dir=store_dir,
     )
     merged = _merge_admitted_native_bars(path, admitted) if path.exists() else admitted
-    path.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_parquet(path)
-    return path
+    return _write_admitted_native_bars(path, merged)
 
 
 def replace_native_bars(
@@ -301,9 +297,7 @@ def replace_native_bars(
         store_dir=store_dir,
     )
     merged = _replace_admitted_native_bars(path, admitted) if path.exists() else admitted
-    path.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_parquet(path)
-    return path
+    return _write_admitted_native_bars(path, merged)
 
 
 def read_native_bars(
@@ -399,9 +393,7 @@ def merge_raw_futures_leg(
     _assert_admitted_native_bar_arrays(admitted, required_arrays)
     path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
     merged = _merge_admitted_native_bars(path, admitted) if path.exists() else admitted
-    path.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_parquet(path)
-    return path
+    return _write_admitted_native_bars(path, merged)
 
 
 def read_raw_futures_leg(
@@ -416,19 +408,15 @@ def read_raw_futures_leg(
     """Provider-free Store Read of one Raw Futures Leg source-material slice."""
     start_ts, end_ts = _window(start, end)
     path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
-    if not path.exists():
-        raise StoreCoverageError(leg, f"no Raw Futures Leg for {timeframe}")
-    admitted = _load_admitted_native_bars(path)
-    selected = _required_native_bar_slice(
+    return _read_admitted_native_bar_slice(
         leg,
-        admitted,
-        arrays=_validated_arrays(arrays),
+        path,
+        arrays=arrays,
+        timeframe=timeframe,
         start=start_ts,
         end=end_ts,
+        missing_detail=f"no Raw Futures Leg for {timeframe}",
     )
-    _assert_expected_daily_coverage(leg, selected, timeframe=timeframe, start=start_ts, end=end_ts)
-    _assert_no_null_arrays(leg, selected)
-    return selected
 
 
 def raw_futures_leg_coverage_gaps(
@@ -453,7 +441,7 @@ def raw_futures_leg_coverage_gaps(
 
 
 def assert_native_bar_coverage(
-    ref: InstrumentRef,
+    key: HistoryKey,
     frame: pd.DataFrame,
     *,
     arrays: Sequence[str],
@@ -465,15 +453,14 @@ def assert_native_bar_coverage(
     start_ts, end_ts = _window(start, end)
     required = _validated_arrays(arrays)
     admitted = _admit_native_bars(frame)
-    selected = _required_native_bar_slice(
-        ref,
+    _covered_native_bar_slice(
+        key,
         admitted,
         arrays=required,
+        timeframe=timeframe,
         start=start_ts,
         end=end_ts,
     )
-    _assert_expected_daily_coverage(ref, selected, timeframe=timeframe, start=start_ts, end=end_ts)
-    _assert_no_null_arrays(ref, selected)
 
 
 def write_fx_history(
@@ -583,13 +570,15 @@ def _read_one_native_bar_frame(
         listed_adjustment=listed_adjustment,
         store_dir=store_dir,
     )
-    if not path.exists():
-        raise StoreCoverageError(ref, f"no Covered History for {timeframe}")
-    admitted = _load_admitted_native_bars(path)
-    selected = _required_native_bar_slice(ref, admitted, arrays=arrays, start=start, end=end)
-    _assert_expected_daily_coverage(ref, selected, timeframe=timeframe, start=start, end=end)
-    _assert_no_null_arrays(ref, selected)
-    return selected
+    return _read_admitted_native_bar_slice(
+        ref,
+        path,
+        arrays=arrays,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        missing_detail=f"no Covered History for {timeframe}",
+    )
 
 
 def _load_admitted_fx_history(path: Path) -> pd.DataFrame:
@@ -601,6 +590,50 @@ def _load_admitted_fx_history(path: Path) -> pd.DataFrame:
 
 def _load_admitted_native_bars(path: Path) -> pd.DataFrame:
     return _admit_native_bars(pd.read_parquet(path))
+
+
+def _write_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    admitted.to_parquet(path)
+    return path
+
+
+def _read_admitted_native_bar_slice(
+    key: HistoryKey,
+    path: Path,
+    *,
+    arrays: Sequence[str],
+    timeframe: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    missing_detail: str,
+) -> pd.DataFrame:
+    if not path.exists():
+        raise StoreCoverageError(key, missing_detail)
+    admitted = _load_admitted_native_bars(path)
+    return _covered_native_bar_slice(
+        key,
+        admitted,
+        arrays=_validated_arrays(arrays),
+        timeframe=timeframe,
+        start=start,
+        end=end,
+    )
+
+
+def _covered_native_bar_slice(
+    key: HistoryKey,
+    frame: pd.DataFrame,
+    *,
+    arrays: tuple[str, ...],
+    timeframe: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DataFrame:
+    selected = _required_native_bar_slice(key, frame, arrays=arrays, start=start, end=end)
+    _assert_expected_daily_coverage(key, selected, timeframe=timeframe, start=start, end=end)
+    _assert_no_null_arrays(key, selected)
+    return selected
 
 
 def _merge_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.DataFrame:

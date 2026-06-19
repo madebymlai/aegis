@@ -10,6 +10,7 @@ from aegis_runtime import FuturesRef
 from aegis_data.databento_pull import pull_databento_futures_bars
 from aegis_data.store import (
     NATIVE_OHLCV_ARRAYS,
+    NativeBarsRequest,
     native_bars_path,
     raw_futures_leg_path,
     read_native_bars,
@@ -33,9 +34,7 @@ def _leg_bars(symbol: str, start: date, end: date) -> pd.DataFrame:
     )
 
 
-def _request(ref: FuturesRef):
-    from aegis_data.store import NativeBarsRequest
-
+def _request(ref: FuturesRef) -> NativeBarsRequest:
     return NativeBarsRequest(
         refs=(ref,),
         arrays=NATIVE_OHLCV_ARRAYS,
@@ -43,6 +42,10 @@ def _request(ref: FuturesRef):
         start="2024-01-02",
         end="2025-01-01",
     )
+
+
+def _provider_hit(symbol: str, start: date, end: date) -> pd.DataFrame:
+    raise AssertionError(f"provider hit for {symbol} in [{start}, {end}]")
 
 
 def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(tmp_path) -> None:
@@ -66,7 +69,7 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
     native_bars_path(ref, "1D", store_dir=tmp_path).unlink()
     pull_databento_futures_bars(
         _request(ref),
-        fetcher=lambda _symbol, _start, _end: (_ for _ in ()).throw(AssertionError("provider hit")),
+        fetcher=_provider_hit,
         store_dir=tmp_path,
     )
     second = read_native_bars(
@@ -91,7 +94,7 @@ def test_databento_pull_derives_alternate_adjustment_from_same_raw_legs(tmp_path
     pull_databento_futures_bars(_request(ratio_ref), fetcher=_leg_bars, store_dir=tmp_path)
     pull_databento_futures_bars(
         _request(difference_ref),
-        fetcher=lambda _symbol, _start, _end: (_ for _ in ()).throw(AssertionError("provider hit")),
+        fetcher=_provider_hit,
         store_dir=tmp_path,
     )
     frames = read_native_bars(
