@@ -82,7 +82,25 @@ class FxPair:
         return f"{self.base}/{self.quote}"
 
 
-HistoryKey: TypeAlias = InstrumentRef | FxPair
+@dataclass(frozen=True, order=True)
+class RawFuturesLeg:
+    """Provider source material for one dated futures contract."""
+
+    dataset: str
+    symbol: str
+
+    def __post_init__(self) -> None:
+        for name, value in (("dataset", self.dataset), ("symbol", self.symbol)):
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"RawFuturesLeg {name} must be a non-empty string; got {value!r}")
+
+    @property
+    def value(self) -> str:
+        """Stable string payload used where a human-readable label is needed."""
+        return f"{self.dataset}:{self.symbol}"
+
+
+HistoryKey: TypeAlias = InstrumentRef | FxPair | RawFuturesLeg
 
 
 class StoreAdmissionError(ValueError):
@@ -158,6 +176,23 @@ def fx_history_path(
     )
 
 
+def raw_futures_leg_path(
+    dataset: str,
+    symbol: str,
+    timeframe: str,
+    *,
+    store_dir: Path | None = None,
+) -> Path:
+    """Parquet location for a Raw Futures Leg source-material slice."""
+    return (
+        _store_root(store_dir)
+        / "futures-raw"
+        / _safe_key(dataset)
+        / _safe_key(symbol)
+        / f"{_safe_key(timeframe)}.parquet"
+    )
+
+
 def native_bars_path(
     ref: InstrumentRef,
     timeframe: str,
@@ -218,9 +253,7 @@ def write_native_bars(
         listed_adjustment=listed_adjustment,
         store_dir=store_dir,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    admitted.to_parquet(path)
-    return path
+    return _write_admitted_native_bars(path, admitted)
 
 
 def merge_native_bars(
@@ -242,9 +275,29 @@ def merge_native_bars(
         store_dir=store_dir,
     )
     merged = _merge_admitted_native_bars(path, admitted) if path.exists() else admitted
-    path.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_parquet(path)
-    return path
+    return _write_admitted_native_bars(path, merged)
+
+
+def replace_native_bars(
+    ref: InstrumentRef,
+    timeframe: str,
+    bars: pd.DataFrame,
+    *,
+    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
+    required_arrays: Sequence[str] = (),
+    store_dir: Path | None = None,
+) -> Path:
+    """Replace an overlapping Covered History window with provider-normalized bars."""
+    admitted = _admit_native_bars(bars)
+    _assert_admitted_native_bar_arrays(admitted, required_arrays)
+    path = native_bars_path(
+        ref,
+        timeframe,
+        listed_adjustment=listed_adjustment,
+        store_dir=store_dir,
+    )
+    merged = _replace_admitted_native_bars(path, admitted) if path.exists() else admitted
+    return _write_admitted_native_bars(path, merged)
 
 
 def read_native_bars(
@@ -318,24 +371,77 @@ def native_bar_coverage_gaps(
         listed_adjustment=listed_adjustment,
         store_dir=store_dir,
     )
-    expected = _expected_bar_index(timeframe, start=start_ts, end=end_ts)
-    if expected.empty:
-        return ()
-    if not path.exists():
-        return _coverage_gaps(expected, expected)
-    admitted = _load_admitted_native_bars(path)
-    missing = _missing_required_bar_index(
-        admitted,
+    return _history_coverage_gaps(
+        path,
         arrays=required,
-        expected=expected,
+        timeframe=timeframe,
         start=start_ts,
         end=end_ts,
     )
-    return _coverage_gaps(missing, expected)
+
+
+def merge_raw_futures_leg(
+    leg: RawFuturesLeg,
+    timeframe: str,
+    bars: pd.DataFrame,
+    *,
+    required_arrays: Sequence[str] = (),
+    store_dir: Path | None = None,
+) -> Path:
+    """Add provider-normalized bars to a Raw Futures Leg corpus."""
+    admitted = _admit_native_bars(bars)
+    _assert_admitted_native_bar_arrays(admitted, required_arrays)
+    path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
+    merged = _merge_admitted_native_bars(path, admitted) if path.exists() else admitted
+    return _write_admitted_native_bars(path, merged)
+
+
+def read_raw_futures_leg(
+    leg: RawFuturesLeg,
+    *,
+    arrays: Sequence[str],
+    timeframe: str,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
+    store_dir: Path | None = None,
+) -> pd.DataFrame:
+    """Provider-free Store Read of one Raw Futures Leg source-material slice."""
+    start_ts, end_ts = _window(start, end)
+    path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
+    return _read_admitted_native_bar_slice(
+        leg,
+        path,
+        arrays=arrays,
+        timeframe=timeframe,
+        start=start_ts,
+        end=end_ts,
+        missing_detail=f"no Raw Futures Leg for {timeframe}",
+    )
+
+
+def raw_futures_leg_coverage_gaps(
+    leg: RawFuturesLeg,
+    *,
+    arrays: Sequence[str],
+    timeframe: str,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
+    store_dir: Path | None = None,
+) -> tuple[CoverageGap, ...]:
+    """Return uncovered expected-bar intervals for a Raw Futures Leg."""
+    start_ts, end_ts = _window(start, end)
+    path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
+    return _history_coverage_gaps(
+        path,
+        arrays=_validated_arrays(arrays),
+        timeframe=timeframe,
+        start=start_ts,
+        end=end_ts,
+    )
 
 
 def assert_native_bar_coverage(
-    ref: InstrumentRef,
+    key: HistoryKey,
     frame: pd.DataFrame,
     *,
     arrays: Sequence[str],
@@ -347,15 +453,14 @@ def assert_native_bar_coverage(
     start_ts, end_ts = _window(start, end)
     required = _validated_arrays(arrays)
     admitted = _admit_native_bars(frame)
-    selected = _required_native_bar_slice(
-        ref,
+    _covered_native_bar_slice(
+        key,
         admitted,
         arrays=required,
+        timeframe=timeframe,
         start=start_ts,
         end=end_ts,
     )
-    _assert_expected_daily_coverage(ref, selected, timeframe=timeframe, start=start_ts, end=end_ts)
-    _assert_no_null_arrays(ref, selected)
 
 
 def write_fx_history(
@@ -520,13 +625,15 @@ def _read_one_native_bar_frame(
         listed_adjustment=listed_adjustment,
         store_dir=store_dir,
     )
-    if not path.exists():
-        raise StoreCoverageError(ref, f"no Covered History for {timeframe}")
-    admitted = _load_admitted_native_bars(path)
-    selected = _required_native_bar_slice(ref, admitted, arrays=arrays, start=start, end=end)
-    _assert_expected_daily_coverage(ref, selected, timeframe=timeframe, start=start, end=end)
-    _assert_no_null_arrays(ref, selected)
-    return selected
+    return _read_admitted_native_bar_slice(
+        ref,
+        path,
+        arrays=arrays,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        missing_detail=f"no Covered History for {timeframe}",
+    )
 
 
 def _load_admitted_fx_history(path: Path) -> pd.DataFrame:
@@ -540,6 +647,50 @@ def _load_admitted_native_bars(path: Path) -> pd.DataFrame:
     return _admit_native_bars(pd.read_parquet(path))
 
 
+def _write_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    admitted.to_parquet(path)
+    return path
+
+
+def _read_admitted_native_bar_slice(
+    key: HistoryKey,
+    path: Path,
+    *,
+    arrays: Sequence[str],
+    timeframe: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    missing_detail: str,
+) -> pd.DataFrame:
+    if not path.exists():
+        raise StoreCoverageError(key, missing_detail)
+    admitted = _load_admitted_native_bars(path)
+    return _covered_native_bar_slice(
+        key,
+        admitted,
+        arrays=_validated_arrays(arrays),
+        timeframe=timeframe,
+        start=start,
+        end=end,
+    )
+
+
+def _covered_native_bar_slice(
+    key: HistoryKey,
+    frame: pd.DataFrame,
+    *,
+    arrays: tuple[str, ...],
+    timeframe: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DataFrame:
+    selected = _required_native_bar_slice(key, frame, arrays=arrays, start=start, end=end)
+    _assert_expected_daily_coverage(key, selected, timeframe=timeframe, start=start, end=end)
+    _assert_no_null_arrays(key, selected)
+    return selected
+
+
 def _merge_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.DataFrame:
     existing = _load_admitted_native_bars(path)
     merged = existing.combine_first(admitted)
@@ -550,6 +701,40 @@ def _merge_admitted_fx_history(path: Path, admitted: pd.DataFrame) -> pd.DataFra
     existing = _load_admitted_fx_history(path)
     merged = existing.combine_first(admitted)
     return _admit_fx_history(merged["rate"])
+
+
+def _replace_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.DataFrame:
+    existing = _load_admitted_native_bars(path)
+    if admitted.empty:
+        return existing
+    left = admitted.index.min()
+    right = admitted.index.max()
+    outside = existing.loc[(existing.index < left) | (existing.index > right)]
+    return _admit_native_bars(pd.concat([outside, admitted]).sort_index())
+
+
+def _history_coverage_gaps(
+    path: Path,
+    *,
+    arrays: tuple[str, ...],
+    timeframe: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> tuple[CoverageGap, ...]:
+    expected = _expected_bar_index(timeframe, start=start, end=end)
+    if expected.empty:
+        return ()
+    if not path.exists():
+        return _coverage_gaps(expected, expected)
+    admitted = _load_admitted_native_bars(path)
+    missing = _missing_required_bar_index(
+        admitted,
+        arrays=arrays,
+        expected=expected,
+        start=start,
+        end=end,
+    )
+    return _coverage_gaps(missing, expected)
 
 
 def _missing_required_bar_index(
@@ -590,7 +775,7 @@ def _missing_fx_rate_index(
 
 
 def _required_native_bar_slice(
-    ref: InstrumentRef,
+    ref: HistoryKey,
     frame: pd.DataFrame,
     *,
     arrays: tuple[str, ...],
@@ -603,7 +788,7 @@ def _required_native_bar_slice(
 
 
 def _require_native_bar_columns(
-    ref: InstrumentRef,
+    ref: HistoryKey,
     frame: pd.DataFrame,
     arrays: tuple[str, ...],
 ) -> dict[str, str]:
@@ -785,6 +970,7 @@ __all__ = [
     "ListedAdjustmentPolicy",
     "NATIVE_OHLCV_ARRAYS",
     "NativeBarsRequest",
+    "RawFuturesLeg",
     "StoreAdmissionError",
     "StoreCoverageError",
     "assert_fx_history_coverage",
@@ -796,11 +982,16 @@ __all__ = [
     "fx_history_path",
     "merge_fx_history",
     "merge_native_bars",
+    "merge_raw_futures_leg",
     "native_bar_coverage_gaps",
     "native_bars_path",
+    "raw_futures_leg_coverage_gaps",
+    "raw_futures_leg_path",
     "read_fx_history",
     "read_native_bars",
     "read_native_bars_request",
+    "read_raw_futures_leg",
+    "replace_native_bars",
     "write_fx_history",
     "write_native_bars",
 ]
