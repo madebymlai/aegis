@@ -378,6 +378,22 @@ def write_fx_history(
     return path
 
 
+def merge_fx_history(
+    pair: FxPair,
+    timeframe: str,
+    rates: pd.Series,
+    *,
+    store_dir: Path | None = None,
+) -> Path:
+    """Add provider-normalized FX rates to existing FX History."""
+    admitted = _admit_fx_history(rates)
+    path = fx_history_path(pair, timeframe, store_dir=store_dir)
+    merged = _merge_admitted_fx_history(path, admitted) if path.exists() else admitted
+    path.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_parquet(path)
+    return path
+
+
 def read_fx_history(
     pairs: Sequence[FxPair],
     *,
@@ -403,6 +419,45 @@ def read_fx_history(
         )
         for pair in pairs
     }
+
+
+def fx_history_coverage_gaps(
+    pair: FxPair,
+    *,
+    timeframe: str,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
+    store_dir: Path | None = None,
+) -> tuple[CoverageGap, ...]:
+    """Return uncovered expected-rate intervals for an FX History request."""
+    start_ts, end_ts = _window(start, end)
+    expected = _expected_bar_index(timeframe, start=start_ts, end=end_ts)
+    if expected.empty:
+        return ()
+    path = fx_history_path(pair, timeframe, store_dir=store_dir)
+    if not path.exists():
+        return _coverage_gaps(expected, expected)
+    admitted = _load_admitted_fx_history(path)
+    missing = _missing_fx_rate_index(admitted, expected=expected, start=start_ts, end=end_ts)
+    return _coverage_gaps(missing, expected)
+
+
+def assert_fx_history_coverage(
+    pair: FxPair,
+    rates: pd.Series,
+    *,
+    timeframe: str,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
+) -> None:
+    """Fail when a provider series cannot cover the requested FX History window."""
+    start_ts, end_ts = _window(start, end)
+    admitted = _admit_fx_history(rates)
+    selected = _slice_window(admitted, start=start_ts, end=end_ts)
+    _assert_expected_daily_coverage(
+        pair, selected, timeframe=timeframe, start=start_ts, end=end_ts, value_name="FX rate"
+    )
+    _assert_no_null_arrays(pair, selected)
 
 
 def cached_fetcher(
@@ -491,6 +546,12 @@ def _merge_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.DataFr
     return _admit_native_bars(merged)
 
 
+def _merge_admitted_fx_history(path: Path, admitted: pd.DataFrame) -> pd.DataFrame:
+    existing = _load_admitted_fx_history(path)
+    merged = existing.combine_first(admitted)
+    return _admit_fx_history(merged["rate"])
+
+
 def _missing_required_bar_index(
     frame: pd.DataFrame,
     *,
@@ -510,6 +571,21 @@ def _missing_required_bar_index(
         return expected
     complete_bars = selected.loc[~selected.isna().any(axis=1)]
     observed_dates = pd.DatetimeIndex(complete_bars.index).tz_localize(None).normalize()
+    return expected.difference(observed_dates)
+
+
+def _missing_fx_rate_index(
+    frame: pd.DataFrame,
+    *,
+    expected: pd.DatetimeIndex,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DatetimeIndex:
+    sliced = _slice_window(frame, start=start, end=end)
+    if sliced.empty:
+        return expected
+    complete_rates = sliced.loc[sliced["rate"].notna()]
+    observed_dates = pd.DatetimeIndex(complete_rates.index).tz_localize(None).normalize()
     return expected.difference(observed_dates)
 
 
@@ -711,11 +787,14 @@ __all__ = [
     "NativeBarsRequest",
     "StoreAdmissionError",
     "StoreCoverageError",
+    "assert_fx_history_coverage",
     "assert_native_bar_coverage",
     "cached_fetcher",
     "data_dir",
     "futures_dir",
+    "fx_history_coverage_gaps",
     "fx_history_path",
+    "merge_fx_history",
     "merge_native_bars",
     "native_bar_coverage_gaps",
     "native_bars_path",

@@ -6,6 +6,8 @@ from typing import Any
 
 import pandas as pd
 from aegis_data.source import continuous_panel, databento_source
+from aegis_data.store import FxPair, read_fx_history
+from aegis_data.yfinance import YFinanceLocator, pull_yfinance_fx_history
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
@@ -18,6 +20,7 @@ from research.aegis_research.configuration import (
     ResolvedRunConfig,
     RunConfig,
     SymbolSpec,
+    store_gap_fill_provider,
 )
 from research.aegis_research.data import (
     MarketDataBundle,
@@ -202,6 +205,13 @@ def _load_fx_rates(
         # No foreign legs: there is nothing to fetch (an empty symbol set cannot
         # be pulled), and the empty rates frame makes the conversion an identity.
         return pd.DataFrame(index=index)
+    if data_config.source == "store":
+        return _load_store_fx_rates(
+            data_config,
+            base_currency=base_currency,
+            pair_by_currency=pair_by_currency,
+            index=index,
+        )
     fx_config = replace(
         data_config,
         symbols=[
@@ -216,6 +226,40 @@ def _load_fx_rates(
         {ccy: fx_close[pair] for ccy, pair in pair_by_currency.items()},
         index=index,
     )
+
+
+def _load_store_fx_rates(
+    data_config: DataConfig,
+    *,
+    base_currency: str,
+    pair_by_currency: dict[str, str],
+    index: pd.Index,
+) -> pd.DataFrame:
+    provider = store_gap_fill_provider(data_config.provider_kwargs)
+    if provider != "yfinance":
+        raise ValueError(f"unsupported store FX gap-fill provider {provider!r}")
+    pairs = {ccy: FxPair(base_currency, ccy) for ccy in pair_by_currency}
+    for ccy, pair in pairs.items():
+        pull_yfinance_fx_history(
+            pair,
+            timeframe=data_config.timeframe,
+            start=_required_data_window_edge(data_config.start, "start"),
+            end=_required_data_window_edge(data_config.end, "end"),
+            locator=YFinanceLocator(pair_by_currency[ccy]),
+        )
+    histories = read_fx_history(
+        tuple(pairs.values()),
+        timeframe=data_config.timeframe,
+        start=_required_data_window_edge(data_config.start, "start"),
+        end=_required_data_window_edge(data_config.end, "end"),
+    )
+    return assemble_fx_rates({ccy: histories[pair] for ccy, pair in pairs.items()}, index=index)
+
+
+def _required_data_window_edge(value: str | None, name: str) -> str:
+    if value is None:
+        raise ValueError(f"{name} is required for store source")
+    return value
 
 
 def _failure_diagnostic(error: Exception) -> dict[str, str]:

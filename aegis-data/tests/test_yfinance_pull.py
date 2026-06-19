@@ -7,14 +7,18 @@ import pytest
 from aegis_runtime import FuturesRef, ListedRef
 
 from aegis_data.store import (
+    FxPair,
     NativeBarsRequest,
     StoreAdmissionError,
     StoreCoverageError,
+    fx_history_path,
     native_bars_path,
+    read_fx_history,
     read_native_bars,
+    write_fx_history,
     write_native_bars,
 )
-from aegis_data.yfinance import YFinanceLocator, pull_yfinance_native_bars
+from aegis_data.yfinance import YFinanceLocator, pull_yfinance_fx_history, pull_yfinance_native_bars
 
 
 def _bars(base: float) -> pd.DataFrame:
@@ -273,6 +277,94 @@ def test_yfinance_pull_rejects_missing_requested_adj_close(tmp_path) -> None:
         )
 
     assert not native_bars_path(ref, "1D", store_dir=tmp_path).exists()
+
+
+def test_yfinance_fx_pull_writes_fx_history_under_pair_identity(tmp_path) -> None:
+    pair = FxPair("EUR", "USD")
+    calls: list[tuple[str, str, str]] = []
+
+    def fetch(locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame:
+        calls.append((locator.ticker, str(request.start), str(request.end)))
+        return pd.DataFrame(
+            {"Close": [1.10, 1.11, 1.12]},
+            index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
+        )
+
+    pull_yfinance_fx_history(
+        pair,
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        locator=YFinanceLocator("EURUSD=X"),
+        fetcher=fetch,
+        store_dir=tmp_path,
+    )
+    rates = read_fx_history(
+        (pair,),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        store_dir=tmp_path,
+    )
+
+    assert calls == [("EURUSD=X", "2024-01-02 00:00:00", "2024-01-05 00:00:00")]
+    assert rates[pair].tolist() == [1.10, 1.11, 1.12]
+
+
+def test_yfinance_fx_pull_fetches_only_uncovered_rate_gaps(tmp_path) -> None:
+    pair = FxPair("EUR", "USD")
+    calls: list[tuple[str, str]] = []
+    write_fx_history(
+        pair,
+        "1D",
+        pd.Series([1.10], index=pd.DatetimeIndex(["2024-01-02"])),
+        store_dir=tmp_path,
+    )
+
+    def fetch(_locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame:
+        calls.append((str(request.start), str(request.end)))
+        return pd.DataFrame(
+            {"Close": [1.11, 1.12]},
+            index=pd.DatetimeIndex(["2024-01-03", "2024-01-04"]),
+        )
+
+    pull_yfinance_fx_history(
+        pair,
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        locator=YFinanceLocator("EURUSD=X"),
+        fetcher=fetch,
+        store_dir=tmp_path,
+    )
+    rates = read_fx_history(
+        (pair,),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        store_dir=tmp_path,
+    )
+
+    assert calls == [("2024-01-03 00:00:00", "2024-01-05 00:00:00")]
+    assert rates[pair].tolist() == [1.10, 1.11, 1.12]
+
+
+def test_yfinance_fx_pull_rejects_missing_expected_rate_before_writing(tmp_path) -> None:
+    pair = FxPair("EUR", "USD")
+    incomplete = pd.DataFrame({"Close": [1.10]}, index=pd.DatetimeIndex(["2024-01-02"]))
+
+    with pytest.raises(StoreAdmissionError, match="2024-01-03"):
+        pull_yfinance_fx_history(
+            pair,
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            locator=YFinanceLocator("EURUSD=X"),
+            fetcher=lambda _locator, _request: incomplete,
+            store_dir=tmp_path,
+        )
+
+    assert not fx_history_path(pair, "1D", store_dir=tmp_path).exists()
 
 
 def test_yfinance_pull_requires_one_explicit_listed_ref(tmp_path) -> None:

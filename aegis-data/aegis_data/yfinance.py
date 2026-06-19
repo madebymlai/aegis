@@ -12,11 +12,16 @@ from aegis_runtime import ListedRef
 
 from aegis_data.store import (
     CoverageGap,
+    FxPair,
     NATIVE_OHLCV_ARRAYS,
     NativeBarsRequest,
     StoreAdmissionError,
     StoreCoverageError,
+    assert_fx_history_coverage,
     assert_native_bar_coverage,
+    fx_history_coverage_gaps,
+    fx_history_path,
+    merge_fx_history,
     merge_native_bars,
     native_bar_coverage_gaps,
     native_bars_path,
@@ -61,6 +66,16 @@ class PullResult:
     bars: int
 
 
+@dataclass(frozen=True)
+class PullFxResult:
+    """FX History admitted by a provider Pull."""
+
+    pair: FxPair
+    locator: YFinanceLocator
+    path: Path
+    rates: int
+
+
 def pull_yfinance_native_bars(
     request: NativeBarsRequest,
     locator: YFinanceLocator,
@@ -89,6 +104,33 @@ def pull_yfinance_native_bars(
         store_dir=store_dir,
     )
     return PullResult(ref=ref, locator=locator, path=path, bars=_covered_bar_count(path))
+
+
+def pull_yfinance_fx_history(
+    pair: FxPair,
+    *,
+    timeframe: str,
+    start: str | pd.Timestamp,
+    end: str | pd.Timestamp,
+    locator: YFinanceLocator,
+    fetcher: YFinanceFetcher | None = None,
+    store_dir: Path | None = None,
+) -> PullFxResult:
+    """Fetch one FX History series from yfinance and write Covered History."""
+    fetch = fetcher or _fetch_yfinance
+    for gap in fx_history_coverage_gaps(
+        pair,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        store_dir=store_dir,
+    ):
+        request = _fx_gap_request(gap, timeframe=timeframe)
+        rates = _fetch_fx_gap_rates(fetch, locator, request)
+        _assert_pulled_fx_gap_coverage(pair, rates, request)
+        merge_fx_history(pair, timeframe, rates, store_dir=store_dir)
+    path = fx_history_path(pair, timeframe, store_dir=store_dir)
+    return PullFxResult(pair=pair, locator=locator, path=path, rates=_covered_rate_count(path))
 
 
 def _uncovered_gap_requests(
@@ -124,6 +166,16 @@ def _gap_request(
     )
 
 
+def _fx_gap_request(gap: CoverageGap, *, timeframe: str) -> NativeBarsRequest:
+    return NativeBarsRequest(
+        refs=(ListedRef("FX_HISTORY_REQUEST"),),
+        arrays=("Close",),
+        timeframe=timeframe,
+        start=gap.start,
+        end=gap.end,
+    )
+
+
 def _fetch_gap_bars(
     fetch: YFinanceFetcher,
     locator: YFinanceLocator,
@@ -132,6 +184,19 @@ def _fetch_gap_bars(
     raw = fetch(locator, request)
     normalized = _normalize_yfinance_bars(raw)
     return _stored_yfinance_bars(normalized, request.arrays)
+
+
+def _fetch_fx_gap_rates(
+    fetch: YFinanceFetcher,
+    locator: YFinanceLocator,
+    request: NativeBarsRequest,
+) -> pd.Series:
+    raw = fetch(locator, request)
+    normalized = _normalize_yfinance_bars(raw)
+    columns = _column_lookup(normalized)
+    if "close" not in columns:
+        raise ValueError("yfinance FX History missing Close")
+    return normalized[columns["close"]].rename("rate")
 
 
 def _single_listed_ref(request: NativeBarsRequest) -> ListedRef:
@@ -161,7 +226,30 @@ def _assert_pulled_gap_coverage(
         raise StoreAdmissionError(str(error)) from error
 
 
+def _assert_pulled_fx_gap_coverage(
+    pair: FxPair,
+    rates: pd.Series,
+    request: NativeBarsRequest,
+) -> None:
+    try:
+        assert_fx_history_coverage(
+            pair,
+            rates,
+            timeframe=request.timeframe,
+            start=request.start,
+            end=request.end,
+        )
+    except StoreCoverageError as error:
+        raise StoreAdmissionError(str(error)) from error
+
+
 def _covered_bar_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return len(pd.read_parquet(path))
+
+
+def _covered_rate_count(path: Path) -> int:
     if not path.exists():
         return 0
     return len(pd.read_parquet(path))
@@ -260,8 +348,10 @@ def _yfinance_interval(timeframe: str) -> str:
 
 
 __all__ = [
+    "PullFxResult",
     "PullResult",
     "YFinanceFetcher",
     "YFinanceLocator",
+    "pull_yfinance_fx_history",
     "pull_yfinance_native_bars",
 ]

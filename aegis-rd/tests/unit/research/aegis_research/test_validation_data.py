@@ -265,6 +265,25 @@ def test_resolve_rejects_csv_without_path(tmp_path: Path) -> None:
     assert "path" in messages[0]
 
 
+def test_resolve_rejects_store_source_without_gap_fill_provider(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {
+                "source": "store",
+                "arrays": ["Close"],
+                "symbols": [{"ticker": "SPY", "ccy": "USD", "figi": "BBG000B9XRY4"}],
+                "start": "2024-01-02",
+                "end": "2024-01-05",
+                "timeframe": "1D",
+            },
+            tmp_path=tmp_path,
+        )
+
+    messages = [i.message for i in e.value.issues if i.path == "data"]
+    assert messages
+    assert "provider" in messages[0]
+
+
 def test_resolve_rejects_remote_source_without_symbols(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(

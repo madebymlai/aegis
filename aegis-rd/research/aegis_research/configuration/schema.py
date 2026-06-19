@@ -218,6 +218,7 @@ class DataConfig:
             _require_symbols_for_source(self.source, self.symbols)
             _require_window_for_source(self.source, self)
             _require_listed_store_symbols(self.symbols)
+            _require_store_gap_fill_provider(self.provider_kwargs)
         if self.skip_on_error and "skipped_symbols" not in self.quality.allowed_degradations:
             raise ValueError(
                 "skip_on_error requires data.quality.allowed_degradations to include 'skipped_symbols'"
@@ -225,7 +226,12 @@ class DataConfig:
         for symbol in self.symbols:
             _validate_future_source_support(self.source, symbol)
         if self.source in LOCAL_DATA_SOURCES:
-            for key in ("wrapper_kwargs", "provider_kwargs", "execution_kwargs"):
+            local_kwargs = ("wrapper_kwargs", "execution_kwargs") if self.source == "store" else (
+                "wrapper_kwargs",
+                "provider_kwargs",
+                "execution_kwargs",
+            )
+            for key in local_kwargs:
                 if getattr(self, key):
                     raise ValueError(
                         f"{key} is not supported for {self.source} source"
@@ -252,9 +258,28 @@ def _require_listed_store_symbols(symbols: list[SymbolSpec]) -> None:
             raise ValueError(f"figi is required for store source symbol {symbol.ticker!r}")
 
 
+def store_gap_fill_provider(provider_kwargs: dict[str, Any]) -> str:
+    provider = provider_kwargs.get("provider")
+    if set(provider_kwargs) != {"provider"}:
+        raise ValueError("store source requires exactly one data.provider_kwargs.provider")
+    normalized = _STORE_PROVIDER_ALIASES.get(str(provider).lower())
+    if normalized is None:
+        allowed = sorted(_STORE_GAP_FILL_PROVIDERS)
+        raise ValueError(
+            f"unsupported store gap-fill provider {provider!r}; expected one of {allowed}"
+        )
+    return normalized
+
+
+def _require_store_gap_fill_provider(provider_kwargs: dict[str, Any]) -> None:
+    store_gap_fill_provider(provider_kwargs)
+
+
 # Sources that can supply per-contract dated-contract data (the overlap the
 # back-adjustment needs).  Only these may declare ``adjustment: back_adjust``.
 _PER_CONTRACT_SOURCES = frozenset({"bento"})
+_STORE_GAP_FILL_PROVIDERS = frozenset({"yfinance"})
+_STORE_PROVIDER_ALIASES = {"yf": "yfinance", "yfinance": "yfinance"}
 
 
 def _validate_future_source_support(source: str, symbol: SymbolSpec) -> None:
