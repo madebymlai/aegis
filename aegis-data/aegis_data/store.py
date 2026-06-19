@@ -64,6 +64,27 @@ class StoreCoverageError(ValueError):
         super().__init__(f"{key.value}: {detail}")
 
 
+@dataclass(frozen=True)
+class NativeBarsRequest:
+    """Neutral Covered History request for native market bars."""
+
+    refs: Sequence[InstrumentRef]
+    arrays: Sequence[str]
+    timeframe: str
+    start: str | date | pd.Timestamp
+    end: str | date | pd.Timestamp
+
+    def __post_init__(self) -> None:
+        refs = tuple(self.refs)
+        if not refs:
+            raise ValueError("NativeBarsRequest requires at least one InstrumentRef")
+        object.__setattr__(self, "refs", refs)
+        object.__setattr__(self, "arrays", _validated_arrays(self.arrays))
+        if not self.timeframe:
+            raise ValueError("NativeBarsRequest timeframe must be a non-empty string")
+        _window(self.start, self.end)
+
+
 def data_dir() -> Path:
     """The historical-data store root: ``$AEGIS_DATA_DIR`` or the OS user-data dir."""
     override = os.environ.get("AEGIS_DATA_DIR")
@@ -159,18 +180,35 @@ def read_native_bars(
     pandas frame per ref, sliced to ``[start, end)``.  Missing files, arrays,
     NaNs, or expected daily bars fail closed before a backtest can run.
     """
-    requested_arrays = _validated_arrays(arrays)
-    start_ts, end_ts = _window(start, end)
+    return read_native_bars_request(
+        NativeBarsRequest(
+            refs=refs,
+            arrays=arrays,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+        ),
+        store_dir=store_dir,
+    )
+
+
+def read_native_bars_request(
+    request: NativeBarsRequest,
+    *,
+    store_dir: Path | None = None,
+) -> dict[InstrumentRef, pd.DataFrame]:
+    """Provider-free Store Read for a neutral native-bars request."""
+    start_ts, end_ts = _window(request.start, request.end)
     return {
         ref: _read_one_native_bar_frame(
             ref,
-            arrays=requested_arrays,
-            timeframe=timeframe,
+            arrays=tuple(request.arrays),
+            timeframe=request.timeframe,
             start=start_ts,
             end=end_ts,
             store_dir=store_dir,
         )
-        for ref in refs
+        for ref in request.refs
     }
 
 
@@ -420,6 +458,7 @@ def _safe_key(value: str) -> str:
 
 __all__ = [
     "FxPair",
+    "NativeBarsRequest",
     "StoreAdmissionError",
     "StoreCoverageError",
     "cached_fetcher",
@@ -429,6 +468,7 @@ __all__ = [
     "native_bars_path",
     "read_fx_history",
     "read_native_bars",
+    "read_native_bars_request",
     "write_fx_history",
     "write_native_bars",
 ]

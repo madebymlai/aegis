@@ -58,43 +58,113 @@
       "start": null,
       "symbols": [
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "SPY"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "IWM"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "EEM"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "TLT"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "GLD"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "DBC"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "VNQ"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "UUP"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "XLE"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "XLU"
         }
       ],
@@ -182,7 +252,7 @@
       "raw_config_identity": {
         "hash": "ca98d40f141ec6be9dd9abca45323747fac8d936a9d508068e682ec0a9e3e1bd"
       },
-      "resolved_config_hash": "0f977c4d69285283cabfaadb62155a5f6a99480c19ae20fdaa87968e4149a1bb",
+      "resolved_config_hash": "f11e3da3e0c4497a7b08c82347aba415e4029be6dcdf63a8a490d3bdb0b2b177",
       "schema_version": 8,
       "selection": {
         "config_path": "<masked>",

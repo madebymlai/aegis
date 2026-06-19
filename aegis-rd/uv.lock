@@ -15,22 +15,26 @@ name = "aegis-data"
 version = "0.1.0"
 source = { editable = "../aegis-data" }
 dependencies = [
+    { name = "aegis-runtime" },
     { name = "databento" },
     { name = "nautilus-trader" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "platformdirs" },
     { name = "pyarrow" },
+    { name = "yfinance" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aegis-runtime", editable = "../aegis-runtime" },
     { name = "databento" },
     { name = "nautilus-trader" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "platformdirs" },
     { name = "pyarrow" },
+    { name = "yfinance", specifier = ">=0.2.56" },
 ]
 
 [package.metadata.requires-dev]
