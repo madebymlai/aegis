@@ -7,30 +7,23 @@ objects — the strategy config with the mode-correct next-close TIF (ADR-0001),
 plus the backtest engine config or the paper/live node config and IBKR client
 dicts whose account ID comes from the environment, never a placeholder.
 
-It assembles and validates the run configuration and logs a summary; feeding
-market data and calling ``node.run()`` / ``engine.run()`` is the operator's
-runtime step (the data source is mode- and deployment-specific).
+It assembles and validates the run configuration and logs a summary; paper/live
+market data and ``node.run()`` remain the operator's runtime step. Backtests read
+only from the ``aegis-data`` Historical Store.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 
-from aegis_trader.backtest import (
-    FxFetcher,
-    OhlcvFetcher,
-    book_return_stats,
-    run_book_backtest,
-    yfinance_fx,
-    yfinance_ohlcv,
-)
+from aegis_trader.backtest import book_return_stats, run_book_backtest
 from aegis_trader.config import (
     IBConnectionSettings,
     find_book_config,
     load_book_config,
 )
-from aegis_trader.data.snapshot import SnapshotCache
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.trader.modes import (
     build_backtest_engine_config,
@@ -91,24 +84,15 @@ def build_ib_client_configs(
 def _run_backtest(args: argparse.Namespace) -> int:
     """Run an offline backtest of the book end-to-end and summarize the outcome.
 
-    Fully independent of ``--mode``: it resolves the book, runs the contract-driven
-    runner with the default contract-aware fetchers, and reports the result.  With
-    ``--data-cache DIR`` the fetchers are pinned to disk so identical runs are
-    reproducible (the live providers are nondeterministic).
+    Fully independent of ``--mode``: it resolves the book, runs the Store Read
+    runner, and reports the result.
     """
     book_path = args.book if args.book is not None else find_book_config()
-    fetch_ohlcv: OhlcvFetcher = yfinance_ohlcv
-    fetch_fx: FxFetcher = yfinance_fx
-    if args.data_cache is not None:
-        cache = SnapshotCache(args.data_cache)
-        fetch_ohlcv = cache.ohlcv(fetch_ohlcv)
-        fetch_fx = cache.fx(fetch_fx)
     engine = run_book_backtest(
         book_path,
         start=args.start,
         end=args.end,
-        fetch_ohlcv=fetch_ohlcv,
-        fetch_fx=fetch_fx,
+        store_dir=args.store_dir,
     )
     result = engine.get_result()
     fills = [order for order in engine.cache.orders() if order.is_closed]
@@ -166,11 +150,11 @@ def main(argv: list[str] | None = None) -> int:
         "(default: discover book.toml by walking up from the cwd)",
     )
     backtest_p.add_argument(
-        "--data-cache",
+        "--store-dir",
         default=None,
         metavar="DIR",
-        help="pin provider data to this directory for reproducible runs "
-        "(first run snapshots; later identical runs read the snapshot)",
+        type=Path,
+        help="read Historical Store data from DIR (default: aegis-data OS store)",
     )
     args = parser.parse_args(argv)
 

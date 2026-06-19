@@ -4,8 +4,8 @@ The CLI is the seam that closes the 'no run configuration' gap (finding a5): a
 ``book.toml`` + the environment assemble into the real Nautilus config objects —
 the strategy config (with the mode-correct next-close TIF), the backtest engine
 config, or the paper/live node config plus IBKR client dicts whose account comes
-from the environment.  It assembles and validates a run; feeding data and
-calling ``node.run()`` is the operator's runtime step.
+from the environment.  Backtests run from the Historical Store; paper/live still
+leave venue data and ``node.run()`` to the operator.
 """
 
 from __future__ import annotations
@@ -16,9 +16,6 @@ import types
 import pytest
 from nautilus_trader.model.enums import TimeInForce
 
-import pandas as pd
-
-from aegis_trader.backtest import BarRequest, yfinance_fx, yfinance_ohlcv
 from aegis_trader.cli import build_ib_client_configs, build_strategy_config, main
 from aegis_trader.config import ConnectionConfigError, IBConnectionSettings
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
@@ -114,16 +111,13 @@ def test_main_backtest_assembles_run_from_book(tmp_path):
 
 
 def test_backtest_subcommand_runs_the_runner(tmp_path, monkeypatch):
-    """`aegis-trader backtest --start --end` runs run_book_backtest with the book,
-    the window, and the default contract-aware fetchers."""
+    """`aegis-trader backtest --start --end` runs run_book_backtest with the book
+    and window, using Store Read inputs."""
     book_path = _write_book(tmp_path)
     calls: dict = {}
 
-    def fake_runner(path, *, start, end, fetch_ohlcv, fetch_fx, **kwargs):
-        calls.update(
-            path=path, start=start, end=end,
-            fetch_ohlcv=fetch_ohlcv, fetch_fx=fetch_fx,
-        )
+    def fake_runner(path, *, start, end, store_dir=None, **kwargs):
+        calls.update(path=path, start=start, end=end, store_dir=store_dir)
         return _FakeEngine()
 
     monkeypatch.setattr("aegis_trader.cli.run_book_backtest", fake_runner)
@@ -137,39 +131,28 @@ def test_backtest_subcommand_runs_the_runner(tmp_path, monkeypatch):
     assert calls["path"] == str(book_path)
     assert calls["start"] == "2020-01-01"
     assert calls["end"] == "2020-06-01"
-    assert calls["fetch_ohlcv"] is yfinance_ohlcv
-    assert calls["fetch_fx"] is yfinance_fx
+    assert calls["store_dir"] is None
 
 
-def test_backtest_subcommand_data_cache_pins_fetchers(tmp_path, monkeypatch):
-    """`--data-cache DIR` hands the runner cache-wrapped fetchers that pin
-    provider responses under DIR (so identical runs become reproducible)."""
+def test_backtest_subcommand_passes_store_dir_override(tmp_path, monkeypatch):
+    """`--store-dir DIR` passes the Historical Store override to the runner."""
     book_path = _write_book(tmp_path)
-    cache_dir = tmp_path / "snap"
+    store_dir = tmp_path / "store"
     captured: dict = {}
 
-    def fake_runner(path, *, start, end, fetch_ohlcv, fetch_fx, **kwargs):
-        captured["ohlcv"] = fetch_ohlcv
+    def fake_runner(path, *, start, end, store_dir=None, **kwargs):
+        captured["store_dir"] = store_dir
         return _FakeEngine()
 
     monkeypatch.setattr("aegis_trader.cli.run_book_backtest", fake_runner)
-    monkeypatch.setattr(
-        "aegis_trader.cli.yfinance_ohlcv",
-        lambda req: pd.DataFrame({"close": [1.0]}, index=pd.to_datetime(["2020-01-02"])),
-    )
 
     rc = main(
         ["backtest", "--start", "2020-01-01", "--end", "2020-06-01",
-         "--book", str(book_path), "--data-cache", str(cache_dir)]
+         "--book", str(book_path), "--store-dir", str(store_dir)]
     )
 
     assert rc == 0
-    # exercising the wrapped fetcher writes a pin under the requested directory
-    captured["ohlcv"](
-        BarRequest(ticker="X", required_arrays=("close",),
-                   start="2020-01-01", end="2020-06-01")
-    )
-    assert list(cache_dir.glob("*.pkl"))
+    assert captured["store_dir"] == store_dir
 
 
 def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
@@ -180,7 +163,7 @@ def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
     monkeypatch.chdir(work)
     seen: dict = {}
 
-    def fake_runner(path, *, start, end, fetch_ohlcv, fetch_fx, **kwargs):
+    def fake_runner(path, *, start, end, store_dir=None, **kwargs):
         seen["path"] = path
         return _FakeEngine()
 
