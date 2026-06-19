@@ -10,7 +10,73 @@ from datetime import date
 
 import pandas as pd
 
-from aegis_data.databento_port import bars_to_ohlcv, databento_port_fetcher
+from aegis_data.databento_port import (
+    bars_to_ohlcv,
+    databento_contract_calendar,
+    databento_port_fetcher,
+)
+
+
+class _FakeDefStore:
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+
+    def to_df(self) -> pd.DataFrame:
+        return self._frame
+
+
+class _FakeDatabento:
+    """Stub Databento historical client capturing the definition query and replaying a frame."""
+
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+        self.timeseries = self
+        self.kwargs: dict = {}
+
+    def get_range(self, **kwargs) -> _FakeDefStore:
+        self.kwargs = kwargs
+        return _FakeDefStore(self._frame)
+
+
+def test_contract_calendar_lists_outright_futures_from_definitions() -> None:
+    # A real definition frame mixes outright futures ("F") with spreads ("S") and repeats
+    # a contract across days.  The calendar keeps only deduped outright futures and maps the
+    # expiration timestamp to a last-trade date.
+    frame = pd.DataFrame(
+        {
+            "raw_symbol": ["CLN6", "CLQ6", "CL-CLQ6", "CLN6"],
+            "instrument_class": ["F", "F", "S", "F"],
+            "expiration": pd.to_datetime(
+                [
+                    "2026-06-22 18:30:00+00:00",
+                    "2026-07-21 18:30:00+00:00",
+                    "2026-06-15 18:30:00+00:00",
+                    "2026-06-22 18:30:00+00:00",
+                ]
+            ),
+        }
+    )
+    client = _FakeDatabento(frame)
+
+    contracts = databento_contract_calendar("GLBX.MDP3", client=client)(
+        "CL", date(2026, 6, 1), date(2026, 8, 1)
+    )
+
+    assert [c.symbol for c in contracts] == ["CLN6", "CLQ6"]  # spread dropped, duplicate collapsed
+    assert contracts[0].last_trade == date(2026, 6, 22)
+    # Parent symbology drives the definition query.
+    assert client.kwargs["symbols"] == ["CL.FUT"]
+    assert client.kwargs["stype_in"] == "parent"
+
+
+def test_contract_calendar_empty_definitions_is_empty() -> None:
+    client = _FakeDatabento(pd.DataFrame())
+
+    contracts = databento_contract_calendar("GLBX.MDP3", client=client)(
+        "CL", date(2026, 6, 1), date(2026, 8, 1)
+    )
+
+    assert contracts == []
 
 
 class _Px:

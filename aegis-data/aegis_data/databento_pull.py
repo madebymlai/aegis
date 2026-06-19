@@ -10,9 +10,9 @@ import pandas as pd
 from aegis_runtime import FuturesRef
 
 from aegis_data.back_adjust import back_adjust_chain
-from aegis_data.chain import ContractChain, ContractFetcher, fetch_contract_chain
+from aegis_data.chain import ContractCalendar, ContractChain, ContractFetcher, fetch_contract_chain
 from aegis_data.continuous import apply_adjustment_factors
-from aegis_data.databento_port import databento_port_fetcher
+from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
 from aegis_data.store import (
     CoverageGap,
     NativeBarsRequest,
@@ -46,6 +46,7 @@ def pull_databento_futures_bars(
     request: NativeBarsRequest,
     *,
     fetcher: ContractFetcher | None = None,
+    contract_calendar: ContractCalendar | None = None,
     client=None,
     store_dir: Path | None = None,
     roll_lead_days: int = 5,
@@ -59,12 +60,14 @@ def pull_databento_futures_bars(
     ref = _single_futures_ref(request)
     _require_supported_roll_rule(ref)
     raw_fetch = fetcher or databento_port_fetcher(ref.dataset, client=client)
+    list_contracts = contract_calendar or databento_contract_calendar(ref.dataset, client=client)
     raw_legs: tuple[RawFuturesLeg, ...] = ()
     if _continuous_gaps(ref, request, store_dir=store_dir):
         panel, raw_legs = _derive_continuous_history(
             ref,
             request,
             fetch=raw_fetch,
+            list_contracts=list_contracts,
             store_dir=store_dir,
             roll_lead_days=roll_lead_days,
         )
@@ -93,6 +96,7 @@ def _derive_continuous_history(
     request: NativeBarsRequest,
     *,
     fetch: ContractFetcher,
+    list_contracts: ContractCalendar,
     store_dir: Path | None,
     roll_lead_days: int,
 ) -> tuple[pd.DataFrame, tuple[RawFuturesLeg, ...]]:
@@ -126,6 +130,7 @@ def _derive_continuous_history(
         ref.root,
         start,
         end,
+        list_contracts=list_contracts,
         fetch=raw_leg_fetch,
         roll_lead_days=roll_lead_days,
     )

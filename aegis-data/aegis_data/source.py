@@ -13,8 +13,8 @@ from datetime import date
 import pandas as pd
 
 from aegis_data.back_adjust import back_adjust_chain
-from aegis_data.chain import ContractFetcher, fetch_contract_chain
-from aegis_data.databento_port import databento_port_fetcher
+from aegis_data.chain import ContractCalendar, ContractFetcher, fetch_contract_chain
+from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
 from aegis_data.store import cached_fetcher
 
 
@@ -33,16 +33,20 @@ def continuous_panel(
     end: date,
     *,
     fetch: ContractFetcher,
+    list_contracts: ContractCalendar,
     method: str = "ratio",
     roll_lead_days: int = 5,
 ) -> pd.DataFrame:
     """Back-adjusted continuous OHLCV panel for ``root`` over ``[start, end]``.
 
-    ``fetch`` is the per-contract source (use :func:`databento_source` in
-    production; inject a fake in tests).
+    ``fetch`` is the per-contract source and ``list_contracts`` the dated-contract
+    calendar (use :func:`databento_source` / :func:`databento_contract_calendar` in
+    production; inject fakes in tests).
     """
-    chain = fetch_contract_chain(root, start, end, fetch=fetch, roll_lead_days=roll_lead_days)
+    chain = fetch_contract_chain(
+        root, start, end, list_contracts=list_contracts, fetch=fetch, roll_lead_days=roll_lead_days
+    )
     return back_adjust_chain(chain, method=method)
 
 
-__all__ = ["continuous_panel", "databento_source"]
+__all__ = ["continuous_panel", "databento_contract_calendar", "databento_source"]

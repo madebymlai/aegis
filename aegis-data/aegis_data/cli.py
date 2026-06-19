@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 from datetime import date
 
-from aegis_data.source import continuous_panel, databento_source
+from aegis_data.source import continuous_panel, databento_contract_calendar, databento_source
 from aegis_data.store import data_dir, futures_dir
 
 
@@ -50,11 +50,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "pull":
         fetch = databento_source(args.dataset)
+        list_contracts = databento_contract_calendar(args.dataset)
         panel = continuous_panel(
             args.root,
             date.fromisoformat(args.start),
             date.fromisoformat(args.end),
             fetch=fetch,
+            list_contracts=list_contracts,
             method=args.method,
             roll_lead_days=args.roll_lead_days,
         )

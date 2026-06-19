@@ -10,15 +10,55 @@ price precision itself (no per-product hardcoding).
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+import os
+from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
 
-from aegis_data.chain import ContractFetcher
+from aegis_data.chain import ContractCalendar, ContractFetcher
+from aegis_data.roll import DatedContract
 
 # databento publisher venue for the GLBX.MDP3 dataset (CME Globex).
 _GLBX_VENUE = "GLBX"
+
+
+def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> ContractCalendar:
+    """List a root's outright dated futures (``raw_symbol`` + expiration) from Databento
+    definitions, via parent symbology (``{ROOT}.FUT``).
+
+    These supply the expiry-driven roll, so a monthly product lists its monthly contracts
+    and a serial/odd-cycle product lists whatever it actually trades — no hardcoded cycle.
+    ``client`` is injectable for tests; production constructs a Databento historical client
+    from ``DATABENTO_API_KEY``.
+    """
+
+    def list_contracts(root: str, start: date, end: date) -> list[DatedContract]:
+        api = client if client is not None else _databento_historical_client()
+        store = api.timeseries.get_range(
+            dataset=dataset,
+            schema="definition",
+            symbols=[f"{root}.FUT"],
+            stype_in="parent",
+            start=str(start),
+            end=str(end + timedelta(days=1)),  # end-exclusive guard
+        )
+        frame = store.to_df()
+        if frame.empty:
+            return []
+        outright = frame[frame["instrument_class"] == "F"].drop_duplicates("raw_symbol")
+        return [
+            DatedContract(str(row["raw_symbol"]), pd.Timestamp(row["expiration"]).date())
+            for _, row in outright.iterrows()
+        ]
+
+    return list_contracts
+
+
+def _databento_historical_client() -> Any:
+    import databento
+
+    return databento.Historical(os.environ["DATABENTO_API_KEY"])
 
 
 def databento_port_fetcher(
@@ -81,4 +121,4 @@ def _instrument_id(value: str) -> Any:
     return InstrumentId.from_str(value)
 
 
-__all__ = ["bars_to_ohlcv", "databento_port_fetcher"]
+__all__ = ["bars_to_ohlcv", "databento_contract_calendar", "databento_port_fetcher"]

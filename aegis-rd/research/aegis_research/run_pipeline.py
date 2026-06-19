@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 from aegis_data.calendars import TradingCalendar
-from aegis_data.source import continuous_panel, databento_source
+from aegis_data.source import continuous_panel, databento_contract_calendar, databento_source
 from aegis_data.store import FxPair, read_fx_history
 from aegis_data.yfinance import YFinanceLocator, pull_yfinance_fx_history
 
@@ -166,7 +166,8 @@ def _apply_futures_back_adjustment(
     arrays = {name: panel.copy() for name, panel in data_bundle.arrays.items()}
     for spec in futures:
         fetch = databento_source(spec.dataset)
-        panel = continuous_panel(spec.root, start, end, fetch=fetch)
+        list_contracts = databento_contract_calendar(spec.dataset)
+        panel = continuous_panel(spec.root, start, end, fetch=fetch, list_contracts=list_contracts)
         for name, frame in arrays.items():
             if spec.ticker in frame.columns and name in panel.columns:
                 frame[spec.ticker] = panel[name].reindex(frame.index)

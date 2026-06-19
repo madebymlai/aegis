@@ -10,9 +10,19 @@ from datetime import date
 
 import pandas as pd
 
+from aegis_data.roll import DatedContract
 from aegis_data.source import continuous_panel, databento_source
 
 _BASIS = {"ESH4": 100.0, "ESM4": 200.0, "ESU4": 300.0, "ESZ4": 400.0}
+
+
+def _es_2024(root: str, start: date, end: date) -> list[DatedContract]:
+    return [
+        DatedContract("ESH4", date(2024, 3, 15)),
+        DatedContract("ESM4", date(2024, 6, 21)),
+        DatedContract("ESU4", date(2024, 9, 20)),
+        DatedContract("ESZ4", date(2024, 12, 20)),
+    ]
 
 
 class _Px:
@@ -51,7 +61,10 @@ def test_continuous_panel_back_adjusts_and_caches(tmp_path) -> None:
     client = _FakeClient()
     fetch = databento_source("GLBX.MDP3", store_dir=tmp_path, client=client)
 
-    panel = continuous_panel("ES", date(2024, 1, 1), date(2024, 12, 31), fetch=fetch, method="ratio")
+    panel = continuous_panel(
+        "ES", date(2024, 1, 1), date(2024, 12, 31),
+        fetch=fetch, list_contracts=_es_2024, method="ratio",
+    )
 
     # Gap-free continuous panel covering the year; most-recent contract (ESZ4) unadjusted.
     assert not panel["Close"].isna().any()
@@ -61,6 +74,9 @@ def test_continuous_panel_back_adjusts_and_caches(tmp_path) -> None:
     assert calls_after_first == 4  # one per contract
 
     # A second resolution reads the store — no further provider hits.
-    again = continuous_panel("ES", date(2024, 1, 1), date(2024, 12, 31), fetch=fetch, method="ratio")
+    again = continuous_panel(
+        "ES", date(2024, 1, 1), date(2024, 12, 31),
+        fetch=fetch, list_contracts=_es_2024, method="ratio",
+    )
     assert client.bar_calls == calls_after_first
     pd.testing.assert_frame_equal(panel, again)

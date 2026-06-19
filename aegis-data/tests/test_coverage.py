@@ -16,6 +16,7 @@ from aegis_runtime import FuturesRef, ListedRef
 
 from aegis_data.calendars import TradingCalendar
 from aegis_data.coverage import GapFillProvider, ensure_native_bar_coverage
+from aegis_data.roll import DatedContract
 from aegis_data.store import (
     NativeBarsRequest,
     native_bars_path,
@@ -344,6 +345,15 @@ def _leg_bars(symbol: str, start: date, end: date) -> pd.DataFrame:
     )
 
 
+def _es_calendar(root: str, start: date, end: date) -> list[DatedContract]:
+    return [
+        DatedContract("ESH4", date(2024, 3, 15)),
+        DatedContract("ESM4", date(2024, 6, 21)),
+        DatedContract("ESU4", date(2024, 9, 20)),
+        DatedContract("ESZ4", date(2024, 12, 20)),
+    ]
+
+
 def test_ensure_coverage_materializes_readable_continuous_futures_history(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -353,6 +363,10 @@ def test_ensure_coverage_materializes_readable_continuous_futures_history(
     monkeypatch.setattr(
         "aegis_data.databento_pull.databento_port_fetcher",
         lambda _dataset, *, client=None: _leg_bars,
+    )
+    monkeypatch.setattr(
+        "aegis_data.databento_pull.databento_contract_calendar",
+        lambda _dataset, *, client=None: _es_calendar,
     )
 
     ensure_native_bar_coverage(

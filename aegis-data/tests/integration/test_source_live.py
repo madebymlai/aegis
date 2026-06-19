@@ -13,7 +13,11 @@ from datetime import date
 
 import pytest
 
-from aegis_data.source import continuous_panel, databento_source
+from aegis_data.source import (
+    continuous_panel,
+    databento_contract_calendar,
+    databento_source,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DATABENTO_API_KEY"),
@@ -23,8 +27,14 @@ pytestmark = pytest.mark.skipif(
 
 def test_live_es_continuous_panel_is_gap_free(tmp_path) -> None:
     fetch = databento_source("GLBX.MDP3", store_dir=tmp_path)
+    list_contracts = databento_contract_calendar("GLBX.MDP3")
 
-    panel = continuous_panel("ES", date(2024, 3, 1), date(2024, 12, 15), fetch=fetch, method="ratio")
+    # Short window spanning one ES roll (M4 → U4) so the smoke test exercises the
+    # definition-sourced expiry roll + back-adjust without a heavy multi-quarter pull.
+    panel = continuous_panel(
+        "ES", date(2024, 6, 1), date(2024, 9, 25),
+        fetch=fetch, list_contracts=list_contracts, method="ratio",
+    )
 
     assert not panel["Close"].isna().any()
     assert panel.index.is_monotonic_increasing

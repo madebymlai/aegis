@@ -9,6 +9,7 @@ from aegis_runtime import FuturesRef
 
 from aegis_data.calendars import TradingCalendar
 from aegis_data.databento_pull import pull_databento_futures_bars
+from aegis_data.roll import DatedContract
 from aegis_data.store import (
     NATIVE_OHLCV_ARRAYS,
     NativeBarsRequest,
@@ -50,6 +51,15 @@ def _provider_hit(symbol: str, start: date, end: date) -> pd.DataFrame:
     raise AssertionError(f"provider hit for {symbol} in [{start}, {end}]")
 
 
+def _es_calendar(root: str, start: date, end: date) -> list[DatedContract]:
+    return [
+        DatedContract("ESH4", date(2024, 3, 15)),
+        DatedContract("ESM4", date(2024, 6, 21)),
+        DatedContract("ESU4", date(2024, 9, 20)),
+        DatedContract("ESZ4", date(2024, 12, 20)),
+    ]
+
+
 def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(tmp_path) -> None:
     ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
     fetched: list[str] = []
@@ -58,7 +68,9 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
         fetched.append(symbol)
         return _leg_bars(symbol, start, end)
 
-    pull_databento_futures_bars(_request(ref), fetcher=fetch, store_dir=tmp_path)
+    pull_databento_futures_bars(
+        _request(ref), fetcher=fetch, contract_calendar=_es_calendar, store_dir=tmp_path
+    )
     first = read_native_bars(
         (ref,),
         arrays=("Close",),
@@ -73,6 +85,7 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
     pull_databento_futures_bars(
         _request(ref),
         fetcher=_provider_hit,
+        contract_calendar=_es_calendar,
         store_dir=tmp_path,
     )
     second = read_native_bars(
@@ -95,10 +108,13 @@ def test_databento_pull_derives_alternate_adjustment_from_same_raw_legs(tmp_path
     ratio_ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
     difference_ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="difference")
 
-    pull_databento_futures_bars(_request(ratio_ref), fetcher=_leg_bars, store_dir=tmp_path)
+    pull_databento_futures_bars(
+        _request(ratio_ref), fetcher=_leg_bars, contract_calendar=_es_calendar, store_dir=tmp_path
+    )
     pull_databento_futures_bars(
         _request(difference_ref),
         fetcher=_provider_hit,
+        contract_calendar=_es_calendar,
         store_dir=tmp_path,
     )
     frames = read_native_bars(
