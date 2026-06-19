@@ -145,4 +145,36 @@ what lets `aerd export` split along its axis of change into a deterministic,
 directory-agnostic **assembly** core (Lock → typed `DataContract` / `BundleManifest` /
 `LockedExecutionPlan` plus component sources) and a thin **wheel materializer** that only
 fails closed on a real name collision and serializes the wheel — wheel-format knowledge
-(codegen, dist-info, RECORD, zip) localized to one module.
+(serialization, dist-info, RECORD, zip) localized to one module.
+
+## Amendment (2026-06-19): the wheel is data plus a constant loader; aegis-runtime owns bundle (de)serialization
+
+The original contract built the bundle facade by **generating Python** — `aerd export`
+`repr`'d the contract/manifest/plan into the wheel's `__init__.py`, which reconstructed the
+typed objects at import (`DataContract(**CONTRACT)` …). That smears the serialization of
+`aegis-runtime`'s own types across three places (export's `repr`-codegen, the
+`bundle_manifest.json` writer, and the runtime's construction), serializes the same data
+twice (Python literals *and* json), and ships *generated logic* inside every wheel.
+
+A bundle's typed payload is `aegis-runtime` vocabulary, so its serialization is
+**`aegis-runtime`'s single responsibility**. `aegis-runtime` gains a `bundle_loader`
+surface: a dump/load pair for the `DataContract` / `BundleManifest` / `LockedExecutionPlan`
+trio and `load_installed_bundle(package) -> ExecutionBundle`. The `InstrumentRef` union is
+encoded with an explicit **`kind`** discriminator (`{"kind": "listed", …}` /
+`{"kind": "futures", …}`) and **decoded fail-closed** on a missing/unknown kind —
+consistent with the codebase's fail-closed, canonical-representation posture, and cheap
+insurance against the next asset variant (the union already grew once, ADR-0002→0003).
+
+A wheel therefore ships **only data plus a constant loader**: the copied component sources,
+one `bundle_manifest.json`, and a byte-identical `__init__.py` shim that calls
+`load_installed_bundle(__package__)`. No generated code. The wheel becomes fully
+inspectable, the json is the single serialization, and the future Trader overlay reads the
+same `bundle_loader` to recover a bundle's provenance (the caps it must check, ADR-0001
+amendment 2026-06-14).
+
+Consequence for `aerd export`: with serialization owned upstream and names deterministic,
+the command splits cleanly into a pure `assemble_bundle(...) -> BundleArtifact` core (the
+typed payload plus component source text, no filesystem) and a thin
+`write_wheel(artifact, out_dir)` materializer (fail-closed clobber guard, then lay out files
+and zip). `BundleArtifact` and the split are implementation detail — not domain glossary;
+"Execution Bundle" remains the wheel.
