@@ -1,13 +1,5 @@
-"""Unit tests for the FIGI→InstrumentId Security Master resolver.
-
-Tests the resolver against a stubbed OpenFIGI transport (no network).
-Covers: successful resolution, exchange-code mapping, fail-closed behaviour
-on unmapped/ambiguous FIGIs, and bimap correctness.
-"""
-
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import date
 
 import pytest
@@ -18,313 +10,61 @@ from aegis_trader.execution.figi_resolver import (
     FigiInstrumentResolver,
     FigiResolutionError,
     FuturesContract,
-    _bloomberg_exch_to_mic,
 )
 
-# ── well-known FIGI test vectors ──────────────────────────────────────────────
 
-_FIGI_VUSA = "BBG000B9XRY4"  # Vanguard S&P 500 UCITS ETF (LSE)
-_FIGI_IUSQ = "BBG00BD5NF21"  # iShares MSCI ACWI UCITS ETF (LSE)
-_FIGI_EUNL = "BBG00H1VQ896"  # iShares Core MSCI World UCITS ETF (XETRA)
-_FIGI_UNKNOWN = "BBGXXXXXXXX"  # not real
+def test_futures_ref_resolves_as_of_and_records_inverse():
+    ref = FuturesRef(root="ES", dataset="cme", roll_rule="calendar", adjustment="unadjusted")
 
+    def calendar(futures_ref: FuturesRef, as_of: date) -> FuturesContract:
+        assert futures_ref == ref
+        symbol = "ESZ4" if as_of < date(2024, 12, 15) else "ESH5"
+        return FuturesContract(symbol=symbol, exchange="GLBX")
 
-# ── mock OpenFIGI responses ───────────────────────────────────────────────────
+    def contract_resolver(contract: FuturesContract) -> InstrumentId:
+        assert contract.exchange == "GLBX"
+        return InstrumentId.from_str(f"{contract.symbol}.XCME")
 
-def _openfigi_response(figi: str, *, ticker: str, exch_code: str,
-                       security_type: str = "Common Stock",
-                       currency: str = "USD",
-                       name: str = "") -> dict:
-    """Build a minimal OpenFIGI /v3/mapping response for a single FIGI query.
+    resolver = FigiInstrumentResolver(
+        futures_calendar=calendar,
+        futures_contract_resolver=contract_resolver,
+    )
 
-    The response mimics the exchange-level record returned when querying
-    by idType=FIGI.
-    """
-    return {
-        "data": [
-            {
-                "figi": figi,
-                "name": name or f"{ticker} Test Security",
-                "ticker": ticker,
-                "exchCode": exch_code,
-                "securityType": security_type,
-                "currency": currency,
-            }
-        ]
-    }
+    before_roll = resolver.resolve(ref, as_of=date(2024, 12, 14))
+    after_roll = resolver.resolve(ref, as_of=date(2024, 12, 15))
+
+    assert before_roll == InstrumentId.from_str("ESZ4.XCME")
+    assert after_roll == InstrumentId.from_str("ESH5.XCME")
+    assert resolver.ref_for(InstrumentId.from_str("ESH5.XCME")) == ref
 
 
-def _mock_transport(responses_by_figi: dict[str, dict]) -> Callable[..., list[dict]]:
-    """Return a callable that acts as an OpenFIGI HTTP transport stub.
+def test_futures_ref_requires_as_of():
+    resolver = FigiInstrumentResolver(
+        futures_calendar=lambda ref, as_of: FuturesContract(symbol="ESZ4", exchange="GLBX"),
+        futures_contract_resolver=lambda contract: InstrumentId.from_str("ESZ4.XCME"),
+    )
 
-    Each job dict must have ``idValue`` set to the FIGI being queried.
-    Returns one response per job in order.
-    """
-    def transport(*, headers, jobs):
-        results = []
-        for job in jobs:
-            figi = job["idValue"]
-            resp = responses_by_figi.get(figi)
-            if resp is None:
-                results.append({"data": []})
-            else:
-                results.append(resp)
-        return results
-    return transport
+    with pytest.raises(FigiResolutionError, match="as_of is required"):
+        resolver.resolve(FuturesRef(root="ES", dataset="cme"))
 
 
-# ── resolver fixture ──────────────────────────────────────────────────────────
+def test_listed_ref_is_not_resolved_by_figi_resolver():
+    resolver = FigiInstrumentResolver()
+
+    with pytest.raises(FigiResolutionError, match="IB InstrumentProvider"):
+        resolver.resolve(ListedRef("BBG000R20GS9"), as_of=date(2024, 1, 1))
 
 
-@pytest.fixture
-def resolver():
-    """Resolver with no preloaded mappings."""
-    return FigiInstrumentResolver()
+def test_resolve_many_is_empty_only_until_resolver_husk_is_deleted():
+    resolver = FigiInstrumentResolver()
+
+    assert resolver.resolve_many(set()) == {}
+    with pytest.raises(FigiResolutionError, match="batch ListedRef resolution"):
+        resolver.resolve_many({ListedRef("BBG000R20GS9")})
 
 
-# ── tests: successful resolution ──────────────────────────────────────────────
+def test_ref_for_unknown_contract_fails_closed():
+    resolver = FigiInstrumentResolver()
 
-
-class TestSuccessfulResolution:
-    """Happy path: FIGI → InstrumentId for various exchange codes."""
-
-    def test_futures_ref_resolves_as_of_and_records_inverse(self):
-        """FuturesRef uses the injected calendar and contract resolver as-of."""
-        ref = FuturesRef(root="ES", dataset="cme", roll_rule="calendar", adjustment="unadjusted")
-
-        def calendar(futures_ref: FuturesRef, as_of: date) -> FuturesContract:
-            assert futures_ref == ref
-            symbol = "ESZ4" if as_of < date(2024, 12, 15) else "ESH5"
-            return FuturesContract(symbol=symbol, exchange="GLBX")
-
-        def contract_resolver(contract: FuturesContract) -> InstrumentId:
-            venue = _bloomberg_exch_to_mic[contract.exchange]
-            return InstrumentId.from_str(f"{contract.symbol}.{venue}")
-
-        resolver = FigiInstrumentResolver(
-            futures_calendar=calendar,
-            futures_contract_resolver=contract_resolver,
-        )
-
-        before_roll = resolver.resolve(ref, as_of=date(2024, 12, 14))
-        after_roll = resolver.resolve(ref, as_of=date(2024, 12, 15))
-
-        assert before_roll == InstrumentId.from_str("ESZ4.XCME")
-        assert after_roll == InstrumentId.from_str("ESH5.XCME")
-        assert resolver.ref_for(InstrumentId.from_str("ESH5.XCME")) == ref
-
-    def test_listed_ref_resolves_date_invariantly(self, resolver):
-        """ListedRef resolves through its FIGI payload and ignores as_of."""
-        ref = ListedRef(_FIGI_VUSA)
-        transport = _mock_transport({
-            _FIGI_VUSA: _openfigi_response(
-                _FIGI_VUSA, ticker="VUSA", exch_code="LN",
-                security_type="ETF", currency="GBP",
-            ),
-        })
-
-        first = resolver.resolve(ref, as_of=date(2024, 1, 1), transport=transport)
-        second = resolver.resolve(ref, as_of=date(2025, 1, 1), transport=transport)
-
-        assert first == InstrumentId.from_str("VUSA.XLON")
-        assert second == first
-
-    def test_single_figi_lse(self, resolver):
-        """VUSA.L on LSE → VUSA.XLON."""
-        transport = _mock_transport({
-            _FIGI_VUSA: _openfigi_response(
-                _FIGI_VUSA, ticker="VUSA", exch_code="LN",
-                security_type="ETF", currency="GBP",
-            ),
-        })
-        bimap = resolver.resolve({_FIGI_VUSA}, transport=transport)
-
-        assert bimap == {_FIGI_VUSA: InstrumentId.from_str("VUSA.XLON")}
-
-    def test_single_figi_xetra(self, resolver):
-        """EUNL.DE on Xetra → EUNL.XETR."""
-        transport = _mock_transport({
-            _FIGI_EUNL: _openfigi_response(
-                _FIGI_EUNL, ticker="EUNL", exch_code="GR",
-                security_type="ETF", currency="EUR",
-            ),
-        })
-        bimap = resolver.resolve({_FIGI_EUNL}, transport=transport)
-
-        assert bimap == {_FIGI_EUNL: InstrumentId.from_str("EUNL.XETR")}
-
-    def test_single_figi_nyse(self, resolver):
-        """AAPL on NYSE → AAPL.XNYS."""
-        figi = "BBG000B9XRY4"  # reuse as test vector
-        transport = _mock_transport({
-            figi: _openfigi_response(
-                figi, ticker="AAPL", exch_code="US",
-                security_type="Common Stock", currency="USD",
-            ),
-        })
-        bimap = resolver.resolve({figi}, transport=transport)
-        assert bimap == {figi: InstrumentId.from_str("AAPL.XNYS")}
-
-    def test_single_figi_nasdaq(self, resolver):
-        """MSFT on NASDAQ → MSFT.XNAS."""
-        figi = "BBG000BPH459"  # test vector
-        transport = _mock_transport({
-            figi: _openfigi_response(
-                figi, ticker="MSFT", exch_code="UQ",
-                security_type="Common Stock", currency="USD",
-            ),
-        })
-        bimap = resolver.resolve({figi}, transport=transport)
-        assert bimap == {figi: InstrumentId.from_str("MSFT.XNAS")}
-
-    def test_multiple_figis(self, resolver):
-        """Multiple FIGIs resolve to their respective InstrumentIds."""
-        transport = _mock_transport({
-            _FIGI_VUSA: _openfigi_response(
-                _FIGI_VUSA, ticker="VUSA", exch_code="LN",
-                security_type="ETF", currency="GBP",
-            ),
-            _FIGI_EUNL: _openfigi_response(
-                _FIGI_EUNL, ticker="EUNL", exch_code="GR",
-                security_type="ETF", currency="EUR",
-            ),
-        })
-        bimap = resolver.resolve({_FIGI_VUSA, _FIGI_EUNL}, transport=transport)
-
-        assert len(bimap) == 2
-        assert bimap[_FIGI_VUSA] == InstrumentId.from_str("VUSA.XLON")
-        assert bimap[_FIGI_EUNL] == InstrumentId.from_str("EUNL.XETR")
-
-    def test_exchange_code_mapping_table_has_required_entries(self):
-        """Verify the bounded exchange table has the commonly-used entries."""
-        required = {"LN": "XLON", "US": "XNYS", "UQ": "XNAS",
-                     "GR": "XETR", "NA": "XAMS", "FP": "XPAR"}
-        for code, expected_venue in required.items():
-            assert _bloomberg_exch_to_mic[code] == expected_venue
-
-
-# ── tests: fail-closed behaviour ─────────────────────────────────────────────
-
-
-class TestFailClosed:
-    """Resolver must refuse to proceed on unmapped/ambiguous FIGIs."""
-
-    def test_unmapped_figi_raises(self, resolver):
-        """A FIGI with no OpenFIGI data raises FigiResolutionError."""
-        transport = _mock_transport({})
-        with pytest.raises(FigiResolutionError, match="no data"):
-            resolver.resolve({_FIGI_UNKNOWN}, transport=transport)
-
-    def test_empty_data_raises(self, resolver):
-        """OpenFIGI returns an empty data list."""
-        transport = _mock_transport({
-            _FIGI_UNKNOWN: {"data": []},
-        })
-        with pytest.raises(FigiResolutionError, match="no data"):
-            resolver.resolve({_FIGI_UNKNOWN}, transport=transport)
-
-    def test_no_exchange_level_record(self, resolver):
-        """Response has data but no entry matching the queried FIGI."""
-        transport = _mock_transport({
-            _FIGI_VUSA: {
-                "data": [
-                    {"figi": "BBG000B9Y5X2", "name": "composite",
-                     "securityType": "", "ticker": "", "exchCode": ""},
-                ]
-            },
-        })
-        with pytest.raises(FigiResolutionError, match="no exchange-level record"):
-            resolver.resolve({_FIGI_VUSA}, transport=transport)
-
-    def test_ambiguous_multiple_exchange_records(self, resolver):
-        """Response has multiple exchange-level entries for the same FIGI."""
-        transport = _mock_transport({
-            _FIGI_VUSA: {
-                "data": [
-                    {"figi": _FIGI_VUSA, "ticker": "VUSA", "exchCode": "LN",
-                     "securityType": "ETF", "currency": "GBP"},
-                    {"figi": _FIGI_VUSA, "ticker": "VUSA", "exchCode": "GR",
-                     "securityType": "ETF", "currency": "EUR"},
-                ]
-            },
-        })
-        with pytest.raises(FigiResolutionError, match="ambiguous"):
-            resolver.resolve({_FIGI_VUSA}, transport=transport)
-
-    def test_one_mapped_one_unmapped_raises(self, resolver):
-        """If any FIGI fails, the whole batch fails (atomic)."""
-        transport = _mock_transport({
-            _FIGI_VUSA: _openfigi_response(
-                _FIGI_VUSA, ticker="VUSA", exch_code="LN",
-                security_type="ETF", currency="GBP",
-            ),
-            # _FIGI_UNKNOWN is not in the transport map → returns {"data": []}
-        })
-        with pytest.raises(FigiResolutionError, match="no data"):
-            resolver.resolve({_FIGI_VUSA, _FIGI_UNKNOWN}, transport=transport)
-
-    def test_unknown_exchange_code_raises(self, resolver):
-        """Bloomberg exchange code not in the bounded table raises."""
-        transport = _mock_transport({
-            _FIGI_VUSA: _openfigi_response(
-                _FIGI_VUSA, ticker="VUSA", exch_code="ZZ",  # unknown
-                security_type="ETF", currency="GBP",
-            ),
-        })
-        with pytest.raises(FigiResolutionError, match="unknown exchange code"):
-            resolver.resolve({_FIGI_VUSA}, transport=transport)
-
-
-# ── tests: edge cases ────────────────────────────────────────────────────────
-
-
-class TestEdgeCases:
-    """Resolver edge cases and invariants."""
-
-    def test_empty_figis_returns_empty(self, resolver):
-        """Resolving zero FIGIs returns an empty bimap."""
-        transport = _mock_transport({})
-        bimap = resolver.resolve(set(), transport=transport)
-        assert bimap == {}
-
-    def test_duplicate_figi_is_idempotent(self, resolver):
-        """Querying the same FIGI twice (e.g. across sleeves) returns one entry."""
-        transport = _mock_transport({
-            _FIGI_VUSA: _openfigi_response(
-                _FIGI_VUSA, ticker="VUSA", exch_code="LN",
-                security_type="ETF", currency="GBP",
-            ),
-        })
-        # Pass the same FIGI twice in the set — set deduplicates, but we
-        # test that the result has exactly one entry.
-        bimap = resolver.resolve({_FIGI_VUSA}, transport=transport)
-        assert len(bimap) == 1
-        assert _FIGI_VUSA in bimap
-
-    def test_missing_ticker_in_response(self, resolver):
-        """Response missing the ticker field raises cleanly."""
-        transport = _mock_transport({
-            _FIGI_VUSA: {
-                "data": [
-                    {"figi": _FIGI_VUSA, "exchCode": "LN",
-                     "securityType": "ETF", "currency": "GBP"},
-                ]
-            },
-        })
-        with pytest.raises(FigiResolutionError, match="ticker"):
-            resolver.resolve({_FIGI_VUSA}, transport=transport)
-
-    def test_retired_figi_resolves(self, resolver):
-        """A FIGI marked as 'retired' in OpenFIGI should still resolve
-        if it has metadata (it's still the canonical identifier)."""
-        transport = _mock_transport({
-            _FIGI_VUSA: {
-                "data": [
-                    {"figi": _FIGI_VUSA, "ticker": "VUSA", "exchCode": "LN",
-                     "securityType": "ETF", "currency": "GBP",
-                     "securityDescription": "RETIRED"},
-                ]
-            },
-        })
-        bimap = resolver.resolve({_FIGI_VUSA}, transport=transport)
-        assert _FIGI_VUSA in bimap
+    with pytest.raises(FigiResolutionError, match="no resolved InstrumentRef inverse"):
+        resolver.ref_for(InstrumentId.from_str("ESZ4.XCME"))

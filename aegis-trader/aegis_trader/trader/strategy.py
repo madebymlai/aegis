@@ -9,10 +9,10 @@ across sleeves before submitting orders.
 NEXT-CLOSE execution (ADR-0001): the target decided at bar t's close is
 submitted on bar t+1 and fills at bar t+1's close — one-bar lag, no look-ahead.
 
-Slice 3: FIGI→InstrumentId resolution via the Security Master (OpenFIGI +
-bounded exchange-code table).  A FIGI→InstrumentId bimap is built at
-``on_start``; netting stays in InstrumentRef space, resolution to venue-specific
-InstrumentIds only at the execution edge (order submission).
+Slice 3: InstrumentRef→InstrumentId resolution via the venue-native provider.
+A bimap is built at ``on_start``; netting stays in InstrumentRef space,
+resolution to venue-specific InstrumentIds only at the execution edge (order
+submission).
 
 RiskEngine guards (Slice 8): the ``RiskGuard`` computes per-instrument
 max-notional caps from NAV; the strategy logs every ``OrderDenied`` event
@@ -71,6 +71,11 @@ from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource, Resol
 from aegis_trader.execution.figi_resolver import (
     FigiInstrumentResolver,
     FigiResolutionError,
+)
+from aegis_trader.trader.instrument_provider import (
+    declared_ref_currencies,
+    loaded_listed_ref_bimap,
+    reconcile_quote_currency,
 )
 from aegis_trader.observability.port import (
     GateOutcome,
@@ -688,15 +693,15 @@ class RebalanceStrategy(Strategy):
     ) -> dict[InstrumentRef, InstrumentId]:
         """Resolve *refs* to a bimap via the Security Master, as-of *as_of*.
 
-        ListedRefs resolve date-invariantly and are batched (one OpenFIGI round
-        trip); FuturesRefs resolve to their live dated contract for *as_of*,
+        ListedRefs resolve from the IB InstrumentProvider-loaded cache;
+        FuturesRefs resolve to their live dated contract for *as_of*,
         individually (each carries its own roll calendar).
         """
-        listed: set[InstrumentRef] = {r for r in refs if isinstance(r, ListedRef)}
+        listed: set[ListedRef] = {r for r in refs if isinstance(r, ListedRef)}
         futures = sorted(r for r in refs if isinstance(r, FuturesRef))
         bimap: dict[InstrumentRef, InstrumentId] = {}
         if listed:
-            bimap.update(self._figi_resolver.resolve_many(listed))  # type: ignore[arg-type]
+            bimap.update(loaded_listed_ref_bimap(listed, self.cache.instruments()))
         for ref in futures:
             bimap[ref] = self._resolve_instrument_id(ref, as_of)
         return bimap
@@ -720,6 +725,7 @@ class RebalanceStrategy(Strategy):
         all_figis: set[InstrumentRef] = set()
         for bundle in self._sleeve_to_bundle.values():
             all_figis.update(bundle.contract.refs)
+        declared_currencies = declared_ref_currencies(self._sleeve_to_bundle.values())
 
         for figi_str in all_figis:
             instr_id = self._figi_to_instr_id(figi_str)
@@ -728,7 +734,11 @@ class RebalanceStrategy(Strategy):
                 continue
 
             figi = figi_str
-            instrument_metas[figi] = sizing
+            currency = reconcile_quote_currency(figi, sizing.currency, declared_currencies)
+            instrument_metas[figi] = InstrumentSizing(
+                currency=currency,
+                size_increment=sizing.size_increment,
+            )
 
             buf = self._bars_buffer.get(instr_id)
             if buf:

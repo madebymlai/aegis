@@ -33,7 +33,6 @@ from aegis_runtime import (
 
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.execution.figi_resolver import FigiInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 # ── synthetic bundle ──────────────────────────────────────────────────────────
@@ -140,13 +139,6 @@ def _make_book() -> BookConfig:
     )
 
 
-class _StubFigiResolver(FigiInstrumentResolver):
-    """Resolver that returns convention-based InstrumentIds for testing."""
-
-    def resolve_many(self, figis, *, transport=None):
-        return {figi: InstrumentId.from_str(f"{figi.value}.{VENUE.value}") for figi in figis}
-
-
 # ── test ──────────────────────────────────────────────────────────────────────
 
 
@@ -183,8 +175,9 @@ def test_tracer_e2e():
     engine.add_instrument(instrument)
     engine.add_data(bars)
 
-    config = RebalanceStrategyConfig(book=book, figi_resolver=_StubFigiResolver())
+    config = RebalanceStrategyConfig(book=book)
     strategy = RebalanceStrategy(config=config)
+    strategy._figi_bimap = {ListedRef(_SYNTH_FIGI): InstrumentId.from_str(f"{_SYNTH_FIGI}.{VENUE.value}")}
     strategy.register_sleeve(book.sleeves[0].name, bundle)
     engine.add_strategy(strategy)
 

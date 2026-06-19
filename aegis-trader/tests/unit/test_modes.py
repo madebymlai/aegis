@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 
+from aegis_runtime import ListedRef
 from nautilus_trader.config import (
     CacheConfig,
     LoggingConfig,
@@ -245,6 +246,44 @@ def test_data_client_loads_fx_reference_pairs_into_instrument_provider():
     # live builder wires it identically
     live = build_live_data_client_config(fx_instrument_ids=fx_ids)
     assert live["instrument_provider"]["load_ids"] == fx_ids
+
+
+def test_data_client_loads_listed_refs_as_ib_figi_contracts():
+    """ListedRefs are preloaded by FIGI through the IB InstrumentProvider."""
+    refs = [ListedRef("BBG000R20GS9")]
+
+    cfg = build_paper_data_client_config(listed_refs=refs)
+
+    assert cfg["instrument_provider"] == {
+        "load_contracts": [
+            {
+                "secType": "STK",
+                "secIdType": "FIGI",
+                "secId": "BBG000R20GS9",
+                "exchange": "SMART",
+            }
+        ],
+        "convert_exchange_to_mic_venue": True,
+        "symbol_to_mic_venue": {"IGLN": "XLON"},
+    }
+
+
+def test_data_client_merges_fx_ids_and_listed_figi_contracts():
+    fx_ids = fx_reference_instrument_ids("EUR", ["USD"])
+    refs = [ListedRef("BBG000R20GS9")]
+
+    cfg = build_live_data_client_config(fx_instrument_ids=fx_ids, listed_refs=refs)
+
+    assert cfg["instrument_provider"]["load_ids"] == fx_ids
+    assert cfg["instrument_provider"]["load_contracts"] == [
+        {
+            "secType": "STK",
+            "secIdType": "FIGI",
+            "secId": "BBG000R20GS9",
+            "exchange": "SMART",
+        }
+    ]
+    assert cfg["instrument_provider"]["convert_exchange_to_mic_venue"] is True
 
 
 def test_data_client_omits_instrument_provider_when_no_fx_pairs():

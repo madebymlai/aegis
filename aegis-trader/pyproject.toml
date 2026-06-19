@@ -16,7 +16,6 @@ dependencies = [
   "aegis-data",
   "nautilus_trader",
   "pydantic>=2.0",
-  "requests>=2.0",
 ]
 
 # IBKR adapter (ibapi) — required only for paper/live runs and the IBKR
