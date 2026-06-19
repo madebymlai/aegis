@@ -24,13 +24,7 @@ from research.aegis_research.market_data.contracts import MarketDataAdapterResul
 def load_store_source(config: DataConfig) -> MarketDataAdapterResult:
     """Load RD panels from aegis-data Covered History."""
     refs = tuple(_instrument_ref(config, symbol) for symbol in config.symbols)
-    request = NativeBarsRequest(
-        refs=refs,
-        arrays=config.effective_arrays,
-        timeframe=config.timeframe,
-        start=_required_window_edge(config.start, "start"),
-        end=_required_window_edge(config.end, "end"),
-    )
+    request = _native_bars_request(config, refs)
     provider = store_gap_fill_provider(config.provider)
     _pull_missing_native_bars(config, refs=refs, provider=provider)
     frames = read_native_bars_request(request)
@@ -51,13 +45,7 @@ def _pull_missing_native_bars(
     provider: str,
 ) -> None:
     for symbol, ref in zip(config.symbols, refs, strict=True):
-        request = NativeBarsRequest(
-            refs=(ref,),
-            arrays=config.effective_arrays,
-            timeframe=config.timeframe,
-            start=_required_window_edge(config.start, "start"),
-            end=_required_window_edge(config.end, "end"),
-        )
+        request = _native_bars_request(config, (ref,))
         if isinstance(ref, ListedRef) and provider == "yfinance":
             pull_yfinance_native_bars(request, YFinanceLocator(symbol.symbol_name))
             continue
@@ -65,6 +53,16 @@ def _pull_missing_native_bars(
             pull_databento_futures_bars(request)
             continue
         raise ValueError(f"unsupported store gap-fill provider {provider!r} for {ref!r}")
+
+
+def _native_bars_request(config: DataConfig, refs: tuple[InstrumentRef, ...]) -> NativeBarsRequest:
+    return NativeBarsRequest(
+        refs=refs,
+        arrays=config.effective_arrays,
+        timeframe=config.timeframe,
+        start=_required_window_edge(config.start, "start"),
+        end=_required_window_edge(config.end, "end"),
+    )
 
 
 def _instrument_ref(config: DataConfig, symbol: SymbolSpec) -> InstrumentRef:

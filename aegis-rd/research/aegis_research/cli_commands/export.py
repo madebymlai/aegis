@@ -15,7 +15,7 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
-from aegis_runtime import FuturesRef, ListedRef
+from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 
 from research.aegis_research.cli_support.errors import (
     CliError,
@@ -33,7 +33,9 @@ from research.aegis_research.component_registry.contracts import IndicatorManife
 from research.aegis_research.configuration import (
     LOCK_ROLES,
     ConfigValidationError,
+    DataConfig,
     RunConfig,
+    SymbolSpec,
     load_run_config,
 )
 from research.aegis_research.market_data.currency import required_fx_currencies
@@ -47,8 +49,8 @@ STRATEGY_SLOT = "strategy"
 ENTRY_POINT_GROUP = "aegis.execution_bundles"
 
 ComponentSpecMap = dict[str, Any]
-# Resolves the universe's provider tickers to their ListedRef FIGI payloads (ticker -> FIGI).
-FigiResolver = Callable[[Sequence[Any]], Mapping[str, str]]
+# Resolves listed provider tickers to their ListedRef FIGI payloads.
+FigiResolver = Callable[[Sequence[SymbolSpec]], Mapping[str, str]]
 
 
 @dataclass(frozen=True)
@@ -143,7 +145,7 @@ def export_locked_bundle(
             "component_source_hashes": components.source_hashes,
             "refs": refs,
         }
-        contract = _bundle_contract(config, components, figi_by_ticker)
+        contract = _bundle_contract(config, components, refs)
         plan = {
             "strategy": components.strategy,
             "indicators": components.indicators,
@@ -296,12 +298,12 @@ def _component_spec(
 
 
 def _bundle_contract(
-    config: RunConfig, components: ExportedComponents, figi_by_ticker: Mapping[str, str]
+    config: RunConfig, components: ExportedComponents, refs: Sequence[InstrumentRef]
 ) -> dict[str, Any]:
     currency_by_symbol = config.data.currency_by_symbol
     base_currency = config.portfolio.base_currency
     return {
-        "refs": _instrument_refs(config.data, figi_by_ticker),
+        "refs": tuple(refs),
         "required_arrays": tuple(_required_arrays(components)),
         "base_currency": base_currency,
         "required_fx_currencies": tuple(
@@ -312,8 +314,10 @@ def _bundle_contract(
     }
 
 
-def _instrument_refs(data_config: Any, figi_by_ticker: Mapping[str, str]) -> tuple[ListedRef | FuturesRef, ...]:
-    refs: list[ListedRef | FuturesRef] = []
+def _instrument_refs(
+    data_config: DataConfig, figi_by_ticker: Mapping[str, str]
+) -> tuple[InstrumentRef, ...]:
+    refs: list[InstrumentRef] = []
     for symbol in data_config.symbols:
         if getattr(symbol, "is_future", False):
             dataset = symbol.dataset or data_config.dataset
