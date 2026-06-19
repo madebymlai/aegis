@@ -72,13 +72,11 @@ def roll_schedule(
     monthly and a serial/odd-cycle product rolls on whatever it actually lists.
     """
     _require_non_negative_roll_lead(roll_lead_days)
-    in_window = [
-        c for c in sorted(contracts, key=lambda c: c.last_trade) if start <= c.last_trade <= end
-    ]
+    in_window = _contracts_expiring_between(contracts, start, end)
     return FuturesChainSchedule(
-        symbols=tuple(c.symbol for c in in_window),
-        expiries=tuple(c.last_trade for c in in_window),
-        roll_dates=tuple(_minus_business_days(c.last_trade, roll_lead_days) for c in in_window[:-1]),
+        symbols=tuple(contract.symbol for contract in in_window),
+        expiries=tuple(contract.last_trade for contract in in_window),
+        roll_dates=tuple(_roll_date(contract, roll_lead_days) for contract in in_window[:-1]),
     )
 
 
@@ -96,21 +94,19 @@ def front_contract(
     ``as_of``.
     """
     _require_non_negative_roll_lead(roll_lead_days)
-    ordered = tuple(sorted(contracts, key=lambda contract: contract.last_trade))
+    ordered = _contracts_by_expiry(contracts)
     if not ordered:
         return None
 
-    schedule = roll_schedule(
+    active_schedule = roll_schedule(
         ordered, as_of, ordered[-1].last_trade, roll_lead_days=roll_lead_days
     )
-    if not schedule.symbols:
+    front_symbol = _front_symbol(active_schedule, as_of)
+    if front_symbol is None:
         return None
 
-    symbol_to_contract = {contract.symbol: contract for contract in ordered}
-    for symbol, roll_date in zip(schedule.symbols, schedule.roll_dates, strict=False):
-        if as_of < roll_date:
-            return symbol_to_contract[symbol]
-    return symbol_to_contract[schedule.symbols[-1]]
+    contract_by_symbol = {contract.symbol: contract for contract in ordered}
+    return contract_by_symbol[front_symbol]
 
 
 def assert_roll_agreement(
@@ -160,6 +156,33 @@ def assert_universe_roll_agreement(
         )
         for root in roots
     )
+
+
+def _front_symbol(schedule: FuturesChainSchedule, as_of: date) -> str | None:
+    if not schedule.symbols:
+        return None
+    for symbol, roll_date in zip(schedule.symbols, schedule.roll_dates, strict=False):
+        if as_of < roll_date:
+            return symbol
+    return schedule.symbols[-1]
+
+
+def _contracts_expiring_between(
+    contracts: Sequence[DatedContract], start: date, end: date
+) -> tuple[DatedContract, ...]:
+    return tuple(
+        contract
+        for contract in _contracts_by_expiry(contracts)
+        if start <= contract.last_trade <= end
+    )
+
+
+def _contracts_by_expiry(contracts: Sequence[DatedContract]) -> tuple[DatedContract, ...]:
+    return tuple(sorted(contracts, key=lambda contract: contract.last_trade))
+
+
+def _roll_date(contract: DatedContract, roll_lead_days: int) -> date:
+    return _minus_business_days(contract.last_trade, roll_lead_days)
 
 
 def _require_non_negative_roll_lead(roll_lead_days: int) -> None:
