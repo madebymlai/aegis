@@ -5,6 +5,9 @@ from typing import ClassVar
 
 import pandas as pd
 import pytest
+from aegis_data.store import NativeBarsRequest
+from aegis_data.yfinance import YFinanceLocator, pull_yfinance_native_bars
+from aegis_runtime import ListedRef
 from vectorbtpro import vbt
 
 from research.aegis_research.data import load_market_data_result
@@ -83,6 +86,47 @@ def test_remote_adapter_projects_allowlisted_provider_mappings() -> None:
         "fetch_kwargs.cache_path",
         "returned_kwargs.auth",
     }
+
+
+def test_store_adapter_reads_listed_covered_history_by_figi(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    ref = ListedRef("BBG000B9XRY4")
+    index = pd.bdate_range("2024-01-02", periods=3)
+    pulled = pd.DataFrame(
+        {
+            "Open": [10.0, 11.0, 12.0],
+            "High": [10.0, 11.0, 12.0],
+            "Low": [10.0, 11.0, 12.0],
+            "Close": [10.0, 11.0, 12.0],
+            "Volume": [1000, 1100, 1200],
+        },
+        index=index,
+    )
+    request = NativeBarsRequest(
+        refs=(ref,),
+        arrays=("Close",),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+    pull_yfinance_native_bars(
+        request,
+        YFinanceLocator("BRK-B"),
+        fetcher=lambda _locator, _request: pulled,
+    )
+    config = make_data_config(
+        source="store",
+        symbols=[{"ticker": "BRK-B", "ccy": "USD", "figi": ref.figi}],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+    result = load_market_data_result(config)
+
+    assert result.metadata.provenance.index_evidence["source"] == "aegis_data_store"
+    assert list(result.native_data.get(feature="Close").columns) == ["BRK-B"]
+    assert result.native_data.get(feature="Close")["BRK-B"].tolist() == [10.0, 11.0, 12.0]
 
 
 def test_remote_adapter_collapses_cross_venue_daily_indices_to_shared_dates() -> None:

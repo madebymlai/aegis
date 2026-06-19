@@ -11,6 +11,7 @@ dependencies = [
   "platformdirs",
   "nautilus_trader",
   "databento",
+  "yfinance>=0.2.56",
 ]
 
 [project.scripts]
@@ -25,6 +26,22 @@ include = ["aegis_data*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["aegis_data"]
+
+[[tool.mypy.overrides]]
+module = [
+  "aegis_runtime",
+  "aegis_runtime.*",
+  "databento.*",
+  "nautilus_trader.*",
+  "pandas",
+  "pandas.*",
+  "yfinance",
+]
+ignore_missing_imports = true
 
 [tool.uv.sources]
 aegis-runtime = { path = "../aegis-runtime", editable = true }

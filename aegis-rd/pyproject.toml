@@ -49,7 +49,16 @@ files = ["research"]
 # These third-party libraries ship no type stubs; suppress the missing-import
 # noise without weakening checks on our own code.
 [[tool.mypy.overrides]]
-module = ["vectorbtpro.*", "pandas", "pandas.*", "yaml"]
+module = [
+  "vectorbtpro.*",
+  "pandas",
+  "pandas.*",
+  "yaml",
+  "aegis_runtime",
+  "aegis_runtime.*",
+  "aegis_data",
+  "aegis_data.*",
+]
 ignore_missing_imports = true
 
 [tool.ruff]

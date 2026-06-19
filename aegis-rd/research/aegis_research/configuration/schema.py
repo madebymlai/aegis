@@ -220,6 +220,17 @@ class DataConfig:
                     )
         if self.source == "csv" and not self.path:
             raise ValueError("path is required for csv source")
+        if self.source == "store":
+            if not self.symbols:
+                raise ValueError("symbols is required for store source")
+            for field_name in ("start", "end", "timeframe"):
+                if not getattr(self, field_name):
+                    raise ValueError(f"{field_name} is required for store source")
+            for symbol in self.symbols:
+                if symbol.is_future:
+                    raise ValueError("store source currently supports listed instruments only")
+                if symbol.figi is None:
+                    raise ValueError(f"figi is required for store source symbol {symbol.ticker!r}")
         if self.skip_on_error and "skipped_symbols" not in self.quality.allowed_degradations:
             raise ValueError(
                 "skip_on_error requires data.quality.allowed_degradations to include 'skipped_symbols'"
