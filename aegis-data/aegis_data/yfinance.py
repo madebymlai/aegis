@@ -11,6 +11,9 @@ from aegis_runtime import ListedRef
 
 from aegis_data.store import NativeBarsRequest, write_native_bars
 
+_MULTIPLE_SYMBOLS_ERROR = "yfinance Pull for one ListedRef returned multiple symbols"
+_YFINANCE_PRICE_FIELDS = frozenset({"Open", "Close"})
+
 
 @dataclass(frozen=True)
 class YFinanceLocator:
@@ -30,7 +33,11 @@ class YFinanceLocator:
 
 
 class YFinanceFetcher(Protocol):
-    def __call__(self, locator: YFinanceLocator, request: NativeBarsRequest) -> pd.DataFrame: ...
+    def __call__(
+        self,
+        locator: YFinanceLocator,
+        request: NativeBarsRequest,
+    ) -> pd.DataFrame: ...
 
 
 @dataclass(frozen=True)
@@ -94,23 +101,29 @@ def _normalize_yfinance_bars(frame: pd.DataFrame) -> pd.DataFrame:
         frame = _single_symbol_yfinance_frame(frame)
     normalized = frame.copy()
     normalized.index = pd.DatetimeIndex(normalized.index).tz_localize(None).normalize()
-    normalized = normalized.rename(columns={"Adj Close": "Adj Close"})
     return normalized
 
 
 def _single_symbol_yfinance_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.columns.nlevels != 2:
         raise ValueError("yfinance returned an unsupported multi-index column layout")
+    symbol_level = _yfinance_symbol_level(frame)
+    symbol = _single_symbol_value(frame, level=symbol_level)
+    return frame.xs(symbol, axis=1, level=symbol_level)
+
+
+def _yfinance_symbol_level(frame: pd.DataFrame) -> int:
     first_level = frame.columns.get_level_values(0)
-    if "Open" in first_level or "Close" in first_level:
-        symbol_values = tuple(dict.fromkeys(frame.columns.get_level_values(1)))
-        if len(symbol_values) != 1:
-            raise ValueError("yfinance Pull for one ListedRef returned multiple symbols")
-        return frame.xs(symbol_values[0], axis=1, level=1)
-    symbol_values = tuple(dict.fromkeys(frame.columns.get_level_values(0)))
+    if any(field in _YFINANCE_PRICE_FIELDS for field in first_level):
+        return 1
+    return 0
+
+
+def _single_symbol_value(frame: pd.DataFrame, *, level: int) -> object:
+    symbol_values = tuple(dict.fromkeys(frame.columns.get_level_values(level)))
     if len(symbol_values) != 1:
-        raise ValueError("yfinance Pull for one ListedRef returned multiple symbols")
-    return frame.xs(symbol_values[0], axis=1, level=0)
+        raise ValueError(_MULTIPLE_SYMBOLS_ERROR)
+    return symbol_values[0]
 
 
 def _yfinance_interval(timeframe: str) -> str:

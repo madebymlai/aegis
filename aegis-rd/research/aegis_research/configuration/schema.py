@@ -25,6 +25,7 @@ OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
 # Full VBT feature names are source-specific and discovered from native_data.features.
 DATA_ARRAY_SHORTCUTS = {"OHLCV": OHLCV_ARRAYS}
+_DATA_WINDOW_REQUIRED_FIELDS = ("start", "end", "timeframe")
 
 PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
 # For each catalog below the Literal is the field type, the set is the
@@ -209,28 +210,14 @@ class DataConfig:
 
         supported_remote = remote_data_sources()
         if self.source in supported_remote:
-            if not self.symbols:
-                raise ValueError(
-                    f"symbols is required for {self.source} source"
-                )
-            for field_name in ("start", "end", "timeframe"):
-                if not getattr(self, field_name):
-                    raise ValueError(
-                        f"{field_name} is required for {self.source} source"
-                    )
+            _require_symbols_for_source(self.source, self.symbols)
+            _require_window_for_source(self.source, self)
         if self.source == "csv" and not self.path:
             raise ValueError("path is required for csv source")
         if self.source == "store":
-            if not self.symbols:
-                raise ValueError("symbols is required for store source")
-            for field_name in ("start", "end", "timeframe"):
-                if not getattr(self, field_name):
-                    raise ValueError(f"{field_name} is required for store source")
-            for symbol in self.symbols:
-                if symbol.is_future:
-                    raise ValueError("store source currently supports listed instruments only")
-                if symbol.figi is None:
-                    raise ValueError(f"figi is required for store source symbol {symbol.ticker!r}")
+            _require_symbols_for_source(self.source, self.symbols)
+            _require_window_for_source(self.source, self)
+            _require_listed_store_symbols(self.symbols)
         if self.skip_on_error and "skipped_symbols" not in self.quality.allowed_degradations:
             raise ValueError(
                 "skip_on_error requires data.quality.allowed_degradations to include 'skipped_symbols'"
@@ -244,6 +231,25 @@ class DataConfig:
                         f"{key} is not supported for {self.source} source"
                     )
         return self
+
+
+def _require_symbols_for_source(source: str, symbols: list[SymbolSpec]) -> None:
+    if not symbols:
+        raise ValueError(f"symbols is required for {source} source")
+
+
+def _require_window_for_source(source: str, config: DataConfig) -> None:
+    for field_name in _DATA_WINDOW_REQUIRED_FIELDS:
+        if not getattr(config, field_name):
+            raise ValueError(f"{field_name} is required for {source} source")
+
+
+def _require_listed_store_symbols(symbols: list[SymbolSpec]) -> None:
+    for symbol in symbols:
+        if symbol.is_future:
+            raise ValueError("store source currently supports listed instruments only")
+        if symbol.figi is None:
+            raise ValueError(f"figi is required for store source symbol {symbol.ticker!r}")
 
 
 # Sources that can supply per-contract dated-contract data (the overlap the
