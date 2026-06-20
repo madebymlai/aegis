@@ -119,3 +119,62 @@ sourced from provenance, not baked into the wheel as enforcement.
 overlay); only its invocation inside `compute_weights` is removed. The book-scope gate of
 ADR-0002 is the **rebalancer's** realized-book invariant, distinct from this per-sleeve
 validator though it reuses the same function.
+
+## Amendment (2026-06-19): bundle names are deterministic — fixed 8-char prefix, fail-closed on collision
+
+The content-addressed name above lengthened the 8-char `candidate_key` prefix *git-style on
+collision*, so the name a Candidate received depended on what else already sat in the target
+directory and on the order bundles were exported. That fights this ADR's own stance that
+bundles are **regenerable from the Lock** and gitignored: re-exporting the same Locks in a
+different order into a populated `bundles/` could shift a *referenced* wheel name
+(`…deadbeef` ↔ `…deadbeef2`), silently breaking the Book Config sleeve that names it.
+
+A content-addressed, regenerable artifact must have a name that is a **pure function of its
+content**. The prefix is therefore **fixed at 8 chars** and never lengthens. `aerd export`
+**fails closed** if a wheel owned by a *different* `candidate_key` already occupies that
+8-char name in the target directory — the same fail-closed posture as FIGI resolution,
+`lookback()`, and exposure validation — rather than silently mutating the name. (At 8 hex
+chars in a single-operator project a genuine collision is ~1e-6 even across hundreds of
+bundles; if it ever fires, the operator re-exports to a clean `--out` dir.) The full
+`run_id`, `role`, and `candidate_key` stay in the manifest as before, so identity is never
+lost — only the *display prefix* is now fixed.
+
+Consequence: a bundle's package name, distribution name, and every module path baked into it
+are computable from the Candidate alone, with **no read of the output directory**. This is
+what lets `aerd export` split along its axis of change into a deterministic,
+directory-agnostic **assembly** core (Lock → typed `DataContract` / `BundleManifest` /
+`LockedExecutionPlan` plus component sources) and a thin **wheel materializer** that only
+fails closed on a real name collision and serializes the wheel — wheel-format knowledge
+(serialization, dist-info, RECORD, zip) localized to one module.
+
+## Amendment (2026-06-19): the wheel is data plus a constant loader; aegis-runtime owns bundle (de)serialization
+
+The original contract built the bundle facade by **generating Python** — `aerd export`
+`repr`'d the contract/manifest/plan into the wheel's `__init__.py`, which reconstructed the
+typed objects at import (`DataContract(**CONTRACT)` …). That smears the serialization of
+`aegis-runtime`'s own types across three places (export's `repr`-codegen, the
+`bundle_manifest.json` writer, and the runtime's construction), serializes the same data
+twice (Python literals *and* json), and ships *generated logic* inside every wheel.
+
+A bundle's typed payload is `aegis-runtime` vocabulary, so its serialization is
+**`aegis-runtime`'s single responsibility**. `aegis-runtime` gains a `bundle_loader`
+surface: a dump/load pair for the `DataContract` / `BundleManifest` / `LockedExecutionPlan`
+trio and `load_installed_bundle(package) -> ExecutionBundle`. The `InstrumentRef` union is
+encoded with an explicit **`kind`** discriminator (`{"kind": "listed", …}` /
+`{"kind": "futures", …}`) and **decoded fail-closed** on a missing/unknown kind —
+consistent with the codebase's fail-closed, canonical-representation posture, and cheap
+insurance against the next asset variant (the union already grew once, ADR-0002→0003).
+
+A wheel therefore ships **only data plus a constant loader**: the copied component sources,
+one `bundle_manifest.json`, and a byte-identical `__init__.py` shim that calls
+`load_installed_bundle(__package__)`. No generated code. The wheel becomes fully
+inspectable, the json is the single serialization, and the future Trader overlay reads the
+same `bundle_loader` to recover a bundle's provenance (the caps it must check, ADR-0001
+amendment 2026-06-14).
+
+Consequence for `aerd export`: with serialization owned upstream and names deterministic,
+the command splits cleanly into a pure `assemble_bundle(...) -> BundleArtifact` core (the
+typed payload plus component source text, no filesystem) and a thin
+`write_wheel(artifact, out_dir)` materializer (fail-closed clobber guard, then lay out files
+and zip). `BundleArtifact` and the split are implementation detail — not domain glossary;
+"Execution Bundle" remains the wheel.

@@ -53,6 +53,8 @@ from research.aegis_research.configuration.schema import (
     has_data_array_token_shape,
     lock_handle,
     merge_data_arrays,
+    required_store_window_edge,
+    store_gap_fill_provider,
 )
 from research.aegis_research.market_data.sources import (
     LOCAL_DATA_SOURCES,
@@ -106,8 +108,10 @@ __all__ = [
     "load_run_config",
     "lock_handle",
     "merge_data_arrays",
+    "required_store_window_edge",
     "resolve_env_refs",
     "resolve_run_config",
+    "store_gap_fill_provider",
     "to_builtin",
     "with_run_config_selection",
 ]

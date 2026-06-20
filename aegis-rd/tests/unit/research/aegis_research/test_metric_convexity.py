@@ -20,11 +20,14 @@ from research.aegis_research.configuration import ReportConfig
 from research.aegis_research.metrics.custom.convexity import (
     BEAR_MARKET_BETA_ID,
     CRASH_DAY_RETURN_ID,
+    CRISIS_QUARTER_RETURN_ID,
     MARKET_BETA_ID,
     MARKET_CONVEXITY_ID,
     QUARTERLY_RETURN_SKEW_ID,
     convexity_metrics,
+    crisis_payoff_bootstrap_ci_from_curve,
 )
+from research.aegis_research.metrics.custom.support import EquityCurve
 
 _CONVEX_GAIN = 8.0
 
@@ -80,8 +83,9 @@ def test_mirror_is_the_concave_long_pole() -> None:
     assert vals[MARKET_BETA_ID]["mirror"] == pytest.approx(1.0, abs=1e-6)
     assert vals[MARKET_CONVEXITY_ID]["mirror"] == pytest.approx(0.0, abs=1e-6)
     assert vals[BEAR_MARKET_BETA_ID]["mirror"] == pytest.approx(1.0, abs=1e-6)
-    # It loses with the benchmark on its worst days.
+    # It loses with the benchmark on its worst days, and over its worst quarters.
     assert vals[CRASH_DAY_RETURN_ID]["mirror"] < 0.0
+    assert vals[CRISIS_QUARTER_RETURN_ID]["mirror"] < 0.0
 
 
 def test_convex_is_the_long_gamma_pole() -> None:
@@ -89,9 +93,22 @@ def test_convex_is_the_long_gamma_pole() -> None:
     # Pure quadratic stream: positive convexity, ~zero linear beta.
     assert vals[MARKET_CONVEXITY_ID]["convex"] > 0.0
     assert vals[MARKET_BETA_ID]["convex"] == pytest.approx(0.0, abs=1e-6)
-    # Gains on the benchmark's worst days, and de-risks the bear regime (beta < 0).
+    # Gains on the benchmark's worst days, over its worst quarters, and de-risks the bear regime.
     assert vals[CRASH_DAY_RETURN_ID]["convex"] > 0.0
+    assert vals[CRISIS_QUARTER_RETURN_ID]["convex"] > 0.0
     assert vals[BEAR_MARKET_BETA_ID]["convex"] < 0.0
+    # The convex pole pays more over the benchmark's worst quarters than the long-biased mirror.
+    assert vals[CRISIS_QUARTER_RETURN_ID]["convex"] > vals[CRISIS_QUARTER_RETURN_ID]["mirror"]
+
+
+def test_crisis_payoff_bootstrap_ci_brackets_and_is_deterministic() -> None:
+    curve = EquityCurve.from_portfolio(_stub_portfolio())
+    ci = crisis_payoff_bootstrap_ci_from_curve(curve, "SPY")
+    # Valid interval, and the always-positive convex pole's whole interval is non-negative.
+    assert ci.loc["convex", "lower"] <= ci.loc["convex", "upper"]
+    assert ci.loc["convex", "lower"] >= 0.0
+    # Seeded, so the bound is deterministic across calls.
+    pd.testing.assert_frame_equal(ci, crisis_payoff_bootstrap_ci_from_curve(curve, "SPY"))
 
 
 def test_quarterly_skew_separates_the_poles() -> None:

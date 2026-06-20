@@ -9,8 +9,9 @@ import numpy as np
 import pandas as pd
 
 from aegis_runtime.currency import assemble_fx_rates, convert_arrays_to_base
+from aegis_runtime.instruments import FuturesRef, InstrumentRef, ListedRef
 
-FIGI_LEVEL = "figi"
+INSTRUMENT_REF_LEVEL = "instrument_ref"
 _EXPOSURE_TOLERANCE = 1e-9
 _DIRECTIONS = frozenset({"longonly", "shortonly", "both"})
 
@@ -28,15 +29,18 @@ class MarketDataBundle:
 
 @dataclass(frozen=True)
 class DataContract:
-    # FIGI is the sole per-instrument identity that crosses the boundary (root
-    # ADR-0002): no provider ticker, no native currency. Currency/contract detail
-    # is derived Trader-side from the FIGI; the consumer keys everything on it.
-    figis: tuple[str, ...]
+    # InstrumentRef is the sole per-instrument identity that crosses the boundary:
+    # no provider ticker, no native currency. Currency/contract detail is derived
+    # Trader-side from the ref; the consumer keys everything on it.
+    refs: tuple[InstrumentRef, ...]
     required_arrays: tuple[str, ...]
     base_currency: str
     required_fx_currencies: tuple[str, ...]
     timeframe: str
     lookback_bars: int = 0
+
+    def __post_init__(self) -> None:
+        _validate_refs(self.refs, "DataContract.refs")
 
 
 @dataclass(frozen=True)
@@ -45,7 +49,10 @@ class BundleManifest:
     role: str
     candidate_key: str
     component_source_hashes: Mapping[str, str]
-    figis: tuple[str, ...]
+    refs: tuple[InstrumentRef, ...]
+
+    def __post_init__(self) -> None:
+        _validate_refs(self.refs, "BundleManifest.refs")
 
 
 @dataclass(frozen=True)
@@ -94,6 +101,30 @@ class ExecutionBundle:
         self.manifest = manifest
         self._plan = plan
 
+    @property
+    def gross_cap(self) -> float:
+        """The locked plan's gross-exposure cap (max Σ|wᵢ|) — the
+        manifest-grounded source of what research validated for this bundle."""
+        return self._plan.gross_cap
+
+    @property
+    def net_cap(self) -> float | None:
+        """The locked plan's net-exposure cap (max |Σwᵢ|), or ``None`` when the
+        plan leaves net exposure bounded only by the gross cap."""
+        return self._plan.net_cap
+
+    @property
+    def symbols(self) -> tuple[str, ...]:
+        """The provider tickers, aligned 1:1 with :attr:`contract.refs` — the
+        ref->ticker map a backtest runner needs to fetch each instrument's data."""
+        return tuple(self._plan.symbols)
+
+    @property
+    def currency_by_symbol(self) -> Mapping[str, str]:
+        """Each provider ticker's native quote currency (incl. minor units like
+        ``GBp``)."""
+        return self._plan.currency_by_symbol
+
     def compute_weights(
         self,
         prices: MarketDataBundle,
@@ -110,7 +141,7 @@ class ExecutionBundle:
                 f"at least {lookback} lookback bars"
             )
         index = close.index
-        component_prices = _relabel_to_symbols(prices, self.contract.figis, self._plan.symbols)
+        component_prices = _relabel_to_symbols(prices, self.contract.refs, self._plan.symbols)
         base_prices = _convert_to_base_currency(
             component_prices,
             currency_by_symbol=self._plan.currency_by_symbol,
@@ -120,7 +151,7 @@ class ExecutionBundle:
             index=index,
         )
         n_candidates = 1
-        n_symbols = len(self.contract.figis)
+        n_symbols = len(self.contract.refs)
         data = _slice_data(base_prices, index, self.contract.required_arrays)
         indicator_outputs = _compute_indicators(
             self._plan.indicators,
@@ -149,7 +180,7 @@ class ExecutionBundle:
             label=f"strategy {self._plan.strategy.component_id} allocation",
         )
         weights = pd.DataFrame(arr[:, :n_symbols], index=close.index, columns=close.columns)
-        weights.columns.name = FIGI_LEVEL
+        weights.columns.name = INSTRUMENT_REF_LEVEL
         _assert_latest_row_not_nan(weights)
         validate_exposure(
             weights,
@@ -158,6 +189,12 @@ class ExecutionBundle:
             direction=self._plan.direction,
         )
         return weights
+
+
+def _validate_refs(refs: Sequence[InstrumentRef], label: str) -> None:
+    for ref in refs:
+        if not isinstance(ref, ListedRef | FuturesRef):
+            raise ValueError(f"{label} must contain InstrumentRef values; got {ref!r}")
 
 
 def _compute_indicators(
@@ -203,10 +240,10 @@ def _slice_data(
 
 
 def _relabel_to_symbols(
-    data: MarketDataBundle, figis: Sequence[str], symbols: Sequence[str]
+    data: MarketDataBundle, refs: Sequence[InstrumentRef], symbols: Sequence[str]
 ) -> MarketDataBundle:
-    """Re-key FIGI-columned panels into the label space the components expect."""
-    rename = dict(zip(figis, symbols, strict=True))
+    """Re-key InstrumentRef-columned panels into the label space the components expect."""
+    rename = dict(zip(refs, symbols, strict=True))
     return MarketDataBundle(
         {name: frame.rename(columns=rename) for name, frame in data.arrays.items()}
     )
@@ -256,11 +293,11 @@ def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> N
         )
     for name in contract.required_arrays:
         frame = prices.array(name)
-        actual = tuple(str(column) for column in frame.columns)
-        if actual != contract.figis:
+        actual = tuple(frame.columns)
+        if actual != contract.refs:
             raise ValueError(
-                f"market data array {name!r} figis {actual} do not match "
-                f"contract figis {contract.figis}"
+                f"market data array {name!r} refs {actual} do not match "
+                f"contract refs {contract.refs}"
             )
         if not frame.index.is_unique:
             raise ValueError(f"market data array {name!r} index must be unique")

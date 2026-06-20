@@ -42,19 +42,26 @@ ULCER_PERFORMANCE_INDEX_DEFINITION = MetricDefinition(
 )
 
 
+def ulcer_performance_index_from_curve(curve: EquityCurve, periods_per_year: int) -> pd.Series:
+    """Annualized return over the Ulcer Index, per group, from an already-read curve.
+
+    Factored out so a composite ranking Metric (e.g. the tail-penalized UPI) can blend UPI with another
+    curve statistic under a *single* portfolio read. A flat equity curve (zero Ulcer Index) yields NaN,
+    the same not-rankable signal as an all-cash Sharpe.
+    """
+    drawdown = curve.drawdown_curve()
+    ulcer = np.sqrt((drawdown**2).mean())
+    annualized = curve.annualized_return(periods_per_year)
+    return annualized / ulcer.replace(0.0, np.nan)
+
+
 def _read_ulcer_performance_index(pf: Any, config: ReportConfig) -> pd.Series:
     """Annualized return over the Ulcer Index, per group, from one value read.
 
-    Everything derives from the single ``get_value`` accessor call so the
-    extractor honours the one-read-per-batch contract. A flat equity curve
-    (zero Ulcer Index) yields NaN, the same not-rankable signal as an
-    all-cash Sharpe.
+    The single ``get_value`` accessor call (in ``EquityCurve.from_portfolio``) is what honours the
+    one-read-per-batch contract.
     """
-    curve = EquityCurve.from_portfolio(pf)
-    drawdown = curve.drawdown_curve()
-    ulcer = np.sqrt((drawdown**2).mean())
-    annualized = curve.annualized_return(config.periods_per_year)
-    return annualized / ulcer.replace(0.0, np.nan)
+    return ulcer_performance_index_from_curve(EquityCurve.from_portfolio(pf), config.periods_per_year)
 
 
 ULCER_PERFORMANCE_INDEX_EXTRACTOR = ExtractorSpec(_read_ulcer_performance_index)
@@ -63,4 +70,5 @@ __all__ = [
     "ULCER_PERFORMANCE_INDEX_DEFINITION",
     "ULCER_PERFORMANCE_INDEX_EXTRACTOR",
     "ULCER_PERFORMANCE_INDEX_ID",
+    "ulcer_performance_index_from_curve",
 ]

@@ -1,0 +1,75 @@
+name: atalanta_trend_ortho_ls
+schema_version: 8
+output_dir: runs/atalanta/trend_ortho_ls
+
+# ORTHOGONAL FULL-SHORT (aegis-rd-167): a fully-shortable book built to be DECORRELATED by
+# construction — one deep-borrow representative per INDEPENDENT macro axis, so shorting never
+# stacks a correlated bet (the failure mode of trend_full_ls, whose 11/19 co-trending bond block
+# = ~3 effective bond bets shorted many times over; N_eff of the 24-name borrowable palette is
+# only 7.35, and at corr~0.4 it collapses to 8 clusters).
+#
+# Axes (10), chosen from the verified-borrowable palette via correlation clustering + greedy
+# max-orthogonality, then deduped by macro factor (drop FX-quoting artifacts like IDTL+IBTA both):
+#   IDTL  US nominal long duration   COPA  copper / industrial metal
+#   ITPS  US real yields (breakeven) BRNT  brent / energy
+#   IEGE  EUR cash / front-end       CORN  grains / agriculture (thin borrow)
+#   HYLD  credit spread              SPLT  platinum / PGM (thin borrow)
+#   IEML  EM local FX + rates        IGLN  gold / precious metal
+# 5 rates/credit/EM + 5 commodity, each a distinct factor (max pairwise corr ~0.5-0.7 in EUR space).
+# Fixed champion params (lb252/vw63/bb0.20) + full short (trendStraddleBuffered) so held-out UPI
+# compares like-for-like with trend_subst_ls (shortmask, 1.981) and trend_full_ls_fixed (correlated
+# full-short 19, 0.263). Tests: does decorrelating the SHORT book recover full-short viability?
+data:
+  source: yf
+  arrays:
+  - OHLCV
+  symbols:
+  - {ticker: IDTL.L, ccy: USD, mic: XLON}                      # US Treasury 20y+ (nominal duration)
+  - {ticker: ITPS.L, ccy: GBP, mic: XLON}                      # US TIPS (real yields)
+  - {ticker: IEGE.L, ccy: EUR, mic: XLON, isin: IE00B3FH7618}  # EUR Govt 0-1y (front-end)
+  - {ticker: HYLD.L, ccy: USD, mic: XLON}                      # Global High Yield (credit spread)
+  - {ticker: IEML.L, ccy: USD, mic: XLON, isin: IE00B5M4WH52}  # EM Local Govt (EM FX + rates)
+  - {ticker: IGLN.L, ccy: USD, mic: XLON, figi: BBG001M8D7W0}  # Gold
+  - {ticker: COPA.L, ccy: USD, mic: XLON, figi: BBG000BL3W79}  # Copper
+  - {ticker: BRNT.L, ccy: USD, mic: XLON}                      # Brent crude (energy)
+  - {ticker: CORN.L, ccy: USD, mic: XLON}                      # Corn (agriculture; thin borrow)
+  - {ticker: SPLT.L, ccy: GBP, mic: XLON}                      # Platinum (PGM; thin borrow)
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+  params:
+    lookback: 252
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: atalanta.trendStraddleBuffered
+  params:
+    entry_band: 0.0
+    buffer_band: 0.20
+
+portfolio:
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+ranking:
+  metric: ulcer_performance_index
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

@@ -1,0 +1,75 @@
+name: atalanta_trend_champion_skewcheck
+schema_version: 8
+output_dir: runs/atalanta/trend_champion_skewcheck
+
+# SKEW-CHECK of the live long-only champion: identical universe (CORN.L, no cocoa), signal params
+# (trend_score lb252 + realized_vol vw63) and strategy (atalanta.trendStraddleBufferedLongOnly,
+# eb0.0/bb0.20) as the locked champion `trend.yaml` - the ONLY changes are ranking.metric ->
+# quarterly_return_skew (so the engine computes/emits held-out skew, which UPI ranking does not) and
+# no lock. Single pinned candidate, so best == the champion and its held-out skew/sharpe are reported
+# apples-to-apples with the L/S pyramid held-out skew (ramp1 0.54 / ramp21 0.65). Answers: what is the
+# long-only champion's HELD-OUT (per-split) quarterly skew, vs its full-sample 2.48 and the L/S book?
+data:
+  source: yf
+  arrays:
+  - OHLCV
+  symbols:
+  - {ticker: IDTL.L, ccy: USD, mic: XLON}
+  - {ticker: ITPS.L, ccy: GBP, mic: XLON}
+  - {ticker: SEGA.L, ccy: GBP, mic: XLON}
+  - {ticker: AIGC.L, ccy: USD, mic: XLON, figi: BBG000BLDWV1}
+  - {ticker: IGLN.L, ccy: USD, mic: XLON, figi: BBG001M8D7W0}
+  - {ticker: BRNT.L, ccy: USD, mic: XLON}
+  - {ticker: COPA.L, ccy: USD, mic: XLON, figi: BBG000BL3W79}
+  - {ticker: AIGA.L, ccy: USD, mic: XLON, figi: BBG000BLFVZ7}
+  - {ticker: GBUS.L, ccy: GBp, mic: XLON, figi: BBG000R20GS9}
+  - {ticker: EMCP.L, ccy: GBP, mic: XLON}
+  - {ticker: HYLD.L, ccy: USD, mic: XLON}
+  - {ticker: SSLV.L, ccy: USD, mic: XLON}
+  - {ticker: IEGE.L, ccy: EUR, mic: XLON, isin: IE00B3FH7618}
+  - {ticker: GILI.L, ccy: GBp, mic: XLON}
+  - {ticker: WEAT.L, ccy: USD, mic: XLON, figi: BBG000BLCP10}
+  - {ticker: HEAT.L, ccy: USD, mic: XLON, figi: BBG000BLBMN4}
+  - {ticker: CORN.L, ccy: USD, mic: XLON}
+  - {ticker: NGAS.L, ccy: USD, mic: XLON, figi: BBG000BLC3X4}
+  - {ticker: IGLO.L, ccy: USD, mic: XLON}
+  - {ticker: IBTA.L, ccy: USD, mic: XLON}
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+  params:
+    lookback: 252
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: atalanta.trendStraddleBufferedLongOnly
+  params:
+    entry_band: 0.0
+    buffer_band: 0.20
+
+portfolio:
+  gross_cap: 1.0
+  direction: longonly
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+ranking:
+  metric: quarterly_return_skew
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

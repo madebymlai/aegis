@@ -57,6 +57,12 @@ def param_space():
     }
 
 
+# %% lookback
+def lookback(**params):
+    """No warmup beyond the indicators': vol-targeted carry sizing adds none."""
+    return 0
+
+
 # %% helpers
 def _weights(score_2d, vol_2d, vol_target, carry_gain):
     """Inverse-vol SHAPE × vol-targeted, richness-leaned EXPOSURE for one candidate.

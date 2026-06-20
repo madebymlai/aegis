@@ -2,6 +2,9 @@ name: demeter_eu_credit_carry_duration
 schema_version: 8
 output_dir: runs/demeter_eu/credit_carry_duration
 
+# Pinned winner of the latest sweep (role: best) for execution-bundle export.
+lock: 20260615T033157551406Z_demeter_eu_credit_carry_duration
+
 # DURATION-STRIPPED credit pole — the live, EU-retail redesign of carry.yaml. The live long-only
 # pole (carry.yaml: IHYU/LQDE/IEMB) earns the credit carry but its unhedged legs carry RATES
 # DURATION, which OVERLAPS atalanta's government-bond book — so the two floor poles are not
@@ -27,9 +30,11 @@ data:
   - OHLCV
   # ccy = each LSE line's native yfinance quote currency. Prices are converted to
   # portfolio.base_currency (EUR) before indicators/portfolio.
+  # mic = the ISO 10383 venue (provider-agnostic), used only by aerd export to
+  # resolve each ticker to one FIGI; the research runtime ignores it.
   symbols:
-  - {ticker: IHYU.L, ccy: USD}
-  - {ticker: LQDH.L, ccy: USD}
+  - {ticker: IHYU.L, ccy: USD, mic: XLON}
+  - {ticker: LQDH.L, ccy: USD, mic: XLON}
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

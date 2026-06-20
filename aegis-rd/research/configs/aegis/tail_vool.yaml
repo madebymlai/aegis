@@ -2,6 +2,9 @@ name: aegis_tail_vool
 schema_version: 8
 output_dir: runs/aegis/tail_vool
 
+# Pinned winner of the latest sweep (role: best) for execution-bundle export.
+lock: 20260615T034350426192Z_aegis_tail_vool
+
 # STANDALONE Regime-A tail sleeve (the roster's target tier), built and scored on its own —
 # the overlay onto the atalanta floor is the future allocator's job, not this strategy's.
 # The book is a fixed-weight, continuously-rebalanced 100% hold of VOOL (Lyxor/Amundi S&P 500
@@ -27,8 +30,10 @@ data:
   - OHLCV
   # ccy = the line's native yfinance quote currency; prices are converted to
   # portfolio.base_currency (EUR) before indicators/portfolio.
+  # mic = ISO 10383 venue (provider-agnostic), used only by aerd export to
+  # resolve the ticker to one FIGI; the research runtime ignores it.
   symbols:
-  - {ticker: VOOL.DE, ccy: EUR}   # the tail leg, native EUR, held 100%
+  - {ticker: VOOL.DE, ccy: EUR, mic: XETR}   # the tail leg, native EUR, held 100%
   start: '2013-01-01'
   end: '2025-01-01'
   timeframe: 1D

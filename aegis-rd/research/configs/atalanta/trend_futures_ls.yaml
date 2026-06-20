@@ -1,0 +1,96 @@
+name: atalanta_trend_futures_ls
+schema_version: 8
+output_dir: runs/atalanta/trend_futures_ls
+
+# FUTURES-UNIVERSE full L/S probe, DATABENTO source (replaces the naive yfinance "=F" front-month
+# that carried roll gaps + the negative-WTI print). Champion mechanism (atalanta.trendStraddleBuffered)
+# on a broad orthogonal NON-EQUITY futures book, all natively L/S (no short mask).
+#
+# DATABENTO: dataset GLBX.MDP3 (CME Globex: CME/CBOT/NYMEX/COMEX), continuous front-month via
+# stype_in=continuous + ".c.0" symbols. Key is referenced from the DATABENTO_API_KEY env var
+# (NOT hardcoded — this config is tracked). 23 GLBX-listed roots; the 5 ICE names (Brent, coffee,
+# sugar, cocoa, cotton) live on a different dataset and are dropped for now.
+#   rates 5 : ZT ZF ZN ZB UB    FX 6 : 6E 6J 6B 6A 6C 6S
+#   energy 4: CL NG RB HO        metals 5: GC SI HG PL PA      grains 3: ZC ZW ZS
+#
+# CAVEAT: databento continuous ".c.0" selects the front contract on a roll rule but is NOT
+# ratio-back-adjusted, so price seams remain at rolls (and front-month WTI still went negative in
+# 2020-04). Cleaner than yahoo, not yet roll-clean; a ratio-adjust pass is the next step if this
+# warrants it.
+data:
+  source: bento
+  arrays:
+  - OHLCV
+  provider_kwargs:
+    dataset: GLBX.MDP3
+    stype_in: continuous
+    client_config:
+      key: {env: DATABENTO_API_KEY}
+  # continuous-contract get_range is ~104s/symbol; default SerialEngine fetches the 23 one at a
+  # time (~40 min). threadpool fans the network-bound pulls out concurrently (~2 min).
+  execution_kwargs:
+    engine: threadpool
+  symbols:
+  - {ticker: ZT.c.0, ccy: USD}
+  - {ticker: ZF.c.0, ccy: USD}
+  - {ticker: ZN.c.0, ccy: USD}
+  - {ticker: ZB.c.0, ccy: USD}
+  - {ticker: UB.c.0, ccy: USD}
+  - {ticker: 6E.c.0, ccy: USD}
+  - {ticker: 6J.c.0, ccy: USD}
+  - {ticker: 6B.c.0, ccy: USD}
+  - {ticker: 6A.c.0, ccy: USD}
+  - {ticker: 6C.c.0, ccy: USD}
+  - {ticker: 6S.c.0, ccy: USD}
+  - {ticker: CL.c.0, ccy: USD}
+  - {ticker: NG.c.0, ccy: USD}
+  - {ticker: RB.c.0, ccy: USD}
+  - {ticker: HO.c.0, ccy: USD}
+  - {ticker: GC.c.0, ccy: USD}
+  - {ticker: SI.c.0, ccy: USD}
+  - {ticker: HG.c.0, ccy: USD}
+  - {ticker: PL.c.0, ccy: USD}
+  - {ticker: PA.c.0, ccy: USD}
+  - {ticker: ZC.c.0, ccy: USD}
+  - {ticker: ZW.c.0, ccy: USD}
+  - {ticker: ZS.c.0, ccy: USD}
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+- id: atalanta.realized_vol
+
+strategy:
+  id: atalanta.trendStraddleBuffered
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+# Rank for the SHAPE, not the Sharpe path ([[what-makes-a-trend-sleeve-convex]] hypothesis #1):
+# select the champion by realized quarterly_return_skew (intrinsic, no benchmark) so the grid is
+# chosen for long-gamma right-tail behaviour rather than calm-market smoothness (UPI/Sharpe pick the
+# least-convex cell). sharpe_ratio + ulcer_performance_index stay in every candidate's summary
+# metrics, so the held-out Sharpe gate is read alongside.
+# CAVEAT: the per-split selection window is ~1y (~4 quarters), so per-split quarterly skew is noisy;
+# the authoritative skew read is full-sample (computed post-hoc in the diary) - the ranking is directional.
+ranking:
+  metric: quarterly_return_skew
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

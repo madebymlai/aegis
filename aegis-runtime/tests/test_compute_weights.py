@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 
+from aegis_runtime import ListedRef
 from aegis_runtime.bundle import (
     BundleManifest,
     ComponentSpec,
@@ -35,7 +36,7 @@ def _bundle(
     symbols: tuple[str, ...] | None = None,
     currency_by_symbol: dict[str, str] | None = None,
 ) -> ExecutionBundle:
-    plan_symbols = contract.figis if symbols is None else symbols
+    plan_symbols = tuple(ref.value for ref in contract.refs) if symbols is None else symbols
     plan = LockedExecutionPlan(
         strategy=_spec(strategy_module, "strategies", "target_weights"),
         indicators=indicators,
@@ -50,14 +51,14 @@ def _bundle(
         role="best",
         candidate_key="k",
         component_source_hashes={},
-        figis=contract.figis,
+        refs=contract.refs,
     )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
 
 
-def _eur_contract(figis=("A", "B"), lookback_bars=0) -> DataContract:
+def _eur_contract(refs=(ListedRef("A"), ListedRef("B")), lookback_bars=0) -> DataContract:
     return DataContract(
-        figis=figis,
+        refs=refs,
         required_arrays=("Close",),
         base_currency="EUR",
         required_fx_currencies=(),
@@ -68,7 +69,8 @@ def _eur_contract(figis=("A", "B"), lookback_bars=0) -> DataContract:
 
 def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:
     idx = _index(3)
-    close = pd.DataFrame({"A": [10.0, 11.0, 12.0], "B": [20.0, 21.0, 22.0]}, index=idx)
+    refs = (ListedRef("A"), ListedRef("B"))
+    close = pd.DataFrame({refs[0]: [10.0, 11.0, 12.0], refs[1]: [20.0, 21.0, 22.0]}, index=idx)
     bundle = _bundle(
         "equal_weight_strategy",
         contract=_eur_contract(),
@@ -77,37 +79,38 @@ def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:
 
     weights = bundle.compute_weights(MarketDataBundle({"Close": close}))
 
-    assert list(weights.columns) == ["A", "B"]
+    assert list(weights.columns) == list(refs)
     assert weights.index.equals(idx)
     assert (weights.to_numpy() == 0.5).all()
 
 
-def test_compute_weights_keys_output_by_figi_and_feeds_components_authored_labels() -> None:
-    # The consumer supplies FIGI-keyed prices (the cross-boundary identity); the
+def test_compute_weights_keys_output_by_ref_and_feeds_components_authored_labels() -> None:
+    # The consumer supplies InstrumentRef-keyed prices (the cross-boundary identity); the
     # baked strategy resolves the instrument by its authored label ('A').
     idx = _index(3)
-    figis = ("BBG000000001", "BBG000000002")
-    close = pd.DataFrame({figis[0]: [10.0, 11.0, 12.0], figis[1]: [20.0, 21.0, 22.0]}, index=idx)
+    refs = (ListedRef("BBG000000001"), ListedRef("BBG000000002"))
+    close = pd.DataFrame({refs[0]: [10.0, 11.0, 12.0], refs[1]: [20.0, 21.0, 22.0]}, index=idx)
     bundle = _bundle(
         "label_select_strategy",
-        contract=_eur_contract(figis=figis),
+        contract=_eur_contract(refs=refs),
         symbols=("A", "B"),
     )
 
     weights = bundle.compute_weights(MarketDataBundle({"Close": close}))
 
-    assert list(weights.columns) == list(figis)
-    assert weights.columns.name == "figi"
-    assert weights[figis[0]].tolist() == [1.0, 1.0, 1.0]
-    assert weights[figis[1]].tolist() == [0.0, 0.0, 0.0]
+    assert list(weights.columns) == list(refs)
+    assert weights.columns.name == "instrument_ref"
+    assert weights[refs[0]].tolist() == [1.0, 1.0, 1.0]
+    assert weights[refs[1]].tolist() == [0.0, 0.0, 0.0]
 
 
 def test_compute_weights_converts_foreign_prices_before_the_strategy_sees_them() -> None:
     idx = _index(2)
     # A quoted in USD, B in EUR (base). EURUSD = 1.25 => A_eur = A_usd / 1.25.
-    close = pd.DataFrame({"A": [100.0, 125.0], "B": [20.0, 20.0]}, index=idx)
+    refs = (ListedRef("A"), ListedRef("B"))
+    close = pd.DataFrame({refs[0]: [100.0, 125.0], refs[1]: [20.0, 20.0]}, index=idx)
     contract = DataContract(
-        figis=("A", "B"),
+        refs=refs,
         required_arrays=("Close",),
         base_currency="EUR",
         required_fx_currencies=("USD",),
@@ -126,13 +129,14 @@ def test_compute_weights_converts_foreign_prices_before_the_strategy_sees_them()
 
     # Converted closes: A=[80,100], B=[20,20]; row sums [100,120].
     # wA reflects CONVERTED prices (0.80), not native (which would be 100/120≈0.833).
-    assert weights["A"].tolist() == pytest.approx([80 / 100, 100 / 120])
-    assert weights["B"].tolist() == pytest.approx([20 / 100, 20 / 120])
+    assert weights[ListedRef("A")].tolist() == pytest.approx([80 / 100, 100 / 120])
+    assert weights[ListedRef("B")].tolist() == pytest.approx([20 / 100, 20 / 120])
 
 
 def test_compute_weights_raises_when_window_shorter_than_lookback_bars() -> None:
     idx = _index(3)
-    close = pd.DataFrame({"A": [1.0, 1.0, 1.0], "B": [1.0, 1.0, 1.0]}, index=idx)
+    refs = (ListedRef("A"), ListedRef("B"))
+    close = pd.DataFrame({refs[0]: [1.0, 1.0, 1.0], refs[1]: [1.0, 1.0, 1.0]}, index=idx)
     bundle = _bundle("equal_weight_strategy", contract=_eur_contract(lookback_bars=5))
 
     with pytest.raises(ValueError, match="at least 5 lookback bars"):
@@ -141,7 +145,8 @@ def test_compute_weights_raises_when_window_shorter_than_lookback_bars() -> None
 
 def test_compute_weights_raises_when_latest_weight_row_is_non_finite() -> None:
     idx = _index(3)
-    close = pd.DataFrame({"A": [1.0, 1.0, 1.0], "B": [1.0, 1.0, 1.0]}, index=idx)
+    refs = (ListedRef("A"), ListedRef("B"))
+    close = pd.DataFrame({refs[0]: [1.0, 1.0, 1.0], refs[1]: [1.0, 1.0, 1.0]}, index=idx)
     bundle = _bundle("nan_tail_strategy", contract=_eur_contract())
 
     with pytest.raises(ValueError, match="latest weight row contains NaN"):
@@ -150,9 +155,10 @@ def test_compute_weights_raises_when_latest_weight_row_is_non_finite() -> None:
 
 def test_compute_weights_fails_closed_when_required_fx_series_is_missing() -> None:
     idx = _index(2)
-    close = pd.DataFrame({"A": [100.0, 125.0], "B": [20.0, 20.0]}, index=idx)
+    refs = (ListedRef("A"), ListedRef("B"))
+    close = pd.DataFrame({refs[0]: [100.0, 125.0], refs[1]: [20.0, 20.0]}, index=idx)
     contract = DataContract(
-        figis=("A", "B"),
+        refs=refs,
         required_arrays=("Close",),
         base_currency="EUR",
         required_fx_currencies=("USD",),

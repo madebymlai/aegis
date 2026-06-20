@@ -43,6 +43,16 @@ interface and *called* by the overlay — never registered as node strategies.
 - **Dynamic sleeve weighting computed live in Trader**: rejected. Conditioning allocations
   on market state is alpha and must carry **Provenance**; it belongs in Aegis RD as a
   composite **Strategy** exported as one Execution Bundle. Trader's budgets are static.
+  - **Amended 2026-06-15 (aegis-rd-bu4 / ADR-0004): the line is return-conditioning, not all
+    conditioning.** "Trader's budgets are static" was too broad. Trader's **Allocator** may
+    condition weights on the *realized risk structure* — sleeve volatilities, the sleeve
+    correlation/covariance matrix, drawdown state, and realized skew — to hold a static
+    **risk** budget, target a constant book volatility, de-lever in stress, and keep the book
+    net-convex. None of these forecast returns; they *measure risk*, the same class as the
+    caps and drift bands (ADR-0002). What remains alpha — and still ships as an RD Execution
+    Bundle with Provenance — is any signal that encodes a **return view**: which sleeve will
+    outperform, or when to size the tail up on a regime / dispersion / valuation signal. The
+    dividing test is whether the input **forecasts returns** or **measures risk**.
 
 ## Consequences
 
@@ -85,13 +95,18 @@ interface and *called* by the overlay — never registered as node strategies.
 - **State leans on Nautilus; reconciliation is one deterministic rule per scope.** The
   reconciled `Cache` is the single source of truth for positions/orders/account/NAV — Trader
   keeps no parallel ledger. Nautilus's startup reconciliation always absorbs broker truth;
-  Trader does not override it. No opt-in paths — two deterministic reactions: an
+  Trader does not override it. No opt-in paths — the one deterministic reaction is an
   **account-integrity failure** (NAV/cash mismatch beyond a band, wrong account id,
-  cache-hydration failure) → **global halt** (no state is trustworthy); a **held instrument
-  not in the current Manifest** → **quarantine + alert** (never auto-traded, but counted in
-  the realized-book gate as real exposure, ADR-0002) while recognized sleeves keep
-  rebalancing. Partial fills need no rule — reconciliation absorbs them. Trader-specific
-  persistent state is only the Book Config (config) and a regenerable Security-Master
-  resolution cache; per-sleeve P&L is *derived*, not a second ledger.
+  cache-hydration failure) → **global halt** (no state is trustworthy). Partial fills need no
+  rule — reconciliation absorbs them. Trader-specific persistent state is only the Book Config
+  (config) and a regenerable Security-Master resolution cache; per-sleeve P&L is *derived*,
+  not a second ledger.
+  - **Amended 2026-06-15 (aegis-rd-bwb.1): quarantine removed.** The original rule also
+    quarantined a *held instrument not in the current Manifest* (never auto-traded, but
+    counted in the realized-book gate). That second reaction is dropped: v1 assumes the
+    Commingled Book holds only sleeve-covered instruments (operational discipline), so an
+    unrecognized holding is **out of scope** rather than gated. Reconciliation is now a single
+    rule — account-integrity → global halt. If unrecognized holdings become a real
+    operational concern, reinstate quarantine as its own decision.
 - **Forward-First:** new venues plug in as Nautilus adapters resolving the same FIGIs; the
   cadence and identity layers are unchanged.

@@ -41,11 +41,13 @@
       "arrays": [
         "OHLCV"
       ],
+      "dataset": null,
       "end": null,
       "execution_kwargs": {},
       "missing_columns": "raise",
       "missing_index": "raise",
       "path": null,
+      "provider": null,
       "provider_kwargs": {},
       "quality": {
         "allowed_degradations": []
@@ -58,43 +60,113 @@
       "start": null,
       "symbols": [
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "SPY"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "IWM"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "EEM"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "TLT"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "GLD"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "DBC"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "VNQ"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "UUP"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "XLE"
         },
         {
+          "adjustment": "unadjusted",
           "ccy": "EUR",
+          "dataset": null,
+          "figi": null,
+          "isin": null,
+          "mic": null,
+          "roll_rule": "calendar",
+          "root": null,
           "ticker": "XLU"
         }
       ],
@@ -169,7 +241,7 @@
       "min_oos_trades": 5,
       "year_freq": "252D"
     },
-    "schema_version": 8,
+    "schema_version": 9,
     "strategy": {
       "id": "tests.momentum_rotator",
       "params": {}
@@ -178,12 +250,12 @@
   "evidence": {
     "component_registry_fingerprint": "28cf8066139b5ad7acd24843a5a7083847f1f1e577dd4940be7a7ff1e80c9137",
     "config": {
-      "authored_config_hash": "250d536a9a59ddc36b23eb02a999ff1ed6f216b2bf043915d075fe56771a2a67",
+      "authored_config_hash": "70affb3ae5d6c547df6123a273c1e62d4df9faddf3980ccf14c2d282a948c9f2",
       "raw_config_identity": {
-        "hash": "ca98d40f141ec6be9dd9abca45323747fac8d936a9d508068e682ec0a9e3e1bd"
+        "hash": "e8c9caf26497ed508cf817a2cd5f361405fc82337a4daab5233d56d72f82878b"
       },
-      "resolved_config_hash": "0f977c4d69285283cabfaadb62155a5f6a99480c19ae20fdaa87968e4149a1bb",
-      "schema_version": 8,
+      "resolved_config_hash": "322c7156377dd7df3864c6a14bdd55f4643a15a72fa2f7f34f27dd8adf985794",
+      "schema_version": 9,
       "selection": {
         "config_path": "<masked>",
         "source": "explicit"

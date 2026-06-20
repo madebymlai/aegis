@@ -32,6 +32,12 @@ def param_space():
     }
 
 
+# %% lookback
+def lookback(**params):
+    """Warmup bars for realized vol: the rolling-std window length."""
+    return int(params["vol_window"])
+
+
 # %% helpers
 def _realized_vol(close, window):
     """Annualized rolling std of daily log returns: std_window(log Close ratio) * sqrt(252)."""

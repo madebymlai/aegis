@@ -35,15 +35,109 @@ def test_resolves_each_ticker_to_its_unique_exchange_level_figi() -> None:
     assert resolved == {"SPY": "BBG000BDTBL9", "IWM": "BBG000B9XB24"}
 
 
-def test_minor_unit_currency_is_sent_to_openfigi_as_its_iso_major() -> None:
-    # GBp (pence) is a quote token, not an ISO currency; OpenFIGI's currency
-    # filter must receive the major GBP or it returns no match.
-    symbols = [SymbolSpec(ticker="SGLN.L", ccy="GBp")]
+def test_mic_drives_miccode_with_bare_symbol() -> None:
+    # The provider-agnostic ISO MIC supplies the venue filter; the provider
+    # ticker's suffix is stripped to the bare OpenFIGI symbol (OpenFIGI's
+    # TICKER type rejects 'IHYU.L').
+    symbols = [SymbolSpec(ticker="IHYU.L", ccy="USD", mic="XLON")]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idType"] == "TICKER"
+    assert job["idValue"] == "IHYU"
+    assert job["micCode"] == "XLON"
+    assert job["currency"] == "USD"
+
+
+def test_isin_resolves_via_id_isin() -> None:
+    # An ISIN is the authoritative, provider-agnostic security id: resolve it
+    # through OpenFIGI's ID_ISIN type, ignoring the provider ticker entirely.
+    symbols = [SymbolSpec(ticker="IHYU.L", ccy="USD", isin="IE00BF3N7094")]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idType"] == "ID_ISIN"
+    assert job["idValue"] == "IE00BF3N7094"
+    # Currency narrows a multi-currency-listed ISIN to the right trading line.
+    assert job["currency"] == "USD"
+
+
+def test_isin_with_mic_narrows_to_venue() -> None:
+    symbols = [SymbolSpec(ticker="IHYU.L", ccy="USD", isin="IE00BF3N7094", mic="XLON")]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idType"] == "ID_ISIN"
+    assert job["micCode"] == "XLON"
+
+
+def test_ticker_without_hints_sends_bare_symbol_and_currency() -> None:
+    # No mic/isin: best-effort TICKER + currency, no venue filter (resolves
+    # only when the bare symbol + currency is globally unique).
+    symbols = [SymbolSpec(ticker="SPY", ccy="USD")]
+    client = _FakeOpenFigiClient([_hit("BBG000BDTBL9")])
+
+    resolve_figis(symbols, client=client)
+
+    job = client.seen_jobs[0]
+    assert job["idValue"] == "SPY"
+    assert job["currency"] == "USD"
+    assert "micCode" not in job
+
+
+def test_quote_currency_is_sent_to_openfigi_verbatim() -> None:
+    # GBp (pence) is the literal exchange quote token; OpenFIGI stores LSE
+    # pence lines under 'GBp', so the filter must receive it verbatim (sending
+    # the ISO major 'GBP' returns no match).
+    symbols = [SymbolSpec(ticker="GILI.L", ccy="GBp", mic="XLON")]
     client = _FakeOpenFigiClient([_hit("BBG000PLNQN7")])
 
     resolve_figis(symbols, client=client)
 
-    assert client.seen_jobs[0]["currency"] == "GBP"
+    assert client.seen_jobs[0]["currency"] == "GBp"
+
+
+def test_explicit_figi_bypasses_openfigi() -> None:
+    # An authoritative figi on the symbol is used verbatim; the ambiguous/
+    # unmappable OpenFIGI lookup is skipped entirely (no job is sent).
+    symbols = [SymbolSpec(ticker="AIGC.L", ccy="USD", figi="BBG000BLDWV1")]
+    client = _FakeOpenFigiClient([])
+
+    resolved = resolve_figis(symbols, client=client)
+
+    assert resolved == {"AIGC.L": "BBG000BLDWV1"}
+    assert client.seen_jobs == []
+
+
+def test_explicit_figi_mixes_with_resolved() -> None:
+    # Only the symbols without an explicit figi are sent to OpenFIGI.
+    symbols = [
+        SymbolSpec(ticker="AIGC.L", ccy="USD", figi="BBG000BLDWV1"),
+        SymbolSpec(ticker="IHYU.L", ccy="USD"),
+    ]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    resolved = resolve_figis(symbols, client=client)
+
+    assert resolved == {"AIGC.L": "BBG000BLDWV1", "IHYU.L": "BBG0022FR5K6"}
+    assert [job["idValue"] for job in client.seen_jobs] == ["IHYU"]
+
+
+def test_explicit_figi_colliding_with_resolved_fails_closed() -> None:
+    symbols = [
+        SymbolSpec(ticker="AIGC.L", ccy="USD", figi="BBG0022FR5K6"),
+        SymbolSpec(ticker="IHYU.L", ccy="USD"),
+    ]
+    client = _FakeOpenFigiClient([_hit("BBG0022FR5K6")])
+
+    with pytest.raises(FigiResolutionError, match="BBG0022FR5K6"):
+        resolve_figis(symbols, client=client)
 
 
 def test_unmapped_ticker_fails_closed() -> None:

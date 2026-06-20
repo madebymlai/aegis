@@ -1,7 +1,17 @@
 # Identify cross-boundary instruments by FIGI, resolved through a shared Security Master
 
 Status: accepted (implementation pending; depends on the `aegis-runtime` carve-out
-and the `DataContract` from issue #40 / `aegis-rd-qcj`)
+and the `DataContract` from issue #40 / `aegis-rd-qcj`). **Refined by ADR-0003**: the
+canonical cross-boundary identity is generalised from a bare FIGI to an asset-agnostic
+`InstrumentRef` (FIGI becomes the `ListedRef` variant), and the Security Master resolves
+*as-of* a date. The FIGI/`ListedRef` path below is unchanged; futures use `FuturesRef`.
+**Superseded in part by ADR-0005** (spike-validated against IB paper, 2026-06-19): there is **no
+bespoke Security Master**. Aegis Trader resolves a `ListedRef` by handing its FIGI to the IB
+`InstrumentProvider` (`secIdType='FIGI'` + `convert_exchange_to_mic_venue`), which returns the
+qualified listing and the MIC venue directly. The "Security Master is a deep module in
+`aegis-runtime`" consequence below is **withdrawn** — equity identity resolves IB-native, RD's
+`ticker→FIGI` mint stays, and the bounded residual is Nautilus's maintained exchange→MIC map plus a
+tiny override set (one line per exchange, zero per instrument).
 
 An **Execution Bundle**, **Aegis Trader**, and the live venue (Interactive Brokers via
 **NautilusTrader**) must agree on *which instrument* a signed target weight refers to.

@@ -13,12 +13,64 @@ requires-python = ">=3.12"
 # Execution Bundle wheel — never declared here.
 dependencies = [
   "aegis-runtime",
+  "aegis-data",
   "nautilus_trader",
   "pydantic>=2.0",
 ]
 
+# IBKR adapter (ibapi) — required only for paper/live runs and the IBKR
+# verification script (scripts/verify_paper_ibkr.py); backtests don't need it.
+[project.optional-dependencies]
+ib = ["nautilus_trader[ib]"]
+
+[project.scripts]
+# Operator entrypoint: `aegis-trader --mode {backtest,paper,live} --book book.toml`.
+# The book spec is declarative (book.toml); IBKR connection + account come from
+# the environment (IB_* / TRADER_ID), never the committed spec.
+aegis-trader = "aegis_trader.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["aegis_trader*"]
 
+[tool.pytest.ini_options]
+# pytest-forked isolates each e2e test in its own process (see tests/e2e/conftest.py).
+# nautilus_trader's Rust runtime makes the process multi-threaded on import, so every
+# os.fork() trips Python 3.12+'s "fork() in a multi-threaded process" DeprecationWarning.
+# The child only runs the already-collected test body and exits, so the deadlock the
+# warning guards against cannot occur here.
+filterwarnings = [
+    "ignore:.*multi-threaded, use of fork.*:DeprecationWarning",
+]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["aegis_trader", "tests"]
+
+# nautilus_trader ships no type stubs, pandas' stubs aren't installed, and
+# aegis-runtime is resolved as an editable local wheel — none expose types to
+# mypy.  Suppress the missing-import noise without weakening checks on our own code.
+[[tool.mypy.overrides]]
+module = [
+    "nautilus_trader.*",
+    "pandas",
+    "pandas.*",
+    "aegis_runtime",
+    "aegis_runtime.*",
+    "aegis_data",
+    "aegis_data.*",
+]
+ignore_missing_imports = true
+
 [tool.uv.sources]
 aegis-runtime = { path = "../aegis-runtime", editable = true }
+aegis-data = { path = "../aegis-data", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+    "pytest-asyncio>=1.4.0",
+    # NautilusTrader's BacktestEngine initialises process-global state (logger,
+    # Rust runtime) that aborts when a second engine is built in the same
+    # process.  e2e tests are marked `forked` so each runs in its own process.
+    "pytest-forked>=1.6.0",
+]

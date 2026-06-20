@@ -1,0 +1,87 @@
+name: atalanta_trend_futures_pyramid
+schema_version: 8
+output_dir: runs/atalanta/trend_futures_pyramid
+
+# PYRAMIDING test on the futures substrate ([[what-makes-a-trend-sleeve-convex]] hypothesis #2, the one
+# article shape-lever the codebase lacked). Same bento GLBX book + champion signal params as
+# trend_futures_ls.yaml (trend_score lb252 + realized_vol vw63, full L/S), but the strategy is
+# atalanta.trendStraddleBufferedPyramid: each name builds 0->full over `ramp_steps` bars of trend
+# persistence, so gross floats up as trends mature (convex, builds the right tail) and down in chop.
+# Pinned signal params + a small strategy grid isolate the lever: ramp_steps 1 == the buffered champion
+# exactly (no-pyramid baseline), vs 21/63/126; with/without the 0.20 buffer. Ranked by quarterly skew
+# (the shape the pyramid is supposed to deepen); sharpe + UPI emitted alongside for the held-out gate.
+#
+# DATABENTO: dataset GLBX.MDP3, continuous front-month (stype_in=continuous, ".c.0"); key from the
+# DATABENTO_API_KEY env var (NOT hardcoded). threadpool fans the 23 network-bound pulls concurrently.
+data:
+  source: bento
+  arrays:
+  - OHLCV
+  provider_kwargs:
+    dataset: GLBX.MDP3
+    stype_in: continuous
+    client_config:
+      key: {env: DATABENTO_API_KEY}
+  execution_kwargs:
+    engine: threadpool
+  symbols:
+  - {ticker: ZT.c.0, ccy: USD}
+  - {ticker: ZF.c.0, ccy: USD}
+  - {ticker: ZN.c.0, ccy: USD}
+  - {ticker: ZB.c.0, ccy: USD}
+  - {ticker: UB.c.0, ccy: USD}
+  - {ticker: 6E.c.0, ccy: USD}
+  - {ticker: 6J.c.0, ccy: USD}
+  - {ticker: 6B.c.0, ccy: USD}
+  - {ticker: 6A.c.0, ccy: USD}
+  - {ticker: 6C.c.0, ccy: USD}
+  - {ticker: 6S.c.0, ccy: USD}
+  - {ticker: CL.c.0, ccy: USD}
+  - {ticker: NG.c.0, ccy: USD}
+  - {ticker: RB.c.0, ccy: USD}
+  - {ticker: HO.c.0, ccy: USD}
+  - {ticker: GC.c.0, ccy: USD}
+  - {ticker: SI.c.0, ccy: USD}
+  - {ticker: HG.c.0, ccy: USD}
+  - {ticker: PL.c.0, ccy: USD}
+  - {ticker: PA.c.0, ccy: USD}
+  - {ticker: ZC.c.0, ccy: USD}
+  - {ticker: ZW.c.0, ccy: USD}
+  - {ticker: ZS.c.0, ccy: USD}
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+  params:
+    lookback: 252
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: atalanta.trendStraddleBufferedPyramid
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+ranking:
+  metric: quarterly_return_skew
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

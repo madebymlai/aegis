@@ -14,11 +14,10 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Sequence
 
-from aegis_runtime.currency import major_currency
-
 from research.aegis_research.configuration.schema import SymbolSpec
 
 OPENFIGI_MAPPING_URL = "https://api.openfigi.com/v3/mapping"
+
 # OpenFIGI caps an unauthenticated mapping request at 10 jobs (100 with a key);
 # the conservative bound works in either mode.
 _MAX_JOBS_PER_REQUEST = 10
@@ -80,24 +79,27 @@ def resolve_figis(
     *,
     client: OpenFigiClient,
 ) -> dict[str, str]:
-    """Map each symbol's provider ticker to its unique exchange-level FIGI.
+    """Map each listed symbol's provider ticker to its unique exchange-level FIGI.
 
-    Returns a ticker -> FIGI map in declared order. Fail-closed: an unmapped or
-    ambiguous ticker raises :class:`FigiResolutionError`.
+    Returns a ticker -> FIGI map in declared order. Futures refs carry their own
+    identity and are skipped. Fail-closed: an unmapped or ambiguous listed ticker
+    raises :class:`FigiResolutionError`.
     """
-    jobs = [_mapping_job(spec) for spec in symbols]
-    responses = client.map(jobs)
-    resolved: dict[str, str] = {}
+    # An explicit figi pins the identity verbatim; only listed instruments are looked up.
+    listed = [spec for spec in symbols if not spec.is_future]
+    resolved: dict[str, str] = {spec.symbol_name: spec.figi for spec in listed if spec.figi}
+    to_map = [spec for spec in listed if not spec.figi]
+    responses = client.map([_mapping_job(spec) for spec in to_map]) if to_map else []
     unmapped: list[str] = []
     ambiguous: list[str] = []
-    for spec, response in zip(symbols, responses, strict=True):
+    for spec, response in zip(to_map, responses, strict=True):
         figis = _figis_of(response)
         if not figis:
-            unmapped.append(spec.ticker)
+            unmapped.append(spec.symbol_name)
         elif len(figis) > 1:
-            ambiguous.append(spec.ticker)
+            ambiguous.append(spec.symbol_name)
         else:
-            resolved[spec.ticker] = next(iter(figis))
+            resolved[spec.symbol_name] = next(iter(figis))
     _fail_closed(unmapped=unmapped, ambiguous=ambiguous, collisions=_collisions(resolved))
     return resolved
 
@@ -132,11 +134,34 @@ def _fail_closed(*, unmapped: list[str], ambiguous: list[str], collisions: list[
 
 
 def _mapping_job(spec: SymbolSpec) -> dict[str, str]:
-    return {
-        "idType": "TICKER",
-        "idValue": spec.ticker,
-        "currency": major_currency(spec.ccy),
-    }
+    """Build the OpenFIGI mapping job for one symbol from its identity hints.
+
+    Provider-agnostic: the venue comes from the ISO MIC (``spec.mic``), never a
+    provider-specific exchange suffix.
+
+    - ``isin`` set: resolve through OpenFIGI's ``ID_ISIN`` (the authoritative,
+      provider-agnostic security id); the provider ticker is irrelevant.
+    - otherwise: a ``TICKER`` lookup on the bare symbol (the provider ticker with
+      any venue suffix stripped, which OpenFIGI's TICKER type requires) filtered
+      by the literal quote currency, narrowed to ``mic`` when supplied.
+
+    ``mic`` (when present) narrows either route to the venue.  Names that stay
+    ambiguous fail closed; pin them with ``figi``/``isin``/``mic`` in the config.
+    """
+    if spec.isin:
+        job: dict[str, str] = {"idType": "ID_ISIN", "idValue": spec.isin, "currency": spec.ccy}
+    else:
+        job = {"idType": "TICKER", "idValue": _bare_symbol(spec.symbol_name), "currency": spec.ccy}
+    if spec.mic:
+        job["micCode"] = spec.mic
+    return job
+
+
+def _bare_symbol(ticker: str) -> str:
+    """The OpenFIGI ticker: the provider ticker with any trailing venue suffix
+    (``IHYU.L`` -> ``IHYU``) removed; a suffixless ticker passes through."""
+    base, dot, _ = ticker.rpartition(".")
+    return base if dot else ticker
 
 
 def _figis_of(response: dict) -> set[str]:

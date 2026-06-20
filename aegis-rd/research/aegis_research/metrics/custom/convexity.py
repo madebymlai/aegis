@@ -16,6 +16,21 @@ rather than its mechanism declaration:
    worst-decile days; isolates tail behaviour from the calm-dominated average.
 4. **Bear-regime beta** — local benchmark beta when the benchmark is below its
    16th percentile; a defensive sleeve translates benchmark losses into gains.
+5. **Crisis-conditional return** — the same crisis-conditional idea measured at the
+   multi-month *horizon* the trend payoff develops over (Fung-Hsieh 2001), not the
+   day: a genuinely convex slow-crisis sleeve co-crashes on the benchmark's worst
+   *days* (metric 3 reads negative: trend lags a fast shock) yet pays over the worst
+   *quarters* (this reads positive: 2022-style grinds). To be a number worth trusting
+   it is *stabilized*: the downside conditioning is smooth (weight by the benchmark
+   window's shortfall below its mean - no worst-quantile cutoff to choose) and the
+   payoff is averaged over a band of multi-month horizons (no single-window choice),
+   each annualized to a common scale. Smoothing removes the threshold knob and the
+   band-average removes the horizon knob; together they cut the design-choice spread
+   several-fold. The residual magnitude uncertainty (a typical sample holds only a
+   couple of crises) is irreducible and is reported post-hoc as a block-bootstrap CI
+   (``crisis_payoff_bootstrap_ci_from_curve``); so the engine ranks on this point
+   estimate (a low-variance conditional mean, far more split-stable than a
+   third-moment skew) and the interval is the trust check.
 
 The benchmark is a **parameter**, not a constant: SPY is the dominant macro
 factor in our ten-ETF universe, but the conditional signatures move with the
@@ -54,6 +69,12 @@ DEFAULT_BENCHMARK = "SPY"
 _WORST_DECILE = 0.10
 _BEAR_PCTILE = 0.16
 _QUARTER = "QE"
+# Crisis-conditional payoff design ("how to stabilize it"). The payoff is averaged over a band of
+# multi-month horizons (trading days): averaging removes the single-horizon knob, and every horizon is
+# kept short enough to survive a one-year split (max < 252). The annualization base puts the
+# differently-sized horizons on one per-year scale before they are averaged.
+_HORIZON_BAND = (42, 63, 84, 126)
+_ANNUALIZATION_DAYS = 252.0
 
 # Metric ids name the behaviour each measures, not the estimator that computes it
 # (a Treynor-Mazuy regression yields market_convexity + market_beta; the regression
@@ -62,6 +83,7 @@ QUARTERLY_RETURN_SKEW_ID = "quarterly_return_skew"
 MARKET_CONVEXITY_ID = "market_convexity"
 MARKET_BETA_ID = "market_beta"
 CRASH_DAY_RETURN_ID = "crash_day_return"
+CRISIS_QUARTER_RETURN_ID = "crisis_quarter_return"
 BEAR_MARKET_BETA_ID = "bear_market_beta"
 
 
@@ -101,13 +123,20 @@ def _lazy_benchmark_close(symbol: str, index: pd.DatetimeIndex) -> pd.Series:
 
 
 def _stream_and_benchmark(pf: Any, benchmark: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Per-group daily returns of the stream and of the benchmark, from one read.
+    """Per-group daily returns of the stream and of the benchmark, from one read."""
+    return _stream_and_benchmark_from_curve(EquityCurve.from_portfolio(pf), benchmark)
 
-    The benchmark is read from the traded close panel when present, else pulled lazily and
-    aligned; an unavailable benchmark yields NaN returns so the benchmark-relative reducers
-    degrade to NaN rather than failing the run.
+
+def _stream_and_benchmark_from_curve(
+    curve: EquityCurve, benchmark: str
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Stream and benchmark daily returns from an already-read curve (the shared-read path).
+
+    The benchmark is read from the traded close panel when present, else pulled lazily and aligned; an
+    unavailable benchmark yields NaN returns so the benchmark-relative reducers degrade to NaN rather
+    than failing the run. Taking the curve (instead of the portfolio) lets a composite Metric share one
+    ``get_value`` read across several benchmark-relative statistics.
     """
-    curve = EquityCurve.from_portfolio(pf)
     if curve.has_symbol(benchmark):
         return curve.returns(), curve.benchmark_returns(benchmark)
     try:
@@ -115,6 +144,57 @@ def _stream_and_benchmark(pf: Any, benchmark: str) -> tuple[pd.DataFrame, pd.Dat
     except Exception:
         close = pd.Series(np.nan, index=curve.value.index)
     return curve.returns(), curve.aligned_benchmark_returns(close)
+
+
+_BOOTSTRAP_SEED = 0
+_BOOTSTRAP_DRAWS = 500
+
+
+def _crisis_payoff_bootstrap_ci(
+    stream: np.ndarray, bench: np.ndarray, *, lower: float, upper: float
+) -> tuple[float, float]:
+    """Stationary block-bootstrap CI for the band-averaged crisis-conditional payoff.
+
+    Overlapping multi-month windows are heavily autocorrelated, so a naive standard error understates
+    the uncertainty; resampling contiguous blocks (length = the longest horizon) preserves that
+    dependence. With only a couple of crises in a typical sample the interval is honestly wide, and that
+    width is the irreducible uncertainty the point estimate hides. Seeded, so the bound is deterministic.
+    """
+    n = stream.size
+    block = max(_HORIZON_BAND)
+    if n < block:
+        return np.nan, np.nan
+    rng = np.random.default_rng(_BOOTSTRAP_SEED)
+    n_blocks = int(np.ceil(n / block))
+    draws = np.empty(_BOOTSTRAP_DRAWS)
+    for d in range(_BOOTSTRAP_DRAWS):
+        starts = rng.integers(0, n - block + 1, n_blocks)
+        idx = np.concatenate([np.arange(s, s + block) for s in starts])[:n]
+        draws[d] = _crisis_quarter_return(stream[idx], bench[idx])
+    return float(np.nanpercentile(draws, lower * 100.0)), float(np.nanpercentile(draws, upper * 100.0))
+
+
+def crisis_payoff_bootstrap_ci_from_curve(
+    curve: EquityCurve, benchmark: str, *, lower: float = 0.05, upper: float = 0.95
+) -> pd.DataFrame:
+    """Per-group (lower, upper) block-bootstrap CI of the crisis-conditional payoff, from one read.
+
+    Post-hoc trust / shortlist-ranking aid (the "rank on a lower confidence bound" option from
+    [[measuring-crisis-alpha]]): too heavy to compute per candidate per split, but the right way to
+    rank a final shortlist of locked candidates - a positive payoff resting on one lucky crisis is
+    shrunk toward its (wide) lower bound. Returns a frame indexed by group with ``lower``/``upper`` columns.
+    """
+    returns, bench = _stream_and_benchmark_from_curve(curve, benchmark)
+    rows: dict[Any, tuple[float, float]] = {}
+    for col in returns.columns:
+        pair = pd.concat([returns[col], bench[col]], axis=1).dropna()
+        if len(pair) < max(_HORIZON_BAND):
+            rows[col] = (np.nan, np.nan)
+            continue
+        rows[col] = _crisis_payoff_bootstrap_ci(
+            pair.iloc[:, 0].to_numpy(), pair.iloc[:, 1].to_numpy(), lower=lower, upper=upper
+        )
+    return pd.DataFrame.from_dict(rows, orient="index", columns=["lower", "upper"])
 
 
 def _per_column(
@@ -172,6 +252,58 @@ def _crisis_conditional(stream: np.ndarray, bench: np.ndarray) -> float:
     return float(stream[mask].mean()) if mask.any() else np.nan
 
 
+def _rolling_compound(daily: np.ndarray, horizon: int) -> np.ndarray:
+    """Overlapping ``horizon``-day compounded simple returns from a daily array.
+
+    Window ending at ``t`` compounds days ``t-horizon+1 .. t``; computed as differences of
+    cumulative log-growth so the whole overlapping series is one vectorised pass. Returns an
+    empty array when there are fewer than ``horizon`` days (the caller degrades to NaN).
+    """
+    if daily.size < horizon:
+        return np.empty(0)
+    log_growth = np.cumsum(np.log1p(daily))
+    windowed = log_growth[horizon - 1:] - np.concatenate(([0.0], log_growth[:-horizon]))
+    return np.expm1(windowed)
+
+
+def _crisis_conditional_payoff(stream: np.ndarray, bench: np.ndarray, horizon: int) -> float:
+    """Annualized downside-weighted mean stream return at one horizon (no hard threshold).
+
+    Both series are compounded into overlapping ``horizon``-day windows; each window is weighted by the
+    benchmark window's shortfall below its *mean* (``max(mean - b, 0)``), so the weight grows smoothly
+    as the benchmark does worse and there is no quantile cutoff to choose (removing the threshold knob
+    that made a single worst-quantile mean swing several-fold). The weighted-mean stream return is then
+    annualized so horizons of different lengths share one scale before they are averaged.
+    """
+    stream_h = _rolling_compound(stream, horizon)
+    bench_h = _rolling_compound(bench, horizon)
+    if stream_h.size == 0 or bench_h.size == 0:
+        return np.nan
+    weight = np.maximum(bench_h.mean() - bench_h, 0.0)
+    total = weight.sum()
+    if total <= 0.0:
+        return np.nan
+    payoff = float((weight * stream_h).sum() / total)
+    return (1.0 + payoff) ** (_ANNUALIZATION_DAYS / horizon) - 1.0
+
+
+def _crisis_quarter_return(stream: np.ndarray, bench: np.ndarray) -> float:
+    """Smooth, horizon-band-averaged annualized return when the benchmark does badly.
+
+    The stabilized convexity signature: the downside conditioning is *smooth* (a mean-shortfall weight,
+    not a worst-quantile cutoff) and the payoff is *averaged over a band of multi-month horizons*, each
+    annualized to a common scale. Smoothing removes the threshold knob and the band-average removes the
+    single-window knob; together they were validated to cut the design-choice spread several-fold versus
+    a single-horizon worst-quintile mean. The residual magnitude uncertainty (a typical sample holds
+    only a couple of crises) is irreducible and is reported, post-hoc, by
+    ``crisis_payoff_bootstrap_ci_from_curve`` - so the engine ranks on this low-variance point estimate
+    and the bootstrap interval is the trust check.
+    """
+    payoffs = [_crisis_conditional_payoff(stream, bench, h) for h in _HORIZON_BAND]
+    finite = [p for p in payoffs if np.isfinite(p)]
+    return float(np.mean(finite)) if finite else np.nan
+
+
 # ── Per-benchmark read factories ──────────────────────────────────────────────
 
 def _make_quarterly_skew_read(benchmark: str) -> Callable[[Any, ReportConfig], pd.Series]:
@@ -195,6 +327,14 @@ def _make_crisis_conditional_read(benchmark: str) -> Callable[[Any, ReportConfig
     def _read(pf: Any, config: ReportConfig) -> pd.Series:
         returns, bench = _stream_and_benchmark(pf, benchmark)
         return _per_column(returns, bench, _crisis_conditional)
+
+    return _read
+
+
+def _make_crisis_quarter_read(benchmark: str) -> Callable[[Any, ReportConfig], pd.Series]:
+    def _read(pf: Any, config: ReportConfig) -> pd.Series:
+        returns, bench = _stream_and_benchmark(pf, benchmark)
+        return _per_column(returns, bench, _crisis_quarter_return)
 
     return _read
 
@@ -252,6 +392,14 @@ def convexity_metrics(
             ExtractorSpec(_make_crisis_conditional_read(benchmark)),
         ),
         (
+            _definition(CRISIS_QUARTER_RETURN_ID,
+                        f"Crisis-Conditional Return ({benchmark}, smooth downside, 2-6mo band)",
+                        "return",
+                        "annualized return when the benchmark does badly (smooth downside weight, horizon-band-averaged)",
+                        benchmark),
+            ExtractorSpec(_make_crisis_quarter_read(benchmark)),
+        ),
+        (
             _definition(BEAR_MARKET_BETA_ID, f"Bear-Market Beta vs {benchmark}",
                         "beta", "exposure specifically in down regimes", benchmark),
             ExtractorSpec(_make_bear_regime_beta_read(benchmark)),
@@ -262,9 +410,11 @@ def convexity_metrics(
 __all__ = [
     "BEAR_MARKET_BETA_ID",
     "CRASH_DAY_RETURN_ID",
+    "CRISIS_QUARTER_RETURN_ID",
     "DEFAULT_BENCHMARK",
     "MARKET_BETA_ID",
     "MARKET_CONVEXITY_ID",
     "QUARTERLY_RETURN_SKEW_ID",
     "convexity_metrics",
+    "crisis_payoff_bootstrap_ci_from_curve",
 ]

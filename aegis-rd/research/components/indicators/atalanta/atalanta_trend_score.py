@@ -33,6 +33,12 @@ def param_space():
     }
 
 
+# %% lookback
+def lookback(**params):
+    """Warmup bars for the trend score: the momentum lookback length."""
+    return int(params["lookback"])
+
+
 # %% helpers
 def _trend_score(close, lookback):
     """Annualized absolute momentum: (Close(t) / Close(t - lookback))^(252/lookback) - 1.
