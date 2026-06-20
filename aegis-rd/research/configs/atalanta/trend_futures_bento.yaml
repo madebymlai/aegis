@@ -1,14 +1,16 @@
 name: atalanta_trend_futures_bento
-schema_version: 8
+schema_version: 9
 output_dir: runs/atalanta/trend_futures_bento
 
-# FUTURES trend sleeve on DATABENTO (source: bento -> vbt.BentoData), now that account-level
-# derivatives + free shorting are allowed (2026-06-17). This supersedes the yfinance "=F" probe
-# (trend_futures_ls.yaml): yfinance front-month "=F" are NAIVE non-back-adjusted series with roll
-# gaps a trend signal misreads; Databento continuous symbology (stype_in: continuous, ROOT.c.0 =
-# calendar-rolled front month) gives a roll-handled series. NO custom adapter: the research engine
-# auto-discovers vbt.BentoData as source "bento"; the API key + pull params flow through
-# provider_kwargs (key read from $DATABENTO_API_KEY, never committed).
+# FUTURES trend sleeve on the AEGIS HISTORICAL STORE (source: store, provider: databento). Migrated
+# off Databento server-side continuous (stype_in: continuous, ROOT.c.0) — that was a RAW stitched
+# front month, NOT price-adjusted, so a roll seam left a gap a trend signal misreads. The store now
+# serves OUR continuous history: dated GLBX outright contracts, rolled on each contract's real expiry
+# (instrument-definition driven) and RATIO back-adjusted (adjustment: backward_ratio) into a gap-free
+# series. The store gap-fills from Databento on first run and caches each leg to parquet, so the pull
+# is once-and-amortized; later runs read the cache. NO provider_kwargs (store is a local source); the
+# API key is read from $DATABENTO_API_KEY by the pull, never committed. (Name retains "bento" for run
+# continuity; the data path is now the store.)
 #
 # MECHANISM unchanged and already validated (2026-06-14 diary): atalanta.trendStraddleBuffered
 # (conviction/magnitude-weighted inverse-vol straddle + turnover buffer) on atalanta.trend_score +
@@ -17,53 +19,51 @@ output_dir: runs/atalanta/trend_futures_bento
 # the roster's substrate claim directly: futures reach rates+FX+energy+metals+ags two-sided at far
 # higher independent-bet breadth than the borrow-constrained London ETC book.
 #
-# UNIVERSE: 23 CME-family continuous front-month futures on GLBX.MDP3 (one dataset, all two-sided,
-# equity-index DELIBERATELY excluded per the non-equity substrate requirement). ICE softs
-# (KC/SB/CC/CT cocoa-etc.) and Brent live on ICE datasets (IFUS/IFEU), not GLBX.MDP3 — a second-
-# dataset extension once this GLBX cut is validated.
+# UNIVERSE: 23 CME-family futures on GLBX.MDP3 (one dataset, all two-sided, equity-index DELIBERATELY
+# excluded per the non-equity substrate requirement). ICE softs (KC/SB/CC/CT cocoa-etc.) and Brent
+# live on ICE datasets (IFUS/IFEU), not GLBX.MDP3 — a second-dataset extension once this GLBX cut is
+# validated.
 #   rates (CBOT)  5 : ZT ZF ZN ZB UB     (2y/5y/10y/30y/ultra-bond)
 #   FX   (CME)    6 : 6E 6J 6B 6A 6C 6S   (EUR JPY GBP AUD CAD CHF)
 #   energy(NYMEX) 4 : CL NG RB HO         (WTI/natgas/gasoline/heating oil)
 #   metals(CMX/NY)5 : GC SI HG PL PA      (gold/silver/copper/platinum/palladium)
 #   ags  (CBOT)   3 : ZC ZW ZS            (corn/wheat/soybean)
 data:
-  source: bento
+  source: store
+  provider: databento                 # gap-fill futures legs from Databento; key from $DATABENTO_API_KEY
+  dataset: GLBX.MDP3
   arrays:
   - OHLCV
-  provider_kwargs:
-    client_config:
-      key: {env: DATABENTO_API_KEY}   # resolve_env_refs -> $DATABENTO_API_KEY; key stays out of git
-    dataset: GLBX.MDP3
-    stype_in: continuous              # ROOT.c.0 = calendar-rolled front month
   symbols:
+  # futures store symbols: root identity + ratio back-adjust (roll_rule defaults to calendar).
   # --- rates: US curve (CBOT) ---
-  - {ticker: "ZT.c.0", ccy: USD}
-  - {ticker: "ZF.c.0", ccy: USD}
-  - {ticker: "ZN.c.0", ccy: USD}
-  - {ticker: "ZB.c.0", ccy: USD}
-  - {ticker: "UB.c.0", ccy: USD}
+  - {root: ZT, ccy: USD, adjustment: backward_ratio}
+  - {root: ZF, ccy: USD, adjustment: backward_ratio}
+  - {root: ZN, ccy: USD, adjustment: backward_ratio}
+  - {root: ZB, ccy: USD, adjustment: backward_ratio}
+  - {root: UB, ccy: USD, adjustment: backward_ratio}
   # --- FX (CME) ---
-  - {ticker: "6E.c.0", ccy: USD}
-  - {ticker: "6J.c.0", ccy: USD}
-  - {ticker: "6B.c.0", ccy: USD}
-  - {ticker: "6A.c.0", ccy: USD}
-  - {ticker: "6C.c.0", ccy: USD}
-  - {ticker: "6S.c.0", ccy: USD}
+  - {root: 6E, ccy: USD, adjustment: backward_ratio}
+  - {root: 6J, ccy: USD, adjustment: backward_ratio}
+  - {root: 6B, ccy: USD, adjustment: backward_ratio}
+  - {root: 6A, ccy: USD, adjustment: backward_ratio}
+  - {root: 6C, ccy: USD, adjustment: backward_ratio}
+  - {root: 6S, ccy: USD, adjustment: backward_ratio}
   # --- energy (NYMEX) ---
-  - {ticker: "CL.c.0", ccy: USD}
-  - {ticker: "NG.c.0", ccy: USD}
-  - {ticker: "RB.c.0", ccy: USD}
-  - {ticker: "HO.c.0", ccy: USD}
+  - {root: CL, ccy: USD, adjustment: backward_ratio}
+  - {root: NG, ccy: USD, adjustment: backward_ratio}
+  - {root: RB, ccy: USD, adjustment: backward_ratio}
+  - {root: HO, ccy: USD, adjustment: backward_ratio}
   # --- metals (COMEX/NYMEX) ---
-  - {ticker: "GC.c.0", ccy: USD}
-  - {ticker: "SI.c.0", ccy: USD}
-  - {ticker: "HG.c.0", ccy: USD}
-  - {ticker: "PL.c.0", ccy: USD}
-  - {ticker: "PA.c.0", ccy: USD}
+  - {root: GC, ccy: USD, adjustment: backward_ratio}
+  - {root: SI, ccy: USD, adjustment: backward_ratio}
+  - {root: HG, ccy: USD, adjustment: backward_ratio}
+  - {root: PL, ccy: USD, adjustment: backward_ratio}
+  - {root: PA, ccy: USD, adjustment: backward_ratio}
   # --- ags (CBOT) ---
-  - {ticker: "ZC.c.0", ccy: USD}
-  - {ticker: "ZW.c.0", ccy: USD}
-  - {ticker: "ZS.c.0", ccy: USD}
+  - {root: ZC, ccy: USD, adjustment: backward_ratio}
+  - {root: ZW, ccy: USD, adjustment: backward_ratio}
+  - {root: ZS, ccy: USD, adjustment: backward_ratio}
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

@@ -27,9 +27,14 @@ from aegis_data.store import (
     replace_native_bars,
 )
 
-_RATIO_ADJUSTMENTS = frozenset({"back_adjust", "ratio"})
-_CLOSE_DEPENDENT_ADJUSTMENTS = _RATIO_ADJUSTMENTS | {"difference"}
-_SUPPORTED_ADJUSTMENTS_MESSAGE = "back_adjust, ratio, difference, or unadjusted"
+# Continuous-futures adjustment vocabulary, named to match NautilusTrader's backward
+# ContinuousFutureAdjustmentType modes so research and live agree by construction:
+# ``backward_ratio`` (multiplicative, returns-preserving) and ``backward_spread``
+# (additive/Panama, point-move & $-P&L preserving).  These map to the generic transform
+# primitives (ratio/difference); the "backward" anchor is implicit (newest unadjusted).
+_RATIO_ADJUSTMENTS = frozenset({"backward_ratio"})
+_CLOSE_DEPENDENT_ADJUSTMENTS = _RATIO_ADJUSTMENTS | {"backward_spread"}
+_SUPPORTED_ADJUSTMENTS_MESSAGE = "backward_ratio, backward_spread, or unadjusted"
 
 
 @dataclass(frozen=True)
@@ -175,7 +180,7 @@ def _fill_raw_leg_gaps(
 def _continuous_panel(chain: ContractChain, *, adjustment: str) -> pd.DataFrame:
     if adjustment in _RATIO_ADJUSTMENTS:
         return back_adjust_chain(chain, method="ratio")
-    if adjustment == "difference":
+    if adjustment == "backward_spread":
         return back_adjust_chain(chain, method="difference")
     if adjustment == "unadjusted":
         return _unadjusted_chain(chain)

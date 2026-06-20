@@ -133,6 +133,10 @@ class SymbolSpec:
     dataset: str | None = None
     roll_rule: str = "calendar"
     adjustment: str = "unadjusted"
+    # Optional second continuous series for a futures store symbol: ``adjustment`` is the
+    # signal price (indicators), ``pnl_adjustment`` the price the portfolio simulates P&L /
+    # sizes against.  When unset the signal series is also the P&L series (single series).
+    pnl_adjustment: str | None = None
 
     @property
     def is_future(self) -> bool:
@@ -322,8 +326,12 @@ def store_gap_fill_provider(provider: str | None) -> str:
 
 
 # Sources that can supply per-contract dated-contract data (the overlap the
-# back-adjustment needs).  Only these may declare ``adjustment: back_adjust``.
+# back-adjustment needs).  Only these may declare a back-adjusted ``adjustment``.
 _PER_CONTRACT_SOURCES = frozenset({"bento", "store"})
+# Back-adjustment modes, named to match NautilusTrader's backward
+# ContinuousFutureAdjustmentType so research and live agree: ``backward_ratio``
+# (multiplicative, returns-preserving) and ``backward_spread`` (additive/Panama).
+_PER_CONTRACT_ADJUSTMENTS = frozenset({"backward_ratio", "backward_spread"})
 _STORE_GAP_FILL_PROVIDERS = frozenset({"databento", "yfinance"})
 _STORE_PROVIDER_ALIASES = {
     "bento": "databento",
@@ -335,6 +343,8 @@ _STORE_PROVIDER_ALIASES = {
 
 def _validate_future_source_support(source: str, symbol: SymbolSpec) -> None:
     if not symbol.is_future:
+        if symbol.pnl_adjustment is not None:
+            raise ValueError("pnl_adjustment is only supported for futures store symbols")
         return
     if source != "store" and symbol.dataset is None:
         raise ValueError("dataset is required when root declares a FuturesRef")
@@ -342,13 +352,28 @@ def _validate_future_source_support(source: str, symbol: SymbolSpec) -> None:
         raise ValueError(
             f"roll_rule {symbol.roll_rule!r} is not supported for {source} source"
         )
+    _validate_pnl_adjustment(source, symbol)
     if symbol.adjustment == "unadjusted":
         return
-    if symbol.adjustment == "back_adjust" and source in _PER_CONTRACT_SOURCES:
+    if symbol.adjustment in _PER_CONTRACT_ADJUSTMENTS and source in _PER_CONTRACT_SOURCES:
         return
     raise ValueError(
         f"adjustment {symbol.adjustment!r} is not supported for {source} source"
     )
+
+
+# Modes a second (P&L) continuous series may take: the two backward back-adjustments or the
+# raw splice.  Anything else fails closed.
+_PNL_ADJUSTMENTS = _PER_CONTRACT_ADJUSTMENTS | {"unadjusted"}
+
+
+def _validate_pnl_adjustment(source: str, symbol: SymbolSpec) -> None:
+    if symbol.pnl_adjustment is None:
+        return
+    if symbol.pnl_adjustment not in _PNL_ADJUSTMENTS or source not in _PER_CONTRACT_SOURCES:
+        raise ValueError(
+            f"pnl_adjustment {symbol.pnl_adjustment!r} is not supported for {source} source"
+        )
 
 
 def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:

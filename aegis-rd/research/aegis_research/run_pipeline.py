@@ -35,6 +35,7 @@ from research.aegis_research.market_data.currency import (
     convert_bundle_to_base,
     required_fx_currencies,
 )
+from research.aegis_research.market_data.panels import canonical_array_panel
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
@@ -123,6 +124,7 @@ def run_strategy_sweep(
         data_result.assert_usable()
         data_bundle = _apply_futures_back_adjustment(config.data, market_data_bundle(data_result))
         data_bundle = _to_base_currency(config, data_bundle=data_bundle)
+        pnl_bundle = _pnl_bundle(config, data_result)
         metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
             config,
@@ -130,6 +132,7 @@ def run_strategy_sweep(
             recorder=recorder,
             data_result=data_result,
             data=data_bundle,
+            pnl_data=pnl_bundle,
             array_contract=array_contract,
             metric_registry_fingerprint=metric_registry.fingerprint,
             metric_registry=metric_registry,
@@ -152,13 +155,15 @@ def run_strategy_sweep(
 def _apply_futures_back_adjustment(
     data_config: DataConfig, data_bundle: MarketDataBundle
 ) -> MarketDataBundle:
-    """Replace each ``back_adjust`` future's panel column with the back-adjusted
+    """Replace each ``backward_ratio`` future's panel column with the back-adjusted
     continuous series sourced from :mod:`aegis_data` (Nautilus databento port +
-    OS-global parquet store); a book with no back-adjust futures passes through.
+    OS-global parquet store); a book with no back-adjusted futures passes through.
     """
     if data_config.source == "store":
         return data_bundle
-    futures = [s for s in data_config.symbols if s.is_future and s.adjustment == "back_adjust"]
+    futures = [
+        s for s in data_config.symbols if s.is_future and s.adjustment == "backward_ratio"
+    ]
     if not futures:
         return data_bundle
     start = pd.Timestamp(data_config.start).date()
@@ -172,6 +177,24 @@ def _apply_futures_back_adjustment(
             if spec.ticker in frame.columns and name in panel.columns:
                 frame[spec.ticker] = panel[name].reindex(frame.index)
     return MarketDataBundle(arrays)
+
+
+def _pnl_bundle(
+    config: RunConfig, data_result: MarketDataResult
+) -> MarketDataBundle | None:
+    """The P&L continuous series (a future's ``pnl_adjustment`` mode), in base currency.
+
+    ``None`` when no symbol declares a P&L series — the portfolio then simulates on the
+    signal series (the single-series default).  The store already back-adjusted this
+    series; here it only needs the same FX conversion the signal bundle gets.
+    """
+    if data_result.pnl_native_data is None:
+        return None
+    loaded = [descriptor.name for descriptor in data_result.metadata.arrays if descriptor.loaded]
+    bundle = MarketDataBundle(
+        {name: canonical_array_panel(data_result.pnl_native_data, name) for name in loaded}
+    )
+    return _to_base_currency(config, data_bundle=bundle)
 
 
 def _to_base_currency(
@@ -282,6 +305,7 @@ def _run_optimization_strategy_sweep(
     recorder: RunRecorder,
     data_result: MarketDataResult,
     data: MarketDataBundle,
+    pnl_data: MarketDataBundle | None,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
     metric_registry: FrozenMetricRegistry,
@@ -293,6 +317,7 @@ def _run_optimization_strategy_sweep(
             config=config,
             component_registry=component_registry,
             data=data,
+            pnl_data=pnl_data,
             data_result=data_result,
             array_contract=array_contract,
             metric_registry_fingerprint=metric_registry_fingerprint,

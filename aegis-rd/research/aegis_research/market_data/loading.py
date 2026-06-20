@@ -98,6 +98,7 @@ def load_market_data_result(
         metadata=metadata,
         diagnostics=diagnostics,
         quality=quality,
+        pnl_native_data=adapter_result.pnl_native_data,
     )
 
 

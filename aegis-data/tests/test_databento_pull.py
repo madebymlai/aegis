@@ -61,7 +61,7 @@ def _es_calendar(root: str, start: date, end: date) -> list[DatedContract]:
 
 
 def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(tmp_path) -> None:
-    ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
+    ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_ratio")
     fetched: list[str] = []
 
     def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
@@ -105,20 +105,23 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
 
 
 def test_databento_pull_derives_alternate_adjustment_from_same_raw_legs(tmp_path) -> None:
-    ratio_ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
-    difference_ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="difference")
+    backward_ratio_ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_ratio")
+    backward_spread_ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_spread")
 
     pull_databento_futures_bars(
-        _request(ratio_ref), fetcher=_leg_bars, contract_calendar=_es_calendar, store_dir=tmp_path
+        _request(backward_ratio_ref),
+        fetcher=_leg_bars,
+        contract_calendar=_es_calendar,
+        store_dir=tmp_path,
     )
     pull_databento_futures_bars(
-        _request(difference_ref),
+        _request(backward_spread_ref),
         fetcher=_provider_hit,
         contract_calendar=_es_calendar,
         store_dir=tmp_path,
     )
     frames = read_native_bars(
-        (ratio_ref, difference_ref),
+        (backward_ratio_ref, backward_spread_ref),
         arrays=("Close",),
         timeframe="1D",
         start="2024-01-02",
@@ -127,7 +130,9 @@ def test_databento_pull_derives_alternate_adjustment_from_same_raw_legs(tmp_path
         calendar=TradingCalendar.XNYS,
     )
 
-    assert native_bars_path(ratio_ref, "1D", store_dir=tmp_path) != native_bars_path(
-        difference_ref, "1D", store_dir=tmp_path
+    assert native_bars_path(backward_ratio_ref, "1D", store_dir=tmp_path) != native_bars_path(
+        backward_spread_ref, "1D", store_dir=tmp_path
     )
-    assert frames[ratio_ref]["Close"].iloc[0] != frames[difference_ref]["Close"].iloc[0]
+    assert (
+        frames[backward_ratio_ref]["Close"].iloc[0] != frames[backward_spread_ref]["Close"].iloc[0]
+    )

@@ -1,59 +1,56 @@
 name: atalanta_trend_futures_ls
-schema_version: 8
+schema_version: 9
 output_dir: runs/atalanta/trend_futures_ls
 
-# FUTURES-UNIVERSE full L/S probe, DATABENTO source (replaces the naive yfinance "=F" front-month
-# that carried roll gaps + the negative-WTI print). Champion mechanism (atalanta.trendStraddleBuffered)
-# on a broad orthogonal NON-EQUITY futures book, all natively L/S (no short mask).
+# FUTURES-UNIVERSE full L/S probe on the AEGIS HISTORICAL STORE (replaces the naive yfinance "=F"
+# front-month that carried roll gaps + the negative-WTI print). Champion mechanism
+# (atalanta.trendStraddleBuffered) on a broad orthogonal NON-EQUITY futures book, all natively L/S
+# (no short mask).
 #
-# DATABENTO: dataset GLBX.MDP3 (CME Globex: CME/CBOT/NYMEX/COMEX), continuous front-month via
-# stype_in=continuous + ".c.0" symbols. Key is referenced from the DATABENTO_API_KEY env var
-# (NOT hardcoded — this config is tracked). 23 GLBX-listed roots; the 5 ICE names (Brent, coffee,
-# sugar, cocoa, cotton) live on a different dataset and are dropped for now.
+# DATA: source: store, provider: databento, dataset GLBX.MDP3 (CME Globex: CME/CBOT/NYMEX/COMEX).
+# Futures are OUR continuous history: dated outright legs rolled on each contract's real expiry and
+# RATIO back-adjusted (adjustment: backward_ratio) into a gap-free series. This RESOLVES the prior ".c.0"
+# caveat — Databento server continuous was NOT back-adjusted, so seams remained at rolls; the store's
+# ratio-adjust pass is that fix. Store gap-fills from Databento on first run and caches each leg to
+# parquet (pull-once, amortized); key read from $DATABENTO_API_KEY (NOT hardcoded — this config is
+# tracked). 23 GLBX-listed roots; the 5 ICE names (Brent, coffee, sugar, cocoa, cotton) live on a
+# different dataset and are dropped for now.
 #   rates 5 : ZT ZF ZN ZB UB    FX 6 : 6E 6J 6B 6A 6C 6S
 #   energy 4: CL NG RB HO        metals 5: GC SI HG PL PA      grains 3: ZC ZW ZS
 #
-# CAVEAT: databento continuous ".c.0" selects the front contract on a roll rule but is NOT
-# ratio-back-adjusted, so price seams remain at rolls (and front-month WTI still went negative in
-# 2020-04). Cleaner than yahoo, not yet roll-clean; a ratio-adjust pass is the next step if this
-# warrants it.
+# FIRST-RUN COST: store coverage pulls the 23 roots sequentially (no engine knob — store is a local
+# source, unlike the old bento threadpool fan-out). Each root now uses the narrowed definition path
+# (~1s defs, per-contract bars), and it is pull-once: every later run reads the parquet cache.
 data:
-  source: bento
+  source: store
+  provider: databento
+  dataset: GLBX.MDP3
   arrays:
   - OHLCV
-  provider_kwargs:
-    dataset: GLBX.MDP3
-    stype_in: continuous
-    client_config:
-      key: {env: DATABENTO_API_KEY}
-  # continuous-contract get_range is ~104s/symbol; default SerialEngine fetches the 23 one at a
-  # time (~40 min). threadpool fans the network-bound pulls out concurrently (~2 min).
-  execution_kwargs:
-    engine: threadpool
   symbols:
-  - {ticker: ZT.c.0, ccy: USD}
-  - {ticker: ZF.c.0, ccy: USD}
-  - {ticker: ZN.c.0, ccy: USD}
-  - {ticker: ZB.c.0, ccy: USD}
-  - {ticker: UB.c.0, ccy: USD}
-  - {ticker: 6E.c.0, ccy: USD}
-  - {ticker: 6J.c.0, ccy: USD}
-  - {ticker: 6B.c.0, ccy: USD}
-  - {ticker: 6A.c.0, ccy: USD}
-  - {ticker: 6C.c.0, ccy: USD}
-  - {ticker: 6S.c.0, ccy: USD}
-  - {ticker: CL.c.0, ccy: USD}
-  - {ticker: NG.c.0, ccy: USD}
-  - {ticker: RB.c.0, ccy: USD}
-  - {ticker: HO.c.0, ccy: USD}
-  - {ticker: GC.c.0, ccy: USD}
-  - {ticker: SI.c.0, ccy: USD}
-  - {ticker: HG.c.0, ccy: USD}
-  - {ticker: PL.c.0, ccy: USD}
-  - {ticker: PA.c.0, ccy: USD}
-  - {ticker: ZC.c.0, ccy: USD}
-  - {ticker: ZW.c.0, ccy: USD}
-  - {ticker: ZS.c.0, ccy: USD}
+  - {root: ZT, ccy: USD, adjustment: backward_ratio}
+  - {root: ZF, ccy: USD, adjustment: backward_ratio}
+  - {root: ZN, ccy: USD, adjustment: backward_ratio}
+  - {root: ZB, ccy: USD, adjustment: backward_ratio}
+  - {root: UB, ccy: USD, adjustment: backward_ratio}
+  - {root: 6E, ccy: USD, adjustment: backward_ratio}
+  - {root: 6J, ccy: USD, adjustment: backward_ratio}
+  - {root: 6B, ccy: USD, adjustment: backward_ratio}
+  - {root: 6A, ccy: USD, adjustment: backward_ratio}
+  - {root: 6C, ccy: USD, adjustment: backward_ratio}
+  - {root: 6S, ccy: USD, adjustment: backward_ratio}
+  - {root: CL, ccy: USD, adjustment: backward_ratio}
+  - {root: NG, ccy: USD, adjustment: backward_ratio}
+  - {root: RB, ccy: USD, adjustment: backward_ratio}
+  - {root: HO, ccy: USD, adjustment: backward_ratio}
+  - {root: GC, ccy: USD, adjustment: backward_ratio}
+  - {root: SI, ccy: USD, adjustment: backward_ratio}
+  - {root: HG, ccy: USD, adjustment: backward_ratio}
+  - {root: PL, ccy: USD, adjustment: backward_ratio}
+  - {root: PA, ccy: USD, adjustment: backward_ratio}
+  - {root: ZC, ccy: USD, adjustment: backward_ratio}
+  - {root: ZW, ccy: USD, adjustment: backward_ratio}
+  - {root: ZS, ccy: USD, adjustment: backward_ratio}
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

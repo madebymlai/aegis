@@ -70,6 +70,11 @@ class SetupResult:
     optimization_source: OptimizationSource
     close: pd.DataFrame
     open_: pd.DataFrame
+    # Prices the portfolio simulates P&L on. Equal to close/open_ for a single-series run;
+    # the future's ``pnl_adjustment`` series when one is declared, while close/open_ (the
+    # signal series) still drive the indicators.
+    pnl_close: pd.DataFrame
+    pnl_open: pd.DataFrame
     split_result: RunSplitsResult
 
     @property
@@ -91,6 +96,7 @@ def run_pipeline_setup(
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
     run_evidence: RunEvidence,
+    pnl_data: MarketDataBundle | None = None,
 ) -> SetupResult:
     """Resolve the Lock, build the optimization source, and construct the evidence baseline."""
     # The public entry point rejects runs without an optimization block, so by the
@@ -117,6 +123,10 @@ def run_pipeline_setup(
     )
     close = data.array("Close")
     open_ = data.array("Open")
+    # The signal series (close/open_) drives indicators and splits; the P&L series drives the
+    # portfolio. With no pnl_adjustment declared they are the same frame (single-series run).
+    pnl_close = pnl_data.array("Close") if pnl_data is not None else close
+    pnl_open = pnl_data.array("Open") if pnl_data is not None else open_
     split_result = build_run_splits_result(close.index, config.optimization.split)
     optimization_builtin = to_builtin(config.optimization)
     run_evidence.initialize_optimization(
@@ -135,6 +145,8 @@ def run_pipeline_setup(
         optimization_source=optimization_source,
         close=close,
         open_=open_,
+        pnl_close=pnl_close,
+        pnl_open=pnl_open,
         split_result=split_result,
     )
 

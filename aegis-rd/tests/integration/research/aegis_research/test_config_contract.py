@@ -334,7 +334,7 @@ def test_store_futures_duplicate_roots_fail_closed(tmp_path: Path) -> None:
         "dataset": "GLBX.MDP3",
         "symbols": [
             {"root": "ES", "ccy": "USD"},
-            {"root": "ES", "ccy": "USD", "adjustment": "back_adjust"},
+            {"root": "ES", "ccy": "USD", "adjustment": "backward_ratio"},
         ],
         "arrays": ["Close"],
         "start": "2024-01-02",

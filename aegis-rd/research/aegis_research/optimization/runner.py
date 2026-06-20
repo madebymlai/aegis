@@ -65,6 +65,23 @@ class OptimizationRunnerError(ValueError):
     pass
 
 
+def _portfolio_prices(
+    close: pd.DataFrame,
+    open_: pd.DataFrame,
+    pnl_close: pd.DataFrame | None,
+    pnl_open: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The (close, open) the portfolio simulates P&L on.
+
+    The P&L series (a future's ``pnl_adjustment`` mode) when supplied, else the signal
+    series the indicators ran on — the single-series default, not a special case.
+    """
+    return (
+        close if pnl_close is None else pnl_close,
+        open_ if pnl_open is None else pnl_open,
+    )
+
+
 def execute_optimization(
     *,
     close: pd.DataFrame,
@@ -77,6 +94,8 @@ def execute_optimization(
     metric_registry: FrozenMetricRegistry,
     split_result: RunSplitsResult,
     fees_by_symbol: pd.Series | None = None,
+    pnl_close: pd.DataFrame | None = None,
+    pnl_open: pd.DataFrame | None = None,
 ) -> OptimizationResult:
     _validate_source_param_names(source.params)
     if ranking.metric not in metric_registry:
@@ -99,12 +118,16 @@ def execute_optimization(
         name: vbt.Param(values, level=0) for name, values in sampled_lists.items()
     }
 
-    # Stage 1: run each indicator's callable once over the full series.
+    # Stage 1: run each indicator's callable once over the full SIGNAL series (close).
     sampled_candidate_keys = candidate_keys(sampled_lists)
     store = source.precompute(close, n_candidates, **sampled_lists)
     invalid_candidate_keys = invalid_candidates(
         store, sampled_candidate_keys
     )
+
+    # The portfolio simulates P&L on the P&L series when one is supplied (a future's
+    # ``pnl_adjustment`` mode); otherwise it reuses the signal series — single-series default.
+    portfolio_close, portfolio_open = _portfolio_prices(close, open_, pnl_close, pnl_open)
 
     # One evaluator drives both sweeps — the per-window slicing, the all-Invalid
     # short-circuit, and the metric extraction. Selection and held-out share this
@@ -114,8 +137,8 @@ def execute_optimization(
         source=source,
         portfolio=portfolio,
         report=report,
-        close=close,
-        open_=open_,
+        close=portfolio_close,
+        open_=portfolio_open,
         store=store,
         invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,

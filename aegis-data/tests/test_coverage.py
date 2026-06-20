@@ -359,7 +359,7 @@ def test_ensure_coverage_materializes_readable_continuous_futures_history(
     tmp_path: Path,
 ) -> None:
     """The futures dispatch yields covered, readable continuous history end-to-end."""
-    ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
+    ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_ratio")
     monkeypatch.setattr(
         "aegis_data.databento_pull.databento_port_fetcher",
         lambda _dataset, *, client=None: _leg_bars,

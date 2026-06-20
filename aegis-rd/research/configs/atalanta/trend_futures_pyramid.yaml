@@ -1,9 +1,9 @@
 name: atalanta_trend_futures_pyramid
-schema_version: 8
+schema_version: 9
 output_dir: runs/atalanta/trend_futures_pyramid
 
 # PYRAMIDING test on the futures substrate ([[what-makes-a-trend-sleeve-convex]] hypothesis #2, the one
-# article shape-lever the codebase lacked). Same bento GLBX book + champion signal params as
+# article shape-lever the codebase lacked). Same GLBX book + champion signal params as
 # trend_futures_ls.yaml (trend_score lb252 + realized_vol vw63, full L/S), but the strategy is
 # atalanta.trendStraddleBufferedPyramid: each name builds 0->full over `ramp_steps` bars of trend
 # persistence, so gross floats up as trends mature (convex, builds the right tail) and down in chop.
@@ -11,43 +11,41 @@ output_dir: runs/atalanta/trend_futures_pyramid
 # exactly (no-pyramid baseline), vs 21/63/126; with/without the 0.20 buffer. Ranked by quarterly skew
 # (the shape the pyramid is supposed to deepen); sharpe + UPI emitted alongside for the held-out gate.
 #
-# DATABENTO: dataset GLBX.MDP3, continuous front-month (stype_in=continuous, ".c.0"); key from the
-# DATABENTO_API_KEY env var (NOT hardcoded). threadpool fans the 23 network-bound pulls concurrently.
+# DATA: aegis historical store (source: store, provider: databento), dataset GLBX.MDP3. Futures are
+# our ratio back-adjusted continuous (adjustment: backward_ratio) — dated outright legs rolled on real
+# expiry, gap-free. Store gap-fills from Databento on first run and caches to parquet (pull-once); key
+# read from $DATABENTO_API_KEY. The store coverage pull is per-root sequential on the first run (no
+# engine knob — store is a local source); later runs read the cache.
 data:
-  source: bento
+  source: store
+  provider: databento
+  dataset: GLBX.MDP3
   arrays:
   - OHLCV
-  provider_kwargs:
-    dataset: GLBX.MDP3
-    stype_in: continuous
-    client_config:
-      key: {env: DATABENTO_API_KEY}
-  execution_kwargs:
-    engine: threadpool
   symbols:
-  - {ticker: ZT.c.0, ccy: USD}
-  - {ticker: ZF.c.0, ccy: USD}
-  - {ticker: ZN.c.0, ccy: USD}
-  - {ticker: ZB.c.0, ccy: USD}
-  - {ticker: UB.c.0, ccy: USD}
-  - {ticker: 6E.c.0, ccy: USD}
-  - {ticker: 6J.c.0, ccy: USD}
-  - {ticker: 6B.c.0, ccy: USD}
-  - {ticker: 6A.c.0, ccy: USD}
-  - {ticker: 6C.c.0, ccy: USD}
-  - {ticker: 6S.c.0, ccy: USD}
-  - {ticker: CL.c.0, ccy: USD}
-  - {ticker: NG.c.0, ccy: USD}
-  - {ticker: RB.c.0, ccy: USD}
-  - {ticker: HO.c.0, ccy: USD}
-  - {ticker: GC.c.0, ccy: USD}
-  - {ticker: SI.c.0, ccy: USD}
-  - {ticker: HG.c.0, ccy: USD}
-  - {ticker: PL.c.0, ccy: USD}
-  - {ticker: PA.c.0, ccy: USD}
-  - {ticker: ZC.c.0, ccy: USD}
-  - {ticker: ZW.c.0, ccy: USD}
-  - {ticker: ZS.c.0, ccy: USD}
+  - {root: ZT, ccy: USD, adjustment: backward_ratio}
+  - {root: ZF, ccy: USD, adjustment: backward_ratio}
+  - {root: ZN, ccy: USD, adjustment: backward_ratio}
+  - {root: ZB, ccy: USD, adjustment: backward_ratio}
+  - {root: UB, ccy: USD, adjustment: backward_ratio}
+  - {root: 6E, ccy: USD, adjustment: backward_ratio}
+  - {root: 6J, ccy: USD, adjustment: backward_ratio}
+  - {root: 6B, ccy: USD, adjustment: backward_ratio}
+  - {root: 6A, ccy: USD, adjustment: backward_ratio}
+  - {root: 6C, ccy: USD, adjustment: backward_ratio}
+  - {root: 6S, ccy: USD, adjustment: backward_ratio}
+  - {root: CL, ccy: USD, adjustment: backward_ratio}
+  - {root: NG, ccy: USD, adjustment: backward_ratio}
+  - {root: RB, ccy: USD, adjustment: backward_ratio}
+  - {root: HO, ccy: USD, adjustment: backward_ratio}
+  - {root: GC, ccy: USD, adjustment: backward_ratio}
+  - {root: SI, ccy: USD, adjustment: backward_ratio}
+  - {root: HG, ccy: USD, adjustment: backward_ratio}
+  - {root: PL, ccy: USD, adjustment: backward_ratio}
+  - {root: PA, ccy: USD, adjustment: backward_ratio}
+  - {root: ZC, ccy: USD, adjustment: backward_ratio}
+  - {root: ZW, ccy: USD, adjustment: backward_ratio}
+  - {root: ZS, ccy: USD, adjustment: backward_ratio}
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

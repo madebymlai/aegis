@@ -60,6 +60,9 @@ class MarketDataAdapterResult:
     evidence: dict[str, Any] = field(default_factory=dict)
     provider_metadata: dict[str, Any] = field(default_factory=dict)
     omitted_metadata_fields: list[dict[str, str]] = field(default_factory=list)
+    # Optional second continuous series (the ``pnl_adjustment`` mode) the portfolio
+    # simulates P&L on; ``None`` when no symbol declares a P&L series.
+    pnl_native_data: Any = None
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -165,6 +168,7 @@ class MarketDataResult:
     metadata: MarketDataMetadataV3
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
+    pnl_native_data: Any = None
 
     def assert_usable(self) -> None:
         if not self.quality.usable:
