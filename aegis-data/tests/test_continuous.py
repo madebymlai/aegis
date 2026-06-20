@@ -50,6 +50,36 @@ def test_roll_adjustment_factors_expose_per_contract_multipliers() -> None:
     assert factors[0] == pytest.approx(122.0 / 102.0)
 
 
+def test_factors_match_nautilus_backward_ratio_published_vectors() -> None:
+    # Tripwire pinning our math to NautilusTrader's own test vectors so research and live
+    # cannot drift from the BACKWARD_RATIO definition (no Nautilus dependency, just the
+    # numbers). Source: nautilus_trader crates/data/src/engine/requests.rs
+    # test_continuous_future_adjustment_for_backward_ratio — transitions (pre 100 -> post
+    # 200), (pre 50 -> post 150) yield per-segment factors [6, 3, 1] (newest unadjusted).
+    c0 = _series(["2024-03-01"], [100.0])  # roll0 pre
+    c1 = _series(["2024-03-01", "2024-06-01"], [200.0, 50.0])  # roll0 post, roll1 pre
+    c2 = _series(["2024-06-01"], [150.0])  # roll1 post
+    rolls = [pd.Timestamp("2024-03-01"), pd.Timestamp("2024-06-01")]
+
+    factors = roll_adjustment_factors([c0, c1, c2], rolls, method="ratio")
+
+    assert factors == pytest.approx((6.0, 3.0, 1.0))
+
+
+def test_factors_match_nautilus_backward_spread_published_vectors() -> None:
+    # As above for BACKWARD_SPREAD (additive). Nautilus' spread test asserts per-segment
+    # offsets [40, 30, 0]; reproduced here with transition diffs (post-pre) of +10 then +30
+    # (newest unadjusted), matching our cumulative sum-of-(new-old).
+    c0 = _series(["2024-03-01"], [100.0])  # roll0 pre
+    c1 = _series(["2024-03-01", "2024-06-01"], [110.0, 50.0])  # roll0 post (+10), roll1 pre
+    c2 = _series(["2024-06-01"], [80.0])  # roll1 post (+30)
+    rolls = [pd.Timestamp("2024-03-01"), pd.Timestamp("2024-06-01")]
+
+    factors = roll_adjustment_factors([c0, c1, c2], rolls, method="difference")
+
+    assert factors == pytest.approx((40.0, 30.0, 0.0))
+
+
 def test_difference_back_adjust_shifts_history_additively() -> None:
     a = _series(["2024-01-01", "2024-01-02", "2024-01-03"], [100.0, 101.0, 102.0])
     b = _series(["2024-01-02", "2024-01-03", "2024-01-04"], [121.0, 122.0, 123.0])
