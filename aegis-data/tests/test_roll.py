@@ -62,17 +62,52 @@ def test_arbitrary_cycle_rolls_on_supplied_months() -> None:
     assert sched.symbols == ("ZCH6", "ZCK6", "ZCN6")
 
 
-def test_contracts_expiring_outside_window_are_excluded() -> None:
+def test_leading_edge_rolled_off_contract_is_excluded_but_front_at_end_is_kept() -> None:
+    # Selection spans every contract front during the window.  A contract that rolled
+    # off before start (never front in the window) is excluded; the contract front at
+    # end is kept even though it expires after end — it is the only leg covering
+    # [last expiry, end] (aegis-rd-vv6).
     contracts = [
-        DatedContract("CLM6", date(2026, 5, 20)),  # expires before start → excluded
+        DatedContract("CLM6", date(2026, 5, 20)),  # rolled off before start → excluded
         DatedContract("CLN6", date(2026, 6, 22)),
         DatedContract("CLQ6", date(2026, 7, 21)),
-        DatedContract("CLU6", date(2026, 8, 20)),  # expires after end → excluded
+        DatedContract("CLU6", date(2026, 8, 20)),  # front at end (expires after it) → kept
     ]
     sched = roll_schedule(contracts, date(2026, 6, 1), date(2026, 7, 31), roll_lead_days=5)
 
-    assert sched.symbols == ("CLN6", "CLQ6")
+    assert sched.symbols == ("CLN6", "CLQ6", "CLU6")
     assert list(sched.roll_dates) == sorted(sched.roll_dates)  # chronological
+
+
+def test_front_at_end_contract_is_in_the_chain_even_though_it_expires_after_end() -> None:
+    # aegis-rd-vv6: the chain must span every contract that is front at some point in
+    # [start, end] — including the one front *at* end, whose last trade falls after end.
+    # Otherwise no leg covers [last expiry, end] and a store pull aborts at the edge.
+    contracts = [
+        DatedContract("ESH4", date(2024, 3, 15)),
+        DatedContract("ESM4", date(2024, 6, 21)),
+        DatedContract("ESU4", date(2024, 9, 20)),
+        DatedContract("ESZ4", date(2024, 12, 20)),  # front at end; expires after it
+    ]
+    # end 2024-10-01: past ESU4's expiry, mid-ESZ4 life.
+    sched = roll_schedule(contracts, date(2024, 1, 2), date(2024, 10, 1), roll_lead_days=5)
+
+    assert sched.symbols == ("ESH4", "ESM4", "ESU4", "ESZ4")
+
+
+def test_window_spanning_no_expiry_yields_the_single_front_contract() -> None:
+    # aegis-rd-vv6 (leading-edge symmetry): a short window entirely inside one contract's
+    # life spans no expiry.  The old expiry-window filter returned an empty chain; the
+    # selection must instead name the contract that is front throughout the window.
+    contracts = [
+        DatedContract("CLN6", date(2026, 6, 22)),
+        DatedContract("CLQ6", date(2026, 7, 21)),
+    ]
+    # [6/25, 7/5]: after CLN6's roll (6/15), before CLQ6's (7/14) → CLQ6 front throughout.
+    sched = roll_schedule(contracts, date(2026, 6, 25), date(2026, 7, 5), roll_lead_days=5)
+
+    assert sched.symbols == ("CLQ6",)
+    assert sched.roll_dates == ()
 
 
 def test_quarterly_product_still_rolls_quarterly() -> None:
