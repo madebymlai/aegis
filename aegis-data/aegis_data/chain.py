@@ -16,6 +16,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from aegis_data.liquidity import liquid_cycle
 from aegis_data.roll import DatedContract, roll_lead_days_for_cadence, roll_schedule
 
 # Each contract is fetched a little past its roll dates so that, after a
@@ -30,6 +31,12 @@ ContractFetcher = Callable[[str, date, date], pd.DataFrame]
 # List the dated contracts (symbol + last-trade date) for a root over a window, from
 # instrument definitions.  Injected so chain assembly stays provider-free.
 ContractCalendar = Callable[[str, date, date], Sequence[DatedContract]]
+
+# Probe one candidate's *daily* volume over [start, end] for liquidity-leadership
+# ranking.  Daily regardless of the deliverable bar cadence (ADR-0001): inclusion is a
+# low-frequency decision, so it must not depend on intraday sampling.  Injected so the
+# liquidity filter stays provider-free.
+VolumeProbe = Callable[[str, date, date], pd.Series]
 
 
 @dataclass(frozen=True)
@@ -54,30 +61,66 @@ def fetch_contract_chain(
     list_contracts: ContractCalendar,
     fetch: ContractFetcher,
     bar_cadence: timedelta,
+    probe_volume: VolumeProbe | None = None,
 ) -> ContractChain:
     """Assemble the dated-contract chain for ``root`` over ``[start, end]``.
 
-    ``list_contracts`` supplies the eligible dated contracts (from instrument
-    definitions); the roll schedule is derived from their last-trade dates, so a
-    monthly product rolls monthly and a serial/odd-cycle product rolls on whatever it
-    actually lists.  The roll lead is derived from ``bar_cadence``, never configured.
+    ``list_contracts`` supplies the candidate dated contracts (from instrument
+    definitions).  When ``probe_volume`` is given, the candidates are first narrowed
+    to the **Liquid Cycle** — those ever the daily Liquidity Leader — so the series
+    holds only the contracts a desk trades and skips thin serial months (inclusion);
+    the calendar roll still decides timing.  The roll schedule is then derived from the
+    eligible contracts' last-trade dates, so a monthly product rolls monthly and a
+    serial/odd-cycle product rolls on whatever it lists.  The roll lead is derived from
+    ``bar_cadence``, never configured.
     """
-    schedule = roll_schedule(
-        list_contracts(root, start, end),
-        start,
-        end,
-        roll_lead_days=roll_lead_days_for_cadence(bar_cadence),
-    )
+    roll_lead_days = roll_lead_days_for_cadence(bar_cadence)
+    candidates = list_contracts(root, start, end)
+    eligible = _liquid_candidates(candidates, start, end, probe_volume, roll_lead_days)
+    schedule = roll_schedule(eligible, start, end, roll_lead_days=roll_lead_days)
     n = len(schedule.symbols)
     frames: list[pd.DataFrame] = []
     for i, symbol in enumerate(schedule.symbols):
         window_start = schedule.roll_dates[i - 1] - _OVERLAP_BUFFER if i > 0 else start
-        window_end = schedule.roll_dates[i] + _OVERLAP_BUFFER if i < n - 1 else end
+        if i < n - 1:
+            # The +overlap buffer past the roll is a best-effort seam fetch, not
+            # required coverage: a rolled-off contract has no bars past its last
+            # trade, and the buffer reaches past expiry, so demanding those days
+            # aborts the pull (aegis-rd-lqz).  Clamp to the contract's last trade.
+            # The seam overlap is preserved — last_trade falls after the roll date,
+            # so the on/before-roll days where adjacent contracts overlap stay in
+            # range.  The final leg keeps the requested ``end`` (it is the front
+            # contract through the window edge, not a rolled-off one).
+            window_end = min(schedule.roll_dates[i] + _OVERLAP_BUFFER, schedule.expiries[i])
+        else:
+            window_end = end
         frames.append(fetch(symbol, window_start, window_end))
     roll_dates = _snap_roll_dates(schedule.roll_dates, frames)
     return ContractChain(
         symbols=schedule.symbols, roll_dates=roll_dates, frames=tuple(frames)
     )
+
+
+def _liquid_candidates(
+    candidates: Sequence[DatedContract],
+    start: date,
+    end: date,
+    probe_volume: VolumeProbe | None,
+    roll_lead_days: int,
+) -> tuple[DatedContract, ...]:
+    """The Liquid Cycle when a volume probe is supplied, else every candidate.
+
+    Probe each candidate's daily volume over the window and keep only the
+    ever-Liquidity-Leader contracts.  With no probe the chain rolls through whatever
+    was listed — a caller that does not rank liquidity (e.g. a single-contract case).
+    """
+    if probe_volume is None:
+        return tuple(candidates)
+    volume_by_symbol = {
+        contract.symbol: probe_volume(contract.symbol, start, end)
+        for contract in candidates
+    }
+    return liquid_cycle(candidates, volume_by_symbol, roll_lead_days=roll_lead_days)
 
 
 def _snap_roll_dates(
@@ -98,4 +141,4 @@ def _snap_roll_dates(
     return tuple(snapped)
 
 
-__all__ = ["ContractChain", "ContractFetcher", "fetch_contract_chain"]
+__all__ = ["ContractChain", "ContractFetcher", "VolumeProbe", "fetch_contract_chain"]

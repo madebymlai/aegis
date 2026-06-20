@@ -227,14 +227,33 @@ def test_store_source_requires_block_level_provider(tmp_path: Path) -> None:
     assert "provider is required for store source" in str(error.value)
 
 
-def test_store_source_rejects_fx_provider(tmp_path: Path) -> None:
+def test_store_source_accepts_fx_provider(tmp_path: Path) -> None:
+    # A EUR-base futures book pulls bars from databento but FX rates from yfinance
+    # (the only store FX gap-fill provider); fx_provider decouples the two.
     raw = _run_config()
     raw["data"] = {
         "source": "store",
-        "provider": "yfinance",
+        "provider": "databento",
         "fx_provider": "yfinance",
-        "symbols": [{"ticker": "SPY", "ccy": "USD", "figi": "BBG000BDTBL9"}],
-        "arrays": ["Close"],
+        "symbols": [{"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3", "adjustment": "backward_ratio"}],
+        "arrays": ["OHLCV"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert resolved.config.data.fx_provider == "yfinance"
+    assert resolved.config.data.effective_fx_provider == "yfinance"
+
+
+def test_fx_provider_rejected_for_non_store_source(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "bento",
+        "fx_provider": "yfinance",
+        "symbols": [{"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3", "adjustment": "backward_ratio"}],
+        "arrays": ["OHLCV"],
         "start": "2024-01-02",
         "end": "2024-01-05",
     }
@@ -242,8 +261,7 @@ def test_store_source_rejects_fx_provider(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 
-    assert "data.fx_provider" in str(error.value)
-    assert "Unexpected keyword argument" in str(error.value)
+    assert "fx_provider is only supported for store source" in str(error.value)
 
 
 def test_store_listed_symbol_rejects_locator_alias(tmp_path: Path) -> None:

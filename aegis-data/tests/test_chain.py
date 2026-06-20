@@ -84,6 +84,50 @@ def test_chain_rolls_on_supplied_monthly_contracts() -> None:
     assert len(chain.roll_dates) == 2
 
 
+def _gc_2024_with_serials(root: str, start: date, end: date) -> list[DatedContract]:
+    """GC over summer 2024: the liquid even-month contracts plus the May/July serials,
+    as a definition source lists them (no hardcoded cycle)."""
+    return [
+        DatedContract("GCK4", date(2024, 5, 28)),  # May serial
+        DatedContract("GCM4", date(2024, 6, 26)),  # June liquid
+        DatedContract("GCN4", date(2024, 7, 29)),  # July serial
+        DatedContract("GCQ4", date(2024, 8, 28)),  # August liquid
+    ]
+
+
+def test_fetch_contract_chain_holds_only_the_liquid_cycle() -> None:
+    # With a daily-volume probe, the chain rolls GCM4 -> GCQ4 and never through the
+    # thin May/July serials; only the liquid legs are deliverable-fetched.
+    liquid = {"GCM4", "GCQ4"}
+    last_trade = {c.symbol: c.last_trade for c in _gc_2024_with_serials("GC", date(2024, 5, 1), date(2024, 8, 1))}
+    fetched: list[str] = []
+
+    def probe_volume(symbol: str, start: date, end: date) -> pd.Series:
+        # A real provider returns no bars past a contract's last trade, so each leg's
+        # volume is clamped to its own life: GCM4 leads through June, then GCQ4 leads.
+        index = pd.bdate_range(start, min(end, last_trade[symbol]))
+        level = 1000.0 if symbol in liquid else 50.0
+        return pd.Series([level] * len(index), index=index, dtype="float64")
+
+    def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
+        fetched.append(symbol)
+        base = {"GCM4": 2000.0, "GCQ4": 2100.0}[symbol]
+        return _ohlcv(start, end, base)
+
+    chain = fetch_contract_chain(
+        "GC", date(2024, 5, 1), date(2024, 8, 1),
+        list_contracts=_gc_2024_with_serials, fetch=fetch,
+        bar_cadence=timedelta(days=1), probe_volume=probe_volume,
+    )
+
+    assert chain.symbols == ("GCM4", "GCQ4")
+    assert fetched == ["GCM4", "GCQ4"]
+    assert len(chain.roll_dates) == 1
+    roll = chain.roll_dates[0]
+    assert roll in chain.frames[0].index
+    assert roll in chain.frames[1].index
+
+
 def test_roll_dates_snap_back_to_the_latest_common_trading_day() -> None:
     def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
         idx = pd.bdate_range(start, end)

@@ -86,8 +86,10 @@ def _provider_locators(
 
 
 def _native_bars_request(config: DataConfig, refs: tuple[InstrumentRef, ...]) -> NativeBarsRequest:
-    # RD's listed universe is US-listed (yfinance) and its futures are CME (GLBX);
-    # both expect bars on the XNYS calendar.
+    # The request-level calendar governs only venue-agnostic refs: RD's listed
+    # universe is US-listed (yfinance) on XNYS.  Futures refs ignore it — the store
+    # resolves each contract's expected-bar calendar from its dataset's venue
+    # (GLBX -> CME, ICE -> IFUS/IFEU), so a mixed universe needs no per-ref calendar.
     return NativeBarsRequest(
         refs=refs,
         arrays=config.effective_arrays,

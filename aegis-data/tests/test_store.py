@@ -6,12 +6,14 @@ from datetime import date
 
 import pandas as pd
 import pytest
-from aegis_runtime import ListedRef
+from aegis_runtime import FuturesRef, ListedRef
 
-from aegis_data.calendars import TradingCalendar
+from aegis_data.calendars import TradingCalendar, business_day_offset
 from aegis_data.store import (
     FxPair,
+    NATIVE_OHLCV_ARRAYS,
     StoreCoverageError,
+    assert_native_bar_coverage,
     cached_fetcher,
     data_dir,
     ListedAdjustmentPolicy,
@@ -141,6 +143,43 @@ def test_native_bar_store_read_does_not_require_exchange_holiday_bars(tmp_path) 
     )
 
     assert frames[ref]["close"].tolist() == [100.0, 101.0]
+
+
+def _cme_futures_frame(days: pd.DatetimeIndex) -> pd.DataFrame:
+    return pd.DataFrame({array: [1.0] * len(days) for array in NATIVE_OHLCV_ARRAYS}, index=days)
+
+
+def test_continuous_futures_coverage_tolerates_interior_but_requires_window_edges() -> None:
+    # aegis-rd-voy: the assembled continuous futures series tolerates interior
+    # non-prints (thin/serial months, venue holidays) but must span the request
+    # window: an uncovered prefix (it does not reach the window start) is a real gap,
+    # so the series is not silently truncated.  (Contrast the listed path above, where
+    # an interior gap also fails closed — a listed instrument trades every session.)
+    ref = FuturesRef("GC", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_ratio")
+    sessions = pd.date_range(
+        "2024-05-01", "2024-05-31", freq=business_day_offset(TradingCalendar.CME)
+    )
+
+    assert_native_bar_coverage(  # interior non-print tolerated
+        ref,
+        _cme_futures_frame(sessions.drop(pd.Timestamp("2024-05-08"))),
+        arrays=NATIVE_OHLCV_ARRAYS,
+        timeframe="1D",
+        start="2024-05-01",
+        end="2024-06-01",
+        calendar=TradingCalendar.CME,
+    )
+
+    with pytest.raises(StoreCoverageError, match="missing expected"):
+        assert_native_bar_coverage(  # uncovered window prefix is still a gap
+            ref,
+            _cme_futures_frame(sessions[5:]),
+            arrays=NATIVE_OHLCV_ARRAYS,
+            timeframe="1D",
+            start="2024-05-01",
+            end="2024-06-01",
+            calendar=TradingCalendar.CME,
+        )
 
 
 def test_intraday_store_read_fails_closed_on_missing_mid_session_bar(tmp_path) -> None:

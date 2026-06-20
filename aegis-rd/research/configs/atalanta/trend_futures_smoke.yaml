@@ -1,0 +1,50 @@
+name: atalanta_trend_futures_smoke
+schema_version: 10
+output_dir: runs/atalanta/trend_futures_smoke
+
+# THROWAWAY SMOKE TEST (not a research run). Single liquid root (ES, GLBX.MDP3, quarterly = fewest
+# contracts) over a short window, to validate the futures store pipeline end-to-end while the `voy`
+# coverage fix lands separately: config load -> store pull/cache -> ratio back-adjust -> backtest.
+# ES is liquid enough to print every CME session, so it does NOT exercise the thin-serial `voy` path
+# by design. Key read from $DATABENTO_API_KEY (never hardcoded).
+data:
+  source: store
+  provider: databento     # futures bars
+  fx_provider: yfinance   # EURUSD gap-fill (decoupled from the bars provider)
+  arrays:
+  - OHLCV
+  symbols:
+  - {root: ES, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  start: '2021-06-01'
+  end: '2024-06-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+- id: atalanta.realized_vol
+
+strategy:
+  id: atalanta.trendStraddleBuffered
+
+portfolio:
+  base_currency: EUR   # USD root + EUR base => exercises the decoupled FX gap-fill (yfinance)
+  gross_cap: 1.0
+  direction: both
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+ranking:
+  metric: quarterly_return_skew
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 2

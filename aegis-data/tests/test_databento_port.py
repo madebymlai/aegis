@@ -10,10 +10,13 @@ from datetime import date
 
 import pandas as pd
 
+import pytest
+
 from aegis_data.databento_port import (
     bars_to_ohlcv,
     databento_contract_calendar,
     databento_port_fetcher,
+    retrying_fetcher,
 )
 
 
@@ -239,6 +242,84 @@ class _FakeClient:
         self.calls.append("bars")
         self.bars_window = (start_ns, end_ns)
         return self._bars
+
+
+def _ohlcv(symbol: str, start: date, end: date) -> pd.DataFrame:
+    return pd.DataFrame(
+        {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [100.0]},
+        index=pd.DatetimeIndex([pd.Timestamp(start)]),
+    )
+
+
+def test_retrying_fetcher_retries_a_transient_provider_error_then_succeeds() -> None:
+    # A single Databento 504 gateway timeout must not abort a long sequential pull.
+    calls: list[int] = []
+    slept: list[float] = []
+
+    def flaky(symbol: str, start: date, end: date) -> pd.DataFrame:
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("Failed to get range: API error: 504 Gateway Timeout")
+        return _ohlcv(symbol, start, end)
+
+    fetch = retrying_fetcher(flaky, attempts=4, sleep=slept.append)
+    out = fetch("6JU4", date(2024, 6, 3), date(2024, 9, 20))
+
+    assert len(calls) == 3  # two failures, third succeeds
+    assert len(slept) == 2  # backed off between attempts
+    assert out["Close"].iloc[0] == 1.5
+
+
+def test_retrying_fetcher_does_not_retry_a_non_transient_error() -> None:
+    # A bad symbol / auth failure is permanent — fail fast, don't waste the retry budget.
+    calls: list[int] = []
+
+    def bad(symbol: str, start: date, end: date) -> pd.DataFrame:
+        calls.append(1)
+        raise ValueError("symbology resolution failed: unknown symbol")
+
+    fetch = retrying_fetcher(bad, attempts=4, sleep=lambda _s: None)
+    with pytest.raises(ValueError, match="unknown symbol"):
+        fetch("NOPE", date(2024, 6, 3), date(2024, 9, 20))
+
+    assert len(calls) == 1  # no retries
+
+
+def test_retrying_fetcher_gives_up_after_max_attempts() -> None:
+    calls: list[int] = []
+
+    def always_504(symbol: str, start: date, end: date) -> pd.DataFrame:
+        calls.append(1)
+        raise RuntimeError("504 Gateway Time-out")
+
+    fetch = retrying_fetcher(always_504, attempts=3, sleep=lambda _s: None)
+    with pytest.raises(RuntimeError, match="504"):
+        fetch("6JU4", date(2024, 6, 3), date(2024, 9, 20))
+
+    assert len(calls) == 3  # exactly the attempt budget, then surfaces the error
+
+
+def test_port_fetcher_survives_a_transient_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Wiring: the production port fetcher applies the retry, so one flaky call is absorbed.
+    monkeypatch.setattr("aegis_data.databento_port.time.sleep", lambda _s: None)
+
+    class _FlakyClient(_FakeClient):
+        def __init__(self, bars: list[_Bar]) -> None:
+            super().__init__(bars)
+            self._fails = 1
+
+        async def get_range_instruments(self, *a, **k) -> list:
+            if self._fails > 0:
+                self._fails -= 1
+                raise RuntimeError("API error: 504 Gateway Timeout")
+            return await super().get_range_instruments(*a, **k)
+
+    client = _FlakyClient([_Bar(pd.Timestamp("2024-09-13").value, 1.0, 2.0, 0.5, 1.5, 100)])
+    fetch = databento_port_fetcher("GLBX.MDP3", client=client)
+
+    df = fetch("ESZ4", date(2024, 9, 13), date(2024, 9, 13))
+
+    assert df.loc[pd.Timestamp("2024-09-13"), "Close"] == 1.5
 
 
 def test_bars_to_ohlcv_normalizes_pyo3_bars() -> None:

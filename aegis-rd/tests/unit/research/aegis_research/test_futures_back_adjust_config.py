@@ -121,3 +121,65 @@ def test_pnl_adjustment_rejects_an_unknown_mode() -> None:
                 pnl_adjustment="panama",
             )
         )
+
+
+def test_fx_provider_decouples_fx_gap_fill_from_the_bars_provider() -> None:
+    # Futures bars come from databento; FX rates come from yfinance (the only store FX
+    # gap-fill provider). Without this decoupling a EUR-base futures book cannot source
+    # its EURUSD rate at all.
+    config = _store_dual_config(
+        SymbolSpec(root="ES", ccy="USD", dataset="GLBX.MDP3", adjustment="backward_ratio")
+    )
+    assert config.provider == "databento"
+    decoupled = DataConfig(
+        source="store",
+        provider="databento",
+        fx_provider="yfinance",
+        arrays=["OHLCV"],
+        symbols=[SymbolSpec(root="ES", ccy="USD", dataset="GLBX.MDP3", adjustment="backward_ratio")],
+        start="2024-01-01",
+        end="2024-12-31",
+    )
+    assert decoupled.effective_fx_provider == "yfinance"
+
+
+def test_effective_fx_provider_falls_back_to_the_bars_provider_when_unset() -> None:
+    bento = _store_dual_config(
+        SymbolSpec(root="ES", ccy="USD", dataset="GLBX.MDP3", adjustment="backward_ratio")
+    )
+    # Unset fx_provider preserves prior behavior: FX uses the bars provider.
+    assert bento.effective_fx_provider == "databento"
+    yfinance = DataConfig(
+        source="store",
+        provider="yfinance",
+        arrays=["OHLCV"],
+        symbols=[SymbolSpec(ticker="SPY", ccy="USD", figi="BBG000B9XRY4")],
+        start="2024-01-01",
+        end="2024-12-31",
+    )
+    assert yfinance.effective_fx_provider == "yfinance"
+
+
+def test_fx_provider_rejected_for_non_store_source() -> None:
+    with pytest.raises(ValueError, match="fx_provider is only supported for store source"):
+        DataConfig(
+            source="bento",
+            fx_provider="yfinance",
+            arrays=["OHLCV"],
+            symbols=[_future("backward_ratio")],
+            start="2024-01-01",
+            end="2024-12-31",
+        )
+
+
+def test_fx_provider_rejects_an_unknown_provider() -> None:
+    with pytest.raises(ValueError, match="gap-fill provider"):
+        DataConfig(
+            source="store",
+            provider="databento",
+            fx_provider="bogus",
+            arrays=["OHLCV"],
+            symbols=[SymbolSpec(root="ES", ccy="USD", dataset="GLBX.MDP3", adjustment="backward_ratio")],
+            start="2024-01-01",
+            end="2024-12-31",
+        )

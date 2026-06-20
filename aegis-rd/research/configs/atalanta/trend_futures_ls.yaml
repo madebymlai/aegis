@@ -14,23 +14,29 @@ output_dir: runs/atalanta/trend_futures_ls
 # caveat — Databento server continuous was NOT back-adjusted, so seams remained at rolls; the store's
 # ratio-adjust pass is that fix. Store gap-fills from Databento on first run and caches each leg to
 # parquet (pull-once, amortized); key read from $DATABENTO_API_KEY (NOT hardcoded — this config is
-# tracked). 23 GLBX-listed roots; the 5 ICE names (Brent, coffee, sugar, cocoa, cotton) live on a
-# different dataset and are dropped for now.
-#   rates 5 : ZT ZF ZN ZB UB    FX 6 : 6E 6J 6B 6A 6C 6S
-#   energy 4: CL NG RB HO        metals 5: GC SI HG PL PA      grains 3: ZC ZW ZS
+# tracked). Per-symbol dataset (schema v10): each root carries its own Databento dataset, so CME/Globex
+# and ICE roots mix in one universe (coverage verified 2026-06-20: GLBX.MDP3 + IFUS.IMPACT + IFEU.IMPACT).
+# 30 IBKR short-tradeable roots. BZ is NYMEX Brent Last Day on GLBX.MDP3 (NOT the ICE "BRN"); DX and the
+# softs SB/KC/CC/CT are ICE-US (IFUS.IMPACT).
+#   rates 6 : ZT ZF ZN TN ZB UB        FX 7 : 6E 6J 6B 6A 6C 6S DX(IFUS)
+#   energy 5: CL BZ NG RB HO           metals 5: GC SI HG PL PA
+#   grains 3: ZC ZW ZS                 softs 4: SB KC CC CT (all IFUS)
 #
-# FIRST-RUN COST: store coverage pulls the 23 roots sequentially (no engine knob — store is a local
+# FIRST-RUN COST: store coverage pulls the 30 roots sequentially (no engine knob — store is a local
 # source, unlike the old bento threadpool fan-out). Each root now uses the narrowed definition path
 # (~1s defs, per-contract bars), and it is pull-once: every later run reads the parquet cache.
 data:
   source: store
-  provider: databento
+  provider: databento     # futures bars (GLBX / IFUS)
+  fx_provider: yfinance   # base-currency (EUR) FX gap-fill, decoupled from the bars provider:
+                          # USD roots need an EURUSD rate, and store FX gap-fill is yfinance-only.
   arrays:
   - OHLCV
   symbols:
   - {root: ZT, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: ZF, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: ZN, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: TN, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}   # Ultra 10y note (CBOT/GLBX); IBKR short-tradeable ~$2.5k
   - {root: ZB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: UB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: 6E, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
@@ -39,10 +45,12 @@ data:
   - {root: 6A, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: 6C, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: 6S, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: DX, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}  # US Dollar Index (ICE-US); IBKR short-tradeable ~$2.3k
   - {root: CL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: NG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: RB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: HO, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: BZ, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}   # NYMEX Brent Last Day (CME Globex, NOT ICE); IBKR short-tradeable ~$16k
   - {root: GC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: SI, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: HG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
@@ -51,7 +59,12 @@ data:
   - {root: ZC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: ZW, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: ZS, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
-  start: '2018-01-01'
+  - {root: SB, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}  # Sugar #11 (ICE-US); IBKR short-tradeable ~$1.6k
+  - {root: KC, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}  # Coffee C (ICE-US); IBKR short-tradeable ~$17k
+  - {root: CC, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}  # Cocoa (ICE-US); IBKR short-tradeable ~$7.3k
+  - {root: CT, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}  # Cotton #2 (ICE-US); IBKR short-tradeable ~$3.2k
+  start: '2019-01-01'   # IFUS.IMPACT (ICE roots DX/SB/KC/CC/CT) history begins 2018-12-23;
+                        # uniform 2019 start aligns all 30 roots on one clean window.
   end: '2025-01-01'
   timeframe: 1D
   missing_index: drop

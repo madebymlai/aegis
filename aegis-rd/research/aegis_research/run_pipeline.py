@@ -22,7 +22,6 @@ from research.aegis_research.configuration import (
     RunConfig,
     SymbolSpec,
     required_store_window_edge,
-    store_gap_fill_provider,
 )
 from research.aegis_research.data import (
     MarketDataBundle,
@@ -263,7 +262,7 @@ def _load_store_fx_rates(
     fx_ticker_by_currency: dict[str, str],
     index: pd.Index,
 ) -> pd.DataFrame:
-    provider = store_gap_fill_provider(data_config.provider)
+    provider = data_config.effective_fx_provider
     if provider != "yfinance":
         raise ValueError(f"unsupported store FX gap-fill provider {provider!r}")
     start = required_store_window_edge(data_config.start, "start")

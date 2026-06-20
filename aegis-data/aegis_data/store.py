@@ -25,6 +25,7 @@ from aegis_data.calendars import (
     as_trading_calendar,
     business_day_offset,
     intraday_session_bars,
+    venue_calendar_for_dataset,
 )
 from aegis_data.chain import ContractFetcher
 
@@ -376,6 +377,7 @@ def native_bar_coverage_gaps(
         calendar=calendar,
         start=start_ts,
         end=end_ts,
+        tolerate_interior=_tolerates_non_trading_days(ref),
     )
 
 
@@ -402,44 +404,23 @@ def read_raw_futures_leg(
     timeframe: str,
     start: str | date | pd.Timestamp,
     end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
     store_dir: Path | None = None,
 ) -> pd.DataFrame:
-    """Provider-free Store Read of one Raw Futures Leg source-material slice."""
+    """Read one Raw Futures Leg source-material slice (no expected-bar grid).
+
+    A dated contract leg is provider source material: the chain places its roll seam
+    at the snapped common trading day and the assembled continuous series carries the
+    coverage guarantee, so a leg read returns exactly what the contract traded in the
+    window — a thin contract that prints sparsely or stops before its expiry is not a
+    gap here.
+    """
     start_ts, end_ts = _window(start, end)
     path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
-    return _read_admitted_native_bar_slice(
-        leg,
-        path,
-        arrays=arrays,
-        timeframe=timeframe,
-        calendar=calendar,
-        start=start_ts,
-        end=end_ts,
-        missing_detail=f"no Raw Futures Leg for {timeframe}",
-    )
-
-
-def raw_futures_leg_coverage_gaps(
-    leg: RawFuturesLeg,
-    *,
-    arrays: Sequence[str],
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
-    store_dir: Path | None = None,
-) -> tuple[CoverageGap, ...]:
-    """Return uncovered expected-bar intervals for a Raw Futures Leg."""
-    start_ts, end_ts = _window(start, end)
-    path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
-    return _history_coverage_gaps(
-        path,
-        arrays=_validated_arrays(arrays),
-        timeframe=timeframe,
-        calendar=calendar,
-        start=start_ts,
-        end=end_ts,
+    if not path.exists():
+        raise StoreCoverageError(leg, f"no Raw Futures Leg for {timeframe}")
+    admitted = _load_admitted_native_bars(path)
+    return _required_native_bar_slice(
+        leg, admitted, arrays=_validated_arrays(arrays), start=start_ts, end=end_ts
     )
 
 
@@ -693,6 +674,21 @@ def _read_one_fx_series(
     return sliced["rate"].copy()
 
 
+def _native_bar_calendar(
+    ref: InstrumentRef, calendar: TradingCalendar | str
+) -> TradingCalendar:
+    """The expected-bar calendar for a ref.
+
+    A ``FuturesRef`` carries its venue in its dataset, so its calendar is resolved
+    from that (CME/ICE), never the caller-supplied one — which governs only
+    venue-agnostic refs (listed equities on XNYS).  This is why a futures Pull or
+    Read needs no calendar threaded for the contract: the dataset decides it.
+    """
+    if isinstance(ref, FuturesRef):
+        return venue_calendar_for_dataset(ref.dataset)
+    return as_trading_calendar(calendar)
+
+
 def _read_one_native_bar_frame(
     ref: InstrumentRef,
     *,
@@ -715,7 +711,7 @@ def _read_one_native_bar_frame(
         path,
         arrays=arrays,
         timeframe=timeframe,
-        calendar=calendar,
+        calendar=_native_bar_calendar(ref, calendar),
         start=start,
         end=end,
         missing_detail=f"no Covered History for {timeframe}",
@@ -812,6 +808,7 @@ def _history_coverage_gaps(
     calendar: TradingCalendar | str,
     start: pd.Timestamp,
     end: pd.Timestamp,
+    tolerate_interior: bool = False,
 ) -> tuple[CoverageGap, ...]:
     expected = _expected_bar_index(timeframe, calendar=calendar, start=start, end=end)
     if expected.empty:
@@ -826,6 +823,7 @@ def _history_coverage_gaps(
         expected=expected,
         start=start,
         end=end,
+        tolerate_interior=tolerate_interior,
     )
     return _coverage_gaps(missing, expected)
 
@@ -838,6 +836,7 @@ def _missing_required_bar_index(
     expected: pd.DatetimeIndex,
     start: pd.Timestamp,
     end: pd.Timestamp,
+    tolerate_interior: bool = False,
 ) -> pd.DatetimeIndex:
     if expected.empty:
         return expected
@@ -850,7 +849,7 @@ def _missing_required_bar_index(
         return expected
     complete_bars = selected.loc[~selected.isna().any(axis=1)]
     observed = _observed_index(complete_bars.index, timeframe)
-    return expected.difference(observed)
+    return _uncovered_expected(expected, observed, tolerate_interior=tolerate_interior)
 
 
 def _missing_fx_rate_index(
@@ -955,6 +954,37 @@ def _admit_datetime_indexed_history(
     return history.sort_index()
 
 
+def _tolerates_non_trading_days(key: HistoryKey) -> bool:
+    """Whether an absent expected bar inside the observed span is a non-trading day.
+
+    A continuous futures series legitimately skips sessions: thin/serial front months
+    and venue holidays simply have no bar that day, so an absent expected bar *inside*
+    the series' span is a non-trading day, not missing data.  Listed and FX histories
+    trade every session, so an absent expected bar there IS missing data.  (Dated
+    contract legs are never coverage-checked — they are source material read as-is.)
+    """
+    return isinstance(key, FuturesRef)
+
+
+def _uncovered_expected(
+    expected: pd.DatetimeIndex,
+    observed: pd.DatetimeIndex,
+    *,
+    tolerate_interior: bool,
+) -> pd.DatetimeIndex:
+    """Expected days a frame fails to cover.
+
+    Strict (listed/FX): every absent expected day is uncovered.  Interior-tolerant
+    (continuous futures): only expected days *outside* the observed span — an
+    uncovered window prefix or suffix — are uncovered, so the series must reach the
+    requested window edges while interior non-prints are tolerated.
+    """
+    missing = expected.difference(observed)
+    if not tolerate_interior or missing.empty or observed.empty:
+        return missing
+    return missing[(missing < observed.min()) | (missing > observed.max())]
+
+
 def _assert_expected_bar_coverage(
     key: HistoryKey,
     frame: pd.DataFrame,
@@ -969,7 +999,9 @@ def _assert_expected_bar_coverage(
     if expected.empty:
         return
     observed = _observed_index(frame.index, timeframe)
-    missing = expected.difference(observed)
+    missing = _uncovered_expected(
+        expected, observed, tolerate_interior=_tolerates_non_trading_days(key)
+    )
     if missing.empty:
         return
     raise StoreCoverageError(
@@ -1094,7 +1126,6 @@ __all__ = [
     "merge_raw_futures_leg",
     "native_bar_coverage_gaps",
     "native_bars_path",
-    "raw_futures_leg_coverage_gaps",
     "raw_futures_leg_path",
     "read_fx_history",
     "read_native_bars",

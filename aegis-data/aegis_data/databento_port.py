@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
+from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any
 
@@ -18,6 +20,13 @@ import pandas as pd
 
 from aegis_data.chain import ContractCalendar, ContractFetcher
 from aegis_data.roll import DatedContract
+
+# A long sequential pull (dozens of roots × years of dated contracts) makes a single transient
+# provider hiccup — a 5xx gateway timeout or a dropped connection — fatal unless absorbed.
+_FETCH_ATTEMPTS = 4
+_TRANSIENT_MARKERS = (
+    "502", "503", "504", "gateway", "timeout", "timed out", "connection reset", "connection aborted",
+)
 
 # databento publisher venue for the GLBX.MDP3 dataset (CME Globex).
 _GLBX_VENUE = "GLBX"
@@ -65,6 +74,37 @@ def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> C
         ]
 
     return list_contracts
+
+
+def _is_transient_provider_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return any(marker in text for marker in _TRANSIENT_MARKERS)
+
+
+def retrying_fetcher(
+    fetch: ContractFetcher,
+    *,
+    attempts: int = _FETCH_ATTEMPTS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> ContractFetcher:
+    """Wrap a per-contract fetcher so transient provider errors (5xx / gateway timeout /
+    dropped connection) retry with exponential backoff.
+
+    A single flaky response must not abort a multi-hour sequential pull; a non-transient error
+    (bad symbol, auth) still fails fast so it surfaces immediately.
+    """
+
+    def fetch_with_retry(symbol: str, start: date, end: date) -> pd.DataFrame:
+        for attempt in range(1, attempts + 1):
+            try:
+                return fetch(symbol, start, end)
+            except Exception as error:  # noqa: BLE001 — provider errors are not a typed hierarchy
+                if attempt == attempts or not _is_transient_provider_error(error):
+                    raise
+                sleep(min(2.0**attempt, 30.0))
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    return fetch_with_retry
 
 
 def _to_weekday(day: date) -> date:
@@ -128,7 +168,9 @@ def databento_port_fetcher(
         )
         return bars_to_ohlcv(bars)
 
-    return fetch
+    # Transient 5xx/timeout responses are absorbed with backoff so one flaky leg does not
+    # abort the whole pull; the leg cache means a retried success is still fetched only once.
+    return retrying_fetcher(fetch)
 
 
 async def _pull(
@@ -176,4 +218,9 @@ def _instrument_id(value: str) -> Any:
     return InstrumentId.from_str(value)
 
 
-__all__ = ["bars_to_ohlcv", "databento_contract_calendar", "databento_port_fetcher"]
+__all__ = [
+    "bars_to_ohlcv",
+    "databento_contract_calendar",
+    "databento_port_fetcher",
+    "retrying_fetcher",
+]

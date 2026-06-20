@@ -10,6 +10,7 @@ from aegis_data.calendars import (
     as_trading_calendar,
     business_day_offset,
     intraday_session_bars,
+    venue_calendar_for_dataset,
 )
 
 
@@ -71,3 +72,45 @@ def test_unknown_calendar_fails_closed() -> None:
         as_trading_calendar("lse")
     with pytest.raises(ValueError, match="unsupported trading calendar"):
         business_day_offset("lse")
+
+
+def test_venue_calendar_resolves_per_dataset() -> None:
+    # A futures dataset's venue prefix selects its trading calendar (GH #65).
+    assert venue_calendar_for_dataset("GLBX.MDP3") is TradingCalendar.CME
+    assert venue_calendar_for_dataset("IFUS.IMPACT") is TradingCalendar.ICE_US
+    assert venue_calendar_for_dataset("IFEU.IMPACT") is TradingCalendar.ICE_EU
+
+
+def test_venue_calendar_fails_closed_on_unknown_dataset() -> None:
+    with pytest.raises(ValueError, match="no trading calendar for dataset"):
+        venue_calendar_for_dataset("XNAS.ITCH")
+
+
+def test_cme_calendar_trades_mlk_day_that_xnys_skips() -> None:
+    # CME Globex runs a holiday session on MLK Day 2024-01-15 (a daily bar prints);
+    # XNYS is closed.  A single hardcoded XNYS grid would falsely expect no bar.
+    cme = pd.date_range(
+        "2024-01-12", "2024-01-17", freq=business_day_offset(TradingCalendar.CME)
+    )
+    xnys = pd.date_range(
+        "2024-01-12", "2024-01-17", freq=business_day_offset(TradingCalendar.XNYS)
+    )
+    mlk = pd.Timestamp("2024-01-15")
+
+    assert mlk in cme
+    assert mlk not in xnys
+
+
+def test_ice_eu_calendar_skips_a_uk_bank_holiday_that_xnys_trades() -> None:
+    # UK Early May Bank Holiday 2024-05-06 (Mon): ICE Futures Europe is closed while
+    # US venues trade normally.
+    ice_eu = pd.date_range(
+        "2024-05-03", "2024-05-08", freq=business_day_offset(TradingCalendar.ICE_EU)
+    )
+    xnys = pd.date_range(
+        "2024-05-03", "2024-05-08", freq=business_day_offset(TradingCalendar.XNYS)
+    )
+    early_may_bank_holiday = pd.Timestamp("2024-05-06")
+
+    assert early_may_bank_holiday not in ice_eu
+    assert early_may_bank_holiday in xnys

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -10,6 +10,7 @@ import pandas as pd
 from aegis_runtime import FuturesRef
 
 from aegis_data.back_adjust import back_adjust_chain
+from aegis_data.calendars import venue_calendar_for_dataset
 from aegis_data.chain import ContractCalendar, ContractChain, ContractFetcher, fetch_contract_chain
 from aegis_data.continuous import apply_adjustment_factors
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
@@ -22,7 +23,7 @@ from aegis_data.store import (
     merge_raw_futures_leg,
     native_bar_coverage_gaps,
     native_bars_path,
-    raw_futures_leg_coverage_gaps,
+    raw_futures_leg_path,
     read_raw_futures_leg,
     replace_native_bars,
 )
@@ -35,6 +36,11 @@ from aegis_data.store import (
 _RATIO_ADJUSTMENTS = frozenset({"backward_ratio"})
 _CLOSE_DEPENDENT_ADJUSTMENTS = _RATIO_ADJUSTMENTS | {"backward_spread"}
 _SUPPORTED_ADJUSTMENTS_MESSAGE = "backward_ratio, backward_spread, or unadjusted"
+
+# Liquidity-leadership eligibility is judged on daily volume regardless of the request
+# cadence (ADR-0001): a daily request shares the probe's cache key with its deliverable
+# legs (fetched once), while an intraday request keeps the daily probe on its own key.
+_DAILY_PROBE_TIMEFRAME = "1D"
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,7 @@ def pull_databento_futures_bars(
     """
     ref = _single_futures_ref(request)
     _require_supported_roll_rule(ref)
+    request = _with_venue_calendar(request, ref)
     raw_fetch = fetcher or databento_port_fetcher(ref.dataset, client=client)
     list_contracts = contract_calendar or databento_contract_calendar(ref.dataset, client=client)
     raw_legs: tuple[RawFuturesLeg, ...] = ()
@@ -107,14 +114,15 @@ def _derive_continuous_history(
 ) -> tuple[pd.DataFrame, tuple[RawFuturesLeg, ...]]:
     start, end = _request_dates(request)
     raw_arrays = _raw_required_arrays(ref, request)
+    probe_timeframe = _daily_probe_timeframe(request)
     raw_legs: list[RawFuturesLeg] = []
 
     def raw_leg_fetch(symbol: str, leg_start: date, leg_end: date) -> pd.DataFrame:
         leg = RawFuturesLeg(ref.dataset, symbol)
         raw_legs.append(leg)
-        _fill_raw_leg_gaps(
+        _materialize_raw_leg(
             leg,
-            request,
+            request.timeframe,
             arrays=raw_arrays,
             start=leg_start,
             end=leg_end,
@@ -127,9 +135,34 @@ def _derive_continuous_history(
             timeframe=request.timeframe,
             start=leg_start,
             end=_exclusive_date_end(leg_end),
-            calendar=request.calendar,
             store_dir=store_dir,
         )
+
+    def probe_daily_volume(symbol: str, probe_start: date, probe_end: date) -> pd.Series:
+        # Rank a candidate on daily volume.  The 1d candidate leg is retained as Raw
+        # Futures Leg source material (presence-cached) but is *not* appended to
+        # ``raw_legs``, so a serial probed here stays cached-but-unused — excluded from
+        # the continuous derivation.  ``fetch`` is the daily port today (BarAggregation.
+        # DAY); an intraday deliverable fetcher would build a daily probe fetcher here.
+        leg = RawFuturesLeg(ref.dataset, symbol)
+        _materialize_raw_leg(
+            leg,
+            probe_timeframe,
+            arrays=raw_arrays,
+            start=probe_start,
+            end=probe_end,
+            fetch=fetch,
+            store_dir=store_dir,
+        )
+        volume = read_raw_futures_leg(
+            leg,
+            arrays=("Volume",),
+            timeframe=probe_timeframe,
+            start=probe_start,
+            end=_exclusive_date_end(probe_end),
+            store_dir=store_dir,
+        )
+        return volume["Volume"]
 
     chain = fetch_contract_chain(
         ref.root,
@@ -138,6 +171,7 @@ def _derive_continuous_history(
         list_contracts=list_contracts,
         fetch=raw_leg_fetch,
         bar_cadence=bar_cadence,
+        probe_volume=probe_daily_volume,
     )
     return _continuous_panel(chain, adjustment=ref.adjustment), tuple(dict.fromkeys(raw_legs))
 
@@ -147,9 +181,21 @@ def _request_bar_cadence(request: NativeBarsRequest) -> timedelta:
     return pd.Timedelta(request.timeframe).to_pytimedelta()
 
 
-def _fill_raw_leg_gaps(
+def _daily_probe_timeframe(request: NativeBarsRequest) -> str:
+    """The timeframe of the daily liquidity-ranking probe (ADR-0001).
+
+    A daily request reuses its own timeframe so the probe and the deliverable legs are
+    one cached fetch; any coarser/intraday request keeps the probe on the canonical
+    daily key, so eligibility never depends on the sampling cadence.
+    """
+    if _request_bar_cadence(request) == timedelta(days=1):
+        return request.timeframe
+    return _DAILY_PROBE_TIMEFRAME
+
+
+def _materialize_raw_leg(
     leg: RawFuturesLeg,
-    request: NativeBarsRequest,
+    timeframe: str,
     *,
     arrays: tuple[str, ...],
     start: date,
@@ -157,24 +203,18 @@ def _fill_raw_leg_gaps(
     fetch: ContractFetcher,
     store_dir: Path | None,
 ) -> None:
-    for gap in _raw_leg_gaps(leg, request, arrays=arrays, start=start, end=end, store_dir=store_dir):
-        bars = fetch(leg.symbol, gap.start.date(), _inclusive_gap_end(gap))
-        assert_admissible_native_bars(
-            leg,
-            bars,
-            arrays=arrays,
-            timeframe=request.timeframe,
-            start=gap.start,
-            end=gap.end,
-            calendar=request.calendar,
-        )
-        merge_raw_futures_leg(
-            leg,
-            request.timeframe,
-            bars,
-            required_arrays=arrays,
-            store_dir=store_dir,
-        )
+    """Fetch a dated contract's bars once and retain them as source material.
+
+    A leg is provider source material, not a covered deliverable: we fetch the whole
+    window the first time and cache it; the contract's actual traded days are whatever
+    the provider returns (a thin/serial contract prints sparsely and stops at its last
+    trade).  Coverage is enforced on the assembled continuous series, never per leg.
+    """
+    if raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir).exists():
+        return
+    merge_raw_futures_leg(
+        leg, timeframe, fetch(leg.symbol, start, end), required_arrays=arrays, store_dir=store_dir
+    )
 
 
 def _continuous_panel(chain: ContractChain, *, adjustment: str) -> pd.DataFrame:
@@ -220,26 +260,6 @@ def _continuous_gaps(
     )
 
 
-def _raw_leg_gaps(
-    leg: RawFuturesLeg,
-    request: NativeBarsRequest,
-    *,
-    arrays: tuple[str, ...],
-    start: date,
-    end: date,
-    store_dir: Path | None,
-) -> tuple[CoverageGap, ...]:
-    return raw_futures_leg_coverage_gaps(
-        leg,
-        arrays=arrays,
-        timeframe=request.timeframe,
-        start=start,
-        end=_exclusive_date_end(end),
-        calendar=request.calendar,
-        store_dir=store_dir,
-    )
-
-
 def _raw_required_arrays(ref: FuturesRef, request: NativeBarsRequest) -> tuple[str, ...]:
     arrays = list(request.arrays)
     if ref.adjustment in _CLOSE_DEPENDENT_ADJUSTMENTS and not _has_array(arrays, "Close"):
@@ -258,10 +278,6 @@ def _request_dates(request: NativeBarsRequest) -> tuple[date, date]:
     return start, (end_exclusive - pd.Timedelta(days=1)).date()
 
 
-def _inclusive_gap_end(gap: CoverageGap) -> date:
-    return (gap.end - pd.Timedelta(days=1)).date()
-
-
 def _exclusive_date_end(value: date) -> pd.Timestamp:
     return pd.Timestamp(value) + pd.Timedelta(days=1)
 
@@ -273,6 +289,17 @@ def _single_futures_ref(request: NativeBarsRequest) -> FuturesRef:
     if not isinstance(ref, FuturesRef):
         raise TypeError(f"Databento futures Pull requires a FuturesRef; got {ref!r}")
     return ref
+
+
+def _with_venue_calendar(request: NativeBarsRequest, ref: FuturesRef) -> NativeBarsRequest:
+    """Re-key the request to the contract's venue calendar, resolved from its dataset.
+
+    A futures Pull's expected-bar grid is the venue's (CME/ICE) — known from the
+    ref's dataset — not the request-level calendar (which governs venue-agnostic
+    refs).  Every leg admission and the continuous series then cover against it, so
+    a day NYSE is open but the venue closed (or vice versa) is no longer a false gap.
+    """
+    return replace(request, calendar=venue_calendar_for_dataset(ref.dataset))
 
 
 def _require_supported_roll_rule(ref: FuturesRef) -> None:

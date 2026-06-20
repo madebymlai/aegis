@@ -171,6 +171,10 @@ class SymbolSpec:
 class DataConfig:
     source: str = "synthetic"
     provider: str | None = None
+    # FX gap-fill provider, decoupled from the bars ``provider``: a futures book pulls
+    # bars from ``databento`` but its base-currency FX rates from ``yfinance`` (the only
+    # store FX gap-fill provider). ``None`` falls back to ``provider`` (prior behavior).
+    fx_provider: str | None = None
     # No schema default — required. Keyword-only so a required field can sit among
     # defaulted ones — every construction site splats **raw anyway.
     arrays: Annotated[list[ArrayToken], Field(min_length=1)] = field(kw_only=True)
@@ -197,6 +201,12 @@ class DataConfig:
     @property
     def effective_arrays(self) -> tuple[str, ...]:
         return expand_data_arrays(self.arrays)
+
+    @property
+    def effective_fx_provider(self) -> str:
+        """The provider used to gap-fill base-currency FX rates: ``fx_provider`` when
+        set, else the bars ``provider`` (so a single-provider book is unchanged)."""
+        return store_gap_fill_provider(self.fx_provider or self.provider)
 
     @property
     def tickers(self) -> list[str]:
@@ -237,8 +247,13 @@ class DataConfig:
             _require_symbols_for_source(self.source, self.symbols)
             _require_window_for_source(self.source, self)
             _require_store_symbols(self.symbols, provider=self.provider)
-        elif self.provider is not None:
-            raise ValueError("data.provider is only supported for store source")
+            if self.fx_provider is not None:
+                store_gap_fill_provider(self.fx_provider)
+        else:
+            if self.provider is not None:
+                raise ValueError("data.provider is only supported for store source")
+            if self.fx_provider is not None:
+                raise ValueError("data.fx_provider is only supported for store source")
         if self.skip_on_error and "skipped_symbols" not in self.quality.allowed_degradations:
             raise ValueError(
                 "skip_on_error requires data.quality.allowed_degradations to include 'skipped_symbols'"
