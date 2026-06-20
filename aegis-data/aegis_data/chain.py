@@ -16,7 +16,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS, DatedContract, roll_schedule
+from aegis_data.roll import DatedContract, roll_lead_days_for_cadence, roll_schedule
 
 # Each contract is fetched a little past its roll dates so that, after a
 # scheduled roll snaps back to the latest common trading day (holiday/weekend),
@@ -53,17 +53,20 @@ def fetch_contract_chain(
     *,
     list_contracts: ContractCalendar,
     fetch: ContractFetcher,
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    bar_cadence: timedelta,
 ) -> ContractChain:
     """Assemble the dated-contract chain for ``root`` over ``[start, end]``.
 
     ``list_contracts`` supplies the eligible dated contracts (from instrument
     definitions); the roll schedule is derived from their last-trade dates, so a
     monthly product rolls monthly and a serial/odd-cycle product rolls on whatever it
-    actually lists.
+    actually lists.  The roll lead is derived from ``bar_cadence``, never configured.
     """
     schedule = roll_schedule(
-        list_contracts(root, start, end), start, end, roll_lead_days=roll_lead_days
+        list_contracts(root, start, end),
+        start,
+        end,
+        roll_lead_days=roll_lead_days_for_cadence(bar_cadence),
     )
     n = len(schedule.symbols)
     frames: list[pd.DataFrame] = []

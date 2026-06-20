@@ -9,7 +9,7 @@ ES series.
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -34,6 +34,7 @@ def test_live_es_continuous_panel_is_gap_free(tmp_path) -> None:
     panel = continuous_panel(
         "ES", date(2024, 6, 1), date(2024, 9, 25),
         fetch=fetch, list_contracts=list_contracts, method="ratio",
+        bar_cadence=timedelta(days=1),
     )
 
     assert not panel["Close"].isna().any()

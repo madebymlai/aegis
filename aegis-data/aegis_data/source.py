@@ -8,14 +8,13 @@ entry point for consumers (Aegis RD's pipeline, Aegis Trader): an omitted
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
 from aegis_data.back_adjust import back_adjust_chain
 from aegis_data.chain import ContractCalendar, ContractFetcher, fetch_contract_chain
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
-from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS
 from aegis_data.store import cached_fetcher
 
 
@@ -36,16 +35,16 @@ def continuous_panel(
     fetch: ContractFetcher,
     list_contracts: ContractCalendar,
     method: str = "ratio",
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    bar_cadence: timedelta,
 ) -> pd.DataFrame:
     """Back-adjusted continuous OHLCV panel for ``root`` over ``[start, end]``.
 
     ``fetch`` is the per-contract source and ``list_contracts`` the dated-contract
     calendar (use :func:`databento_source` / :func:`databento_contract_calendar` in
-    production; inject fakes in tests).
+    production; inject fakes in tests).  The roll lead derives from ``bar_cadence``.
     """
     chain = fetch_contract_chain(
-        root, start, end, list_contracts=list_contracts, fetch=fetch, roll_lead_days=roll_lead_days
+        root, start, end, list_contracts=list_contracts, fetch=fetch, bar_cadence=bar_cadence
     )
     return back_adjust_chain(chain, method=method)
 

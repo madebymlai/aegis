@@ -33,7 +33,7 @@ globally on failure.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from nautilus_trader.model.data import Bar, QuoteTick
@@ -46,7 +46,7 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
-from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS, DatedContract
+from aegis_data.roll import DatedContract
 from aegis_runtime import (
     DataContract,
     ExecutionBundle,
@@ -99,7 +99,6 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     bundle_label: str = "synthetic"
     risk_guard_config: RiskGuardConfig = RiskGuardConfig()
     futures_contract_chains: dict[str, tuple[DatedContract, ...]] | None = None
-    futures_roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS
     fill_time_in_force: TimeInForce | None = None
     """Time-in-force for submitted orders (ADR-0001, next-close execution).
 
@@ -117,8 +116,8 @@ class RebalanceStrategy(Strategy):
     - When the period (day) changes, a rebalance is triggered for the
       *completed* period using the Cache-backed rolling bar window.
     - Each sleeve's bundle computes targets from its own Cache-backed bars,
-      netted across sleeves, and orders are emitted only for FIGIs whose
-      venue was open (had a Cache bar) during the completed period.
+      netted across sleeves, and orders are emitted only for InstrumentRefs
+      whose venue was open (had a Cache bar) during the completed period.
     """
 
     def __init__(self, config: RebalanceStrategyConfig) -> None:
@@ -139,7 +138,9 @@ class RebalanceStrategy(Strategy):
         self._futures_contract_chains: dict[str, tuple[DatedContract, ...]] = (
             config.futures_contract_chains or {}
         )
-        self._futures_roll_lead_days: int = config.futures_roll_lead_days
+        # Bar cadence (one across sleeves); set in on_start, the futures roll lead
+        # derives from it so resolution picks the contract the book trades.
+        self._bar_cadence: timedelta | None = None
         # ── Slice 8: RiskEngine guards ───────────────────────────────────
         self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
         # Slice 7: startup gates + global halt
@@ -202,6 +203,11 @@ class RebalanceStrategy(Strategy):
             raise RuntimeError("rebalance pipeline queried before on_start wired it")
         return self._pipeline
 
+    def _require_bar_cadence(self) -> timedelta:
+        if self._bar_cadence is None:
+            raise RuntimeError("bar cadence queried before on_start resolved it")
+        return self._bar_cadence
+
     # ── Nautilus lifecycle ────────────────────────────────────────────────────
 
     def on_start(self) -> None:
@@ -249,6 +255,9 @@ class RebalanceStrategy(Strategy):
         )
         self._book_timeframe = book_timeframe
         self._period_ns = timeframe_to_ns(book_timeframe)
+        # The futures roll lead is derived from this cadence (never configured); hold
+        # it so the resolver picks the same front contract the book trades on.
+        self._bar_cadence = timedelta(microseconds=self._period_ns // 1000)
         pipeline.initialize_identity(self._as_of())
 
         identity = pipeline.resolved_identity_snapshot()
@@ -496,7 +505,7 @@ class RebalanceStrategy(Strategy):
                     self.cache.instruments(),
                     as_of=as_of,
                     contract_chains=self._futures_contract_chains,
-                    roll_lead_days=self._futures_roll_lead_days,
+                    bar_cadence=self._require_bar_cadence(),
                 )[ref]
             raise InstrumentResolutionError(
                 f"unsupported InstrumentRef variant {type(ref).__name__}"
@@ -528,10 +537,10 @@ class RebalanceStrategy(Strategy):
         """
         identity = self._require_pipeline().resolved_identity_snapshot()
         instrument_ids: list[str] = [
-            identity[figi].value
+            identity[ref].value
             for contract in self._sleeve_to_contract.values()
-            for figi in contract.refs
-            if figi in identity
+            for ref in contract.refs
+            if ref in identity
         ]
         return self._risk_guard.risk_engine_config_dict(
             nav=nav,

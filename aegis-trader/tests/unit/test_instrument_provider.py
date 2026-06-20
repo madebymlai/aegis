@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from aegis_data.roll import DatedContract
@@ -79,8 +79,24 @@ def test_listed_ref_mic_override_maps_igln_to_london_mic():
     assert IB_LISTED_MIC_OVERRIDES == {"IGLN": "XLON"}
 
 
-def test_futures_mic_override_maps_comex_metals_to_xcec():
-    assert IB_FUTURES_MIC_OVERRIDES == {"COMEX": "XCEC"}
+def _mic_override_for_symbol(symbol: str, overrides: dict[str, str]) -> str | None:
+    """Apply Nautilus's documented symbol_to_mic_venue rule (prefix match).
+
+    Mirrors ``_resolve_symbol_specific_venue`` in the IB provider, which selects
+    a MIC venue when ``contract.symbol.startswith(prefix)`` for a configured key.
+    """
+    for prefix, venue in overrides.items():
+        if symbol.startswith(prefix):
+            return venue
+    return None
+
+
+@pytest.mark.parametrize("metal_root", ["GC", "SI", "HG"])
+def test_comex_metal_future_resolves_to_xcec_under_nautilus_prefix_rule(metal_root):
+    # IB reports COMEX metals on the raw COMEX exchange; the override pins them to
+    # XCEC. Nautilus matches by the contract *symbol* (the Globex root), never the
+    # "COMEX" exchange code, so the override must be keyed by GC/SI/HG.
+    assert _mic_override_for_symbol(metal_root, IB_FUTURES_MIC_OVERRIDES) == "XCEC"
 
 
 def test_loaded_listed_ref_bimap_records_provider_returned_instrument_id():
@@ -99,8 +115,12 @@ def test_select_front_futures_contract_rolls_on_expiry_rule_without_dataset():
         DatedContract("ESU6", date(2026, 9, 18)),
     )
 
-    before_roll = select_front_futures_contract(ref, date(2026, 6, 11), contracts)
-    on_roll = select_front_futures_contract(ref, date(2026, 6, 12), contracts)
+    before_roll = select_front_futures_contract(
+        ref, date(2026, 6, 11), contracts, bar_cadence=timedelta(days=1)
+    )
+    on_roll = select_front_futures_contract(
+        ref, date(2026, 6, 12), contracts, bar_cadence=timedelta(days=1)
+    )
 
     assert before_roll == DatedContract("ESM6", date(2026, 6, 19))
     assert on_roll == DatedContract("ESU6", date(2026, 9, 18))
@@ -111,7 +131,7 @@ def test_futures_ref_ib_contracts_request_globex_local_symbol_only():
     chains = {"GC": (DatedContract("GCQ6", date(2026, 8, 27)),)}
 
     contracts = futures_ref_ib_contracts(
-        {ref}, as_of=date(2026, 7, 1), contract_chains=chains
+        {ref}, as_of=date(2026, 7, 1), contract_chains=chains, bar_cadence=timedelta(days=1)
     )
 
     assert contracts == [{"secType": "FUT", "localSymbol": "GCQ6", "exchange": "CME"}]
@@ -123,7 +143,8 @@ def test_loaded_futures_ref_bimap_records_provider_returned_contract_id():
     chains = {"GC": (DatedContract("GCQ6", date(2026, 8, 27)),)}
 
     bimap = loaded_futures_ref_bimap(
-        {ref}, instruments, as_of=date(2026, 7, 1), contract_chains=chains
+        {ref}, instruments, as_of=date(2026, 7, 1), contract_chains=chains,
+        bar_cadence=timedelta(days=1),
     )
 
     assert bimap == {ref: InstrumentId.from_str("GCQ6.XCEC")}

@@ -6,7 +6,7 @@ without network — the real databento call is covered by the live smoke test.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -64,6 +64,7 @@ def test_continuous_panel_back_adjusts_and_caches(tmp_path) -> None:
     panel = continuous_panel(
         "ES", date(2024, 1, 1), date(2024, 12, 31),
         fetch=fetch, list_contracts=_es_2024, method="ratio",
+        bar_cadence=timedelta(days=1),
     )
 
     # Gap-free continuous panel covering the year; most-recent contract (ESZ4) unadjusted.
@@ -77,6 +78,7 @@ def test_continuous_panel_back_adjusts_and_caches(tmp_path) -> None:
     again = continuous_panel(
         "ES", date(2024, 1, 1), date(2024, 12, 31),
         fetch=fetch, list_contracts=_es_2024, method="ratio",
+        bar_cadence=timedelta(days=1),
     )
     assert client.bar_calls == calls_after_first
     pd.testing.assert_frame_equal(panel, again)

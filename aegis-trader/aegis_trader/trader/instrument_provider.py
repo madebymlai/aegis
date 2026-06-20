@@ -10,12 +10,12 @@ needed to build that boot bimap.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import date
+from datetime import date, timedelta
 from typing import Protocol
 
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS, DatedContract, front_contract
+from aegis_data.roll import DatedContract, front_contract, roll_lead_days_for_cadence
 from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 from aegis_runtime.currency import major_currency
 
@@ -25,12 +25,12 @@ IB_LISTED_SEC_ID_TYPE = "FIGI"
 IB_FUTURES_SEC_TYPE = "FUT"
 IB_FUTURES_EXCHANGE = "CME"
 
-# Nautilus's IB provider accepts symbol-prefix/exchange-code -> MIC overrides.
-# IB sometimes reports London ETF listings on raw pseudo-venues (spike:
-# IGLN.LSEETF), and COMEX metals on raw COMEX; the overrides pin those known
-# provider codes to the listing MIC returned by IB.
+# Nautilus's IB provider matches symbol_to_mic_venue by contract *symbol* prefix
+# (``contract.symbol.startswith(prefix)``), never the exchange code. IB reports
+# London ETF listings on raw pseudo-venues (spike: IGLN.LSEETF) and the COMEX
+# metals on raw COMEX; the overrides pin those symbols to the listing MIC.
 IB_LISTED_MIC_OVERRIDES: dict[str, str] = {"IGLN": "XLON"}
-IB_FUTURES_MIC_OVERRIDES: dict[str, str] = {"COMEX": "XCEC"}
+IB_FUTURES_MIC_OVERRIDES: dict[str, str] = {"GC": "XCEC", "SI": "XCEC", "HG": "XCEC"}
 
 IBContractConfig = dict[str, str]
 FuturesContractChains = Mapping[str, Sequence[DatedContract]]
@@ -78,7 +78,7 @@ def select_front_futures_contract(
     as_of: date,
     contracts: Sequence[DatedContract],
     *,
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    bar_cadence: timedelta,
 ) -> DatedContract:
     """Select the dated contract a FuturesRef represents on *as_of*.
 
@@ -86,7 +86,8 @@ def select_front_futures_contract(
     ``adjustment`` are research-source metadata and are intentionally not read.
     Eligible dated contracts and expiries are supplied by the caller (IBKR chain
     at live, Databento definitions at research), so the same expiry-driven rule
-    reproduces on both sides without a per-root month table.
+    reproduces on both sides without a per-root month table.  The roll lead is
+    derived from ``bar_cadence``, never configured.
     """
     if ref.roll_rule != "calendar":
         raise InstrumentResolutionError(
@@ -95,7 +96,9 @@ def select_front_futures_contract(
     if not contracts:
         raise InstrumentResolutionError(f"FuturesRef root {ref.root!r} has no dated contracts")
 
-    selected = front_contract(contracts, as_of, roll_lead_days=roll_lead_days)
+    selected = front_contract(
+        contracts, as_of, roll_lead_days=roll_lead_days_for_cadence(bar_cadence)
+    )
     if selected is None:
         raise InstrumentResolutionError(
             f"FuturesRef root {ref.root!r} has no dated contract active on {as_of}"
@@ -108,7 +111,7 @@ def futures_ref_ib_contracts(
     *,
     as_of: date,
     contract_chains: FuturesContractChains,
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    bar_cadence: timedelta,
 ) -> list[IBContractConfig]:
     """IBContract-shaped dictionaries for loading FuturesRefs by localSymbol.
 
@@ -119,7 +122,7 @@ def futures_ref_ib_contracts(
         _unique_futures_refs(refs),
         as_of=as_of,
         contract_chains=contract_chains,
-        roll_lead_days=roll_lead_days,
+        bar_cadence=bar_cadence,
     )
     contracts_by_symbol = {
         contract.symbol: _ib_futures_contract(contract)
@@ -176,7 +179,7 @@ def loaded_futures_ref_bimap(
     *,
     as_of: date,
     contract_chains: FuturesContractChains,
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    bar_cadence: timedelta,
 ) -> dict[FuturesRef, InstrumentId]:
     """Map requested FuturesRefs to the IB-loaded dated contracts.
 
@@ -191,7 +194,7 @@ def loaded_futures_ref_bimap(
         sorted(requested),
         as_of=as_of,
         contract_chains=contract_chains,
-        roll_lead_days=roll_lead_days,
+        bar_cadence=bar_cadence,
     )
     by_local_symbol: dict[str, FuturesRef] = {}
     for ref, contract in selected.items():
@@ -289,13 +292,13 @@ def _selected_futures_contracts(
     *,
     as_of: date,
     contract_chains: FuturesContractChains,
-    roll_lead_days: int,
+    bar_cadence: timedelta,
 ) -> dict[FuturesRef, DatedContract]:
     selected: dict[FuturesRef, DatedContract] = {}
     for ref in refs:
         chain = _contract_chain_for(ref, contract_chains)
         selected[ref] = select_front_futures_contract(
-            ref, as_of, chain, roll_lead_days=roll_lead_days
+            ref, as_of, chain, bar_cadence=bar_cadence
         )
     return selected
 

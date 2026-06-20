@@ -17,8 +17,9 @@ are tested separately in an integration environment.
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, timedelta
 
+import pytest
 from aegis_data.roll import DatedContract
 from aegis_runtime import FuturesRef, ListedRef
 from nautilus_trader.config import (
@@ -58,6 +59,7 @@ from aegis_trader.trader.modes import (
     IB_PAPER_ACCOUNT_ID,
     IB_PAPER_PORT,
 )
+from aegis_trader.trader.instrument_provider import InstrumentResolutionError
 
 
 # --------------------------------------------------------------------------- #
@@ -272,7 +274,7 @@ def test_data_client_loads_listed_refs_as_ib_figi_contracts():
             }
         ],
         "convert_exchange_to_mic_venue": True,
-        "symbol_to_mic_venue": {"IGLN": "XLON", "COMEX": "XCEC"},
+        "symbol_to_mic_venue": {"IGLN": "XLON", "GC": "XCEC", "SI": "XCEC", "HG": "XCEC"},
     }
 
 
@@ -299,17 +301,29 @@ def test_data_client_loads_futures_refs_as_ib_local_symbol_contracts():
     chains = {"6E": (DatedContract("6EU6", date(2026, 9, 14)),)}
 
     cfg = build_paper_data_client_config(
-        futures_refs=[ref], futures_as_of=date(2026, 8, 1), futures_contract_chains=chains
+        futures_refs=[ref], futures_as_of=date(2026, 8, 1), futures_contract_chains=chains,
+        bar_cadence=timedelta(days=1),
     )
 
     assert cfg["instrument_provider"] == {
         "load_contracts": [{"secType": "FUT", "localSymbol": "6EU6", "exchange": "CME"}],
         "convert_exchange_to_mic_venue": True,
-        "symbol_to_mic_venue": {"IGLN": "XLON", "COMEX": "XCEC"},
+        "symbol_to_mic_venue": {"IGLN": "XLON", "GC": "XCEC", "SI": "XCEC", "HG": "XCEC"},
     }
 
 
-def test_data_client_uses_configured_futures_roll_lead_days():
+@pytest.mark.parametrize(
+    ("bar_cadence", "expected_local_symbol"),
+    [
+        (timedelta(days=1), "6EM6"),   # daily lead 5: still holds the front contract
+        (timedelta(weeks=1), "6EU6"),  # weekly lead 14: rolls earlier, already advanced
+    ],
+)
+def test_data_client_derives_roll_lead_from_bar_cadence(bar_cadence, expected_local_symbol):
+    # The lead is derived from the book's bar cadence, never configured. With the same
+    # as_of, a daily book (lead 5) still holds the front 6EM6, while a weekly book
+    # (lead 14, rolls earlier) has already advanced to 6EU6 — proving the data client
+    # reads the *actual* cadence, not a daily constant.
     ref = FuturesRef("6E", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
     chains = {
         "6E": (
@@ -319,15 +333,25 @@ def test_data_client_uses_configured_futures_roll_lead_days():
     }
 
     cfg = build_paper_data_client_config(
-        futures_refs=[ref],
-        futures_as_of=date(2026, 6, 10),
-        futures_contract_chains=chains,
-        futures_roll_lead_days=2,
+        futures_refs=[ref], futures_as_of=date(2026, 6, 1), futures_contract_chains=chains,
+        bar_cadence=bar_cadence,
     )
 
     assert cfg["instrument_provider"]["load_contracts"] == [
-        {"secType": "FUT", "localSymbol": "6EM6", "exchange": "CME"}
+        {"secType": "FUT", "localSymbol": expected_local_symbol, "exchange": "CME"}
     ]
+
+
+def test_data_client_requires_bar_cadence_to_load_futures():
+    # Mirrors the futures_as_of guard: futures cannot be selected without the cadence
+    # the roll lead derives from.
+    ref = FuturesRef("6E", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
+    chains = {"6E": (DatedContract("6EU6", date(2026, 9, 14)),)}
+
+    with pytest.raises(InstrumentResolutionError, match="bar_cadence"):
+        build_paper_data_client_config(
+            futures_refs=[ref], futures_as_of=date(2026, 8, 1), futures_contract_chains=chains
+        )
 
 
 def test_data_client_omits_instrument_provider_when_no_fx_pairs():

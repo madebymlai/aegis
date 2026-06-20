@@ -10,9 +10,8 @@ Commands:
 from __future__ import annotations
 
 import argparse
-from datetime import date
+from datetime import date, timedelta
 
-from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS
 from aegis_data.source import continuous_panel, databento_contract_calendar, databento_source
 from aegis_data.store import data_dir, futures_dir
 
@@ -32,7 +31,6 @@ def main(argv: list[str] | None = None) -> int:
     p_pull.add_argument("--start", required=True, help="YYYY-MM-DD")
     p_pull.add_argument("--end", required=True, help="YYYY-MM-DD")
     p_pull.add_argument("--method", default="ratio", choices=["ratio", "difference"])
-    p_pull.add_argument("--roll-lead-days", type=int, default=DEFAULT_ROLL_LEAD_DAYS)
 
     args = parser.parse_args(argv)
 
@@ -59,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
             fetch=fetch,
             list_contracts=list_contracts,
             method=args.method,
-            roll_lead_days=args.roll_lead_days,
+            bar_cadence=timedelta(days=1),
         )
         print(
             f"{args.root}: {len(panel)} continuous bars "

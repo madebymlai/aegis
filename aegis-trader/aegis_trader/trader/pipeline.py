@@ -49,7 +49,6 @@ class GateOutcome(str, Enum):
     """Outcome of the cap/band gate during a rebalance."""
 
     PASS = "pass"
-    HALT = "halt"
     ERROR = "error"
 
 

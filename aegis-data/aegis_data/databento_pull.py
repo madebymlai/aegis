@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -13,7 +13,6 @@ from aegis_data.back_adjust import back_adjust_chain
 from aegis_data.chain import ContractCalendar, ContractChain, ContractFetcher, fetch_contract_chain
 from aegis_data.continuous import apply_adjustment_factors
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
-from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS
 from aegis_data.store import (
     CoverageGap,
     NativeBarsRequest,
@@ -50,13 +49,13 @@ def pull_databento_futures_bars(
     contract_calendar: ContractCalendar | None = None,
     client=None,
     store_dir: Path | None = None,
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
 ) -> DatabentoPullResult:
     """Pull one ``FuturesRef`` and materialize Continuous Futures History.
 
     Raw dated-contract legs are retained as provider source material under the
     dataset+symbol key.  Continuous history is a derived Covered History keyed by
-    the requested ``FuturesRef`` (root, dataset, roll rule, adjustment).
+    the requested ``FuturesRef`` (root, dataset, roll rule, adjustment).  The roll
+    lead is derived from the request's bar cadence — never configured.
     """
     ref = _single_futures_ref(request)
     _require_supported_roll_rule(ref)
@@ -70,7 +69,7 @@ def pull_databento_futures_bars(
             fetch=raw_fetch,
             list_contracts=list_contracts,
             store_dir=store_dir,
-            roll_lead_days=roll_lead_days,
+            bar_cadence=_request_bar_cadence(request),
         )
         assert_admissible_native_bars(
             ref,
@@ -99,7 +98,7 @@ def _derive_continuous_history(
     fetch: ContractFetcher,
     list_contracts: ContractCalendar,
     store_dir: Path | None,
-    roll_lead_days: int,
+    bar_cadence: timedelta,
 ) -> tuple[pd.DataFrame, tuple[RawFuturesLeg, ...]]:
     start, end = _request_dates(request)
     raw_arrays = _raw_required_arrays(ref, request)
@@ -133,9 +132,14 @@ def _derive_continuous_history(
         end,
         list_contracts=list_contracts,
         fetch=raw_leg_fetch,
-        roll_lead_days=roll_lead_days,
+        bar_cadence=bar_cadence,
     )
     return _continuous_panel(chain, adjustment=ref.adjustment), tuple(dict.fromkeys(raw_legs))
+
+
+def _request_bar_cadence(request: NativeBarsRequest) -> timedelta:
+    """The request's bar cadence as a duration; the roll lead derives from it."""
+    return pd.Timedelta(request.timeframe).to_pytimedelta()
 
 
 def _fill_raw_leg_gaps(

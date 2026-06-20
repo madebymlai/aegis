@@ -13,11 +13,17 @@ Pure: no I/O, no provider.  Holiday calendars are out of scope (business-day = M
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-DEFAULT_ROLL_LEAD_DAYS = 5
+# Roll about one trading week before last-trade: clears first-notice/delivery and
+# the liquidity migration to the back contract.  Not an operator knob — the lead is
+# derived from the bar cadence (see ``roll_lead_days_for_cadence``).
+ROLL_LIQUIDITY_BUFFER_DAYS = 5
+
+_ONE_BUSINESS_DAY = timedelta(days=1)
 
 
 @dataclass(frozen=True)
@@ -62,7 +68,7 @@ def roll_schedule(
     start: date,
     end: date,
     *,
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    roll_lead_days: int,
 ) -> FuturesChainSchedule:
     """Chain over ``[start, end]`` from *supplied* contracts.
 
@@ -84,7 +90,7 @@ def front_contract(
     contracts: Sequence[DatedContract],
     as_of: date,
     *,
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    roll_lead_days: int,
 ) -> DatedContract | None:
     """Return the dated contract active on ``as_of`` under the expiry rule.
 
@@ -116,7 +122,7 @@ def assert_roll_agreement(
     start: date,
     end: date,
     *,
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    roll_lead_days: int,
 ) -> RollAgreement:
     """Assert one root's research and live calendars produce the same schedule."""
     research = roll_schedule(
@@ -142,7 +148,7 @@ def assert_universe_roll_agreement(
     start: date,
     end: date,
     *,
-    roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    roll_lead_days: int,
 ) -> tuple[RollAgreement, ...]:
     """Assert roll-schedule parity for every root in a futures universe."""
     return tuple(
@@ -185,6 +191,20 @@ def _roll_date(contract: DatedContract, roll_lead_days: int) -> date:
     return _minus_business_days(contract.last_trade, roll_lead_days)
 
 
+def roll_lead_days_for_cadence(bar_cadence: timedelta) -> int:
+    """Business-day roll lead derived from the book's bar cadence — no operator knob.
+
+    Rolls about one trading week before last-trade (clearing first-notice/delivery and
+    the liquidity migration to the back contract), but never later than the cadence
+    safety floor — two bars, the one acted on plus the one-bar next-close execution
+    latency (ADR-0001).  So a coarse timeframe rolls earlier (weekly -> 14), an intraday
+    one keeps the week buffer (-> 5), and research and live derive the same lead from
+    the cadence they already share.
+    """
+    safety_floor = max(1, math.ceil(2 * bar_cadence / _ONE_BUSINESS_DAY))
+    return max(ROLL_LIQUIDITY_BUFFER_DAYS, safety_floor)
+
+
 def _require_non_negative_roll_lead(roll_lead_days: int) -> None:
     if roll_lead_days < 0:
         raise ValueError("roll_lead_days must be non-negative")
@@ -201,7 +221,7 @@ def _minus_business_days(day: date, count: int) -> date:
 
 
 __all__ = [
-    "DEFAULT_ROLL_LEAD_DAYS",
+    "ROLL_LIQUIDITY_BUFFER_DAYS",
     "DatedContract",
     "FuturesChainSchedule",
     "RollAgreement",
@@ -209,5 +229,6 @@ __all__ = [
     "assert_roll_agreement",
     "assert_universe_roll_agreement",
     "front_contract",
+    "roll_lead_days_for_cadence",
     "roll_schedule",
 ]

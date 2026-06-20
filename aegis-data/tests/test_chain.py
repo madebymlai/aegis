@@ -7,7 +7,7 @@ injected, so assembly + snapping are tested without I/O.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -45,7 +45,7 @@ def test_fetch_contract_chain_assembles_per_contract_bars_with_roll_overlap() ->
 
     chain = fetch_contract_chain(
         "ES", date(2024, 1, 1), date(2024, 12, 31),
-        list_contracts=_es_2024, fetch=fake_fetch, roll_lead_days=5,
+        list_contracts=_es_2024, fetch=fake_fetch, bar_cadence=timedelta(days=1),
     )
 
     assert chain.symbols == ("ESH4", "ESM4", "ESU4", "ESZ4")
@@ -77,7 +77,7 @@ def test_chain_rolls_on_supplied_monthly_contracts() -> None:
         date(2026, 9, 30),
         list_contracts=list_contracts,
         fetch=fetch,
-        roll_lead_days=5,
+        bar_cadence=timedelta(days=1),
     )
 
     assert chain.symbols == ("CLN6", "CLQ6", "CLU6")
@@ -97,7 +97,7 @@ def test_roll_dates_snap_back_to_the_latest_common_trading_day() -> None:
 
     chain = fetch_contract_chain(
         "ES", date(2024, 1, 1), date(2024, 12, 31),
-        list_contracts=_es_2024, fetch=fetch, roll_lead_days=5,
+        list_contracts=_es_2024, fetch=fetch, bar_cadence=timedelta(days=1),
     )
 
     assert chain.roll_dates[0] == pd.Timestamp("2024-03-07")

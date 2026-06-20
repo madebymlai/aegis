@@ -20,7 +20,7 @@ dicts into the full IBKR config classes at node-build time.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from nautilus_trader.backtest.config import BacktestEngineConfig
@@ -36,7 +36,6 @@ from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.risk.config import RiskEngineConfig
 
-from aegis_data.roll import DEFAULT_ROLL_LEAD_DAYS
 from aegis_runtime import InstrumentRef
 from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.trader.instrument_provider import (
@@ -160,7 +159,7 @@ def _data_client_config(
     futures_refs: Iterable[InstrumentRef],
     futures_as_of: date | None,
     futures_contract_chains: FuturesContractChains,
-    futures_roll_lead_days: int,
+    bar_cadence: timedelta | None,
 ) -> dict[str, Any]:
     """Shared data-client dict; embeds an InstrumentProvider that loads the FX
     reference pairs (``load_ids``), listed FIGI contracts, and selected dated
@@ -179,7 +178,7 @@ def _data_client_config(
         futures_refs=futures_refs,
         futures_as_of=futures_as_of,
         futures_contract_chains=futures_contract_chains,
-        futures_roll_lead_days=futures_roll_lead_days,
+        bar_cadence=bar_cadence,
     )
 
 
@@ -191,7 +190,7 @@ def _with_instrument_provider(
     futures_refs: Iterable[InstrumentRef],
     futures_as_of: date | None,
     futures_contract_chains: FuturesContractChains,
-    futures_roll_lead_days: int,
+    bar_cadence: timedelta | None,
 ) -> dict[str, Any]:
     provider = _instrument_provider_config(
         fx_instrument_ids=fx_instrument_ids,
@@ -199,7 +198,7 @@ def _with_instrument_provider(
         futures_refs=futures_refs,
         futures_as_of=futures_as_of,
         futures_contract_chains=futures_contract_chains,
-        futures_roll_lead_days=futures_roll_lead_days,
+        bar_cadence=bar_cadence,
     )
     if provider:
         cfg["instrument_provider"] = provider
@@ -213,7 +212,7 @@ def _instrument_provider_config(
     futures_refs: Iterable[InstrumentRef],
     futures_as_of: date | None,
     futures_contract_chains: FuturesContractChains,
-    futures_roll_lead_days: int,
+    bar_cadence: timedelta | None,
 ) -> dict[str, Any]:
     provider: dict[str, Any] = {}
     load_ids = list(fx_instrument_ids)
@@ -226,12 +225,17 @@ def _instrument_provider_config(
             raise InstrumentResolutionError(
                 "futures_as_of is required to load FuturesRefs at IBKR"
             )
+        if bar_cadence is None:
+            raise InstrumentResolutionError(
+                "bar_cadence is required to load FuturesRefs at IBKR "
+                "(the roll lead derives from it)"
+            )
         load_contracts.extend(
             futures_ref_ib_contracts(
                 future_refs,
                 as_of=futures_as_of,
                 contract_chains=futures_contract_chains,
-                roll_lead_days=futures_roll_lead_days,
+                bar_cadence=bar_cadence,
             )
         )
     if load_contracts:
@@ -255,7 +259,7 @@ def build_paper_data_client_config(
     futures_refs: Iterable[InstrumentRef] = (),
     futures_as_of: date | None = None,
     futures_contract_chains: FuturesContractChains | None = None,
-    futures_roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    bar_cadence: timedelta | None = None,
 ) -> dict[str, Any]:
     """Build an IBKR paper-mode data client config dict.
 
@@ -271,7 +275,7 @@ def build_paper_data_client_config(
         listed_refs=listed_refs, futures_refs=futures_refs,
         futures_as_of=futures_as_of,
         futures_contract_chains=futures_contract_chains or {},
-        futures_roll_lead_days=futures_roll_lead_days,
+        bar_cadence=bar_cadence,
     )
 
 
@@ -285,7 +289,7 @@ def build_paper_exec_client_config(
     futures_refs: Iterable[InstrumentRef] = (),
     futures_as_of: date | None = None,
     futures_contract_chains: FuturesContractChains | None = None,
-    futures_roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    bar_cadence: timedelta | None = None,
 ) -> dict[str, Any]:
     """Build an IBKR paper-mode execution client config dict.
 
@@ -306,7 +310,7 @@ def build_paper_exec_client_config(
         futures_refs=futures_refs,
         futures_as_of=futures_as_of,
         futures_contract_chains=futures_contract_chains or {},
-        futures_roll_lead_days=futures_roll_lead_days,
+        bar_cadence=bar_cadence,
     )
 
 
@@ -324,7 +328,7 @@ def build_live_data_client_config(
     futures_refs: Iterable[InstrumentRef] = (),
     futures_as_of: date | None = None,
     futures_contract_chains: FuturesContractChains | None = None,
-    futures_roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    bar_cadence: timedelta | None = None,
 ) -> dict[str, Any]:
     """Build an IBKR live-mode data client config dict.
 
@@ -340,7 +344,7 @@ def build_live_data_client_config(
         listed_refs=listed_refs, futures_refs=futures_refs,
         futures_as_of=futures_as_of,
         futures_contract_chains=futures_contract_chains or {},
-        futures_roll_lead_days=futures_roll_lead_days,
+        bar_cadence=bar_cadence,
     )
 
 
@@ -354,7 +358,7 @@ def build_live_exec_client_config(
     futures_refs: Iterable[InstrumentRef] = (),
     futures_as_of: date | None = None,
     futures_contract_chains: FuturesContractChains | None = None,
-    futures_roll_lead_days: int = DEFAULT_ROLL_LEAD_DAYS,
+    bar_cadence: timedelta | None = None,
 ) -> dict[str, Any]:
     """Build an IBKR live-mode execution client config dict.
 
@@ -375,7 +379,7 @@ def build_live_exec_client_config(
         futures_refs=futures_refs,
         futures_as_of=futures_as_of,
         futures_contract_chains=futures_contract_chains or {},
-        futures_roll_lead_days=futures_roll_lead_days,
+        bar_cadence=bar_cadence,
     )
 
 

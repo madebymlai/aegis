@@ -9,7 +9,7 @@ monthly product rolls monthly and an odd-cycle product rolls on whatever it list
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -17,7 +17,9 @@ from aegis_data.roll import (
     DatedContract,
     RollAgreementError,
     assert_roll_agreement,
+    assert_universe_roll_agreement,
     front_contract,
+    roll_lead_days_for_cadence,
     roll_schedule,
 )
 
@@ -191,4 +193,58 @@ def test_roll_agreement_harness_fails_closed_on_live_research_mismatch() -> None
             date(2026, 6, 1),
             date(2026, 8, 31),
             roll_lead_days=5,
+        )
+
+
+@pytest.mark.parametrize(
+    ("bar_cadence", "expected_lead"),
+    [
+        (timedelta(hours=1), 5),   # intraday: 2h span < buffer, the one-week buffer governs
+        (timedelta(days=1), 5),    # daily: lands on the one-week liquidity buffer
+        (timedelta(days=3), 6),    # crossover: two 3-day bars (6) just exceed the buffer
+        (timedelta(weeks=1), 14),  # weekly: 14-day span, the cadence safety floor wins
+    ],
+)
+def test_roll_lead_is_derived_from_bar_cadence(bar_cadence, expected_lead) -> None:
+    # The lead is derived from the bar cadence, never configured: roll ~a trading week
+    # before last-trade (clearing first-notice + liquidity migration), floored at the
+    # cadence safety minimum (two bars: act + next-close).
+    assert roll_lead_days_for_cadence(bar_cadence) == expected_lead
+
+
+def test_universe_roll_agreement_returns_one_schedule_per_root() -> None:
+    # Same real CME contracts on both substrates (Databento defs vs the IBKR chain)
+    # => identical last-trade dates => identical schedules for the shared lead.
+    research = {
+        "CL": [DatedContract("CLN6", date(2026, 6, 22)), DatedContract("CLQ6", date(2026, 7, 21))],
+        "GC": [DatedContract("GCM6", date(2026, 6, 25)), DatedContract("GCQ6", date(2026, 8, 27))],
+    }
+    live = {
+        "CL": [DatedContract("CLN6", date(2026, 6, 22)), DatedContract("CLQ6", date(2026, 7, 21))],
+        "GC": [DatedContract("GCM6", date(2026, 6, 25)), DatedContract("GCQ6", date(2026, 8, 27))],
+    }
+
+    agreements = assert_universe_roll_agreement(
+        ("CL", "GC"), research, live, date(2026, 6, 1), date(2026, 8, 31), roll_lead_days=5
+    )
+
+    assert tuple(a.root for a in agreements) == ("CL", "GC")
+    assert agreements[0].symbols == ("CLN6", "CLQ6")
+    assert agreements[1].symbols == ("GCM6", "GCQ6")
+
+
+def test_universe_roll_agreement_fails_closed_naming_the_divergent_root() -> None:
+    # CL agrees; GC's live chain lists a different back contract than research.
+    research = {
+        "CL": [DatedContract("CLN6", date(2026, 6, 22)), DatedContract("CLQ6", date(2026, 7, 21))],
+        "GC": [DatedContract("GCM6", date(2026, 6, 25)), DatedContract("GCQ6", date(2026, 8, 27))],
+    }
+    live = {
+        "CL": [DatedContract("CLN6", date(2026, 6, 22)), DatedContract("CLQ6", date(2026, 7, 21))],
+        "GC": [DatedContract("GCM6", date(2026, 6, 25)), DatedContract("GCV6", date(2026, 9, 28))],
+    }
+
+    with pytest.raises(RollAgreementError, match="GC"):
+        assert_universe_roll_agreement(
+            ("CL", "GC"), research, live, date(2026, 6, 1), date(2026, 9, 30), roll_lead_days=5
         )
