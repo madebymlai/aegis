@@ -20,7 +20,7 @@ from research.aegis_research.configuration.field_types import (
     UnitInterval,
 )
 
-CONFIG_SCHEMA_VERSION = 9
+CONFIG_SCHEMA_VERSION = 10
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
 # Full VBT feature names are source-specific and discovered from native_data.features.
@@ -107,10 +107,10 @@ class SymbolSpec:
     """One universe member: its RD symbol identity and quote currency.
 
     Listed symbols use ``ticker`` as their RD name and provider locator. Futures
-    store symbols use ``root`` as their RD name and take dataset semantics from
-    the data block. Currency is instrument identity, declared inline (never
-    sniffed from a data provider). ``ccy`` is the literal quote token, including
-    minor units such as ``GBp`` (pence); the converter owns the minor-unit math.
+    symbols use ``root`` as their RD name and carry their Databento Dataset on
+    ``dataset``. Currency is instrument identity, declared inline (never sniffed
+    from a data provider). ``ccy`` is the literal quote token, including minor
+    units such as ``GBp`` (pence); the converter owns the minor-unit math.
 
     Optional, provider-agnostic identity hints — ``figi`` / ``isin`` / ``mic`` —
     are used ONLY by ``aerd export`` to resolve the ticker to exactly one FIGI;
@@ -154,10 +154,12 @@ class SymbolSpec:
     def _validate_instrument_identity(self) -> SymbolSpec:
         if self.root is None:
             if self.dataset is not None:
-                raise ValueError("root is required when dataset declares a FuturesRef")
+                raise ValueError("dataset is only supported for futures symbols")
             if self.ticker is None:
                 raise ValueError("ticker is required for listed symbol")
             return self
+        if self.dataset is None:
+            raise ValueError("dataset is required when root declares a FuturesRef")
         if self.figi is not None or self.isin is not None or self.mic is not None:
             raise ValueError(
                 "futures fields are mutually exclusive with listed identity hints figi/isin/mic"
@@ -169,7 +171,6 @@ class SymbolSpec:
 class DataConfig:
     source: str = "synthetic"
     provider: str | None = None
-    dataset: str | None = None
     # No schema default — required. Keyword-only so a required field can sit among
     # defaulted ones — every construction site splats **raw anyway.
     arrays: Annotated[list[ArrayToken], Field(min_length=1)] = field(kw_only=True)
@@ -235,9 +236,9 @@ class DataConfig:
         if self.source == "store":
             _require_symbols_for_source(self.source, self.symbols)
             _require_window_for_source(self.source, self)
-            _require_store_symbols(self.symbols, provider=self.provider, dataset=self.dataset)
-        elif self.provider is not None or self.dataset is not None:
-            raise ValueError("data.provider and data.dataset are only supported for store source")
+            _require_store_symbols(self.symbols, provider=self.provider)
+        elif self.provider is not None:
+            raise ValueError("data.provider is only supported for store source")
         if self.skip_on_error and "skipped_symbols" not in self.quality.allowed_degradations:
             raise ValueError(
                 "skip_on_error requires data.quality.allowed_degradations to include 'skipped_symbols'"
@@ -271,13 +272,8 @@ def _require_store_symbols(
     symbols: list[SymbolSpec],
     *,
     provider: str | None,
-    dataset: str | None,
 ) -> None:
     normalized_provider = store_gap_fill_provider(provider)
-    if normalized_provider == "yfinance" and dataset is not None:
-        raise ValueError("dataset is not supported for store provider 'yfinance'")
-    if normalized_provider == "databento" and dataset is None:
-        raise ValueError("dataset is required for store provider 'databento'")
     futures_roots: set[str] = set()
     for symbol in symbols:
         if symbol.is_future:
@@ -302,8 +298,6 @@ def _require_store_future_symbol(symbol: SymbolSpec, *, provider: str) -> None:
         raise ValueError("futures store symbols require provider 'databento'")
     if symbol.ticker is not None:
         raise ValueError("futures store symbols must not declare ticker")
-    if symbol.dataset is not None:
-        raise ValueError("futures store symbols use block-level data.dataset, not per-symbol dataset")
 
 
 def required_store_window_edge(value: str | None, name: str) -> str:
@@ -353,8 +347,6 @@ def _validate_future_source_support(source: str, symbol: SymbolSpec) -> None:
         if symbol.pnl_adjustment is not None:
             raise ValueError("pnl_adjustment is only supported for futures store symbols")
         return
-    if source != "store" and symbol.dataset is None:
-        raise ValueError("dataset is required when root declares a FuturesRef")
     if symbol.roll_rule != "calendar":
         raise ValueError(
             f"roll_rule {symbol.roll_rule!r} is not supported for {source} source"

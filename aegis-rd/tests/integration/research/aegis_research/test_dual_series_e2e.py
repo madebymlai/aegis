@@ -56,7 +56,12 @@ def _write_by_adjustment(request: Any, *, store_dir: Any) -> object:
 
 
 def _store_future(*, pnl_adjustment: str | None) -> dict[str, Any]:
-    symbol: dict[str, Any] = {"root": "ES", "ccy": "EUR", "adjustment": "backward_ratio"}
+    symbol: dict[str, Any] = {
+        "root": "ES",
+        "ccy": "EUR",
+        "dataset": "GLBX.MDP3",
+        "adjustment": "backward_ratio",
+    }
     if pnl_adjustment is not None:
         symbol["pnl_adjustment"] = pnl_adjustment
     return symbol
@@ -87,7 +92,6 @@ def _portfolio_close_levels(
         data={
             "source": "store",
             "provider": "databento",
-            "dataset": "GLBX.MDP3",
             "symbols": [_store_future(pnl_adjustment=pnl_adjustment)],
             "arrays": ["OHLCV"],
             "start": "2022-01-03",

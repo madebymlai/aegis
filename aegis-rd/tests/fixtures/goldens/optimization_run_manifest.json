@@ -41,7 +41,6 @@
       "arrays": [
         "OHLCV"
       ],
-      "dataset": null,
       "end": null,
       "execution_kwargs": {},
       "missing_columns": "raise",
@@ -66,6 +65,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "SPY"
@@ -77,6 +77,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "IWM"
@@ -88,6 +89,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "EEM"
@@ -99,6 +101,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "TLT"
@@ -110,6 +113,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "GLD"
@@ -121,6 +125,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "DBC"
@@ -132,6 +137,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "VNQ"
@@ -143,6 +149,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "UUP"
@@ -154,6 +161,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "XLE"
@@ -165,6 +173,7 @@
           "figi": null,
           "isin": null,
           "mic": null,
+          "pnl_adjustment": null,
           "roll_rule": "calendar",
           "root": null,
           "ticker": "XLU"
@@ -241,7 +250,7 @@
       "min_oos_trades": 5,
       "year_freq": "252D"
     },
-    "schema_version": 9,
+    "schema_version": 10,
     "strategy": {
       "id": "tests.momentum_rotator",
       "params": {}
@@ -250,12 +259,12 @@
   "evidence": {
     "component_registry_fingerprint": "28cf8066139b5ad7acd24843a5a7083847f1f1e577dd4940be7a7ff1e80c9137",
     "config": {
-      "authored_config_hash": "70affb3ae5d6c547df6123a273c1e62d4df9faddf3980ccf14c2d282a948c9f2",
+      "authored_config_hash": "8cb267aac3dc2d06ed46b4d5e2c5176ef157b7c03fb10d1a87679a6a900eba5a",
       "raw_config_identity": {
-        "hash": "e8c9caf26497ed508cf817a2cd5f361405fc82337a4daab5233d56d72f82878b"
+        "hash": "ea0e8d6263fb3c3e988b3b3a0923bf7af1e8dbf78aa3bc23cb6bf5e84b37255b"
       },
-      "resolved_config_hash": "322c7156377dd7df3864c6a14bdd55f4643a15a72fa2f7f34f27dd8adf985794",
-      "schema_version": 9,
+      "resolved_config_hash": "087e5c78ddf88e547ef9a36f5d39e1f6706e4d6fb8198536214106c327ecd848",
+      "schema_version": 10,
       "selection": {
         "config_path": "<masked>",
         "source": "explicit"

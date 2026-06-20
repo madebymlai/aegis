@@ -1,5 +1,5 @@
 name: atalanta_trend_futures_pyramid
-schema_version: 9
+schema_version: 10
 output_dir: runs/atalanta/trend_futures_pyramid
 
 # PYRAMIDING test on the futures substrate ([[what-makes-a-trend-sleeve-convex]] hypothesis #2, the one
@@ -11,41 +11,41 @@ output_dir: runs/atalanta/trend_futures_pyramid
 # exactly (no-pyramid baseline), vs 21/63/126; with/without the 0.20 buffer. Ranked by quarterly skew
 # (the shape the pyramid is supposed to deepen); sharpe + UPI emitted alongside for the held-out gate.
 #
-# DATA: aegis historical store (source: store, provider: databento), dataset GLBX.MDP3. Futures are
-# our ratio back-adjusted continuous (adjustment: backward_ratio) — dated outright legs rolled on real
-# expiry, gap-free. Store gap-fills from Databento on first run and caches to parquet (pull-once); key
-# read from $DATABENTO_API_KEY. The store coverage pull is per-root sequential on the first run (no
-# engine knob — store is a local source); later runs read the cache.
+# DATA: aegis historical store (source: store, provider: databento). Each futures root carries its
+# own Databento dataset; active GLBX roots below use GLBX.MDP3. Futures are our ratio back-adjusted
+# continuous (adjustment: backward_ratio) — dated outright legs rolled on real expiry, gap-free.
+# Store gap-fills from Databento on first run and caches to parquet (pull-once); key read from
+# $DATABENTO_API_KEY. The store coverage pull is per-root sequential on the first run (no engine knob
+# — store is a local source); later runs read the cache.
 data:
   source: store
   provider: databento
-  dataset: GLBX.MDP3
   arrays:
   - OHLCV
   symbols:
-  - {root: ZT, ccy: USD, adjustment: backward_ratio}
-  - {root: ZF, ccy: USD, adjustment: backward_ratio}
-  - {root: ZN, ccy: USD, adjustment: backward_ratio}
-  - {root: ZB, ccy: USD, adjustment: backward_ratio}
-  - {root: UB, ccy: USD, adjustment: backward_ratio}
-  - {root: 6E, ccy: USD, adjustment: backward_ratio}
-  - {root: 6J, ccy: USD, adjustment: backward_ratio}
-  - {root: 6B, ccy: USD, adjustment: backward_ratio}
-  - {root: 6A, ccy: USD, adjustment: backward_ratio}
-  - {root: 6C, ccy: USD, adjustment: backward_ratio}
-  - {root: 6S, ccy: USD, adjustment: backward_ratio}
-  - {root: CL, ccy: USD, adjustment: backward_ratio}
-  - {root: NG, ccy: USD, adjustment: backward_ratio}
-  - {root: RB, ccy: USD, adjustment: backward_ratio}
-  - {root: HO, ccy: USD, adjustment: backward_ratio}
-  - {root: GC, ccy: USD, adjustment: backward_ratio}
-  - {root: SI, ccy: USD, adjustment: backward_ratio}
-  - {root: HG, ccy: USD, adjustment: backward_ratio}
-  - {root: PL, ccy: USD, adjustment: backward_ratio}
-  - {root: PA, ccy: USD, adjustment: backward_ratio}
-  - {root: ZC, ccy: USD, adjustment: backward_ratio}
-  - {root: ZW, ccy: USD, adjustment: backward_ratio}
-  - {root: ZS, ccy: USD, adjustment: backward_ratio}
+  - {root: ZT, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZF, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZN, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: UB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6E, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6J, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6B, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6A, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6C, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6S, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: CL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: NG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: RB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: HO, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: GC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: SI, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: HG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: PL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: PA, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZW, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZS, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

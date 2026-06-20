@@ -38,6 +38,70 @@ def _pulled_bars_with_adj_close() -> pd.DataFrame:
     )
 
 
+_MIXED_SIGNAL_ES = FuturesRef("ES", "GLBX.MDP3", "calendar", "backward_ratio")
+_MIXED_SIGNAL_BZ = FuturesRef("BZ", "IFEU.IMPACT", "calendar", "backward_ratio")
+_MIXED_PNL_BZ = FuturesRef("BZ", "IFEU.IMPACT", "calendar", "backward_spread")
+_MIXED_DATASET_INDEX = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"])
+_MIXED_DATASET_VALUES = {
+    _MIXED_SIGNAL_ES: [1.0, 2.0, 3.0],
+    _MIXED_SIGNAL_BZ: [10.0, 20.0, 30.0],
+    _MIXED_PNL_BZ: [100.0, 200.0, 300.0],
+}
+
+
+class _RecordingMixedDatasetPull:
+    def __init__(self) -> None:
+        self.requests: list[NativeBarsRequest] = []
+
+    def __call__(self, request: NativeBarsRequest, *, store_dir=None) -> object:
+        self.requests.append(request)
+        _write_mixed_dataset_bars(request, store_dir=store_dir)
+        return object()
+
+
+def _write_mixed_dataset_bars(
+    request: NativeBarsRequest,
+    *,
+    store_dir: object,
+) -> None:
+    for ref in request.refs:
+        write_native_bars(
+            ref,
+            "1D",
+            pd.DataFrame(
+                {"Close": _MIXED_DATASET_VALUES[ref]},
+                index=_MIXED_DATASET_INDEX,
+            ),
+            required_arrays=("Close",),
+            store_dir=store_dir,
+        )
+
+
+def _mixed_dataset_store_config():
+    return make_data_config(
+        source="store",
+        provider="databento",
+        symbols=[
+            {
+                "root": "ES",
+                "ccy": "USD",
+                "dataset": "GLBX.MDP3",
+                "adjustment": "backward_ratio",
+            },
+            {
+                "root": "BZ",
+                "ccy": "USD",
+                "dataset": "IFEU.IMPACT",
+                "adjustment": "backward_ratio",
+                "pnl_adjustment": "backward_spread",
+            },
+        ],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+
 def test_synthetic_adapter_loads_native_data_behind_the_seam() -> None:
     result = synthetic_adapter.load_synthetic_source(
         make_data_config(source="synthetic", rows=4, symbols=[{"ticker": "AAA", "ccy": "EUR"}, {"ticker": "BBB", "ccy": "EUR"}])
@@ -275,7 +339,7 @@ def test_store_adapter_reads_requested_adj_close_through_aegis_data(
     assert result.native_data.get(feature="Adj Close")["SPY"].tolist() == [90.0, 91.0, 92.0]
 
 
-def test_store_adapter_folds_block_dataset_into_futures_request(
+def test_store_adapter_reads_per_symbol_dataset_for_futures_request(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -304,8 +368,14 @@ def test_store_adapter_folds_block_dataset_into_futures_request(
     config = make_data_config(
         source="store",
         provider="databento",
-        dataset="GLBX.MDP3",
-        symbols=[{"root": "ES", "ccy": "USD", "adjustment": "unadjusted"}],
+        symbols=[
+            {
+                "root": "ES",
+                "ccy": "USD",
+                "dataset": "GLBX.MDP3",
+                "adjustment": "unadjusted",
+            }
+        ],
         arrays=["Close"],
         start="2024-01-02",
         end="2024-01-05",
@@ -325,6 +395,60 @@ def test_store_adapter_folds_block_dataset_into_futures_request(
     ]
     assert list(result.native_data.get(feature="Close").columns) == ["ES"]
     assert result.native_data.get(feature="Close")["ES"].tolist() == [5010.0, 5020.0, 5030.0]
+
+
+def test_store_adapter_requests_each_mixed_dataset_futures_leg(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    pull = _RecordingMixedDatasetPull()
+    monkeypatch.setattr("aegis_data.coverage.pull_databento_futures_bars", pull)
+
+    load_market_data_result(_mixed_dataset_store_config())
+
+    assert pull.requests == [
+        NativeBarsRequest(
+            refs=(_MIXED_SIGNAL_ES,),
+            arrays=("Close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
+        ),
+        NativeBarsRequest(
+            refs=(_MIXED_SIGNAL_BZ,),
+            arrays=("Close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
+        ),
+        NativeBarsRequest(
+            refs=(_MIXED_PNL_BZ,),
+            arrays=("Close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
+        ),
+    ]
+
+
+def test_store_adapter_loads_mixed_dataset_signal_and_pnl_series(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    pull = _RecordingMixedDatasetPull()
+    monkeypatch.setattr("aegis_data.coverage.pull_databento_futures_bars", pull)
+
+    result = load_market_data_result(_mixed_dataset_store_config())
+
+    assert result.native_data.get(feature="Close")["ES"].tolist() == [1.0, 2.0, 3.0]
+    assert result.native_data.get(feature="Close")["BZ"].tolist() == [10.0, 20.0, 30.0]
+    assert result.pnl_native_data.get(feature="Close")["ES"].tolist() == [1.0, 2.0, 3.0]
+    assert result.pnl_native_data.get(feature="Close")["BZ"].tolist() == [100.0, 200.0, 300.0]
 
 
 def test_store_adapter_materializes_a_pnl_series_for_a_dual_adjustment_future(
@@ -350,11 +474,11 @@ def test_store_adapter_materializes_a_pnl_series_for_a_dual_adjustment_future(
     config = make_data_config(
         source="store",
         provider="databento",
-        dataset="GLBX.MDP3",
         symbols=[
             {
                 "root": "ES",
                 "ccy": "USD",
+                "dataset": "GLBX.MDP3",
                 "adjustment": "backward_ratio",
                 "pnl_adjustment": "backward_spread",
             }
@@ -396,8 +520,14 @@ def test_store_adapter_has_no_pnl_series_without_pnl_adjustment(
     config = make_data_config(
         source="store",
         provider="databento",
-        dataset="GLBX.MDP3",
-        symbols=[{"root": "ES", "ccy": "USD", "adjustment": "backward_ratio"}],
+        symbols=[
+            {
+                "root": "ES",
+                "ccy": "USD",
+                "dataset": "GLBX.MDP3",
+                "adjustment": "backward_ratio",
+            }
+        ],
         arrays=["Close"],
         start="2024-01-02",
         end="2024-01-05",

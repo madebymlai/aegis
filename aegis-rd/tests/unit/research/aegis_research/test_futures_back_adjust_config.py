@@ -19,7 +19,7 @@ def _future(adjustment: str) -> SymbolSpec:
 
 
 def _store_future(adjustment: str) -> SymbolSpec:
-    return SymbolSpec(root="ES", ccy="USD", adjustment=adjustment)
+    return SymbolSpec(root="ES", ccy="USD", dataset="GLBX.MDP3", adjustment=adjustment)
 
 
 def test_backward_ratio_accepted_for_bento_source() -> None:
@@ -37,7 +37,6 @@ def test_backward_spread_accepted_for_store_source() -> None:
     config = DataConfig(
         source="store",
         provider="databento",
-        dataset="GLBX.MDP3",
         arrays=["OHLCV"],
         symbols=[_store_future("backward_spread")],
         start="2024-01-01",
@@ -62,7 +61,6 @@ def test_legacy_back_adjust_spelling_is_rejected() -> None:
         DataConfig(
             source="store",
             provider="databento",
-            dataset="GLBX.MDP3",
             arrays=["OHLCV"],
             symbols=[_store_future("back_adjust")],
             start="2024-01-01",
@@ -74,7 +72,6 @@ def _store_dual_config(symbol: SymbolSpec) -> DataConfig:
     return DataConfig(
         source="store",
         provider="databento",
-        dataset="GLBX.MDP3",
         arrays=["OHLCV"],
         symbols=[symbol],
         start="2024-01-01",
@@ -85,7 +82,13 @@ def _store_dual_config(symbol: SymbolSpec) -> DataConfig:
 def test_pnl_adjustment_carries_a_second_backward_mode_for_a_store_future() -> None:
     # Dual series in one run: signal on backward_ratio, P&L/sizing on backward_spread.
     config = _store_dual_config(
-        SymbolSpec(root="ES", ccy="USD", adjustment="backward_ratio", pnl_adjustment="backward_spread")
+        SymbolSpec(
+            root="ES",
+            ccy="USD",
+            dataset="GLBX.MDP3",
+            adjustment="backward_ratio",
+            pnl_adjustment="backward_spread",
+        )
     )
     assert config.symbols[0].adjustment == "backward_ratio"
     assert config.symbols[0].pnl_adjustment == "backward_spread"
@@ -110,5 +113,11 @@ def test_pnl_adjustment_rejected_for_a_listed_symbol() -> None:
 def test_pnl_adjustment_rejects_an_unknown_mode() -> None:
     with pytest.raises(ValueError, match="pnl_adjustment"):
         _store_dual_config(
-            SymbolSpec(root="ES", ccy="USD", adjustment="backward_ratio", pnl_adjustment="panama")
+            SymbolSpec(
+                root="ES",
+                ccy="USD",
+                dataset="GLBX.MDP3",
+                adjustment="backward_ratio",
+                pnl_adjustment="panama",
+            )
         )

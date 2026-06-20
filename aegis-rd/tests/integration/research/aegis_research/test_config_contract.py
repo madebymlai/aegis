@@ -289,13 +289,44 @@ def test_store_listed_symbol_requires_explicit_listed_ref(tmp_path: Path) -> Non
     assert "figi is required for store source symbol 'SPY'" in str(error.value)
 
 
+def test_store_listed_symbol_rejects_dataset(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "yfinance",
+        "symbols": [
+            {
+                "ticker": "SPY",
+                "ccy": "USD",
+                "figi": "BBG000BDTBL9",
+                "dataset": "GLBX.MDP3",
+            }
+        ],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert "data" in str(error.value)
+    assert "dataset is only supported for futures symbols" in str(error.value)
+
+
 def test_store_futures_symbols_derive_names_from_root(tmp_path: Path) -> None:
     raw = _run_config()
     raw["data"] = {
         "source": "store",
         "provider": "databento",
-        "dataset": "GLBX.MDP3",
-        "symbols": [{"root": "ES", "ccy": "USD", "adjustment": "unadjusted"}],
+        "symbols": [
+            {
+                "root": "ES",
+                "ccy": "USD",
+                "dataset": "GLBX.MDP3",
+                "adjustment": "unadjusted",
+            }
+        ],
         "arrays": ["Close"],
         "start": "2024-01-02",
         "end": "2024-01-05",
@@ -312,8 +343,9 @@ def test_store_futures_symbols_reject_provider_locators(tmp_path: Path) -> None:
     raw["data"] = {
         "source": "store",
         "provider": "databento",
-        "dataset": "GLBX.MDP3",
-        "symbols": [{"root": "ES", "ticker": "ES.FUT", "ccy": "USD"}],
+        "symbols": [
+            {"root": "ES", "ticker": "ES.FUT", "ccy": "USD", "dataset": "GLBX.MDP3"}
+        ],
         "arrays": ["Close"],
         "start": "2024-01-02",
         "end": "2024-01-05",
@@ -331,10 +363,14 @@ def test_store_futures_duplicate_roots_fail_closed(tmp_path: Path) -> None:
     raw["data"] = {
         "source": "store",
         "provider": "databento",
-        "dataset": "GLBX.MDP3",
         "symbols": [
-            {"root": "ES", "ccy": "USD"},
-            {"root": "ES", "ccy": "USD", "adjustment": "backward_ratio"},
+            {"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3"},
+            {
+                "root": "ES",
+                "ccy": "USD",
+                "dataset": "IFUS.IMPACT",
+                "adjustment": "backward_ratio",
+            },
         ],
         "arrays": ["Close"],
         "start": "2024-01-02",
@@ -348,7 +384,30 @@ def test_store_futures_duplicate_roots_fail_closed(tmp_path: Path) -> None:
     assert "duplicate futures root 'ES'" in str(error.value)
 
 
-def test_databento_store_requires_block_level_dataset(tmp_path: Path) -> None:
+def test_store_futures_symbols_accept_mixed_datasets(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "databento",
+        "symbols": [
+            {"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3"},
+            {"root": "BZ", "ccy": "USD", "dataset": "IFEU.IMPACT"},
+        ],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert resolved.config.data.tickers == ["ES", "BZ"]
+    assert [symbol.dataset for symbol in resolved.config.data.symbols] == [
+        "GLBX.MDP3",
+        "IFEU.IMPACT",
+    ]
+
+
+def test_databento_store_requires_per_symbol_dataset(tmp_path: Path) -> None:
     raw = _run_config()
     raw["data"] = {
         "source": "store",
@@ -363,7 +422,26 @@ def test_databento_store_requires_block_level_dataset(tmp_path: Path) -> None:
         resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 
     assert "data" in str(error.value)
-    assert "dataset is required for store provider 'databento'" in str(error.value)
+    assert "dataset is required when root declares a FuturesRef" in str(error.value)
+
+
+def test_store_data_rejects_block_level_dataset(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["data"] = {
+        "source": "store",
+        "provider": "databento",
+        "dataset": "GLBX.MDP3",
+        "symbols": [{"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3"}],
+        "arrays": ["Close"],
+        "start": "2024-01-02",
+        "end": "2024-01-05",
+    }
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert "data.dataset" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_config_rejects_removed_feature_map(tmp_path: Path) -> None:

@@ -1,5 +1,5 @@
 name: atalanta_trend_futures_bento
-schema_version: 9
+schema_version: 10
 output_dir: runs/atalanta/trend_futures_bento
 
 # FUTURES trend sleeve on the AEGIS HISTORICAL STORE (source: store, provider: databento). Migrated
@@ -19,10 +19,10 @@ output_dir: runs/atalanta/trend_futures_bento
 # the roster's substrate claim directly: futures reach rates+FX+energy+metals+ags two-sided at far
 # higher independent-bet breadth than the borrow-constrained London ETC book.
 #
-# UNIVERSE: 23 CME-family futures on GLBX.MDP3 (one dataset, all two-sided, equity-index DELIBERATELY
-# excluded per the non-equity substrate requirement). ICE softs (KC/SB/CC/CT cocoa-etc.) and Brent
-# live on ICE datasets (IFUS/IFEU), not GLBX.MDP3 — a second-dataset extension once this GLBX cut is
-# validated.
+# UNIVERSE: 23 CME-family futures, each declaring GLBX.MDP3 (all two-sided, equity-index
+# DELIBERATELY excluded per the non-equity substrate requirement). ICE softs (KC/SB/CC/CT
+# cocoa-etc.) and Brent live on ICE datasets (IFUS/IFEU), not GLBX.MDP3 — activate them only
+# after confirming those datasets are in the store subscription.
 #   rates (CBOT)  5 : ZT ZF ZN ZB UB     (2y/5y/10y/30y/ultra-bond)
 #   FX   (CME)    6 : 6E 6J 6B 6A 6C 6S   (EUR JPY GBP AUD CAD CHF)
 #   energy(NYMEX) 4 : CL NG RB HO         (WTI/natgas/gasoline/heating oil)
@@ -31,39 +31,38 @@ output_dir: runs/atalanta/trend_futures_bento
 data:
   source: store
   provider: databento                 # gap-fill futures legs from Databento; key from $DATABENTO_API_KEY
-  dataset: GLBX.MDP3
   arrays:
   - OHLCV
   symbols:
   # futures store symbols: root identity + ratio back-adjust (roll_rule defaults to calendar).
   # --- rates: US curve (CBOT) ---
-  - {root: ZT, ccy: USD, adjustment: backward_ratio}
-  - {root: ZF, ccy: USD, adjustment: backward_ratio}
-  - {root: ZN, ccy: USD, adjustment: backward_ratio}
-  - {root: ZB, ccy: USD, adjustment: backward_ratio}
-  - {root: UB, ccy: USD, adjustment: backward_ratio}
+  - {root: ZT, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZF, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZN, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: UB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   # --- FX (CME) ---
-  - {root: 6E, ccy: USD, adjustment: backward_ratio}
-  - {root: 6J, ccy: USD, adjustment: backward_ratio}
-  - {root: 6B, ccy: USD, adjustment: backward_ratio}
-  - {root: 6A, ccy: USD, adjustment: backward_ratio}
-  - {root: 6C, ccy: USD, adjustment: backward_ratio}
-  - {root: 6S, ccy: USD, adjustment: backward_ratio}
+  - {root: 6E, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6J, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6B, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6A, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6C, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6S, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   # --- energy (NYMEX) ---
-  - {root: CL, ccy: USD, adjustment: backward_ratio}
-  - {root: NG, ccy: USD, adjustment: backward_ratio}
-  - {root: RB, ccy: USD, adjustment: backward_ratio}
-  - {root: HO, ccy: USD, adjustment: backward_ratio}
+  - {root: CL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: NG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: RB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: HO, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   # --- metals (COMEX/NYMEX) ---
-  - {root: GC, ccy: USD, adjustment: backward_ratio}
-  - {root: SI, ccy: USD, adjustment: backward_ratio}
-  - {root: HG, ccy: USD, adjustment: backward_ratio}
-  - {root: PL, ccy: USD, adjustment: backward_ratio}
-  - {root: PA, ccy: USD, adjustment: backward_ratio}
+  - {root: GC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: SI, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: HG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: PL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: PA, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   # --- ags (CBOT) ---
-  - {root: ZC, ccy: USD, adjustment: backward_ratio}
-  - {root: ZW, ccy: USD, adjustment: backward_ratio}
-  - {root: ZS, ccy: USD, adjustment: backward_ratio}
+  - {root: ZC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZW, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZS, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

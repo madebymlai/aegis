@@ -1,5 +1,5 @@
 name: atalanta_trend_futures_ls
-schema_version: 9
+schema_version: 10
 output_dir: runs/atalanta/trend_futures_ls
 
 # FUTURES-UNIVERSE full L/S probe on the AEGIS HISTORICAL STORE (replaces the naive yfinance "=F"
@@ -7,7 +7,8 @@ output_dir: runs/atalanta/trend_futures_ls
 # (atalanta.trendStraddleBuffered) on a broad orthogonal NON-EQUITY futures book, all natively L/S
 # (no short mask).
 #
-# DATA: source: store, provider: databento, dataset GLBX.MDP3 (CME Globex: CME/CBOT/NYMEX/COMEX).
+# DATA: source: store, provider: databento; each active root declares dataset GLBX.MDP3
+# (CME Globex: CME/CBOT/NYMEX/COMEX).
 # Futures are OUR continuous history: dated outright legs rolled on each contract's real expiry and
 # RATIO back-adjusted (adjustment: backward_ratio) into a gap-free series. This RESOLVES the prior ".c.0"
 # caveat — Databento server continuous was NOT back-adjusted, so seams remained at rolls; the store's
@@ -24,33 +25,32 @@ output_dir: runs/atalanta/trend_futures_ls
 data:
   source: store
   provider: databento
-  dataset: GLBX.MDP3
   arrays:
   - OHLCV
   symbols:
-  - {root: ZT, ccy: USD, adjustment: backward_ratio}
-  - {root: ZF, ccy: USD, adjustment: backward_ratio}
-  - {root: ZN, ccy: USD, adjustment: backward_ratio}
-  - {root: ZB, ccy: USD, adjustment: backward_ratio}
-  - {root: UB, ccy: USD, adjustment: backward_ratio}
-  - {root: 6E, ccy: USD, adjustment: backward_ratio}
-  - {root: 6J, ccy: USD, adjustment: backward_ratio}
-  - {root: 6B, ccy: USD, adjustment: backward_ratio}
-  - {root: 6A, ccy: USD, adjustment: backward_ratio}
-  - {root: 6C, ccy: USD, adjustment: backward_ratio}
-  - {root: 6S, ccy: USD, adjustment: backward_ratio}
-  - {root: CL, ccy: USD, adjustment: backward_ratio}
-  - {root: NG, ccy: USD, adjustment: backward_ratio}
-  - {root: RB, ccy: USD, adjustment: backward_ratio}
-  - {root: HO, ccy: USD, adjustment: backward_ratio}
-  - {root: GC, ccy: USD, adjustment: backward_ratio}
-  - {root: SI, ccy: USD, adjustment: backward_ratio}
-  - {root: HG, ccy: USD, adjustment: backward_ratio}
-  - {root: PL, ccy: USD, adjustment: backward_ratio}
-  - {root: PA, ccy: USD, adjustment: backward_ratio}
-  - {root: ZC, ccy: USD, adjustment: backward_ratio}
-  - {root: ZW, ccy: USD, adjustment: backward_ratio}
-  - {root: ZS, ccy: USD, adjustment: backward_ratio}
+  - {root: ZT, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZF, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZN, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: UB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6E, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6J, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6B, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6A, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6C, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6S, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: CL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: NG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: RB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: HO, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: GC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: SI, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: HG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: PL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: PA, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZW, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZS, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

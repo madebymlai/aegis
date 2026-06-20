@@ -31,8 +31,11 @@ def load_store_source(config: DataConfig) -> MarketDataAdapterResult:
     P&L against.  Both modes derive from the same cached raw legs (the store keys by
     adjustment), so the second series adds no extra provider fetch.
     """
-    signal_refs = tuple(_instrument_ref(config, symbol) for symbol in config.symbols)
-    pnl_refs = tuple(_pnl_ref(config, symbol, signal) for symbol, signal in zip(config.symbols, signal_refs, strict=True))
+    signal_refs = tuple(_instrument_ref(symbol) for symbol in config.symbols)
+    pnl_refs = tuple(
+        _pnl_ref(symbol, signal)
+        for symbol, signal in zip(config.symbols, signal_refs, strict=True)
+    )
     all_refs = signal_refs + tuple(ref for ref in pnl_refs if ref not in signal_refs)
     request = _native_bars_request(config, all_refs)
     provider = store_gap_fill_provider(config.provider)
@@ -57,9 +60,7 @@ def load_store_source(config: DataConfig) -> MarketDataAdapterResult:
     )
 
 
-def _pnl_ref(
-    config: DataConfig, symbol: SymbolSpec, signal_ref: InstrumentRef
-) -> InstrumentRef:
+def _pnl_ref(symbol: SymbolSpec, signal_ref: InstrumentRef) -> InstrumentRef:
     """The P&L-series ref for a dual-adjustment future, else the signal ref itself.
 
     A future with ``pnl_adjustment`` resolves to a second ``FuturesRef`` differing only
@@ -67,7 +68,7 @@ def _pnl_ref(
     symbol reuses its signal ref, so the P&L panel spans the whole universe.
     """
     if symbol.is_future and symbol.pnl_adjustment is not None:
-        return _futures_ref(config, symbol, adjustment=symbol.pnl_adjustment)
+        return _futures_ref(symbol, adjustment=symbol.pnl_adjustment)
     return signal_ref
 
 
@@ -97,9 +98,9 @@ def _native_bars_request(config: DataConfig, refs: tuple[InstrumentRef, ...]) ->
     )
 
 
-def _instrument_ref(config: DataConfig, symbol: SymbolSpec) -> InstrumentRef:
+def _instrument_ref(symbol: SymbolSpec) -> InstrumentRef:
     if symbol.is_future:
-        return _futures_ref(config, symbol)
+        return _futures_ref(symbol)
     return _listed_ref(symbol)
 
 
@@ -109,16 +110,14 @@ def _listed_ref(symbol: SymbolSpec) -> ListedRef:
     return ListedRef(symbol.figi)
 
 
-def _futures_ref(
-    config: DataConfig, symbol: SymbolSpec, *, adjustment: str | None = None
-) -> FuturesRef:
-    if config.dataset is None:
-        raise ValueError("data.dataset is required for store futures")
+def _futures_ref(symbol: SymbolSpec, *, adjustment: str | None = None) -> FuturesRef:
+    if symbol.dataset is None:
+        raise ValueError(f"dataset is required for store futures symbol {symbol.root!r}")
     if symbol.root is None:
         raise ValueError("root is required for store futures")
     return FuturesRef(
         root=symbol.root,
-        dataset=config.dataset,
+        dataset=symbol.dataset,
         roll_rule=symbol.roll_rule,
         adjustment=adjustment if adjustment is not None else symbol.adjustment,
     )

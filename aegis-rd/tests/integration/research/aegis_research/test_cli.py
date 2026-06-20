@@ -504,9 +504,9 @@ def test_show_config_schema_exits_zero_and_prints_markdown(
     assert "## Component IDs" in guide
     assert "## Example Run Config" in guide
 
-    # Prepass overlay: optimization required, schema_version const 9
+    # Prepass overlay: optimization required, schema_version const 10
     assert "optimization`** — required" in guide
-    assert "schema_version`** — must be present and exactly `9`" in guide
+    assert "schema_version`** — must be present and exactly `10`" in guide
 
     # Pointers to other show subcommands
     assert "`aerd show splitters <method>`" in guide
@@ -548,8 +548,8 @@ def test_show_config_schema_marks_optimization_required_and_schema_version_const
     assert "optimization`** — required" in guide
     assert "forward contract requires" in guide.lower()
 
-    # schema_version is const 9 (model default is CONFIG_SCHEMA_VERSION)
-    assert "schema_version`** — must be present and exactly `9`" in guide
+    # schema_version is const 10 (model default is CONFIG_SCHEMA_VERSION)
+    assert "schema_version`** — must be present and exactly `10`" in guide
 
 
 def test_show_config_schema_literal_catalogs_interpolated(
@@ -1340,9 +1340,9 @@ def test_config_schema_guide_marks_optimization_required() -> None:
 
 
 def test_config_schema_guide_marks_schema_version_const() -> None:
-    """Drift: schema_version is marked as const 9 (not a model default)."""
+    """Drift: schema_version is marked as const 10 (not a model default)."""
     guide = _render_guide("config-schema")
-    assert "schema_version`** — must be present and exactly `9`" in guide
+    assert "schema_version`** — must be present and exactly `10`" in guide
 
 
 def test_config_schema_guide_states_allowed_data_sources() -> None:

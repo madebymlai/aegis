@@ -236,7 +236,7 @@ def _render_data_section() -> str:
             "run; a non-base-currency leg additionally pays `portfolio.fx_conversion_cost` "
             "per trade. For `source: store`, listed symbols require `figi` and use `ticker` "
             "only as the provider locator; futures symbols use `root` as the RD symbol name, "
-            "take block-level `data.dataset`, and reject per-symbol provider locators.",
+            "declare their own `dataset`, and reject per-symbol provider locators.",
             "",
             "**Futures continuous series (`adjustment` / `pnl_adjustment`)** — a futures store "
             "symbol stitches its dated contracts into a continuous series. `adjustment` selects "
@@ -546,10 +546,9 @@ def _render_futures_example() -> str:
     data:
       source: store
       provider: databento
-      dataset: GLBX.MDP3
       symbols:
-        - {{root: ES, ccy: USD, adjustment: backward_ratio, pnl_adjustment: backward_spread}}
-        - {{root: CL, ccy: USD, adjustment: backward_ratio}}
+        - {{root: ES, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio, pnl_adjustment: backward_spread}}
+        - {{root: CL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}}
       arrays: [OHLCV]
       start: "2020-01-01"
       end: "2023-12-31"
@@ -582,7 +581,7 @@ def _render_futures_example() -> str:
     `ES` signals on its `backward_ratio` series but sizes and realizes P&L on a
     `backward_spread` series; `CL` omits `pnl_adjustment`, so its signal series is
     also its P&L series. The store source gap-fills and caches each leg the first
-    time it is pulled (provider `databento`, `dataset: GLBX.MDP3`).""")
+    time it is pulled (provider `databento`, symbol `dataset: GLBX.MDP3`).""")
 
 
 # ── Field-tree helpers ────────────────────────────────────────────────────────
