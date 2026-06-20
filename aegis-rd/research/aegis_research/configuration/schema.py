@@ -331,7 +331,14 @@ _PER_CONTRACT_SOURCES = frozenset({"bento", "store"})
 # Back-adjustment modes, named to match NautilusTrader's backward
 # ContinuousFutureAdjustmentType so research and live agree: ``backward_ratio``
 # (multiplicative, returns-preserving) and ``backward_spread`` (additive/Panama).
-_PER_CONTRACT_ADJUSTMENTS = frozenset({"backward_ratio", "backward_spread"})
+# Ordered tuples are the single source of truth for docs/UX; the validators use
+# the frozenset forms derived from them so a documented mode cannot fork from an
+# accepted one.
+UNADJUSTED = "unadjusted"
+BACK_ADJUSTMENT_MODES: tuple[str, ...] = ("backward_ratio", "backward_spread")
+# Every value a futures store symbol's ``adjustment`` / ``pnl_adjustment`` may take.
+FUTURES_ADJUSTMENT_MODES: tuple[str, ...] = (UNADJUSTED, *BACK_ADJUSTMENT_MODES)
+_PER_CONTRACT_ADJUSTMENTS = frozenset(BACK_ADJUSTMENT_MODES)
 _STORE_GAP_FILL_PROVIDERS = frozenset({"databento", "yfinance"})
 _STORE_PROVIDER_ALIASES = {
     "bento": "databento",
@@ -364,7 +371,7 @@ def _validate_future_source_support(source: str, symbol: SymbolSpec) -> None:
 
 # Modes a second (P&L) continuous series may take: the two backward back-adjustments or the
 # raw splice.  Anything else fails closed.
-_PNL_ADJUSTMENTS = _PER_CONTRACT_ADJUSTMENTS | {"unadjusted"}
+_PNL_ADJUSTMENTS = frozenset(FUTURES_ADJUSTMENT_MODES)
 
 
 def _validate_pnl_adjustment(source: str, symbol: SymbolSpec) -> None:

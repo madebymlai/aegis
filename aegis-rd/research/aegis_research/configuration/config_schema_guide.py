@@ -6,9 +6,9 @@ validating pydantic models and code constants at render time; semantics prose
 is hand-curated.
 
 The rendered guide states the **forward contract**, not the raw pydantic model:
-the prepass overlay (``optimization`` required, ``schema_version`` const 8,
-data-source whitelist) is applied so the documented requiredness matches the
-enforced requiredness (ADR-0019, ADR-0012).
+the prepass overlay (``optimization`` required, ``schema_version`` pinned to the
+current ``CONFIG_SCHEMA_VERSION``, data-source whitelist) is applied so the
+documented requiredness matches the enforced requiredness (ADR-0019, ADR-0012).
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from research.aegis_research.configuration.schema import (
     DATA_QUALITY_DEGRADATIONS,
     DEFAULT_LOCK_ROLE,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
+    FUTURES_ADJUSTMENT_MODES,
     LOCK_ROLES,
     MISSING_POLICIES,
     OHLCV_ARRAYS,
@@ -89,6 +90,24 @@ _SECTION_TYPES: dict[str, type[object] | list[type[object]]] = {
 _SHOW_SPLITTERS = "`aerd show splitters <method>`"
 _SHOW_COMPONENTS = "`aerd show components`"
 
+# Hand-curated semantics for each continuous-futures adjustment mode. The keys are
+# validated against FUTURES_ADJUSTMENT_MODES at render time, so a mode added to the
+# schema without a description here fails loudly rather than rendering an empty catalog.
+_ADJUSTMENT_MODE_DESCRIPTIONS: dict[str, str] = {
+    "unadjusted": (
+        "raw spliced front-month chain; roll gaps are preserved (the back-month basis "
+        "shows up as a jump at each roll)."
+    ),
+    "backward_ratio": (
+        "multiplicative back-adjust; within-contract returns are preserved and the series "
+        "stays positive (NautilusTrader BACKWARD_RATIO)."
+    ),
+    "backward_spread": (
+        "additive / Panama back-adjust; absolute point moves are preserved and the series "
+        "can go negative (NautilusTrader BACKWARD_SPREAD)."
+    ),
+}
+
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -112,6 +131,7 @@ def render_config_schema_guide() -> str:
         _render_split_params_pointer(),
         _render_component_ids_pointer(),
         _render_example(),
+        _render_futures_example(),
     ]
     return "\n\n".join(sections) + "\n"
 
@@ -217,6 +237,16 @@ def _render_data_section() -> str:
             "per trade. For `source: store`, listed symbols require `figi` and use `ticker` "
             "only as the provider locator; futures symbols use `root` as the RD symbol name, "
             "take block-level `data.dataset`, and reject per-symbol provider locators.",
+            "",
+            "**Futures continuous series (`adjustment` / `pnl_adjustment`)** — a futures store "
+            "symbol stitches its dated contracts into a continuous series. `adjustment` selects "
+            "the **signal** series the indicators run on; the optional `pnl_adjustment` selects a "
+            "second continuous series the portfolio simulates **P&L** and sizes against. When "
+            "`pnl_adjustment` is omitted the signal series is also the P&L series (single series). "
+            "Both are named for NautilusTrader's backward `ContinuousFutureAdjustmentType` modes so "
+            "research and live agree; see the **Continuous-Futures Adjustment Modes** catalog below "
+            "for the allowed values. Only futures store symbols may set a back-adjusted mode — "
+            "listed / non-futures symbols are `unadjusted` only and may not set `pnl_adjustment`.",
             "",
             _render_field_table(SymbolSpec),
             "",
@@ -401,6 +431,13 @@ def _render_literal_catalogs() -> str:
             "Keys that must NOT appear under `optimization.execute`; "
             "managed by Aegis's optimization layer.",
         ),
+        (
+            "Continuous-Futures Adjustment Modes",
+            {mode: _ADJUSTMENT_MODE_DESCRIPTIONS[mode] for mode in FUTURES_ADJUSTMENT_MODES},
+            "Valid values for a futures store symbol's `adjustment` (the signal series "
+            "indicators run on) and `pnl_adjustment` (the series the portfolio simulates "
+            "P&L on). Listed / non-futures symbols accept only `unadjusted`.",
+        ),
     ]
 
     for title, values, description in catalogs:
@@ -492,6 +529,60 @@ def _render_example() -> str:
     it completes in seconds. The `demo.*` Components must exist under
     `research/components/strategies/` and `research/components/indicators/`
     relative to the working directory.""")
+
+
+def _render_futures_example() -> str:
+    """Embed a worked futures dual continuous-series Run Config YAML snippet."""
+    return textwrap.dedent(f"""\
+    ## Example: Futures Dual Continuous Series
+
+    A futures store universe that runs indicators on a ratio-adjusted continuous
+    series but simulates P&L on a spread-adjusted one via `pnl_adjustment`:
+
+    ```yaml
+    schema_version: {CONFIG_SCHEMA_VERSION}
+    name: example.futures
+
+    data:
+      source: store
+      provider: databento
+      dataset: GLBX.MDP3
+      symbols:
+        - {{root: ES, ccy: USD, adjustment: backward_ratio, pnl_adjustment: backward_spread}}
+        - {{root: CL, ccy: USD, adjustment: backward_ratio}}
+      arrays: [OHLCV]
+      start: "2020-01-01"
+      end: "2023-12-31"
+      timeframe: "1D"
+
+    portfolio:
+      gross_cap: 1.0
+      direction: longonly
+      base_currency: EUR
+
+    strategy:
+      id: demo.strategy
+
+    indicators:
+      - id: demo.returns
+
+    ranking:
+      metric: sharpe_ratio
+
+    optimization:
+      search: grid
+      split:
+        method: from_rolling
+        params:
+          length: 252
+          split: 0.5
+        max_splits: 2
+    ```
+
+    `ES` signals on its `backward_ratio` series but sizes and realizes P&L on a
+    `backward_spread` series; `CL` omits `pnl_adjustment`, so its signal series is
+    also its P&L series. The store source gap-fills and caches each leg the first
+    time it is pulled (provider `databento`, `dataset: GLBX.MDP3`).""")
 
 
 # ── Field-tree helpers ────────────────────────────────────────────────────────

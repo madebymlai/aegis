@@ -601,6 +601,93 @@ def test_show_config_schema_points_at_splitters_and_components(
     assert "`aerd show components`" in guide
 
 
+def test_show_config_schema_documents_continuous_adjustment_modes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The guide enumerates the futures continuous-series adjustment vocabulary,
+    derived from the schema constant so it cannot list a mode the validator rejects."""
+    from research.aegis_research.configuration.schema import FUTURES_ADJUSTMENT_MODES
+
+    assert cli.main(["show", "config-schema"]) == 0
+    guide = capsys.readouterr().out
+
+    assert "Continuous-Futures Adjustment Modes" in guide
+    # Every accepted mode is listed (catalog is interpolated from the constant).
+    for mode in FUTURES_ADJUSTMENT_MODES:
+        assert f"`{mode}`" in guide
+    assert "backward_ratio" in guide
+    assert "backward_spread" in guide
+
+
+def test_show_config_schema_explains_signal_and_pnl_adjustment(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The guide explains the dual-series split: adjustment drives indicators
+    (signal), pnl_adjustment drives the portfolio (P&L), futures-store only."""
+    assert cli.main(["show", "config-schema"]) == 0
+    guide = capsys.readouterr().out
+
+    assert "pnl_adjustment" in guide
+    assert "signal" in guide.lower()
+    assert "P&L" in guide
+    # The dual series is a futures-store-only capability.
+    assert "futures" in guide.lower()
+
+
+def test_show_config_schema_embeds_dual_series_futures_example(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The guide carries a worked futures dual-series example snippet."""
+    assert cli.main(["show", "config-schema"]) == 0
+    guide = capsys.readouterr().out
+
+    assert "adjustment: backward_ratio" in guide
+    assert "pnl_adjustment: backward_spread" in guide
+    assert "source: store" in guide
+
+
+def test_show_config_schema_dual_series_example_validates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The embedded futures dual-series YAML validates through the real
+    validation coordinator — the documented vocabulary is a real, accepted config."""
+    monkeypatch.chdir(tmp_path)
+    write_indicator_component(
+        tmp_path / "research" / "components" / "indicators" / "returns.py"
+    )
+    write_strategy_component(
+        tmp_path / "research" / "components" / "strategies" / "strategy.py"
+    )
+
+    assert cli.main(["show", "config-schema"]) == 0
+    guide = capsys.readouterr().out
+
+    raw = yaml.safe_load(
+        _yaml_block_after(guide, "## Example: Futures Dual Continuous Series")
+    )
+
+    from research.aegis_research.configuration import resolve_run_config
+
+    resolved = resolve_run_config(raw)
+    symbols = resolved.config.data.symbols
+    es = next(s for s in symbols if s.root == "ES")
+    assert es.adjustment == "backward_ratio"
+    assert es.pnl_adjustment == "backward_spread"
+    # A symbol without pnl_adjustment signals and realizes P&L on the same series.
+    cl = next(s for s in symbols if s.root == "CL")
+    assert cl.pnl_adjustment is None
+
+
+def _yaml_block_after(guide: str, heading: str) -> str:
+    """Return the first fenced ```yaml block following ``heading`` in the guide."""
+    start = guide.index(heading)
+    fence = guide.index("```yaml", start) + len("```yaml")
+    end = guide.index("```", fence)
+    return guide[fence:end]
+
+
 def test_show_config_schema_embedded_example_validates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
