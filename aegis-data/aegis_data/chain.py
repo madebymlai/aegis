@@ -110,14 +110,20 @@ def _liquid_candidates(
 ) -> tuple[DatedContract, ...]:
     """The Liquid Cycle when a volume probe is supplied, else every candidate.
 
-    Probe each candidate's daily volume over the window and keep only the
-    ever-Liquidity-Leader contracts.  With no probe the chain rolls through whatever
-    was listed — a caller that does not rank liquidity (e.g. a single-contract case).
+    Probe each candidate's daily volume over its own life and keep only the
+    ever-Liquidity-Leader contracts.  Each probe window ends at ``min(last_trade, end)``,
+    never the full multi-year chain edge, so the per-contract definitions snapshot —
+    anchored at the window's late edge — lands inside the contract's listed life: a
+    contract is only listed a bounded horizon before expiry (ICE lists ~10 months out),
+    so probing every candidate to the full edge left far-dated contracts unresolvable
+    (Databento 422).  Clamping to ``end`` keeps the front-at-end contract's anchor on a
+    day data exists (its last trade may be past the requested window).  With no probe the
+    chain rolls through whatever was listed — a caller that does not rank liquidity.
     """
     if probe_volume is None:
         return tuple(candidates)
     volume_by_symbol = {
-        contract.symbol: probe_volume(contract.symbol, start, end)
+        contract.symbol: probe_volume(contract.symbol, start, min(contract.last_trade, end))
         for contract in candidates
     }
     return liquid_cycle(candidates, volume_by_symbol, roll_lead_days=roll_lead_days)

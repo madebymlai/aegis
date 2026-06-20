@@ -344,22 +344,52 @@ def test_fetcher_loads_definitions_before_bars() -> None:
     assert df.loc[pd.Timestamp("2024-09-13"), "Close"] == 1.5
 
 
-def test_fetcher_loads_definitions_over_a_single_weekday_not_the_bars_window() -> None:
-    # Price precision is static, so loading definitions over the whole bars window pulls a
-    # per-day snapshot for every day and dominates the fetch.  The definition load is one day,
-    # snapped onto a weekday (a weekend anchor returns no snapshot); the bars keep the full span.
+def test_fetcher_anchors_definitions_at_the_window_late_edge_snapped_to_a_weekday() -> None:
+    # Price precision is static, so definitions load as a single-day snapshot, not over the
+    # whole bars window.  The snapshot is anchored at the window's LATE edge — where the
+    # contract is listed (a contract is only listed a bounded horizon before expiry) — and
+    # snapped back onto a weekday; the bars keep the full span.
     client = _FakeClient([_Bar(pd.Timestamp("2024-09-13").value, 1.0, 2.0, 0.5, 1.5, 100)])
     fetch = databento_port_fetcher("GLBX.MDP3", client=client)
 
-    fetch("ESU4", date(2024, 6, 1), date(2024, 9, 25))  # 2024-06-01 is a Saturday
+    fetch("ESU4", date(2024, 6, 3), date(2024, 9, 29))  # 2024-09-29 is a Sunday
 
     one_day = pd.Timedelta(days=1).value
     instr_start, instr_end = client.instr_window
     bars_start, bars_end = client.bars_window
-    assert instr_end - instr_start == one_day              # definitions: a single day
-    assert instr_start == pd.Timestamp("2024-06-03").value  # Saturday start snapped to Monday
-    assert bars_start == pd.Timestamp("2024-06-01").value   # bars keep the true window start
-    assert bars_end - bars_start > one_day                  # bars: the full multi-month span
+    assert instr_end - instr_start == one_day               # definitions: a single day
+    assert instr_start == pd.Timestamp("2024-09-27").value  # Sunday end snapped back to Friday
+    assert bars_start == pd.Timestamp("2024-06-03").value    # bars keep the true window start
+    assert bars_end - bars_start > one_day                   # bars: the full multi-month span
+
+
+def test_fetcher_resolves_a_contract_listed_only_late_in_the_window() -> None:
+    """Regression (ICE symbology gap): a contract listed only near expiry must resolve when
+    fetched over a window that opens before it was listed.
+
+    ICE lists a contract a bounded horizon before expiry, so a definitions snapshot taken at
+    the window START — years before, as the liquidity probe spans the whole panel — cannot
+    resolve it (Databento 422 symbology_invalid_request).  Anchoring the snapshot at the
+    window's late edge, inside the contract's listed life, resolves it.
+    """
+    listed_from = pd.Timestamp("2024-06-01").value
+
+    class _LateListed(_FakeClient):
+        async def get_range_instruments(self, dataset, ids, start_ns, end_ns, *a, **k) -> list:
+            if end_ns <= listed_from:  # a snapshot taken before the contract was listed
+                raise ValueError(
+                    "Failed to get range: API error: 422 Unprocessable Entity None of the "
+                    "symbols could be resolved (case: symbology_invalid_request)"
+                )
+            return await super().get_range_instruments(dataset, ids, start_ns, end_ns, *a, **k)
+
+    client = _LateListed([_Bar(pd.Timestamp("2024-09-13").value, 1.0, 2.0, 0.5, 1.5, 100)])
+    fetch = databento_port_fetcher("IFUS.IMPACT", client=client)
+
+    # Probe-style: the window opens in 2019 (before listing) but ends at the contract's last trade.
+    df = fetch("DX  FMU0024", date(2019, 1, 1), date(2024, 9, 16))
+
+    assert df.loc[pd.Timestamp("2024-09-13"), "Close"] == 1.5
 
 
 def test_fetcher_definition_load_is_constant_regardless_of_bars_window() -> None:

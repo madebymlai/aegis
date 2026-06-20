@@ -128,6 +128,40 @@ def test_fetch_contract_chain_holds_only_the_liquid_cycle() -> None:
     assert roll in chain.frames[1].index
 
 
+def test_liquidity_probe_windows_each_candidate_to_its_own_last_trade() -> None:
+    """Regression (ICE symbology gap): the probe must fetch each candidate over a window
+    ending at *its own* last trade, not the full chain window.
+
+    The per-contract definitions snapshot is anchored at the fetch window's late edge, and
+    a contract is only listed for a bounded horizon before expiry (ICE lists ~10 months
+    out).  Probing every candidate over the full multi-year window made far-dated contracts
+    unresolvable (Databento 422) because the window's edge fell before they were listed.
+    Windowing each probe to the candidate's last trade keeps the definitions anchor inside
+    the contract's listed life.
+    """
+    probed: dict[str, tuple[date, date]] = {}
+
+    def probe_volume(symbol: str, start: date, end: date) -> pd.Series:
+        probed[symbol] = (start, end)
+        index = pd.bdate_range(start, end)
+        return pd.Series([1000.0] * len(index), index=index, dtype="float64")
+
+    def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
+        base = {"ESH4": 100.0, "ESM4": 200.0, "ESU4": 300.0, "ESZ4": 400.0}[symbol]
+        return _ohlcv(start, end, base)
+
+    fetch_contract_chain(
+        "ES", date(2024, 1, 2), date(2024, 12, 31),
+        list_contracts=_es_2024, fetch=fetch,
+        bar_cadence=timedelta(days=1), probe_volume=probe_volume,
+    )
+
+    last_trade = {c.symbol: c.last_trade for c in _es_2024("ES", date(2024, 1, 2), date(2024, 12, 31))}
+    # Each candidate is probed to its own last trade — never the full 2024-12-31 window edge.
+    for symbol, (_probe_start, probe_end) in probed.items():
+        assert probe_end == last_trade[symbol], f"{symbol} probed to {probe_end}, not its last trade"
+
+
 def test_roll_dates_snap_back_to_the_latest_common_trading_day() -> None:
     def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
         idx = pd.bdate_range(start, end)

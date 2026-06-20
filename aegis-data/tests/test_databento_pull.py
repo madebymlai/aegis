@@ -59,7 +59,7 @@ def _request(ref: FuturesRef) -> NativeBarsRequest:
         arrays=NATIVE_OHLCV_ARRAYS,
         timeframe="1D",
         start="2024-01-02",
-        end="2025-01-01",
+        end="2024-12-13",
         calendar=TradingCalendar.XNYS,
     )
 
@@ -93,7 +93,7 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
         arrays=("Close",),
         timeframe="1D",
         start="2024-01-02",
-        end="2025-01-01",
+        end="2024-12-13",
         store_dir=tmp_path,
         calendar=TradingCalendar.XNYS,
     )
@@ -110,7 +110,7 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
         arrays=("Close",),
         timeframe="1D",
         start="2024-01-02",
-        end="2025-01-01",
+        end="2024-12-13",
         store_dir=tmp_path,
         calendar=TradingCalendar.XNYS,
     )
@@ -154,7 +154,7 @@ def test_databento_pull_does_not_require_bars_past_a_rolled_off_contract_expiry(
         arrays=NATIVE_OHLCV_ARRAYS,
         timeframe="1D",
         start="2024-01-02",
-        end="2024-10-01",  # past ESU4's expiry so all three contracts are in the chain
+        end="2024-09-13",  # within ESU4's life — ESU4 is the front contract at the window edge
         calendar=TradingCalendar.XNYS,
     )
     pull_databento_futures_bars(
@@ -162,7 +162,7 @@ def test_databento_pull_does_not_require_bars_past_a_rolled_off_contract_expiry(
     )
     frames = read_native_bars(
         (ref,), arrays=("Close",), timeframe="1D",
-        start="2024-01-02", end="2024-10-01", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
+        start="2024-01-02", end="2024-09-13", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
     )
     assert not frames[ref]["Close"].isna().any()
 
@@ -227,7 +227,7 @@ def test_databento_pull_tolerates_a_contract_non_print_on_an_xnys_day(tmp_path) 
     )
     frames = read_native_bars(
         (ref,), arrays=("Close",), timeframe="1D",
-        start="2024-01-02", end="2025-01-01", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
+        start="2024-01-02", end="2024-12-13", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
     )
     assert not frames[ref]["Close"].isna().any()
     assert skipped not in frames[ref].index
@@ -383,7 +383,7 @@ def test_databento_pull_derives_alternate_adjustment_from_same_raw_legs(tmp_path
         arrays=("Close",),
         timeframe="1D",
         start="2024-01-02",
-        end="2025-01-01",
+        end="2024-12-13",
         store_dir=tmp_path,
         calendar=TradingCalendar.XNYS,
     )

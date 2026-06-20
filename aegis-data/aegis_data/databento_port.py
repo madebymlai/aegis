@@ -114,6 +114,13 @@ def _to_weekday(day: date) -> date:
     return day
 
 
+def _to_weekday_back(day: date) -> date:
+    """Nudge a weekend anchor back onto the previous weekday (definitions snapshot Mon–Fri)."""
+    while day.weekday() >= 5:  # Saturday (5) or Sunday (6)
+        day -= timedelta(days=1)
+    return day
+
+
 def _collect_outrights(frame: pd.DataFrame, into: dict[str, date]) -> None:
     """Merge a snapshot's outright futures (dropping spreads) into ``into``, keyed by symbol."""
     if frame.empty:
@@ -158,9 +165,12 @@ def databento_port_fetcher(
         instrument_id = _instrument_id(f"{symbol}.{venue}")
         bars_start_ns = pd.Timestamp(start).value
         bars_end_ns = (pd.Timestamp(end) + pd.Timedelta(days=1)).value  # end-exclusive guard
-        # Price precision is static, so definitions load over a single weekday (the contract is
-        # active at the window start) — a full-window load pulls a per-day snapshot for every day.
-        defs_day = _to_weekday(start)
+        # Price precision is static, so definitions load over a single weekday — not the whole
+        # window.  Anchor that snapshot at the window's LATE edge: a contract is only listed a
+        # bounded horizon before expiry, so a snapshot at the window start (years before, when
+        # the liquidity probe spans the whole panel) cannot resolve a far-dated contract
+        # (Databento 422).  The late edge is inside the contract's listed life.
+        defs_day = _to_weekday_back(end)
         defs_start_ns = pd.Timestamp(defs_day).value
         defs_end_ns = (pd.Timestamp(defs_day) + pd.Timedelta(days=1)).value
         bars = asyncio.run(

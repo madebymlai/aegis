@@ -370,7 +370,7 @@ def test_ensure_coverage_materializes_readable_continuous_futures_history(
     )
 
     ensure_native_bar_coverage(
-        _window_request(ref, start="2024-01-02", end="2025-01-01"),
+        _window_request(ref, start="2024-01-02", end="2024-12-13"),
         provider=GapFillProvider.DATABENTO,
         locators={ref: "ES"},
         store_dir=tmp_path,
@@ -381,7 +381,7 @@ def test_ensure_coverage_materializes_readable_continuous_futures_history(
         arrays=("Close",),
         timeframe="1D",
         start="2024-01-02",
-        end="2025-01-01",
+        end="2024-12-13",
         calendar=TradingCalendar.XNYS,
         store_dir=tmp_path,
     )
