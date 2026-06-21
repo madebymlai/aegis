@@ -17,7 +17,10 @@ from typing import Any
 
 import pandas as pd
 
-from research.aegis_research.optimization.precompute import CandidateKey
+from research.aegis_research.optimization.precompute import (
+    CandidateKey,
+    canonical_param_order,
+)
 
 SPLIT_LEVEL = "split"
 
@@ -83,8 +86,15 @@ class CandidateGrid:
 
     @property
     def param_levels(self) -> list[str]:
-        """Parameter level names (all index levels except the split level)."""
-        return [n for n in self._spine.index.names if n != SPLIT_LEVEL]
+        """Parameter level names (all index levels except the split level), in canonical order.
+
+        Ordered by :func:`canonical_param_order` (sorted name) — not the MultiIndex insertion
+        order the sweep happens to emit — so a grid candidate key matches the same candidate's
+        ``candidate_keys`` identity used by the precompute/invalid path (aegis-rd-948).
+        """
+        return canonical_param_order(
+            n for n in self._spine.index.names if n != SPLIT_LEVEL
+        )
 
     @property
     def metric_ids(self) -> list[str]:

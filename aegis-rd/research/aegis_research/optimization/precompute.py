@@ -23,7 +23,7 @@ row while rejecting dependence on any future row.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from operator import index as operator_index
 
@@ -33,15 +33,28 @@ CandidateKey = tuple
 CandidateIndex = Mapping[CandidateKey, int]
 
 
+def canonical_param_order(names: Iterable[str]) -> list[str]:
+    """The one canonical element order for a ``CandidateKey``: param names, sorted.
+
+    A ``CandidateKey`` is a positional tuple, so its meaning depends entirely on the
+    order its elements are placed in. Every path that builds or reads a key orders it
+    through this function — the precompute/store-addressing path (``candidate_keys``)
+    and the scored-grid path (``CandidateGrid.param_levels``) — so a key built by one
+    path compares equal to the same candidate's key built by the other. Owning the
+    order in one place is what stops those paths from silently drifting (aegis-rd-948).
+    """
+    return sorted(names)
+
+
 def candidate_keys(param_lists: Mapping[str, Sequence]) -> list[CandidateKey]:
     """Canonical per-candidate identity tuples for a materialised candidate set.
 
-    The tuple is built in sorted param-name order so the precompute store and the
-    simulate-stage lookup agree regardless of the kwargs order the framework hands
-    each stage. The ordering is internal to store addressing and is independent of
-    the metric-row candidate identity used by the central-metrics step.
+    Tuple elements follow :func:`canonical_param_order` (sorted param name) so every
+    stage — the precompute store, the simulate-stage lookup, and the scored grid —
+    addresses a candidate by the same key, regardless of the kwargs order the framework
+    hands each stage.
     """
-    names = sorted(param_lists)
+    names = canonical_param_order(param_lists)
     n_candidates = len(param_lists[names[0]]) if names else 0
     return [tuple(param_lists[name][i] for name in names) for i in range(n_candidates)]
 

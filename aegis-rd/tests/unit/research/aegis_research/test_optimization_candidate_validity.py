@@ -226,6 +226,27 @@ def test_classify_invalid_candidate_with_finite_score_reported_invalid_not_non_t
     assert verdict.excluded_degenerate == 1
 
 
+def test_classify_matches_invalid_key_when_grid_param_order_differs_from_sorted() -> None:
+    """Regression (aegis-rd-948): ``invalid_candidates`` returns canonical sorted-name keys
+    (buffer_band before entry_band), while a grid is emitted in the sweep's param order
+    (entry_band before buffer_band). A genuinely Invalid Candidate must still be matched and
+    reported invalid — not silently mislabeled non_trading, the exact symptom we observed."""
+    # Canonical invalid key: sorted-name order -> (buffer_band=0.2, entry_band=0.0).
+    invalid_keys = set(candidate_keys({"entry_band": [0.0], "buffer_band": [0.2]}))
+    # Grid built in sweep/insertion order; metric all-NaN, so a pre-fix key miss would fall
+    # through to non_trading.
+    grid = make_candidate_grid(
+        {(0.0, 0.2): {"s0": {"sharpe": None}}},
+        param_names=["entry_band", "buffer_band"],
+    )
+
+    verdict = classify_candidates(grid, invalid_keys=invalid_keys, min_trades=0, metric="sharpe")
+
+    assert verdict.invalid == {(0.2, 0.0)}
+    assert verdict.non_trading == set()
+    assert verdict.valid == set()
+
+
 def test_classify_non_trading_candidate_all_nan_metric() -> None:
     """A Candidate whose ranking metric is all-NaN across every split is non_trading."""
     grid = make_candidate_grid({

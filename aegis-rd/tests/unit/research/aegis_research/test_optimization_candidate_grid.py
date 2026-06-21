@@ -345,3 +345,25 @@ def test_multiple_param_levels_derive_correctly() -> None:
     grid = CandidateGrid(_frame(tuples, names=names, columns=["v"]))
     assert grid.param_levels == ["fast", "slow"]
     assert grid.metric_ids == ["v"]
+
+
+def test_param_levels_and_keys_use_canonical_sorted_order_not_index_order() -> None:
+    """param_levels (and so by_candidate key element order) is canonical sorted-name order,
+    matching ``candidate_keys`` — not the MultiIndex insertion order the sweep happens to emit.
+
+    Regression (aegis-rd-948): the grid built keys in insertion order (entry_band, buffer_band)
+    while ``candidate_keys`` builds them sorted (buffer_band, entry_band), so a key from one path
+    never matched the other.
+    """
+    grid = CandidateGrid(
+        _filled_frame(
+            [("e", "b", "s0")],  # index names: entry_band before buffer_band (insertion order)
+            names=["entry_band", "buffer_band", "split"],
+            values={"sharpe": [1.0]},
+        )
+    )
+
+    assert grid.param_levels == ["buffer_band", "entry_band"]  # sorted, not insertion order
+    (key, _), = grid.by_candidate()
+    assert key == ("b", "e")  # (buffer_band-value, entry_band-value): sorted-name element order
+    assert grid.split_metrics(("b", "e")) == {"s0": {"sharpe": 1.0}}
