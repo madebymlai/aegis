@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
@@ -44,6 +44,14 @@ class ListedAdjustmentPolicy(StrEnum):
     """Listed native-bar adjustment policy in the Historical Store identity."""
 
     RAW = "raw"
+
+
+class WriteMode(StrEnum):
+    """Covered History write semantics."""
+
+    MERGE = "merge"
+    REPLACE = "replace"
+    OVERWRITE = "overwrite"
 
 
 @dataclass(frozen=True, order=True)
@@ -131,10 +139,192 @@ class NativeBarsRequest:
         )
 
 
+@dataclass(frozen=True)
+class CoveredWindow:
+    """Covered History demand over one half-open window."""
+
+    timeframe: str
+    start: str | date | pd.Timestamp
+    end: str | date | pd.Timestamp
+    arrays: Sequence[str]
+    calendar: TradingCalendar | str
+    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW
+
+    def __post_init__(self) -> None:
+        history_window = HistoryWindow(
+            timeframe=self.timeframe,
+            calendar=self.calendar,
+            start=self.start,
+            end=self.end,
+        )
+        object.__setattr__(self, "start", history_window.start)
+        object.__setattr__(self, "end", history_window.end)
+        object.__setattr__(self, "calendar", history_window.calendar)
+        object.__setattr__(self, "arrays", _validated_arrays(self.arrays))
+        object.__setattr__(
+            self,
+            "listed_adjustment",
+            _listed_adjustment_policy(self.listed_adjustment),
+        )
+
+    def narrowed_to(self, gap: CoverageGap) -> CoveredWindow:
+        """Return this window narrowed to one coverage gap."""
+        return CoveredWindow(
+            timeframe=self.timeframe,
+            start=gap.start,
+            end=gap.end,
+            arrays=self.arrays,
+            calendar=self.calendar,
+            listed_adjustment=self.listed_adjustment,
+        )
+
+    def _history_window(self, *, calendar: TradingCalendar | str) -> HistoryWindow:
+        """Build the StoreCoverage window using the effective calendar."""
+        return HistoryWindow(
+            timeframe=self.timeframe,
+            calendar=calendar,
+            start=self.start,
+            end=self.end,
+        )
+
+
 def data_dir() -> Path:
     """The historical-data store root: ``$AEGIS_DATA_DIR`` or the OS user-data dir."""
     override = os.environ.get("AEGIS_DATA_DIR")
     return Path(override) if override else Path(platformdirs.user_data_dir(_APP))
+
+
+@dataclass(frozen=True)
+class HistoricalStore:
+    """Deep Historical Store interface for one store root."""
+
+    root: Path = field(default_factory=data_dir)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root", Path(self.root))
+
+    def read(
+        self,
+        key: InstrumentRef | FxPair,
+        window: CoveredWindow,
+    ) -> pd.DataFrame:
+        """Provider-free Store Read for one Covered History identity."""
+        coverage_window = self._coverage_window(key, window)
+        path = self._path(key, window)
+        if isinstance(key, FxPair):
+            self._require_fx_rate_array(key, window)
+            admitted = _load_admitted_fx_history_or_empty(path)
+            return StoreCoverage.for_fx_rates(key).slice(coverage_window, admitted)
+        return _read_admitted_native_bar_slice(
+            key,
+            path,
+            arrays=window.arrays,
+            window=coverage_window,
+        )
+
+    def write(
+        self,
+        key: InstrumentRef | FxPair,
+        value: pd.DataFrame,
+        window: CoveredWindow,
+        *,
+        mode: WriteMode | str,
+    ) -> None:
+        """Admit and write one Covered History frame."""
+        write_mode = WriteMode(mode)
+        path = self._path(key, window)
+        if isinstance(key, FxPair):
+            self._require_fx_rate_array(key, window)
+            admitted = _admit_fx_history_frame(value)
+            merged = self._merge_write(path, admitted, write_mode, _load_admitted_fx_history)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            merged.to_parquet(path)
+            return
+        admitted = _admit_native_bars(value)
+        _assert_admitted_native_bar_arrays(admitted, window.arrays)
+        merged = self._merge_write(path, admitted, write_mode, _load_admitted_native_bars)
+        _write_admitted_native_bars(path, merged)
+
+    def coverage_gaps(
+        self,
+        key: InstrumentRef | FxPair,
+        window: CoveredWindow,
+    ) -> tuple[CoverageGap, ...]:
+        """Return uncovered expected intervals for one Covered History identity."""
+        coverage_window = self._coverage_window(key, window)
+        path = self._path(key, window)
+        if isinstance(key, FxPair):
+            self._require_fx_rate_array(key, window)
+            observed = _load_admitted_fx_history_or_empty(path)
+            return StoreCoverage.for_fx_rates(key).gaps(coverage_window, observed)
+        observed = _load_admitted_native_bars_or_empty(path, tuple(window.arrays))
+        return StoreCoverage.for_native_bars(key, arrays=window.arrays).gaps(
+            coverage_window,
+            observed,
+        )
+
+    def assert_admissible(
+        self,
+        key: InstrumentRef | FxPair,
+        value: pd.DataFrame,
+        window: CoveredWindow,
+    ) -> None:
+        """Pull admission: reject a provider frame that cannot cover the window."""
+        coverage_window = self._coverage_window(key, window)
+        try:
+            if isinstance(key, FxPair):
+                self._require_fx_rate_array(key, window)
+                admitted = _admit_fx_history_frame(value)
+                StoreCoverage.for_fx_rates(key).slice(coverage_window, admitted)
+                return
+            admitted = _admit_native_bars(value)
+            StoreCoverage.for_native_bars(key, arrays=window.arrays).slice(
+                coverage_window,
+                admitted,
+            )
+        except StoreCoverageError as error:
+            raise StoreAdmissionError(str(error)) from error
+
+    def _path(
+        self,
+        key: InstrumentRef | FxPair,
+        window: CoveredWindow,
+    ) -> Path:
+        return _covered_history_path(
+            key,
+            window.timeframe,
+            listed_adjustment=window.listed_adjustment,
+            store_dir=self.root,
+        )
+
+    def _coverage_window(
+        self,
+        key: InstrumentRef | FxPair,
+        window: CoveredWindow,
+    ) -> HistoryWindow:
+        if isinstance(key, FuturesRef):
+            return window._history_window(calendar=venue_calendar_for_dataset(key.dataset))
+        if isinstance(key, (ListedRef, FxPair)):
+            return window._history_window(calendar=window.calendar)
+        raise TypeError(f"unsupported HistoricalStore key {key!r}")
+
+    def _require_fx_rate_array(self, key: FxPair, window: CoveredWindow) -> None:
+        missing = missing_history_columns({"rate": "rate"}, window.arrays)
+        if missing:
+            raise StoreCoverageError(key, f"missing arrays {list(missing)}")
+
+    def _merge_write(
+        self,
+        path: Path,
+        admitted: pd.DataFrame,
+        mode: WriteMode,
+        load_existing: Callable[[Path], pd.DataFrame],
+    ) -> pd.DataFrame:
+        if mode is WriteMode.OVERWRITE or not path.exists():
+            return admitted
+        if mode is WriteMode.MERGE:
+            return _admit_covered_frame(load_existing(path).combine_first(admitted))
+        return _replace_admitted_frame(load_existing(path), admitted)
 
 
 def fx_history_path(
@@ -144,13 +334,7 @@ def fx_history_path(
     store_dir: Path | None = None,
 ) -> Path:
     """Parquet location for an FX History Covered History slice."""
-    return (
-        _store_root(store_dir)
-        / "fx"
-        / _safe_key(pair.base)
-        / _safe_key(pair.quote)
-        / f"{_safe_key(timeframe)}.parquet"
-    )
+    return _covered_history_path(pair, timeframe, store_dir=store_dir)
 
 
 def raw_futures_leg_path(
@@ -200,27 +384,12 @@ def native_bars_path(
     path is intentionally exposed so tests can fixture-seed the Historical Store
     without introducing a provider.
     """
-    root = _store_root(store_dir)
-    if isinstance(ref, ListedRef):
-        adjustment = _listed_adjustment_policy(listed_adjustment)
-        return (
-            root
-            / "listed"
-            / _safe_key(ref.figi)
-            / "bars"
-            / _safe_key(adjustment.value)
-            / f"{_safe_key(timeframe)}.parquet"
-        )
-    if isinstance(ref, FuturesRef):
-        return (
-            root
-            / "futures-ref"
-            / _safe_key(ref.dataset)
-            / _safe_key(ref.root)
-            / _safe_key(ref.roll_rule)
-            / f"{_safe_key(ref.adjustment)}_{_safe_key(timeframe)}.parquet"
-        )
-    raise TypeError(f"unsupported InstrumentRef {ref!r}")
+    return _covered_history_path(
+        ref,
+        timeframe,
+        listed_adjustment=listed_adjustment,
+        store_dir=store_dir,
+    )
 
 
 def write_native_bars(
@@ -669,6 +838,44 @@ def _store_root(store_dir: Path | None) -> Path:
     return store_dir or data_dir()
 
 
+def _covered_history_path(
+    key: InstrumentRef | FxPair,
+    timeframe: str,
+    *,
+    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
+    store_dir: Path | None = None,
+) -> Path:
+    root = _store_root(store_dir)
+    if isinstance(key, FxPair):
+        return (
+            root
+            / "fx"
+            / _safe_key(key.base)
+            / _safe_key(key.quote)
+            / f"{_safe_key(timeframe)}.parquet"
+        )
+    if isinstance(key, ListedRef):
+        adjustment = _listed_adjustment_policy(listed_adjustment)
+        return (
+            root
+            / "listed"
+            / _safe_key(key.figi)
+            / "bars"
+            / _safe_key(adjustment.value)
+            / f"{_safe_key(timeframe)}.parquet"
+        )
+    if isinstance(key, FuturesRef):
+        return (
+            root
+            / "futures-ref"
+            / _safe_key(key.dataset)
+            / _safe_key(key.root)
+            / _safe_key(key.roll_rule)
+            / f"{_safe_key(key.adjustment)}_{_safe_key(timeframe)}.parquet"
+        )
+    raise TypeError(f"unsupported HistoricalStore key {key!r}")
+
+
 def _read_one_fx_series(
     pair: FxPair,
     *,
@@ -818,6 +1025,22 @@ def _replace_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.Data
     return _admit_native_bars(pd.concat([outside, admitted]).sort_index())
 
 
+def _replace_admitted_frame(existing: pd.DataFrame, admitted: pd.DataFrame) -> pd.DataFrame:
+    if admitted.empty:
+        return existing
+    left = admitted.index.min()
+    right = admitted.index.max()
+    outside = existing.loc[(existing.index < left) | (existing.index > right)]
+    return _admit_covered_frame(pd.concat([outside, admitted]).sort_index())
+
+
+def _admit_covered_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    admitted = _admit_datetime_indexed_history(frame, label="Covered History")
+    if admitted.columns.has_duplicates:
+        raise StoreAdmissionError("Covered History contains duplicate columns")
+    return admitted
+
+
 def _require_native_bar_columns(
     ref: HistoryKey,
     frame: pd.DataFrame,
@@ -874,6 +1097,14 @@ def _admit_fx_history(rates: pd.Series) -> pd.DataFrame:
     return admitted.rename("rate").to_frame()
 
 
+def _admit_fx_history_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(frame, pd.DataFrame):
+        raise StoreAdmissionError("FX History must be a rate-column DataFrame")
+    if "rate" not in frame.columns:
+        raise StoreAdmissionError("FX History must contain a rate column")
+    return _admit_fx_history(frame["rate"])
+
+
 def _admit_native_bars(bars: pd.DataFrame) -> pd.DataFrame:
     admitted = _admit_datetime_indexed_history(bars, label="native bars")
     if admitted.columns.has_duplicates:
@@ -921,14 +1152,17 @@ def _safe_key(value: str) -> str:
 
 
 __all__ = [
+    "CoveredWindow",
     "CoverageGap",
     "FxPair",
+    "HistoricalStore",
     "ListedAdjustmentPolicy",
     "NATIVE_OHLCV_ARRAYS",
     "NativeBarsRequest",
     "RawFuturesLeg",
     "StoreAdmissionError",
     "StoreCoverageError",
+    "WriteMode",
     "assert_admissible_fx_history",
     "assert_admissible_native_bars",
     "assert_fx_history_coverage",
