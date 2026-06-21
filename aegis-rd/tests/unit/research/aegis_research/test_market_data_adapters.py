@@ -6,8 +6,9 @@ from typing import ClassVar
 import pandas as pd
 import pytest
 from aegis_data.calendars import TradingCalendar
+from aegis_data.pull import FetchWindow
 from aegis_data.store import CoveredWindow, HistoricalStore, NativeBarsRequest, WriteMode
-from aegis_data.yfinance import FetchWindow, YFinanceLocator, pull_yfinance_native_bars
+from aegis_data.yfinance import YFinanceLocator, pull_yfinance_native_bars
 from aegis_runtime import FuturesRef, ListedRef
 from vectorbtpro import vbt
 
@@ -15,6 +16,7 @@ from research.aegis_research.data import load_market_data_result
 from research.aegis_research.market_data.adapters import csv as csv_adapter
 from research.aegis_research.market_data.adapters import remote as remote_adapter
 from research.aegis_research.market_data.adapters import synthetic as synthetic_adapter
+from research.aegis_research.market_data.adapters.store import reconcile_panels
 from research.aegis_research.market_data.contracts import (
     MarketDataAdapterResult,
     RemoteDataPullError,
@@ -125,6 +127,48 @@ def _mixed_dataset_store_config():
         start="2024-01-02",
         end="2024-01-05",
     )
+
+
+def test_reconcile_panels_forward_fills_a_closed_day_and_trims_leading_warmup() -> None:
+    # aegis-rd-z5l: _array_panels unions each root's OWN trading days, so a day root AAA trades
+    # but root BBB is closed (cross-venue holiday divergence / a thin contract's no-trade day)
+    # lands as a NaN cell -- a closed market, not a hole in the price process. Reconciliation:
+    #  - forward-fills the interior gap as a FLAT no-trade bar: carry BBB's last settle (Close)
+    #    into every price array -> a doji at the prior close (0 return, NO fabricated intraday
+    #    range), Volume 0; and
+    #  - trims the leading NaN (BBB's first bar is a day after AAA's) to the common warm-up,
+    #    never back-filling a price that never existed,
+    # leaving no surviving NaN for the quality gate.
+    index = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"])
+
+    def panel(aaa: list[float], bbb: list[float | None]) -> pd.DataFrame:
+        return pd.DataFrame({"AAA": aaa, "BBB": bbb}, index=index)
+
+    panels = {  # BBB: leading NaN on 01-02, interior (closed) NaN on 01-04
+        "Open": panel([9.0, 10.0, 11.0, 12.0], [None, 19.0, None, 21.0]),
+        "High": panel([11.0, 12.0, 13.0, 14.0], [None, 21.0, None, 23.0]),
+        "Low": panel([8.0, 9.0, 10.0, 11.0], [None, 18.0, None, 20.0]),
+        "Close": panel([10.0, 11.0, 12.0, 13.0], [None, 20.0, None, 22.0]),
+        "Volume": panel([100.0, 110.0, 120.0, 130.0], [None, 200.0, None, 220.0]),
+    }
+
+    out = reconcile_panels(panels)
+
+    # Leading warm-up trimmed: the panel starts at BBB's first real bar (the common warm-up day).
+    expected_index = pd.DatetimeIndex(["2024-01-03", "2024-01-04", "2024-01-05"])
+    for name, frame in out.items():
+        assert list(frame.index) == list(expected_index), name
+        assert int(frame.isna().sum().sum()) == 0, name  # no surviving NaN anywhere
+    # BBB's closed day (01-04) is a flat doji at its last settle (01-03 Close == 20), volume 0.
+    closed = pd.Timestamp("2024-01-04")
+    assert out["Close"].loc[closed, "BBB"] == 20.0  # carried settle -> 0 return
+    assert out["Open"].loc[closed, "BBB"] == 20.0  # the settle, NOT the prior Open (19)
+    assert out["High"].loc[closed, "BBB"] == 20.0  # the settle, NOT the prior High (21): no fake range
+    assert out["Low"].loc[closed, "BBB"] == 20.0
+    assert out["Volume"].loc[closed, "BBB"] == 0.0
+    # AAA traded that day -- untouched.
+    assert out["Close"].loc[closed, "AAA"] == 12.0
+    assert out["Volume"].loc[closed, "AAA"] == 120.0
 
 
 def test_synthetic_adapter_loads_native_data_behind_the_seam() -> None:
