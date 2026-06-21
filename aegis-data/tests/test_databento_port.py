@@ -484,6 +484,24 @@ def test_fetcher_anchors_definitions_as_a_bounded_lookback_at_the_window_late_ed
     assert bars_end - bars_start > fifteen_days              # bars: the full multi-month span
 
 
+def test_fetcher_defs_lookback_never_reaches_before_the_bars_window_start() -> None:
+    # Regression (CC 2019 / IFUS.IMPACT): when the fetch window is SHORTER than the defs
+    # lookback — a front contract expiring days into the window — anchoring definitions at
+    # ``end - 14d`` reaches before the bars window start, and before the dataset's available
+    # history, so the definitions query 422s (data_start_before_available_start).  Clamp the
+    # defs window start up to the bars window start: it still spans days the contract trades
+    # (precision resolves) while never requesting before the data exists.
+    client = _FakeClient([_Bar(pd.Timestamp("2019-01-02").value, 1.0, 2.0, 0.5, 1.5, 100)])
+    fetch = databento_port_fetcher("IFUS.IMPACT", client=client)
+
+    fetch("CC  FMH0019!", date(2019, 1, 1), date(2019, 1, 4))  # 4-day window, shorter than the 14d lookback
+
+    instr_start, _instr_end = client.instr_window
+    bars_start, _bars_end = client.bars_window
+    # The defs window is clamped to the bars start — not the unclamped 2018-12-21 (end - 14d).
+    assert instr_start == bars_start == pd.Timestamp("2019-01-01").value
+
+
 def test_fetcher_resolves_a_contract_listed_only_late_in_the_window() -> None:
     """Regression (ICE symbology gap): a contract listed only near expiry must resolve when
     fetched over a window that opens before it was listed.
@@ -560,9 +578,12 @@ def test_fetcher_definition_load_is_constant_regardless_of_bars_window() -> None
     # per-day snapshot for every day (99s cold for a multi-month contract).  Precision is static,
     # so the definition load stays a bounded lookback no matter how long the bars span — only
     # the bars scale.
+    # Both windows are longer than the lookback, so the defs load is the full bounded lookback
+    # for each (a window shorter than the lookback clamps to the bars start — covered separately
+    # by test_fetcher_defs_lookback_never_reaches_before_the_bars_window_start).
     bar = [_Bar(pd.Timestamp("2024-06-03").value, 1.0, 2.0, 0.5, 1.5, 100)]
     short, long = _FakeClient(list(bar)), _FakeClient(list(bar))
-    databento_port_fetcher("GLBX.MDP3", client=short)("ESU4", date(2024, 6, 3), date(2024, 6, 10))
+    databento_port_fetcher("GLBX.MDP3", client=short)("ESU4", date(2024, 6, 3), date(2024, 7, 10))
     databento_port_fetcher("GLBX.MDP3", client=long)("ESU4", date(2024, 6, 3), date(2034, 6, 10))
 
     fifteen_days = pd.Timedelta(days=15).value  # 14-day lookback + the end-exclusive guard day

@@ -204,7 +204,12 @@ def databento_port_fetcher(
         # delisted day and fail to resolve precision.  A lookback window ending at the late edge
         # straddles both — inside the listed life, spanning days the definition is still active —
         # while staying bounded so the load never scales with the bars window.
-        defs_start_ns = (pd.Timestamp(end) - _DEFS_LOOKBACK).value
+        # Never let the lookback reach before the bars window start: a contract whose fetched
+        # window is shorter than the lookback (a front leg expiring days into the window) would
+        # otherwise anchor definitions before the dataset's available history and 422.  The bars
+        # window is days the contract trades, so a defs window clamped to its start still lands
+        # inside the listed life and resolves precision.
+        defs_start_ns = max((pd.Timestamp(end) - _DEFS_LOOKBACK).value, bars_start_ns)
         defs_end_ns = (pd.Timestamp(end) + pd.Timedelta(days=1)).value
         bars = asyncio.run(
             _pull(api, dataset, instrument_id, defs_start_ns, defs_end_ns, bars_start_ns, bars_end_ns)
