@@ -15,15 +15,25 @@ import pandas as pd
 from aegis_data.back_adjust import back_adjust_chain
 from aegis_data.chain import ContractCalendar, ContractFetcher, fetch_contract_chain
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
-from aegis_data.store import cached_fetcher
+from aegis_data.raw_leg_cache import LegPorts, raw_leg_ports
 
 
 def databento_source(
     dataset: str, *, store_dir=None, client=None
 ) -> ContractFetcher:
-    """A store-cached, fetch-on-miss per-contract fetcher over the databento port."""
-    return cached_fetcher(
-        databento_port_fetcher(dataset, client=client), dataset=dataset, store_dir=store_dir
+    """A raw-leg-cache-backed per-contract fetcher over the databento port."""
+    return databento_leg_ports(dataset, store_dir=store_dir, client=client).fetch
+
+
+def databento_leg_ports(
+    dataset: str, *, timeframe: str = "1D", store_dir=None, client=None
+) -> LegPorts:
+    """Fetch/probe ports over the databento port, bound to the same raw-leg cache."""
+    return raw_leg_ports(
+        dataset=dataset,
+        timeframe=timeframe,
+        fetch=databento_port_fetcher(dataset, client=client),
+        store_dir=store_dir,
     )
 
 
@@ -32,21 +42,33 @@ def continuous_panel(
     start: date,
     end: date,
     *,
-    fetch: ContractFetcher,
+    ports: LegPorts,
     list_contracts: ContractCalendar,
     method: str = "ratio",
     bar_cadence: timedelta,
 ) -> pd.DataFrame:
     """Back-adjusted continuous OHLCV panel for ``root`` over ``[start, end]``.
 
-    ``fetch`` is the per-contract source and ``list_contracts`` the dated-contract
-    calendar (use :func:`databento_source` / :func:`databento_contract_calendar` in
-    production; inject fakes in tests).  The roll lead derives from ``bar_cadence``.
+    ``ports`` supplies the per-contract source plus daily volume probe, and
+    ``list_contracts`` the dated-contract calendar (use :func:`databento_source` /
+    :func:`databento_contract_calendar` in production; inject fakes in tests). The
+    roll lead derives from ``bar_cadence``.
     """
     chain = fetch_contract_chain(
-        root, start, end, list_contracts=list_contracts, fetch=fetch, bar_cadence=bar_cadence
+        root,
+        start,
+        end,
+        list_contracts=list_contracts,
+        fetch=ports.fetch,
+        bar_cadence=bar_cadence,
+        probe_volume=ports.probe,
     )
     return back_adjust_chain(chain, method=method)
 
 
-__all__ = ["continuous_panel", "databento_contract_calendar", "databento_source"]
+__all__ = [
+    "continuous_panel",
+    "databento_contract_calendar",
+    "databento_leg_ports",
+    "databento_source",
+]

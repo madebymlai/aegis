@@ -13,7 +13,6 @@ import pandas as pd
 import pytest
 import yaml
 from aegis_runtime import FuturesRef, ListedRef
-from aegis_runtime import MarketDataBundle as RuntimeMarketDataBundle
 
 from research.aegis_research import cli
 from research.aegis_research.component_registry import (
@@ -107,7 +106,7 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
     try:
         module = importlib.import_module(package_name)
         bundle = module.get_bundle()
-        actual = bundle.compute_weights(RuntimeMarketDataBundle(_ref_arrays(prices)))
+        actual = bundle.compute_weights(MarketDataBundle(_ref_arrays(prices)))
     finally:
         sys.path.remove(import_path)
         _remove_imported_package(package_name)
@@ -128,7 +127,7 @@ def test_exported_base_currency_bundle_matches_locked_rd_weights(tmp_path, monke
 
     with pytest.raises(ValueError, match="refs"):
         bundle.compute_weights(
-            RuntimeMarketDataBundle(
+            MarketDataBundle(
                 {"Close": prices.array("Close").rename(columns=_REF_BY_SYMBOL | {"SPY": ListedRef("BAD")})}
             )
         )
@@ -195,7 +194,7 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
         entry_point = next(ep for ep in entry_points if ep.name == wheel_path.name)
         bundle = entry_point.load()()
         actual = bundle.compute_weights(
-            RuntimeMarketDataBundle(_ref_arrays(native_prices)), fx_series=fx_series
+            MarketDataBundle(_ref_arrays(native_prices)), fx_series=fx_series
         )
     finally:
         sys.path.remove(import_path)
@@ -210,7 +209,7 @@ def test_exported_multi_currency_bundle_converts_native_prices_to_base_weights(
     pd.testing.assert_frame_equal(actual, expected)
 
     with pytest.raises(ValueError, match=r"missing=\['USD'\]"):
-        bundle.compute_weights(RuntimeMarketDataBundle(_ref_arrays(native_prices)), fx_series={})
+        bundle.compute_weights(MarketDataBundle(_ref_arrays(native_prices)), fx_series={})
 
 
 def test_export_rejects_component_without_lookback(tmp_path, monkeypatch) -> None:

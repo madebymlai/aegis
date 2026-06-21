@@ -251,13 +251,12 @@ def _instrument_refs(
     refs: list[InstrumentRef] = []
     for symbol in data_config.symbols:
         if getattr(symbol, "is_future", False):
-            dataset = symbol.dataset or data_config.dataset
-            if dataset is None:
+            if symbol.dataset is None:
                 raise ValueError(f"dataset is required for futures symbol {symbol.root!r}")
             refs.append(
                 FuturesRef(
                     root=symbol.root,
-                    dataset=dataset,
+                    dataset=symbol.dataset,
                     roll_rule=symbol.roll_rule,
                     adjustment=symbol.adjustment,
                 )

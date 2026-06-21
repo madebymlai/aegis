@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -10,26 +10,28 @@ import pandas as pd
 from aegis_runtime import FuturesRef
 
 from aegis_data.back_adjust import back_adjust_chain
+from aegis_data.calendars import venue_calendar_for_dataset
 from aegis_data.chain import ContractCalendar, ContractChain, ContractFetcher, fetch_contract_chain
 from aegis_data.continuous import apply_adjustment_factors
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
+from aegis_data.raw_leg_cache import raw_leg_ports
 from aegis_data.store import (
+    CoveredWindow,
     CoverageGap,
+    HistoricalStore,
     NativeBarsRequest,
     RawFuturesLeg,
-    assert_admissible_native_bars,
-    covered_row_count,
-    merge_raw_futures_leg,
-    native_bar_coverage_gaps,
-    native_bars_path,
-    raw_futures_leg_coverage_gaps,
-    read_raw_futures_leg,
-    replace_native_bars,
+    WriteMode,
 )
 
-_RATIO_ADJUSTMENTS = frozenset({"back_adjust", "ratio"})
-_CLOSE_DEPENDENT_ADJUSTMENTS = _RATIO_ADJUSTMENTS | {"difference"}
-_SUPPORTED_ADJUSTMENTS_MESSAGE = "back_adjust, ratio, difference, or unadjusted"
+# Continuous-futures adjustment vocabulary, named to match NautilusTrader's backward
+# ContinuousFutureAdjustmentType modes so research and live agree by construction:
+# ``backward_ratio`` (multiplicative, returns-preserving) and ``backward_spread``
+# (additive/Panama, point-move & $-P&L preserving).  These map to the generic transform
+# primitives (ratio/difference); the "backward" anchor is implicit (newest unadjusted).
+_RATIO_ADJUSTMENTS = frozenset({"backward_ratio"})
+_CLOSE_DEPENDENT_ADJUSTMENTS = _RATIO_ADJUSTMENTS | {"backward_spread"}
+_SUPPORTED_ADJUSTMENTS_MESSAGE = "backward_ratio, backward_spread, or unadjusted"
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,6 @@ class DatabentoPullResult:
     """Continuous Futures History admitted by a Databento Pull."""
 
     ref: FuturesRef
-    path: Path
-    bars: int
     raw_legs: tuple[RawFuturesLeg, ...]
 
 
@@ -59,10 +59,13 @@ def pull_databento_futures_bars(
     """
     ref = _single_futures_ref(request)
     _require_supported_roll_rule(ref)
+    request = _with_venue_calendar(request, ref)
     raw_fetch = fetcher or databento_port_fetcher(ref.dataset, client=client)
     list_contracts = contract_calendar or databento_contract_calendar(ref.dataset, client=client)
+    store = _store(store_dir)
+    window = _covered_window(request)
     raw_legs: tuple[RawFuturesLeg, ...] = ()
-    if _continuous_gaps(ref, request, store_dir=store_dir):
+    if _continuous_gaps(ref, window, store=store):
         panel, raw_legs = _derive_continuous_history(
             ref,
             request,
@@ -71,24 +74,9 @@ def pull_databento_futures_bars(
             store_dir=store_dir,
             bar_cadence=_request_bar_cadence(request),
         )
-        assert_admissible_native_bars(
-            ref,
-            panel,
-            arrays=request.arrays,
-            timeframe=request.timeframe,
-            start=request.start,
-            end=request.end,
-            calendar=request.calendar,
-        )
-        replace_native_bars(
-            ref,
-            request.timeframe,
-            panel,
-            required_arrays=request.arrays,
-            store_dir=store_dir,
-        )
-    path = native_bars_path(ref, request.timeframe, store_dir=store_dir)
-    return DatabentoPullResult(ref=ref, path=path, bars=covered_row_count(path), raw_legs=raw_legs)
+        store.assert_admissible(ref, panel, window)
+        store.write(ref, panel, window, mode=WriteMode.REPLACE)
+    return DatabentoPullResult(ref=ref, raw_legs=raw_legs)
 
 
 def _derive_continuous_history(
@@ -102,29 +90,19 @@ def _derive_continuous_history(
 ) -> tuple[pd.DataFrame, tuple[RawFuturesLeg, ...]]:
     start, end = _request_dates(request)
     raw_arrays = _raw_required_arrays(ref, request)
+    ports = raw_leg_ports(
+        dataset=ref.dataset,
+        timeframe=request.timeframe,
+        fetch=fetch,
+        arrays=raw_arrays,
+        store_dir=store_dir,
+    )
     raw_legs: list[RawFuturesLeg] = []
 
     def raw_leg_fetch(symbol: str, leg_start: date, leg_end: date) -> pd.DataFrame:
         leg = RawFuturesLeg(ref.dataset, symbol)
         raw_legs.append(leg)
-        _fill_raw_leg_gaps(
-            leg,
-            request,
-            arrays=raw_arrays,
-            start=leg_start,
-            end=leg_end,
-            fetch=fetch,
-            store_dir=store_dir,
-        )
-        return read_raw_futures_leg(
-            leg,
-            arrays=raw_arrays,
-            timeframe=request.timeframe,
-            start=leg_start,
-            end=_exclusive_date_end(leg_end),
-            calendar=request.calendar,
-            store_dir=store_dir,
-        )
+        return ports.fetch(symbol, leg_start, leg_end)
 
     chain = fetch_contract_chain(
         ref.root,
@@ -133,6 +111,7 @@ def _derive_continuous_history(
         list_contracts=list_contracts,
         fetch=raw_leg_fetch,
         bar_cadence=bar_cadence,
+        probe_volume=ports.probe,
     )
     return _continuous_panel(chain, adjustment=ref.adjustment), tuple(dict.fromkeys(raw_legs))
 
@@ -142,40 +121,10 @@ def _request_bar_cadence(request: NativeBarsRequest) -> timedelta:
     return pd.Timedelta(request.timeframe).to_pytimedelta()
 
 
-def _fill_raw_leg_gaps(
-    leg: RawFuturesLeg,
-    request: NativeBarsRequest,
-    *,
-    arrays: tuple[str, ...],
-    start: date,
-    end: date,
-    fetch: ContractFetcher,
-    store_dir: Path | None,
-) -> None:
-    for gap in _raw_leg_gaps(leg, request, arrays=arrays, start=start, end=end, store_dir=store_dir):
-        bars = fetch(leg.symbol, gap.start.date(), _inclusive_gap_end(gap))
-        assert_admissible_native_bars(
-            leg,
-            bars,
-            arrays=arrays,
-            timeframe=request.timeframe,
-            start=gap.start,
-            end=gap.end,
-            calendar=request.calendar,
-        )
-        merge_raw_futures_leg(
-            leg,
-            request.timeframe,
-            bars,
-            required_arrays=arrays,
-            store_dir=store_dir,
-        )
-
-
 def _continuous_panel(chain: ContractChain, *, adjustment: str) -> pd.DataFrame:
     if adjustment in _RATIO_ADJUSTMENTS:
         return back_adjust_chain(chain, method="ratio")
-    if adjustment == "difference":
+    if adjustment == "backward_spread":
         return back_adjust_chain(chain, method="difference")
     if adjustment == "unadjusted":
         return _unadjusted_chain(chain)
@@ -200,39 +149,26 @@ def _unadjusted_chain(chain: ContractChain) -> pd.DataFrame:
 
 def _continuous_gaps(
     ref: FuturesRef,
-    request: NativeBarsRequest,
+    window: CoveredWindow,
     *,
-    store_dir: Path | None,
+    store: HistoricalStore,
 ) -> tuple[CoverageGap, ...]:
-    return native_bar_coverage_gaps(
-        ref,
-        arrays=request.arrays,
+    return store.coverage_gaps(ref, window)
+
+
+def _covered_window(request: NativeBarsRequest) -> CoveredWindow:
+    return CoveredWindow(
         timeframe=request.timeframe,
         start=request.start,
         end=request.end,
+        arrays=request.arrays,
         calendar=request.calendar,
-        store_dir=store_dir,
+        listed_adjustment=request.listed_adjustment,
     )
 
 
-def _raw_leg_gaps(
-    leg: RawFuturesLeg,
-    request: NativeBarsRequest,
-    *,
-    arrays: tuple[str, ...],
-    start: date,
-    end: date,
-    store_dir: Path | None,
-) -> tuple[CoverageGap, ...]:
-    return raw_futures_leg_coverage_gaps(
-        leg,
-        arrays=arrays,
-        timeframe=request.timeframe,
-        start=start,
-        end=_exclusive_date_end(end),
-        calendar=request.calendar,
-        store_dir=store_dir,
-    )
+def _store(store_dir: Path | None) -> HistoricalStore:
+    return HistoricalStore(store_dir) if store_dir is not None else HistoricalStore()
 
 
 def _raw_required_arrays(ref: FuturesRef, request: NativeBarsRequest) -> tuple[str, ...]:
@@ -253,14 +189,6 @@ def _request_dates(request: NativeBarsRequest) -> tuple[date, date]:
     return start, (end_exclusive - pd.Timedelta(days=1)).date()
 
 
-def _inclusive_gap_end(gap: CoverageGap) -> date:
-    return (gap.end - pd.Timedelta(days=1)).date()
-
-
-def _exclusive_date_end(value: date) -> pd.Timestamp:
-    return pd.Timestamp(value) + pd.Timedelta(days=1)
-
-
 def _single_futures_ref(request: NativeBarsRequest) -> FuturesRef:
     if len(request.refs) != 1:
         raise ValueError("Databento futures Pull requires exactly one InstrumentRef")
@@ -268,6 +196,17 @@ def _single_futures_ref(request: NativeBarsRequest) -> FuturesRef:
     if not isinstance(ref, FuturesRef):
         raise TypeError(f"Databento futures Pull requires a FuturesRef; got {ref!r}")
     return ref
+
+
+def _with_venue_calendar(request: NativeBarsRequest, ref: FuturesRef) -> NativeBarsRequest:
+    """Re-key the request to the contract's venue calendar, resolved from its dataset.
+
+    A futures Pull's expected-bar grid is the venue's (CME/ICE) — known from the
+    ref's dataset — not the request-level calendar (which governs venue-agnostic
+    refs).  Every leg admission and the continuous series then cover against it, so
+    a day NYSE is open but the venue closed (or vice versa) is no longer a false gap.
+    """
+    return replace(request, calendar=venue_calendar_for_dataset(ref.dataset))
 
 
 def _require_supported_roll_rule(ref: FuturesRef) -> None:

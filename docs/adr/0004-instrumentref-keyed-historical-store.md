@@ -63,10 +63,10 @@ absent or incomplete.
 - **FX History uses the same provider.** Store-mode RD configs do not declare a
   separate `fx_provider`; required FX History is ensured through the same
   block-level Gap-Fill Provider.
-- **Databento futures declare one block-level dataset.** `data.dataset` selects
-  the Databento feed/universe for the block. It is folded into each expanded
-  `FuturesRef`, so futures symbols declare roots and roll/adjustment semantics
-  but do not repeat dataset per symbol.
+- **Databento futures declare a per-symbol dataset.** Amended by
+  `aegis-rd/docs/adr/0023-per-symbol-futures-dataset.md`: each futures
+  `SymbolSpec` carries the Databento feed/universe that becomes its
+  `FuturesRef.dataset`; there is no block-level dataset default.
 - **RD `source: store` requires explicit refs.** Every symbol in the store path
   declares its canonical `InstrumentRef` before any gap-fill pull can run.
   Listed store symbols keep `ticker` as their provider locator; there is no

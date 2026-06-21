@@ -78,7 +78,9 @@ def roll_schedule(
     monthly and a serial/odd-cycle product rolls on whatever it actually lists.
     """
     _require_non_negative_roll_lead(roll_lead_days)
-    in_window = _contracts_expiring_between(contracts, start, end)
+    in_window = _contracts_front_between(
+        _contracts_by_expiry(contracts), start, end, roll_lead_days
+    )
     return FuturesChainSchedule(
         symbols=tuple(contract.symbol for contract in in_window),
         expiries=tuple(contract.last_trade for contract in in_window),
@@ -101,18 +103,8 @@ def front_contract(
     """
     _require_non_negative_roll_lead(roll_lead_days)
     ordered = _contracts_by_expiry(contracts)
-    if not ordered:
-        return None
-
-    active_schedule = roll_schedule(
-        ordered, as_of, ordered[-1].last_trade, roll_lead_days=roll_lead_days
-    )
-    front_symbol = _front_symbol(active_schedule, as_of)
-    if front_symbol is None:
-        return None
-
-    contract_by_symbol = {contract.symbol: contract for contract in ordered}
-    return contract_by_symbol[front_symbol]
+    index = _front_index(ordered, as_of, roll_lead_days)
+    return None if index is None else ordered[index]
 
 
 def assert_roll_agreement(
@@ -164,23 +156,43 @@ def assert_universe_roll_agreement(
     )
 
 
-def _front_symbol(schedule: FuturesChainSchedule, as_of: date) -> str | None:
-    if not schedule.symbols:
+def _front_index(
+    ordered: Sequence[DatedContract], as_of: date, roll_lead_days: int
+) -> int | None:
+    """Index (into expiry-ordered contracts) of the one front on ``as_of``.
+
+    The front contract is the earliest-expiring one that has not yet rolled off:
+    the first whose roll date is still ahead of ``as_of``.  Once ``as_of`` is past
+    every roll date but on/before the back contract's last trade, that back contract
+    is front.  ``None`` means ``as_of`` is past the last contract's last trade — no
+    supplied contract covers it.
+    """
+    if not ordered or as_of > ordered[-1].last_trade:
         return None
-    for symbol, roll_date in zip(schedule.symbols, schedule.roll_dates, strict=False):
-        if as_of < roll_date:
-            return symbol
-    return schedule.symbols[-1]
+    for index, contract in enumerate(ordered):
+        if as_of < _roll_date(contract, roll_lead_days):
+            return index
+    return len(ordered) - 1
 
 
-def _contracts_expiring_between(
-    contracts: Sequence[DatedContract], start: date, end: date
+def _contracts_front_between(
+    ordered: Sequence[DatedContract], start: date, end: date, roll_lead_days: int
 ) -> tuple[DatedContract, ...]:
-    return tuple(
-        contract
-        for contract in _contracts_by_expiry(contracts)
-        if start <= contract.last_trade <= end
-    )
+    """Every contract that is front at some point in ``[start, end]``.
+
+    The front contract advances monotonically with ``as_of``, so this is the
+    contiguous run from the contract front at ``start`` through the one front at
+    ``end`` — inclusive of the front-at-``end`` contract even when its last trade
+    falls *after* ``end`` (it is the only leg covering ``[last expiry, end]``).  An
+    ``end`` past every contract runs through the back contract; a ``start`` past
+    every contract yields the empty chain (aegis-rd-vv6).
+    """
+    first = _front_index(ordered, start, roll_lead_days)
+    if first is None:
+        return ()
+    last = _front_index(ordered, end, roll_lead_days)
+    last = len(ordered) - 1 if last is None else last
+    return tuple(ordered[first : last + 1])
 
 
 def _contracts_by_expiry(contracts: Sequence[DatedContract]) -> tuple[DatedContract, ...]:

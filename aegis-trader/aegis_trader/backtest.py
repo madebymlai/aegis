@@ -22,7 +22,7 @@ from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency, Money
 
 from aegis_data.calendars import TradingCalendar
-from aegis_data.store import FxPair, read_fx_history, read_native_bars
+from aegis_data.store import CoveredWindow, FxPair, HistoricalStore
 from aegis_runtime import ExecutionBundle, InstrumentRef
 from aegis_runtime.currency import _major_currency_and_scale
 
@@ -276,16 +276,15 @@ def _read_native_market_bars(
 ) -> pd.DataFrame:
     # Trader's book universe is US-listed (yfinance) and CME futures (GLBX); both
     # expect bars on the XNYS calendar.
-    frames = read_native_bars(
-        (ref,),
-        arrays=_store_read_arrays(required_arrays),
+    store = _store(store_dir)
+    window = CoveredWindow(
         timeframe=timeframe,
         start=start,
         end=end,
+        arrays=_store_read_arrays(required_arrays),
         calendar=TradingCalendar.XNYS,
-        store_dir=store_dir,
     )
-    return frames[ref]
+    return store.read(ref, window)
 
 
 def _read_fx_inputs(
@@ -304,15 +303,15 @@ def _read_fx_inputs(
         if ccy == book.base_currency:
             continue
         pair = FxPair(book.base_currency, ccy)
-        history = read_fx_history(
-            (pair,),
+        store = _store(store_dir)
+        window = CoveredWindow(
             timeframe=timeframe,
             start=start,
             end=end,
+            arrays=("rate",),
             calendar=TradingCalendar.WEEKDAY,
-            store_dir=store_dir,
         )
-        fx_series = history[pair]
+        fx_series = store.read(pair, window)["rate"]
         aligned[ccy] = _align_fx_to_bars(
             fx_series,
             fx_index=fx_index,
@@ -320,6 +319,10 @@ def _read_fx_inputs(
             quote=ccy,
         )
     return aligned
+
+
+def _store(store_dir: Path | None) -> HistoricalStore:
+    return HistoricalStore(store_dir) if store_dir is not None else HistoricalStore()
 
 
 def _align_fx_to_bars(

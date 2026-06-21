@@ -6,7 +6,7 @@ from typing import ClassVar
 import pandas as pd
 import pytest
 from aegis_data.calendars import TradingCalendar
-from aegis_data.store import NativeBarsRequest, write_native_bars
+from aegis_data.store import CoveredWindow, HistoricalStore, NativeBarsRequest, WriteMode
 from aegis_data.yfinance import FetchWindow, YFinanceLocator, pull_yfinance_native_bars
 from aegis_runtime import FuturesRef, ListedRef
 from vectorbtpro import vbt
@@ -35,6 +35,95 @@ def _pulled_bars_with_adj_close() -> pd.DataFrame:
             "Volume": [1000, 1100, 1200],
         },
         index=index,
+    )
+
+
+_MIXED_SIGNAL_ES = FuturesRef("ES", "GLBX.MDP3", "calendar", "backward_ratio")
+_MIXED_SIGNAL_BZ = FuturesRef("BZ", "IFEU.IMPACT", "calendar", "backward_ratio")
+_MIXED_PNL_BZ = FuturesRef("BZ", "IFEU.IMPACT", "calendar", "backward_spread")
+_MIXED_DATASET_INDEX = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"])
+_MIXED_DATASET_VALUES = {
+    _MIXED_SIGNAL_ES: [1.0, 2.0, 3.0],
+    _MIXED_SIGNAL_BZ: [10.0, 20.0, 30.0],
+    _MIXED_PNL_BZ: [100.0, 200.0, 300.0],
+}
+
+
+def _store(store_dir: Path | None) -> HistoricalStore:
+    return HistoricalStore(store_dir) if store_dir is not None else HistoricalStore()
+
+
+def _write_store_bars(
+    ref,
+    bars: pd.DataFrame,
+    *,
+    store_dir: Path | None,
+    arrays: tuple[str, ...] = ("Close",),
+    timeframe: str = "1D",
+) -> None:
+    end = bars.index.max() + pd.Timedelta(days=1)
+    _store(store_dir).write(
+        ref,
+        bars,
+        CoveredWindow(
+            timeframe=timeframe,
+            start=bars.index.min(),
+            end=end,
+            arrays=arrays,
+            calendar=TradingCalendar.XNYS,
+        ),
+        mode=WriteMode.OVERWRITE,
+    )
+
+
+class _RecordingMixedDatasetPull:
+    def __init__(self) -> None:
+        self.requests: list[NativeBarsRequest] = []
+
+    def __call__(self, request: NativeBarsRequest, *, store_dir=None) -> object:
+        self.requests.append(request)
+        _write_mixed_dataset_bars(request, store_dir=store_dir)
+        return object()
+
+
+def _write_mixed_dataset_bars(
+    request: NativeBarsRequest,
+    *,
+    store_dir: Path | None,
+) -> None:
+    for ref in request.refs:
+        _write_store_bars(
+            ref,
+            pd.DataFrame(
+                {"Close": _MIXED_DATASET_VALUES[ref]},
+                index=_MIXED_DATASET_INDEX,
+            ),
+            store_dir=store_dir,
+        )
+
+
+def _mixed_dataset_store_config():
+    return make_data_config(
+        source="store",
+        provider="databento",
+        symbols=[
+            {
+                "root": "ES",
+                "ccy": "USD",
+                "dataset": "GLBX.MDP3",
+                "adjustment": "backward_ratio",
+            },
+            {
+                "root": "BZ",
+                "ccy": "USD",
+                "dataset": "IFEU.IMPACT",
+                "adjustment": "backward_ratio",
+                "pnl_adjustment": "backward_spread",
+            },
+        ],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
     )
 
 
@@ -111,14 +200,13 @@ def test_store_adapter_pulls_missing_yfinance_gap_then_reads_by_figi(
 ) -> None:
     monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
     ref = ListedRef("BBG000B9XRY4")
-    write_native_bars(
+    _write_store_bars(
         ref,
-        "1D",
         pd.DataFrame(
             {"Open": [10.0], "High": [10.0], "Low": [10.0], "Close": [10.0], "Volume": [1000]},
             index=pd.DatetimeIndex(["2024-01-02"]),
         ),
-        required_arrays=("Close",),
+        store_dir=None,
     )
     requests: list[tuple[str, str, str]] = []
 
@@ -275,7 +363,7 @@ def test_store_adapter_reads_requested_adj_close_through_aegis_data(
     assert result.native_data.get(feature="Adj Close")["SPY"].tolist() == [90.0, 91.0, 92.0]
 
 
-def test_store_adapter_folds_block_dataset_into_futures_request(
+def test_store_adapter_reads_per_symbol_dataset_for_futures_request(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -285,14 +373,12 @@ def test_store_adapter_folds_block_dataset_into_futures_request(
 
     def pull_futures(request: NativeBarsRequest, *, store_dir=None) -> object:
         requests.append(request)
-        write_native_bars(
+        _write_store_bars(
             ref,
-            "1D",
             pd.DataFrame(
                 {"Close": [5010.0, 5020.0, 5030.0]},
                 index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
             ),
-            required_arrays=("Close",),
             store_dir=store_dir,
         )
         return object()
@@ -304,8 +390,14 @@ def test_store_adapter_folds_block_dataset_into_futures_request(
     config = make_data_config(
         source="store",
         provider="databento",
-        dataset="GLBX.MDP3",
-        symbols=[{"root": "ES", "ccy": "USD", "adjustment": "unadjusted"}],
+        symbols=[
+            {
+                "root": "ES",
+                "ccy": "USD",
+                "dataset": "GLBX.MDP3",
+                "adjustment": "unadjusted",
+            }
+        ],
         arrays=["Close"],
         start="2024-01-02",
         end="2024-01-05",
@@ -325,6 +417,143 @@ def test_store_adapter_folds_block_dataset_into_futures_request(
     ]
     assert list(result.native_data.get(feature="Close").columns) == ["ES"]
     assert result.native_data.get(feature="Close")["ES"].tolist() == [5010.0, 5020.0, 5030.0]
+
+
+def test_store_adapter_requests_each_mixed_dataset_futures_leg(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    pull = _RecordingMixedDatasetPull()
+    monkeypatch.setattr("aegis_data.coverage.pull_databento_futures_bars", pull)
+
+    load_market_data_result(_mixed_dataset_store_config())
+
+    assert pull.requests == [
+        NativeBarsRequest(
+            refs=(_MIXED_SIGNAL_ES,),
+            arrays=("Close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
+        ),
+        NativeBarsRequest(
+            refs=(_MIXED_SIGNAL_BZ,),
+            arrays=("Close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
+        ),
+        NativeBarsRequest(
+            refs=(_MIXED_PNL_BZ,),
+            arrays=("Close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
+        ),
+    ]
+
+
+def test_store_adapter_loads_mixed_dataset_signal_and_pnl_series(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    pull = _RecordingMixedDatasetPull()
+    monkeypatch.setattr("aegis_data.coverage.pull_databento_futures_bars", pull)
+
+    result = load_market_data_result(_mixed_dataset_store_config())
+
+    assert result.native_data.get(feature="Close")["ES"].tolist() == [1.0, 2.0, 3.0]
+    assert result.native_data.get(feature="Close")["BZ"].tolist() == [10.0, 20.0, 30.0]
+    assert result.pnl_native_data.get(feature="Close")["ES"].tolist() == [1.0, 2.0, 3.0]
+    assert result.pnl_native_data.get(feature="Close")["BZ"].tolist() == [100.0, 200.0, 300.0]
+
+
+def test_store_adapter_materializes_a_pnl_series_for_a_dual_adjustment_future(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+    index = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"])
+
+    def pull_futures(request: NativeBarsRequest, *, store_dir=None) -> object:
+        for ref in request.refs:
+            close = [1.0, 2.0, 3.0] if ref.adjustment == "backward_ratio" else [10.0, 20.0, 30.0]
+            _write_store_bars(
+                ref,
+                pd.DataFrame({"Close": close}, index=index),
+                store_dir=store_dir,
+            )
+        return object()
+
+    monkeypatch.setattr("aegis_data.coverage.pull_databento_futures_bars", pull_futures)
+    config = make_data_config(
+        source="store",
+        provider="databento",
+        symbols=[
+            {
+                "root": "ES",
+                "ccy": "USD",
+                "dataset": "GLBX.MDP3",
+                "adjustment": "backward_ratio",
+                "pnl_adjustment": "backward_spread",
+            }
+        ],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+    result = load_market_data_result(config)
+
+    # Signal series (indicators) is the backward_ratio adjustment.
+    assert result.native_data.get(feature="Close")["ES"].tolist() == [1.0, 2.0, 3.0]
+    # The P&L series (portfolio) is carried alongside as the backward_spread adjustment.
+    assert result.pnl_native_data.get(feature="Close")["ES"].tolist() == [10.0, 20.0, 30.0]
+
+
+def test_store_adapter_has_no_pnl_series_without_pnl_adjustment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
+
+    def pull_futures(request: NativeBarsRequest, *, store_dir=None) -> object:
+        for ref in request.refs:
+            _write_store_bars(
+                ref,
+                pd.DataFrame(
+                    {"Close": [1.0, 2.0, 3.0]},
+                    index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
+                ),
+                store_dir=store_dir,
+            )
+        return object()
+
+    monkeypatch.setattr("aegis_data.coverage.pull_databento_futures_bars", pull_futures)
+    config = make_data_config(
+        source="store",
+        provider="databento",
+        symbols=[
+            {
+                "root": "ES",
+                "ccy": "USD",
+                "dataset": "GLBX.MDP3",
+                "adjustment": "backward_ratio",
+            }
+        ],
+        arrays=["Close"],
+        start="2024-01-02",
+        end="2024-01-05",
+    )
+
+    result = load_market_data_result(config)
+
+    assert result.pnl_native_data is None
 
 
 def test_store_fx_rates_pull_through_aegis_data_fx_history(

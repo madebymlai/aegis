@@ -18,12 +18,13 @@ from aegis_data.calendars import TradingCalendar
 from aegis_data.coverage import GapFillProvider, ensure_native_bar_coverage
 from aegis_data.roll import DatedContract
 from aegis_data.store import (
+    CoveredWindow,
+    HistoricalStore,
     NativeBarsRequest,
-    native_bars_path,
-    read_native_bars,
-    write_native_bars,
+    WriteMode,
 )
-from aegis_data.yfinance import FetchWindow, YFinanceLocator
+from aegis_data.pull import FetchWindow
+from aegis_data.yfinance import YFinanceLocator
 
 _ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 
@@ -53,6 +54,25 @@ def _bars() -> pd.DataFrame:
     )
 
 
+def _window(
+    *,
+    start: str = "2024-01-02",
+    end: str = "2024-01-05",
+    arrays: tuple[str, ...] = ("Close",),
+) -> CoveredWindow:
+    return CoveredWindow(
+        timeframe="1D",
+        start=start,
+        end=end,
+        arrays=arrays,
+        calendar=TradingCalendar.XNYS,
+    )
+
+
+def _stored_close(store_dir, ref: ListedRef | FuturesRef, *, start: str, end: str) -> pd.Series:
+    return HistoricalStore(store_dir).read(ref, _window(start=start, end=end))["Close"]
+
+
 def test_ensure_coverage_dispatches_listed_ref_to_yfinance(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -73,17 +93,9 @@ def test_ensure_coverage_dispatches_listed_ref_to_yfinance(
         store_dir=tmp_path,
     )
 
-    frames = read_native_bars(
-        (ref,),
-        arrays=("Close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
-        calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
-    )
+    close = _stored_close(tmp_path, ref, start="2024-01-02", end="2024-01-05")
     assert tickers == ["BRK-B"]
-    assert frames[ref]["Close"].tolist() == [10.0, 11.0, 12.0]
+    assert close.tolist() == [10.0, 11.0, 12.0]
 
 
 def test_ensure_coverage_pulls_each_listed_ref_with_its_own_locator(
@@ -235,18 +247,10 @@ def test_ensure_coverage_fetches_only_the_uncovered_gap_and_keeps_existing_bars(
         store_dir=tmp_path,
     )
 
-    frames = read_native_bars(
-        (ref,),
-        arrays=("Close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
-        calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
-    )
+    close = _stored_close(tmp_path, ref, start="2024-01-02", end="2024-01-05")
     # First Ensure pulled [2,4); the second pulled only the missing [4,5) day.
     assert windows == [("2024-01-02", "2024-01-04"), ("2024-01-04", "2024-01-05")]
-    assert frames[ref]["Close"].tolist() == [10.0, 11.0, 12.0]
+    assert close.tolist() == [10.0, 11.0, 12.0]
 
 
 def test_ensure_coverage_does_not_fetch_when_window_is_already_covered(
@@ -254,12 +258,11 @@ def test_ensure_coverage_does_not_fetch_when_window_is_already_covered(
     tmp_path: Path,
 ) -> None:
     ref = ListedRef("BBG000B9XRY4")
-    write_native_bars(
+    HistoricalStore(tmp_path).write(
         ref,
-        "1D",
         _bars_for(["2024-01-02", "2024-01-03", "2024-01-04"], 10.0),
-        required_arrays=("Close",),
-        store_dir=tmp_path,
+        _window(start="2024-01-02", end="2024-01-05"),
+        mode=WriteMode.OVERWRITE,
     )
 
     def fetch(_locator: YFinanceLocator, _window: FetchWindow) -> pd.DataFrame:
@@ -274,16 +277,8 @@ def test_ensure_coverage_does_not_fetch_when_window_is_already_covered(
         store_dir=tmp_path,
     )
 
-    frames = read_native_bars(
-        (ref,),
-        arrays=("Close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
-        calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
-    )
-    assert frames[ref]["Close"].tolist() == [10.0, 11.0, 12.0]
+    close = _stored_close(tmp_path, ref, start="2024-01-02", end="2024-01-05")
+    assert close.tolist() == [10.0, 11.0, 12.0]
 
 
 def test_ensure_coverage_stores_each_ref_under_its_figi_not_its_locator(
@@ -308,23 +303,10 @@ def test_ensure_coverage_stores_each_ref_under_its_figi_not_its_locator(
         store_dir=tmp_path,
     )
 
-    frames = read_native_bars(
-        (first, second),
-        arrays=("Close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
-        calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
-    )
-    assert frames[first]["Close"].tolist() == [10.0, 11.0, 12.0]
-    assert frames[second]["Close"].tolist() == [400.0, 401.0, 402.0]
-    # Identity, not provider locator: bars live under the FIGI directory.
-    assert native_bars_path(first, "1D", store_dir=tmp_path).exists()
-    assert sorted(p.name for p in (tmp_path / "listed").iterdir()) == [
-        "BBG000B9XRY4",
-        "BBG000BPH459",
-    ]
+    first_close = _stored_close(tmp_path, first, start="2024-01-02", end="2024-01-05")
+    second_close = _stored_close(tmp_path, second, start="2024-01-02", end="2024-01-05")
+    assert first_close.tolist() == [10.0, 11.0, 12.0]
+    assert second_close.tolist() == [400.0, 401.0, 402.0]
 
 
 _FUTURES_BASIS = {"ESH4": 100.0, "ESM4": 200.0, "ESU4": 300.0, "ESZ4": 400.0}
@@ -359,7 +341,7 @@ def test_ensure_coverage_materializes_readable_continuous_futures_history(
     tmp_path: Path,
 ) -> None:
     """The futures dispatch yields covered, readable continuous history end-to-end."""
-    ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
+    ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_ratio")
     monkeypatch.setattr(
         "aegis_data.databento_pull.databento_port_fetcher",
         lambda _dataset, *, client=None: _leg_bars,
@@ -370,21 +352,12 @@ def test_ensure_coverage_materializes_readable_continuous_futures_history(
     )
 
     ensure_native_bar_coverage(
-        _window_request(ref, start="2024-01-02", end="2025-01-01"),
+        _window_request(ref, start="2024-01-02", end="2024-12-13"),
         provider=GapFillProvider.DATABENTO,
         locators={ref: "ES"},
         store_dir=tmp_path,
     )
 
-    frames = read_native_bars(
-        (ref,),
-        arrays=("Close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2025-01-01",
-        calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
-    )
-    close = frames[ref]["Close"]
+    close = _stored_close(tmp_path, ref, start="2024-01-02", end="2024-12-13")
     assert not close.isna().any()
     assert len(close) > 200  # a full year of XNYS sessions, gap-free

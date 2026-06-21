@@ -86,6 +86,8 @@ def run_pipeline_execution(
         optimization_result = execute_optimization(
             close=setup.close,
             open_=setup.open_,
+            pnl_close=setup.pnl_close,
+            pnl_open=setup.pnl_open,
             source=setup.optimization_source,
             optimization=config.optimization,
             portfolio=config.portfolio,

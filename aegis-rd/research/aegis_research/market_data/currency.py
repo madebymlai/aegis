@@ -1,8 +1,8 @@
 """Convert per-symbol price panels into a single portfolio base currency.
 
 Research and locked execution share the conversion rules in ``aegis_runtime.currency``.
-This module keeps the research-facing ``MarketDataBundle`` wrapper so existing RD
-callers receive the RD bundle type while the arithmetic lives in one place.
+This module wraps the converted panels back into the kernel ``MarketDataBundle``
+so the arithmetic lives in one place.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import pandas as pd
+from aegis_runtime import MarketDataBundle
 from aegis_runtime.currency import (
     assemble_fx_rates,
     convert_arrays_to_base,
@@ -17,8 +18,6 @@ from aegis_runtime.currency import (
     required_fx_currencies,
     requires_conversion,
 )
-
-from research.aegis_research.market_data.contracts import MarketDataBundle
 
 
 def convert_bundle_to_base(

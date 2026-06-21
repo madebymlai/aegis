@@ -57,13 +57,15 @@ data:
       figi: BBG000BDTBL9
 ```
 
-Futures store configs use block-level Databento request semantics. The symbol authoring surface is the `FuturesRef.root`; RD columns/display names derive from that root, and per-symbol `ticker`, `locator`, `label`, and `dataset` are rejected:
+Futures store configs declare the Databento Dataset on each futures symbol. The
+symbol authoring surface is the `FuturesRef.root`; RD columns/display names
+derive from that root, and per-symbol `ticker`, `locator`, and `label` are
+rejected:
 
 ```yaml
 data:
   source: store
   provider: databento
-  dataset: GLBX.MDP3
   start: "2024-01-02"
   end: "2024-03-01"
   timeframe: 1D
@@ -71,6 +73,7 @@ data:
   symbols:
     - root: ES
       ccy: USD
+      dataset: GLBX.MDP3
       roll_rule: calendar
       adjustment: unadjusted
 ```

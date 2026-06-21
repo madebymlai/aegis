@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
+from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any
 
@@ -19,12 +21,33 @@ import pandas as pd
 from aegis_data.chain import ContractCalendar, ContractFetcher
 from aegis_data.roll import DatedContract
 
+# A long sequential pull (dozens of roots × years of dated contracts) makes a single transient
+# provider hiccup — a 5xx gateway timeout or a dropped connection — fatal unless absorbed.
+_FETCH_ATTEMPTS = 4
+_TRANSIENT_MARKERS = (
+    "502", "503", "504", "gateway", "timeout", "timed out", "connection reset", "connection aborted",
+)
+
 # databento publisher venue for the GLBX.MDP3 dataset (CME Globex).
 _GLBX_VENUE = "GLBX"
 
 # When a window outruns the listed forward curve and nothing at all is listed at an anchor
 # (a brand-new or dormant root), step ahead by this much before snapshotting again.
 _UNLISTED_STEP = timedelta(days=180)
+
+# The per-leg definitions snapshot (for static price precision) is loaded over a short window
+# ending at the bars' late edge rather than a single day: a contract's definition is dropped
+# from the active set on its last-trade day when it stopped trading earlier (last bar < last
+# trade), so a single day at exactly the edge can land on the delisted day and fail to resolve
+# precision.  A bounded lookback straddles the still-active days without scaling with the window.
+_DEFS_LOOKBACK = timedelta(days=14)
+
+# Databento publishes a separate off-market ohlcv-1d stream for ICE venues (venue "XOFF", the
+# ISO 10383 MIC for off-exchange trades): block/negotiated prints with no intraday range, so their
+# Low/Close arrive as 0.  On a day they share with the regular session, that zero would clobber the
+# real bar and corrupt the back-adjusted series, so off-market bars are dropped (aegis-rd-5x7).
+# Non-ICE datasets (e.g. CME GLBX) publish no XOFF stream, so the filter is a no-op there.
+_OFF_MARKET_VENUE = "XOFF"
 
 
 def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> ContractCalendar:
@@ -46,12 +69,12 @@ def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> C
 
     def list_contracts(root: str, start: date, end: date) -> list[DatedContract]:
         api = client if client is not None else _databento_historical_client()
-        contracts: dict[str, date] = {}
+        contracts: dict[date, str] = {}  # expiration -> chosen raw_symbol (one contract per expiry)
         anchor = start
         while anchor <= end:
             snapshot_day = _to_weekday(anchor)
             _collect_outrights(_definition_snapshot(api, dataset, root, snapshot_day), contracts)
-            covered = max(contracts.values(), default=None)
+            covered = max(contracts, default=None)
             if covered is not None and covered >= end:
                 break  # the listed forward curve already spans the window
             anchor = (
@@ -59,12 +82,40 @@ def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> C
                 if covered is not None
                 else snapshot_day + _UNLISTED_STEP
             )
-        return [
-            DatedContract(symbol, expiry)
-            for symbol, expiry in sorted(contracts.items(), key=lambda item: item[1])
-        ]
+        return [DatedContract(symbol, expiry) for expiry, symbol in sorted(contracts.items())]
 
     return list_contracts
+
+
+def _is_transient_provider_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return any(marker in text for marker in _TRANSIENT_MARKERS)
+
+
+def retrying_fetcher(
+    fetch: ContractFetcher,
+    *,
+    attempts: int = _FETCH_ATTEMPTS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> ContractFetcher:
+    """Wrap a per-contract fetcher so transient provider errors (5xx / gateway timeout /
+    dropped connection) retry with exponential backoff.
+
+    A single flaky response must not abort a multi-hour sequential pull; a non-transient error
+    (bad symbol, auth) still fails fast so it surfaces immediately.
+    """
+
+    def fetch_with_retry(symbol: str, start: date, end: date) -> pd.DataFrame:
+        for attempt in range(1, attempts + 1):
+            try:
+                return fetch(symbol, start, end)
+            except Exception as error:  # noqa: BLE001 — provider errors are not a typed hierarchy
+                if attempt == attempts or not _is_transient_provider_error(error):
+                    raise
+                sleep(min(2.0**attempt, 30.0))
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    return fetch_with_retry
 
 
 def _to_weekday(day: date) -> date:
@@ -74,13 +125,38 @@ def _to_weekday(day: date) -> date:
     return day
 
 
-def _collect_outrights(frame: pd.DataFrame, into: dict[str, date]) -> None:
-    """Merge a snapshot's outright futures (dropping spreads) into ``into``, keyed by symbol."""
+def _collect_outrights(frame: pd.DataFrame, into: dict[date, str]) -> None:
+    """Merge a snapshot's outright futures into ``into``, keyed by expiration so each
+    delivery month maps to a single contract — the one a desk actually trades.
+
+    Spreads (instrument_class ``S``) are dropped.  A subtler duplicate is ICE-specific:
+    each delivery month is listed under both its *base outright* (switch character ``!`` —
+    "no additional data", ICE Instrument Naming Convention §1.8.1) and auxiliary derived
+    markets that share the same expiration and that Databento *also* classes ``F`` — notably
+    the Trade-at-Settlement book (``_Z``, §1.8.5.4), which carries a fraction of the volume.
+    Keying by ``raw_symbol`` admitted both, so one expiry produced two ``DatedContract``s and
+    chain assembly aborted at the seam (aegis-rd-min).  Keying by expiration and preferring
+    the ``!`` base outright collapses each month to that future.  CME (GLBX) lists one symbol
+    per expiry with no ``!`` switch, so the preference never fires and first-seen wins.
+    """
     if frame.empty:
         return
     outright = frame[frame["instrument_class"] == "F"]
     for _, row in outright.iterrows():
-        into.setdefault(str(row["raw_symbol"]), pd.Timestamp(row["expiration"]).date())
+        expiry = pd.Timestamp(row["expiration"]).date()
+        symbol = str(row["raw_symbol"])
+        incumbent = into.get(expiry)
+        if incumbent is None or (_is_base_outright(symbol) and not _is_base_outright(incumbent)):
+            into[expiry] = symbol
+
+
+def _is_base_outright(symbol: str) -> bool:
+    """True for an ICE *base* outright — switch character ``!`` ("no additional data", ICE
+    Instrument Naming Convention §1.8.1).  Auxiliary ICE markets that share a future's
+    expiration (Trade-at-Settlement ``_Z`` and other underscore blocks) end otherwise.  CME
+    symbols carry no switch character, so this is simply ``False`` for them — and never
+    competes, since CME lists one outright per expiry."""
+    return symbol.endswith("!")
 
 
 def _definition_snapshot(api: Any, dataset: str, root: str, day: date) -> pd.DataFrame:
@@ -118,17 +194,31 @@ def databento_port_fetcher(
         instrument_id = _instrument_id(f"{symbol}.{venue}")
         bars_start_ns = pd.Timestamp(start).value
         bars_end_ns = (pd.Timestamp(end) + pd.Timedelta(days=1)).value  # end-exclusive guard
-        # Price precision is static, so definitions load over a single weekday (the contract is
-        # active at the window start) — a full-window load pulls a per-day snapshot for every day.
-        defs_day = _to_weekday(start)
-        defs_start_ns = pd.Timestamp(defs_day).value
-        defs_end_ns = (pd.Timestamp(defs_day) + pd.Timedelta(days=1)).value
+        # Price precision is static, so definitions load over a short window — not the whole bars
+        # span.  Anchor that window at the bars' LATE edge with a lookback, not a single day.  Two
+        # failure modes bracket the anchor: a contract is only listed a bounded horizon before
+        # expiry, so a snapshot at the window start (years before, when the liquidity probe spans
+        # the whole panel) cannot resolve a far-dated contract (Databento 422); yet its definition
+        # is also dropped from the active set on its last-trade day when it stopped trading earlier
+        # (last bar < last trade), so a single day at exactly the late edge can land on the
+        # delisted day and fail to resolve precision.  A lookback window ending at the late edge
+        # straddles both — inside the listed life, spanning days the definition is still active —
+        # while staying bounded so the load never scales with the bars window.
+        # Never let the lookback reach before the bars window start: a contract whose fetched
+        # window is shorter than the lookback (a front leg expiring days into the window) would
+        # otherwise anchor definitions before the dataset's available history and 422.  The bars
+        # window is days the contract trades, so a defs window clamped to its start still lands
+        # inside the listed life and resolves precision.
+        defs_start_ns = max((pd.Timestamp(end) - _DEFS_LOOKBACK).value, bars_start_ns)
+        defs_end_ns = (pd.Timestamp(end) + pd.Timedelta(days=1)).value
         bars = asyncio.run(
             _pull(api, dataset, instrument_id, defs_start_ns, defs_end_ns, bars_start_ns, bars_end_ns)
         )
-        return bars_to_ohlcv(bars)
+        return bars_to_ohlcv(_on_market_bars(bars))
 
-    return fetch
+    # Transient 5xx/timeout responses are absorbed with backoff so one flaky leg does not
+    # abort the whole pull; the leg cache means a retried success is still fetched only once.
+    return retrying_fetcher(fetch)
 
 
 async def _pull(
@@ -149,8 +239,37 @@ async def _pull(
     )
 
 
+def _on_market_bars(bars: list[Any]) -> list[Any]:
+    """Keep only regular-session bars, dropping off-market (``XOFF``) block-trade bars.
+
+    The publisher venue rides on each bar's ``bar_type.instrument_id.venue``.  ICE off-market
+    block prints carry zeroed Low/Close that would corrupt the back-adjusted continuous series
+    (aegis-rd-5x7); non-ICE datasets publish no ``XOFF`` stream, so this is a no-op for them.
+    """
+    return [bar for bar in bars if str(bar.bar_type.instrument_id.venue) != _OFF_MARKET_VENUE]
+
+
+def drop_utc_weekend_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    """Date a Databento daily-bar frame by trade date, dropping UTC-bucketing weekend rows.
+
+    Databento's ``ohlcv-1d`` schema buckets by UTC calendar day, not the exchange session.  A
+    product whose week opens with an overnight session — CME Globex opens Sunday 17:00 CT (≈22:00
+    UTC), and ICE financials (e.g. the US Dollar Index DX) run a Sunday-evening session too —
+    therefore prints a spurious UTC-Sunday daily bar for that session sliver, while a futures
+    trade date is always a weekday.  Dropping the weekend rows leaves one row per trade date,
+    matching the session-aligned daily bars a live feed (IBKR) reports, so a mixed-venue
+    continuous panel aligns instead of stranding Sunday-session roots against absent
+    weekday-only ones (aegis-rd-2xm).  A no-op for a product with no weekend session (ICE softs
+    — sugar, coffee, cocoa, cotton).  Daily-only by construction: this port pulls DAY bars, where
+    a weekend date is always a UTC artifact (an intraday Sunday-evening bar is a real session and
+    must not be dropped).
+    """
+    weekday = pd.DatetimeIndex(frame.index).weekday
+    return frame.loc[weekday < 5]
+
+
 def bars_to_ohlcv(bars: list[Any]) -> pd.DataFrame:
-    """Convert Nautilus pyo3 ``Bar``s to an OHLCV DataFrame on a naive date index."""
+    """Convert Nautilus pyo3 ``Bar``s to an OHLCV DataFrame on a naive trade-date index."""
     index: list[pd.Timestamp] = []
     rows: dict[str, list[float]] = {"Open": [], "High": [], "Low": [], "Close": [], "Volume": []}
     for bar in bars:
@@ -161,7 +280,32 @@ def bars_to_ohlcv(bars: list[Any]) -> pd.DataFrame:
         rows["Close"].append(float(bar.close.as_double()))
         rows["Volume"].append(float(bar.volume.as_double()))
     frame = pd.DataFrame(rows, index=pd.DatetimeIndex(index))
-    return frame[~frame.index.duplicated(keep="last")].sort_index()
+    frame = frame[~frame.index.duplicated(keep="last")].sort_index()
+    return _repair_nonpositive_prices(drop_utc_weekend_rows(frame))
+
+
+def _repair_nonpositive_prices(frame: pd.DataFrame) -> pd.DataFrame:
+    """Repair on-market bars whose Low (or, rarely, Close) field dropped to a non-positive value
+    on a day that genuinely traded (real Open/High + volume).  Dropping the off-market (``XOFF``)
+    publisher removes the systematic block-trade zeros, but the on-market (``IFUS``) stream itself
+    sporadically emits a zeroed Low/Close (aegis-rd-5x7); a non-positive futures price is not a
+    valid observation and would corrupt back-adjustment.  Reconstruct each corrupt field from the
+    bar's surviving positive prices so the bar stays internally consistent (``Low <= Open, Close
+    <= High``) — dropping the day instead would punch a calendar gap on a real trading day.  These
+    are field glitches, not market moves, so well-formed bars pass through untouched; Volume is
+    never altered.
+    """
+    if frame.empty:
+        return frame
+    open_, high, low, close = (frame["Open"], frame["High"], frame["Low"], frame["Close"])
+    # Endpoints first: a missing settle falls back to the Open (its only surviving endpoint).
+    close = close.where(close > 0, open_)
+    open_ = open_.where(open_ > 0, close)
+    envelope = pd.concat([open_, close], axis=1)
+    # Then the extrema, clamped to the endpoints they must bound.
+    high = high.where(high > 0, envelope.max(axis=1))
+    low = low.where(low > 0, envelope.min(axis=1))
+    return frame.assign(Open=open_, High=high, Low=low, Close=close)
 
 
 def _nautilus_databento_client() -> Any:
@@ -176,4 +320,10 @@ def _instrument_id(value: str) -> Any:
     return InstrumentId.from_str(value)
 
 
-__all__ = ["bars_to_ohlcv", "databento_contract_calendar", "databento_port_fetcher"]
+__all__ = [
+    "bars_to_ohlcv",
+    "databento_contract_calendar",
+    "databento_port_fetcher",
+    "drop_utc_weekend_rows",
+    "retrying_fetcher",
+]

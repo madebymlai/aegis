@@ -18,6 +18,11 @@ _DIRECTIONS = frozenset({"longonly", "shortonly", "both"})
 
 @dataclass(frozen=True)
 class MarketDataBundle:
+    """Eager value object of materialised Array panels.
+
+    Dict membership is the sole guard — an array is loaded iff it is a key.
+    """
+
     arrays: Mapping[str, pd.DataFrame]
 
     def array(self, name: str) -> pd.DataFrame:

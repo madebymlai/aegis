@@ -12,8 +12,8 @@ from __future__ import annotations
 import argparse
 from datetime import date, timedelta
 
-from aegis_data.source import continuous_panel, databento_contract_calendar, databento_source
-from aegis_data.store import data_dir, futures_dir
+from aegis_data.source import continuous_panel, databento_contract_calendar, databento_leg_ports
+from aegis_data.store import HistoricalStore, raw_futures_dir
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,26 +35,26 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "path":
-        print(data_dir())
+        print(HistoricalStore().root)
         return 0
 
     if args.command == "ls":
-        directory = futures_dir(args.dataset)
+        directory = raw_futures_dir(args.dataset)
         if not directory.exists():
             print(f"(empty: {directory})")
             return 0
-        for parquet in sorted(directory.glob("*.parquet")):
-            print(parquet.name)
+        for parquet in sorted(directory.glob("*/*.parquet")):
+            print(parquet.relative_to(directory))
         return 0
 
     if args.command == "pull":
-        fetch = databento_source(args.dataset)
+        ports = databento_leg_ports(args.dataset)
         list_contracts = databento_contract_calendar(args.dataset)
         panel = continuous_panel(
             args.root,
             date.fromisoformat(args.start),
             date.fromisoformat(args.end),
-            fetch=fetch,
+            ports=ports,
             list_contracts=list_contracts,
             method=args.method,
             bar_cadence=timedelta(days=1),
@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"{args.root}: {len(panel)} continuous bars "
             f"{panel.index.min().date()}..{panel.index.max().date()} "
-            f"(contracts cached under {futures_dir(args.dataset)})"
+            f"(contracts cached under {raw_futures_dir(args.dataset)})"
         )
         return 0
 

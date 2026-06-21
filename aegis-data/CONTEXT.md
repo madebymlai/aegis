@@ -94,11 +94,42 @@ The native market bars for one dated futures contract supplied by a
 futures history and are retained independently of any roll rule or adjustment.
 _Avoid_: continuous future, FuturesRef, adjusted series, generic contract
 
+**Fetch Ledger**:
+The record of half-open time windows over which a **Raw Futures Leg** has been
+requested from a **Historical Provider**, independent of how many bars came
+back. A fetched window — including a legitimately empty one — counts as covered,
+so a thin contract is never re-requested forever; it is fetch bookkeeping, not
+**Covered History**.
+_Avoid_: bar coverage, Covered History, observed-bar completeness, gap marker, fabricated coverage
+
 **Continuous Futures History**:
 Covered history for a **FuturesRef**, derived from **Raw Futures Legs** by its
 roll rule and adjustment method. It is reusable derived history, not the provider
 source material itself.
 _Avoid_: raw contract bars, dated contract, provider result
+
+**Liquid Cycle**:
+The subset of a futures root's dated contracts that a **Continuous Futures
+History** actually holds and rolls through: those that are ever the **Liquidity
+Leader** over their own life. The roll schedule and back-adjustment see only the
+Liquid Cycle, never the full listed curve. Membership is read from data, not a
+per-product month cycle.
+_Avoid_: front month, active month, all listed contracts, even-month cycle
+
+**Liquidity Leader**:
+The live dated contract of a root carrying the most trading volume — the contract
+the market is actually trading. Being the Liquidity Leader at some point in its life
+is what admits a contract to the **Liquid Cycle**; how the volume is measured is a
+sourcing choice, not part of the term.
+_Avoid_: nearest contract, front month, highest open interest (as identity)
+
+**Serial Month**:
+A dated contract that is never the **Liquidity Leader** in its own life (e.g.
+COMEX gold's odd-month K/N contracts). A Serial Month is excluded from the
+**Liquid Cycle**, so it places no roll seam and contributes no prices; excluding
+it drops no exposure, because the liquid contract covering that calendar month
+trades every session.
+_Avoid_: thin contract, illiquid leg, off-cycle month, serial future
 
 **Listed Adjustment Policy**:
 The explicit price-adjustment choice for listed-instrument history, such as raw

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
-import pandas as pd
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -60,6 +59,9 @@ class MarketDataAdapterResult:
     evidence: dict[str, Any] = field(default_factory=dict)
     provider_metadata: dict[str, Any] = field(default_factory=dict)
     omitted_metadata_fields: list[dict[str, str]] = field(default_factory=list)
+    # Optional second continuous series (the ``pnl_adjustment`` mode) the portfolio
+    # simulates P&L on; ``None`` when no symbol declares a P&L series.
+    pnl_native_data: Any = None
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -165,25 +167,8 @@ class MarketDataResult:
     metadata: MarketDataMetadataV3
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
+    pnl_native_data: Any = None
 
     def assert_usable(self) -> None:
         if not self.quality.usable:
             raise MarketDataQualityError(self.quality)
-
-
-@dataclass(frozen=True)
-class MarketDataBundle:
-    """Eager value object of materialised Array panels.
-
-    Dict membership is the sole guard — an array is loaded iff it is a key.
-    """
-
-    arrays: dict[str, pd.DataFrame]
-
-    def array(self, array: str) -> pd.DataFrame:
-        try:
-            return self.arrays[array]
-        except KeyError:
-            raise ValueError(
-                f"market data array {array!r} was not loaded for this run"
-            ) from None

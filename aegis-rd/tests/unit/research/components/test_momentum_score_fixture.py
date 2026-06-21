@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from research.aegis_research.market_data.contracts import MarketDataBundle
+from research.aegis_research.data import MarketDataBundle
 
 
 def _make_data(n_dates: int = 300, symbols: list[str] | None = None) -> MarketDataBundle:

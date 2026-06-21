@@ -11,9 +11,17 @@ from datetime import date, timedelta
 import pandas as pd
 
 from aegis_data.roll import DatedContract
-from aegis_data.source import continuous_panel, databento_source
+from aegis_data.source import continuous_panel, databento_leg_ports
 
-_BASIS = {"ESH4": 100.0, "ESM4": 200.0, "ESU4": 300.0, "ESZ4": 400.0}
+_BASIS = {
+    "ESH4": 100.0,
+    "ESM4": 200.0,
+    "ESU4": 300.0,
+    "ESZ4": 400.0,
+    "SBG4": 50.0,
+    "SBH4": 100.0,
+    "SBK4": 200.0,
+}
 
 
 def _es_2024(root: str, start: date, end: date) -> list[DatedContract]:
@@ -25,6 +33,14 @@ def _es_2024(root: str, start: date, end: date) -> list[DatedContract]:
     ]
 
 
+def _sb_with_empty_serial(root: str, start: date, end: date) -> list[DatedContract]:
+    return [
+        DatedContract("SBG4", date(2024, 1, 15)),
+        DatedContract("SBH4", date(2024, 3, 15)),
+        DatedContract("SBK4", date(2024, 5, 15)),
+    ]
+
+
 class _Px:
     def __init__(self, v: float) -> None:
         self._v = v
@@ -33,18 +49,28 @@ class _Px:
         return self._v
 
 
+class _BarType:
+    """Minimal stand-in for the pyo3 Bar's bar_type, carrying the publisher venue."""
+
+    def __init__(self, venue: str) -> None:
+        self.instrument_id = type("_IID", (), {"venue": type("_V", (), {"__str__": lambda s: venue})()})()
+
+
 class _Bar:
-    def __init__(self, ts: int, c: float) -> None:
+    def __init__(self, ts: int, c: float, *, venue: str = "GLBX") -> None:
         self.ts_event = ts
         self.open = self.high = self.low = self.close = _Px(c)
         self.volume = _Px(1.0)
+        self.bar_type = _BarType(venue)
 
 
 class _FakeClient:
     """Generates per-contract daily bars from the requested instrument + window."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, empty_symbols: set[str] | None = None) -> None:
         self.bar_calls = 0
+        self.symbols: list[str] = []
+        self.empty_symbols = empty_symbols or set()
 
     async def get_range_instruments(self, *args, **kwargs) -> list:
         return []
@@ -52,6 +78,9 @@ class _FakeClient:
     async def get_range_bars(self, dataset, instrument_ids, aggregation, start_ns, end_ns, **kwargs):
         self.bar_calls += 1
         symbol = instrument_ids[0].symbol.value
+        self.symbols.append(symbol)
+        if symbol in self.empty_symbols:
+            return []
         base = _BASIS[symbol]
         idx = pd.bdate_range(pd.Timestamp(start_ns), pd.Timestamp(end_ns))
         return [_Bar(ts.value, base + i) for i, ts in enumerate(idx)]
@@ -59,11 +88,11 @@ class _FakeClient:
 
 def test_continuous_panel_back_adjusts_and_caches(tmp_path) -> None:
     client = _FakeClient()
-    fetch = databento_source("GLBX.MDP3", store_dir=tmp_path, client=client)
+    ports = databento_leg_ports("GLBX.MDP3", store_dir=tmp_path, client=client)
 
     panel = continuous_panel(
-        "ES", date(2024, 1, 1), date(2024, 12, 31),
-        fetch=fetch, list_contracts=_es_2024, method="ratio",
+        "ES", date(2024, 1, 1), date(2024, 12, 20),
+        ports=ports, list_contracts=_es_2024, method="ratio",
         bar_cadence=timedelta(days=1),
     )
 
@@ -76,9 +105,27 @@ def test_continuous_panel_back_adjusts_and_caches(tmp_path) -> None:
 
     # A second resolution reads the store — no further provider hits.
     again = continuous_panel(
-        "ES", date(2024, 1, 1), date(2024, 12, 31),
-        fetch=fetch, list_contracts=_es_2024, method="ratio",
+        "ES", date(2024, 1, 1), date(2024, 12, 20),
+        ports=ports, list_contracts=_es_2024, method="ratio",
         bar_cadence=timedelta(days=1),
     )
     assert client.bar_calls == calls_after_first
     pd.testing.assert_frame_equal(panel, again)
+
+
+def test_continuous_panel_liquid_cycle_excludes_empty_serial_at_one_pull_per_leg(tmp_path) -> None:
+    client = _FakeClient(empty_symbols={"SBG4"})
+    ports = databento_leg_ports("IFUS.IMPACT", store_dir=tmp_path, client=client)
+
+    panel = continuous_panel(
+        "SB",
+        date(2024, 1, 1),
+        date(2024, 5, 1),
+        ports=ports,
+        list_contracts=_sb_with_empty_serial,
+        method="ratio",
+        bar_cadence=timedelta(days=1),
+    )
+
+    assert not panel["Close"].isna().any()
+    assert client.symbols == ["SBG4", "SBH4", "SBK4"]

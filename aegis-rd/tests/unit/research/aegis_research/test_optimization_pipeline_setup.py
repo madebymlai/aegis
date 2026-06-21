@@ -102,6 +102,55 @@ def test_pipeline_setup_evidence_baseline_shape(
     assert result.strategy_evidence is result.optimization_source.evidence["strategy"]
 
 
+class _PnlFakeData:
+    def array(self, name: str) -> Any:
+        import pandas as pd
+
+        return pd.DataFrame({0: [float(i) + 1000.0 for i in range(120)]})
+
+
+def test_pipeline_setup_routes_pnl_series_to_pnl_prices(tmp_path: Path) -> None:
+    """A supplied P&L series drives pnl_close/pnl_open; the signal series still drives close/open_."""
+    resolved = build_resolved_run_config(tmp_path)
+    config = resolved.config
+    array_contract = build_run_data_array_contract(config, resolved.component_registry)
+
+    result = run_pipeline_setup(
+        config=config,
+        component_registry=resolved.component_registry,
+        data=_FakeData(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+        array_contract=array_contract,
+        metric_registry_fingerprint=None,
+        run_evidence=_run_evidence(),
+        pnl_data=_PnlFakeData(),
+    )
+
+    assert result.close.iloc[0, 0] == 0.0  # signal series (indicators)
+    assert result.pnl_close.iloc[0, 0] == 1000.0  # P&L series (portfolio)
+    assert result.pnl_open.iloc[0, 0] == 1000.0
+
+
+def test_pipeline_setup_pnl_prices_default_to_signal_without_pnl_data(tmp_path: Path) -> None:
+    """No P&L series → the portfolio simulates on the signal series (single-series default)."""
+    resolved = build_resolved_run_config(tmp_path)
+    config = resolved.config
+    array_contract = build_run_data_array_contract(config, resolved.component_registry)
+
+    result = run_pipeline_setup(
+        config=config,
+        component_registry=resolved.component_registry,
+        data=_FakeData(),
+        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+        array_contract=array_contract,
+        metric_registry_fingerprint=None,
+        run_evidence=_run_evidence(),
+    )
+
+    assert result.pnl_close is result.close
+    assert result.pnl_open is result.open_
+
+
 def test_pipeline_setup_store_path_matches_candidate_store(
     tmp_path: Path,
 ) -> None:
