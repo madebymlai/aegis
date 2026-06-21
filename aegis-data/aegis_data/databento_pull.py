@@ -14,17 +14,15 @@ from aegis_data.calendars import venue_calendar_for_dataset
 from aegis_data.chain import ContractCalendar, ContractChain, ContractFetcher, fetch_contract_chain
 from aegis_data.continuous import apply_adjustment_factors
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
+from aegis_data.raw_leg_cache import raw_leg_ports
 from aegis_data.store import (
     CoverageGap,
     NativeBarsRequest,
     RawFuturesLeg,
     assert_admissible_native_bars,
     covered_row_count,
-    merge_raw_futures_leg,
     native_bar_coverage_gaps,
     native_bars_path,
-    raw_futures_leg_path,
-    read_raw_futures_leg,
     replace_native_bars,
 )
 
@@ -36,11 +34,6 @@ from aegis_data.store import (
 _RATIO_ADJUSTMENTS = frozenset({"backward_ratio"})
 _CLOSE_DEPENDENT_ADJUSTMENTS = _RATIO_ADJUSTMENTS | {"backward_spread"}
 _SUPPORTED_ADJUSTMENTS_MESSAGE = "backward_ratio, backward_spread, or unadjusted"
-
-# Liquidity-leadership eligibility is judged on daily volume regardless of the request
-# cadence (ADR-0001): a daily request shares the probe's cache key with its deliverable
-# legs (fetched once), while an intraday request keeps the daily probe on its own key.
-_DAILY_PROBE_TIMEFRAME = "1D"
 
 
 @dataclass(frozen=True)
@@ -114,55 +107,19 @@ def _derive_continuous_history(
 ) -> tuple[pd.DataFrame, tuple[RawFuturesLeg, ...]]:
     start, end = _request_dates(request)
     raw_arrays = _raw_required_arrays(ref, request)
-    probe_timeframe = _daily_probe_timeframe(request)
+    ports = raw_leg_ports(
+        dataset=ref.dataset,
+        timeframe=request.timeframe,
+        fetch=fetch,
+        arrays=raw_arrays,
+        store_dir=store_dir,
+    )
     raw_legs: list[RawFuturesLeg] = []
 
     def raw_leg_fetch(symbol: str, leg_start: date, leg_end: date) -> pd.DataFrame:
         leg = RawFuturesLeg(ref.dataset, symbol)
         raw_legs.append(leg)
-        _materialize_raw_leg(
-            leg,
-            request.timeframe,
-            arrays=raw_arrays,
-            start=leg_start,
-            end=leg_end,
-            fetch=fetch,
-            store_dir=store_dir,
-        )
-        return read_raw_futures_leg(
-            leg,
-            arrays=raw_arrays,
-            timeframe=request.timeframe,
-            start=leg_start,
-            end=_exclusive_date_end(leg_end),
-            store_dir=store_dir,
-        )
-
-    def probe_daily_volume(symbol: str, probe_start: date, probe_end: date) -> pd.Series:
-        # Rank a candidate on daily volume.  The 1d candidate leg is retained as Raw
-        # Futures Leg source material (presence-cached) but is *not* appended to
-        # ``raw_legs``, so a serial probed here stays cached-but-unused — excluded from
-        # the continuous derivation.  ``fetch`` is the daily port today (BarAggregation.
-        # DAY); an intraday deliverable fetcher would build a daily probe fetcher here.
-        leg = RawFuturesLeg(ref.dataset, symbol)
-        _materialize_raw_leg(
-            leg,
-            probe_timeframe,
-            arrays=raw_arrays,
-            start=probe_start,
-            end=probe_end,
-            fetch=fetch,
-            store_dir=store_dir,
-        )
-        volume = read_raw_futures_leg(
-            leg,
-            arrays=("Volume",),
-            timeframe=probe_timeframe,
-            start=probe_start,
-            end=_exclusive_date_end(probe_end),
-            store_dir=store_dir,
-        )
-        return volume["Volume"]
+        return ports.fetch(symbol, leg_start, leg_end)
 
     chain = fetch_contract_chain(
         ref.root,
@@ -171,7 +128,7 @@ def _derive_continuous_history(
         list_contracts=list_contracts,
         fetch=raw_leg_fetch,
         bar_cadence=bar_cadence,
-        probe_volume=probe_daily_volume,
+        probe_volume=ports.probe,
     )
     return _continuous_panel(chain, adjustment=ref.adjustment), tuple(dict.fromkeys(raw_legs))
 
@@ -179,42 +136,6 @@ def _derive_continuous_history(
 def _request_bar_cadence(request: NativeBarsRequest) -> timedelta:
     """The request's bar cadence as a duration; the roll lead derives from it."""
     return pd.Timedelta(request.timeframe).to_pytimedelta()
-
-
-def _daily_probe_timeframe(request: NativeBarsRequest) -> str:
-    """The timeframe of the daily liquidity-ranking probe (ADR-0001).
-
-    A daily request reuses its own timeframe so the probe and the deliverable legs are
-    one cached fetch; any coarser/intraday request keeps the probe on the canonical
-    daily key, so eligibility never depends on the sampling cadence.
-    """
-    if _request_bar_cadence(request) == timedelta(days=1):
-        return request.timeframe
-    return _DAILY_PROBE_TIMEFRAME
-
-
-def _materialize_raw_leg(
-    leg: RawFuturesLeg,
-    timeframe: str,
-    *,
-    arrays: tuple[str, ...],
-    start: date,
-    end: date,
-    fetch: ContractFetcher,
-    store_dir: Path | None,
-) -> None:
-    """Fetch a dated contract's bars once and retain them as source material.
-
-    A leg is provider source material, not a covered deliverable: we fetch the whole
-    window the first time and cache it; the contract's actual traded days are whatever
-    the provider returns (a thin/serial contract prints sparsely and stops at its last
-    trade).  Coverage is enforced on the assembled continuous series, never per leg.
-    """
-    if raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir).exists():
-        return
-    merge_raw_futures_leg(
-        leg, timeframe, fetch(leg.symbol, start, end), required_arrays=arrays, store_dir=store_dir
-    )
 
 
 def _continuous_panel(chain: ContractChain, *, adjustment: str) -> pd.DataFrame:
@@ -276,10 +197,6 @@ def _request_dates(request: NativeBarsRequest) -> tuple[date, date]:
     start = pd.Timestamp(request.start).date()
     end_exclusive = pd.Timestamp(request.end)
     return start, (end_exclusive - pd.Timedelta(days=1)).date()
-
-
-def _exclusive_date_end(value: date) -> pd.Timestamp:
-    return pd.Timestamp(value) + pd.Timedelta(days=1)
 
 
 def _single_futures_ref(request: NativeBarsRequest) -> FuturesRef:

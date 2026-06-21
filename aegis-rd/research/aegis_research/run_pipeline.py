@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 
 import pandas as pd
 from aegis_data.calendars import TradingCalendar
-from aegis_data.source import continuous_panel, databento_contract_calendar, databento_source
+from aegis_data.source import continuous_panel, databento_contract_calendar, databento_leg_ports
 from aegis_data.store import FxPair, read_fx_history
 from aegis_data.yfinance import YFinanceLocator, pull_yfinance_fx_history
 
@@ -169,9 +170,16 @@ def _apply_futures_back_adjustment(
     end = pd.Timestamp(data_config.end).date()
     arrays = {name: panel.copy() for name, panel in data_bundle.arrays.items()}
     for spec in futures:
-        fetch = databento_source(spec.dataset)
+        ports = databento_leg_ports(spec.dataset)
         list_contracts = databento_contract_calendar(spec.dataset)
-        panel = continuous_panel(spec.root, start, end, fetch=fetch, list_contracts=list_contracts)
+        panel = continuous_panel(
+            spec.root,
+            start,
+            end,
+            ports=ports,
+            list_contracts=list_contracts,
+            bar_cadence=timedelta(days=1),
+        )
         for name, frame in arrays.items():
             if spec.ticker in frame.columns and name in panel.columns:
                 frame[spec.ticker] = panel[name].reindex(frame.index)
@@ -358,4 +366,3 @@ def _run_optimization_strategy_sweep(
         run_evidence=run_evidence,
         metric_registry_fingerprint=metric_registry_fingerprint,
     )
-

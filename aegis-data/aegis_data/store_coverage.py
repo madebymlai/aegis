@@ -91,11 +91,11 @@ class Completeness:
         return cls(arrays=("rate",), value_name="FX rate")
 
     def complete_index(self, window: HistoryWindow, observed: pd.DataFrame) -> pd.DatetimeIndex:
-        columns = _column_lookup(observed)
-        if any(array.lower() not in columns for array in self.arrays):
+        columns = history_column_lookup(observed)
+        if missing_history_columns(columns, self.arrays):
             return pd.DatetimeIndex([])
         sliced = _slice_window(observed, window)
-        selected = _select_columns(sliced, columns, self.arrays)
+        selected = select_history_columns(sliced, columns, self.arrays)
         if selected.empty:
             return pd.DatetimeIndex([])
         complete_rows = selected.loc[~selected.isna().any(axis=1)]
@@ -109,7 +109,7 @@ class Completeness:
     ) -> pd.DataFrame:
         columns = _require_columns(key, observed, self.arrays)
         sliced = _slice_window(observed, window)
-        return _select_columns(sliced, columns, self.arrays)
+        return select_history_columns(sliced, columns, self.arrays)
 
 
 @dataclass(frozen=True)
@@ -124,10 +124,13 @@ class StoreCoverage:
     def for_native_bars(
         cls, ref: CoverageKey, *, arrays: Sequence[str]
     ) -> StoreCoverage:
+        tolerate_interior = isinstance(ref, FuturesRef) or bool(
+            getattr(ref, "tolerates_interior_missing_bars", False)
+        )
         return cls(
             key=ref,
             completeness=Completeness.for_native_bars(arrays),
-            tolerate_interior=isinstance(ref, FuturesRef),
+            tolerate_interior=tolerate_interior,
         )
 
     @classmethod
@@ -232,8 +235,15 @@ def _coverage_gap(first: pd.Timestamp, last: pd.Timestamp) -> CoverageGap:
     return CoverageGap(start=first.normalize(), end=(last + pd.Timedelta(days=1)).normalize())
 
 
-def _column_lookup(frame: pd.DataFrame) -> dict[str, str]:
+def history_column_lookup(frame: pd.DataFrame) -> dict[str, str]:
     return {str(column).lower(): str(column) for column in frame.columns}
+
+
+def missing_history_columns(
+    columns: dict[str, str],
+    arrays: Sequence[str],
+) -> tuple[str, ...]:
+    return tuple(array for array in arrays if array.lower() not in columns)
 
 
 def _require_columns(
@@ -241,14 +251,14 @@ def _require_columns(
     frame: pd.DataFrame,
     arrays: tuple[str, ...],
 ) -> dict[str, str]:
-    columns = _column_lookup(frame)
-    missing_arrays = tuple(array for array in arrays if array.lower() not in columns)
+    columns = history_column_lookup(frame)
+    missing_arrays = missing_history_columns(columns, arrays)
     if missing_arrays:
         raise StoreCoverageError(key, f"missing arrays {list(missing_arrays)}")
     return columns
 
 
-def _select_columns(
+def select_history_columns(
     frame: pd.DataFrame,
     columns: dict[str, str],
     arrays: tuple[str, ...],
@@ -264,4 +274,7 @@ __all__ = [
     "HistoryWindow",
     "StoreCoverage",
     "StoreCoverageError",
+    "history_column_lookup",
+    "missing_history_columns",
+    "select_history_columns",
 ]

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
-
 import pandas as pd
 import pytest
 from aegis_runtime import FuturesRef, ListedRef
@@ -14,36 +12,20 @@ from aegis_data.store import (
     NATIVE_OHLCV_ARRAYS,
     StoreCoverageError,
     assert_native_bar_coverage,
-    cached_fetcher,
     data_dir,
     ListedAdjustmentPolicy,
     NativeBarsRequest,
+    RawFuturesLeg,
     merge_native_bars,
+    merge_raw_futures_leg,
     native_bars_path,
     read_fx_history,
     read_native_bars,
+    read_raw_futures_leg_or_empty,
     replace_native_bars,
     write_fx_history,
     write_native_bars,
 )
-
-
-def test_cached_fetcher_writes_then_reads_from_store(tmp_path) -> None:
-    calls: list[str] = []
-
-    def base(symbol: str, start: date, end: date) -> pd.DataFrame:
-        calls.append(symbol)
-        idx = pd.bdate_range(start, end)
-        return pd.DataFrame({"Close": [1.0] * len(idx)}, index=idx)
-
-    fetch = cached_fetcher(base, dataset="GLBX.MDP3", store_dir=tmp_path)
-
-    first = fetch("ESZ4", date(2024, 1, 1), date(2024, 3, 1))
-    second = fetch("ESZ4", date(2024, 1, 1), date(2024, 3, 1))
-
-    assert calls == ["ESZ4"]  # provider hit once
-    pd.testing.assert_frame_equal(first, second)
-    assert (tmp_path / "futures" / "GLBX.MDP3" / "ESZ4_2024-01-01_2024-03-01.parquet").exists()
 
 
 def test_data_dir_respects_env_override(monkeypatch, tmp_path) -> None:
@@ -198,6 +180,60 @@ def test_continuous_futures_coverage_tolerates_interior_but_requires_window_edge
             end="2024-06-01",
             calendar=TradingCalendar.CME,
         )
+
+
+def test_raw_futures_leg_load_or_empty_returns_empty_frame_for_missing_path(tmp_path) -> None:
+    leg = RawFuturesLeg("GLBX.MDP3", "ESH4")
+
+    frame = read_raw_futures_leg_or_empty(
+        leg,
+        arrays=("Close", "Volume"),
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-05",
+        store_dir=tmp_path,
+    )
+
+    pd.testing.assert_frame_equal(
+        frame,
+        pd.DataFrame(columns=["Close", "Volume"], index=pd.DatetimeIndex([])),
+    )
+
+
+def test_raw_futures_leg_load_or_empty_reads_existing_slice(tmp_path) -> None:
+    leg = RawFuturesLeg("GLBX.MDP3", "ESH4")
+    bars = pd.DataFrame(
+        {
+            "open": [100.0, 101.0, 102.0, 103.0],
+            "close": [100.5, 101.5, 102.5, 103.5],
+            "volume": [1000, 1100, 1200, 1300],
+        },
+        index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]),
+    )
+    merge_raw_futures_leg(
+        leg,
+        "1D",
+        bars,
+        required_arrays=("Close", "Volume"),
+        store_dir=tmp_path,
+    )
+
+    frame = read_raw_futures_leg_or_empty(
+        leg,
+        arrays=("Close",),
+        timeframe="1D",
+        start="2024-01-03",
+        end="2024-01-05",
+        store_dir=tmp_path,
+    )
+
+    pd.testing.assert_frame_equal(
+        frame,
+        pd.DataFrame(
+            {"Close": [101.5, 102.5]},
+            index=pd.DatetimeIndex(["2024-01-03", "2024-01-04"]),
+        ),
+    )
 
 
 def test_intraday_store_read_fails_closed_on_missing_mid_session_bar(tmp_path) -> None:

@@ -15,7 +15,6 @@ from aegis_data.store import (
     FxPair,
     NATIVE_OHLCV_ARRAYS,
     NativeBarsRequest,
-    _column_lookup,
     assert_admissible_fx_history,
     assert_admissible_native_bars,
     covered_row_count,
@@ -26,6 +25,7 @@ from aegis_data.store import (
     native_bar_coverage_gaps,
     native_bars_path,
 )
+from aegis_data.store_coverage import history_column_lookup, select_history_columns
 
 _MULTIPLE_SYMBOLS_ERROR = "yfinance Pull for one ListedRef returned multiple symbols"
 _YFINANCE_PRICE_FIELDS = frozenset({"Open", "Close"})
@@ -199,7 +199,7 @@ def _fetch_fx_gap_rates(
 ) -> pd.Series:
     raw = fetch(locator, window)
     normalized = _normalize_yfinance_bars(raw)
-    columns = _column_lookup(normalized)
+    columns = history_column_lookup(normalized)
     if "close" not in columns:
         raise ValueError("yfinance FX History missing Close")
     return normalized[columns["close"]].rename("rate")
@@ -245,11 +245,9 @@ def _normalize_yfinance_bars(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _stored_yfinance_bars(frame: pd.DataFrame, requested_arrays: Sequence[str]) -> pd.DataFrame:
-    columns = _column_lookup(frame)
+    columns = history_column_lookup(frame)
     stored_arrays = _stored_yfinance_array_names(columns, requested_arrays)
-    selected = frame.loc[:, [columns[array.lower()] for array in stored_arrays]].copy()
-    selected.columns = list(stored_arrays)
-    return selected
+    return select_history_columns(frame, columns, stored_arrays)
 
 
 def _stored_yfinance_array_names(

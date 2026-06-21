@@ -9,7 +9,9 @@ from aegis_runtime import FuturesRef
 
 from aegis_data.calendars import TradingCalendar
 from aegis_data.databento_pull import pull_databento_futures_bars
+from aegis_data.raw_leg_cache import raw_leg_ports
 from aegis_data.roll import DatedContract
+from aegis_data.source import continuous_panel
 from aegis_data.store import (
     NATIVE_OHLCV_ARRAYS,
     NativeBarsRequest,
@@ -119,6 +121,31 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
     assert raw_futures_leg_path("GLBX.MDP3", "ESH4", "1D", store_dir=tmp_path).exists()
     assert not first[ref]["Close"].isna().any()
     pd.testing.assert_frame_equal(first[ref], second[ref])
+
+
+def test_continuous_panel_reuses_raw_legs_materialized_by_pull(tmp_path) -> None:
+    ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_ratio")
+    pull_databento_futures_bars(
+        _request(ref), fetcher=_leg_bars, contract_calendar=_es_calendar, store_dir=tmp_path
+    )
+    ports = raw_leg_ports(
+        dataset="GLBX.MDP3",
+        timeframe="1D",
+        fetch=_provider_hit,
+        store_dir=tmp_path,
+    )
+
+    panel = continuous_panel(
+        "ES",
+        date(2024, 1, 2),
+        date(2024, 12, 12),
+        ports=ports,
+        list_contracts=_es_calendar,
+        method="ratio",
+        bar_cadence=pd.Timedelta("1D").to_pytimedelta(),
+    )
+
+    assert not panel["Close"].isna().any()
 
 
 def _es_three(root: str, start: date, end: date) -> list[DatedContract]:

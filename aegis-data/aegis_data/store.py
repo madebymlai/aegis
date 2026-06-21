@@ -25,12 +25,14 @@ from aegis_data.calendars import (
     as_trading_calendar,
     venue_calendar_for_dataset,
 )
-from aegis_data.chain import ContractFetcher
 from aegis_data.store_coverage import (
     CoverageGap,
     HistoryWindow,
     StoreCoverage,
     StoreCoverageError,
+    history_column_lookup,
+    missing_history_columns,
+    select_history_columns,
 )
 
 _APP = "aegis-data"
@@ -83,6 +85,10 @@ class RawFuturesLeg:
         """Stable string payload used where a human-readable label is needed."""
         return f"{self.dataset}:{self.symbol}"
 
+    @property
+    def tolerates_interior_missing_bars(self) -> bool:
+        """Raw contract source material may be legitimately sparse inside its life."""
+        return True
 
 HistoryKey: TypeAlias = InstrumentRef | FxPair | RawFuturesLeg
 
@@ -131,10 +137,6 @@ def data_dir() -> Path:
     return Path(override) if override else Path(platformdirs.user_data_dir(_APP))
 
 
-def futures_dir(dataset: str, *, store_dir: Path | None = None) -> Path:
-    return _store_root(store_dir) / "futures" / dataset
-
-
 def fx_history_path(
     pair: FxPair,
     timeframe: str,
@@ -160,10 +162,26 @@ def raw_futures_leg_path(
 ) -> Path:
     """Parquet location for a Raw Futures Leg source-material slice."""
     return (
-        _store_root(store_dir)
-        / "futures-raw"
-        / _safe_key(dataset)
+        raw_futures_dir(dataset, store_dir=store_dir)
         / _safe_key(symbol)
+        / f"{_safe_key(timeframe)}.parquet"
+    )
+
+
+def raw_futures_dir(dataset: str, *, store_dir: Path | None = None) -> Path:
+    return _store_root(store_dir) / "futures-raw" / _safe_key(dataset)
+
+
+def _raw_futures_leg_coverage_path(
+    leg: RawFuturesLeg,
+    timeframe: str,
+    *,
+    store_dir: Path | None = None,
+) -> Path:
+    return (
+        raw_futures_dir(leg.dataset, store_dir=store_dir)
+        / _safe_key(leg.symbol)
+        / ".coverage"
         / f"{_safe_key(timeframe)}.parquet"
     )
 
@@ -407,11 +425,72 @@ def read_raw_futures_leg(
     path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
     if not path.exists():
         raise StoreCoverageError(leg, f"no Raw Futures Leg for {timeframe}")
-    admitted = _load_admitted_native_bars(path)
-    required = _validated_arrays(arrays)
-    columns = _require_native_bar_columns(leg, admitted, required)
-    sliced = admitted.loc[(admitted.index >= window.start) & (admitted.index < window.end)]
-    return _select_native_bar_arrays(sliced, columns, required)
+    return _read_raw_futures_leg_slice(leg, path, arrays=arrays, window=window)
+
+
+def read_raw_futures_leg_or_empty(
+    leg: RawFuturesLeg,
+    *,
+    arrays: Sequence[str],
+    timeframe: str,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
+    store_dir: Path | None = None,
+) -> pd.DataFrame:
+    """Read a Raw Futures Leg source-material slice, or an empty frame on a cold leg."""
+    window = HistoryWindow(
+        timeframe=timeframe,
+        calendar=TradingCalendar.CONTINUOUS,
+        start=start,
+        end=end,
+    )
+    path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
+    return _read_raw_futures_leg_slice(
+        leg,
+        path,
+        arrays=arrays,
+        window=window,
+        missing_ok=True,
+    )
+
+
+def record_raw_futures_leg_coverage(
+    leg: RawFuturesLeg,
+    timeframe: str,
+    *,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
+    store_dir: Path | None = None,
+) -> Path:
+    """Remember a fetched half-open Raw Futures Leg window, even when it had no bars."""
+    coverage = _admit_raw_futures_leg_coverage(
+        pd.DataFrame({"start": [start], "end": [end]})
+    )
+    path = _raw_futures_leg_coverage_path(leg, timeframe, store_dir=store_dir)
+    if path.exists():
+        coverage = _coalesce_raw_futures_leg_coverage(
+            pd.concat([_load_raw_futures_leg_coverage(path), coverage])
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    coverage.to_parquet(path)
+    return path
+
+
+def read_raw_futures_leg_coverage(
+    leg: RawFuturesLeg,
+    timeframe: str,
+    *,
+    store_dir: Path | None = None,
+) -> tuple[CoverageGap, ...]:
+    """Fetched half-open Raw Futures Leg windows for cache coverage decisions."""
+    path = _raw_futures_leg_coverage_path(leg, timeframe, store_dir=store_dir)
+    if not path.exists():
+        return ()
+    coverage = _load_raw_futures_leg_coverage(path)
+    return tuple(
+        CoverageGap(start=row.start, end=row.end)
+        for row in coverage.itertuples(index=False)
+    )
 
 
 def assert_native_bar_coverage(
@@ -586,26 +665,6 @@ def _as_admission(check: Callable[[], None]) -> None:
         raise StoreAdmissionError(str(error)) from error
 
 
-def cached_fetcher(
-    fetch: ContractFetcher, *, dataset: str, store_dir: Path | None = None
-) -> ContractFetcher:
-    """Wrap a per-contract fetcher with a write-through parquet cache in the store.
-
-    Keyed by ``(symbol, start, end)``; on a miss it fetches and writes, then
-    always returns the parquet-materialised frame (cache-hit and miss agree).
-    """
-    root = futures_dir(dataset, store_dir=store_dir)
-
-    def cached(symbol: str, start: date, end: date) -> pd.DataFrame:
-        root.mkdir(parents=True, exist_ok=True)
-        path = root / f"{symbol}_{start.isoformat()}_{end.isoformat()}.parquet"
-        if not path.exists():
-            fetch(symbol, start, end).to_parquet(path)
-        return pd.read_parquet(path)
-
-    return cached
-
-
 def _store_root(store_dir: Path | None) -> Path:
     return store_dir or data_dir()
 
@@ -695,6 +754,10 @@ def _load_admitted_native_bars_or_empty(path: Path, arrays: tuple[str, ...]) -> 
     return pd.DataFrame(columns=list(arrays), index=pd.DatetimeIndex([]))
 
 
+def _load_raw_futures_leg_coverage(path: Path) -> pd.DataFrame:
+    return _admit_raw_futures_leg_coverage(pd.read_parquet(path))
+
+
 def _write_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     admitted.to_parquet(path)
@@ -711,6 +774,26 @@ def _read_admitted_native_bar_slice(
     required = _validated_arrays(arrays)
     admitted = _load_admitted_native_bars_or_empty(path, required)
     return StoreCoverage.for_native_bars(key, arrays=required).slice(window, admitted)
+
+
+def _read_raw_futures_leg_slice(
+    leg: RawFuturesLeg,
+    path: Path,
+    *,
+    arrays: Sequence[str],
+    window: HistoryWindow,
+    missing_ok: bool = False,
+) -> pd.DataFrame:
+    required = _validated_arrays(arrays)
+    if path.exists():
+        admitted = _load_admitted_native_bars(path)
+    elif missing_ok:
+        admitted = _load_admitted_native_bars_or_empty(path, required)
+    else:
+        raise StoreCoverageError(leg, f"no Raw Futures Leg for {window.timeframe}")
+    columns = _require_native_bar_columns(leg, admitted, required)
+    sliced = admitted.loc[(admitted.index >= window.start) & (admitted.index < window.end)]
+    return select_history_columns(sliced, columns, required)
 
 
 def _merge_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.DataFrame:
@@ -740,8 +823,8 @@ def _require_native_bar_columns(
     frame: pd.DataFrame,
     arrays: tuple[str, ...],
 ) -> dict[str, str]:
-    columns = _column_lookup(frame)
-    missing_arrays = tuple(array for array in arrays if array.lower() not in columns)
+    columns = history_column_lookup(frame)
+    missing_arrays = missing_history_columns(columns, arrays)
     if missing_arrays:
         raise StoreCoverageError(ref, f"missing arrays {list(missing_arrays)}")
     return columns
@@ -752,20 +835,38 @@ def _assert_admitted_native_bar_arrays(
     required_arrays: Sequence[str],
 ) -> None:
     required = _validated_arrays(required_arrays) if required_arrays else ()
-    columns = _column_lookup(frame)
-    missing_arrays = tuple(array for array in required if array.lower() not in columns)
+    columns = history_column_lookup(frame)
+    missing_arrays = missing_history_columns(columns, required)
     if missing_arrays:
         raise StoreAdmissionError(f"native bars missing required arrays {list(missing_arrays)}")
 
 
-def _select_native_bar_arrays(
-    frame: pd.DataFrame,
-    columns: dict[str, str],
-    arrays: tuple[str, ...],
-) -> pd.DataFrame:
-    selected = frame.loc[:, [columns[array.lower()] for array in arrays]].copy()
-    selected.columns = list(arrays)
-    return selected
+def _admit_raw_futures_leg_coverage(frame: pd.DataFrame) -> pd.DataFrame:
+    missing = [column for column in ("start", "end") if column not in frame.columns]
+    if missing:
+        raise StoreAdmissionError(f"Raw Futures Leg coverage missing columns {missing}")
+    coverage = pd.DataFrame(
+        {
+            "start": [pd.Timestamp(value).tz_localize(None) for value in frame["start"]],
+            "end": [pd.Timestamp(value).tz_localize(None) for value in frame["end"]],
+        }
+    )
+    if (coverage["end"] <= coverage["start"]).any():
+        raise StoreAdmissionError("Raw Futures Leg coverage end must be after start")
+    return _coalesce_raw_futures_leg_coverage(coverage)
+
+
+def _coalesce_raw_futures_leg_coverage(frame: pd.DataFrame) -> pd.DataFrame:
+    ordered = frame.sort_values(["start", "end"])
+    intervals: list[dict[str, pd.Timestamp]] = []
+    for row in ordered.itertuples(index=False):
+        start = pd.Timestamp(row.start)
+        end = pd.Timestamp(row.end)
+        if intervals and start <= intervals[-1]["end"]:
+            intervals[-1]["end"] = max(intervals[-1]["end"], end)
+            continue
+        intervals.append({"start": start, "end": end})
+    return pd.DataFrame(intervals, columns=["start", "end"])
 
 
 def _admit_fx_history(rates: pd.Series) -> pd.DataFrame:
@@ -792,10 +893,6 @@ def _admit_datetime_indexed_history(
     if history.index.is_monotonic_increasing:
         return history
     return history.sort_index()
-
-
-def _column_lookup(frame: pd.DataFrame) -> dict[str, str]:
-    return {str(column).lower(): str(column) for column in frame.columns}
 
 
 def _listed_adjustment_policy(
@@ -836,10 +933,8 @@ __all__ = [
     "assert_admissible_native_bars",
     "assert_fx_history_coverage",
     "assert_native_bar_coverage",
-    "cached_fetcher",
     "covered_row_count",
     "data_dir",
-    "futures_dir",
     "fx_history_coverage_gaps",
     "fx_history_path",
     "merge_fx_history",
@@ -848,10 +943,14 @@ __all__ = [
     "native_bar_coverage_gaps",
     "native_bars_path",
     "raw_futures_leg_path",
+    "raw_futures_dir",
     "read_fx_history",
     "read_native_bars",
     "read_native_bars_request",
     "read_raw_futures_leg",
+    "read_raw_futures_leg_coverage",
+    "read_raw_futures_leg_or_empty",
+    "record_raw_futures_leg_coverage",
     "replace_native_bars",
     "write_fx_history",
     "write_native_bars",
