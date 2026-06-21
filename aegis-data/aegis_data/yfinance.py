@@ -11,6 +11,8 @@ import pandas as pd
 from aegis_runtime import ListedRef
 
 from aegis_data.calendars import TradingCalendar
+from aegis_data.pull import FetchWindow as _FetchWindow
+from aegis_data.pull import GapFetch, pull
 from aegis_data.store import (
     CoveredWindow,
     FxPair,
@@ -42,26 +44,11 @@ class YFinanceLocator:
             )
 
 
-@dataclass(frozen=True)
-class FetchWindow:
-    """Provider fetch window for one Pull request.
-
-    Fetch input only: the window names the bars to download, never Historical
-    Store identity. FX and listed Pulls share it so neither has to borrow a store
-    request (or fabricate an identity) to express "fetch this span".
-    """
-
-    timeframe: str
-    start: str | pd.Timestamp
-    end: str | pd.Timestamp
-    arrays: Sequence[str]
-
-
 class YFinanceFetcher(Protocol):
     def __call__(
         self,
         locator: YFinanceLocator,
-        window: FetchWindow,
+        window: _FetchWindow,
     ) -> pd.DataFrame: ...
 
 
@@ -81,6 +68,20 @@ class PullFxResult:
     locator: YFinanceLocator
 
 
+def yfinance_native_adapter(
+    locator: YFinanceLocator,
+    *,
+    fetcher: YFinanceFetcher | None = None,
+) -> GapFetch:
+    """Return a yfinance GapFetch adapter bound to one Provider Locator."""
+    fetch = fetcher or _fetch_yfinance
+
+    def fetch_gap(window: _FetchWindow) -> pd.DataFrame:
+        return _fetch_gap_bars(fetch, locator, window)
+
+    return fetch_gap
+
+
 def pull_yfinance_native_bars(
     request: NativeBarsRequest,
     locator: YFinanceLocator,
@@ -90,7 +91,6 @@ def pull_yfinance_native_bars(
 ) -> PullResult:
     """Fetch one listed instrument from yfinance and write native-bar Covered History."""
     ref = _single_listed_ref(request)
-    fetch = fetcher or _fetch_yfinance
     store = _store(store_dir)
     request_window = CoveredWindow(
         timeframe=request.timeframe,
@@ -100,17 +100,12 @@ def pull_yfinance_native_bars(
         calendar=request.calendar,
         listed_adjustment=request.listed_adjustment,
     )
-    for gap in store.coverage_gaps(ref, request_window):
-        gap_window = request_window.narrowed_to(gap)
-        fetch_window = FetchWindow(
-            timeframe=request.timeframe,
-            start=gap.start,
-            end=gap.end,
-            arrays=request.arrays,
-        )
-        bars = _fetch_gap_bars(fetch, locator, fetch_window)
-        store.assert_admissible(ref, bars, gap_window)
-        store.write(ref, bars, gap_window, mode=WriteMode.MERGE)
+    pull(
+        ref,
+        request_window,
+        store=store,
+        fetch=yfinance_native_adapter(locator, fetcher=fetcher),
+    )
     return PullResult(ref=ref, locator=locator)
 
 
@@ -137,7 +132,7 @@ def pull_yfinance_fx_history(
     )
     for gap in store.coverage_gaps(pair, request_window):
         gap_window = request_window.narrowed_to(gap)
-        fetch_window = FetchWindow(
+        fetch_window = _FetchWindow(
             timeframe=timeframe,
             start=gap.start,
             end=gap.end,
@@ -152,7 +147,7 @@ def pull_yfinance_fx_history(
 def _fetch_gap_bars(
     fetch: YFinanceFetcher,
     locator: YFinanceLocator,
-    window: FetchWindow,
+    window: _FetchWindow,
 ) -> pd.DataFrame:
     raw = fetch(locator, window)
     normalized = _normalize_yfinance_bars(raw)
@@ -162,7 +157,7 @@ def _fetch_gap_bars(
 def _fetch_fx_gap_rates(
     fetch: YFinanceFetcher,
     locator: YFinanceLocator,
-    window: FetchWindow,
+    window: _FetchWindow,
 ) -> pd.DataFrame:
     raw = fetch(locator, window)
     normalized = _normalize_yfinance_bars(raw)
@@ -185,7 +180,7 @@ def _single_listed_ref(request: NativeBarsRequest) -> ListedRef:
     return ref
 
 
-def _fetch_yfinance(locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
+def _fetch_yfinance(locator: YFinanceLocator, window: _FetchWindow) -> pd.DataFrame:
     try:
         import yfinance as yf
     except ImportError as error:  # pragma: no cover - exercised only without optional package
@@ -272,11 +267,11 @@ def _yfinance_interval(timeframe: str) -> str:
 
 
 __all__ = [
-    "FetchWindow",
     "PullFxResult",
     "PullResult",
     "YFinanceFetcher",
     "YFinanceLocator",
     "pull_yfinance_fx_history",
     "pull_yfinance_native_bars",
+    "yfinance_native_adapter",
 ]

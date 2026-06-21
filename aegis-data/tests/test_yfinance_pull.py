@@ -9,7 +9,6 @@ from aegis_runtime import FuturesRef, ListedRef
 from aegis_data.calendars import TradingCalendar
 from aegis_data.store import (
     CoveredWindow,
-    CoverageGap,
     FxPair,
     HistoricalStore,
     NativeBarsRequest,
@@ -17,11 +16,12 @@ from aegis_data.store import (
     StoreCoverageError,
     WriteMode,
 )
+from aegis_data.pull import FetchWindow
 from aegis_data.yfinance import (
-    FetchWindow,
     YFinanceLocator,
     pull_yfinance_fx_history,
     pull_yfinance_native_bars,
+    yfinance_native_adapter,
 )
 
 
@@ -43,6 +43,32 @@ def _bars_with_adj_close() -> pd.DataFrame:
     bars = _bars(100.0)
     bars["Adj Close"] = [90.0, 91.0, 92.0]
     return bars
+
+
+def _multi_index_yfinance_bars() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            ("Open", "SPY"): [100.0, 101.0],
+            ("High", "SPY"): [101.0, 102.0],
+            ("Low", "SPY"): [99.0, 100.0],
+            ("Close", "SPY"): [100.5, 101.5],
+            ("Adj Close", "SPY"): [90.5, 91.5],
+            ("Volume", "SPY"): [1000, 1100],
+        },
+        index=pd.DatetimeIndex(
+            ["2024-01-02 16:00:00", "2024-01-03 16:00:00"],
+            tz="America/New_York",
+        ),
+    )
+
+
+def _native_fetch_window(*, arrays: tuple[str, ...] = ("Close",)) -> FetchWindow:
+    return FetchWindow(
+        timeframe="1D",
+        start=pd.Timestamp("2024-01-02"),
+        end=pd.Timestamp("2024-01-04"),
+        arrays=arrays,
+    )
 
 
 def _listed_window(
@@ -74,16 +100,6 @@ def _fx_window(
     )
 
 
-def _write_listed(
-    store: HistoricalStore,
-    ref: ListedRef,
-    bars: pd.DataFrame,
-    *,
-    arrays: tuple[str, ...] = ("Close",),
-) -> None:
-    store.write(ref, bars, _listed_window(arrays=arrays), mode=WriteMode.OVERWRITE)
-
-
 def _write_fx(store: HistoricalStore, pair: FxPair, rates: pd.Series) -> None:
     end = rates.index.max() + pd.Timedelta(days=1)
     store.write(
@@ -92,6 +108,53 @@ def _write_fx(store: HistoricalStore, pair: FxPair, rates: pd.Series) -> None:
         _fx_window(start=str(rates.index.min().date()), end=str(end.date())),
         mode=WriteMode.OVERWRITE,
     )
+
+
+def test_yfinance_native_adapter_binds_locator() -> None:
+    calls: list[str] = []
+
+    def fetch(locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
+        calls.append(locator.ticker)
+        return _multi_index_yfinance_bars()
+
+    adapter = yfinance_native_adapter(YFinanceLocator("SPY"), fetcher=fetch)
+    adapter(_native_fetch_window())
+
+    assert calls == ["SPY"]
+
+
+def test_yfinance_native_adapter_normalizes_single_symbol_multi_index() -> None:
+    adapter = yfinance_native_adapter(
+        YFinanceLocator("SPY"),
+        fetcher=lambda _locator, _window: _multi_index_yfinance_bars(),
+    )
+
+    frame = adapter(_native_fetch_window())
+
+    assert frame.index.tolist() == [
+        pd.Timestamp("2024-01-02"),
+        pd.Timestamp("2024-01-03"),
+    ]
+    assert frame["Close"].tolist() == [100.5, 101.5]
+
+
+def test_yfinance_native_adapter_selects_requested_arrays() -> None:
+    adapter = yfinance_native_adapter(
+        YFinanceLocator("SPY"),
+        fetcher=lambda _locator, _window: _multi_index_yfinance_bars(),
+    )
+
+    frame = adapter(_native_fetch_window(arrays=("Close", "Adj Close")))
+
+    assert frame.columns.tolist() == [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume",
+        "Adj Close",
+    ]
+    assert frame["Adj Close"].tolist() == [90.5, 91.5]
 
 
 def test_yfinance_pull_writes_native_bars_under_listed_ref_not_locator(tmp_path) -> None:
@@ -123,120 +186,6 @@ def test_yfinance_pull_writes_native_bars_under_listed_ref_not_locator(tmp_path)
 
     assert calls == ["BRK-B"]
     assert frame["Close"].tolist() == [100.0, 101.0, 102.0]
-
-
-def test_yfinance_pull_fetches_only_uncovered_calendar_gaps(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-    existing = pd.DataFrame(
-        {
-            "Open": [100.0, 101.0, 102.0],
-            "High": [100.0, 101.0, 102.0],
-            "Low": [100.0, 101.0, 102.0],
-            "Close": [100.0, 101.0, 102.0],
-            "Volume": [1000, 1100, 1200],
-        },
-        index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
-    )
-    fetched = pd.DataFrame(
-        {
-            "Open": [103.0, 104.0],
-            "High": [103.0, 104.0],
-            "Low": [103.0, 104.0],
-            "Close": [103.0, 104.0],
-            "Volume": [1300, 1400],
-        },
-        index=pd.DatetimeIndex(["2024-01-05", "2024-01-08"]),
-    )
-    calls: list[tuple[str, str]] = []
-
-    def fetch(_locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
-        calls.append((str(window.start), str(window.end)))
-        return fetched
-
-    store = HistoricalStore(tmp_path)
-    _write_listed(store, ref, existing, arrays=("Open", "High", "Low", "Close", "Volume"))
-    request = NativeBarsRequest(
-        refs=(ref,),
-        arrays=("Open", "High", "Low", "Close", "Volume"),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-09",
-        calendar=TradingCalendar.XNYS,
-    )
-
-    pull_yfinance_native_bars(request, YFinanceLocator("SPY"), fetcher=fetch, store_dir=tmp_path)
-    frame = store.read(ref, _listed_window(arrays=("Close",), end="2024-01-09"))
-
-    assert calls == [("2024-01-05 00:00:00", "2024-01-09 00:00:00")]
-    assert frame["Close"].tolist() == [100.0, 101.0, 102.0, 103.0, 104.0]
-
-
-def test_yfinance_pull_fetches_existing_dates_when_requested_array_is_uncovered(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-    calls: list[tuple[str, str]] = []
-
-    def fetch(_locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
-        calls.append((str(window.start), str(window.end)))
-        return _bars_with_adj_close()
-
-    store = HistoricalStore(tmp_path)
-    _write_listed(store, ref, _bars(100.0), arrays=("Close",))
-    request = NativeBarsRequest(
-        refs=(ref,),
-        arrays=("Close", "Adj Close"),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
-        calendar=TradingCalendar.XNYS,
-    )
-
-    pull_yfinance_native_bars(request, YFinanceLocator("SPY"), fetcher=fetch, store_dir=tmp_path)
-    frame = store.read(ref, _listed_window(arrays=("Close", "Adj Close")))
-
-    assert calls == [("2024-01-02 00:00:00", "2024-01-05 00:00:00")]
-    assert frame["Close"].tolist() == [100.0, 101.0, 102.0]
-    assert frame["Adj Close"].tolist() == [90.0, 91.0, 92.0]
-
-
-def test_yfinance_pull_rejects_missing_expected_session_before_writing(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-    incomplete = pd.DataFrame(
-        {
-            "Open": [100.0],
-            "High": [100.0],
-            "Low": [100.0],
-            "Close": [100.0],
-            "Volume": [1000],
-        },
-        index=pd.DatetimeIndex(["2024-03-28"]),
-    )
-    request = NativeBarsRequest(
-        refs=(ref,),
-        arrays=("Open", "High", "Low", "Close", "Volume"),
-        timeframe="1D",
-        start="2024-03-28",
-        end="2024-04-02",
-        calendar=TradingCalendar.XNYS,
-    )
-
-    with pytest.raises(StoreAdmissionError, match="2024-04-01"):
-        pull_yfinance_native_bars(
-            request,
-            YFinanceLocator("SPY"),
-            fetcher=lambda _locator, _window: incomplete,
-            store_dir=tmp_path,
-        )
-
-    assert HistoricalStore(tmp_path).coverage_gaps(
-        ref,
-        _listed_window(
-            arrays=("Close",),
-            start="2024-03-28",
-            end="2024-04-02",
-        ),
-    ) == (
-        CoverageGap(start=pd.Timestamp("2024-03-28"), end=pd.Timestamp("2024-04-02")),
-    )
 
 
 def test_yfinance_pull_keeps_close_raw_and_stores_adj_close_only_when_requested(tmp_path) -> None:

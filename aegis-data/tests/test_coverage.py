@@ -23,7 +23,8 @@ from aegis_data.store import (
     NativeBarsRequest,
     WriteMode,
 )
-from aegis_data.yfinance import FetchWindow, YFinanceLocator
+from aegis_data.pull import FetchWindow
+from aegis_data.yfinance import YFinanceLocator
 
 _ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 
