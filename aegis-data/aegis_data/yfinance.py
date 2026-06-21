@@ -19,7 +19,6 @@ from aegis_data.store import (
     HistoricalStore,
     NATIVE_OHLCV_ARRAYS,
     NativeBarsRequest,
-    WriteMode,
 )
 from aegis_data.store_coverage import history_column_lookup, select_history_columns
 
@@ -82,6 +81,29 @@ def yfinance_native_adapter(
     return fetch_gap
 
 
+def yfinance_fx_adapter(
+    locator: YFinanceLocator,
+    *,
+    fetcher: YFinanceFetcher | None = None,
+) -> GapFetch:
+    """Return a yfinance FX GapFetch adapter bound to one Provider Locator."""
+    fetch = fetcher or _fetch_yfinance
+
+    def fetch_gap(window: _FetchWindow) -> pd.DataFrame:
+        return _fetch_fx_gap_rates(
+            fetch,
+            locator,
+            _FetchWindow(
+                timeframe=window.timeframe,
+                start=window.start,
+                end=window.end,
+                arrays=("Close",),
+            ),
+        )
+
+    return fetch_gap
+
+
 def pull_yfinance_native_bars(
     request: NativeBarsRequest,
     locator: YFinanceLocator,
@@ -121,7 +143,6 @@ def pull_yfinance_fx_history(
     store_dir: Path | None = None,
 ) -> PullFxResult:
     """Fetch one FX History series from yfinance and write Covered History."""
-    fetch = fetcher or _fetch_yfinance
     store = _store(store_dir)
     request_window = CoveredWindow(
         timeframe=timeframe,
@@ -130,17 +151,12 @@ def pull_yfinance_fx_history(
         arrays=("rate",),
         calendar=calendar,
     )
-    for gap in store.coverage_gaps(pair, request_window):
-        gap_window = request_window.narrowed_to(gap)
-        fetch_window = _FetchWindow(
-            timeframe=timeframe,
-            start=gap.start,
-            end=gap.end,
-            arrays=("Close",),
-        )
-        rates = _fetch_fx_gap_rates(fetch, locator, fetch_window)
-        store.assert_admissible(pair, rates, gap_window)
-        store.write(pair, rates, gap_window, mode=WriteMode.MERGE)
+    pull(
+        pair,
+        request_window,
+        store=store,
+        fetch=yfinance_fx_adapter(locator, fetcher=fetcher),
+    )
     return PullFxResult(pair=pair, locator=locator)
 
 
@@ -183,8 +199,8 @@ def _single_listed_ref(request: NativeBarsRequest) -> ListedRef:
 def _fetch_yfinance(locator: YFinanceLocator, window: _FetchWindow) -> pd.DataFrame:
     try:
         import yfinance as yf
-    except ImportError as error:  # pragma: no cover - exercised only without optional package
-        raise RuntimeError("yfinance is required to Pull yfinance native bars") from error
+    except ImportError as error:  # pragma: no cover - optional package
+        raise RuntimeError("yfinance is required to Pull yfinance history") from error
 
     start = pd.Timestamp(window.start).date().isoformat()
     end = pd.Timestamp(window.end).date().isoformat()
@@ -210,7 +226,9 @@ def _normalize_yfinance_bars(frame: pd.DataFrame) -> pd.DataFrame:
     return normalized
 
 
-def _stored_yfinance_bars(frame: pd.DataFrame, requested_arrays: Sequence[str]) -> pd.DataFrame:
+def _stored_yfinance_bars(
+    frame: pd.DataFrame, requested_arrays: Sequence[str]
+) -> pd.DataFrame:
     columns = history_column_lookup(frame)
     stored_arrays = _stored_yfinance_array_names(columns, requested_arrays)
     return select_history_columns(frame, columns, stored_arrays)
@@ -273,5 +291,6 @@ __all__ = [
     "YFinanceLocator",
     "pull_yfinance_fx_history",
     "pull_yfinance_native_bars",
+    "yfinance_fx_adapter",
     "yfinance_native_adapter",
 ]

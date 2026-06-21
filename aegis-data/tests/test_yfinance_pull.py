@@ -14,13 +14,13 @@ from aegis_data.store import (
     NativeBarsRequest,
     StoreAdmissionError,
     StoreCoverageError,
-    WriteMode,
 )
 from aegis_data.pull import FetchWindow
 from aegis_data.yfinance import (
     YFinanceLocator,
     pull_yfinance_fx_history,
     pull_yfinance_native_bars,
+    yfinance_fx_adapter,
     yfinance_native_adapter,
 )
 
@@ -71,6 +71,15 @@ def _native_fetch_window(*, arrays: tuple[str, ...] = ("Close",)) -> FetchWindow
     )
 
 
+def _fx_fetch_window() -> FetchWindow:
+    return FetchWindow(
+        timeframe="1D",
+        start=pd.Timestamp("2024-01-02"),
+        end=pd.Timestamp("2024-01-04"),
+        arrays=("rate",),
+    )
+
+
 def _listed_window(
     *,
     arrays: tuple[str, ...],
@@ -97,16 +106,6 @@ def _fx_window(
         end=end,
         arrays=("rate",),
         calendar=TradingCalendar.WEEKDAY,
-    )
-
-
-def _write_fx(store: HistoricalStore, pair: FxPair, rates: pd.Series) -> None:
-    end = rates.index.max() + pd.Timedelta(days=1)
-    store.write(
-        pair,
-        rates.rename("rate").to_frame(),
-        _fx_window(start=str(rates.index.min().date()), end=str(end.date())),
-        mode=WriteMode.OVERWRITE,
     )
 
 
@@ -157,7 +156,9 @@ def test_yfinance_native_adapter_selects_requested_arrays() -> None:
     assert frame["Adj Close"].tolist() == [90.5, 91.5]
 
 
-def test_yfinance_pull_writes_native_bars_under_listed_ref_not_locator(tmp_path) -> None:
+def test_yfinance_pull_writes_native_bars_under_listed_ref_not_locator(
+    tmp_path,
+) -> None:
     ref = ListedRef("BBG000B9XRY4")
     store = HistoricalStore(tmp_path)
     calls: list[str] = []
@@ -188,7 +189,9 @@ def test_yfinance_pull_writes_native_bars_under_listed_ref_not_locator(tmp_path)
     assert frame["Close"].tolist() == [100.0, 101.0, 102.0]
 
 
-def test_yfinance_pull_keeps_close_raw_and_stores_adj_close_only_when_requested(tmp_path) -> None:
+def test_yfinance_pull_keeps_close_raw_and_stores_adj_close_only_when_requested(
+    tmp_path,
+) -> None:
     ref = ListedRef("BBG000B9XRY4")
     request = NativeBarsRequest(
         refs=(ref,),
@@ -262,6 +265,66 @@ def test_yfinance_pull_rejects_missing_requested_adj_close(tmp_path) -> None:
         HistoricalStore(tmp_path).read(ref, _listed_window(arrays=("Close",)))
 
 
+def test_yfinance_fx_adapter_binds_locator() -> None:
+    calls: list[str] = []
+
+    def fetch(locator: YFinanceLocator, _window: FetchWindow) -> pd.DataFrame:
+        calls.append(locator.ticker)
+        return pd.DataFrame(
+            {"Close": [1.10]},
+            index=pd.DatetimeIndex(["2024-01-02"]),
+        )
+
+    adapter = yfinance_fx_adapter(YFinanceLocator("EURUSD=X"), fetcher=fetch)
+    adapter(_fx_fetch_window())
+
+    assert calls == ["EURUSD=X"]
+
+
+def test_yfinance_fx_adapter_fetches_provider_close_privately() -> None:
+    requested_arrays: list[tuple[str, ...]] = []
+
+    def fetch(_locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
+        requested_arrays.append(tuple(window.arrays))
+        return pd.DataFrame(
+            {"Close": [1.10]},
+            index=pd.DatetimeIndex(["2024-01-02"]),
+        )
+
+    adapter = yfinance_fx_adapter(YFinanceLocator("EURUSD=X"), fetcher=fetch)
+    adapter(_fx_fetch_window())
+
+    assert requested_arrays == [("Close",)]
+
+
+def test_yfinance_fx_adapter_converts_close_to_rate_frame() -> None:
+    adapter = yfinance_fx_adapter(
+        YFinanceLocator("EURUSD=X"),
+        fetcher=lambda _locator, _window: pd.DataFrame(
+            {"Close": [1.10, 1.11]},
+            index=pd.DatetimeIndex(["2024-01-02", "2024-01-03"]),
+        ),
+    )
+
+    frame = adapter(_fx_fetch_window())
+
+    assert frame.columns.tolist() == ["rate"]
+    assert frame["rate"].tolist() == [1.10, 1.11]
+
+
+def test_yfinance_fx_adapter_rejects_missing_close() -> None:
+    adapter = yfinance_fx_adapter(
+        YFinanceLocator("EURUSD=X"),
+        fetcher=lambda _locator, _window: pd.DataFrame(
+            {"Open": [1.10]},
+            index=pd.DatetimeIndex(["2024-01-02"]),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="missing Close"):
+        adapter(_fx_fetch_window())
+
+
 def test_yfinance_fx_pull_writes_fx_history_under_pair_identity(tmp_path) -> None:
     pair = FxPair("EUR", "USD")
     calls: list[tuple[str, str, str]] = []
@@ -287,55 +350,6 @@ def test_yfinance_fx_pull_writes_fx_history_under_pair_identity(tmp_path) -> Non
 
     assert calls == [("EURUSD=X", "2024-01-02 00:00:00", "2024-01-05 00:00:00")]
     assert rates.tolist() == [1.10, 1.11, 1.12]
-
-
-def test_yfinance_fx_pull_fetches_only_uncovered_rate_gaps(tmp_path) -> None:
-    pair = FxPair("EUR", "USD")
-    calls: list[tuple[str, str]] = []
-    store = HistoricalStore(tmp_path)
-    _write_fx(store, pair, pd.Series([1.10], index=pd.DatetimeIndex(["2024-01-02"])))
-
-    def fetch(_locator: YFinanceLocator, window: FetchWindow) -> pd.DataFrame:
-        calls.append((str(window.start), str(window.end)))
-        return pd.DataFrame(
-            {"Close": [1.11, 1.12]},
-            index=pd.DatetimeIndex(["2024-01-03", "2024-01-04"]),
-        )
-
-    pull_yfinance_fx_history(
-        pair,
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
-        locator=YFinanceLocator("EURUSD=X"),
-        fetcher=fetch,
-        store_dir=tmp_path,
-        calendar=TradingCalendar.WEEKDAY,
-    )
-    rates = store.read(pair, _fx_window())["rate"]
-
-    assert calls == [("2024-01-03 00:00:00", "2024-01-05 00:00:00")]
-    assert rates.tolist() == [1.10, 1.11, 1.12]
-
-
-def test_yfinance_fx_pull_rejects_missing_expected_rate_before_writing(tmp_path) -> None:
-    pair = FxPair("EUR", "USD")
-    incomplete = pd.DataFrame({"Close": [1.10]}, index=pd.DatetimeIndex(["2024-01-02"]))
-
-    with pytest.raises(StoreAdmissionError, match="2024-01-03"):
-        pull_yfinance_fx_history(
-            pair,
-            timeframe="1D",
-            start="2024-01-02",
-            end="2024-01-05",
-            locator=YFinanceLocator("EURUSD=X"),
-            fetcher=lambda _locator, _window: incomplete,
-            store_dir=tmp_path,
-            calendar=TradingCalendar.WEEKDAY,
-        )
-
-    with pytest.raises(StoreCoverageError, match="2024-01-02"):
-        HistoricalStore(tmp_path).read(pair, _fx_window())
 
 
 def test_yfinance_pull_requires_one_explicit_listed_ref(tmp_path) -> None:
