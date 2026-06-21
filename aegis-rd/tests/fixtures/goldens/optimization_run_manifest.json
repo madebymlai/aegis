@@ -43,6 +43,7 @@
       ],
       "end": null,
       "execution_kwargs": {},
+      "fx_provider": null,
       "missing_columns": "raise",
       "missing_index": "raise",
       "path": null,
@@ -263,7 +264,7 @@
       "raw_config_identity": {
         "hash": "ea0e8d6263fb3c3e988b3b3a0923bf7af1e8dbf78aa3bc23cb6bf5e84b37255b"
       },
-      "resolved_config_hash": "087e5c78ddf88e547ef9a36f5d39e1f6706e4d6fb8198536214106c327ecd848",
+      "resolved_config_hash": "4a748a0153d295e2db552ea85ea20f4b21c3ba3baceeda0e503c6a86a4e04b54",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",
