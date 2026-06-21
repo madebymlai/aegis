@@ -450,3 +450,20 @@ def test_fx_history_store_read_fails_closed_on_missing_coverage(tmp_path) -> Non
 
     assert "EUR/USD" in str(exc.value)
     assert "2024-01-03" in str(exc.value)
+
+
+def test_fx_history_store_read_absent_history_names_missing_expected_rate(tmp_path) -> None:
+    pair = FxPair("EUR", "USD")
+
+    with pytest.raises(StoreCoverageError) as exc:
+        read_fx_history(
+            (pair,),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar=TradingCalendar.WEEKDAY,
+            store_dir=tmp_path,
+        )
+
+    assert "EUR/USD" in str(exc.value)
+    assert "missing expected 1D FX rate on 2024-01-02" in str(exc.value)
