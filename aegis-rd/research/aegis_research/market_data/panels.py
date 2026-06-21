@@ -11,11 +11,9 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
+from aegis_runtime import MarketDataBundle
 
-from research.aegis_research.market_data.contracts import (
-    MarketDataBundle,
-    MarketDataResult,
-)
+from research.aegis_research.market_data.contracts import MarketDataResult
 
 
 def available_array_panels(

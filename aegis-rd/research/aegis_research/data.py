@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from aegis_runtime import MarketDataBundle
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import OHLCV_ARRAYS
@@ -19,7 +20,6 @@ from research.aegis_research.market_data.contracts import (
     DataDiagnostics,
     MarketDataAdapter,
     MarketDataAdapterResult,
-    MarketDataBundle,
     MarketDataQuality,
     MarketDataQualityError,
     MarketDataResult,

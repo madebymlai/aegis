@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
-import pandas as pd
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -173,21 +172,3 @@ class MarketDataResult:
     def assert_usable(self) -> None:
         if not self.quality.usable:
             raise MarketDataQualityError(self.quality)
-
-
-@dataclass(frozen=True)
-class MarketDataBundle:
-    """Eager value object of materialised Array panels.
-
-    Dict membership is the sole guard — an array is loaded iff it is a key.
-    """
-
-    arrays: dict[str, pd.DataFrame]
-
-    def array(self, array: str) -> pd.DataFrame:
-        try:
-            return self.arrays[array]
-        except KeyError:
-            raise ValueError(
-                f"market data array {array!r} was not loaded for this run"
-            ) from None

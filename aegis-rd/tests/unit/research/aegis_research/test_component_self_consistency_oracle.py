@@ -20,7 +20,7 @@ from research.aegis_research.component_registry import (
     StrategyManifest,
     discover_component_registry,
 )
-from research.aegis_research.market_data.contracts import MarketDataBundle
+from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import ComponentStrategyInputs
 
 # ── Symbol list that satisfies tests.momentum_rotator's sleeve constants ──

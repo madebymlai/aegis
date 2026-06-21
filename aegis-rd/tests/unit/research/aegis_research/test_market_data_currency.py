@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from research.aegis_research.market_data.contracts import MarketDataBundle
+from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.market_data.currency import (
     assemble_fx_rates,
     convert_bundle_to_base,

@@ -67,7 +67,7 @@ def test_market_data_bundle_rejects_unloaded_features() -> None:
     close = pd.DataFrame({"SYN": [1.0, 2.0]}, index=index)
     bundle = MarketDataBundle(arrays={"Close": close})
 
-    with pytest.raises(ValueError, match="was not loaded"):
+    with pytest.raises(ValueError, match="was not supplied"):
         bundle.array("FundingRate")
 
 
@@ -153,7 +153,7 @@ def test_bundle_can_serve_dynamic_feature_without_close() -> None:
     )
     bundle = market_data_bundle(result)
 
-    with pytest.raises(ValueError, match="was not loaded"):
+    with pytest.raises(ValueError, match="was not supplied"):
         bundle.array("Close")
     assert bundle.array("FundingRate").iloc[-1, 0] == 0.03
 
