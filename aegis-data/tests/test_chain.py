@@ -196,6 +196,39 @@ def test_liquidity_probe_skips_a_candidate_expiring_before_the_window() -> None:
     assert "ESZ3" not in chain.symbols
 
 
+def test_overlap_fetch_never_reaches_before_the_window_start() -> None:
+    """Regression (CC/CT 2019): when the first roll falls within the seam overlap buffer of
+    ``start``, the next leg's overlap fetch must not reach before ``start`` — a leg fetch that
+    starts before the dataset's available history aborts the pull (Databento 422).  The prior
+    leg begins at ``start`` anyway, so the seam intersection cannot use pre-``start`` days; the
+    overlap is clamped to ``start`` (the symmetric counterpart to the expiry clamp on the late
+    edge).
+    """
+    start, end = date(2024, 1, 15), date(2024, 4, 1)
+
+    def list_contracts(root: str, s: date, e: date) -> list[DatedContract]:
+        return [
+            DatedContract("CLF4", date(2024, 1, 29)),  # front at start; rolls ~2024-01-22
+            DatedContract("CLG4", date(2024, 2, 29)),
+            DatedContract("CLH4", date(2024, 3, 28)),
+        ]
+
+    fetched: list[tuple[str, date, date]] = []
+
+    def fetch(symbol: str, s: date, e: date) -> pd.DataFrame:
+        fetched.append((symbol, s, e))
+        return _ohlcv(s, e, 100.0)
+
+    fetch_contract_chain(
+        "CL", start, end,
+        list_contracts=list_contracts, fetch=fetch, bar_cadence=timedelta(days=1),
+    )
+
+    assert fetched, "expected at least one leg fetch"
+    earliest = min(s for _sym, s, _e in fetched)
+    assert earliest >= start, f"a leg was fetched from {earliest}, before the window start {start}"
+
+
 def test_roll_dates_snap_back_to_the_latest_common_trading_day() -> None:
     def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
         idx = pd.bdate_range(start, end)

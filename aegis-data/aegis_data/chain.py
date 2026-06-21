@@ -81,7 +81,11 @@ def fetch_contract_chain(
     n = len(schedule.symbols)
     frames: list[pd.DataFrame] = []
     for i, symbol in enumerate(schedule.symbols):
-        window_start = schedule.roll_dates[i - 1] - _OVERLAP_BUFFER if i > 0 else start
+        # Reach back past the prior roll for seam overlap, but never before ``start``: the
+        # first leg begins at ``start``, so the seam intersection cannot use earlier days,
+        # and a fetch before the dataset's available history aborts the pull (Databento 422
+        # at the window's left edge).  Symmetric to the expiry clamp on the late edge below.
+        window_start = max(schedule.roll_dates[i - 1] - _OVERLAP_BUFFER, start) if i > 0 else start
         if i < n - 1:
             # The +overlap buffer past the roll is a best-effort seam fetch, not
             # required coverage: a rolled-off contract has no bars past its last
