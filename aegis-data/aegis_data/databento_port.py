@@ -249,8 +249,27 @@ def _on_market_bars(bars: list[Any]) -> list[Any]:
     return [bar for bar in bars if str(bar.bar_type.instrument_id.venue) != _OFF_MARKET_VENUE]
 
 
+def drop_utc_weekend_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    """Date a Databento daily-bar frame by trade date, dropping UTC-bucketing weekend rows.
+
+    Databento's ``ohlcv-1d`` schema buckets by UTC calendar day, not the exchange session.  A
+    product whose week opens with an overnight session — CME Globex opens Sunday 17:00 CT (≈22:00
+    UTC), and ICE financials (e.g. the US Dollar Index DX) run a Sunday-evening session too —
+    therefore prints a spurious UTC-Sunday daily bar for that session sliver, while a futures
+    trade date is always a weekday.  Dropping the weekend rows leaves one row per trade date,
+    matching the session-aligned daily bars a live feed (IBKR) reports, so a mixed-venue
+    continuous panel aligns instead of stranding Sunday-session roots against absent
+    weekday-only ones (aegis-rd-2xm).  A no-op for a product with no weekend session (ICE softs
+    — sugar, coffee, cocoa, cotton).  Daily-only by construction: this port pulls DAY bars, where
+    a weekend date is always a UTC artifact (an intraday Sunday-evening bar is a real session and
+    must not be dropped).
+    """
+    weekday = pd.DatetimeIndex(frame.index).weekday
+    return frame.loc[weekday < 5]
+
+
 def bars_to_ohlcv(bars: list[Any]) -> pd.DataFrame:
-    """Convert Nautilus pyo3 ``Bar``s to an OHLCV DataFrame on a naive date index."""
+    """Convert Nautilus pyo3 ``Bar``s to an OHLCV DataFrame on a naive trade-date index."""
     index: list[pd.Timestamp] = []
     rows: dict[str, list[float]] = {"Open": [], "High": [], "Low": [], "Close": [], "Volume": []}
     for bar in bars:
@@ -262,7 +281,7 @@ def bars_to_ohlcv(bars: list[Any]) -> pd.DataFrame:
         rows["Volume"].append(float(bar.volume.as_double()))
     frame = pd.DataFrame(rows, index=pd.DatetimeIndex(index))
     frame = frame[~frame.index.duplicated(keep="last")].sort_index()
-    return _repair_nonpositive_prices(frame)
+    return _repair_nonpositive_prices(drop_utc_weekend_rows(frame))
 
 
 def _repair_nonpositive_prices(frame: pd.DataFrame) -> pd.DataFrame:
@@ -305,5 +324,6 @@ __all__ = [
     "bars_to_ohlcv",
     "databento_contract_calendar",
     "databento_port_fetcher",
+    "drop_utc_weekend_rows",
     "retrying_fetcher",
 ]

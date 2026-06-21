@@ -387,6 +387,24 @@ def test_bars_to_ohlcv_normalizes_pyo3_bars() -> None:
     assert df.loc[pd.Timestamp("2024-09-13"), "Volume"] == 291354.0
 
 
+def test_bars_to_ohlcv_dates_to_trade_dates_dropping_utc_weekend_rows() -> None:
+    # Databento ohlcv-1d buckets by UTC day, so CME's Sunday-evening Globex open (the start of
+    # Monday's trade date, ~22:00 UTC Sun) prints a spurious UTC-Sunday daily bar.  A trade date
+    # is always a weekday, so the port drops the weekend sliver, leaving one row per trade date
+    # — matching the session-aligned daily bars a live feed (IBKR) reports (aegis-rd-2xm).
+    bars = [
+        _Bar(pd.Timestamp("2024-09-13").value, 1.0, 2.0, 0.5, 1.5, 100),  # Fri
+        _Bar(pd.Timestamp("2024-09-15").value, 1.1, 2.1, 0.6, 1.6, 5),    # Sun sliver (UTC artifact)
+        _Bar(pd.Timestamp("2024-09-16").value, 1.2, 2.2, 0.7, 1.7, 120),  # Mon
+    ]
+
+    df = bars_to_ohlcv(bars)
+
+    assert list(df.index) == [pd.Timestamp("2024-09-13"), pd.Timestamp("2024-09-16")]
+    assert (pd.DatetimeIndex(df.index).weekday < 5).all()
+    assert df.loc[pd.Timestamp("2024-09-16"), "Close"] == 1.7
+
+
 def test_bars_to_ohlcv_repairs_a_dropped_low_field_keeping_the_real_close() -> None:
     # ICE's on-market (IFUS) daily bars sporadically drop the Low to 0 on a day that genuinely
     # traded (real Open/High/Close + heavy volume) — a feed glitch the off-market (XOFF) filter
