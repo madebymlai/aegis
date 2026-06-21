@@ -35,6 +35,13 @@ _GLBX_VENUE = "GLBX"
 # (a brand-new or dormant root), step ahead by this much before snapshotting again.
 _UNLISTED_STEP = timedelta(days=180)
 
+# The per-leg definitions snapshot (for static price precision) is loaded over a short window
+# ending at the bars' late edge rather than a single day: a contract's definition is dropped
+# from the active set on its last-trade day when it stopped trading earlier (last bar < last
+# trade), so a single day at exactly the edge can land on the delisted day and fail to resolve
+# precision.  A bounded lookback straddles the still-active days without scaling with the window.
+_DEFS_LOOKBACK = timedelta(days=14)
+
 
 def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> ContractCalendar:
     """List a root's outright dated futures (``raw_symbol`` + expiration) from Databento
@@ -55,12 +62,12 @@ def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> C
 
     def list_contracts(root: str, start: date, end: date) -> list[DatedContract]:
         api = client if client is not None else _databento_historical_client()
-        contracts: dict[str, date] = {}
+        contracts: dict[date, str] = {}  # expiration -> chosen raw_symbol (one contract per expiry)
         anchor = start
         while anchor <= end:
             snapshot_day = _to_weekday(anchor)
             _collect_outrights(_definition_snapshot(api, dataset, root, snapshot_day), contracts)
-            covered = max(contracts.values(), default=None)
+            covered = max(contracts, default=None)
             if covered is not None and covered >= end:
                 break  # the listed forward curve already spans the window
             anchor = (
@@ -68,10 +75,7 @@ def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> C
                 if covered is not None
                 else snapshot_day + _UNLISTED_STEP
             )
-        return [
-            DatedContract(symbol, expiry)
-            for symbol, expiry in sorted(contracts.items(), key=lambda item: item[1])
-        ]
+        return [DatedContract(symbol, expiry) for expiry, symbol in sorted(contracts.items())]
 
     return list_contracts
 
@@ -114,20 +118,38 @@ def _to_weekday(day: date) -> date:
     return day
 
 
-def _to_weekday_back(day: date) -> date:
-    """Nudge a weekend anchor back onto the previous weekday (definitions snapshot Mon–Fri)."""
-    while day.weekday() >= 5:  # Saturday (5) or Sunday (6)
-        day -= timedelta(days=1)
-    return day
+def _collect_outrights(frame: pd.DataFrame, into: dict[date, str]) -> None:
+    """Merge a snapshot's outright futures into ``into``, keyed by expiration so each
+    delivery month maps to a single contract — the one a desk actually trades.
 
-
-def _collect_outrights(frame: pd.DataFrame, into: dict[str, date]) -> None:
-    """Merge a snapshot's outright futures (dropping spreads) into ``into``, keyed by symbol."""
+    Spreads (instrument_class ``S``) are dropped.  A subtler duplicate is ICE-specific:
+    each delivery month is listed under both its *base outright* (switch character ``!`` —
+    "no additional data", ICE Instrument Naming Convention §1.8.1) and auxiliary derived
+    markets that share the same expiration and that Databento *also* classes ``F`` — notably
+    the Trade-at-Settlement book (``_Z``, §1.8.5.4), which carries a fraction of the volume.
+    Keying by ``raw_symbol`` admitted both, so one expiry produced two ``DatedContract``s and
+    chain assembly aborted at the seam (aegis-rd-min).  Keying by expiration and preferring
+    the ``!`` base outright collapses each month to that future.  CME (GLBX) lists one symbol
+    per expiry with no ``!`` switch, so the preference never fires and first-seen wins.
+    """
     if frame.empty:
         return
     outright = frame[frame["instrument_class"] == "F"]
     for _, row in outright.iterrows():
-        into.setdefault(str(row["raw_symbol"]), pd.Timestamp(row["expiration"]).date())
+        expiry = pd.Timestamp(row["expiration"]).date()
+        symbol = str(row["raw_symbol"])
+        incumbent = into.get(expiry)
+        if incumbent is None or (_is_base_outright(symbol) and not _is_base_outright(incumbent)):
+            into[expiry] = symbol
+
+
+def _is_base_outright(symbol: str) -> bool:
+    """True for an ICE *base* outright — switch character ``!`` ("no additional data", ICE
+    Instrument Naming Convention §1.8.1).  Auxiliary ICE markets that share a future's
+    expiration (Trade-at-Settlement ``_Z`` and other underscore blocks) end otherwise.  CME
+    symbols carry no switch character, so this is simply ``False`` for them — and never
+    competes, since CME lists one outright per expiry."""
+    return symbol.endswith("!")
 
 
 def _definition_snapshot(api: Any, dataset: str, root: str, day: date) -> pd.DataFrame:
@@ -165,14 +187,18 @@ def databento_port_fetcher(
         instrument_id = _instrument_id(f"{symbol}.{venue}")
         bars_start_ns = pd.Timestamp(start).value
         bars_end_ns = (pd.Timestamp(end) + pd.Timedelta(days=1)).value  # end-exclusive guard
-        # Price precision is static, so definitions load over a single weekday — not the whole
-        # window.  Anchor that snapshot at the window's LATE edge: a contract is only listed a
-        # bounded horizon before expiry, so a snapshot at the window start (years before, when
-        # the liquidity probe spans the whole panel) cannot resolve a far-dated contract
-        # (Databento 422).  The late edge is inside the contract's listed life.
-        defs_day = _to_weekday_back(end)
-        defs_start_ns = pd.Timestamp(defs_day).value
-        defs_end_ns = (pd.Timestamp(defs_day) + pd.Timedelta(days=1)).value
+        # Price precision is static, so definitions load over a short window — not the whole bars
+        # span.  Anchor that window at the bars' LATE edge with a lookback, not a single day.  Two
+        # failure modes bracket the anchor: a contract is only listed a bounded horizon before
+        # expiry, so a snapshot at the window start (years before, when the liquidity probe spans
+        # the whole panel) cannot resolve a far-dated contract (Databento 422); yet its definition
+        # is also dropped from the active set on its last-trade day when it stopped trading earlier
+        # (last bar < last trade), so a single day at exactly the late edge can land on the
+        # delisted day and fail to resolve precision.  A lookback window ending at the late edge
+        # straddles both — inside the listed life, spanning days the definition is still active —
+        # while staying bounded so the load never scales with the bars window.
+        defs_start_ns = (pd.Timestamp(end) - _DEFS_LOOKBACK).value
+        defs_end_ns = (pd.Timestamp(end) + pd.Timedelta(days=1)).value
         bars = asyncio.run(
             _pull(api, dataset, instrument_id, defs_start_ns, defs_end_ns, bars_start_ns, bars_end_ns)
         )

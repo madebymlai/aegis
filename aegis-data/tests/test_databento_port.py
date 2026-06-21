@@ -93,6 +93,38 @@ def test_contract_calendar_lists_outright_futures_from_definitions() -> None:
     assert client.kwargs["stype_in"] == "parent"
 
 
+def test_contract_calendar_drops_ice_trade_at_settlement_variant_keeping_base_outright() -> None:
+    # REGRESSION (aegis-rd-min): ICE lists each delivery month under its base outright
+    # (switch character "!" — "no additional data", ICE Instrument Naming Convention §1.8.1)
+    # AND auxiliary markets that share the same expiration and that Databento also classes
+    # "F" — notably Trade-at-Settlement ("_Z", §1.8.5.4).  Keying by raw_symbol admitted both,
+    # so one expiry produced two DatedContracts and chain assembly aborted at the seam.  The
+    # calendar must collapse each expiry to its single "!" base outright.
+    frame = pd.DataFrame(
+        {
+            "raw_symbol": ["DX  FMH0019!", "DX  FMH0019_Z", "DX  FMM0019!", "DX  FMM0019_Z"],
+            "instrument_class": ["F", "F", "F", "F"],  # TAS is classed "F", so the "F" filter keeps it
+            "expiration": pd.to_datetime(
+                [
+                    "2019-03-18 21:00:00+00:00",
+                    "2019-03-18 21:00:00+00:00",  # _Z shares the base future's expiration
+                    "2019-06-17 21:00:00+00:00",
+                    "2019-06-17 21:00:00+00:00",
+                ]
+            ),
+        }
+    )
+    client = _FakeDatabento(frame)
+
+    contracts = databento_contract_calendar("IFUS.IMPACT", client=client)(
+        "DX", date(2019, 1, 1), date(2019, 6, 1)
+    )
+
+    # One contract per expiry — the "!" base outright; the "_Z" TAS variant is dropped.
+    assert [c.symbol for c in contracts] == ["DX  FMH0019!", "DX  FMM0019!"]
+    assert [c.last_trade for c in contracts] == [date(2019, 3, 18), date(2019, 6, 17)]
+
+
 def test_contract_calendar_empty_definitions_is_empty() -> None:
     client = _FakeDatabento(pd.DataFrame())
 
@@ -344,23 +376,24 @@ def test_fetcher_loads_definitions_before_bars() -> None:
     assert df.loc[pd.Timestamp("2024-09-13"), "Close"] == 1.5
 
 
-def test_fetcher_anchors_definitions_at_the_window_late_edge_snapped_to_a_weekday() -> None:
-    # Price precision is static, so definitions load as a single-day snapshot, not over the
-    # whole bars window.  The snapshot is anchored at the window's LATE edge — where the
-    # contract is listed (a contract is only listed a bounded horizon before expiry) — and
-    # snapped back onto a weekday; the bars keep the full span.
+def test_fetcher_anchors_definitions_as_a_bounded_lookback_at_the_window_late_edge() -> None:
+    # Price precision is static, so definitions load over a short bounded window, not the whole
+    # bars span.  The window is anchored at the bars' LATE edge — inside the contract's listed
+    # life (a contract is only listed a bounded horizon before expiry) — with a lookback rather
+    # than a single day, so an expiry-day delisting still leaves an active definition to resolve.
     client = _FakeClient([_Bar(pd.Timestamp("2024-09-13").value, 1.0, 2.0, 0.5, 1.5, 100)])
     fetch = databento_port_fetcher("GLBX.MDP3", client=client)
 
-    fetch("ESU4", date(2024, 6, 3), date(2024, 9, 29))  # 2024-09-29 is a Sunday
+    fetch("ESU4", date(2024, 6, 3), date(2024, 9, 29))
 
-    one_day = pd.Timedelta(days=1).value
+    fifteen_days = pd.Timedelta(days=15).value  # 14-day lookback + the end-exclusive guard day
     instr_start, instr_end = client.instr_window
     bars_start, bars_end = client.bars_window
-    assert instr_end - instr_start == one_day               # definitions: a single day
-    assert instr_start == pd.Timestamp("2024-09-27").value  # Sunday end snapped back to Friday
+    assert instr_end - instr_start == fifteen_days           # definitions: a bounded lookback
+    assert instr_end == pd.Timestamp("2024-09-30").value     # window ends just past the late edge
+    assert instr_start == pd.Timestamp("2024-09-15").value   # ...looking back 14 days from the edge
     assert bars_start == pd.Timestamp("2024-06-03").value    # bars keep the true window start
-    assert bars_end - bars_start > one_day                   # bars: the full multi-month span
+    assert bars_end - bars_start > fifteen_days              # bars: the full multi-month span
 
 
 def test_fetcher_resolves_a_contract_listed_only_late_in_the_window() -> None:
@@ -392,18 +425,61 @@ def test_fetcher_resolves_a_contract_listed_only_late_in_the_window() -> None:
     assert df.loc[pd.Timestamp("2024-09-13"), "Close"] == 1.5
 
 
+def test_fetcher_resolves_a_contract_delisted_on_its_last_trade_day() -> None:
+    """Regression (ICE defs-anchor edge case): a contract whose definition is dropped from the
+    active set on its last-trade day — because it stopped trading earlier (last bar < last
+    trade, e.g. DX FMH0024: last bar 2024-03-15, expiry Monday 2024-03-18) — must still resolve
+    price precision when the window ends at that last-trade day.
+
+    A single-day definitions snapshot anchored at exactly the late edge lands on the delisted
+    day and cannot resolve precision (Databento ValueError: "Could not resolve price_precision").
+    A short lookback window ending at the late edge spans days where the definition is still
+    active, so precision resolves; it stays inside the listed life (no 422) and bounded (fast).
+    """
+    delisted_from = pd.Timestamp("2024-03-18").value  # the definition is gone on/after this day
+
+    class _DelistedAtExpiry(_FakeClient):
+        def __init__(self, bars: list[_Bar]) -> None:
+            super().__init__(bars)
+            self._precision_resolved = False
+
+        async def get_range_instruments(self, dataset, ids, start_ns, end_ns, *a, **k) -> list:
+            await super().get_range_instruments(dataset, ids, start_ns, end_ns, *a, **k)
+            if start_ns < delisted_from:  # the window reaches a day the definition is still active
+                self._precision_resolved = True
+            return []
+
+        async def get_range_bars(self, dataset, ids, agg, start_ns, end_ns, *a, **k) -> list[_Bar]:
+            if not self._precision_resolved:  # the port raises this when no definition was loaded
+                raise ValueError(
+                    "Could not resolve `price_precision` for DX  FMH0024!.IFUS: pass "
+                    "`price_precision` explicitly, call `set_price_precision`, or fetch the "
+                    "instrument definitions first via `get_range_instruments`"
+                )
+            return await super().get_range_bars(dataset, ids, agg, start_ns, end_ns, *a, **k)
+
+    client = _DelistedAtExpiry([_Bar(pd.Timestamp("2024-03-15").value, 1.0, 2.0, 0.5, 1.5, 100)])
+    fetch = databento_port_fetcher("IFUS.IMPACT", client=client)
+
+    # Probe-style window ending at the contract's last-trade day (a weekday), the delisted day.
+    df = fetch("DX  FMH0024!", date(2019, 1, 1), date(2024, 3, 18))
+
+    assert df.loc[pd.Timestamp("2024-03-15"), "Close"] == 1.5
+
+
 def test_fetcher_definition_load_is_constant_regardless_of_bars_window() -> None:
     # REGRESSION GUARD: the port once loaded definitions over the whole bars window, pulling a
     # per-day snapshot for every day (99s cold for a multi-month contract).  Precision is static,
-    # so the definition load stays one day no matter how long the bars span — only bars scale.
+    # so the definition load stays a bounded lookback no matter how long the bars span — only
+    # the bars scale.
     bar = [_Bar(pd.Timestamp("2024-06-03").value, 1.0, 2.0, 0.5, 1.5, 100)]
     short, long = _FakeClient(list(bar)), _FakeClient(list(bar))
     databento_port_fetcher("GLBX.MDP3", client=short)("ESU4", date(2024, 6, 3), date(2024, 6, 10))
     databento_port_fetcher("GLBX.MDP3", client=long)("ESU4", date(2024, 6, 3), date(2034, 6, 10))
 
-    one_day = pd.Timedelta(days=1).value
+    fifteen_days = pd.Timedelta(days=15).value  # 14-day lookback + the end-exclusive guard day
     short_defs = short.instr_window[1] - short.instr_window[0]
     long_defs = long.instr_window[1] - long.instr_window[0]
-    assert short_defs == long_defs == one_day  # definition volume does not grow with the window
+    assert short_defs == long_defs == fifteen_days  # definition volume does not grow with the window
     # ...while the bars window does scale, proving the contrast is real, not both pinned to one day.
     assert (long.bars_window[1] - long.bars_window[0]) > (short.bars_window[1] - short.bars_window[0])
