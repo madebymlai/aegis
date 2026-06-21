@@ -117,6 +117,24 @@ def test_native_bar_store_read_fails_closed_on_missing_listed_coverage(tmp_path)
     assert "2024-01-03" in str(exc.value)
 
 
+def test_native_bar_store_read_absent_history_names_missing_expected_bar(tmp_path) -> None:
+    ref = ListedRef("BBG000B9XRY4")
+
+    with pytest.raises(StoreCoverageError) as exc:
+        read_native_bars(
+            (ref,),
+            arrays=("close",),
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
+            calendar=TradingCalendar.XNYS,
+            store_dir=tmp_path,
+        )
+
+    assert "BBG000B9XRY4" in str(exc.value)
+    assert "missing expected 1D bar on 2024-01-02" in str(exc.value)
+
+
 def test_native_bar_store_read_does_not_require_exchange_holiday_bars(tmp_path) -> None:
     ref = ListedRef("BBG000B9XRY4")
     bars = pd.DataFrame(

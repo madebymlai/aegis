@@ -23,14 +23,17 @@ from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 from aegis_data.calendars import (
     TradingCalendar,
     as_trading_calendar,
-    business_day_offset,
-    intraday_session_bars,
     venue_calendar_for_dataset,
 )
 from aegis_data.chain import ContractFetcher
+from aegis_data.store_coverage import (
+    CoverageGap,
+    HistoryWindow,
+    StoreCoverage,
+    StoreCoverageError,
+)
 
 _APP = "aegis-data"
-_DAILY_TIMEFRAMES = frozenset({"1D", "1d"})
 NATIVE_OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 _HistoryFrame = TypeVar("_HistoryFrame", pd.Series, pd.DataFrame)
 
@@ -88,22 +91,6 @@ class StoreAdmissionError(ValueError):
     """Historical data cannot be admitted as Covered History."""
 
 
-class StoreCoverageError(ValueError):
-    """A provider-free Store Read cannot satisfy the requested Covered History."""
-
-    def __init__(self, key: HistoryKey, detail: str) -> None:
-        self.key = key
-        super().__init__(f"{key.value}: {detail}")
-
-
-@dataclass(frozen=True)
-class CoverageGap:
-    """Uncovered half-open interval of expected instrument-calendar bars."""
-
-    start: pd.Timestamp
-    end: pd.Timestamp
-
-
 @dataclass(frozen=True)
 class NativeBarsRequest:
     """Neutral Covered History request for native market bars."""
@@ -130,7 +117,12 @@ class NativeBarsRequest:
             "listed_adjustment",
             _listed_adjustment_policy(self.listed_adjustment),
         )
-        _window(self.start, self.end)
+        HistoryWindow(
+            timeframe=self.timeframe,
+            calendar=self.calendar,
+            start=self.start,
+            end=self.end,
+        )
 
 
 def data_dir() -> Path:
@@ -331,7 +323,6 @@ def read_native_bars_request(
     store_dir: Path | None = None,
 ) -> dict[InstrumentRef, pd.DataFrame]:
     """Provider-free Store Read for a neutral native-bars request."""
-    start_ts, end_ts = _window(request.start, request.end)
     arrays = tuple(request.arrays)
     listed_adjustment = _listed_adjustment_policy(request.listed_adjustment)
     calendar = as_trading_calendar(request.calendar)
@@ -342,8 +333,8 @@ def read_native_bars_request(
             timeframe=request.timeframe,
             listed_adjustment=listed_adjustment,
             calendar=calendar,
-            start=start_ts,
-            end=end_ts,
+            start=request.start,
+            end=request.end,
             store_dir=store_dir,
         )
         for ref in request.refs
@@ -362,7 +353,7 @@ def native_bar_coverage_gaps(
     store_dir: Path | None = None,
 ) -> tuple[CoverageGap, ...]:
     """Return uncovered expected-bar intervals for a native-bars request."""
-    start_ts, end_ts = _window(start, end)
+    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
     required = _validated_arrays(arrays)
     path = native_bars_path(
         ref,
@@ -370,15 +361,8 @@ def native_bar_coverage_gaps(
         listed_adjustment=listed_adjustment,
         store_dir=store_dir,
     )
-    return _history_coverage_gaps(
-        path,
-        arrays=required,
-        timeframe=timeframe,
-        calendar=calendar,
-        start=start_ts,
-        end=end_ts,
-        tolerate_interior=_tolerates_non_trading_days(ref),
-    )
+    observed = _load_admitted_native_bars_or_empty(path, required)
+    return StoreCoverage.for_native_bars(ref, arrays=required).gaps(window, observed)
 
 
 def merge_raw_futures_leg(
@@ -414,14 +398,20 @@ def read_raw_futures_leg(
     window — a thin contract that prints sparsely or stops before its expiry is not a
     gap here.
     """
-    start_ts, end_ts = _window(start, end)
+    window = HistoryWindow(
+        timeframe=timeframe,
+        calendar=TradingCalendar.CONTINUOUS,
+        start=start,
+        end=end,
+    )
     path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
     if not path.exists():
         raise StoreCoverageError(leg, f"no Raw Futures Leg for {timeframe}")
     admitted = _load_admitted_native_bars(path)
-    return _required_native_bar_slice(
-        leg, admitted, arrays=_validated_arrays(arrays), start=start_ts, end=end_ts
-    )
+    required = _validated_arrays(arrays)
+    columns = _require_native_bar_columns(leg, admitted, required)
+    sliced = admitted.loc[(admitted.index >= window.start) & (admitted.index < window.end)]
+    return _select_native_bar_arrays(sliced, columns, required)
 
 
 def assert_native_bar_coverage(
@@ -435,18 +425,10 @@ def assert_native_bar_coverage(
     calendar: TradingCalendar | str,
 ) -> None:
     """Fail when a provider frame cannot cover the requested native-bar window."""
-    start_ts, end_ts = _window(start, end)
+    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
     required = _validated_arrays(arrays)
     admitted = _admit_native_bars(frame)
-    _covered_native_bar_slice(
-        key,
-        admitted,
-        arrays=required,
-        timeframe=timeframe,
-        calendar=calendar,
-        start=start_ts,
-        end=end_ts,
-    )
+    StoreCoverage.for_native_bars(key, arrays=required).slice(window, admitted)
 
 
 def write_fx_history(
@@ -500,14 +482,13 @@ def read_fx_history(
     pair, sliced to ``[start, end)``. Missing files, NaNs, or rates expected by
     ``calendar`` fail closed before Trader valuation or conversion can run.
     """
-    start_ts, end_ts = _window(start, end)
     return {
         pair: _read_one_fx_series(
             pair,
             timeframe=timeframe,
             calendar=calendar,
-            start=start_ts,
-            end=end_ts,
+            start=start,
+            end=end,
             store_dir=store_dir,
         )
         for pair in pairs
@@ -524,18 +505,10 @@ def fx_history_coverage_gaps(
     store_dir: Path | None = None,
 ) -> tuple[CoverageGap, ...]:
     """Return uncovered expected-rate intervals for an FX History request."""
-    start_ts, end_ts = _window(start, end)
-    expected = _expected_bar_index(timeframe, calendar=calendar, start=start_ts, end=end_ts)
-    if expected.empty:
-        return ()
+    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
     path = fx_history_path(pair, timeframe, store_dir=store_dir)
-    if not path.exists():
-        return _coverage_gaps(expected, expected)
-    admitted = _load_admitted_fx_history(path)
-    missing = _missing_fx_rate_index(
-        admitted, timeframe=timeframe, expected=expected, start=start_ts, end=end_ts
-    )
-    return _coverage_gaps(missing, expected)
+    observed = _load_admitted_fx_history_or_empty(path)
+    return StoreCoverage.for_fx_rates(pair).gaps(window, observed)
 
 
 def assert_fx_history_coverage(
@@ -548,19 +521,9 @@ def assert_fx_history_coverage(
     calendar: TradingCalendar | str,
 ) -> None:
     """Fail when a provider series cannot cover the requested FX History window."""
-    start_ts, end_ts = _window(start, end)
+    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
     admitted = _admit_fx_history(rates)
-    selected = _slice_window(admitted, start=start_ts, end=end_ts)
-    _assert_expected_bar_coverage(
-        pair,
-        selected,
-        timeframe=timeframe,
-        calendar=calendar,
-        start=start_ts,
-        end=end_ts,
-        value_name="FX rate",
-    )
-    _assert_no_null_arrays(pair, selected)
+    StoreCoverage.for_fx_rates(pair).slice(window, admitted)
 
 
 def covered_row_count(path: Path) -> int:
@@ -652,25 +615,14 @@ def _read_one_fx_series(
     *,
     timeframe: str,
     calendar: TradingCalendar | str,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
     store_dir: Path | None,
 ) -> pd.Series:
+    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
     path = fx_history_path(pair, timeframe, store_dir=store_dir)
-    if not path.exists():
-        raise StoreCoverageError(pair, f"no FX History for {timeframe}")
-    admitted = _load_admitted_fx_history(path)
-    sliced = _slice_window(admitted, start=start, end=end)
-    _assert_expected_bar_coverage(
-        pair,
-        sliced,
-        timeframe=timeframe,
-        calendar=calendar,
-        start=start,
-        end=end,
-        value_name="FX rate",
-    )
-    _assert_no_null_arrays(pair, sliced)
+    admitted = _load_admitted_fx_history_or_empty(path)
+    sliced = StoreCoverage.for_fx_rates(pair).slice(window, admitted)
     return sliced["rate"].copy()
 
 
@@ -696,10 +648,16 @@ def _read_one_native_bar_frame(
     timeframe: str,
     listed_adjustment: ListedAdjustmentPolicy,
     calendar: TradingCalendar | str,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
+    start: str | date | pd.Timestamp,
+    end: str | date | pd.Timestamp,
     store_dir: Path | None,
 ) -> pd.DataFrame:
+    window = HistoryWindow(
+        timeframe=timeframe,
+        calendar=_native_bar_calendar(ref, calendar),
+        start=start,
+        end=end,
+    )
     path = native_bars_path(
         ref,
         timeframe,
@@ -710,11 +668,7 @@ def _read_one_native_bar_frame(
         ref,
         path,
         arrays=arrays,
-        timeframe=timeframe,
-        calendar=_native_bar_calendar(ref, calendar),
-        start=start,
-        end=end,
-        missing_detail=f"no Covered History for {timeframe}",
+        window=window,
     )
 
 
@@ -725,8 +679,20 @@ def _load_admitted_fx_history(path: Path) -> pd.DataFrame:
     return _admit_fx_history(frame["rate"])
 
 
+def _load_admitted_fx_history_or_empty(path: Path) -> pd.DataFrame:
+    if path.exists():
+        return _load_admitted_fx_history(path)
+    return pd.DataFrame(columns=["rate"], index=pd.DatetimeIndex([]))
+
+
 def _load_admitted_native_bars(path: Path) -> pd.DataFrame:
     return _admit_native_bars(pd.read_parquet(path))
+
+
+def _load_admitted_native_bars_or_empty(path: Path, arrays: tuple[str, ...]) -> pd.DataFrame:
+    if path.exists():
+        return _load_admitted_native_bars(path)
+    return pd.DataFrame(columns=list(arrays), index=pd.DatetimeIndex([]))
 
 
 def _write_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> Path:
@@ -740,42 +706,11 @@ def _read_admitted_native_bar_slice(
     path: Path,
     *,
     arrays: Sequence[str],
-    timeframe: str,
-    calendar: TradingCalendar | str,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    missing_detail: str,
+    window: HistoryWindow,
 ) -> pd.DataFrame:
-    if not path.exists():
-        raise StoreCoverageError(key, missing_detail)
-    admitted = _load_admitted_native_bars(path)
-    return _covered_native_bar_slice(
-        key,
-        admitted,
-        arrays=_validated_arrays(arrays),
-        timeframe=timeframe,
-        calendar=calendar,
-        start=start,
-        end=end,
-    )
-
-
-def _covered_native_bar_slice(
-    key: HistoryKey,
-    frame: pd.DataFrame,
-    *,
-    arrays: tuple[str, ...],
-    timeframe: str,
-    calendar: TradingCalendar | str,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-) -> pd.DataFrame:
-    selected = _required_native_bar_slice(key, frame, arrays=arrays, start=start, end=end)
-    _assert_expected_bar_coverage(
-        key, selected, timeframe=timeframe, calendar=calendar, start=start, end=end
-    )
-    _assert_no_null_arrays(key, selected)
-    return selected
+    required = _validated_arrays(arrays)
+    admitted = _load_admitted_native_bars_or_empty(path, required)
+    return StoreCoverage.for_native_bars(key, arrays=required).slice(window, admitted)
 
 
 def _merge_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.DataFrame:
@@ -798,87 +733,6 @@ def _replace_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.Data
     right = admitted.index.max()
     outside = existing.loc[(existing.index < left) | (existing.index > right)]
     return _admit_native_bars(pd.concat([outside, admitted]).sort_index())
-
-
-def _history_coverage_gaps(
-    path: Path,
-    *,
-    arrays: tuple[str, ...],
-    timeframe: str,
-    calendar: TradingCalendar | str,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    tolerate_interior: bool = False,
-) -> tuple[CoverageGap, ...]:
-    expected = _expected_bar_index(timeframe, calendar=calendar, start=start, end=end)
-    if expected.empty:
-        return ()
-    if not path.exists():
-        return _coverage_gaps(expected, expected)
-    admitted = _load_admitted_native_bars(path)
-    missing = _missing_required_bar_index(
-        admitted,
-        arrays=arrays,
-        timeframe=timeframe,
-        expected=expected,
-        start=start,
-        end=end,
-        tolerate_interior=tolerate_interior,
-    )
-    return _coverage_gaps(missing, expected)
-
-
-def _missing_required_bar_index(
-    frame: pd.DataFrame,
-    *,
-    arrays: tuple[str, ...],
-    timeframe: str,
-    expected: pd.DatetimeIndex,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    tolerate_interior: bool = False,
-) -> pd.DatetimeIndex:
-    if expected.empty:
-        return expected
-    columns = _column_lookup(frame)
-    if any(array.lower() not in columns for array in arrays):
-        return expected
-    sliced = _slice_window(frame, start=start, end=end)
-    selected = _select_native_bar_arrays(sliced, columns, arrays)
-    if selected.empty:
-        return expected
-    complete_bars = selected.loc[~selected.isna().any(axis=1)]
-    observed = _observed_index(complete_bars.index, timeframe)
-    return _uncovered_expected(expected, observed, tolerate_interior=tolerate_interior)
-
-
-def _missing_fx_rate_index(
-    frame: pd.DataFrame,
-    *,
-    timeframe: str,
-    expected: pd.DatetimeIndex,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-) -> pd.DatetimeIndex:
-    sliced = _slice_window(frame, start=start, end=end)
-    if sliced.empty:
-        return expected
-    complete_rates = sliced.loc[sliced["rate"].notna()]
-    observed = _observed_index(complete_rates.index, timeframe)
-    return expected.difference(observed)
-
-
-def _required_native_bar_slice(
-    ref: HistoryKey,
-    frame: pd.DataFrame,
-    *,
-    arrays: tuple[str, ...],
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-) -> pd.DataFrame:
-    columns = _require_native_bar_columns(ref, frame, arrays)
-    sliced = _slice_window(frame, start=start, end=end)
-    return _select_native_bar_arrays(sliced, columns, arrays)
 
 
 def _require_native_bar_columns(
@@ -914,20 +768,6 @@ def _select_native_bar_arrays(
     return selected
 
 
-def _slice_window(
-    frame: pd.DataFrame,
-    *,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-) -> pd.DataFrame:
-    return frame.loc[(frame.index >= start) & (frame.index < end)]
-
-
-def _assert_no_null_arrays(key: HistoryKey, frame: pd.DataFrame) -> None:
-    if frame.isna().any().any():
-        raise StoreCoverageError(key, "requested arrays contain null values")
-
-
 def _admit_fx_history(rates: pd.Series) -> pd.DataFrame:
     admitted = _admit_datetime_indexed_history(rates, label="FX History")
     return admitted.rename("rate").to_frame()
@@ -954,114 +794,6 @@ def _admit_datetime_indexed_history(
     return history.sort_index()
 
 
-def _tolerates_non_trading_days(key: HistoryKey) -> bool:
-    """Whether an absent expected bar inside the observed span is a non-trading day.
-
-    A continuous futures series legitimately skips sessions: thin/serial front months
-    and venue holidays simply have no bar that day, so an absent expected bar *inside*
-    the series' span is a non-trading day, not missing data.  Listed and FX histories
-    trade every session, so an absent expected bar there IS missing data.  (Dated
-    contract legs are never coverage-checked — they are source material read as-is.)
-    """
-    return isinstance(key, FuturesRef)
-
-
-def _uncovered_expected(
-    expected: pd.DatetimeIndex,
-    observed: pd.DatetimeIndex,
-    *,
-    tolerate_interior: bool,
-) -> pd.DatetimeIndex:
-    """Expected days a frame fails to cover.
-
-    Strict (listed/FX): every absent expected day is uncovered.  Interior-tolerant
-    (continuous futures): only expected days *outside* the observed span — an
-    uncovered window prefix or suffix — are uncovered, so the series must reach the
-    requested window edges while interior non-prints are tolerated.
-    """
-    missing = expected.difference(observed)
-    if not tolerate_interior or missing.empty or observed.empty:
-        return missing
-    return missing[(missing < observed.min()) | (missing > observed.max())]
-
-
-def _assert_expected_bar_coverage(
-    key: HistoryKey,
-    frame: pd.DataFrame,
-    *,
-    timeframe: str,
-    calendar: TradingCalendar | str,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    value_name: str = "bar",
-) -> None:
-    expected = _expected_bar_index(timeframe, calendar=calendar, start=start, end=end)
-    if expected.empty:
-        return
-    observed = _observed_index(frame.index, timeframe)
-    missing = _uncovered_expected(
-        expected, observed, tolerate_interior=_tolerates_non_trading_days(key)
-    )
-    if missing.empty:
-        return
-    raise StoreCoverageError(
-        key, f"missing expected {timeframe} {value_name} on {missing[0].isoformat()}"
-    )
-
-
-def _observed_index(index: pd.Index, timeframe: str) -> pd.DatetimeIndex:
-    """Observed timestamps at the timeframe's resolution: daily collapses to the
-    session date; intraday keeps the full naive timestamp."""
-    observed = pd.DatetimeIndex(index).tz_localize(None)
-    return observed.normalize() if timeframe in _DAILY_TIMEFRAMES else observed
-
-
-def _business_days(
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    *,
-    calendar: TradingCalendar | str,
-) -> pd.DatetimeIndex:
-    last_inclusive = (end - pd.Timedelta(days=1)).normalize()
-    if last_inclusive < start.normalize():
-        return pd.DatetimeIndex([])
-    return pd.date_range(start.normalize(), last_inclusive, freq=business_day_offset(calendar))
-
-
-def _expected_bar_index(
-    timeframe: str,
-    *,
-    calendar: TradingCalendar | str,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-) -> pd.DatetimeIndex:
-    if timeframe not in _DAILY_TIMEFRAMES:
-        return intraday_session_bars(calendar, timeframe, start, end)
-    return _business_days(start, end, calendar=calendar)
-
-
-def _coverage_gaps(
-    missing: pd.DatetimeIndex,
-    expected: pd.DatetimeIndex,
-) -> tuple[CoverageGap, ...]:
-    if missing.empty:
-        return ()
-    positions = expected.get_indexer(missing)
-    gaps: list[CoverageGap] = []
-    group_start = 0
-    for offset in range(1, len(positions)):
-        if positions[offset] == positions[offset - 1] + 1:
-            continue
-        gaps.append(_coverage_gap(missing[group_start], missing[offset - 1]))
-        group_start = offset
-    gaps.append(_coverage_gap(missing[group_start], missing[-1]))
-    return tuple(gaps)
-
-
-def _coverage_gap(first: pd.Timestamp, last: pd.Timestamp) -> CoverageGap:
-    return CoverageGap(start=first.normalize(), end=(last + pd.Timedelta(days=1)).normalize())
-
-
 def _column_lookup(frame: pd.DataFrame) -> dict[str, str]:
     return {str(column).lower(): str(column) for column in frame.columns}
 
@@ -1085,17 +817,6 @@ def _validated_arrays(arrays: Sequence[str]) -> tuple[str, ...]:
     if any(not value for value in values):
         raise ValueError(f"Store Read arrays must be non-empty strings; got {values!r}")
     return values
-
-
-def _window(
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-) -> tuple[pd.Timestamp, pd.Timestamp]:
-    left = pd.Timestamp(start).tz_localize(None)
-    right = pd.Timestamp(end).tz_localize(None)
-    if right <= left:
-        raise ValueError(f"Store Read end must be after start; got {start!r} -> {end!r}")
-    return left, right
 
 
 def _safe_key(value: str) -> str:
