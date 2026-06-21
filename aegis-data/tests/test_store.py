@@ -16,20 +16,9 @@ from aegis_data.store import (
     StoreAdmissionError,
     StoreCoverageError,
     WriteMode,
-    assert_native_bar_coverage,
     data_dir,
-    ListedAdjustmentPolicy,
     NativeBarsRequest,
     RawFuturesLeg,
-    merge_native_bars,
-    merge_raw_futures_leg,
-    native_bars_path,
-    read_fx_history,
-    read_native_bars,
-    read_raw_futures_leg_or_empty,
-    replace_native_bars,
-    write_fx_history,
-    write_native_bars,
 )
 
 
@@ -327,128 +316,11 @@ def test_historical_store_assert_admissible_raises_store_admission_error(tmp_pat
     assert "missing expected 1D bar on 2024-01-03" in str(exc.value)
 
 
-def test_historical_store_native_write_matches_legacy_parquet_layout(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-    legacy_dir = tmp_path / "legacy"
-    object_dir = tmp_path / "object"
-    legacy_path = write_native_bars(ref, "1D", _listed_bars(), store_dir=legacy_dir)
-    window = _listed_window()
-
-    HistoricalStore(object_dir).write(
-        ref,
-        _listed_bars(),
-        window,
-        mode=WriteMode.OVERWRITE,
-    )
-    object_path = native_bars_path(ref, "1D", store_dir=object_dir)
-
-    assert object_path.relative_to(object_dir) == legacy_path.relative_to(legacy_dir)
-    assert object_path.read_bytes() == legacy_path.read_bytes()
-
-
-def test_listed_native_bar_identity_includes_adjustment_policy(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-
-    path = native_bars_path(
-        ref,
-        "1D",
-        listed_adjustment=ListedAdjustmentPolicy.RAW,
-        store_dir=tmp_path,
-    )
-
-    assert path == tmp_path / "listed" / "BBG000B9XRY4" / "bars" / "raw" / "1D.parquet"
-
-
-def test_native_bar_store_read_returns_provider_free_listed_frames(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-    write_native_bars(ref, "1D", _listed_bars(), store_dir=tmp_path)
-
-    frames = read_native_bars(
-        (ref,),
-        arrays=("close", "volume"),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
-        calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
-    )
-
-    assert tuple(frames) == (ref,)
-    assert list(frames[ref].columns) == ["close", "volume"]
-    assert frames[ref]["close"].tolist() == [101.0, 102.0, 103.0]
-
-
-def test_native_bar_store_read_fails_closed_on_missing_listed_coverage(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-    gapped = _listed_bars().drop(pd.Timestamp("2024-01-03"))
-    write_native_bars(ref, "1D", gapped, store_dir=tmp_path)
-
-    with pytest.raises(StoreCoverageError) as exc:
-        read_native_bars(
-            (ref,),
-            arrays=("close",),
-            timeframe="1D",
-            start="2024-01-02",
-            end="2024-01-05",
-            calendar=TradingCalendar.XNYS,
-            store_dir=tmp_path,
-        )
-
-    assert "BBG000B9XRY4" in str(exc.value)
-    assert "2024-01-03" in str(exc.value)
-
-
-def test_native_bar_store_read_absent_history_names_missing_expected_bar(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-
-    with pytest.raises(StoreCoverageError) as exc:
-        read_native_bars(
-            (ref,),
-            arrays=("close",),
-            timeframe="1D",
-            start="2024-01-02",
-            end="2024-01-05",
-            calendar=TradingCalendar.XNYS,
-            store_dir=tmp_path,
-        )
-
-    assert "BBG000B9XRY4" in str(exc.value)
-    assert "missing expected 1D bar on 2024-01-02" in str(exc.value)
-
-
-def test_native_bar_store_read_does_not_require_exchange_holiday_bars(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-    bars = pd.DataFrame(
-        {
-            "open": [100.0, 101.0],
-            "high": [100.0, 101.0],
-            "low": [100.0, 101.0],
-            "close": [100.0, 101.0],
-            "volume": [1000, 1100],
-        },
-        index=pd.DatetimeIndex(["2024-03-28", "2024-04-01"]),
-    )
-    write_native_bars(ref, "1D", bars, store_dir=tmp_path)
-
-    # Good Friday 2024-03-29 is an XNYS holiday, so XNYS must not expect a bar there.
-    frames = read_native_bars(
-        (ref,),
-        arrays=("close",),
-        timeframe="1D",
-        start="2024-03-28",
-        end="2024-04-02",
-        calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
-    )
-
-    assert frames[ref]["close"].tolist() == [100.0, 101.0]
-
-
 def _cme_futures_frame(days: pd.DatetimeIndex) -> pd.DataFrame:
     return pd.DataFrame({array: [1.0] * len(days) for array in NATIVE_OHLCV_ARRAYS}, index=days)
 
 
-def test_continuous_futures_coverage_tolerates_interior_but_requires_window_edges() -> None:
+def test_historical_store_assert_admissible_tolerates_futures_interior_gaps() -> None:
     # aegis-rd-voy: the assembled continuous futures series tolerates interior
     # non-prints (thin/serial months, venue holidays) but must span the request
     # window: an uncovered prefix (it does not reach the window start) is a real gap,
@@ -458,40 +330,41 @@ def test_continuous_futures_coverage_tolerates_interior_but_requires_window_edge
     sessions = pd.date_range(
         "2024-05-01", "2024-05-31", freq=business_day_offset(TradingCalendar.CME)
     )
-
-    assert_native_bar_coverage(  # interior non-print tolerated
-        ref,
-        _cme_futures_frame(sessions.drop(pd.Timestamp("2024-05-08"))),
-        arrays=NATIVE_OHLCV_ARRAYS,
+    store = HistoricalStore()
+    window = CoveredWindow(
         timeframe="1D",
         start="2024-05-01",
         end="2024-06-01",
+        arrays=NATIVE_OHLCV_ARRAYS,
         calendar=TradingCalendar.CME,
     )
 
-    with pytest.raises(StoreCoverageError, match="missing expected"):
-        assert_native_bar_coverage(  # uncovered window prefix is still a gap
+    store.assert_admissible(
+        ref,
+        _cme_futures_frame(sessions.drop(pd.Timestamp("2024-05-08"))),
+        window,
+    )
+
+    with pytest.raises(StoreAdmissionError, match="missing expected"):
+        store.assert_admissible(
             ref,
             _cme_futures_frame(sessions[5:]),
-            arrays=NATIVE_OHLCV_ARRAYS,
-            timeframe="1D",
-            start="2024-05-01",
-            end="2024-06-01",
-            calendar=TradingCalendar.CME,
+            window,
         )
 
 
-def test_raw_futures_leg_load_or_empty_returns_empty_frame_for_missing_path(tmp_path) -> None:
+def test_historical_store_raw_leg_read_is_cold_tolerant(tmp_path) -> None:
     leg = RawFuturesLeg("GLBX.MDP3", "ESH4")
-
-    frame = read_raw_futures_leg_or_empty(
-        leg,
-        arrays=("Close", "Volume"),
+    store = HistoricalStore(tmp_path)
+    window = CoveredWindow(
         timeframe="1D",
         start="2024-01-02",
         end="2024-01-05",
-        store_dir=tmp_path,
+        arrays=("Close", "Volume"),
+        calendar=TradingCalendar.CONTINUOUS,
     )
+
+    frame = store.read_leg(leg, window)
 
     pd.testing.assert_frame_equal(
         frame,
@@ -499,31 +372,35 @@ def test_raw_futures_leg_load_or_empty_returns_empty_frame_for_missing_path(tmp_
     )
 
 
-def test_raw_futures_leg_load_or_empty_reads_existing_slice(tmp_path) -> None:
+def test_historical_store_raw_leg_merge_reads_slice_and_records_coverage(tmp_path) -> None:
     leg = RawFuturesLeg("GLBX.MDP3", "ESH4")
+    store = HistoricalStore(tmp_path)
+    window = CoveredWindow(
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-06",
+        arrays=("Close", "Volume"),
+        calendar=TradingCalendar.CONTINUOUS,
+    )
     bars = pd.DataFrame(
         {
-            "open": [100.0, 101.0, 102.0, 103.0],
             "close": [100.5, 101.5, 102.5, 103.5],
             "volume": [1000, 1100, 1200, 1300],
         },
         index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]),
     )
-    merge_raw_futures_leg(
-        leg,
-        "1D",
-        bars,
-        required_arrays=("Close", "Volume"),
-        store_dir=tmp_path,
-    )
 
-    frame = read_raw_futures_leg_or_empty(
+    store.merge_leg(leg, bars, window)
+    store.record_leg_coverage(leg, window)
+    frame = store.read_leg(
         leg,
-        arrays=("Close",),
-        timeframe="1D",
-        start="2024-01-03",
-        end="2024-01-05",
-        store_dir=tmp_path,
+        CoveredWindow(
+            timeframe="1D",
+            start="2024-01-03",
+            end="2024-01-05",
+            arrays=("Close",),
+            calendar=TradingCalendar.CONTINUOUS,
+        ),
     )
 
     pd.testing.assert_frame_equal(
@@ -533,6 +410,9 @@ def test_raw_futures_leg_load_or_empty_reads_existing_slice(tmp_path) -> None:
             index=pd.DatetimeIndex(["2024-01-03", "2024-01-04"]),
         ),
     )
+    assert store.read_leg_coverage(leg, timeframe="1D") == (
+        CoverageGap(start=pd.Timestamp("2024-01-02"), end=pd.Timestamp("2024-01-06")),
+    )
 
 
 def test_intraday_store_read_fails_closed_on_missing_mid_session_bar(tmp_path) -> None:
@@ -541,18 +421,18 @@ def test_intraday_store_read_fails_closed_on_missing_mid_session_bar(tmp_path) -
     session = pd.date_range("2024-01-02 09:30", "2024-01-02 16:00", freq="15min", inclusive="left")
     gapped = session.delete(list(session).index(pd.Timestamp("2024-01-02 11:00")))
     bars = pd.DataFrame({"close": [float(i) for i in range(len(gapped))]}, index=gapped)
-    write_native_bars(ref, "15min", bars, store_dir=tmp_path)
+    store = HistoricalStore(tmp_path)
+    window = CoveredWindow(
+        timeframe="15min",
+        start="2024-01-02 09:30",
+        end="2024-01-02 16:00",
+        arrays=("close",),
+        calendar=TradingCalendar.XNYS,
+    )
+    store.write(ref, bars, window, mode=WriteMode.OVERWRITE)
 
     with pytest.raises(StoreCoverageError) as exc:
-        read_native_bars(
-            (ref,),
-            arrays=("close",),
-            timeframe="15min",
-            start="2024-01-02 09:30",
-            end="2024-01-02 16:00",
-            calendar=TradingCalendar.XNYS,
-            store_dir=tmp_path,
-        )
+        store.read(ref, window)
 
     assert "11:00" in str(exc.value)
 
@@ -561,19 +441,18 @@ def test_intraday_store_read_passes_with_a_complete_session(tmp_path) -> None:
     ref = ListedRef("BBG000B9XRY4")
     session = pd.date_range("2024-01-02 09:30", "2024-01-02 16:00", freq="15min", inclusive="left")
     bars = pd.DataFrame({"close": [float(i) for i in range(len(session))]}, index=session)
-    write_native_bars(ref, "15min", bars, store_dir=tmp_path)
-
-    frames = read_native_bars(
-        (ref,),
-        arrays=("close",),
+    store = HistoricalStore(tmp_path)
+    window = CoveredWindow(
         timeframe="15min",
         start="2024-01-02 09:30",
         end="2024-01-02 16:00",
+        arrays=("close",),
         calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
     )
+    store.write(ref, bars, window, mode=WriteMode.OVERWRITE)
+    frame = store.read(ref, window)
 
-    assert len(frames[ref]) == 26
+    assert len(frame) == 26
 
 
 @pytest.mark.parametrize(
@@ -593,72 +472,19 @@ def test_intraday_store_read_accepts_xnys_standard_early_closes(tmp_path, sessio
         inclusive="left",
     )
     bars = pd.DataFrame({"close": [float(i) for i in range(len(session))]}, index=session)
-    write_native_bars(ref, "15min", bars, store_dir=tmp_path)
-
-    frames = read_native_bars(
-        (ref,),
-        arrays=("close",),
+    store = HistoricalStore(tmp_path)
+    window = CoveredWindow(
         timeframe="15min",
         start=f"{session_day} 09:30",
         end=f"{session_day} 16:00",
-        calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
-    )
-
-    assert len(frames[ref]) == 14
-    assert frames[ref].index[-1] == pd.Timestamp(f"{session_day} 12:45")
-
-
-def test_merge_native_bars_keeps_existing_covered_history_on_overlap(tmp_path) -> None:
-    # Additive merge is idempotent: a re-Pull of overlapping dates must not rewrite
-    # already-admitted bars.
-    ref = ListedRef("BBG000B9XRY4")
-    write_native_bars(ref, "1D", _listed_bars(), store_dir=tmp_path)
-    restated = _listed_bars()
-    restated["close"] = restated["close"] + 1000.0
-
-    merge_native_bars(ref, "1D", restated, store_dir=tmp_path)
-
-    frames = read_native_bars(
-        (ref,),
         arrays=("close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
         calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
     )
-    assert frames[ref]["close"].tolist() == [101.0, 102.0, 103.0]
+    store.write(ref, bars, window, mode=WriteMode.OVERWRITE)
+    frame = store.read(ref, window)
 
-
-def test_replace_native_bars_overwrites_overlap_and_keeps_outside(tmp_path) -> None:
-    # Replace wins across its own span (re-derived history) but retains bars outside it.
-    ref = ListedRef("BBG000B9XRY4")
-    write_native_bars(ref, "1D", _listed_bars(), store_dir=tmp_path)
-    replacement = pd.DataFrame(
-        {
-            "open": [9990.0, 9991.0],
-            "high": [9990.0, 9991.0],
-            "low": [9990.0, 9991.0],
-            "close": [9990.0, 9991.0],
-            "volume": [1, 1],
-        },
-        index=pd.DatetimeIndex(["2024-01-03", "2024-01-04"]),
-    )
-
-    replace_native_bars(ref, "1D", replacement, store_dir=tmp_path)
-
-    frames = read_native_bars(
-        (ref,),
-        arrays=("close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
-        calendar=TradingCalendar.XNYS,
-        store_dir=tmp_path,
-    )
-    # 2024-01-02 retained from the original; 2024-01-03/04 overwritten.
-    assert frames[ref]["close"].tolist() == [101.0, 9990.0, 9991.0]
+    assert len(frame) == 14
+    assert frame.index[-1] == pd.Timestamp(f"{session_day} 12:45")
 
 
 def test_native_bars_request_requires_a_trading_calendar() -> None:
@@ -674,95 +500,11 @@ def test_native_bars_request_requires_a_trading_calendar() -> None:
 
 
 def test_store_read_fails_closed_on_unknown_calendar(tmp_path) -> None:
-    ref = ListedRef("BBG000B9XRY4")
-    write_native_bars(ref, "1D", _listed_bars(), store_dir=tmp_path)
-
     with pytest.raises(ValueError, match="unsupported trading calendar"):
-        read_native_bars(
-            (ref,),
+        CoveredWindow(
+            timeframe="1D",
+            start="2024-01-02",
+            end="2024-01-05",
             arrays=("close",),
-            timeframe="1D",
-            start="2024-01-02",
-            end="2024-01-05",
             calendar="lse",
-            store_dir=tmp_path,
         )
-
-
-def test_fx_history_weekday_calendar_expects_a_us_holiday_weekday(tmp_path) -> None:
-    # MLK Day 2024-01-15 (Mon) is an XNYS holiday, but FX trades that weekday, so
-    # a WEEKDAY calendar must expect a rate there and fail closed when it is absent.
-    pair = FxPair("EUR", "USD")
-    rates = pd.Series(
-        [1.10, 1.11, 1.12],
-        index=pd.DatetimeIndex(["2024-01-12", "2024-01-16", "2024-01-17"]),
-    )
-    write_fx_history(pair, "1D", rates, store_dir=tmp_path)
-
-    with pytest.raises(StoreCoverageError) as exc:
-        read_fx_history(
-            (pair,),
-            timeframe="1D",
-            start="2024-01-12",
-            end="2024-01-18",
-            calendar=TradingCalendar.WEEKDAY,
-            store_dir=tmp_path,
-        )
-
-    assert "2024-01-15" in str(exc.value)
-
-
-def test_fx_history_store_read_returns_provider_free_rates(tmp_path) -> None:
-    pair = FxPair("EUR", "USD")
-    index = pd.bdate_range("2024-01-01", periods=5)
-    rates = pd.Series([1.10, 1.11, 1.12, 1.13, 1.14], index=index)
-    write_fx_history(pair, "1D", rates, store_dir=tmp_path)
-
-    history = read_fx_history(
-        (pair,),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-01-05",
-        calendar=TradingCalendar.WEEKDAY,
-        store_dir=tmp_path,
-    )
-
-    assert tuple(history) == (pair,)
-    assert history[pair].tolist() == [1.11, 1.12, 1.13]
-
-
-def test_fx_history_store_read_fails_closed_on_missing_coverage(tmp_path) -> None:
-    pair = FxPair("EUR", "USD")
-    index = pd.bdate_range("2024-01-01", periods=5).delete(2)
-    rates = pd.Series([1.10, 1.11, 1.13, 1.14], index=index)
-    write_fx_history(pair, "1D", rates, store_dir=tmp_path)
-
-    with pytest.raises(StoreCoverageError) as exc:
-        read_fx_history(
-            (pair,),
-            timeframe="1D",
-            start="2024-01-02",
-            end="2024-01-05",
-            calendar=TradingCalendar.WEEKDAY,
-            store_dir=tmp_path,
-        )
-
-    assert "EUR/USD" in str(exc.value)
-    assert "2024-01-03" in str(exc.value)
-
-
-def test_fx_history_store_read_absent_history_names_missing_expected_rate(tmp_path) -> None:
-    pair = FxPair("EUR", "USD")
-
-    with pytest.raises(StoreCoverageError) as exc:
-        read_fx_history(
-            (pair,),
-            timeframe="1D",
-            start="2024-01-02",
-            end="2024-01-05",
-            calendar=TradingCalendar.WEEKDAY,
-            store_dir=tmp_path,
-        )
-
-    assert "EUR/USD" in str(exc.value)
-    assert "missing expected 1D FX rate on 2024-01-02" in str(exc.value)

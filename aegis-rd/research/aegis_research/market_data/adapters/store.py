@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 from aegis_data.calendars import TradingCalendar
 from aegis_data.coverage import GapFillProvider, ensure_native_bar_coverage
-from aegis_data.store import NativeBarsRequest, read_native_bars_request
+from aegis_data.store import CoveredWindow, HistoricalStore, NativeBarsRequest
 from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
 
 from research.aegis_research.configuration import (
@@ -44,7 +44,7 @@ def load_store_source(config: DataConfig) -> MarketDataAdapterResult:
         provider=GapFillProvider(provider),
         locators=_provider_locators(config, signal_refs, pnl_refs),
     )
-    frames = read_native_bars_request(request)
+    frames = _read_native_frames(request, store=HistoricalStore())
     native_data = native_from_array_dict(_array_panels(config, refs=signal_refs, frames=frames), config)
     pnl_native_data = (
         native_from_array_dict(_array_panels(config, refs=pnl_refs, frames=frames), config)
@@ -98,6 +98,22 @@ def _native_bars_request(config: DataConfig, refs: tuple[InstrumentRef, ...]) ->
         end=required_store_window_edge(config.end, "end"),
         calendar=TradingCalendar.XNYS,
     )
+
+
+def _read_native_frames(
+    request: NativeBarsRequest,
+    *,
+    store: HistoricalStore,
+) -> dict[InstrumentRef, pd.DataFrame]:
+    window = CoveredWindow(
+        timeframe=request.timeframe,
+        start=request.start,
+        end=request.end,
+        arrays=request.arrays,
+        calendar=request.calendar,
+        listed_adjustment=request.listed_adjustment,
+    )
+    return {ref: store.read(ref, window) for ref in request.refs}
 
 
 def _instrument_ref(symbol: SymbolSpec) -> InstrumentRef:

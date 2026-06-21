@@ -13,7 +13,7 @@ import argparse
 from datetime import date, timedelta
 
 from aegis_data.source import continuous_panel, databento_contract_calendar, databento_leg_ports
-from aegis_data.store import data_dir, raw_futures_dir
+from aegis_data.store import HistoricalStore, raw_futures_dir
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "path":
-        print(data_dir())
+        print(HistoricalStore().root)
         return 0
 
     if args.command == "ls":

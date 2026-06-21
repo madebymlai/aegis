@@ -19,7 +19,14 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.instruments import CurrencyPair
 
-from aegis_data.store import FxPair, StoreCoverageError, write_fx_history, write_native_bars
+from aegis_data.calendars import TradingCalendar
+from aegis_data.store import (
+    CoveredWindow,
+    FxPair,
+    HistoricalStore,
+    StoreCoverageError,
+    WriteMode,
+)
 from aegis_runtime import (
     ListedRef,
     BundleManifest,
@@ -229,9 +236,9 @@ def _seed_native_bars(
     figi: str = _FIGI,
     timeframe: str = "1D",
 ) -> None:
-    write_native_bars(ListedRef(figi), timeframe, bars, store_dir=store_dir)
-    write_fx_history(FxPair("EUR", "GBP"), timeframe, _flat_fx(bars.index), store_dir=store_dir)
-    write_fx_history(FxPair("EUR", "USD"), timeframe, _flat_fx(bars.index, 1.10), store_dir=store_dir)
+    _seed_native_store_frame(store_dir, ListedRef(figi), timeframe, bars)
+    _seed_fx_store_frame(store_dir, FxPair("EUR", "GBP"), timeframe, _flat_fx(bars.index))
+    _seed_fx_store_frame(store_dir, FxPair("EUR", "USD"), timeframe, _flat_fx(bars.index, 1.10))
 
 
 def _seed_fx_history(
@@ -241,7 +248,37 @@ def _seed_fx_history(
     quote: str,
     timeframe: str = "1D",
 ) -> None:
-    write_fx_history(FxPair("EUR", quote), timeframe, rates, store_dir=store_dir)
+    _seed_fx_store_frame(store_dir, FxPair("EUR", quote), timeframe, rates)
+
+
+def _seed_native_store_frame(store_dir, ref: ListedRef, timeframe: str, bars: pd.DataFrame) -> None:
+    HistoricalStore(store_dir).write(
+        ref,
+        bars,
+        CoveredWindow(
+            timeframe=timeframe,
+            start=bars.index.min(),
+            end=bars.index.max() + pd.Timedelta(timeframe),
+            arrays=tuple(bars.columns),
+            calendar=TradingCalendar.XNYS,
+        ),
+        mode=WriteMode.OVERWRITE,
+    )
+
+
+def _seed_fx_store_frame(store_dir, pair: FxPair, timeframe: str, rates: pd.Series) -> None:
+    HistoricalStore(store_dir).write(
+        pair,
+        rates.rename("rate").to_frame(),
+        CoveredWindow(
+            timeframe=timeframe,
+            start=rates.index.min(),
+            end=rates.index.max() + pd.Timedelta(timeframe),
+            arrays=("rate",),
+            calendar=TradingCalendar.WEEKDAY,
+        ),
+        mode=WriteMode.OVERWRITE,
+    )
 
 
 def _flat_fx(index: pd.DatetimeIndex, rate: float = 1.0) -> pd.Series:
@@ -663,7 +700,7 @@ def test_costed_backtest_fill_path_is_deterministic_with_pinned_seed(tmp_path):
 def test_run_book_backtest_feeds_preseeded_listed_bars(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
-    write_native_bars(ListedRef(_FIGI), "1D", _synthetic_ohlcv(), store_dir=tmp_path)
+    _seed_native_store_frame(tmp_path, ListedRef(_FIGI), "1D", _synthetic_ohlcv())
 
     engine = run_book_backtest(
         str(book_path),
@@ -700,8 +737,8 @@ def test_run_book_backtest_reads_required_fx_history(tmp_path) -> None:
     ohlcv = _synthetic_ohlcv()
     _seed_native_bars(tmp_path, ohlcv)
     fx = pd.Series([1.10, 1.20, 1.30, 1.40], index=pd.bdate_range("2020-01-01", periods=4))
-    write_native_bars(ListedRef(_FIGI), "1D", ohlcv, store_dir=tmp_path)
-    write_fx_history(FxPair("EUR", "USD"), "1D", fx, store_dir=tmp_path)
+    _seed_native_store_frame(tmp_path, ListedRef(_FIGI), "1D", ohlcv)
+    _seed_fx_store_frame(tmp_path, FxPair("EUR", "USD"), "1D", fx)
 
     engine = run_book_backtest(
         str(book_path),
@@ -722,7 +759,7 @@ def test_run_book_backtest_reads_required_fx_history(tmp_path) -> None:
 def test_run_book_backtest_fails_closed_on_missing_fx_history(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
-    write_native_bars(ListedRef(_FIGI), "1D", _synthetic_ohlcv(), store_dir=tmp_path)
+    _seed_native_store_frame(tmp_path, ListedRef(_FIGI), "1D", _synthetic_ohlcv())
 
     with pytest.raises(StoreCoverageError) as exc:
         run_book_backtest(
@@ -751,7 +788,7 @@ def test_run_book_backtest_store_read_uses_baked_ref_and_required_arrays(tmp_pat
     )
     registry = StubBundleRegistry({_WHEEL: bundle})
     ohlcv = _synthetic_ohlcv()
-    write_native_bars(ListedRef(_FIGI), "1D", ohlcv, store_dir=tmp_path)
+    _seed_native_store_frame(tmp_path, ListedRef(_FIGI), "1D", ohlcv)
 
     engine = run_book_backtest(
         str(book_path),
@@ -799,11 +836,11 @@ def test_run_book_backtest_loads_and_subscribes_at_the_contract_timeframe(tmp_pa
         {_WHEEL: _FixedWeightBundle(_FIGI, 0.5, timeframe="15min")}
     )
     ohlcv = _synthetic_intraday_ohlcv()
-    write_native_bars(ListedRef(_FIGI), "15min", ohlcv, store_dir=tmp_path)
+    _seed_native_store_frame(tmp_path, ListedRef(_FIGI), "15min", ohlcv)
     # FX trades 24h on weekdays, so intraday FX History needs the full-day grid.
     fx_index = pd.date_range("2020-01-02 00:00", "2020-01-03 00:00", freq="15min", inclusive="left")
-    write_fx_history(FxPair("EUR", "GBP"), "15min", _flat_fx(fx_index), store_dir=tmp_path)
-    write_fx_history(FxPair("EUR", "USD"), "15min", _flat_fx(fx_index, 1.10), store_dir=tmp_path)
+    _seed_fx_store_frame(tmp_path, FxPair("EUR", "GBP"), "15min", _flat_fx(fx_index))
+    _seed_fx_store_frame(tmp_path, FxPair("EUR", "USD"), "15min", _flat_fx(fx_index, 1.10))
 
     engine = run_book_backtest(
         str(book_path),
@@ -955,9 +992,9 @@ def test_run_book_backtest_fails_closed_when_fx_does_not_cover_the_window(tmp_pa
     )
     registry = StubBundleRegistry({_WHEEL: bundle})
     ohlcv = _synthetic_ohlcv()  # 6 daily bars, 2020-01-01..06
-    write_native_bars(ListedRef(_FIGI), "1D", ohlcv, store_dir=tmp_path)
+    _seed_native_store_frame(tmp_path, ListedRef(_FIGI), "1D", ohlcv)
     late_fx = pd.Series([1.40, 1.50, 1.60], index=ohlcv.index[3:])  # first 3 uncovered
-    write_fx_history(FxPair("EUR", "USD"), "1D", late_fx, store_dir=tmp_path)
+    _seed_fx_store_frame(tmp_path, FxPair("EUR", "USD"), "1D", late_fx)
 
     with pytest.raises(StoreCoverageError) as exc:
         run_book_backtest(

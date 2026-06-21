@@ -8,7 +8,13 @@ import pandas as pd
 import pytest
 
 from aegis_data.raw_leg_cache import RawLegCache, raw_leg_ports
-from aegis_data.store import RawFuturesLeg, StoreCoverageError, merge_raw_futures_leg
+from aegis_data.calendars import TradingCalendar
+from aegis_data.store import (
+    CoveredWindow,
+    HistoricalStore,
+    RawFuturesLeg,
+    StoreCoverageError,
+)
 
 
 def _bars(symbol: str, start: date, end: date) -> pd.DataFrame:
@@ -34,6 +40,21 @@ class _Provider:
     def __call__(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         self.calls.append((symbol, start, end))
         return _bars(symbol, start, end)
+
+
+def _window(
+    *,
+    start: str = "2024-01-01",
+    end: str = "2024-01-06",
+    arrays: tuple[str, ...] = ("Open", "High", "Low", "Close", "Volume"),
+) -> CoveredWindow:
+    return CoveredWindow(
+        timeframe="1D",
+        start=start,
+        end=end,
+        arrays=arrays,
+        calendar=TradingCalendar.CONTINUOUS,
+    )
 
 
 def test_raw_leg_cache_cold_leg_pulls_once_and_returns_requested_window(tmp_path) -> None:
@@ -77,12 +98,10 @@ def test_raw_leg_cache_sub_window_of_cached_leg_pulls_zero(tmp_path) -> None:
 def test_raw_leg_cache_wider_window_fetches_only_uncovered_edge(tmp_path) -> None:
     provider = _Provider()
     leg = RawFuturesLeg("GLBX.MDP3", "ESH4")
-    merge_raw_futures_leg(
+    HistoricalStore(tmp_path).merge_leg(
         leg,
-        "1D",
         _bars("ESH4", date(2024, 1, 3), date(2024, 1, 5)),
-        required_arrays=("Open", "High", "Low", "Close", "Volume"),
-        store_dir=tmp_path,
+        _window(start="2024-01-03", end="2024-01-06"),
     )
     cache = RawLegCache(
         dataset="GLBX.MDP3",
@@ -137,12 +156,10 @@ def test_raw_leg_cache_interior_sparsity_is_not_re_pulled(tmp_path) -> None:
     sparse = _bars("ESH4", date(2024, 1, 1), date(2024, 1, 5)).drop(
         [pd.Timestamp("2024-01-02"), pd.Timestamp("2024-01-04")]
     )
-    merge_raw_futures_leg(
+    HistoricalStore(tmp_path).merge_leg(
         leg,
-        "1D",
         sparse,
-        required_arrays=("Open", "High", "Low", "Close", "Volume"),
-        store_dir=tmp_path,
+        _window(),
     )
     cache = RawLegCache(
         dataset="GLBX.MDP3",
@@ -201,14 +218,13 @@ def test_raw_leg_cache_empty_provider_response_is_persistently_covered(tmp_path)
 def test_raw_leg_cache_missing_required_array_raises_coverage_error(tmp_path) -> None:
     provider = _Provider()
     leg = RawFuturesLeg("GLBX.MDP3", "ESH4")
-    merge_raw_futures_leg(
+    HistoricalStore(tmp_path).merge_leg(
         leg,
-        "1D",
         pd.DataFrame(
             {"Close": [1.0, 2.0]},
             index=pd.DatetimeIndex(["2024-01-01", "2024-01-02"]),
         ),
-        store_dir=tmp_path,
+        _window(start="2024-01-01", end="2024-01-03", arrays=("Close",)),
     )
     cache = RawLegCache(
         dataset="GLBX.MDP3",

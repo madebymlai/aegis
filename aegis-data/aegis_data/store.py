@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
-from typing import TypeAlias, TypeVar
+from typing import TypeVar
 
 import pandas as pd
 import platformdirs
@@ -97,9 +97,6 @@ class RawFuturesLeg:
     def tolerates_interior_missing_bars(self) -> bool:
         """Raw contract source material may be legitimately sparse inside its life."""
         return True
-
-HistoryKey: TypeAlias = InstrumentRef | FxPair | RawFuturesLeg
-
 
 class StoreAdmissionError(ValueError):
     """Historical data cannot be admitted as Covered History."""
@@ -285,6 +282,62 @@ class HistoricalStore:
         except StoreCoverageError as error:
             raise StoreAdmissionError(str(error)) from error
 
+    def merge_leg(
+        self,
+        leg: RawFuturesLeg,
+        value: pd.DataFrame,
+        window: CoveredWindow,
+    ) -> None:
+        """Merge Raw Futures Leg source material without exposing overwrite modes."""
+        admitted = _admit_native_bars(value)
+        _assert_admitted_native_bar_arrays(admitted, window.arrays)
+        path = self._leg_path(leg, window.timeframe)
+        merged = _merge_admitted_native_bars(path, admitted) if path.exists() else admitted
+        _write_admitted_native_bars(path, merged)
+
+    def read_leg(
+        self,
+        leg: RawFuturesLeg,
+        window: CoveredWindow,
+    ) -> pd.DataFrame:
+        """Read Raw Futures Leg source material, returning empty on a cold leg."""
+        return _read_raw_futures_leg_slice(
+            leg,
+            self._leg_path(leg, window.timeframe),
+            arrays=window.arrays,
+            window=window._history_window(calendar=window.calendar),
+            missing_ok=True,
+        )
+
+    def record_leg_coverage(self, leg: RawFuturesLeg, window: CoveredWindow) -> None:
+        """Remember a fetched Raw Futures Leg window, even when it had no bars."""
+        coverage = _admit_raw_futures_leg_coverage(
+            pd.DataFrame({"start": [window.start], "end": [window.end]})
+        )
+        path = self._leg_coverage_path(leg, window.timeframe)
+        if path.exists():
+            coverage = _coalesce_raw_futures_leg_coverage(
+                pd.concat([_load_raw_futures_leg_coverage(path), coverage])
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        coverage.to_parquet(path)
+
+    def read_leg_coverage(
+        self,
+        leg: RawFuturesLeg,
+        *,
+        timeframe: str,
+    ) -> tuple[CoverageGap, ...]:
+        """Fetched half-open Raw Futures Leg windows for cache decisions."""
+        path = self._leg_coverage_path(leg, timeframe)
+        if not path.exists():
+            return ()
+        coverage = _load_raw_futures_leg_coverage(path)
+        return tuple(
+            CoverageGap(start=row.start, end=row.end)
+            for row in coverage.itertuples(index=False)
+        )
+
     def _path(
         self,
         key: InstrumentRef | FxPair,
@@ -295,6 +348,21 @@ class HistoricalStore:
             window.timeframe,
             listed_adjustment=window.listed_adjustment,
             store_dir=self.root,
+        )
+
+    def _leg_path(self, leg: RawFuturesLeg, timeframe: str) -> Path:
+        return (
+            raw_futures_dir(leg.dataset, store_dir=self.root)
+            / _safe_key(leg.symbol)
+            / f"{_safe_key(timeframe)}.parquet"
+        )
+
+    def _leg_coverage_path(self, leg: RawFuturesLeg, timeframe: str) -> Path:
+        return (
+            raw_futures_dir(leg.dataset, store_dir=self.root)
+            / _safe_key(leg.symbol)
+            / ".coverage"
+            / f"{_safe_key(timeframe)}.parquet"
         )
 
     def _coverage_window(
@@ -327,511 +395,8 @@ class HistoricalStore:
         return _replace_admitted_frame(load_existing(path), admitted)
 
 
-def fx_history_path(
-    pair: FxPair,
-    timeframe: str,
-    *,
-    store_dir: Path | None = None,
-) -> Path:
-    """Parquet location for an FX History Covered History slice."""
-    return _covered_history_path(pair, timeframe, store_dir=store_dir)
-
-
-def raw_futures_leg_path(
-    dataset: str,
-    symbol: str,
-    timeframe: str,
-    *,
-    store_dir: Path | None = None,
-) -> Path:
-    """Parquet location for a Raw Futures Leg source-material slice."""
-    return (
-        raw_futures_dir(dataset, store_dir=store_dir)
-        / _safe_key(symbol)
-        / f"{_safe_key(timeframe)}.parquet"
-    )
-
-
 def raw_futures_dir(dataset: str, *, store_dir: Path | None = None) -> Path:
     return _store_root(store_dir) / "futures-raw" / _safe_key(dataset)
-
-
-def _raw_futures_leg_coverage_path(
-    leg: RawFuturesLeg,
-    timeframe: str,
-    *,
-    store_dir: Path | None = None,
-) -> Path:
-    return (
-        raw_futures_dir(leg.dataset, store_dir=store_dir)
-        / _safe_key(leg.symbol)
-        / ".coverage"
-        / f"{_safe_key(timeframe)}.parquet"
-    )
-
-
-def native_bars_path(
-    ref: InstrumentRef,
-    timeframe: str,
-    *,
-    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
-    store_dir: Path | None = None,
-) -> Path:
-    """Parquet location for a native-market-bar Covered History slice.
-
-    Listed instruments are keyed by ``ListedRef`` (FIGI), and futures are keyed
-    by their continuous ``FuturesRef`` contract, never by provider ticker.  The
-    path is intentionally exposed so tests can fixture-seed the Historical Store
-    without introducing a provider.
-    """
-    return _covered_history_path(
-        ref,
-        timeframe,
-        listed_adjustment=listed_adjustment,
-        store_dir=store_dir,
-    )
-
-
-def write_native_bars(
-    ref: InstrumentRef,
-    timeframe: str,
-    bars: pd.DataFrame,
-    *,
-    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
-    required_arrays: Sequence[str] = (),
-    store_dir: Path | None = None,
-) -> Path:
-    """Admit provider-normalized native market bars as Covered History.
-
-    The frame is stored as-is apart from deterministic index sorting. Prices stay
-    in the instrument's native quote currency; Store Read returns pandas frames,
-    never Nautilus engine objects.
-    """
-    admitted = _admit_native_bars(bars)
-    _assert_admitted_native_bar_arrays(admitted, required_arrays)
-    path = native_bars_path(
-        ref,
-        timeframe,
-        listed_adjustment=listed_adjustment,
-        store_dir=store_dir,
-    )
-    return _write_admitted_native_bars(path, admitted)
-
-
-def merge_native_bars(
-    ref: InstrumentRef,
-    timeframe: str,
-    bars: pd.DataFrame,
-    *,
-    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
-    required_arrays: Sequence[str] = (),
-    store_dir: Path | None = None,
-) -> Path:
-    """Add provider-normalized native market bars to existing Covered History.
-
-    Additive and idempotent: on an overlapping timestamp the already-admitted
-    Covered History wins, so a re-Pull never silently rewrites admitted bars. Use
-    :func:`replace_native_bars` to overwrite an existing window (e.g. to repair a
-    bad bar or re-derive a continuous panel).
-    """
-    admitted = _admit_native_bars(bars)
-    _assert_admitted_native_bar_arrays(admitted, required_arrays)
-    path = native_bars_path(
-        ref,
-        timeframe,
-        listed_adjustment=listed_adjustment,
-        store_dir=store_dir,
-    )
-    merged = _merge_admitted_native_bars(path, admitted) if path.exists() else admitted
-    return _write_admitted_native_bars(path, merged)
-
-
-def replace_native_bars(
-    ref: InstrumentRef,
-    timeframe: str,
-    bars: pd.DataFrame,
-    *,
-    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
-    required_arrays: Sequence[str] = (),
-    store_dir: Path | None = None,
-) -> Path:
-    """Replace an overlapping Covered History window with provider-normalized bars.
-
-    The new bars win across their own ``[min, max]`` span (so a re-derived
-    continuous panel can change historical values); admitted bars outside that
-    span are retained. Unlike :func:`merge_native_bars`, this overwrites overlap.
-    """
-    admitted = _admit_native_bars(bars)
-    _assert_admitted_native_bar_arrays(admitted, required_arrays)
-    path = native_bars_path(
-        ref,
-        timeframe,
-        listed_adjustment=listed_adjustment,
-        store_dir=store_dir,
-    )
-    merged = _replace_admitted_native_bars(path, admitted) if path.exists() else admitted
-    return _write_admitted_native_bars(path, merged)
-
-
-def read_native_bars(
-    refs: Sequence[InstrumentRef],
-    *,
-    arrays: Sequence[str],
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
-    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
-    store_dir: Path | None = None,
-) -> dict[InstrumentRef, pd.DataFrame]:
-    """Provider-free Store Read for native market bars.
-
-    Reads Covered History for each ``InstrumentRef`` and returns one native
-    pandas frame per ref, sliced to ``[start, end)``.  Missing files, arrays,
-    NaNs, or bars expected by ``calendar`` fail closed before a backtest can run.
-    """
-    return read_native_bars_request(
-        NativeBarsRequest(
-            refs=refs,
-            arrays=arrays,
-            timeframe=timeframe,
-            start=start,
-            end=end,
-            calendar=calendar,
-            listed_adjustment=listed_adjustment,
-        ),
-        store_dir=store_dir,
-    )
-
-
-def read_native_bars_request(
-    request: NativeBarsRequest,
-    *,
-    store_dir: Path | None = None,
-) -> dict[InstrumentRef, pd.DataFrame]:
-    """Provider-free Store Read for a neutral native-bars request."""
-    arrays = tuple(request.arrays)
-    listed_adjustment = _listed_adjustment_policy(request.listed_adjustment)
-    calendar = as_trading_calendar(request.calendar)
-    return {
-        ref: _read_one_native_bar_frame(
-            ref,
-            arrays=arrays,
-            timeframe=request.timeframe,
-            listed_adjustment=listed_adjustment,
-            calendar=calendar,
-            start=request.start,
-            end=request.end,
-            store_dir=store_dir,
-        )
-        for ref in request.refs
-    }
-
-
-def native_bar_coverage_gaps(
-    ref: InstrumentRef,
-    *,
-    arrays: Sequence[str],
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
-    listed_adjustment: ListedAdjustmentPolicy | str = ListedAdjustmentPolicy.RAW,
-    store_dir: Path | None = None,
-) -> tuple[CoverageGap, ...]:
-    """Return uncovered expected-bar intervals for a native-bars request."""
-    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
-    required = _validated_arrays(arrays)
-    path = native_bars_path(
-        ref,
-        timeframe,
-        listed_adjustment=listed_adjustment,
-        store_dir=store_dir,
-    )
-    observed = _load_admitted_native_bars_or_empty(path, required)
-    return StoreCoverage.for_native_bars(ref, arrays=required).gaps(window, observed)
-
-
-def merge_raw_futures_leg(
-    leg: RawFuturesLeg,
-    timeframe: str,
-    bars: pd.DataFrame,
-    *,
-    required_arrays: Sequence[str] = (),
-    store_dir: Path | None = None,
-) -> Path:
-    """Add provider-normalized bars to a Raw Futures Leg corpus."""
-    admitted = _admit_native_bars(bars)
-    _assert_admitted_native_bar_arrays(admitted, required_arrays)
-    path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
-    merged = _merge_admitted_native_bars(path, admitted) if path.exists() else admitted
-    return _write_admitted_native_bars(path, merged)
-
-
-def read_raw_futures_leg(
-    leg: RawFuturesLeg,
-    *,
-    arrays: Sequence[str],
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    store_dir: Path | None = None,
-) -> pd.DataFrame:
-    """Read one Raw Futures Leg source-material slice (no expected-bar grid).
-
-    A dated contract leg is provider source material: the chain places its roll seam
-    at the snapped common trading day and the assembled continuous series carries the
-    coverage guarantee, so a leg read returns exactly what the contract traded in the
-    window — a thin contract that prints sparsely or stops before its expiry is not a
-    gap here.
-    """
-    window = HistoryWindow(
-        timeframe=timeframe,
-        calendar=TradingCalendar.CONTINUOUS,
-        start=start,
-        end=end,
-    )
-    path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
-    if not path.exists():
-        raise StoreCoverageError(leg, f"no Raw Futures Leg for {timeframe}")
-    return _read_raw_futures_leg_slice(leg, path, arrays=arrays, window=window)
-
-
-def read_raw_futures_leg_or_empty(
-    leg: RawFuturesLeg,
-    *,
-    arrays: Sequence[str],
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    store_dir: Path | None = None,
-) -> pd.DataFrame:
-    """Read a Raw Futures Leg source-material slice, or an empty frame on a cold leg."""
-    window = HistoryWindow(
-        timeframe=timeframe,
-        calendar=TradingCalendar.CONTINUOUS,
-        start=start,
-        end=end,
-    )
-    path = raw_futures_leg_path(leg.dataset, leg.symbol, timeframe, store_dir=store_dir)
-    return _read_raw_futures_leg_slice(
-        leg,
-        path,
-        arrays=arrays,
-        window=window,
-        missing_ok=True,
-    )
-
-
-def record_raw_futures_leg_coverage(
-    leg: RawFuturesLeg,
-    timeframe: str,
-    *,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    store_dir: Path | None = None,
-) -> Path:
-    """Remember a fetched half-open Raw Futures Leg window, even when it had no bars."""
-    coverage = _admit_raw_futures_leg_coverage(
-        pd.DataFrame({"start": [start], "end": [end]})
-    )
-    path = _raw_futures_leg_coverage_path(leg, timeframe, store_dir=store_dir)
-    if path.exists():
-        coverage = _coalesce_raw_futures_leg_coverage(
-            pd.concat([_load_raw_futures_leg_coverage(path), coverage])
-        )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    coverage.to_parquet(path)
-    return path
-
-
-def read_raw_futures_leg_coverage(
-    leg: RawFuturesLeg,
-    timeframe: str,
-    *,
-    store_dir: Path | None = None,
-) -> tuple[CoverageGap, ...]:
-    """Fetched half-open Raw Futures Leg windows for cache coverage decisions."""
-    path = _raw_futures_leg_coverage_path(leg, timeframe, store_dir=store_dir)
-    if not path.exists():
-        return ()
-    coverage = _load_raw_futures_leg_coverage(path)
-    return tuple(
-        CoverageGap(start=row.start, end=row.end)
-        for row in coverage.itertuples(index=False)
-    )
-
-
-def assert_native_bar_coverage(
-    key: HistoryKey,
-    frame: pd.DataFrame,
-    *,
-    arrays: Sequence[str],
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
-) -> None:
-    """Fail when a provider frame cannot cover the requested native-bar window."""
-    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
-    required = _validated_arrays(arrays)
-    admitted = _admit_native_bars(frame)
-    StoreCoverage.for_native_bars(key, arrays=required).slice(window, admitted)
-
-
-def write_fx_history(
-    pair: FxPair,
-    timeframe: str,
-    rates: pd.Series,
-    *,
-    store_dir: Path | None = None,
-) -> Path:
-    """Admit provider-normalized FX rates as Covered History.
-
-    Rates are quote-currency units per one base-currency unit, stored separately
-    from instrument native market bars so conversion inputs can be reused across
-    instruments and backtests.
-    """
-    admitted = _admit_fx_history(rates)
-    path = fx_history_path(pair, timeframe, store_dir=store_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    admitted.to_parquet(path)
-    return path
-
-
-def merge_fx_history(
-    pair: FxPair,
-    timeframe: str,
-    rates: pd.Series,
-    *,
-    store_dir: Path | None = None,
-) -> Path:
-    """Add provider-normalized FX rates to existing FX History."""
-    admitted = _admit_fx_history(rates)
-    path = fx_history_path(pair, timeframe, store_dir=store_dir)
-    merged = _merge_admitted_fx_history(path, admitted) if path.exists() else admitted
-    path.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_parquet(path)
-    return path
-
-
-def read_fx_history(
-    pairs: Sequence[FxPair],
-    *,
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
-    store_dir: Path | None = None,
-) -> dict[FxPair, pd.Series]:
-    """Provider-free Store Read for FX History.
-
-    Reads Covered History for each ``FxPair`` and returns one rate series per
-    pair, sliced to ``[start, end)``. Missing files, NaNs, or rates expected by
-    ``calendar`` fail closed before Trader valuation or conversion can run.
-    """
-    return {
-        pair: _read_one_fx_series(
-            pair,
-            timeframe=timeframe,
-            calendar=calendar,
-            start=start,
-            end=end,
-            store_dir=store_dir,
-        )
-        for pair in pairs
-    }
-
-
-def fx_history_coverage_gaps(
-    pair: FxPair,
-    *,
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
-    store_dir: Path | None = None,
-) -> tuple[CoverageGap, ...]:
-    """Return uncovered expected-rate intervals for an FX History request."""
-    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
-    path = fx_history_path(pair, timeframe, store_dir=store_dir)
-    observed = _load_admitted_fx_history_or_empty(path)
-    return StoreCoverage.for_fx_rates(pair).gaps(window, observed)
-
-
-def assert_fx_history_coverage(
-    pair: FxPair,
-    rates: pd.Series,
-    *,
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
-) -> None:
-    """Fail when a provider series cannot cover the requested FX History window."""
-    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
-    admitted = _admit_fx_history(rates)
-    StoreCoverage.for_fx_rates(pair).slice(window, admitted)
-
-
-def covered_row_count(path: Path) -> int:
-    """Number of admitted rows in a Covered History slice (0 when absent)."""
-    if not path.exists():
-        return 0
-    return len(pd.read_parquet(path))
-
-
-def assert_admissible_native_bars(
-    key: HistoryKey,
-    frame: pd.DataFrame,
-    *,
-    arrays: Sequence[str],
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
-) -> None:
-    """Pull admission: reject provider native bars a Store Read could not cover."""
-    _as_admission(
-        lambda: assert_native_bar_coverage(
-            key,
-            frame,
-            arrays=arrays,
-            timeframe=timeframe,
-            start=start,
-            end=end,
-            calendar=calendar,
-        )
-    )
-
-
-def assert_admissible_fx_history(
-    pair: FxPair,
-    rates: pd.Series,
-    *,
-    timeframe: str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    calendar: TradingCalendar | str,
-) -> None:
-    """Pull admission: reject provider FX rates a Store Read could not cover."""
-    _as_admission(
-        lambda: assert_fx_history_coverage(
-            pair,
-            rates,
-            timeframe=timeframe,
-            start=start,
-            end=end,
-            calendar=calendar,
-        )
-    )
-
-
-def _as_admission(check: Callable[[], None]) -> None:
-    try:
-        check()
-    except StoreCoverageError as error:
-        raise StoreAdmissionError(str(error)) from error
 
 
 def _store_root(store_dir: Path | None) -> Path:
@@ -876,68 +441,6 @@ def _covered_history_path(
     raise TypeError(f"unsupported HistoricalStore key {key!r}")
 
 
-def _read_one_fx_series(
-    pair: FxPair,
-    *,
-    timeframe: str,
-    calendar: TradingCalendar | str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    store_dir: Path | None,
-) -> pd.Series:
-    window = HistoryWindow(timeframe=timeframe, calendar=calendar, start=start, end=end)
-    path = fx_history_path(pair, timeframe, store_dir=store_dir)
-    admitted = _load_admitted_fx_history_or_empty(path)
-    sliced = StoreCoverage.for_fx_rates(pair).slice(window, admitted)
-    return sliced["rate"].copy()
-
-
-def _native_bar_calendar(
-    ref: InstrumentRef, calendar: TradingCalendar | str
-) -> TradingCalendar:
-    """The expected-bar calendar for a ref.
-
-    A ``FuturesRef`` carries its venue in its dataset, so its calendar is resolved
-    from that (CME/ICE), never the caller-supplied one — which governs only
-    venue-agnostic refs (listed equities on XNYS).  This is why a futures Pull or
-    Read needs no calendar threaded for the contract: the dataset decides it.
-    """
-    if isinstance(ref, FuturesRef):
-        return venue_calendar_for_dataset(ref.dataset)
-    return as_trading_calendar(calendar)
-
-
-def _read_one_native_bar_frame(
-    ref: InstrumentRef,
-    *,
-    arrays: tuple[str, ...],
-    timeframe: str,
-    listed_adjustment: ListedAdjustmentPolicy,
-    calendar: TradingCalendar | str,
-    start: str | date | pd.Timestamp,
-    end: str | date | pd.Timestamp,
-    store_dir: Path | None,
-) -> pd.DataFrame:
-    window = HistoryWindow(
-        timeframe=timeframe,
-        calendar=_native_bar_calendar(ref, calendar),
-        start=start,
-        end=end,
-    )
-    path = native_bars_path(
-        ref,
-        timeframe,
-        listed_adjustment=listed_adjustment,
-        store_dir=store_dir,
-    )
-    return _read_admitted_native_bar_slice(
-        ref,
-        path,
-        arrays=arrays,
-        window=window,
-    )
-
-
 def _load_admitted_fx_history(path: Path) -> pd.DataFrame:
     frame = pd.read_parquet(path)
     if "rate" not in frame.columns:
@@ -972,7 +475,7 @@ def _write_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> Path:
 
 
 def _read_admitted_native_bar_slice(
-    key: HistoryKey,
+    key: InstrumentRef | RawFuturesLeg,
     path: Path,
     *,
     arrays: Sequence[str],
@@ -1009,22 +512,6 @@ def _merge_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.DataFr
     return _admit_native_bars(merged)
 
 
-def _merge_admitted_fx_history(path: Path, admitted: pd.DataFrame) -> pd.DataFrame:
-    existing = _load_admitted_fx_history(path)
-    merged = existing.combine_first(admitted)
-    return _admit_fx_history(merged["rate"])
-
-
-def _replace_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> pd.DataFrame:
-    existing = _load_admitted_native_bars(path)
-    if admitted.empty:
-        return existing
-    left = admitted.index.min()
-    right = admitted.index.max()
-    outside = existing.loc[(existing.index < left) | (existing.index > right)]
-    return _admit_native_bars(pd.concat([outside, admitted]).sort_index())
-
-
 def _replace_admitted_frame(existing: pd.DataFrame, admitted: pd.DataFrame) -> pd.DataFrame:
     if admitted.empty:
         return existing
@@ -1042,7 +529,7 @@ def _admit_covered_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _require_native_bar_columns(
-    ref: HistoryKey,
+    ref: InstrumentRef | RawFuturesLeg,
     frame: pd.DataFrame,
     arrays: tuple[str, ...],
 ) -> dict[str, str]:
@@ -1163,29 +650,6 @@ __all__ = [
     "StoreAdmissionError",
     "StoreCoverageError",
     "WriteMode",
-    "assert_admissible_fx_history",
-    "assert_admissible_native_bars",
-    "assert_fx_history_coverage",
-    "assert_native_bar_coverage",
-    "covered_row_count",
     "data_dir",
-    "fx_history_coverage_gaps",
-    "fx_history_path",
-    "merge_fx_history",
-    "merge_native_bars",
-    "merge_raw_futures_leg",
-    "native_bar_coverage_gaps",
-    "native_bars_path",
-    "raw_futures_leg_path",
     "raw_futures_dir",
-    "read_fx_history",
-    "read_native_bars",
-    "read_native_bars_request",
-    "read_raw_futures_leg",
-    "read_raw_futures_leg_coverage",
-    "read_raw_futures_leg_or_empty",
-    "record_raw_futures_leg_coverage",
-    "replace_native_bars",
-    "write_fx_history",
-    "write_native_bars",
 ]

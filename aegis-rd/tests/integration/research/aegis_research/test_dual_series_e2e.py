@@ -15,7 +15,8 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from aegis_data.store import write_native_bars
+from aegis_data.calendars import TradingCalendar
+from aegis_data.store import CoveredWindow, HistoricalStore, WriteMode
 
 from research.aegis_research.run_pipeline import run_strategy_sweep
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
@@ -43,14 +44,21 @@ def _ohlcv(base: float) -> pd.DataFrame:
 
 def _write_by_adjustment(request: Any, *, store_dir: Any) -> object:
     """Fake the Databento futures pull: each adjustment gets a disjoint price level."""
+    store = HistoricalStore(store_dir) if store_dir is not None else HistoricalStore()
+    window = CoveredWindow(
+        timeframe="1D",
+        start=_BUSINESS_DAYS.min(),
+        end=_BUSINESS_DAYS.max() + pd.Timedelta(days=1),
+        arrays=("Open", "High", "Low", "Close", "Volume"),
+        calendar=TradingCalendar.XNYS,
+    )
     for ref in request.refs:
         base = _RATIO_BASE if ref.adjustment == "backward_ratio" else _SPREAD_BASE
-        write_native_bars(
+        store.write(
             ref,
-            "1D",
             _ohlcv(base),
-            required_arrays=("Open", "High", "Low", "Close", "Volume"),
-            store_dir=store_dir,
+            window,
+            mode=WriteMode.OVERWRITE,
         )
     return object()
 

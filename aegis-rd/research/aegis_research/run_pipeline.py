@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 from aegis_data.calendars import TradingCalendar
 from aegis_data.source import continuous_panel, databento_contract_calendar, databento_leg_ports
-from aegis_data.store import FxPair, read_fx_history
+from aegis_data.store import CoveredWindow, FxPair, HistoricalStore
 from aegis_data.yfinance import YFinanceLocator, pull_yfinance_fx_history
 
 from research.aegis_research.component_registry import (
@@ -276,6 +276,14 @@ def _load_store_fx_rates(
     start = required_store_window_edge(data_config.start, "start")
     end = required_store_window_edge(data_config.end, "end")
     fx_pair_by_currency = {ccy: FxPair(base_currency, ccy) for ccy in fx_ticker_by_currency}
+    store = HistoricalStore()
+    window = CoveredWindow(
+        timeframe=data_config.timeframe,
+        start=start,
+        end=end,
+        arrays=("rate",),
+        calendar=TradingCalendar.WEEKDAY,
+    )
     for ccy, fx_pair in fx_pair_by_currency.items():
         pull_yfinance_fx_history(
             fx_pair,
@@ -285,13 +293,10 @@ def _load_store_fx_rates(
             calendar=TradingCalendar.WEEKDAY,
             locator=YFinanceLocator(fx_ticker_by_currency[ccy]),
         )
-    histories = read_fx_history(
-        tuple(fx_pair_by_currency.values()),
-        timeframe=data_config.timeframe,
-        start=start,
-        end=end,
-        calendar=TradingCalendar.WEEKDAY,
-    )
+    histories = {
+        fx_pair: store.read(fx_pair, window)["rate"]
+        for fx_pair in fx_pair_by_currency.values()
+    }
     return assemble_fx_rates(
         {ccy: histories[fx_pair] for ccy, fx_pair in fx_pair_by_currency.items()},
         index=index,

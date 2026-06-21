@@ -13,11 +13,11 @@ from aegis_data.raw_leg_cache import raw_leg_ports
 from aegis_data.roll import DatedContract
 from aegis_data.source import continuous_panel
 from aegis_data.store import (
+    CoveredWindow,
+    HistoricalStore,
     NATIVE_OHLCV_ARRAYS,
     NativeBarsRequest,
-    native_bars_path,
-    raw_futures_leg_path,
-    read_native_bars,
+    RawFuturesLeg,
 )
 
 _BASIS = {"ESH4": 100.0, "ESM4": 200.0, "ESU4": 300.0, "ESZ4": 400.0}
@@ -79,8 +79,52 @@ def _es_calendar(root: str, start: date, end: date) -> list[DatedContract]:
     ]
 
 
+def _covered_window(
+    *,
+    start: str = "2024-01-02",
+    end: str = "2024-12-13",
+    arrays: tuple[str, ...] = ("Close",),
+) -> CoveredWindow:
+    return CoveredWindow(
+        timeframe="1D",
+        start=start,
+        end=end,
+        arrays=arrays,
+        calendar=TradingCalendar.XNYS,
+    )
+
+
+def _leg_window(
+    *,
+    start: str = "2024-01-02",
+    end: str = "2024-03-16",
+) -> CoveredWindow:
+    return CoveredWindow(
+        timeframe="1D",
+        start=start,
+        end=end,
+        arrays=NATIVE_OHLCV_ARRAYS,
+        calendar=TradingCalendar.CONTINUOUS,
+    )
+
+
+def _stored_close(
+    store_dir,
+    ref: FuturesRef,
+    *,
+    start: str,
+    end: str,
+) -> pd.Series:
+    return HistoricalStore(store_dir).read(
+        ref,
+        _covered_window(start=start, end=end),
+    )["Close"]
+
+
 def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(tmp_path) -> None:
-    ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_ratio")
+    ratio_ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_ratio")
+    spread_ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="backward_spread")
+    store = HistoricalStore(tmp_path)
     fetched: list[str] = []
 
     def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
@@ -88,39 +132,22 @@ def test_databento_pull_materializes_continuous_history_from_retained_raw_legs(t
         return _leg_bars(symbol, start, end)
 
     pull_databento_futures_bars(
-        _request(ref), fetcher=fetch, contract_calendar=_es_calendar, store_dir=tmp_path
+        _request(ratio_ref), fetcher=fetch, contract_calendar=_es_calendar, store_dir=tmp_path
     )
-    first = read_native_bars(
-        (ref,),
-        arrays=("Close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-12-13",
-        store_dir=tmp_path,
-        calendar=TradingCalendar.XNYS,
-    )
-
-    native_bars_path(ref, "1D", store_dir=tmp_path).unlink()
     pull_databento_futures_bars(
-        _request(ref),
+        _request(spread_ref),
         fetcher=_provider_hit,
         contract_calendar=_es_calendar,
         store_dir=tmp_path,
     )
-    second = read_native_bars(
-        (ref,),
-        arrays=("Close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-12-13",
-        store_dir=tmp_path,
-        calendar=TradingCalendar.XNYS,
-    )
+    first = store.read(ratio_ref, _covered_window())
+    second = store.read(spread_ref, _covered_window())
+    retained_leg = store.read_leg(RawFuturesLeg("GLBX.MDP3", "ESH4"), _leg_window())
 
     assert fetched == ["ESH4", "ESM4", "ESU4", "ESZ4"]
-    assert raw_futures_leg_path("GLBX.MDP3", "ESH4", "1D", store_dir=tmp_path).exists()
-    assert not first[ref]["Close"].isna().any()
-    pd.testing.assert_frame_equal(first[ref], second[ref])
+    assert not retained_leg.empty
+    assert not first["Close"].isna().any()
+    assert not second["Close"].isna().any()
 
 
 def test_continuous_panel_reuses_raw_legs_materialized_by_pull(tmp_path) -> None:
@@ -187,11 +214,8 @@ def test_databento_pull_does_not_require_bars_past_a_rolled_off_contract_expiry(
     pull_databento_futures_bars(
         request, fetcher=expiry_truncated_fetch, contract_calendar=_es_three, store_dir=tmp_path
     )
-    frames = read_native_bars(
-        (ref,), arrays=("Close",), timeframe="1D",
-        start="2024-01-02", end="2024-09-13", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
-    )
-    assert not frames[ref]["Close"].isna().any()
+    close = _stored_close(tmp_path, ref, start="2024-01-02", end="2024-09-13")
+    assert not close.isna().any()
 
 
 def test_databento_pull_covers_through_end_via_the_front_at_end_contract(tmp_path) -> None:
@@ -225,11 +249,8 @@ def test_databento_pull_covers_through_end_via_the_front_at_end_contract(tmp_pat
     pull_databento_futures_bars(
         request, fetcher=expiry_truncated_fetch, contract_calendar=_es_calendar, store_dir=tmp_path
     )
-    frames = read_native_bars(
-        (ref,), arrays=("Close",), timeframe="1D",
-        start="2024-01-02", end="2024-10-01", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
-    )
-    assert not frames[ref]["Close"].isna().any()
+    close = _stored_close(tmp_path, ref, start="2024-01-02", end="2024-10-01")
+    assert not close.isna().any()
 
 
 def test_databento_pull_tolerates_a_contract_non_print_on_an_xnys_day(tmp_path) -> None:
@@ -252,12 +273,9 @@ def test_databento_pull_tolerates_a_contract_non_print_on_an_xnys_day(tmp_path) 
     pull_databento_futures_bars(
         _request(ref), fetcher=thin_contract_fetch, contract_calendar=_es_calendar, store_dir=tmp_path
     )
-    frames = read_native_bars(
-        (ref,), arrays=("Close",), timeframe="1D",
-        start="2024-01-02", end="2024-12-13", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
-    )
-    assert not frames[ref]["Close"].isna().any()
-    assert skipped not in frames[ref].index
+    close = _stored_close(tmp_path, ref, start="2024-01-02", end="2024-12-13")
+    assert not close.isna().any()
+    assert skipped not in close.index
 
 
 def test_databento_pull_tolerates_a_thin_contract_that_stops_before_its_expiry(tmp_path) -> None:
@@ -288,11 +306,8 @@ def test_databento_pull_tolerates_a_thin_contract_that_stops_before_its_expiry(t
     pull_databento_futures_bars(
         request, fetcher=thin_contract_fetch, contract_calendar=_es_calendar, store_dir=tmp_path
     )
-    frames = read_native_bars(
-        (ref,), arrays=("Close",), timeframe="1D",
-        start="2024-01-02", end="2024-10-01", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
-    )
-    assert not frames[ref]["Close"].isna().any()
+    close = _stored_close(tmp_path, ref, start="2024-01-02", end="2024-10-01")
+    assert not close.isna().any()
 
 
 _GC_LAST_TRADE = {
@@ -343,15 +358,21 @@ def test_databento_pull_stores_only_the_liquid_cycle_excluding_serials(tmp_path)
     result = pull_databento_futures_bars(
         request, fetcher=_gc_leg_bars, contract_calendar=_gc_calendar, store_dir=tmp_path
     )
-    frames = read_native_bars(
-        (ref,), arrays=("Close",), timeframe="1D",
-        start="2024-05-01", end="2024-08-01", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
+    store = HistoricalStore(tmp_path)
+    close = store.read(ref, _covered_window(start="2024-05-01", end="2024-08-01"))["Close"]
+    may_serial = store.read_leg(
+        RawFuturesLeg("GLBX.MDP3", "GCK4"),
+        _leg_window(start="2024-05-01", end="2024-05-29"),
+    )
+    july_serial = store.read_leg(
+        RawFuturesLeg("GLBX.MDP3", "GCN4"),
+        _leg_window(start="2024-07-01", end="2024-07-30"),
     )
 
     assert tuple(leg.symbol for leg in result.raw_legs) == ("GCM4", "GCQ4")
-    assert raw_futures_leg_path("GLBX.MDP3", "GCK4", "1D", store_dir=tmp_path).exists()
-    assert raw_futures_leg_path("GLBX.MDP3", "GCN4", "1D", store_dir=tmp_path).exists()
-    assert not frames[ref]["Close"].isna().any()
+    assert not may_serial.empty
+    assert not july_serial.empty
+    assert not close.isna().any()
 
 
 def test_databento_pull_liquid_cycle_tolerates_a_liquid_leg_non_print(tmp_path) -> None:
@@ -379,14 +400,11 @@ def test_databento_pull_liquid_cycle_tolerates_a_liquid_leg_non_print(tmp_path) 
     result = pull_databento_futures_bars(
         request, fetcher=thin_liquid_fetch, contract_calendar=_gc_calendar, store_dir=tmp_path
     )
-    frames = read_native_bars(
-        (ref,), arrays=("Close",), timeframe="1D",
-        start="2024-05-01", end="2024-08-01", store_dir=tmp_path, calendar=TradingCalendar.XNYS,
-    )
+    close = _stored_close(tmp_path, ref, start="2024-05-01", end="2024-08-01")
 
     assert tuple(leg.symbol for leg in result.raw_legs) == ("GCM4", "GCQ4")
-    assert not frames[ref]["Close"].isna().any()
-    assert skipped not in frames[ref].index
+    assert not close.isna().any()
+    assert skipped not in close.index
 
 
 def test_databento_pull_derives_alternate_adjustment_from_same_raw_legs(tmp_path) -> None:
@@ -405,19 +423,7 @@ def test_databento_pull_derives_alternate_adjustment_from_same_raw_legs(tmp_path
         contract_calendar=_es_calendar,
         store_dir=tmp_path,
     )
-    frames = read_native_bars(
-        (backward_ratio_ref, backward_spread_ref),
-        arrays=("Close",),
-        timeframe="1D",
-        start="2024-01-02",
-        end="2024-12-13",
-        store_dir=tmp_path,
-        calendar=TradingCalendar.XNYS,
-    )
+    ratio = _stored_close(tmp_path, backward_ratio_ref, start="2024-01-02", end="2024-12-13")
+    spread = _stored_close(tmp_path, backward_spread_ref, start="2024-01-02", end="2024-12-13")
 
-    assert native_bars_path(backward_ratio_ref, "1D", store_dir=tmp_path) != native_bars_path(
-        backward_spread_ref, "1D", store_dir=tmp_path
-    )
-    assert (
-        frames[backward_ratio_ref]["Close"].iloc[0] != frames[backward_spread_ref]["Close"].iloc[0]
-    )
+    assert ratio.iloc[0] != spread.iloc[0]

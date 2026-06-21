@@ -12,18 +12,12 @@ from aegis_runtime import ListedRef
 
 from aegis_data.calendars import TradingCalendar
 from aegis_data.store import (
+    CoveredWindow,
     FxPair,
+    HistoricalStore,
     NATIVE_OHLCV_ARRAYS,
     NativeBarsRequest,
-    assert_admissible_fx_history,
-    assert_admissible_native_bars,
-    covered_row_count,
-    fx_history_coverage_gaps,
-    fx_history_path,
-    merge_fx_history,
-    merge_native_bars,
-    native_bar_coverage_gaps,
-    native_bars_path,
+    WriteMode,
 )
 from aegis_data.store_coverage import history_column_lookup, select_history_columns
 
@@ -77,8 +71,6 @@ class PullResult:
 
     ref: ListedRef
     locator: YFinanceLocator
-    path: Path
-    bars: int
 
 
 @dataclass(frozen=True)
@@ -87,8 +79,6 @@ class PullFxResult:
 
     pair: FxPair
     locator: YFinanceLocator
-    path: Path
-    rates: int
 
 
 def pull_yfinance_native_bars(
@@ -101,48 +91,27 @@ def pull_yfinance_native_bars(
     """Fetch one listed instrument from yfinance and write native-bar Covered History."""
     ref = _single_listed_ref(request)
     fetch = fetcher or _fetch_yfinance
-    gaps = native_bar_coverage_gaps(
-        ref,
-        arrays=request.arrays,
+    store = _store(store_dir)
+    request_window = CoveredWindow(
         timeframe=request.timeframe,
         start=request.start,
         end=request.end,
+        arrays=request.arrays,
         calendar=request.calendar,
         listed_adjustment=request.listed_adjustment,
-        store_dir=store_dir,
     )
-    for gap in gaps:
-        window = FetchWindow(
+    for gap in store.coverage_gaps(ref, request_window):
+        gap_window = request_window.narrowed_to(gap)
+        fetch_window = FetchWindow(
             timeframe=request.timeframe,
             start=gap.start,
             end=gap.end,
             arrays=request.arrays,
         )
-        bars = _fetch_gap_bars(fetch, locator, window)
-        assert_admissible_native_bars(
-            ref,
-            bars,
-            arrays=window.arrays,
-            timeframe=window.timeframe,
-            start=window.start,
-            end=window.end,
-            calendar=request.calendar,
-        )
-        merge_native_bars(
-            ref,
-            request.timeframe,
-            bars,
-            listed_adjustment=request.listed_adjustment,
-            required_arrays=request.arrays,
-            store_dir=store_dir,
-        )
-    path = native_bars_path(
-        ref,
-        request.timeframe,
-        listed_adjustment=request.listed_adjustment,
-        store_dir=store_dir,
-    )
-    return PullResult(ref=ref, locator=locator, path=path, bars=covered_row_count(path))
+        bars = _fetch_gap_bars(fetch, locator, fetch_window)
+        store.assert_admissible(ref, bars, gap_window)
+        store.write(ref, bars, gap_window, mode=WriteMode.MERGE)
+    return PullResult(ref=ref, locator=locator)
 
 
 def pull_yfinance_fx_history(
@@ -158,28 +127,26 @@ def pull_yfinance_fx_history(
 ) -> PullFxResult:
     """Fetch one FX History series from yfinance and write Covered History."""
     fetch = fetcher or _fetch_yfinance
-    gaps = fx_history_coverage_gaps(
-        pair,
+    store = _store(store_dir)
+    request_window = CoveredWindow(
         timeframe=timeframe,
         start=start,
         end=end,
+        arrays=("rate",),
         calendar=calendar,
-        store_dir=store_dir,
     )
-    for gap in gaps:
-        window = FetchWindow(timeframe=timeframe, start=gap.start, end=gap.end, arrays=("Close",))
-        rates = _fetch_fx_gap_rates(fetch, locator, window)
-        assert_admissible_fx_history(
-            pair,
-            rates,
-            timeframe=window.timeframe,
-            start=window.start,
-            end=window.end,
-            calendar=calendar,
+    for gap in store.coverage_gaps(pair, request_window):
+        gap_window = request_window.narrowed_to(gap)
+        fetch_window = FetchWindow(
+            timeframe=timeframe,
+            start=gap.start,
+            end=gap.end,
+            arrays=("Close",),
         )
-        merge_fx_history(pair, timeframe, rates, store_dir=store_dir)
-    path = fx_history_path(pair, timeframe, store_dir=store_dir)
-    return PullFxResult(pair=pair, locator=locator, path=path, rates=covered_row_count(path))
+        rates = _fetch_fx_gap_rates(fetch, locator, fetch_window)
+        store.assert_admissible(pair, rates, gap_window)
+        store.write(pair, rates, gap_window, mode=WriteMode.MERGE)
+    return PullFxResult(pair=pair, locator=locator)
 
 
 def _fetch_gap_bars(
@@ -196,13 +163,17 @@ def _fetch_fx_gap_rates(
     fetch: YFinanceFetcher,
     locator: YFinanceLocator,
     window: FetchWindow,
-) -> pd.Series:
+) -> pd.DataFrame:
     raw = fetch(locator, window)
     normalized = _normalize_yfinance_bars(raw)
     columns = history_column_lookup(normalized)
     if "close" not in columns:
         raise ValueError("yfinance FX History missing Close")
-    return normalized[columns["close"]].rename("rate")
+    return normalized[columns["close"]].rename("rate").to_frame()
+
+
+def _store(store_dir: Path | None) -> HistoricalStore:
+    return HistoricalStore(store_dir) if store_dir is not None else HistoricalStore()
 
 
 def _single_listed_ref(request: NativeBarsRequest) -> ListedRef:

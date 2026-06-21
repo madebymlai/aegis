@@ -16,14 +16,12 @@ from aegis_data.continuous import apply_adjustment_factors
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
 from aegis_data.raw_leg_cache import raw_leg_ports
 from aegis_data.store import (
+    CoveredWindow,
     CoverageGap,
+    HistoricalStore,
     NativeBarsRequest,
     RawFuturesLeg,
-    assert_admissible_native_bars,
-    covered_row_count,
-    native_bar_coverage_gaps,
-    native_bars_path,
-    replace_native_bars,
+    WriteMode,
 )
 
 # Continuous-futures adjustment vocabulary, named to match NautilusTrader's backward
@@ -41,8 +39,6 @@ class DatabentoPullResult:
     """Continuous Futures History admitted by a Databento Pull."""
 
     ref: FuturesRef
-    path: Path
-    bars: int
     raw_legs: tuple[RawFuturesLeg, ...]
 
 
@@ -66,8 +62,10 @@ def pull_databento_futures_bars(
     request = _with_venue_calendar(request, ref)
     raw_fetch = fetcher or databento_port_fetcher(ref.dataset, client=client)
     list_contracts = contract_calendar or databento_contract_calendar(ref.dataset, client=client)
+    store = _store(store_dir)
+    window = _covered_window(request)
     raw_legs: tuple[RawFuturesLeg, ...] = ()
-    if _continuous_gaps(ref, request, store_dir=store_dir):
+    if _continuous_gaps(ref, window, store=store):
         panel, raw_legs = _derive_continuous_history(
             ref,
             request,
@@ -76,24 +74,9 @@ def pull_databento_futures_bars(
             store_dir=store_dir,
             bar_cadence=_request_bar_cadence(request),
         )
-        assert_admissible_native_bars(
-            ref,
-            panel,
-            arrays=request.arrays,
-            timeframe=request.timeframe,
-            start=request.start,
-            end=request.end,
-            calendar=request.calendar,
-        )
-        replace_native_bars(
-            ref,
-            request.timeframe,
-            panel,
-            required_arrays=request.arrays,
-            store_dir=store_dir,
-        )
-    path = native_bars_path(ref, request.timeframe, store_dir=store_dir)
-    return DatabentoPullResult(ref=ref, path=path, bars=covered_row_count(path), raw_legs=raw_legs)
+        store.assert_admissible(ref, panel, window)
+        store.write(ref, panel, window, mode=WriteMode.REPLACE)
+    return DatabentoPullResult(ref=ref, raw_legs=raw_legs)
 
 
 def _derive_continuous_history(
@@ -166,19 +149,26 @@ def _unadjusted_chain(chain: ContractChain) -> pd.DataFrame:
 
 def _continuous_gaps(
     ref: FuturesRef,
-    request: NativeBarsRequest,
+    window: CoveredWindow,
     *,
-    store_dir: Path | None,
+    store: HistoricalStore,
 ) -> tuple[CoverageGap, ...]:
-    return native_bar_coverage_gaps(
-        ref,
-        arrays=request.arrays,
+    return store.coverage_gaps(ref, window)
+
+
+def _covered_window(request: NativeBarsRequest) -> CoveredWindow:
+    return CoveredWindow(
         timeframe=request.timeframe,
         start=request.start,
         end=request.end,
+        arrays=request.arrays,
         calendar=request.calendar,
-        store_dir=store_dir,
+        listed_adjustment=request.listed_adjustment,
     )
+
+
+def _store(store_dir: Path | None) -> HistoricalStore:
+    return HistoricalStore(store_dir) if store_dir is not None else HistoricalStore()
 
 
 def _raw_required_arrays(ref: FuturesRef, request: NativeBarsRequest) -> tuple[str, ...]:

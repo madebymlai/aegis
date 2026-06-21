@@ -6,7 +6,7 @@ from typing import ClassVar
 import pandas as pd
 import pytest
 from aegis_data.calendars import TradingCalendar
-from aegis_data.store import NativeBarsRequest, write_native_bars
+from aegis_data.store import CoveredWindow, HistoricalStore, NativeBarsRequest, WriteMode
 from aegis_data.yfinance import FetchWindow, YFinanceLocator, pull_yfinance_native_bars
 from aegis_runtime import FuturesRef, ListedRef
 from vectorbtpro import vbt
@@ -49,6 +49,33 @@ _MIXED_DATASET_VALUES = {
 }
 
 
+def _store(store_dir: Path | None) -> HistoricalStore:
+    return HistoricalStore(store_dir) if store_dir is not None else HistoricalStore()
+
+
+def _write_store_bars(
+    ref,
+    bars: pd.DataFrame,
+    *,
+    store_dir: Path | None,
+    arrays: tuple[str, ...] = ("Close",),
+    timeframe: str = "1D",
+) -> None:
+    end = bars.index.max() + pd.Timedelta(days=1)
+    _store(store_dir).write(
+        ref,
+        bars,
+        CoveredWindow(
+            timeframe=timeframe,
+            start=bars.index.min(),
+            end=end,
+            arrays=arrays,
+            calendar=TradingCalendar.XNYS,
+        ),
+        mode=WriteMode.OVERWRITE,
+    )
+
+
 class _RecordingMixedDatasetPull:
     def __init__(self) -> None:
         self.requests: list[NativeBarsRequest] = []
@@ -62,17 +89,15 @@ class _RecordingMixedDatasetPull:
 def _write_mixed_dataset_bars(
     request: NativeBarsRequest,
     *,
-    store_dir: object,
+    store_dir: Path | None,
 ) -> None:
     for ref in request.refs:
-        write_native_bars(
+        _write_store_bars(
             ref,
-            "1D",
             pd.DataFrame(
                 {"Close": _MIXED_DATASET_VALUES[ref]},
                 index=_MIXED_DATASET_INDEX,
             ),
-            required_arrays=("Close",),
             store_dir=store_dir,
         )
 
@@ -175,14 +200,13 @@ def test_store_adapter_pulls_missing_yfinance_gap_then_reads_by_figi(
 ) -> None:
     monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path))
     ref = ListedRef("BBG000B9XRY4")
-    write_native_bars(
+    _write_store_bars(
         ref,
-        "1D",
         pd.DataFrame(
             {"Open": [10.0], "High": [10.0], "Low": [10.0], "Close": [10.0], "Volume": [1000]},
             index=pd.DatetimeIndex(["2024-01-02"]),
         ),
-        required_arrays=("Close",),
+        store_dir=None,
     )
     requests: list[tuple[str, str, str]] = []
 
@@ -349,14 +373,12 @@ def test_store_adapter_reads_per_symbol_dataset_for_futures_request(
 
     def pull_futures(request: NativeBarsRequest, *, store_dir=None) -> object:
         requests.append(request)
-        write_native_bars(
+        _write_store_bars(
             ref,
-            "1D",
             pd.DataFrame(
                 {"Close": [5010.0, 5020.0, 5030.0]},
                 index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
             ),
-            required_arrays=("Close",),
             store_dir=store_dir,
         )
         return object()
@@ -461,11 +483,9 @@ def test_store_adapter_materializes_a_pnl_series_for_a_dual_adjustment_future(
     def pull_futures(request: NativeBarsRequest, *, store_dir=None) -> object:
         for ref in request.refs:
             close = [1.0, 2.0, 3.0] if ref.adjustment == "backward_ratio" else [10.0, 20.0, 30.0]
-            write_native_bars(
+            _write_store_bars(
                 ref,
-                "1D",
                 pd.DataFrame({"Close": close}, index=index),
-                required_arrays=("Close",),
                 store_dir=store_dir,
             )
         return object()
@@ -504,14 +524,12 @@ def test_store_adapter_has_no_pnl_series_without_pnl_adjustment(
 
     def pull_futures(request: NativeBarsRequest, *, store_dir=None) -> object:
         for ref in request.refs:
-            write_native_bars(
+            _write_store_bars(
                 ref,
-                "1D",
                 pd.DataFrame(
                     {"Close": [1.0, 2.0, 3.0]},
                     index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
                 ),
-                required_arrays=("Close",),
                 store_dir=store_dir,
             )
         return object()

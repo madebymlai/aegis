@@ -12,12 +12,10 @@ import pandas as pd
 from aegis_data.calendars import TradingCalendar
 from aegis_data.chain import ContractFetcher, VolumeProbe
 from aegis_data.store import (
+    CoveredWindow,
+    HistoricalStore,
     NATIVE_OHLCV_ARRAYS,
     RawFuturesLeg,
-    merge_raw_futures_leg,
-    read_raw_futures_leg_coverage,
-    read_raw_futures_leg_or_empty,
-    record_raw_futures_leg_coverage,
 )
 from aegis_data.store_coverage import CoverageGap, HistoryWindow, StoreCoverage
 
@@ -72,7 +70,7 @@ class RawLegCache:
         self.timeframe = timeframe
         self._fetch = fetch
         self.arrays = required_arrays
-        self.store_dir = store_dir
+        self.store = HistoricalStore(store_dir) if store_dir is not None else HistoricalStore()
         self.calendar = calendar
 
     def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
@@ -81,54 +79,31 @@ class RawLegCache:
         window = _inclusive_contract_window(
             self.timeframe,
             self.calendar,
+            self.arrays,
             start,
             end,
         )
         observed = self._coverage_observed(leg, window)
         coverage = StoreCoverage.for_native_bars(leg, arrays=self.arrays)
-        for gap in coverage.gaps(window, observed):
-            self._fetch_gap(leg, gap)
-        return read_raw_futures_leg_or_empty(
-            leg,
-            arrays=self.arrays,
-            timeframe=self.timeframe,
-            start=window.start,
-            end=window.end,
-            store_dir=self.store_dir,
-        )
+        for gap in coverage.gaps(window._history_window(calendar=self.calendar), observed):
+            self._fetch_gap(leg, window.narrowed_to(gap))
+        return self.store.read_leg(leg, window)
 
-    def _fetch_gap(self, leg: RawFuturesLeg, gap: CoverageGap) -> None:
-        start = gap.start.date()
-        end = _inclusive_gap_end(gap)
-        merge_raw_futures_leg(
+    def _fetch_gap(self, leg: RawFuturesLeg, window: CoveredWindow) -> None:
+        start = pd.Timestamp(window.start).date()
+        end = _inclusive_window_end(window)
+        self.store.merge_leg(
             leg,
-            self.timeframe,
             self._fetch(leg.symbol, start, end),
-            required_arrays=self.arrays,
-            store_dir=self.store_dir,
+            window,
         )
-        record_raw_futures_leg_coverage(
-            leg,
-            self.timeframe,
-            start=gap.start,
-            end=gap.end,
-            store_dir=self.store_dir,
-        )
+        self.store.record_leg_coverage(leg, window)
 
-    def _coverage_observed(self, leg: RawFuturesLeg, window: HistoryWindow) -> pd.DataFrame:
-        observed = read_raw_futures_leg_or_empty(
-            leg,
-            arrays=self.arrays,
-            timeframe=self.timeframe,
-            start=window.start,
-            end=window.end,
-            store_dir=self.store_dir,
-        )
+    def _coverage_observed(self, leg: RawFuturesLeg, window: CoveredWindow) -> pd.DataFrame:
+        observed = self.store.read_leg(leg, window)
         markers = [
-            self._coverage_marker(window, covered)
-            for covered in read_raw_futures_leg_coverage(
-                leg, self.timeframe, store_dir=self.store_dir
-            )
+            self._coverage_marker(window._history_window(calendar=self.calendar), covered)
+            for covered in self.store.read_leg_coverage(leg, timeframe=self.timeframe)
         ]
         markers = [marker for marker in markers if not marker.empty]
         if not markers:
@@ -198,19 +173,21 @@ def raw_leg_ports(
 def _inclusive_contract_window(
     timeframe: str,
     calendar: TradingCalendar | str,
+    arrays: Sequence[str],
     start: date,
     end: date,
-) -> HistoryWindow:
-    return HistoryWindow(
+) -> CoveredWindow:
+    return CoveredWindow(
         timeframe=timeframe,
         calendar=calendar,
         start=start,
         end=pd.Timestamp(end) + pd.Timedelta(days=1),
+        arrays=arrays,
     )
 
 
-def _inclusive_gap_end(gap: CoverageGap) -> date:
-    return (gap.end - pd.Timedelta(days=1)).date()
+def _inclusive_window_end(window: CoveredWindow) -> date:
+    return (pd.Timestamp(window.end) - pd.Timedelta(days=1)).date()
 
 
 def _daily_probe_timeframe(timeframe: str) -> str:
