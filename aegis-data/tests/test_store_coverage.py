@@ -260,22 +260,26 @@ def test_intraday_native_assert_covered_accepts_xnys_standard_early_close() -> N
     StoreCoverage.for_native_bars(ref, arrays=("Close",)).assert_covered(window, observed)
 
 
-def test_fx_gaps_use_strict_rate_completeness() -> None:
+def test_fx_gaps_flag_a_boundary_gap_but_tolerate_an_interior_hole() -> None:
+    # Leading day 01-02 missing (insufficient history -> flagged); interior day 01-04 missing
+    # (carry-last quantity -> tolerated, assemble_fx_rates ffills it downstream).
     pair = FxPair("EUR", "USD")
-    window = _window(start="2024-01-02", end="2024-01-05")
+    window = _window(start="2024-01-02", end="2024-01-06")  # expected 01-02, 01-03, 01-04, 01-05
     observed = pd.DataFrame(
-        {"rate": [1.10, None, 1.12]},
-        index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
+        {"rate": [1.11, 1.13]},
+        index=pd.DatetimeIndex(["2024-01-03", "2024-01-05"]),
     )
 
     gaps = StoreCoverage.for_fx_rates(pair).gaps(window, observed)
 
     assert gaps == (
-        CoverageGap(start=pd.Timestamp("2024-01-03"), end=pd.Timestamp("2024-01-04")),
+        CoverageGap(start=pd.Timestamp("2024-01-02"), end=pd.Timestamp("2024-01-03")),
     )
 
 
-def test_fx_slice_fails_closed_on_missing_rate() -> None:
+def test_fx_slice_rejects_a_present_null_rate() -> None:
+    # A row that EXISTS with a null rate is a genuine defect (distinct from an absent day, which
+    # is tolerated for downstream ffill), so the slice still fails closed.
     pair = FxPair("EUR", "USD")
     window = _window(start="2024-01-02", end="2024-01-05")
     observed = pd.DataFrame(
@@ -283,7 +287,7 @@ def test_fx_slice_fails_closed_on_missing_rate() -> None:
         index=pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"]),
     )
 
-    with pytest.raises(StoreCoverageError, match="FX rate on 2024-01-03"):
+    with pytest.raises(StoreCoverageError, match="null values"):
         StoreCoverage.for_fx_rates(pair).slice(window, observed)
 
 
@@ -305,3 +309,21 @@ def test_fx_assert_covered_accepts_complete_provider_rates() -> None:
     )
 
     StoreCoverage.for_fx_rates(pair).assert_covered(window, observed)
+
+
+def test_fx_tolerates_an_absent_interior_rate_day() -> None:
+    # yfinance FX history (e.g. EURUSD=X) drops the odd interior weekday (the live failure was
+    # 2019-05-22). An FX rate is a carry-last quantity that assemble_fx_rates forward-fills onto
+    # the price index, so store coverage tolerates an INTERIOR hole -- mirroring futures bars --
+    # instead of failing admission/read for the whole run. Boundary gaps stay strict.
+    pair = FxPair("EUR", "USD")
+    window = _window(start="2024-01-02", end="2024-01-05")  # expected weekdays 01-02, 01-03, 01-04
+    observed = pd.DataFrame(
+        {"rate": [1.10, 1.12]},  # 2024-01-03 ABSENT (no row): an interior hole
+        index=pd.DatetimeIndex(["2024-01-02", "2024-01-04"]),
+    )
+
+    coverage = StoreCoverage.for_fx_rates(pair)
+    assert coverage.gaps(window, observed) == ()  # interior hole is not flagged
+    sliced = coverage.slice(window, observed)  # does not raise; present rows pass through to ffill
+    assert list(sliced.index) == [pd.Timestamp("2024-01-02"), pd.Timestamp("2024-01-04")]

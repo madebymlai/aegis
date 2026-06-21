@@ -135,10 +135,14 @@ class StoreCoverage:
 
     @classmethod
     def for_fx_rates(cls, pair: CoverageKey) -> StoreCoverage:
+        # An FX rate is a carry-last quantity: ``assemble_fx_rates`` forward-fills interior
+        # calendar gaps onto the price index and flags only leading gaps. yfinance routinely
+        # drops the odd interior weekday, so coverage tolerates interior holes (like futures
+        # bars) and stays strict only at the boundaries (genuinely insufficient history).
         return cls(
             key=pair,
             completeness=Completeness.for_fx_rates(),
-            tolerate_interior=False,
+            tolerate_interior=True,
         )
 
     def gaps(
