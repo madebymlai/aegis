@@ -9,7 +9,7 @@ instead of re-fetching already covered intervals.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
@@ -25,6 +25,7 @@ from aegis_data.calendars import (
     as_trading_calendar,
     venue_calendar_for_dataset,
 )
+from aegis_data.fetch_ledger import FetchedInterval, FetchLedger
 from aegis_data.store_coverage import (
     CoverageGap,
     HistoryWindow,
@@ -294,6 +295,7 @@ class HistoricalStore:
         path = self._leg_path(leg, window.timeframe)
         merged = _merge_admitted_native_bars(path, admitted) if path.exists() else admitted
         _write_admitted_native_bars(path, merged)
+        self._record_leg_fetch(leg, window)
 
     def read_leg(
         self,
@@ -309,34 +311,25 @@ class HistoricalStore:
             missing_ok=True,
         )
 
-    def record_leg_coverage(self, leg: RawFuturesLeg, window: CoveredWindow) -> None:
-        """Remember a fetched Raw Futures Leg window, even when it had no bars."""
-        coverage = _admit_raw_futures_leg_coverage(
-            pd.DataFrame({"start": [window.start], "end": [window.end]})
-        )
-        path = self._leg_coverage_path(leg, window.timeframe)
-        if path.exists():
-            coverage = _coalesce_raw_futures_leg_coverage(
-                pd.concat([_load_raw_futures_leg_coverage(path), coverage])
-            )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        coverage.to_parquet(path)
-
-    def read_leg_coverage(
+    def leg_fetch_gaps(
         self,
         leg: RawFuturesLeg,
-        *,
-        timeframe: str,
+        window: CoveredWindow,
     ) -> tuple[CoverageGap, ...]:
-        """Fetched half-open Raw Futures Leg windows for cache decisions."""
-        path = self._leg_coverage_path(leg, timeframe)
-        if not path.exists():
-            return ()
-        coverage = _load_raw_futures_leg_coverage(path)
-        return tuple(
-            CoverageGap(start=row.start, end=row.end)
-            for row in coverage.itertuples(index=False)
+        """Return unfetched Raw Futures Leg intervals for one request window."""
+        intervals = _load_raw_futures_leg_fetches_or_empty(
+            self._leg_fetch_ledger_path(leg, window.timeframe)
         )
+        ledger = FetchLedger.of(intervals)
+        return ledger.gaps(FetchedInterval(start=window.start, end=window.end))
+
+    def _record_leg_fetch(self, leg: RawFuturesLeg, window: CoveredWindow) -> None:
+        path = self._leg_fetch_ledger_path(leg, window.timeframe)
+        intervals = (
+            *_load_raw_futures_leg_fetches_or_empty(path),
+            FetchedInterval(start=window.start, end=window.end),
+        )
+        _write_raw_futures_leg_fetches(path, intervals)
 
     def _path(
         self,
@@ -357,7 +350,7 @@ class HistoricalStore:
             / f"{_safe_key(timeframe)}.parquet"
         )
 
-    def _leg_coverage_path(self, leg: RawFuturesLeg, timeframe: str) -> Path:
+    def _leg_fetch_ledger_path(self, leg: RawFuturesLeg, timeframe: str) -> Path:
         return (
             raw_futures_dir(leg.dataset, store_dir=self.root)
             / _safe_key(leg.symbol)
@@ -464,8 +457,23 @@ def _load_admitted_native_bars_or_empty(path: Path, arrays: tuple[str, ...]) -> 
     return pd.DataFrame(columns=list(arrays), index=pd.DatetimeIndex([]))
 
 
-def _load_raw_futures_leg_coverage(path: Path) -> pd.DataFrame:
-    return _admit_raw_futures_leg_coverage(pd.read_parquet(path))
+def _load_raw_futures_leg_fetches(path: Path) -> tuple[FetchedInterval, ...]:
+    return _admit_raw_futures_leg_fetches(pd.read_parquet(path))
+
+
+def _load_raw_futures_leg_fetches_or_empty(path: Path) -> tuple[FetchedInterval, ...]:
+    if not path.exists():
+        return ()
+    return _load_raw_futures_leg_fetches(path)
+
+
+def _write_raw_futures_leg_fetches(
+    path: Path,
+    intervals: Iterable[FetchedInterval],
+) -> None:
+    frame = _raw_futures_leg_fetches_frame(FetchLedger.of(intervals).intervals)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(path)
 
 
 def _write_admitted_native_bars(path: Path, admitted: pd.DataFrame) -> Path:
@@ -551,32 +559,31 @@ def _assert_admitted_native_bar_arrays(
         raise StoreAdmissionError(f"native bars missing required arrays {list(missing_arrays)}")
 
 
-def _admit_raw_futures_leg_coverage(frame: pd.DataFrame) -> pd.DataFrame:
+def _admit_raw_futures_leg_fetches(frame: pd.DataFrame) -> tuple[FetchedInterval, ...]:
     missing = [column for column in ("start", "end") if column not in frame.columns]
     if missing:
-        raise StoreAdmissionError(f"Raw Futures Leg coverage missing columns {missing}")
-    coverage = pd.DataFrame(
+        raise StoreAdmissionError(f"Raw Futures Leg fetch ledger missing columns {missing}")
+    try:
+        intervals = (
+            FetchedInterval(start=start, end=end)
+            for start, end in zip(frame["start"], frame["end"], strict=True)
+        )
+        return FetchLedger.of(intervals).intervals
+    except ValueError as error:
+        raise StoreAdmissionError("Raw Futures Leg fetch ledger end must be after start") from error
+
+
+def _raw_futures_leg_fetches_frame(
+    intervals: Iterable[FetchedInterval],
+) -> pd.DataFrame:
+    values = tuple(intervals)
+    return pd.DataFrame(
         {
-            "start": [pd.Timestamp(value).tz_localize(None) for value in frame["start"]],
-            "end": [pd.Timestamp(value).tz_localize(None) for value in frame["end"]],
-        }
+            "start": [interval.start for interval in values],
+            "end": [interval.end for interval in values],
+        },
+        columns=["start", "end"],
     )
-    if (coverage["end"] <= coverage["start"]).any():
-        raise StoreAdmissionError("Raw Futures Leg coverage end must be after start")
-    return _coalesce_raw_futures_leg_coverage(coverage)
-
-
-def _coalesce_raw_futures_leg_coverage(frame: pd.DataFrame) -> pd.DataFrame:
-    ordered = frame.sort_values(["start", "end"])
-    intervals: list[dict[str, pd.Timestamp]] = []
-    for row in ordered.itertuples(index=False):
-        start = pd.Timestamp(row.start)
-        end = pd.Timestamp(row.end)
-        if intervals and start <= intervals[-1]["end"]:
-            intervals[-1]["end"] = max(intervals[-1]["end"], end)
-            continue
-        intervals.append({"start": start, "end": end})
-    return pd.DataFrame(intervals, columns=["start", "end"])
 
 
 def _admit_fx_history(rates: pd.Series) -> pd.DataFrame:

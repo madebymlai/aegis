@@ -32,9 +32,9 @@ adjustment as one value. Covered reads and writes use one `pd.DataFrame` shape;
 FX history is a `rate` column at the storage boundary.
 
 Raw Futures Legs remain a sibling source-material contract on the same object:
-`merge_leg`, cold-tolerant `read_leg`, `record_leg_coverage`, and
-`read_leg_coverage`. They do not expose replace or overwrite modes because raw
-legs are immutable provider source material.
+`merge_leg`, cold-tolerant `read_leg`, and, as amended by ADR-0005,
+`leg_fetch_gaps`. They do not expose replace or overwrite modes because raw legs
+are immutable provider source material.
 
 The module keeps `data_dir()` as the OS-root resolver and `raw_futures_dir()` as
 a display helper for the CLI. The public parquet path helpers, covered row

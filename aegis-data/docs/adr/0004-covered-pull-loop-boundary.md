@@ -47,10 +47,9 @@ Putting it behind `pull` would add a mode flag and a one-caller branch that hide
 important rebuild rule.
 
 Raw Futures Leg caching is also excluded. It is provider source material, not
-Covered History under an `InstrumentRef`; coverage is derived from observed raw-leg
-frames plus explicit coverage markers. Its contract is `merge_leg` and
-`record_leg_coverage`, not covered `write`. Any shared raw-leg loop belongs to the
-separate Candidate #3 raw-leg-cache discussion.
+Covered History under an `InstrumentRef`; fetch gaps are derived from the Fetch
+Ledger introduced by ADR-0005. Its contract is `merge_leg`, `read_leg`, and
+`leg_fetch_gaps`, not covered `write`.
 
 ## Consequences
 

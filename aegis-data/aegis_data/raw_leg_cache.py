@@ -17,7 +17,6 @@ from aegis_data.store import (
     NATIVE_OHLCV_ARRAYS,
     RawFuturesLeg,
 )
-from aegis_data.store_coverage import CoverageGap, HistoryWindow, StoreCoverage
 
 _DAILY_PROBE_TIMEFRAME = "1D"
 
@@ -83,9 +82,7 @@ class RawLegCache:
             start,
             end,
         )
-        observed = self._coverage_observed(leg, window)
-        coverage = StoreCoverage.for_native_bars(leg, arrays=self.arrays)
-        for gap in coverage.gaps(window._history_window(calendar=self.calendar), observed):
+        for gap in self.store.leg_fetch_gaps(leg, window):
             self._fetch_gap(leg, window.narrowed_to(gap))
         return self.store.read_leg(leg, window)
 
@@ -97,41 +94,10 @@ class RawLegCache:
             self._fetch(leg.symbol, start, end),
             window,
         )
-        self.store.record_leg_coverage(leg, window)
-
-    def _coverage_observed(self, leg: RawFuturesLeg, window: CoveredWindow) -> pd.DataFrame:
-        observed = self.store.read_leg(leg, window)
-        markers = [
-            self._coverage_marker(window._history_window(calendar=self.calendar), covered)
-            for covered in self.store.read_leg_coverage(leg, timeframe=self.timeframe)
-        ]
-        markers = [marker for marker in markers if not marker.empty]
-        if not markers:
-            return observed
-        if observed.empty:
-            return pd.concat(markers).sort_index()
-        return pd.concat([observed, *markers]).sort_index()
 
     def contract_fetcher(self) -> ContractFetcher:
         """Return the cache bound to the existing chain fetcher protocol."""
         return self.fetch
-
-    def _coverage_marker(self, window: HistoryWindow, covered: CoverageGap) -> pd.DataFrame:
-        start = max(window.start, covered.start)
-        end = min(window.end, covered.end)
-        if end <= start:
-            return pd.DataFrame(columns=list(self.arrays), index=pd.DatetimeIndex([]))
-        marker_window = HistoryWindow(
-            timeframe=self.timeframe,
-            calendar=self.calendar,
-            start=start,
-            end=end,
-        )
-        index = marker_window.expected_index()
-        return pd.DataFrame(
-            {array: [1.0] * len(index) for array in self.arrays},
-            index=index,
-        )
 
 
 def raw_leg_ports(

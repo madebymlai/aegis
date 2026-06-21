@@ -372,7 +372,25 @@ def test_historical_store_raw_leg_read_is_cold_tolerant(tmp_path) -> None:
     )
 
 
-def test_historical_store_raw_leg_merge_reads_slice_and_records_coverage(tmp_path) -> None:
+def test_historical_store_raw_leg_fetch_gaps_on_cold_leg_returns_whole_window(tmp_path) -> None:
+    leg = RawFuturesLeg("GLBX.MDP3", "ESH4")
+    store = HistoricalStore(tmp_path)
+    window = CoveredWindow(
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-06",
+        arrays=("Close", "Volume"),
+        calendar=TradingCalendar.CONTINUOUS,
+    )
+
+    gaps = store.leg_fetch_gaps(leg, window)
+
+    assert gaps == (
+        CoverageGap(start=pd.Timestamp("2024-01-02"), end=pd.Timestamp("2024-01-06")),
+    )
+
+
+def test_historical_store_raw_leg_merge_reads_slice_and_records_fetch(tmp_path) -> None:
     leg = RawFuturesLeg("GLBX.MDP3", "ESH4")
     store = HistoricalStore(tmp_path)
     window = CoveredWindow(
@@ -391,7 +409,6 @@ def test_historical_store_raw_leg_merge_reads_slice_and_records_coverage(tmp_pat
     )
 
     store.merge_leg(leg, bars, window)
-    store.record_leg_coverage(leg, window)
     frame = store.read_leg(
         leg,
         CoveredWindow(
@@ -410,8 +427,36 @@ def test_historical_store_raw_leg_merge_reads_slice_and_records_coverage(tmp_pat
             index=pd.DatetimeIndex(["2024-01-03", "2024-01-04"]),
         ),
     )
-    assert store.read_leg_coverage(leg, timeframe="1D") == (
-        CoverageGap(start=pd.Timestamp("2024-01-02"), end=pd.Timestamp("2024-01-06")),
+    assert store.leg_fetch_gaps(leg, window) == ()
+
+
+def test_historical_store_raw_leg_fetch_gaps_report_uncovered_edge(tmp_path) -> None:
+    leg = RawFuturesLeg("GLBX.MDP3", "ESH4")
+    store = HistoricalStore(tmp_path)
+    covered = CoveredWindow(
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-04",
+        arrays=("Close", "Volume"),
+        calendar=TradingCalendar.CONTINUOUS,
+    )
+    requested = CoveredWindow(
+        timeframe="1D",
+        start="2024-01-02",
+        end="2024-01-06",
+        arrays=("Close", "Volume"),
+        calendar=TradingCalendar.CONTINUOUS,
+    )
+    bars = pd.DataFrame(
+        {"close": [100.5, 101.5], "volume": [1000, 1100]},
+        index=pd.DatetimeIndex(["2024-01-02", "2024-01-03"]),
+    )
+
+    store.merge_leg(leg, bars, covered)
+    gaps = store.leg_fetch_gaps(leg, requested)
+
+    assert gaps == (
+        CoverageGap(start=pd.Timestamp("2024-01-04"), end=pd.Timestamp("2024-01-06")),
     )
 
 

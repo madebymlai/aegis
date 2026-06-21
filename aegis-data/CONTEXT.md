@@ -94,6 +94,14 @@ The native market bars for one dated futures contract supplied by a
 futures history and are retained independently of any roll rule or adjustment.
 _Avoid_: continuous future, FuturesRef, adjusted series, generic contract
 
+**Fetch Ledger**:
+The record of half-open time windows over which a **Raw Futures Leg** has been
+requested from a **Historical Provider**, independent of how many bars came
+back. A fetched window — including a legitimately empty one — counts as covered,
+so a thin contract is never re-requested forever; it is fetch bookkeeping, not
+**Covered History**.
+_Avoid_: bar coverage, Covered History, observed-bar completeness, gap marker, fabricated coverage
+
 **Continuous Futures History**:
 Covered history for a **FuturesRef**, derived from **Raw Futures Legs** by its
 roll rule and adjustment method. It is reusable derived history, not the provider
