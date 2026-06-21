@@ -33,11 +33,19 @@ class _Px:
         return self._v
 
 
+class _BarType:
+    """Minimal stand-in for the pyo3 Bar's bar_type, carrying the publisher venue."""
+
+    def __init__(self, venue: str) -> None:
+        self.instrument_id = type("_IID", (), {"venue": type("_V", (), {"__str__": lambda s: venue})()})()
+
+
 class _Bar:
-    def __init__(self, ts: int, c: float) -> None:
+    def __init__(self, ts: int, c: float, *, venue: str = "GLBX") -> None:
         self.ts_event = ts
         self.open = self.high = self.low = self.close = _Px(c)
         self.volume = _Px(1.0)
+        self.bar_type = _BarType(venue)
 
 
 class _FakeClient:

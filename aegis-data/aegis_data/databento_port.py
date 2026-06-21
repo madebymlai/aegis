@@ -42,6 +42,13 @@ _UNLISTED_STEP = timedelta(days=180)
 # precision.  A bounded lookback straddles the still-active days without scaling with the window.
 _DEFS_LOOKBACK = timedelta(days=14)
 
+# Databento publishes a separate off-market ohlcv-1d stream for ICE venues (venue "XOFF", the
+# ISO 10383 MIC for off-exchange trades): block/negotiated prints with no intraday range, so their
+# Low/Close arrive as 0.  On a day they share with the regular session, that zero would clobber the
+# real bar and corrupt the back-adjusted series, so off-market bars are dropped (aegis-rd-5x7).
+# Non-ICE datasets (e.g. CME GLBX) publish no XOFF stream, so the filter is a no-op there.
+_OFF_MARKET_VENUE = "XOFF"
+
 
 def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> ContractCalendar:
     """List a root's outright dated futures (``raw_symbol`` + expiration) from Databento
@@ -202,7 +209,7 @@ def databento_port_fetcher(
         bars = asyncio.run(
             _pull(api, dataset, instrument_id, defs_start_ns, defs_end_ns, bars_start_ns, bars_end_ns)
         )
-        return bars_to_ohlcv(bars)
+        return bars_to_ohlcv(_on_market_bars(bars))
 
     # Transient 5xx/timeout responses are absorbed with backoff so one flaky leg does not
     # abort the whole pull; the leg cache means a retried success is still fetched only once.
@@ -227,6 +234,16 @@ async def _pull(
     )
 
 
+def _on_market_bars(bars: list[Any]) -> list[Any]:
+    """Keep only regular-session bars, dropping off-market (``XOFF``) block-trade bars.
+
+    The publisher venue rides on each bar's ``bar_type.instrument_id.venue``.  ICE off-market
+    block prints carry zeroed Low/Close that would corrupt the back-adjusted continuous series
+    (aegis-rd-5x7); non-ICE datasets publish no ``XOFF`` stream, so this is a no-op for them.
+    """
+    return [bar for bar in bars if str(bar.bar_type.instrument_id.venue) != _OFF_MARKET_VENUE]
+
+
 def bars_to_ohlcv(bars: list[Any]) -> pd.DataFrame:
     """Convert Nautilus pyo3 ``Bar``s to an OHLCV DataFrame on a naive date index."""
     index: list[pd.Timestamp] = []
@@ -239,7 +256,32 @@ def bars_to_ohlcv(bars: list[Any]) -> pd.DataFrame:
         rows["Close"].append(float(bar.close.as_double()))
         rows["Volume"].append(float(bar.volume.as_double()))
     frame = pd.DataFrame(rows, index=pd.DatetimeIndex(index))
-    return frame[~frame.index.duplicated(keep="last")].sort_index()
+    frame = frame[~frame.index.duplicated(keep="last")].sort_index()
+    return _repair_nonpositive_prices(frame)
+
+
+def _repair_nonpositive_prices(frame: pd.DataFrame) -> pd.DataFrame:
+    """Repair on-market bars whose Low (or, rarely, Close) field dropped to a non-positive value
+    on a day that genuinely traded (real Open/High + volume).  Dropping the off-market (``XOFF``)
+    publisher removes the systematic block-trade zeros, but the on-market (``IFUS``) stream itself
+    sporadically emits a zeroed Low/Close (aegis-rd-5x7); a non-positive futures price is not a
+    valid observation and would corrupt back-adjustment.  Reconstruct each corrupt field from the
+    bar's surviving positive prices so the bar stays internally consistent (``Low <= Open, Close
+    <= High``) — dropping the day instead would punch a calendar gap on a real trading day.  These
+    are field glitches, not market moves, so well-formed bars pass through untouched; Volume is
+    never altered.
+    """
+    if frame.empty:
+        return frame
+    open_, high, low, close = (frame["Open"], frame["High"], frame["Low"], frame["Close"])
+    # Endpoints first: a missing settle falls back to the Open (its only surviving endpoint).
+    close = close.where(close > 0, open_)
+    open_ = open_.where(open_ > 0, close)
+    envelope = pd.concat([open_, close], axis=1)
+    # Then the extrema, clamped to the endpoints they must bound.
+    high = high.where(high > 0, envelope.max(axis=1))
+    low = low.where(low > 0, envelope.min(axis=1))
+    return frame.assign(Open=open_, High=high, Low=low, Close=close)
 
 
 def _nautilus_databento_client() -> Any:

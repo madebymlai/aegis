@@ -250,12 +250,34 @@ class _Px:
         return self._value
 
 
+class _Venue:
+    def __init__(self, value: str) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return self._value
+
+
+class _InstrumentId:
+    def __init__(self, venue: str) -> None:
+        self.venue = _Venue(venue)
+
+
+class _BarType:
+    def __init__(self, venue: str) -> None:
+        self.instrument_id = _InstrumentId(venue)
+
+
 class _Bar:
-    def __init__(self, ts: int, o: float, h: float, low: float, c: float, v: float) -> None:
+    def __init__(
+        self, ts: int, o: float, h: float, low: float, c: float, v: float, *, venue: str = "GLBX"
+    ) -> None:
         self.ts_event = ts
         self.open, self.high, self.low, self.close, self.volume = (
             _Px(o), _Px(h), _Px(low), _Px(c), _Px(v),
         )
+        # Mirrors the real pyo3 Bar: the publisher venue rides on bar_type.instrument_id.venue.
+        self.bar_type = _BarType(venue)
 
 
 class _FakeClient:
@@ -363,6 +385,72 @@ def test_bars_to_ohlcv_normalizes_pyo3_bars() -> None:
     assert df.index.tz is None
     assert df.loc[pd.Timestamp("2024-09-13"), "Close"] == 5687.5
     assert df.loc[pd.Timestamp("2024-09-13"), "Volume"] == 291354.0
+
+
+def test_bars_to_ohlcv_repairs_a_dropped_low_field_keeping_the_real_close() -> None:
+    # ICE's on-market (IFUS) daily bars sporadically drop the Low to 0 on a day that genuinely
+    # traded (real Open/High/Close + heavy volume) — a feed glitch the off-market (XOFF) filter
+    # cannot catch because it IS the on-market bar.  A non-positive futures price is not a valid
+    # observation: repair the Low into the bar's own envelope (<= Open, Close) so no zero reaches
+    # back-adjustment, while preserving the real settle (aegis-rd-5x7).
+    bars = [_Bar(pd.Timestamp("2022-02-25").value, 18.32, 18.38, 0.0, 18.03, 14401)]
+
+    df = bars_to_ohlcv(bars)
+
+    row = df.loc[pd.Timestamp("2022-02-25")]
+    assert row["Close"] == 18.03  # real settle preserved
+    assert row["Low"] == 18.03  # repaired to the low endpoint min(Open, Close)
+    assert row["Open"] == 18.32 and row["High"] == 18.38
+
+
+def test_bars_to_ohlcv_repairs_a_dropped_close_field_from_the_open() -> None:
+    # On rare days the on-market settle itself drops to 0 (Low=Close=0) though the bar traded
+    # (real Open/High + heavy volume).  With no in-bar settle, fall back to the Open endpoint so a
+    # positive, in-range Close reaches back-adjustment instead of a divide-by-zero seam (aegis-rd-5x7).
+    bars = [_Bar(pd.Timestamp("2022-05-18").value, 19.90, 20.13, 0.0, 0.0, 57882)]
+
+    df = bars_to_ohlcv(bars)
+
+    row = df.loc[pd.Timestamp("2022-05-18")]
+    assert row["Close"] == 19.90  # settle repaired from the Open endpoint
+    assert row["Low"] == 19.90  # low repaired into the envelope
+    assert row["High"] == 20.13 and row["Open"] == 19.90
+    assert (row[["Open", "High", "Low", "Close"]] > 0).all()
+
+
+def test_fetcher_keeps_on_market_bar_and_drops_off_market_block_trade() -> None:
+    # ICE publishes a separate off-market (XOFF) ohlcv-1d stream alongside the regular session
+    # (IFUS): its block prints have no intraday range, so Low/Close arrive as 0.  The fetcher must
+    # keep only the on-market bar per day, or those zeros land on a roll seam and corrupt the
+    # back-adjusted continuous series (aegis-rd-5x7).  The off-market bar is returned LAST, so the
+    # bug (naive keep-last dedup) would surface its zeros.
+    day = pd.Timestamp("2019-08-29").value
+    on_market = _Bar(day, 13.8, 13.8, 13.8, 13.8, 13, venue="IFUS")
+    off_market = _Bar(day, 13.8, 13.8, 0.0, 0.0, 54, venue="XOFF")
+    client = _FakeClient([on_market, off_market])
+    fetch = databento_port_fetcher("IFUS.IMPACT", client=client)
+
+    df = fetch("SB  FMH0022!", date(2019, 8, 29), date(2019, 8, 29))
+
+    assert df.loc[pd.Timestamp("2019-08-29"), "Low"] == 13.8    # on-market kept
+    assert df.loc[pd.Timestamp("2019-08-29"), "Close"] == 13.8  # off-market zeros discarded
+
+
+def test_fetcher_passes_non_ice_bars_through_unfiltered() -> None:
+    # CME (GLBX) has no off-market (XOFF) publisher, so the off-market filter must be a no-op
+    # there — every regular-session bar survives (guards the CME roots from the ICE-specific fix).
+    bars = [
+        _Bar(pd.Timestamp("2024-06-03").value, 1.0, 2.0, 0.5, 1.5, 100),  # default venue GLBX
+        _Bar(pd.Timestamp("2024-06-04").value, 1.6, 2.1, 1.4, 1.9, 120),
+    ]
+    client = _FakeClient(bars)
+    fetch = databento_port_fetcher("GLBX.MDP3", client=client)
+
+    df = fetch("ESU4", date(2024, 6, 3), date(2024, 6, 4))
+
+    assert len(df) == 2
+    assert df.loc[pd.Timestamp("2024-06-03"), "Low"] == 0.5
+    assert df.loc[pd.Timestamp("2024-06-04"), "Close"] == 1.9
 
 
 def test_fetcher_loads_definitions_before_bars() -> None:
