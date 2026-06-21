@@ -19,7 +19,43 @@ from datetime import date
 
 import pandas as pd
 
-from aegis_data.roll import DatedContract, RollAgreement, assert_roll_agreement
+from aegis_data.roll import (
+    DatedContract,
+    FuturesChainSchedule,
+    RollAgreement,
+    assert_roll_agreement,
+    roll_schedule,
+)
+
+
+def liquid_roll_schedule(
+    candidates: Sequence[DatedContract],
+    volume_by_symbol: Mapping[str, pd.Series],
+    start: date,
+    end: date,
+    *,
+    roll_lead_days: int,
+) -> FuturesChainSchedule:
+    """Calendar roll schedule moved earlier to the Liquidity-Leader migration.
+
+    The calendar rule (:func:`roll.roll_schedule`) rolls a fixed lead before last-trade,
+    but for thin roots (palladium, platinum, the ICE softs) liquidity migrates to the next
+    contract weeks earlier; the front then stops printing while still 'front' by the
+    calendar, and the stitch drops the in-between days the already-liquid next contract
+    traded.  This caps each seam's roll at the day the next contract becomes the
+    trailing-smoothed Liquidity Leader — **never later** than the calendar roll, so a root
+    whose liquidity tracks expiry is unchanged.  Leadership is judged on trailing volume
+    only, so the capped roll dates are identical whether computed acausally (research, full
+    window) or causally (live, volume-so-far) — the backtest/live roll stays in parity.
+    """
+    eligible = liquid_cycle(candidates, volume_by_symbol, roll_lead_days=roll_lead_days)
+    calendar = roll_schedule(eligible, start, end, roll_lead_days=roll_lead_days)
+    crossovers = _leadership_crossovers(calendar.symbols, volume_by_symbol, roll_lead_days)
+    return FuturesChainSchedule(
+        symbols=calendar.symbols,
+        expiries=calendar.expiries,
+        roll_dates=_cap_rolls(calendar.roll_dates, crossovers),
+    )
 
 
 def liquid_cycle(
@@ -96,6 +132,74 @@ def assert_liquid_cycle_agreement(
     )
 
 
+def _leadership_crossovers(
+    symbols: Sequence[str],
+    volume_by_symbol: Mapping[str, pd.Series],
+    roll_lead_days: int,
+) -> tuple[date | None, ...]:
+    """Per-seam date the next contract first becomes the (monotone) Liquidity Leader.
+
+    One entry per seam (``len(symbols) - 1``).  The daily leader is the highest
+    trailing-smoothed volume among the contracts printing that day; ``cummax`` over the
+    expiry order makes leadership monotone front→back (no flip back to an earlier
+    contract).  ``None`` for a seam whose next contract never leads within the supplied
+    volume — that seam keeps its calendar roll.
+    """
+    if len(symbols) < 2:
+        return ()
+    live = {
+        symbol: volume_by_symbol[symbol]
+        for symbol in symbols
+        if symbol in volume_by_symbol and len(volume_by_symbol[symbol]) > 0
+    }
+    if not live:
+        return tuple(None for _ in symbols[:-1])
+    # Judge leadership on a continuous daily grid, carrying each contract's smoothed volume
+    # across short non-print gaps (``ffill`` bounded to the smoothing window): a single
+    # missed session keeps the leader leading, but once a contract has not printed for the
+    # whole window its carried value lapses to NaN — it is no longer actively trading and
+    # cannot lead, so liquidity hands over.  (The Liquid-Cycle inclusion smoothing, judged on
+    # each contract's own sparse index, is left untouched.)
+    grid = pd.bdate_range(min(v.index.min() for v in live.values()),
+                          max(v.index.max() for v in live.values()))
+    window = max(1, roll_lead_days)
+    columns: dict[str, pd.Series] = {
+        symbol: _smoothed(live[symbol], roll_lead_days).reindex(grid).ffill(limit=window)
+        for symbol in symbols
+        if symbol in live
+    }
+    panel = pd.DataFrame(columns).reindex(columns=[s for s in symbols if s in columns])
+    if panel.empty:
+        return tuple(None for _ in symbols[:-1])
+    position = {symbol: index for index, symbol in enumerate(symbols)}
+    rank = panel.idxmax(axis=1).map(position).cummax()
+    crossovers: list[date | None] = []
+    for seam in range(1, len(symbols)):
+        reached = rank.index[rank >= seam]
+        crossovers.append(reached.min().date() if len(reached) else None)
+    return tuple(crossovers)
+
+
+def _cap_rolls(
+    calendar_rolls: Sequence[date], crossovers: Sequence[date | None]
+) -> tuple[date, ...]:
+    """Each seam's roll, moved earlier to its crossover but never below the prior roll.
+
+    ``min(calendar, crossover)`` only ever rolls earlier; a noisy crossover that would
+    invert the schedule (land on/before the previous seam) falls back to the calendar
+    roll, keeping roll dates strictly increasing.
+    """
+    capped: list[date] = []
+    previous: date | None = None
+    for calendar, crossover in zip(calendar_rolls, crossovers):
+        roll = calendar if crossover is None else min(calendar, crossover)
+        if previous is not None and roll <= previous:
+            roll = calendar
+        capped.append(roll)
+        previous = roll
+    return tuple(capped)
+
+
 def _ever_leader_symbols(
     candidates: Sequence[DatedContract],
     volume_by_symbol: Mapping[str, pd.Series],
@@ -140,4 +244,9 @@ def _by_expiry(candidates: Sequence[DatedContract]) -> tuple[DatedContract, ...]
     )
 
 
-__all__ = ["assert_liquid_cycle_agreement", "liquid_cycle", "liquid_cycle_causal"]
+__all__ = [
+    "assert_liquid_cycle_agreement",
+    "liquid_cycle",
+    "liquid_cycle_causal",
+    "liquid_roll_schedule",
+]

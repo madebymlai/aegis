@@ -20,8 +20,9 @@ from aegis_data.liquidity import (
     assert_liquid_cycle_agreement,
     liquid_cycle,
     liquid_cycle_causal,
+    liquid_roll_schedule,
 )
-from aegis_data.roll import DatedContract, RollAgreementError
+from aegis_data.roll import DatedContract, RollAgreementError, roll_schedule
 
 
 def _flat_volume(start: date, end: date, value: float) -> pd.Series:
@@ -152,6 +153,95 @@ def test_causal_liquid_cycle_admits_a_back_month_only_after_it_has_led() -> None
 
     assert tuple(contract.symbol for contract in before) == ("GCM4",)
     assert tuple(contract.symbol for contract in after) == ("GCM4", "GCQ4")
+
+
+def test_liquid_roll_schedule_rolls_on_leadership_crossover_before_the_calendar_roll() -> None:
+    # Thin metal: liquidity leaves the front (PAM4) in early Feb, weeks before its calendar
+    # roll (last-trade 2024-02-29 -> 2024-02-22).  The seam must move EARLIER, onto the day
+    # the back contract (PAU4) takes liquidity leadership, so no liquid day is stranded.
+    candidates = [
+        DatedContract("PAM4", date(2024, 2, 29)),
+        DatedContract("PAU4", date(2024, 5, 31)),
+    ]
+    crossover = pd.Timestamp("2024-02-05")
+    front = pd.Series(
+        [1000.0 if d < crossover else 1.0 for d in pd.bdate_range("2024-01-01", "2024-02-29")],
+        index=pd.bdate_range("2024-01-01", "2024-02-29"), dtype="float64",
+    )
+    back = pd.Series(
+        [10.0 if d < crossover else 5000.0 for d in pd.bdate_range("2024-01-01", "2024-04-01")],
+        index=pd.bdate_range("2024-01-01", "2024-04-01"), dtype="float64",
+    )
+    volume = {"PAM4": front, "PAU4": back}
+
+    schedule = liquid_roll_schedule(
+        candidates, volume, date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
+    )
+    calendar = roll_schedule(
+        [c for c in candidates], date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
+    )
+
+    assert schedule.symbols == ("PAM4", "PAU4")
+    assert calendar.roll_dates[0] == date(2024, 2, 22)  # the unchanged calendar roll
+    assert schedule.roll_dates[0] < date(2024, 2, 22)  # moved earlier, onto the crossover
+    assert date(2024, 2, 5) <= schedule.roll_dates[0] <= date(2024, 2, 13)
+
+
+def test_liquid_roll_schedule_keeps_the_calendar_roll_when_liquidity_tracks_expiry() -> None:
+    # Liquid root: the front leads right up to its last trade, the back leads only after.
+    # The crossover lands after the calendar roll, so the cap is a no-op — no regression for
+    # CL/GC-style roots whose liquidity migrates near expiry.
+    candidates = [
+        DatedContract("CLG4", date(2024, 2, 29)),
+        DatedContract("CLJ4", date(2024, 5, 31)),
+    ]
+    front = pd.Series(
+        [1000.0] * len(pd.bdate_range("2024-01-01", "2024-02-29")),
+        index=pd.bdate_range("2024-01-01", "2024-02-29"), dtype="float64",
+    )
+    back = pd.Series(
+        [100.0 if d <= pd.Timestamp("2024-02-29") else 2000.0
+         for d in pd.bdate_range("2024-01-01", "2024-04-01")],
+        index=pd.bdate_range("2024-01-01", "2024-04-01"), dtype="float64",
+    )
+    volume = {"CLG4": front, "CLJ4": back}
+
+    schedule = liquid_roll_schedule(
+        candidates, volume, date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
+    )
+
+    assert schedule.roll_dates[0] == date(2024, 2, 22)  # unchanged calendar roll
+
+
+def test_liquid_roll_schedule_roll_dates_are_causal() -> None:
+    # The roll only ever depends on trailing volume, so truncating every series to the
+    # resulting roll date reproduces the same roll — the guarantee that the live (causal)
+    # and research (acausal) roll dates coincide, preserving backtest/live parity.
+    candidates = [
+        DatedContract("PAM4", date(2024, 2, 29)),
+        DatedContract("PAU4", date(2024, 5, 31)),
+    ]
+    crossover = pd.Timestamp("2024-02-05")
+    front = pd.Series(
+        [1000.0 if d < crossover else 1.0 for d in pd.bdate_range("2024-01-01", "2024-02-29")],
+        index=pd.bdate_range("2024-01-01", "2024-02-29"), dtype="float64",
+    )
+    back = pd.Series(
+        [10.0 if d < crossover else 5000.0 for d in pd.bdate_range("2024-01-01", "2024-04-01")],
+        index=pd.bdate_range("2024-01-01", "2024-04-01"), dtype="float64",
+    )
+    volume = {"PAM4": front, "PAU4": back}
+
+    acausal = liquid_roll_schedule(
+        candidates, volume, date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
+    )
+    roll = pd.Timestamp(acausal.roll_dates[0])
+    causal_volume = {symbol: series[series.index <= roll] for symbol, series in volume.items()}
+    causal = liquid_roll_schedule(
+        candidates, causal_volume, date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
+    )
+
+    assert causal.roll_dates == acausal.roll_dates
 
 
 def test_liquid_cycle_agreement_returns_the_shared_schedule_for_matching_feeds() -> None:
