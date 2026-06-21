@@ -62,9 +62,11 @@ def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> C
     every contract expiring in the window.  Coverage is read back from each snapshot (its
     furthest expiration): only when the window outruns the listed curve — a multi-decade
     backtest beyond the listing horizon — does the calendar resample at the frontier to pick
-    up contracts that list later.  Anchors are nudged onto a weekday (definitions snapshot
-    Mon–Fri).  ``client`` is injectable for tests; production constructs a Databento
-    historical client from ``DATABENTO_API_KEY``.
+    up contracts that list later.  When the window ends exactly on a contract's expiry, the
+    curve is extended one snapshot past ``end`` so the chain has a liquid successor to roll onto
+    for the boundary day.  Anchors are nudged onto a weekday (definitions snapshot Mon–Fri).
+    ``client`` is injectable for tests; production constructs a Databento historical client from
+    ``DATABENTO_API_KEY``.
     """
 
     def list_contracts(root: str, start: date, end: date) -> list[DatedContract]:
@@ -82,6 +84,17 @@ def databento_contract_calendar(dataset: str, *, client: Any | None = None) -> C
                 if covered is not None
                 else snapshot_day + _UNLISTED_STEP
             )
+        # The window can end exactly on a contract's expiry, where the curve stops at ``covered ==
+        # end``.  By that day liquidity has already migrated to the successor (the ikh thesis), but
+        # a contract lists only a bounded horizon before its own expiry, so that successor is absent
+        # from every snapshot up to ``end`` and the chain would strand on the expiring (illiquid)
+        # leg — the back-adjusted continuous then ends a day short and the coverage gate fails on
+        # the boundary day (aegis-rd-ikh).  One more snapshot at ``end`` lists the successor.
+        # Bounded to a single extra query (no loop); skipped when the curve already runs past
+        # ``end`` or the root never listed anything.
+        covered = max(contracts, default=None)
+        if covered is not None and covered <= end:
+            _collect_outrights(_definition_snapshot(api, dataset, root, _to_weekday(end)), contracts)
         return [DatedContract(symbol, expiry) for expiry, symbol in sorted(contracts.items())]
 
     return list_contracts

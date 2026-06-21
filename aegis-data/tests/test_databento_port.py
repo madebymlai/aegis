@@ -199,6 +199,51 @@ def test_contract_calendar_resamples_when_window_outruns_listed_curve() -> None:
     assert sorted(c.symbol for c in contracts) == ["CLN6", "CLZ6"]
 
 
+def test_contract_calendar_lists_a_successor_past_a_window_ending_on_a_contract_expiry() -> None:
+    # BOUNDARY (aegis-rd-ikh): when the window ends exactly on a contract's expiry, the
+    # continuous still needs a LIQUID successor to roll onto for that boundary day — by expiry
+    # liquidity has already migrated to the next contract (the ikh thesis).  A contract lists
+    # only a bounded horizon before its expiry, so the successor is absent from every snapshot up
+    # to `end` and surfaces only in a snapshot taken at/just past `end`.  Stopping the curve at
+    # `covered >= end` strands the chain on the expiring contract, so the back-adjusted continuous
+    # ends one day short and the coverage gate fails (GLBX:ZT:calendar:backward_ratio missing 1D
+    # bar on the boundary day).  The calendar must list one contract expiring strictly past `end`.
+    near = pd.DataFrame(
+        {
+            "raw_symbol": ["CLN6"],
+            "instrument_class": ["F"],
+            "expiration": pd.to_datetime(["2026-06-22 18:30:00+00:00"]),  # curve reaches mid-window
+        }
+    )
+    frontier = pd.DataFrame(
+        {
+            "raw_symbol": ["CLN6", "CLZ6"],
+            "instrument_class": ["F", "F"],
+            "expiration": pd.to_datetime(
+                ["2026-06-22 18:30:00+00:00", "2026-12-21 18:30:00+00:00"]  # CLZ6 expires ON `end`
+            ),
+        }
+    )
+    with_successor = pd.DataFrame(
+        {
+            "raw_symbol": ["CLZ6", "CLH7"],
+            "instrument_class": ["F", "F"],
+            "expiration": pd.to_datetime(
+                ["2026-12-21 18:30:00+00:00", "2027-03-22 18:30:00+00:00"]  # CLH7 lists only later
+            ),
+        }
+    )
+    client = _SequencedDatabento([near, frontier, with_successor])
+
+    contracts = databento_contract_calendar("GLBX.MDP3", client=client)(
+        "CL", date(2026, 6, 1), date(2026, 12, 21)  # window ends exactly on CLZ6's expiry
+    )
+
+    # The chain must reach a liquid leg whose expiry is strictly past the boundary day.
+    assert [c.symbol for c in contracts] == ["CLN6", "CLZ6", "CLH7"]
+    assert contracts[-1].last_trade == date(2027, 3, 22)  # CLH7 covers the boundary day's session
+
+
 def test_contract_calendar_snaps_a_weekend_anchor_to_a_weekday() -> None:
     # Definitions snapshot only Mon–Fri.  2024-06-01 is a Saturday, so the query must move to
     # the next weekday (Monday 2024-06-03) — otherwise a weekend anchor returns nothing.
