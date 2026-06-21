@@ -481,6 +481,27 @@ def test_bars_to_ohlcv_repairs_a_dropped_close_field_from_the_open() -> None:
     assert (row[["Open", "High", "Low", "Close"]] > 0).all()
 
 
+def test_bars_to_ohlcv_drops_a_fully_undefined_price_bar() -> None:
+    # Databento marks an undefined price with INT64_MAX, which Nautilus decodes to ~1.7e22 --
+    # ~13 orders of magnitude above any real futures settle.  Live symptom: KCZ1 (Coffee) on
+    # 2021-12-03 carried O=H=L=C=1.7014118e22, which back-adjustment scaled into a 1.5e22 spike in
+    # the continuous series and blew the backtest P&L up to ~1e19.  The bar carries no real
+    # observation and there is no surviving in-bar price to repair from, so the port drops the row,
+    # leaving back-adjustment an interior gap (tolerated, ffilled) instead of a spike (aegis-rd-*).
+    sentinel = 1.7014118346046923e22
+    bars = [
+        _Bar(pd.Timestamp("2021-12-02").value, 236.3, 236.65, 236.3, 236.65, 20),
+        _Bar(pd.Timestamp("2021-12-03").value, sentinel, sentinel, sentinel, sentinel, 9),
+        _Bar(pd.Timestamp("2021-12-06").value, 244.5, 250.35, 244.5, 250.35, 22),
+    ]
+
+    df = bars_to_ohlcv(bars)
+
+    assert pd.Timestamp("2021-12-03") not in df.index  # fully-undefined bar dropped, not a spike
+    assert list(df.index) == [pd.Timestamp("2021-12-02"), pd.Timestamp("2021-12-06")]
+    assert (df[["Open", "High", "Low", "Close"]] < 1e9).all().all()  # no sentinel survives anywhere
+
+
 def test_fetcher_keeps_on_market_bar_and_drops_off_market_block_trade() -> None:
     # ICE publishes a separate off-market (XOFF) ohlcv-1d stream alongside the regular session
     # (IFUS): its block prints have no intraday range, so Low/Close arrive as 0.  The fetcher must

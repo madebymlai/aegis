@@ -294,30 +294,51 @@ def bars_to_ohlcv(bars: list[Any]) -> pd.DataFrame:
         rows["Volume"].append(float(bar.volume.as_double()))
     frame = pd.DataFrame(rows, index=pd.DatetimeIndex(index))
     frame = frame[~frame.index.duplicated(keep="last")].sort_index()
-    return _repair_nonpositive_prices(drop_utc_weekend_rows(frame))
+    return _repair_invalid_prices(drop_utc_weekend_rows(frame))
 
 
-def _repair_nonpositive_prices(frame: pd.DataFrame) -> pd.DataFrame:
-    """Repair on-market bars whose Low (or, rarely, Close) field dropped to a non-positive value
-    on a day that genuinely traded (real Open/High + volume).  Dropping the off-market (``XOFF``)
-    publisher removes the systematic block-trade zeros, but the on-market (``IFUS``) stream itself
-    sporadically emits a zeroed Low/Close (aegis-rd-5x7); a non-positive futures price is not a
-    valid observation and would corrupt back-adjustment.  Reconstruct each corrupt field from the
-    bar's surviving positive prices so the bar stays internally consistent (``Low <= Open, Close
-    <= High``) — dropping the day instead would punch a calendar gap on a real trading day.  These
+# A daily futures settle never reaches a billion: real prices sit in the hundreds-to-tens-of-
+# thousands.  Databento marks an undefined price with INT64_MAX, which Nautilus decodes to ~1.7e22
+# — so any field above this ceiling is the undefined-price sentinel, not an observation, and is
+# treated exactly like the non-positive (zero) glitch below.
+_PRICE_SANITY_CEILING = 1e9
+
+
+def _repair_invalid_prices(frame: pd.DataFrame) -> pd.DataFrame:
+    """Repair or drop on-market bars carrying an invalid price field on a day that genuinely traded.
+
+    A valid futures price is finite and lies in ``(0, _PRICE_SANITY_CEILING)``.  Two glitch tails
+    break that: a non-positive (zeroed) Low/Close, and an undefined-price sentinel (~1.7e22).  The
+    off-market (``XOFF``) filter removes the systematic block-trade zeros, but the on-market
+    (``IFUS``) stream itself emits both — a zeroed Low/Close (aegis-rd-5x7) and, on rare days, a
+    fully undefined bar (every field the sentinel; live symptom KCZ1 2021-12-03).
+
+    A bar with *some* surviving valid price is repaired from it, staying internally consistent
+    (``Low <= Open, Close <= High``), because dropping the day would punch a calendar gap on a real
+    trading day.  A bar with *no* valid price carries no observation at all, so it is dropped — a
+    tolerated interior gap that back-adjustment ffills, never a 1e22 spike on a roll seam.  These
     are field glitches, not market moves, so well-formed bars pass through untouched; Volume is
     never altered.
     """
     if frame.empty:
         return frame
+
+    def valid(series: pd.Series) -> pd.Series:
+        return (series > 0) & (series < _PRICE_SANITY_CEILING)
+
+    fields = frame[["Open", "High", "Low", "Close"]]
+    # No surviving price = no observation (a fully undefined bar): drop the day.
+    frame = frame.loc[valid(fields).any(axis=1)]
+    if frame.empty:
+        return frame
     open_, high, low, close = (frame["Open"], frame["High"], frame["Low"], frame["Close"])
     # Endpoints first: a missing settle falls back to the Open (its only surviving endpoint).
-    close = close.where(close > 0, open_)
-    open_ = open_.where(open_ > 0, close)
+    close = close.where(valid(close), open_)
+    open_ = open_.where(valid(open_), close)
     envelope = pd.concat([open_, close], axis=1)
     # Then the extrema, clamped to the endpoints they must bound.
-    high = high.where(high > 0, envelope.max(axis=1))
-    low = low.where(low > 0, envelope.min(axis=1))
+    high = high.where(valid(high), envelope.max(axis=1))
+    low = low.where(valid(low), envelope.min(axis=1))
     return frame.assign(Open=open_, High=high, Low=low, Close=close)
 
 
