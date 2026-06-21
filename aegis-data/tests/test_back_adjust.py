@@ -42,3 +42,27 @@ def test_back_adjust_chain_applies_close_factors_to_ohlc_and_passes_volume() -> 
     assert panel["Volume"].loc[roll] == 21
     assert list(panel.columns) == ["Open", "High", "Low", "Close", "Volume"]
     assert panel.index.is_monotonic_increasing
+
+
+def test_back_adjust_chain_none_stitches_active_spans_without_a_price_factor() -> None:
+    """``method="none"`` is the raw, unadjusted continuous series: each contract's
+    bars are carried at their own level, stitched at the roll, with no price factor."""
+    a = _frame(["2024-01-01", "2024-01-02", "2024-01-03"], [100.0, 101.0, 102.0],
+               opens=[100.5, 101.5, 103.0], vol=[10, 11, 12])
+    b = _frame(["2024-01-02", "2024-01-03", "2024-01-04"], [121.0, 122.0, 123.0],
+               opens=[121.5, 124.0, 123.5], vol=[20, 21, 22])
+    roll = pd.Timestamp("2024-01-03")
+    chain = ContractChain(symbols=("ESH4", "ESM4"), roll_dates=(roll,), frames=(a, b))
+
+    panel = back_adjust_chain(chain, method="none")
+
+    # Pre-roll spans come from the older contract, unadjusted (no factor applied).
+    assert panel["Close"].loc["2024-01-01"] == 100.0
+    assert panel["Open"].loc["2024-01-01"] == 100.5
+    # The roll seam and after come from the newer contract, also unadjusted.
+    assert panel["Close"].loc[roll] == 122.0
+    assert panel["Open"].loc[roll] == 124.0
+    assert panel["Volume"].loc["2024-01-01"] == 10
+    assert panel["Volume"].loc[roll] == 21
+    assert list(panel.columns) == ["Open", "High", "Low", "Close", "Volume"]
+    assert panel.index.is_monotonic_increasing

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
+import pytest
 from aegis_runtime import FuturesRef
 
 from aegis_data.calendars import TradingCalendar
@@ -427,3 +428,18 @@ def test_databento_pull_derives_alternate_adjustment_from_same_raw_legs(tmp_path
     spread = _stored_close(tmp_path, backward_spread_ref, start="2024-01-02", end="2024-12-13")
 
     assert ratio.iloc[0] != spread.iloc[0]
+
+
+def test_databento_pull_unadjusted_stitches_raw_legs_without_back_adjustment(tmp_path) -> None:
+    """An ``unadjusted`` ref stores the raw continuous series: active spans stitched at
+    the roll with no price factor, so the front contract's first bar appears at its own
+    unadjusted level (not scaled toward the newest contract as ratio/spread would)."""
+    ref = FuturesRef("ES", "GLBX.MDP3", roll_rule="calendar", adjustment="unadjusted")
+
+    pull_databento_futures_bars(
+        _request(ref), fetcher=_leg_bars, contract_calendar=_es_calendar, store_dir=tmp_path
+    )
+    close = _stored_close(tmp_path, ref, start="2024-01-02", end="2024-12-13")
+
+    assert not close.isna().any()
+    assert close.iloc[0] == pytest.approx(_BASIS["ESH4"])

@@ -9,12 +9,11 @@ from pathlib import Path
 import pandas as pd
 from aegis_runtime import FuturesRef
 
-from aegis_data.back_adjust import back_adjust_chain
 from aegis_data.calendars import venue_calendar_for_dataset
-from aegis_data.chain import ContractCalendar, ContractChain, ContractFetcher, fetch_contract_chain
-from aegis_data.continuous import apply_adjustment_factors
+from aegis_data.chain import ContractCalendar, ContractFetcher
 from aegis_data.databento_port import databento_contract_calendar, databento_port_fetcher
-from aegis_data.raw_leg_cache import raw_leg_ports
+from aegis_data.raw_leg_cache import LegPorts, raw_leg_ports
+from aegis_data.source import continuous_panel
 from aegis_data.store import (
     CoveredWindow,
     CoverageGap,
@@ -24,14 +23,24 @@ from aegis_data.store import (
     WriteMode,
 )
 
-# Continuous-futures adjustment vocabulary, named to match NautilusTrader's backward
-# ContinuousFutureAdjustmentType modes so research and live agree by construction:
+# Continuous-futures adjustment vocabulary → generic back-adjust transform method, the
+# single authority for which adjustments a Pull supports.  Names match NautilusTrader's
+# backward ContinuousFutureAdjustmentType modes so research and live agree by construction:
 # ``backward_ratio`` (multiplicative, returns-preserving) and ``backward_spread``
-# (additive/Panama, point-move & $-P&L preserving).  These map to the generic transform
-# primitives (ratio/difference); the "backward" anchor is implicit (newest unadjusted).
-_RATIO_ADJUSTMENTS = frozenset({"backward_ratio"})
-_CLOSE_DEPENDENT_ADJUSTMENTS = _RATIO_ADJUSTMENTS | {"backward_spread"}
-_SUPPORTED_ADJUSTMENTS_MESSAGE = "backward_ratio, backward_spread, or unadjusted"
+# (additive/Panama, point-move & $-P&L preserving) map to the generic ratio/difference
+# primitives; ``unadjusted`` stitches the raw series with no factor (``none``).  The
+# "backward" anchor is implicit (newest contract unadjusted).
+_ADJUSTMENT_METHODS = {
+    "backward_ratio": "ratio",
+    "backward_spread": "difference",
+    "unadjusted": "none",
+}
+# Adjustments whose roll factor is derived from Close (every method but the raw stitch):
+# these need the Close array even when the caller did not request it.
+_CLOSE_DEPENDENT_ADJUSTMENTS = frozenset(
+    adjustment for adjustment, method in _ADJUSTMENT_METHODS.items() if method != "none"
+)
+_SUPPORTED_ADJUSTMENTS_MESSAGE = ", ".join(_ADJUSTMENT_METHODS)
 
 
 @dataclass(frozen=True)
@@ -89,31 +98,29 @@ def _derive_continuous_history(
     bar_cadence: timedelta,
 ) -> tuple[pd.DataFrame, tuple[RawFuturesLeg, ...]]:
     start, end = _request_dates(request)
-    raw_arrays = _raw_required_arrays(ref, request)
     ports = raw_leg_ports(
         dataset=ref.dataset,
         timeframe=request.timeframe,
         fetch=fetch,
-        arrays=raw_arrays,
+        arrays=_raw_required_arrays(ref, request),
         store_dir=store_dir,
     )
     raw_legs: list[RawFuturesLeg] = []
 
-    def raw_leg_fetch(symbol: str, leg_start: date, leg_end: date) -> pd.DataFrame:
-        leg = RawFuturesLeg(ref.dataset, symbol)
-        raw_legs.append(leg)
+    def record_leg(symbol: str, leg_start: date, leg_end: date) -> pd.DataFrame:
+        raw_legs.append(RawFuturesLeg(ref.dataset, symbol))
         return ports.fetch(symbol, leg_start, leg_end)
 
-    chain = fetch_contract_chain(
+    panel = continuous_panel(
         ref.root,
         start,
         end,
+        ports=LegPorts(fetch=record_leg, probe=ports.probe),
         list_contracts=list_contracts,
-        fetch=raw_leg_fetch,
+        method=_adjustment_method(ref.adjustment),
         bar_cadence=bar_cadence,
-        probe_volume=ports.probe,
     )
-    return _continuous_panel(chain, adjustment=ref.adjustment), tuple(dict.fromkeys(raw_legs))
+    return panel, tuple(dict.fromkeys(raw_legs))
 
 
 def _request_bar_cadence(request: NativeBarsRequest) -> timedelta:
@@ -121,30 +128,14 @@ def _request_bar_cadence(request: NativeBarsRequest) -> timedelta:
     return pd.Timedelta(request.timeframe).to_pytimedelta()
 
 
-def _continuous_panel(chain: ContractChain, *, adjustment: str) -> pd.DataFrame:
-    if adjustment in _RATIO_ADJUSTMENTS:
-        return back_adjust_chain(chain, method="ratio")
-    if adjustment == "backward_spread":
-        return back_adjust_chain(chain, method="difference")
-    if adjustment == "unadjusted":
-        return _unadjusted_chain(chain)
-    raise ValueError(
-        f"unsupported futures adjustment {adjustment!r}; expected {_SUPPORTED_ADJUSTMENTS_MESSAGE}"
-    )
-
-
-def _unadjusted_chain(chain: ContractChain) -> pd.DataFrame:
-    identity = tuple(1.0 for _ in chain.frames)
-    columns: dict[str, pd.Series] = {}
-    for column in chain.frames[0].columns:
-        series = [frame[column] for frame in chain.frames]
-        columns[column] = apply_adjustment_factors(
-            series,
-            chain.roll_dates,
-            identity,
-            method="ratio",
-        )
-    return pd.DataFrame(columns)
+def _adjustment_method(adjustment: str) -> str:
+    """The generic back-adjust transform method for a FuturesRef adjustment."""
+    try:
+        return _ADJUSTMENT_METHODS[adjustment]
+    except KeyError:
+        raise ValueError(
+            f"unsupported futures adjustment {adjustment!r}; expected {_SUPPORTED_ADJUSTMENTS_MESSAGE}"
+        ) from None
 
 
 def _continuous_gaps(
