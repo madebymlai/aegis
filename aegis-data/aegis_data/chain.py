@@ -122,9 +122,14 @@ def _liquid_candidates(
     """
     if probe_volume is None:
         return tuple(candidates)
+    # A candidate whose last trade falls before the window start is listed only by the
+    # calendar's lookback anchor; it expired before the window opens, so its probe window
+    # would invert (``start`` > ``min(last_trade, end)``).  It can never be the Liquidity
+    # Leader, so skip the probe — ``liquid_cycle`` then drops it for having no volume.
     volume_by_symbol = {
         contract.symbol: probe_volume(contract.symbol, start, min(contract.last_trade, end))
         for contract in candidates
+        if contract.last_trade >= start
     }
     return liquid_cycle(candidates, volume_by_symbol, roll_lead_days=roll_lead_days)
 

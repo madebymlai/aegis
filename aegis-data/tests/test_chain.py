@@ -162,6 +162,40 @@ def test_liquidity_probe_windows_each_candidate_to_its_own_last_trade() -> None:
         assert probe_end == last_trade[symbol], f"{symbol} probed to {probe_end}, not its last trade"
 
 
+def test_liquidity_probe_skips_a_candidate_expiring_before_the_window() -> None:
+    """Regression (RB 2019): a candidate whose last trade falls *before* the window start —
+    pulled in by the calendar's lookback anchor — must not be probed.  Its probe window would
+    invert (``start`` > ``min(last_trade, end)``), and the leg cache rejects an end-on-or-before
+    -start window, aborting the pull.  Such a contract expired before the window, can never be
+    the Liquidity Leader, and is dropped from the Liquid Cycle.
+    """
+
+    def _with_expired_leg(root: str, start: date, end: date) -> list[DatedContract]:
+        # An already-expired Dec-2023 leg listed just before the 2024 window opens.
+        return [DatedContract("ESZ3", date(2023, 12, 15)), *_es_2024(root, start, end)]
+
+    probed: list[str] = []
+
+    def probe_volume(symbol: str, start: date, end: date) -> pd.Series:
+        assert end >= start, f"{symbol} probed with inverted window {start}..{end}"
+        probed.append(symbol)
+        index = pd.bdate_range(start, end)
+        return pd.Series([1000.0] * len(index), index=index, dtype="float64")
+
+    def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
+        base = {"ESH4": 100.0, "ESM4": 200.0, "ESU4": 300.0, "ESZ4": 400.0}[symbol]
+        return _ohlcv(start, end, base)
+
+    chain = fetch_contract_chain(
+        "ES", date(2024, 1, 2), date(2024, 12, 31),
+        list_contracts=_with_expired_leg, fetch=fetch,
+        bar_cadence=timedelta(days=1), probe_volume=probe_volume,
+    )
+
+    assert "ESZ3" not in probed  # the expired-before-window leg is never probed
+    assert "ESZ3" not in chain.symbols
+
+
 def test_roll_dates_snap_back_to_the_latest_common_trading_day() -> None:
     def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
         idx = pd.bdate_range(start, end)
