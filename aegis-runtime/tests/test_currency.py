@@ -42,6 +42,22 @@ def test_assemble_fx_rates_ffills_calendar_gaps_and_keeps_leading_nan() -> None:
     assert rates["USD"].tolist()[1:] == [1.2, 1.2, 1.4]
 
 
+def test_assemble_fx_rates_aligns_a_tz_naive_series_onto_a_tz_aware_index() -> None:
+    # The futures panel index is tz-aware UTC (databento bars), but the store FX series is
+    # tz-naive (yfinance parquet). A naive reindex onto the UTC index silently drops every
+    # value -> all-NaN rates -> all-NaN converted prices. assemble_fx_rates owns the alignment,
+    # so it reconciles the tz rather than failing closed.
+    utc_index = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    naive_series = pd.Series(
+        [1.1, 1.2, 1.3], index=pd.date_range("2024-01-01", periods=3, freq="D")
+    )
+
+    rates = assemble_fx_rates({"USD": naive_series}, utc_index)
+
+    assert rates.index.equals(utc_index)
+    assert rates["USD"].tolist() == [1.1, 1.2, 1.3]  # aligned, not all-NaN
+
+
 def test_convert_prices_to_base_passes_through_base_currency_unchanged() -> None:
     index = _index(3)
     prices = pd.DataFrame({"B": [10.0, 11.0, 12.0]}, index=index)

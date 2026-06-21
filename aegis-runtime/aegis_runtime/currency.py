@@ -36,14 +36,37 @@ def assemble_fx_rates(
 
     Calendar gaps are forward-filled; leading gaps remain NaN so the caller's
     data-quality checks can catch insufficient FX history without backfilling.
+    A tz-aware/naive mismatch between a series and the index is reconciled here
+    (see :func:`_reindex_onto`) — aligning the FX series onto the index is this
+    function's job, and a silent all-NaN reindex is the opposite of alignment.
     """
     return pd.DataFrame(
         {
-            currency: series.reindex(index).ffill()
+            currency: _reindex_onto(series, index).ffill()
             for currency, series in pair_series_by_currency.items()
         },
         index=index,
     )
+
+
+def _reindex_onto(series: pd.Series, index: pd.Index) -> pd.Series:
+    """Reindex an FX series onto ``index``, reconciling a tz-aware/naive mismatch.
+
+    The futures panel index is tz-aware (databento UTC) while a store FX series
+    read from parquet is tz-naive; a plain reindex across that boundary matches
+    nothing and silently drops every row. Daily FX timestamps sit at midnight, so
+    localizing (or stripping) the tz is a pure label change that lines the series
+    up with the index.
+    """
+    target_tz = getattr(index, "tz", None)
+    source_tz = getattr(series.index, "tz", None)
+    if source_tz is None and target_tz is not None:
+        series = series.tz_localize(target_tz)
+    elif source_tz is not None and target_tz is None:
+        series = series.tz_localize(None)
+    elif source_tz is not None and target_tz is not None and source_tz != target_tz:
+        series = series.tz_convert(target_tz)
+    return series.reindex(index)
 
 
 def required_fx_currencies(
