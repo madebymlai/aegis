@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import pytest
+from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.persistence.catalog import ParquetDataCatalog
+
+from aegis_data.catalog import (
+    CatalogBackedDataPort,
+    CatalogCoverageGapError,
+    RawBarRequest,
+    catalog_root,
+    raw_bar_type,
+)
+
+
+def _bar(bar_type: str, day: str, close: float) -> Bar:
+    ts_event = pd.Timestamp(day, tz="UTC").value
+    return Bar(
+        BarType.from_str(bar_type),
+        Price.from_str(f"{close:.2f}"),
+        Price.from_str(f"{close + 1:.2f}"),
+        Price.from_str(f"{close - 1:.2f}"),
+        Price.from_str(f"{close:.2f}"),
+        Quantity.from_str("100"),
+        ts_event,
+        ts_event,
+    )
+
+
+def _write_span(
+    catalog: ParquetDataCatalog,
+    bars: list[Bar],
+    *,
+    start: str,
+    end: str,
+) -> None:
+    catalog.write_data(
+        bars,
+        start=pd.Timestamp(start, tz="UTC").value,
+        end=pd.Timestamp(end, tz="UTC").value,
+    )
+
+
+class _ProviderPort:
+    def __init__(self, bars: list[Bar]) -> None:
+        self.bars = bars
+        self.requests: list[tuple[str, bool]] = []
+
+    def request_bars(
+        self,
+        bar_type: str,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        update_catalog: bool,
+    ) -> list[Bar]:
+        self.requests.append((bar_type, update_catalog))
+        return self.bars
+
+
+def test_catalog_root_uses_aegis_data_dir_catalog_subpath(tmp_path: Path) -> None:
+    root = catalog_root({"AEGIS_DATA_DIR": str(tmp_path / "aegis-data")})
+
+    assert root == tmp_path / "aegis-data" / "catalog"
+
+
+def test_catalog_writes_nautilus_native_bar_layout(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    bar_type = raw_bar_type("AAPL.NASDAQ", "1D")
+
+    _write_span(
+        catalog,
+        [_bar(bar_type, "2024-01-01", 10.0)],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+
+    layout = sorted(
+        path.relative_to(catalog_path).parts[:3] for path in catalog_path.rglob("*.parquet")
+    )
+
+    assert layout == [("data", "bar", "AAPL.NASDAQ-1-DAY-LAST-INTERNAL")]
+
+
+def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    bar_type = raw_bar_type("AAPL.NASDAQ", "1D")
+    _write_span(
+        catalog,
+        [_bar(bar_type, "2024-01-01", 10.0)],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+    provider = _ProviderPort([])
+    port = CatalogBackedDataPort(catalog, provider=provider)
+
+    frames = port.load_raw_bars(
+        RawBarRequest(
+            instrument_ids=("AAPL.NASDAQ",),
+            start="2024-01-01",
+            end="2024-01-02",
+        )
+    )
+
+    assert frames["AAPL.NASDAQ"]["Close"].tolist() == [10.0]
+    assert provider.requests == []
+
+
+def test_catalog_port_backfills_missing_tail_with_update_catalog(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    bar_type = raw_bar_type("AAPL.NASDAQ", "1D")
+    _write_span(
+        catalog,
+        [_bar(bar_type, "2024-01-01", 10.0)],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+    provider = _ProviderPort([_bar(bar_type, "2024-01-02", 11.0)])
+    port = CatalogBackedDataPort(catalog, provider=provider)
+
+    first = port.load_raw_bars(
+        RawBarRequest(
+            instrument_ids=("AAPL.NASDAQ",),
+            start="2024-01-01",
+            end="2024-01-03",
+        )
+    )
+    second = port.load_raw_bars(
+        RawBarRequest(
+            instrument_ids=("AAPL.NASDAQ",),
+            start="2024-01-01",
+            end="2024-01-03",
+        )
+    )
+
+    assert first["AAPL.NASDAQ"]["Close"].tolist() == [10.0, 11.0]
+    assert second["AAPL.NASDAQ"]["Close"].tolist() == [10.0, 11.0]
+    assert provider.requests == [(bar_type, True)]
+
+
+def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    port = CatalogBackedDataPort(catalog)
+
+    with pytest.raises(CatalogCoverageGapError, match="catalog cannot serve AAPL.NASDAQ"):
+        port.load_raw_bars(
+            RawBarRequest(
+                instrument_ids=("AAPL.NASDAQ",),
+                start="2024-01-01",
+                end="2024-01-02",
+            )
+        )
