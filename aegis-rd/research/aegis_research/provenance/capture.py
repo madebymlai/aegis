@@ -4,7 +4,6 @@ import hashlib
 import importlib.metadata
 import os
 import platform
-import random
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -52,11 +51,6 @@ def capture_run_start_evidence(
         "repository": capture_git_evidence(repo_path),
         "packages": capture_package_versions(),
         "vectorbt_settings": capture_vectorbt_settings(),
-        "seed_policy": {
-            "data_seed": None,
-            "run_seed": None,
-            "vectorbt_set_seed": False,
-        },
     }
 
 
@@ -137,34 +131,6 @@ def capture_vectorbt_settings() -> dict[str, Any]:
         except Exception:
             settings[section] = {"available": False}
     return {"available": True, "sections": settings}
-
-
-def apply_seed_policy(seed: int) -> dict[str, Any]:
-    random.seed(seed)
-    seed_state: dict[str, Any] = {
-        "run_seed": seed,
-        "numpy_seeded": False,
-        "vectorbt_set_seed": False,
-    }
-    try:
-        import numpy as np
-
-        np.random.seed(seed)
-        seed_state["numpy_seeded"] = True
-    except ImportError:
-        seed_state["numpy_seed_error"] = "not installed"
-    except Exception as error:
-        seed_state["numpy_seed_error"] = type(error).__name__
-    try:
-        from vectorbtpro import vbt
-
-        vbt.set_seed(seed)
-        seed_state["vectorbt_set_seed"] = True
-    except ImportError:
-        seed_state["vectorbt_seed_error"] = "not installed"
-    except Exception as error:
-        seed_state["vectorbt_seed_error"] = type(error).__name__
-    return seed_state
 
 
 def canonical_hash(value: Any) -> str:
