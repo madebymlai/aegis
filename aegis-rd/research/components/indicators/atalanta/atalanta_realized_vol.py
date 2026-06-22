@@ -23,10 +23,16 @@ COMPONENT_MANIFEST = {
 
 # %% parameter space
 def param_space():
-    """Return VBT-native realized-vol windows (monthly / quarterly)."""
+    """Return VBT-native realized-vol windows: monthly, quarterly, semi-annual, annual.
+
+    The longer windows (126/252) let the inverse-vol sizing pair a *long* vol window with a
+    long trend lookback. Research Affiliates find a long lookback paired with a *short* (3-month)
+    vol window "all but negates positive skew", while a longer (2-year) window restores it — so
+    the vol window is a convexity lever, not just a sizing detail ([[what-makes-a-trend-sleeve-convex]]).
+    """
 
     return {
-        "vol_window": vbt.Param([21, 63]),
+        "vol_window": vbt.Param([21, 63, 126, 252]),
     }
 
 
