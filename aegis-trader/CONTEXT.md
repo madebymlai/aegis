@@ -74,6 +74,18 @@ cross-context *identity* (the **InstrumentRef**) is still single and authoritati
 *resolution* is vendor-native.
 _Avoid_: symbol map, instrument map, ticker table, security database, FIGI resolver, VenueContract (resolution is vendor-native — no bespoke resolver or intermediate contract type)
 
+**Broker Connection**:
+The environment-resolved IBKR connection (`IBConnectionSettings`: host, port, client
+id, account id) that a live trader run trades through. Paper and live are **not** run
+modes — they are the *same* code path pointed at different gateway ports, so the **port
+alone** distinguishes paper from live; the system requires `IB_PORT` and `account_id`
+explicitly and fails closed rather than assume which gateway it is talking to. Read from
+the process environment (never the committed **Book Config**) and handed to the single
+IBKR adapter, which translates it into Nautilus's stock client configs. There is no
+`--mode`: the operator-facing surface is `aegis-trader backtest` (offline) and
+`aegis-trader trader start`/`stop` (live; the port decides paper vs live).
+_Avoid_: mode, paper mode, live mode, run mode, environment, broker config, gateway profile
+
 Add domain terms here as decisions crystallise — one or two sentences each,
 defining what the term **is** (not what it does), with an `_Avoid_:` line
 listing rejected synonyms. Keep this file a glossary only; implementation
