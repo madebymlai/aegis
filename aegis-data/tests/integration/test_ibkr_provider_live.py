@@ -38,18 +38,20 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _provider(client_id: int) -> IbkrHistoricalProvider:
+def _provider() -> IbkrHistoricalProvider:
     # DELAYED_FROZEN so the checks run without a real-time data subscription;
     # they validate the read path + identity + persistence, not live streaming.
+    # The real connection is a process singleton, so every test shares one client
+    # (a second IB client per process aborts on the global Rust logger).
     return IbkrHistoricalProvider(
         port=int(_GATEWAY_PORT),  # type: ignore[arg-type]
-        client_id=client_id,
+        client_id=7,
         market_data_type="DELAYED_FROZEN",
     )
 
 
 def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
-    bars = _provider(7).request_bars(raw_bar_type(_AAPL, "1D"), start=_START, end=_END)
+    bars = _provider().request_bars(raw_bar_type(_AAPL, "1D"), start=_START, end=_END)
 
     assert bars
     assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in bars)
@@ -58,7 +60,7 @@ def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
 def test_request_instruments_round_trips_native_identity() -> None:
     """The IB-simplified symbology returns a definition whose id is the native
     InstrumentId we asked for — the invariant AC6's catalog lookup relies on."""
-    instruments = _provider(8).request_instruments((_AAPL,))
+    instruments = _provider().request_instruments((_AAPL,))
 
     assert any(instrument.id == _AAPL for instrument in instruments)
 
@@ -68,7 +70,7 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     AND seeds the definition; a provider-less re-read then serves from the catalog
     (warm, no IBKR), and the instrument definition is present (AC1/AC3/AC6)."""
     catalog_path = tmp_path / "catalog"
-    provider = _provider(9)
+    provider = _provider()
     catalog = parquet_data_catalog(catalog_path)
     port = CatalogBackedDataPort(
         catalog,

@@ -7,7 +7,7 @@ backtesting and research" — and:
 - is **pure fetch**: ``request_bars`` *returns* bars; :class:`CatalogBackedDataPort`
   is the single writer of record (ADR-0008).  Same for ``request_instruments``.
 - **hides ``asyncio``** behind the synchronous port: the historic client is async,
-  so every call connects, requests, and disconnects inside one ``asyncio.run``.
+  so calls run on a persistent event loop over one reused connection.
 - resolves identity through IB **simplified symbology** — the native
   ``InstrumentId`` value (``SYMBOL.VENUE``) is the IBKR request id; no bespoke
   resolver (ADR-0005).
@@ -22,6 +22,7 @@ running gateway.  Instrument *definitions* are a separate Step-1 write
 from __future__ import annotations
 
 import asyncio
+import atexit
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -45,15 +46,28 @@ IB_REQUEST_TIMEOUT = 120
 # at construction, not at connect time, without importing ``ibapi`` to do it.
 _IB_MARKET_DATA_TYPES = frozenset({"REALTIME", "FROZEN", "DELAYED", "DELAYED_FROZEN"})
 
+# Nautilus initializes a **process-global** Rust logger when an IB client is
+# constructed, so a second client in the same process aborts
+# ("attempted to set a logger after the logging system was already initialized").
+# The real connection is therefore a per-process singleton (one loop + one client),
+# created once and reused by every call across every provider instance.
+_IB_CONNECTION: dict[str, Any] = {}
+
 
 @dataclass(frozen=True)
 class IbkrHistoricalProvider:
     """Pure-fetch IBKR data provider over the standalone historic client.
 
-    ``client_factory`` exists for testing: a fake async client stands in for the
-    real ``HistoricInteractiveBrokersClient`` so the param-translation and
-    asyncio-hiding can be verified without IBKR.  Left ``None`` in production, the
-    real client is lazily constructed.
+    Connection management is dictated by an upstream constraint: only one IB client
+    may exist per process (it sets up a process-global Rust logger).  So the real
+    connection is a **process singleton** — one persistent event loop and one
+    connected client, lazily created and reused by every ``request_*`` call across
+    all provider instances; per-call connect/teardown would abort on the second
+    call.  Connection params come from the *first* provider that opens it.
+
+    ``client_factory`` exists for testing: a fake session stands in for the real
+    client (it has no process-global constraint, so it runs isolated per call), so
+    the param-translation and asyncio-hiding are verified without IBKR.
     """
 
     host: str = IB_HOST
@@ -79,17 +93,15 @@ class IbkrHistoricalProvider:
         end: pd.Timestamp,
     ) -> Sequence[Bar]:
         """The vendor-aggregated bars for *bar_type* over ``[start, end]``."""
-        return asyncio.run(
-            self._with_client(
-                lambda client: client.request_bars(
-                    bar_specifications=[str(bar_type.spec)],
-                    start_date_time=_naive_utc(start),
-                    end_date_time=_naive_utc(end),
-                    tz_name="UTC",
-                    instrument_ids=[bar_type.instrument_id.value],
-                    use_rth=self.use_rth,
-                    timeout=self.timeout,
-                )
+        return self._run(
+            lambda session: session.request_bars(
+                bar_specifications=[str(bar_type.spec)],
+                start_date_time=_naive_utc(start),
+                end_date_time=_naive_utc(end),
+                tz_name="UTC",
+                instrument_ids=[bar_type.instrument_id.value],
+                use_rth=self.use_rth,
+                timeout=self.timeout,
             )
         )
 
@@ -97,29 +109,43 @@ class IbkrHistoricalProvider:
         self, instrument_ids: Sequence[InstrumentId]
     ) -> Sequence[Instrument]:
         """The IBKR instrument definitions for *instrument_ids* (Step-1 write)."""
-        return asyncio.run(
-            self._with_client(
-                lambda client: client.request_instruments(
-                    instrument_ids=[
-                        instrument_id.value for instrument_id in instrument_ids
-                    ],
-                )
+        return self._run(
+            lambda session: session.request_instruments(
+                instrument_ids=[
+                    instrument_id.value for instrument_id in instrument_ids
+                ],
             )
         )
 
-    async def _with_client(
-        self, call: Callable[[Any], Awaitable[Any]]
-    ) -> Any:
-        client = self._make_client()
-        await client.connect()
-        try:
-            return await call(client)
-        finally:
-            await client.aclose()
-
-    def _make_client(self) -> Any:
+    def _run(self, call: Callable[[Any], Awaitable[Any]]) -> Any:
         if self.client_factory is not None:
-            return self.client_factory()
+            return asyncio.run(self._isolated(self.client_factory, call))
+        loop, session = self._connection()
+        return loop.run_until_complete(call(session))
+
+    async def _isolated(
+        self, make: Callable[[], Any], call: Callable[[Any], Awaitable[Any]]
+    ) -> Any:
+        # Test path only: the fake session has no process-global constraint, so it
+        # connects, runs, and closes per call in its own loop.
+        session = make()
+        await session.connect()
+        try:
+            return await call(session)
+        finally:
+            await session.aclose()
+
+    def _connection(self) -> tuple[Any, Any]:
+        if not _IB_CONNECTION:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            session = self._build_real_session()
+            loop.run_until_complete(session.connect())
+            _IB_CONNECTION["loop"] = loop
+            _IB_CONNECTION["session"] = session
+        return _IB_CONNECTION["loop"], _IB_CONNECTION["session"]
+
+    def _build_real_session(self) -> _HistoricSession:
         from ibapi.common import MarketDataTypeEnum
         from nautilus_trader.adapters.interactive_brokers.historical.client import (
             HistoricInteractiveBrokersClient,
@@ -158,7 +184,30 @@ class _HistoricSession:
         return await self._client.request_instruments(**kwargs)
 
     async def aclose(self) -> None:
-        await self._client._client._disconnect()
+        # The historic client has no public teardown; stopping the inner client
+        # drains its background tasks cleanly (so closing the loop is quiet).
+        await self._client._client._stop_async()
+
+
+def close_connection() -> None:
+    """Tear down the process-singleton real session (idempotent, best-effort).
+
+    Registered at process exit so a real connection closes cleanly; safe to call
+    explicitly (e.g. test teardown).  Never raises — exit-time cleanup."""
+    if not _IB_CONNECTION:
+        return
+    loop = _IB_CONNECTION["loop"]
+    session = _IB_CONNECTION["session"]
+    try:
+        loop.run_until_complete(session.aclose())
+    except Exception:  # noqa: BLE001 - exit-time cleanup must not raise
+        pass
+    finally:
+        loop.close()
+        _IB_CONNECTION.clear()
+
+
+atexit.register(close_connection)
 
 
 def _naive_utc(timestamp: pd.Timestamp) -> datetime:
@@ -205,5 +254,6 @@ def _missing_definitions(
 
 __all__ = [
     "IbkrHistoricalProvider",
+    "close_connection",
     "seed_instrument_definitions",
 ]

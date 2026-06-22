@@ -89,8 +89,8 @@ code** — one IBKR seam, not several.
 - **Live node** config (`Environment.LIVE`, `trader_id`, live `RiskEngine`,
   cache, logging, catalogs) + the run/stop lifecycle → broker-neutral
   `aegis_trader/trader/node.py`. It wires the broker through one call,
-  `ibkr.attach_live_clients(node, connection, instrument_ids)`, and carries
-  **no** `ibg_*`/`IDEALPRO` vocabulary.
+  `ibkr_provider.attach_live_clients(node, connection, instrument_ids)`, and
+  carries **no** `ibg_*`/`IDEALPRO` vocabulary.
 - **IBKR** client-config building + factory registration + IB constants → the
   **single** IBKR adapter `aegis-data/aegis_data/ibkr_provider.py` (extended in
   place — no rename; lazy `ibapi`). It builds Nautilus's *stock*
