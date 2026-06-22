@@ -1,15 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
-from datetime import timedelta
 from typing import Any
-
-import pandas as pd
-from aegis_data.calendars import TradingCalendar
-from aegis_data.source import continuous_panel, databento_contract_calendar, databento_leg_ports
-from aegis_data.store import CoveredWindow, FxPair, HistoricalStore
-from aegis_data.yfinance import YFinanceLocator, pull_yfinance_fx_history
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
@@ -21,19 +13,12 @@ from research.aegis_research.configuration import (
     DataConfig,
     ResolvedRunConfig,
     RunConfig,
-    SymbolSpec,
-    required_store_window_edge,
 )
 from research.aegis_research.data import (
     MarketDataBundle,
     MarketDataResult,
     load_market_data_result,
     market_data_bundle,
-)
-from research.aegis_research.market_data.currency import (
-    assemble_fx_rates,
-    convert_bundle_to_base,
-    required_fx_currencies,
 )
 from research.aegis_research.market_data.panels import canonical_array_panel
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
@@ -155,35 +140,8 @@ def run_strategy_sweep(
 def _apply_futures_back_adjustment(
     data_config: DataConfig, data_bundle: MarketDataBundle
 ) -> MarketDataBundle:
-    """Replace each ``backward_ratio`` future's panel column with the back-adjusted
-    continuous series sourced from :mod:`aegis_data` (Nautilus databento port +
-    OS-global parquet store); a book with no back-adjusted futures passes through.
-    """
-    if data_config.source == "store":
-        return data_bundle
-    futures = [
-        s for s in data_config.symbols if s.is_future and s.adjustment == "backward_ratio"
-    ]
-    if not futures:
-        return data_bundle
-    start = pd.Timestamp(data_config.start).date()
-    end = pd.Timestamp(data_config.end).date()
-    arrays = {name: panel.copy() for name, panel in data_bundle.arrays.items()}
-    for spec in futures:
-        ports = databento_leg_ports(spec.dataset)
-        list_contracts = databento_contract_calendar(spec.dataset)
-        panel = continuous_panel(
-            spec.root,
-            start,
-            end,
-            ports=ports,
-            list_contracts=list_contracts,
-            bar_cadence=timedelta(days=1),
-        )
-        for name, frame in arrays.items():
-            if spec.ticker in frame.columns and name in panel.columns:
-                frame[spec.ticker] = panel[name].reindex(frame.index)
-    return MarketDataBundle(arrays)
+    """Raw-bar r8b.1 path: dated futures legs pass through unchanged."""
+    return data_bundle
 
 
 def _pnl_bundle(
@@ -207,100 +165,8 @@ def _pnl_bundle(
 def _to_base_currency(
     config: RunConfig, *, data_bundle: MarketDataBundle
 ) -> MarketDataBundle:
-    """Re-express the loaded bundle in the portfolio's base currency.
-
-    One path: the price panels always flow through the converter. A book whose
-    legs already quote in the base needs no FX series, and the conversion is then
-    an identity - a no-op, not a separate branch.
-    """
-    base_currency = config.portfolio.base_currency
-    currency_by_symbol = config.data.currency_by_symbol
-    fx_rates = _load_fx_rates(
-        config.data,
-        base_currency=base_currency,
-        currencies=required_fx_currencies(currency_by_symbol, base_currency),
-        index=data_bundle.array("Close").index,
-    )
-    return convert_bundle_to_base(
-        data_bundle, currency_by_symbol, base_currency, fx_rates
-    )
-
-
-def _load_fx_rates(
-    data_config: DataConfig,
-    *,
-    base_currency: str,
-    currencies: set[str],
-    index: pd.Index,
-) -> pd.DataFrame:
-    """Fetch the ``base->ccy`` FX series (the native ``EUR<ccy>=X`` quotes) and
-    align them to the price ``index``."""
-    fx_ticker_by_currency = {ccy: f"{base_currency}{ccy}=X" for ccy in currencies}
-    if not fx_ticker_by_currency:
-        # No foreign legs: there is nothing to fetch (an empty symbol set cannot
-        # be pulled), and the empty rates frame makes the conversion an identity.
-        return pd.DataFrame(index=index)
-    if data_config.source == "store":
-        return _load_store_fx_rates(
-            data_config,
-            base_currency=base_currency,
-            fx_ticker_by_currency=fx_ticker_by_currency,
-            index=index,
-        )
-    fx_config = replace(
-        data_config,
-        symbols=[
-            SymbolSpec(ticker=fx_ticker, ccy=base_currency)
-            for fx_ticker in fx_ticker_by_currency.values()
-        ],
-    )
-    fx_result = load_market_data_result(fx_config, required_arrays=("Close",))
-    fx_result.assert_usable()
-    fx_close = market_data_bundle(fx_result).array("Close")
-    return assemble_fx_rates(
-        {ccy: fx_close[fx_ticker] for ccy, fx_ticker in fx_ticker_by_currency.items()},
-        index=index,
-    )
-
-
-def _load_store_fx_rates(
-    data_config: DataConfig,
-    *,
-    base_currency: str,
-    fx_ticker_by_currency: dict[str, str],
-    index: pd.Index,
-) -> pd.DataFrame:
-    provider = data_config.effective_fx_provider
-    if provider != "yfinance":
-        raise ValueError(f"unsupported store FX gap-fill provider {provider!r}")
-    start = required_store_window_edge(data_config.start, "start")
-    end = required_store_window_edge(data_config.end, "end")
-    fx_pair_by_currency = {ccy: FxPair(base_currency, ccy) for ccy in fx_ticker_by_currency}
-    store = HistoricalStore()
-    window = CoveredWindow(
-        timeframe=data_config.timeframe,
-        start=start,
-        end=end,
-        arrays=("rate",),
-        calendar=TradingCalendar.WEEKDAY,
-    )
-    for ccy, fx_pair in fx_pair_by_currency.items():
-        pull_yfinance_fx_history(
-            fx_pair,
-            timeframe=data_config.timeframe,
-            start=start,
-            end=end,
-            calendar=TradingCalendar.WEEKDAY,
-            locator=YFinanceLocator(fx_ticker_by_currency[ccy]),
-        )
-    histories = {
-        fx_pair: store.read(fx_pair, window)["rate"]
-        for fx_pair in fx_pair_by_currency.values()
-    }
-    return assemble_fx_rates(
-        {ccy: histories[fx_pair] for ccy, fx_pair in fx_pair_by_currency.items()},
-        index=index,
-    )
+    """Currency conversion is split to r8b.4; r8b.1 keeps raw native prices."""
+    return data_bundle
 
 
 def _failure_diagnostic(error: Exception) -> dict[str, str]:

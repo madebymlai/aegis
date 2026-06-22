@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 from platformdirs import user_data_dir
 
 AEGIS_DATA_DIR_ENV = "AEGIS_DATA_DIR"
@@ -30,7 +31,7 @@ class NautilusDataProviderPort(Protocol):
 
 @dataclass(frozen=True)
 class RawBarRequest:
-    instrument_ids: tuple[str, ...]
+    instrument_ids: tuple[InstrumentId, ...]
     start: str
     end: str
     timeframe: str = "1D"
@@ -41,8 +42,8 @@ class CatalogBackedDataPort:
     catalog: Any
     provider: NautilusDataProviderPort | None = None
 
-    def load_raw_bars(self, request: RawBarRequest) -> dict[str, pd.DataFrame]:
-        frames: dict[str, pd.DataFrame] = {}
+    def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
+        frames: dict[InstrumentId, pd.DataFrame] = {}
         for instrument_id in request.instrument_ids:
             bar_type = raw_bar_type(instrument_id, request.timeframe)
             self._ensure_covered(bar_type, request)
@@ -103,10 +104,10 @@ def parquet_data_catalog(path: str | Path | None = None) -> Any:
     return ParquetDataCatalog(root)
 
 
-def raw_bar_type(instrument_id: str, timeframe: str) -> str:
+def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> str:
     if timeframe.upper() not in {"1D", "1-DAY"}:
         raise ValueError(f"catalog source supports only 1D raw bars; got {timeframe!r}")
-    return f"{instrument_id}-1-DAY-LAST-INTERNAL"
+    return f"{instrument_id.value}-1-DAY-LAST-INTERNAL"
 
 
 def _coverage_gap(bar_type: str, intervals: Sequence[tuple[int, int]]) -> CatalogCoverageGapError:

@@ -601,58 +601,39 @@ def test_show_config_schema_points_at_splitters_and_components(
     assert "`aerd show components`" in guide
 
 
-def test_show_config_schema_documents_continuous_adjustment_modes(
+def test_show_config_schema_documents_native_data_contract(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The guide enumerates the futures continuous-series adjustment vocabulary,
-    derived from the schema constant so it cannot list a mode the validator rejects."""
-    from research.aegis_research.configuration.schema import FUTURES_ADJUSTMENT_MODES
-
+    """The guide documents native ids, not legacy source/provider selectors."""
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
 
-    assert "Continuous-Futures Adjustment Modes" in guide
-    # Every accepted mode is listed (catalog is interpolated from the constant).
-    for mode in FUTURES_ADJUSTMENT_MODES:
-        assert f"`{mode}`" in guide
-    assert "backward_ratio" in guide
-    assert "backward_spread" in guide
+    assert "`instruments`" in guide
+    assert "`exchange`" in guide
+    assert "native Nautilus `InstrumentId`" in guide
+    assert "data.source" in guide
+    assert "Continuous-Futures Adjustment Modes" not in guide
+    assert "pnl_adjustment" not in guide
 
 
-def test_show_config_schema_explains_signal_and_pnl_adjustment(
+def test_show_config_schema_embeds_dated_futures_leg_example(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The guide explains the dual-series split: adjustment drives indicators
-    (signal), pnl_adjustment drives the portfolio (P&L), futures-store only."""
+    """The guide carries a worked raw dated futures leg example snippet."""
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
 
-    assert "pnl_adjustment" in guide
-    assert "signal" in guide.lower()
-    assert "P&L" in guide
-    # The dual series is a futures-store-only capability.
-    assert "futures" in guide.lower()
+    assert "## Example: Dated Futures Leg" in guide
+    assert "ESZ6.XCME" in guide
+    assert "source: store" not in guide
 
 
-def test_show_config_schema_embeds_dual_series_futures_example(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The guide carries a worked futures dual-series example snippet."""
-    assert cli.main(["show", "config-schema"]) == 0
-    guide = capsys.readouterr().out
-
-    assert "adjustment: backward_ratio" in guide
-    assert "pnl_adjustment: backward_spread" in guide
-    assert "source: store" in guide
-
-
-def test_show_config_schema_dual_series_example_validates(
+def test_show_config_schema_dated_leg_example_validates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The embedded futures dual-series YAML validates through the real
-    validation coordinator — the documented vocabulary is a real, accepted config."""
+    """The embedded dated-leg YAML validates through the real validation coordinator."""
     monkeypatch.chdir(tmp_path)
     write_indicator_component(
         tmp_path / "research" / "components" / "indicators" / "returns.py"
@@ -664,20 +645,14 @@ def test_show_config_schema_dual_series_example_validates(
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
 
-    raw = yaml.safe_load(
-        _yaml_block_after(guide, "## Example: Futures Dual Continuous Series")
-    )
+    raw = yaml.safe_load(_yaml_block_after(guide, "## Example: Dated Futures Leg"))
 
     from research.aegis_research.configuration import resolve_run_config
 
     resolved = resolve_run_config(raw)
-    symbols = resolved.config.data.symbols
-    es = next(s for s in symbols if s.root == "ES")
-    assert es.adjustment == "backward_ratio"
-    assert es.pnl_adjustment == "backward_spread"
-    # A symbol without pnl_adjustment signals and realizes P&L on the same series.
-    cl = next(s for s in symbols if s.root == "CL")
-    assert cl.pnl_adjustment is None
+    assert resolved.config.data.instruments == ["ESZ6.XCME"]
+    assert resolved.config.data.exchange == []
+    assert not hasattr(resolved.config.data, "source")
 
 
 def _yaml_block_after(guide: str, heading: str) -> str:
@@ -711,10 +686,13 @@ def test_show_config_schema_embedded_example_validates(
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "example.run",
         "data": {
-            "source": "synthetic",
-            "symbols": [{"ticker": "A", "ccy": "EUR"}, {"ticker": "B", "ccy": "EUR"}, {"ticker": "C", "ccy": "EUR"}],
-            "rows": 250,
+            "base_currency": "USD",
+            "instruments": ["AAPL.NASDAQ", "MSFT.NASDAQ", "SPY.ARCA"],
+            "exchange": ["EUR/USD.IDEALPRO"],
             "arrays": ["OHLCV"],
+            "start": "2024-01-01",
+            "end": "2024-12-31",
+            "timeframe": "1D",
         },
         "portfolio": {
             "gross_cap": 1.0,
@@ -736,7 +714,7 @@ def test_show_config_schema_embedded_example_validates(
     resolved = resolve_run_config(example_raw)
     assert resolved is not None
     assert resolved.config.name == "example.run"
-    assert resolved.config.data.source == "synthetic"
+    assert resolved.config.data.instruments == ["AAPL.NASDAQ", "MSFT.NASDAQ", "SPY.ARCA"]
     assert resolved.config.portfolio.direction == "longonly"
     assert resolved.config.optimization is not None
     assert resolved.config.optimization.search == "grid"
@@ -1345,16 +1323,22 @@ def test_config_schema_guide_marks_schema_version_const() -> None:
     assert "schema_version`** — must be present and exactly `10`" in guide
 
 
-def test_config_schema_guide_states_allowed_data_sources() -> None:
-    """Drift: data source whitelist is interpolated from code."""
+def test_config_schema_guide_states_native_data_contract() -> None:
+    """Drift: data contract documents native ids, not source selectors."""
     guide = _render_guide("config-schema")
-    assert "`synthetic`" in guide
-    assert "`csv`" in guide
+    assert "`instruments`" in guide
+    assert "`exchange`" in guide
+    assert "native Nautilus `InstrumentId`" in guide
+    assert "`synthetic`" not in guide
+    assert "`csv`" not in guide
 
 
 def test_config_schema_guide_states_removed_fields_unknown() -> None:
     """Drift: labeler/train/model are called out as removed/unknown."""
     guide = _render_guide("config-schema")
+    assert "`data.source`" in guide
+    assert "`data.symbols`" in guide
+    assert "`data.provider`" in guide
     assert "`labeler`" in guide
     assert "`train`" in guide
     assert "`model`" in guide

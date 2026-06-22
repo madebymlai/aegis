@@ -7,7 +7,7 @@ is hand-curated.
 
 The rendered guide states the **forward contract**, not the raw pydantic model:
 the prepass overlay (``optimization`` required, ``schema_version`` pinned to the
-current ``CONFIG_SCHEMA_VERSION``, data-source whitelist) is applied so the
+current ``CONFIG_SCHEMA_VERSION``) is applied so the
 documented requiredness matches the enforced requiredness (ADR-0019, ADR-0012).
 """
 
@@ -27,7 +27,6 @@ from research.aegis_research.configuration.schema import (
     DATA_QUALITY_DEGRADATIONS,
     DEFAULT_LOCK_ROLE,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
-    FUTURES_ADJUSTMENT_MODES,
     LOCK_ROLES,
     MISSING_POLICIES,
     OHLCV_ARRAYS,
@@ -50,11 +49,6 @@ from research.aegis_research.configuration.schema import (
     RunSourceRefConfig,
     RunSplitConfig,
     SignalConfig,
-    SymbolSpec,
-)
-from research.aegis_research.market_data.sources import (
-    LOCAL_DATA_SOURCES,
-    remote_data_sources,
 )
 
 # Forward-contract overlay (PREPASS_REQUIRED_FIELDS / PREPASS_CONST_FIELDS) is
@@ -63,10 +57,6 @@ from research.aegis_research.market_data.sources import (
 
 GUIDE_SCHEMA_VERSION = "config_schema_guide.v1"
 """Payload schema version for the ``aerd show config-schema`` JSON envelope."""
-
-
-def _allowed_data_sources() -> set[str]:
-    return LOCAL_DATA_SOURCES | remote_data_sources()
 
 
 # ── Nested type tree for rendering ────────────────────────────────────────────
@@ -89,25 +79,6 @@ _SECTION_TYPES: dict[str, type[object] | list[type[object]]] = {
 # Text anchors for curated prose that reference CLI subcommands.
 _SHOW_SPLITTERS = "`aerd show splitters <method>`"
 _SHOW_COMPONENTS = "`aerd show components`"
-
-# Hand-curated semantics for each continuous-futures adjustment mode. The keys are
-# validated against FUTURES_ADJUSTMENT_MODES at render time, so a mode added to the
-# schema without a description here fails loudly rather than rendering an empty catalog.
-_ADJUSTMENT_MODE_DESCRIPTIONS: dict[str, str] = {
-    "unadjusted": (
-        "raw spliced front-month chain; roll gaps are preserved (the back-month basis "
-        "shows up as a jump at each roll)."
-    ),
-    "backward_ratio": (
-        "multiplicative back-adjust; within-contract returns are preserved and the series "
-        "stays positive (NautilusTrader BACKWARD_RATIO)."
-    ),
-    "backward_spread": (
-        "additive / Panama back-adjust; absolute point moves are preserved and the series "
-        "can go negative (NautilusTrader BACKWARD_SPREAD)."
-    ),
-}
-
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -168,16 +139,11 @@ def _render_forward_contract() -> str:
         f"- **`optimization`** — required. {FORWARD_OPTIMIZATION_REQUIRED_MESSAGE}"
     )
 
-    # data source whitelist
-    sources = sorted(_allowed_data_sources())
-    lines.append(
-        f"- **`data.source`** — must be one of: {', '.join(f'`{s}`' for s in sources)}."
-    )
-
     # removed fields
     lines.append(
-        "- **Removed fields** — `labeler`, `train`, `model`, and any key not listed "
-        "in this guide are rejected as unknown."
+        "- **Removed fields** — `data.source`, `data.symbols`, `data.provider`, "
+        "`data.fx_provider`, `labeler`, `train`, `model`, and any key not listed in "
+        "this guide are rejected as unknown."
     )
 
     # schema_version
@@ -226,29 +192,13 @@ def _render_data_section() -> str:
         extra_lines=[
             f"**arrays shortcuts**: `OHLCV` expands to `{', '.join(OHLCV_ARRAYS)}`. "
             "Any VBT feature name works; no surrounding whitespace or control characters.",
-            f"**Allowed sources**: {', '.join(f'`{s}`' for s in sorted(_allowed_data_sources()))}.",
             "",
-            "**`symbols`** — listed entries are `{ticker, ccy}` records (a bare string ticker is "
-            "rejected). `ccy` is the literal quote token declared inline beside the ticker — "
-            "`EUR`, `USD`, or a minor unit such as `GBp` (pence). Currency is instrument "
-            "identity and is never sniffed from the data provider. Prices are converted to "
-            "`portfolio.base_currency` (default `EUR`) before indicators and the portfolio "
-            "run; a non-base-currency leg additionally pays `portfolio.fx_conversion_cost` "
-            "per trade. For `source: store`, listed symbols require `figi` and use `ticker` "
-            "only as the provider locator; futures symbols use `root` as the RD symbol name, "
-            "declare their own `dataset`, and reject per-symbol provider locators.",
+            "**`instruments`** — tradeable native Nautilus `InstrumentId` values in execution "
+            "column order. These are parsed to `InstrumentId` at the catalog adapter edge and "
+            "remain typed through the runtime bundle.",
             "",
-            "**Futures continuous series (`adjustment` / `pnl_adjustment`)** — a futures store "
-            "symbol stitches its dated contracts into a continuous series. `adjustment` selects "
-            "the **signal** series the indicators run on; the optional `pnl_adjustment` selects a "
-            "second continuous series the portfolio simulates **P&L** and sizes against. When "
-            "`pnl_adjustment` is omitted the signal series is also the P&L series (single series). "
-            "Both are named for NautilusTrader's backward `ContinuousFutureAdjustmentType` modes so "
-            "research and live agree; see the **Continuous-Futures Adjustment Modes** catalog below "
-            "for the allowed values. Only futures store symbols may set a back-adjusted mode — "
-            "listed / non-futures symbols are `unadjusted` only and may not set `pnl_adjustment`.",
-            "",
-            _render_field_table(SymbolSpec),
+            "**`exchange`** — optional data-only native `InstrumentId` values requested from "
+            "the same catalog/port but never exposed as tradeable bundle columns.",
             "",
             "<br>**`quality.allowed_degradations`**: ",
         ],
@@ -431,13 +381,6 @@ def _render_literal_catalogs() -> str:
             "Keys that must NOT appear under `optimization.execute`; "
             "managed by Aegis's optimization layer.",
         ),
-        (
-            "Continuous-Futures Adjustment Modes",
-            {mode: _ADJUSTMENT_MODE_DESCRIPTIONS[mode] for mode in FUTURES_ADJUSTMENT_MODES},
-            "Valid values for a futures store symbol's `adjustment` (the signal series "
-            "indicators run on) and `pnl_adjustment` (the series the portfolio simulates "
-            "P&L on). Listed / non-futures symbols accept only `unadjusted`.",
-        ),
     ]
 
     for title, values, description in catalogs:
@@ -492,13 +435,13 @@ def _render_example() -> str:
     name: example.run
 
     data:
-      source: synthetic
-      symbols:
-        - {{ticker: A, ccy: EUR}}
-        - {{ticker: B, ccy: EUR}}
-        - {{ticker: C, ccy: EUR}}
-      rows: 250
+      base_currency: USD
+      instruments: [AAPL.NASDAQ, MSFT.NASDAQ, SPY.ARCA]
+      exchange: [EUR/USD.IDEALPRO]
       arrays: [OHLCV]
+      start: "2024-01-01"
+      end: "2024-12-31"
+      timeframe: "1D"
 
     portfolio:
       gross_cap: 1.0
@@ -524,9 +467,9 @@ def _render_example() -> str:
         max_splits: 2
     ```
 
-    This example uses `synthetic` data (no network), the `demo.strategy` and
-    `demo.returns` Component fixtures, and a tiny 2-split rolling window so
-    it completes in seconds. The `demo.*` Components must exist under
+    This example reads native Nautilus bars from the configured catalog/port, uses
+    the `demo.strategy` and `demo.returns` Component fixtures, and a tiny 2-split
+    rolling window. The `demo.*` Components must exist under
     `research/components/strategies/` and `research/components/indicators/`
     relative to the working directory.""")
 
@@ -534,21 +477,18 @@ def _render_example() -> str:
 def _render_futures_example() -> str:
     """Embed a worked futures dual continuous-series Run Config YAML snippet."""
     return textwrap.dedent(f"""\
-    ## Example: Futures Dual Continuous Series
+    ## Example: Dated Futures Leg
 
-    A futures store universe that runs indicators on a ratio-adjusted continuous
-    series but simulates P&L on a spread-adjusted one via `pnl_adjustment`:
+    A single dated futures leg read as raw bars. Continuous futures are handled by
+    the next market-data slice.
 
     ```yaml
     schema_version: {CONFIG_SCHEMA_VERSION}
     name: example.futures
 
     data:
-      source: store
-      provider: databento
-      symbols:
-        - {{root: ES, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio, pnl_adjustment: backward_spread}}
-        - {{root: CL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}}
+      base_currency: USD
+      instruments: [ESZ6.XCME]
       arrays: [OHLCV]
       start: "2020-01-01"
       end: "2023-12-31"
@@ -578,10 +518,9 @@ def _render_futures_example() -> str:
         max_splits: 2
     ```
 
-    `ES` signals on its `backward_ratio` series but sizes and realizes P&L on a
-    `backward_spread` series; `CL` omits `pnl_adjustment`, so its signal series is
-    also its P&L series. The store source gap-fills and caches each leg the first
-    time it is pulled (provider `databento`, symbol `dataset: GLBX.MDP3`).""")
+    `ESZ6.XCME` is a native Nautilus `InstrumentId`. The catalog adapter requests
+    that id through the shared data-provider port and returns `InstrumentId`-keyed
+    OHLCV panels.""")
 
 
 # ── Field-tree helpers ────────────────────────────────────────────────────────

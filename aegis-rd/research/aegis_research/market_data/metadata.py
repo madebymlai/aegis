@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from nautilus_trader.model.identifiers import InstrumentId
+
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration import OHLCV_ARRAYS, DataConfig
 from research.aegis_research.market_data.contracts import (
@@ -46,7 +48,7 @@ def describe(
     """
     index = observation.index
     observed_arrays = list(observation.arrays)
-    symbols = list(observation.symbols)
+    instrument_ids = list(observation.instrument_ids)
     panels = observation.panels
     ohlc_arrays = OHLCV_ARRAYS
     all_requested_names: set[str] = set(required_arrays) | set(observed_arrays)
@@ -63,15 +65,14 @@ def describe(
     return MarketDataMetadataV3(
         schema_version="market_data.v3",
         request=RequestFacet(
-            source=config.source,
-            requested_symbols=list(config.tickers),
+            requested_instrument_ids=_instrument_ids(config.instruments),
             timeframe=config.timeframe,
             authored_arrays=to_builtin(config.arrays),
             effective_arrays=list(config.effective_arrays),
         ),
         arrays=array_descriptors,
         coverage=CoverageFacet(
-            symbols=symbols,
+            instrument_ids=instrument_ids,
             rows=len(index),
             start=str(index[0]) if len(index) else None,
             end=str(index[-1]) if len(index) else None,
@@ -93,3 +94,7 @@ def describe(
             silence_warnings=config.silence_warnings,
         ),
     )
+
+
+def _instrument_ids(values: list[str]) -> list[InstrumentId]:
+    return [InstrumentId.from_str(value) for value in values]

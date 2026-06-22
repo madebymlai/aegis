@@ -132,9 +132,8 @@ def build_candidate_data_identity(
     loaded_arrays = [d.name for d in metadata.arrays if d.loaded]
     return {
         "schema_version": "candidate_data_identity.v2",
-        "source": metadata.request.source,
-        "requested_symbols": metadata.request.requested_symbols,
-        "symbols": metadata.coverage.symbols,
+        "requested_instrument_ids": metadata.request.requested_instrument_ids,
+        "instrument_ids": metadata.coverage.instrument_ids,
         "timeframe": metadata.request.timeframe,
         "effective_arrays": metadata.request.effective_arrays,
         "loaded_arrays": loaded_arrays,

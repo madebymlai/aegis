@@ -58,7 +58,7 @@
       "skip_on_error": false,
       "source": "synthetic",
       "start": null,
-      "symbols": [
+      "instrument_ids": [
         {
           "adjustment": "unadjusted",
           "ccy": "EUR",
@@ -393,7 +393,7 @@
                 "Open",
                 "Volume"
               ],
-              "requested_symbols": [
+              "requested_instrument_ids": [
                 "SPY",
                 "IWM",
                 "EEM",
@@ -407,13 +407,12 @@
               ],
               "rows": 1008,
               "schema_version": "candidate_data_identity.v2",
-              "source": "synthetic",
               "source_metadata": {
                 "generated": true,
                 "rows": 1008,
                 "seed": 42
               },
-              "symbols": [
+              "instrument_ids": [
                 "SPY",
                 "IWM",
                 "EEM",
@@ -649,7 +648,7 @@
                 "Open",
                 "Volume"
               ],
-              "requested_symbols": [
+              "requested_instrument_ids": [
                 "SPY",
                 "IWM",
                 "EEM",
@@ -663,13 +662,12 @@
               ],
               "rows": 1008,
               "schema_version": "candidate_data_identity.v2",
-              "source": "synthetic",
               "source_metadata": {
                 "generated": true,
                 "rows": 1008,
                 "seed": 42
               },
-              "symbols": [
+              "instrument_ids": [
                 "SPY",
                 "IWM",
                 "EEM",
@@ -905,7 +903,7 @@
                 "Open",
                 "Volume"
               ],
-              "requested_symbols": [
+              "requested_instrument_ids": [
                 "SPY",
                 "IWM",
                 "EEM",
@@ -919,13 +917,12 @@
               ],
               "rows": 1008,
               "schema_version": "candidate_data_identity.v2",
-              "source": "synthetic",
               "source_metadata": {
                 "generated": true,
                 "rows": 1008,
                 "seed": 42
               },
-              "symbols": [
+              "instrument_ids": [
                 "SPY",
                 "IWM",
                 "EEM",

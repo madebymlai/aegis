@@ -15,7 +15,6 @@ from research.aegis_research.configuration import (
     resolve_run_config,
 )
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
-from tests.support.research.aegis_research.factories import make_data_config
 
 
 def test_public_config_exports_only_run_config_contract() -> None:
@@ -158,9 +157,10 @@ def test_data_arrays_single_ohlcv_resolves_effective_set(tmp_path: Path) -> None
 def test_data_arrays_mixed_shortcut_dedupes_deterministically(tmp_path: Path) -> None:
     raw = _run_config()
     raw["data"] = {
-        "source": "synthetic",
-        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-        "rows": 120,
+        "instruments": ["AAPL.NASDAQ"],
+        "start": "2024-01-01",
+        "end": "2024-02-01",
+        "timeframe": "1D",
         "arrays": ["FundingRate", "OHLCV", "Close", "FundingRate"],
     }
 
@@ -182,9 +182,10 @@ def test_data_arrays_mixed_shortcut_dedupes_deterministically(tmp_path: Path) ->
 def test_data_arrays_accept_source_specific_vbt_feature_names(tmp_path: Path) -> None:
     raw = _run_config()
     raw["data"] = {
-        "source": "synthetic",
-        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-        "rows": 120,
+        "instruments": ["AAPL.NASDAQ"],
+        "start": "2024-01-01",
+        "end": "2024-02-01",
+        "timeframe": "1D",
         "arrays": ["Close", "Stock Splits", "close"],
     }
 
@@ -198,7 +199,12 @@ def test_data_arrays_accept_source_specific_vbt_feature_names(tmp_path: Path) ->
 
 def test_run_config_requires_explicit_data_arrays(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["data"] = {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120}
+    raw["data"] = {
+        "instruments": ["AAPL.NASDAQ"],
+        "start": "2024-01-01",
+        "end": "2024-02-01",
+        "timeframe": "1D",
+    }
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
@@ -210,264 +216,35 @@ def test_run_config_requires_explicit_data_arrays(tmp_path: Path) -> None:
     assert "required" in str(error.value)
 
 
-def test_store_source_requires_block_level_provider(tmp_path: Path) -> None:
+def test_data_rejects_removed_source_symbols_and_provider(tmp_path: Path) -> None:
     raw = _run_config()
     raw["data"] = {
-        "source": "store",
-        "symbols": [{"ticker": "SPY", "ccy": "USD", "figi": "BBG000BDTBL9"}],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert "data" in str(error.value)
-    assert "provider is required for store source" in str(error.value)
-
-
-def test_store_source_accepts_fx_provider(tmp_path: Path) -> None:
-    # A EUR-base futures book pulls bars from databento but FX rates from yfinance
-    # (the only store FX gap-fill provider); fx_provider decouples the two.
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "databento",
-        "fx_provider": "yfinance",
-        "symbols": [{"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3", "adjustment": "backward_ratio"}],
+        "source": "synthetic",
+        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
+        "provider": "yfinance",
         "arrays": ["OHLCV"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert resolved.config.data.fx_provider == "yfinance"
-    assert resolved.config.data.effective_fx_provider == "yfinance"
-
-
-def test_fx_provider_rejected_for_non_store_source(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "bento",
-        "fx_provider": "yfinance",
-        "symbols": [{"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3", "adjustment": "backward_ratio"}],
-        "arrays": ["OHLCV"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
+        "instruments": ["AAPL.NASDAQ"],
+        "start": "2024-01-01",
+        "end": "2024-02-01",
+        "timeframe": "1D",
     }
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 
-    assert "fx_provider is only supported for store source" in str(error.value)
-
-
-def test_store_listed_symbol_rejects_locator_alias(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "yfinance",
-        "symbols": [
-            {
-                "ticker": "BRK-B",
-                "locator": "BRK-B",
-                "ccy": "USD",
-                "figi": "BBG000B9XRY4",
-            }
-        ],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert "data.symbols[0].locator" in str(error.value)
-    assert "Unexpected keyword argument" in str(error.value)
-
-
-def test_store_listed_symbol_requires_explicit_listed_ref(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "yfinance",
-        "symbols": [{"ticker": "SPY", "ccy": "USD"}],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert "data" in str(error.value)
-    assert "figi is required for store source symbol 'SPY'" in str(error.value)
-
-
-def test_store_listed_symbol_rejects_dataset(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "yfinance",
-        "symbols": [
-            {
-                "ticker": "SPY",
-                "ccy": "USD",
-                "figi": "BBG000BDTBL9",
-                "dataset": "GLBX.MDP3",
-            }
-        ],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert "data" in str(error.value)
-    assert "dataset is only supported for futures symbols" in str(error.value)
-
-
-def test_store_futures_symbols_derive_names_from_root(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "databento",
-        "symbols": [
-            {
-                "root": "ES",
-                "ccy": "USD",
-                "dataset": "GLBX.MDP3",
-                "adjustment": "unadjusted",
-            }
-        ],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert resolved.config.data.tickers == ["ES"]
-    assert resolved.config.data.currency_by_symbol == {"ES": "USD"}
-
-
-def test_store_futures_symbols_reject_provider_locators(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "databento",
-        "symbols": [
-            {"root": "ES", "ticker": "ES.FUT", "ccy": "USD", "dataset": "GLBX.MDP3"}
-        ],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert "data" in str(error.value)
-    assert "futures store symbols must not declare ticker" in str(error.value)
-
-
-def test_store_futures_duplicate_roots_fail_closed(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "databento",
-        "symbols": [
-            {"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3"},
-            {
-                "root": "ES",
-                "ccy": "USD",
-                "dataset": "IFUS.IMPACT",
-                "adjustment": "backward_ratio",
-            },
-        ],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert "data" in str(error.value)
-    assert "duplicate futures root 'ES'" in str(error.value)
-
-
-def test_store_futures_symbols_accept_mixed_datasets(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "databento",
-        "symbols": [
-            {"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3"},
-            {"root": "BZ", "ccy": "USD", "dataset": "IFEU.IMPACT"},
-        ],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert resolved.config.data.tickers == ["ES", "BZ"]
-    assert [symbol.dataset for symbol in resolved.config.data.symbols] == [
-        "GLBX.MDP3",
-        "IFEU.IMPACT",
-    ]
-
-
-def test_databento_store_requires_per_symbol_dataset(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "databento",
-        "symbols": [{"root": "ES", "ccy": "USD"}],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert "data" in str(error.value)
-    assert "dataset is required when root declares a FuturesRef" in str(error.value)
-
-
-def test_store_data_rejects_block_level_dataset(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "store",
-        "provider": "databento",
-        "dataset": "GLBX.MDP3",
-        "symbols": [{"root": "ES", "ccy": "USD", "dataset": "GLBX.MDP3"}],
-        "arrays": ["Close"],
-        "start": "2024-01-02",
-        "end": "2024-01-05",
-    }
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert "data.dataset" in str(error.value)
+    assert "data.source" in str(error.value)
+    assert "data.symbols" in str(error.value)
+    assert "data.provider" in str(error.value)
     assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_config_rejects_removed_feature_map(tmp_path: Path) -> None:
     raw = _run_config()
     raw["data"] = {
-        "source": "synthetic",
-        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-        "rows": 120,
+        "instruments": ["AAPL.NASDAQ"],
+        "start": "2024-01-01",
+        "end": "2024-02-01",
+        "timeframe": "1D",
         "arrays": ["OHLCV"],
         "feature_map": {"close": "price"},
     }
@@ -486,9 +263,10 @@ def test_run_config_rejects_removed_feature_map(tmp_path: Path) -> None:
 def test_run_config_rejects_invalid_data_arrays(tmp_path: Path, arrays: object) -> None:
     raw = _run_config()
     raw["data"] = {
-        "source": "synthetic",
-        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-        "rows": 120,
+        "instruments": ["AAPL.NASDAQ"],
+        "start": "2024-01-01",
+        "end": "2024-02-01",
+        "timeframe": "1D",
         "arrays": arrays,
     }
 
@@ -527,9 +305,9 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
                 f"schema_version: {CONFIG_SCHEMA_VERSION}",
                 "name: duplicate_key_test",
                 "data:",
-                "  source: synthetic",
+                "  instruments: [AAPL.NASDAQ]",
                 "data:",
-                "  source: synthetic",
+                "  instruments: [MSFT.NASDAQ]",
                 "portfolio:",
                 "  gross_cap: 1.0",
                 "strategy: {}",
@@ -548,35 +326,9 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
 
 def test_env_refs_are_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("BINANCE_API_KEY", "super-secret-token")
-    config = make_data_config(
-        source="binance",
-        symbols=[{"ticker": "BTCUSDT", "ccy": "EUR"}],
-        start="2020-01-01",
-        end="2020-02-01",
-        timeframe="1D",
-        provider_kwargs={"api_key": {"env": "BINANCE_API_KEY"}},
-    )
-
-    resolved_kwargs = resolve_env_refs(config.provider_kwargs)
+    resolved_kwargs = resolve_env_refs({"api_key": {"env": "BINANCE_API_KEY"}})
 
     assert resolved_kwargs == {"api_key": "super-secret-token"}
-
-
-def test_run_config_accepts_inline_credential_under_secret_like_key(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["data"] = {
-        "source": "yf",
-        "symbols": [{"ticker": "BTC-USD", "ccy": "EUR"}],
-        "start": "2020-01-01",
-        "end": "2020-02-01",
-        "timeframe": "1D",
-        "arrays": ["OHLCV"],
-        "provider_kwargs": {"api_key": "literal-secret-value"},
-    }
-
-    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-
-    assert resolved.config.data.provider_kwargs == {"api_key": "literal-secret-value"}
 
 
 def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
@@ -877,7 +629,13 @@ def _run_config() -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "canonical_run",
-        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120, "arrays": ["OHLCV"]},
+        "data": {
+            "instruments": ["AAPL.NASDAQ"],
+            "start": "2024-01-01",
+            "end": "2024-02-01",
+            "timeframe": "1D",
+            "arrays": ["OHLCV"],
+        },
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],

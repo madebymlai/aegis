@@ -4,6 +4,7 @@ from aegis_runtime.bundle import (
     ComponentStrategyInputs,
     DataContract,
     ExecutionBundle,
+    InstrumentId,
     LockedExecutionPlan,
     MarketDataBundle,
 )
@@ -12,7 +13,6 @@ from aegis_runtime.bundle_loader import (
     load_bundle_payload,
     load_installed_bundle,
 )
-from aegis_runtime.instruments import FuturesRef, InstrumentRef, ListedRef
 
 __all__ = [
     "BundleManifest",
@@ -21,11 +21,9 @@ __all__ = [
     "DataContract",
     "dump_bundle_payload",
     "ExecutionBundle",
+    "InstrumentId",
     "LockedExecutionPlan",
     "load_bundle_payload",
     "load_installed_bundle",
-    "FuturesRef",
-    "InstrumentRef",
-    "ListedRef",
     "MarketDataBundle",
 ]

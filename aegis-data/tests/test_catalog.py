@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
@@ -29,6 +30,10 @@ def _bar(bar_type: str, day: str, close: float) -> Bar:
         ts_event,
         ts_event,
     )
+
+
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)
 
 
 def _write_span(
@@ -72,7 +77,7 @@ def test_catalog_writes_nautilus_native_bar_layout(tmp_path: Path) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = ParquetDataCatalog(catalog_path)
-    bar_type = raw_bar_type("AAPL.NASDAQ", "1D")
+    bar_type = raw_bar_type(_id("AAPL.NASDAQ"), "1D")
 
     _write_span(
         catalog,
@@ -92,7 +97,8 @@ def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = ParquetDataCatalog(catalog_path)
-    bar_type = raw_bar_type("AAPL.NASDAQ", "1D")
+    instrument_id = _id("AAPL.NASDAQ")
+    bar_type = raw_bar_type(instrument_id, "1D")
     _write_span(
         catalog,
         [_bar(bar_type, "2024-01-01", 10.0)],
@@ -104,13 +110,13 @@ def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:
 
     frames = port.load_raw_bars(
         RawBarRequest(
-            instrument_ids=("AAPL.NASDAQ",),
+            instrument_ids=(instrument_id,),
             start="2024-01-01",
             end="2024-01-02",
         )
     )
 
-    assert frames["AAPL.NASDAQ"]["Close"].tolist() == [10.0]
+    assert frames[instrument_id]["Close"].tolist() == [10.0]
     assert provider.requests == []
 
 
@@ -118,7 +124,8 @@ def test_catalog_port_backfills_missing_tail_with_update_catalog(tmp_path: Path)
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = ParquetDataCatalog(catalog_path)
-    bar_type = raw_bar_type("AAPL.NASDAQ", "1D")
+    instrument_id = _id("AAPL.NASDAQ")
+    bar_type = raw_bar_type(instrument_id, "1D")
     _write_span(
         catalog,
         [_bar(bar_type, "2024-01-01", 10.0)],
@@ -130,21 +137,21 @@ def test_catalog_port_backfills_missing_tail_with_update_catalog(tmp_path: Path)
 
     first = port.load_raw_bars(
         RawBarRequest(
-            instrument_ids=("AAPL.NASDAQ",),
+            instrument_ids=(instrument_id,),
             start="2024-01-01",
             end="2024-01-03",
         )
     )
     second = port.load_raw_bars(
         RawBarRequest(
-            instrument_ids=("AAPL.NASDAQ",),
+            instrument_ids=(instrument_id,),
             start="2024-01-01",
             end="2024-01-03",
         )
     )
 
-    assert first["AAPL.NASDAQ"]["Close"].tolist() == [10.0, 11.0]
-    assert second["AAPL.NASDAQ"]["Close"].tolist() == [10.0, 11.0]
+    assert first[instrument_id]["Close"].tolist() == [10.0, 11.0]
+    assert second[instrument_id]["Close"].tolist() == [10.0, 11.0]
     assert provider.requests == [(bar_type, True)]
 
 
@@ -157,7 +164,7 @@ def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Pa
     with pytest.raises(CatalogCoverageGapError, match="catalog cannot serve AAPL.NASDAQ"):
         port.load_raw_bars(
             RawBarRequest(
-                instrument_ids=("AAPL.NASDAQ",),
+                instrument_ids=(_id("AAPL.NASDAQ"),),
                 start="2024-01-01",
                 end="2024-01-02",
             )

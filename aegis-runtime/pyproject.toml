@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Shared locked-execution runtime for Aegis: runs an Execution Bundle's strategy + indicators against supplied market data and gates the result."
 requires-python = ">=3.12"
 dependencies = [
+  "nautilus_trader",
   "numpy",
   "pandas",
 ]

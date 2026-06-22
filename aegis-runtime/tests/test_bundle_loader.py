@@ -2,8 +2,8 @@ import json
 import sys
 
 import pytest
+from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime import FuturesRef, ListedRef
 from aegis_runtime.bundle import (
     BundleManifest,
     ComponentSpec,
@@ -19,18 +19,9 @@ from aegis_runtime.bundle_loader import (
 
 def _contract() -> DataContract:
     return DataContract(
-        refs=(
-            ListedRef("BBG000000001"),
-            FuturesRef(
-                root="ES",
-                dataset="cme",
-                roll_rule="calendar",
-                adjustment="continuous",
-            ),
-        ),
+        instrument_ids=(_id("AAPL.NASDAQ"), _id("ESZ6.XCME")),
         required_arrays=("Close", "Open"),
         base_currency="EUR",
-        required_fx_currencies=("USD",),
         timeframe="1D",
         lookback_bars=20,
     )
@@ -42,7 +33,7 @@ def _manifest(contract: DataContract) -> BundleManifest:
         role="best",
         candidate_key="0123456789abcdef",
         component_source_hashes={"strategies/test": "abc123"},
-        refs=contract.refs,
+        instrument_ids=contract.instrument_ids,
     )
 
 
@@ -69,12 +60,14 @@ def _plan() -> LockedExecutionPlan:
         gross_cap=1.0,
         net_cap=None,
         direction="longonly",
-        symbols=("SPY", "ES"),
-        currency_by_symbol={"SPY": "USD", "ES": "USD"},
     )
 
 
-def test_bundle_payload_round_trips_kind_tagged_refs() -> None:
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)
+
+
+def test_bundle_payload_round_trips_native_instrument_ids() -> None:
     contract = _contract()
     plan = _plan()
 
@@ -85,47 +78,36 @@ def test_bundle_payload_round_trips_kind_tagged_refs() -> None:
     )
     bundle = load_bundle_payload(json.loads(json.dumps(payload)))
 
-    assert payload["contract"]["refs"] == [
-        {"kind": "listed", "figi": "BBG000000001"},
-        {
-            "kind": "futures",
-            "root": "ES",
-            "dataset": "cme",
-            "roll_rule": "calendar",
-            "adjustment": "continuous",
-        },
-    ]
+    assert payload["contract"]["instrument_ids"] == ["AAPL.NASDAQ", "ESZ6.XCME"]
     assert bundle.contract == contract
     assert bundle.manifest == _manifest(contract)
     assert bundle.gross_cap == plan.gross_cap
     assert bundle.net_cap == plan.net_cap
-    assert bundle.symbols == plan.symbols
-    assert bundle.currency_by_symbol == plan.currency_by_symbol
 
 
-def test_bundle_payload_rejects_ref_without_kind() -> None:
+def test_bundle_payload_rejects_missing_instrument_ids() -> None:
     contract = _contract()
     payload = dump_bundle_payload(
         contract=contract,
         manifest=_manifest(contract),
         plan=_plan(),
     )
-    del payload["contract"]["refs"][0]["kind"]
+    del payload["contract"]["instrument_ids"]
 
-    with pytest.raises(ValueError, match="missing kind"):
+    with pytest.raises(ValueError, match="instrument_ids"):
         load_bundle_payload(payload)
 
 
-def test_bundle_payload_rejects_unknown_ref_kind() -> None:
+def test_bundle_payload_rejects_invalid_instrument_id() -> None:
     contract = _contract()
     payload = dump_bundle_payload(
         contract=contract,
         manifest=_manifest(contract),
         plan=_plan(),
     )
-    payload["manifest"]["refs"][1]["kind"] = "option"
+    payload["manifest"]["instrument_ids"][1] = ""
 
-    with pytest.raises(ValueError, match="unknown InstrumentRef kind"):
+    with pytest.raises(ValueError, match="InstrumentId"):
         load_bundle_payload(payload)
 
 

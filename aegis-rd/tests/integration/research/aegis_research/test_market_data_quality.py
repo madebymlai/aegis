@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
@@ -27,7 +28,7 @@ def test_quality_verdict_is_derived_from_typed_diagnostics_without_panels() -> N
         make_data_config(source="diagnostic", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
         (
             DataDiagnostics(
-                symbol="SYN",
+                instrument_id=_id("SYN.XNAS"),
                 configured=True,
                 arrays={
                     "Close": DataArrayDiagnostics(
@@ -51,7 +52,7 @@ def test_quality_verdict_is_derived_from_typed_diagnostics_without_panels() -> N
         "raw data index contains duplicate timestamps",
         "raw data index is not monotonic increasing",
         "required array 'Close' contains missing values",
-        "required array 'Close' has non-numeric symbols ['SYN']",
+        "required array 'Close' has non-numeric instrument IDs ['SYN.XNAS']",
     )
 
 
@@ -232,7 +233,7 @@ def test_skipped_symbol_with_explicit_policy_is_degraded_allowed() -> None:
             source="fake",
             symbols=[{"ticker": "AAA", "ccy": "EUR"}, {"ticker": "BBB", "ccy": "EUR"}],
             skip_on_error=True,
-            quality=make_data_quality_config(allowed_degradations=["skipped_symbols"]),
+            quality=make_data_quality_config(allowed_degradations=["skipped_instrument_ids"]),
         ),
         adapters={"fake": lambda _config: MarketDataAdapterResult(native_data=native_data)},
     )
@@ -271,6 +272,10 @@ def test_provider_failure_returns_safe_non_usable_result() -> None:
     assert result.metadata.quality.state == "provider_failed"
     assert result.metadata.diagnostics[0].provider_status == "provider_failed"
     assert "network unavailable" not in str(result.metadata)
+
+
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)
 
 
 def test_provider_update_support_uses_symbol_update_capability() -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import (
     RunConfig,
@@ -41,16 +42,17 @@ class ExecutionResult:
 
 
 def _fx_fees(config: RunConfig) -> pd.Series:
-    """Per-symbol trade fees for the book.
+    """Per-instrument trade fees for the book.
 
     ``fx_adjusted_fees`` is the single fee builder: it returns the base fee for
     every leg and adds the FX surcharge only to non-base legs, so a zero-cost or
     single-currency book gets a uniform no-op series - no branch, no special case.
     """
     portfolio = config.portfolio
+    instrument_ids = tuple(InstrumentId.from_str(value) for value in config.data.instruments)
     return fx_adjusted_fees(
-        config.data.tickers,
-        config.data.currency_by_symbol,
+        instrument_ids,
+        dict.fromkeys(instrument_ids, config.data.base_currency),
         portfolio.base_currency,
         base_fee=portfolio.fees,
         fx_conversion_cost=portfolio.fx_conversion_cost,

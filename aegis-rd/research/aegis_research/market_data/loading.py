@@ -16,7 +16,7 @@ from research.aegis_research.market_data import features as _features
 from research.aegis_research.market_data import metadata as _metadata
 from research.aegis_research.market_data import native_metadata as _native_metadata
 from research.aegis_research.market_data import quality as _judge
-from research.aegis_research.market_data.adapters import default_source_loaders
+from research.aegis_research.market_data.adapters.catalog import load_catalog_source
 from research.aegis_research.market_data.contracts import (
     MarketDataAdapter,
     MarketDataResult,
@@ -54,18 +54,15 @@ def load_market_data_result(
     config: DataConfig,
     *,
     required_arrays: tuple[str, ...] | None = None,
-    adapters: dict[str, MarketDataAdapter] | None = None,
+    adapter: MarketDataAdapter | None = None,
 ) -> MarketDataResult:
-    """Load data through VBT-backed sources, then apply Aegis evidence/quality contracts."""
-    source = config.source.lower()
-    source_loaders = {**default_source_loaders(), **(adapters or {})}
-    if source not in source_loaders:
-        raise ValueError(f"Unsupported data source: {config.source}")
+    """Load catalog data, then apply Aegis evidence/quality contracts."""
     requested = config.effective_arrays
     required = merge_data_arrays(requested, required_arrays or ())
+    load_data = load_catalog_source if adapter is None else adapter
 
     try:
-        adapter_result = source_loaders[source](config)
+        adapter_result = load_data(config)
     except RemoteDataPullError as error:
         return _provider_failed_result(config, error, required_arrays=required)
 

@@ -48,32 +48,19 @@ from research.aegis_research.configuration.schema import (
     RunSourceRefConfig,
     RunSplitConfig,
     SignalConfig,
-    SymbolSpec,
     expand_data_arrays,
     has_data_array_token_shape,
     lock_handle,
     merge_data_arrays,
-    required_store_window_edge,
-    store_gap_fill_provider,
 )
-from research.aegis_research.market_data.sources import (
-    LOCAL_DATA_SOURCES,
-    data_sources,
-    remote_data_sources,
-)
-
-DATA_SOURCES = data_sources()
-REMOTE_DATA_SOURCES = remote_data_sources()
 
 __all__ = [
     "CONFIG_SCHEMA_VERSION",
     "DATA_ARRAY_SHORTCUTS",
     "DATA_QUALITY_DEGRADATIONS",
-    "DATA_SOURCES",
     "DEFAULT_LOCK_ROLE",
     "FORWARD_OPTIMIZATION_REQUIRED_MESSAGE",
     "IDENTIFIER_RE",
-    "LOCAL_DATA_SOURCES",
     "LOCK_ROLES",
     "MISSING_POLICIES",
     "OHLCV_ARRAYS",
@@ -81,7 +68,6 @@ __all__ = [
     "PORTFOLIO_DIRECTIONS",
     "PREPASS_CONST_FIELDS",
     "PREPASS_REQUIRED_FIELDS",
-    "REMOTE_DATA_SOURCES",
     "SIGNAL_EXECUTION_TIMINGS",
     "SIGNAL_POLICIES",
     "ComponentIdStr",
@@ -102,16 +88,13 @@ __all__ = [
     "RunSourceRefConfig",
     "RunSplitConfig",
     "SignalConfig",
-    "SymbolSpec",
     "expand_data_arrays",
     "has_data_array_token_shape",
     "load_run_config",
     "lock_handle",
     "merge_data_arrays",
-    "required_store_window_edge",
     "resolve_env_refs",
     "resolve_run_config",
-    "store_gap_fill_provider",
     "to_builtin",
     "with_run_config_selection",
 ]

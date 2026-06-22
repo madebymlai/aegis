@@ -11,7 +11,6 @@ dependencies = [
   "platformdirs",
   "nautilus_trader",
   "databento",
-  "yfinance>=0.2.56",
 ]
 
 [project.scripts]
@@ -39,7 +38,6 @@ module = [
   "nautilus_trader.*",
   "pandas",
   "pandas.*",
-  "yfinance",
 ]
 ignore_missing_imports = true
 

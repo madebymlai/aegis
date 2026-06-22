@@ -74,5 +74,4 @@ def test_data_stage_result_exposes_metadata_without_recorder_ids() -> None:
 
     assert result.native_data.feature_oriented
     assert close_from_ohlcv(result.native_data).shape == (10, 1)
-    assert result.metadata.request.source == "synthetic"
     assert result.metadata.coverage.rows == 10

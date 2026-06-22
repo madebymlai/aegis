@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
@@ -13,7 +14,6 @@ from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.exposure_validation import (
     validate_exposure,
 )
-from research.aegis_research.market_data.currency import requires_conversion
 
 _SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
@@ -195,28 +195,34 @@ def short_masked_cash_dividends(
 
 
 def fx_adjusted_fees(
-    symbols: Sequence[str],
-    currency_by_symbol: Mapping[str, str],
+    instrument_ids: Sequence[InstrumentId],
+    currency_by_instrument_id: Mapping[InstrumentId, str],
     base_currency: str,
     base_fee: float,
     fx_conversion_cost: float,
 ) -> pd.Series:
-    """Per-symbol trade fee, adding the FX conversion cost to foreign legs.
+    """Per-instrument trade fee, adding the FX conversion cost to foreign legs.
 
     A foreign leg (one whose currency is not the book's base) crosses an FX
     spread on every trade - the EUR->ccy buy and the ccy->EUR sell - so it pays
     ``base_fee + fx_conversion_cost``; a base-currency leg pays ``base_fee``.
     """
     fees = {
-        symbol: base_fee
+        instrument_id: base_fee
         + (
             fx_conversion_cost
-            if requires_conversion(currency_by_symbol[symbol], base_currency)
+            if _requires_conversion(
+                currency_by_instrument_id[instrument_id], base_currency
+            )
             else 0.0
         )
-        for symbol in symbols
+        for instrument_id in instrument_ids
     }
     return pd.Series(fees)
+
+
+def _requires_conversion(quote_currency: str, base_currency: str) -> bool:
+    return quote_currency.upper() != base_currency.upper()
 
 
 def simulate_single_book(

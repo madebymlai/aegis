@@ -14,7 +14,7 @@ Each valid run writes a local `manifest.json` that records lifecycle status, con
 
 Aegis RD gives each research loop a clear contract:
 
-- Load market data through a native VectorBT `Data` contract with explicit provider, symbol, feature, timeframe, timezone, missing-data, and quality behavior.
+- Load market data from the shared Nautilus catalog by native `InstrumentId`, with explicit arrays, timeframe, timezone, missing-data, and quality behavior.
 - Build indicator outputs with preserved parameter metadata.
 - Generate strategy signals from reviewed components.
 - Optionally split run scoring into selection and held-out windows with native VBT splitter labels preserved as evidence.
@@ -29,54 +29,22 @@ Configs stay inert: YAML selects trusted IDs and parameters only. It cannot impo
 
 ## Market Data Contract
 
-Market data is loaded as native VectorBT `Data` for every supported source: `synthetic`, `csv`, `yf`, `binance`, and `ccxt`. Run configs declare `data.arrays` as a list of exact VectorBT feature names, with `OHLCV` expanding to `Open`, `High`, `Low`, `Close`, and `Volume`. Beyond that shortcut, available arrays are source-specific VBT `Data.features`, not a global Aegis list. Downstream stages consume timestamp-by-symbol panels; single-symbol runs are still one-column panels, not squeezed Series.
-
-Each run writes public `data.metadata` with safe provider metadata, requested and observed symbols, canonical feature availability, per-symbol diagnostics, quality state, timezone and index evidence, and omitted metadata fields. Private `data.native` preserves VectorBT-native state after public metadata succeeds and remains secret-scanned and fail-closed.
-
-Strategy runs require Open and Close data so bar-aligned entry/exit signals can be scored with next-open execution. Portfolio configs must declare `portfolio.entry_budget`, which is split across executable same-bar entries in one shared cash pool. Shorting, `portfolio.direction: both`, equal-weight rebalancing, ranked allocation, and target-weight sizing are out of scope for the v1 signal contract.
-
-Non-standard local columns must be normalized before ingestion or inside a source adapter; run configs do not provide feature mapping. Market-data symbols are not normalized: configs must use the provider's exact symbol format, such as `BTC-USD` for Yahoo Finance, `BTCUSDT` for Binance, or `BTC/USDT` for CCXT. This is intentional; hidden alias mapping would make evidence ambiguous.
-
-### Historical Store configs
-
-`data.source: store` reads cache-backed Covered History through `aegis-data` and may gap-fill through exactly one block-level `provider`. Required FX history uses the same provider; there is no `fx_provider`.
-
-Listed instruments keep `ticker` only as the provider locator and must declare the canonical `ListedRef` FIGI explicitly:
+Market data is loaded from Aegis Data's Nautilus `ParquetDataCatalog` through the shared DataProvider port. Run configs declare native Nautilus `InstrumentId` strings:
 
 ```yaml
 data:
-  source: store
-  provider: yfinance
+  base_currency: USD
+  instruments: [AAPL.NASDAQ, ESZ6.XCME]
+  exchange: [EUR/USD.IDEALPRO]
   start: "2024-01-02"
   end: "2024-03-01"
   timeframe: 1D
   arrays: [Close]
-  symbols:
-    - ticker: SPY
-      ccy: USD
-      figi: BBG000BDTBL9
 ```
 
-Futures store configs declare the Databento Dataset on each futures symbol. The
-symbol authoring surface is the `FuturesRef.root`; RD columns/display names
-derive from that root, and per-symbol `ticker`, `locator`, and `label` are
-rejected:
+`instruments` are tradeable columns. `exchange` IDs are data-only, requested from the same catalog/port but never exposed as tradeable columns. There is no `source`, `symbols`, or `provider` field in the forward data schema.
 
-```yaml
-data:
-  source: store
-  provider: databento
-  start: "2024-01-02"
-  end: "2024-03-01"
-  timeframe: 1D
-  arrays: [Close]
-  symbols:
-    - root: ES
-      ccy: USD
-      dataset: GLBX.MDP3
-      roll_rule: calendar
-      adjustment: unadjusted
-```
+Each run writes public `data.metadata` with requested and observed native IDs, canonical feature availability, per-instrument diagnostics, quality state, timezone and index evidence, and provider-port provenance. Private `data.native` preserves VectorBT-native state after public metadata succeeds and remains secret-scanned and fail-closed.
 
 ## Why It Exists
 

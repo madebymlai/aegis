@@ -64,15 +64,14 @@ def make_data_config(**overrides: Any) -> DataConfig:
     supplies it as a kwarg just like every other field.
     """
     defaults: dict[str, Any] = {
-        "source": "synthetic",
         "arrays": ["OHLCV"],
-        "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-        "start": None,
-        "end": None,
+        "base_currency": "EUR",
+        "instruments": ["SYN.XNAS"],
+        "exchange": [],
+        "start": "2024-01-01",
+        "end": "2024-01-03",
         "timeframe": "1D",
         "path": None,
-        "seed": 42,
-        "rows": 750,
         "missing_index": "raise",
         "missing_columns": "raise",
         "tz_localize": None,
@@ -80,9 +79,6 @@ def make_data_config(**overrides: Any) -> DataConfig:
         "skip_on_error": False,
         "silence_warnings": False,
         "quality": make_data_quality_config(),
-        "wrapper_kwargs": {},
-        "provider_kwargs": {},
-        "execution_kwargs": {},
     }
     defaults.update(overrides)
     return DataConfig(**defaults)

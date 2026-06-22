@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from nautilus_trader.model.identifiers import InstrumentId
+
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data.contracts import (
     QUALITY_DEGRADED_ALLOWED,
@@ -41,30 +43,35 @@ def evaluate(
     if provider_failed:
         return MarketDataQuality(
             state=QUALITY_PROVIDER_FAILED,
-            reasons=(f"{config.source} provider failed before usable native data was available",),
+            reasons=("provider failed before usable native data was available",),
             allowed_degradations=tuple(config.quality.allowed_degradations),
         )
 
-    skipped_symbols = [
-        diagnostic.symbol
+    skipped_instrument_ids = [
+        diagnostic.instrument_id
         for diagnostic in diagnostics
         if diagnostic.configured and diagnostic.provider_status == "skipped"
     ]
-    allowed_skipped_symbols = (
-        set(skipped_symbols) if (config.skip_on_error and "skipped_symbols" in allowed) else set()
+    allowed_skipped_instrument_ids = (
+        set(skipped_instrument_ids)
+        if (config.skip_on_error and "skipped_instrument_ids" in allowed)
+        else set()
     )
-    if skipped_symbols:
-        if allowed_skipped_symbols:
+    if skipped_instrument_ids:
+        skipped_values = _instrument_id_values(skipped_instrument_ids)
+        if allowed_skipped_instrument_ids:
             _record_quality_issue(
-                "skipped_symbols",
-                f"configured symbols missing from loaded data: {skipped_symbols}",
+                "skipped_instrument_ids",
+                f"configured instrument IDs missing from loaded data: {skipped_values}",
                 allowed,
                 reasons,
                 warnings,
                 degradations,
             )
         else:
-            reasons.append(f"configured symbols missing from loaded data: {skipped_symbols}")
+            reasons.append(
+                f"configured instrument IDs missing from loaded data: {skipped_values}"
+            )
 
     if index_evidence.get("raw_index_has_duplicates"):
         _record_quality_issue(
@@ -88,7 +95,8 @@ def evaluate(
     configured_diagnostics = [
         diagnostic
         for diagnostic in diagnostics
-        if diagnostic.configured and diagnostic.symbol not in allowed_skipped_symbols
+        if diagnostic.configured
+        and diagnostic.instrument_id not in allowed_skipped_instrument_ids
     ]
     for name in required_arrays:
         array_diagnostics = [
@@ -106,14 +114,16 @@ def evaluate(
         if all(array_diag.rows == 0 for _, array_diag in available):
             reasons.append(f"required array {name!r} is empty")
             continue
-        missing_required_symbols = [
-            diagnostic.symbol
+        missing_required_instrument_ids = [
+            diagnostic.instrument_id
             for diagnostic, array_diag in array_diagnostics
             if array_diag is None or not array_diag.available
         ]
-        if missing_required_symbols:
+        if missing_required_instrument_ids:
+            missing_required_values = _instrument_id_values(missing_required_instrument_ids)
             reasons.append(
-                f"required array {name!r} is missing symbols {missing_required_symbols}"
+                "required array "
+                f"{name!r} is missing instrument IDs {missing_required_values}"
             )
         if any(array_diag.missing > 0 for _, array_diag in available):
             _record_quality_issue(
@@ -125,12 +135,15 @@ def evaluate(
                 degradations,
             )
         non_numeric = [
-            diagnostic.symbol
+            diagnostic.instrument_id
             for diagnostic, array_diag in available
             if array_diag.numeric is False
         ]
         if non_numeric:
-            reasons.append(f"required array {name!r} has non-numeric symbols {non_numeric}")
+            reasons.append(
+                "required array "
+                f"{name!r} has non-numeric instrument IDs {_instrument_id_values(non_numeric)}"
+            )
 
     if reasons:
         state = QUALITY_REJECTED
@@ -159,3 +172,7 @@ def _record_quality_issue(
         warnings.append(message)
     else:
         reasons.append(message)
+
+
+def _instrument_id_values(instrument_ids: list[InstrumentId]) -> list[str]:
+    return [instrument_id.value for instrument_id in instrument_ids]

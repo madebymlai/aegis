@@ -109,9 +109,8 @@ def test_candidate_identity_golden_bytes_pin() -> None:
         source_identity={"source": "component", "id": "demo.rsi", "source_hash": "abc123"},
         data_identity={
             "schema_version": "candidate_data_identity.v2",
-            "source": "synthetic",
-            "requested_symbols": ["SYN", "ALT"],
-            "symbols": ["SYN", "ALT"],
+            "requested_instrument_ids": ["SYN.XNAS", "ALT.XNAS"],
+            "instrument_ids": ["SYN.XNAS", "ALT.XNAS"],
             "timeframe": "1D",
             "effective_arrays": ["Close", "Open"],
             "loaded_arrays": ["Close"],
@@ -138,15 +137,15 @@ def test_candidate_identity_golden_bytes_pin() -> None:
         b'"configured_arrays":["Close"],"contract_required_arrays":["Close","Open"],'
         b'"missing_required_arrays":["Open"],"pipeline_required_arrays":["Close","Open"]},'
         b'"effective_arrays":["Close","Open"],"index_end":"2026-01-31",'
-        b'"index_evidence":{},"index_start":"2026-01-01","loaded_arrays":["Close"],'
-        b'"requested_symbols":["SYN","ALT"],"rows":31,'
-        b'"schema_version":"candidate_data_identity.v2",'
-        b'"source":"synthetic","source_metadata":{},"symbols":["SYN","ALT"],'
+        b'"index_evidence":{},"index_start":"2026-01-01",'
+        b'"instrument_ids":["SYN.XNAS","ALT.XNAS"],"loaded_arrays":["Close"],'
+        b'"requested_instrument_ids":["SYN.XNAS","ALT.XNAS"],"rows":31,'
+        b'"schema_version":"candidate_data_identity.v2","source_metadata":{},'
         b'"timeframe":"1D"},"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
         b'"ma_window":100,"rsi_window":14},"schema_version":"candidate_identity.v4",'
         b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
     )
-    assert row["candidate_key"] == "cand_750cdfe832df4bbfcc82e853562ce8e6"
+    assert row["candidate_key"] == "cand_77b490a16196ee004c1c820d593f6f05"
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:
