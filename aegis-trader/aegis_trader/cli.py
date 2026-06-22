@@ -8,27 +8,23 @@ plus the backtest engine config or the paper/live node config and IBKR client
 dicts whose account ID comes from the environment, never a placeholder.
 
 It assembles and validates the run configuration and logs a summary; paper/live
-market data and ``node.run()`` remain the operator's runtime step. Backtests read
-only from the ``aegis-data`` Historical Store.
+market data and ``node.run()`` remain the operator's runtime step.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-from datetime import date
 from pathlib import Path
 
-from aegis_runtime import InstrumentRef
+from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_trader.backtest import book_return_stats, run_book_backtest
 from aegis_trader.config import (
     IBConnectionSettings,
     find_book_config,
     load_book_config,
 )
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.trader.instrument_provider import FuturesContractChains
 from aegis_trader.trader.modes import (
     build_backtest_engine_config,
     build_live_data_client_config,
@@ -51,6 +47,7 @@ def build_strategy_config(book: BookConfig, mode: str) -> RebalanceStrategyConfi
     return RebalanceStrategyConfig(
         book=book,
         fill_time_in_force=fill_time_in_force_for_mode(mode),
+        warmup_cache_on_start=mode in ("paper", "live"),
     )
 
 
@@ -58,10 +55,7 @@ def build_ib_client_configs(
     settings: IBConnectionSettings,
     mode: str,
     *,
-    listed_refs: tuple[InstrumentRef, ...] = (),
-    futures_refs: tuple[InstrumentRef, ...] = (),
-    futures_as_of: date | None = None,
-    futures_contract_chains: FuturesContractChains | None = None,
+    instrument_ids: tuple[InstrumentId, ...] = (),
 ) -> tuple[dict, dict]:
     """Map resolved connection settings onto the IBKR data/exec client dicts.
 
@@ -72,35 +66,23 @@ def build_ib_client_configs(
         data = build_paper_data_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id,
-            listed_refs=listed_refs,
-            futures_refs=futures_refs,
-            futures_as_of=futures_as_of,
-            futures_contract_chains=futures_contract_chains,
+            instrument_ids=instrument_ids,
         )
         execution = build_paper_exec_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id, account_id=settings.account_id,
-            listed_refs=listed_refs,
-            futures_refs=futures_refs,
-            futures_as_of=futures_as_of,
-            futures_contract_chains=futures_contract_chains,
+            instrument_ids=instrument_ids,
         )
     elif mode == "live":
         data = build_live_data_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id,
-            listed_refs=listed_refs,
-            futures_refs=futures_refs,
-            futures_as_of=futures_as_of,
-            futures_contract_chains=futures_contract_chains,
+            instrument_ids=instrument_ids,
         )
         execution = build_live_exec_client_config(
             ibg_host=settings.host, ibg_port=settings.port,
             ibg_client_id=settings.client_id, account_id=settings.account_id,
-            listed_refs=listed_refs,
-            futures_refs=futures_refs,
-            futures_as_of=futures_as_of,
-            futures_contract_chains=futures_contract_chains,
+            instrument_ids=instrument_ids,
         )
     else:
         raise ValueError(f"mode {mode!r} has no IBKR connection (backtest is offline)")
@@ -113,6 +95,8 @@ def _run_backtest(args: argparse.Namespace) -> int:
     Fully independent of ``--mode``: it resolves the book, runs the Store Read
     runner, and reports the result.
     """
+    from aegis_trader.backtest import book_return_stats, run_book_backtest
+
     book_path = args.book if args.book is not None else find_book_config()
     engine = run_book_backtest(
         book_path,

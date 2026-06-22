@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from aegis_runtime import ListedRef
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import SleeveName
+from nautilus_trader.model.identifiers import InstrumentId
+
+
+def _iid(symbol: str) -> InstrumentId:
+    return InstrumentId.from_str(f"{symbol}.TEST")
+
 
 _TREND = SleeveName("trend")
 _CARRY = SleeveName("carry")
-_A = ListedRef("A")
-_B = ListedRef("B")
+_A = _iid("A")
+_B = _iid("B")
 
 
 def test_realized_covariance_uses_complete_sleeve_return_rows():

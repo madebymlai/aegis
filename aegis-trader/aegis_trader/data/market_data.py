@@ -19,8 +19,6 @@ from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency, Quantity
-from aegis_runtime import InstrumentRef
-
 from aegis_trader.data.bar_type import bar_type
 from aegis_trader.domain.sizing import InstrumentSizing
 
@@ -59,7 +57,6 @@ class MarketDataPort(Protocol):
 
     def lookback_window(
         self,
-        ref: InstrumentRef,
         instrument_id: InstrumentId,
         timeframe: str,
         *,
@@ -77,7 +74,6 @@ class MarketDataPort(Protocol):
 
     def has_bar_in_period(
         self,
-        ref: InstrumentRef,
         instrument_id: InstrumentId,
         timeframe: str,
         *,
@@ -121,7 +117,6 @@ class NautilusMarketData:
 
     def lookback_window(
         self,
-        _ref: InstrumentRef,
         instrument_id: InstrumentId,
         timeframe: str,
         *,
@@ -138,7 +133,6 @@ class NautilusMarketData:
 
     def has_bar_in_period(
         self,
-        _ref: InstrumentRef,
         instrument_id: InstrumentId,
         timeframe: str,
         *,

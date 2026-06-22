@@ -2,8 +2,8 @@
 
 The allocator owns the Trader-side risk-budget scaling seam: raw per-sleeve
 weights from Execution Bundles in, risk-budget-scaled per-sleeve weights out.
-It imports no Nautilus types.  The diagonal allocator from the tracer slice is
-kept as the zero-correlation limit; the covariance path uses Equal Risk
+It performs no I/O.  The diagonal allocator from the tracer slice is kept as
+the zero-correlation limit; the covariance path uses Equal Risk
 Contribution (ERC) and can split risk top-down by declared risk group before
 allocating within each group.
 """
@@ -18,7 +18,7 @@ from typing import TypeVar
 import numpy as np
 
 from aegis_trader.domain.book_config import DrawdownDeleverCurve
-from aegis_runtime import InstrumentRef
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.types import SleeveName
 
@@ -34,7 +34,7 @@ class Allocation:
     """Risk-budget-scaled sleeve targets and their scalar multipliers."""
 
     multipliers: Mapping[SleeveName, float]
-    scaled_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]]
+    scaled_targets: Mapping[SleeveName, Mapping[InstrumentId, float]]
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ class _GroupComposition:
 
 def allocate_diagonal_vol_target(
     *,
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     risk_shares: Mapping[SleeveName, float],
     realized_vols: Mapping[SleeveName, float] | None,
     book_vol_target: float,
@@ -120,7 +120,7 @@ def allocate_diagonal_vol_target(
 
 def allocate_covariance_vol_target(
     *,
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     risk_shares: Mapping[SleeveName, float],
     realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]],
     book_vol_target: float,
@@ -313,7 +313,7 @@ def _validate_book_vol_target(book_vol_target: float) -> None:
 
 
 def _delevered_allocation(
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     multipliers: Mapping[SleeveName, float],
     *,
     realized_drawdown: float | None,
@@ -415,7 +415,7 @@ def _within_sleeve_weight_band(drift: float, band: SleeveWeightBand) -> bool:
 
 
 def _allocation_from_multipliers(
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     multipliers: Mapping[SleeveName, float],
 ) -> Allocation:
     return Allocation(
@@ -425,7 +425,7 @@ def _allocation_from_multipliers(
 
 
 def _active_sleeves(
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     risk_shares: Mapping[SleeveName, float],
 ) -> tuple[SleeveName, ...]:
     active: list[SleeveName] = []
@@ -685,10 +685,10 @@ def _erc_vector(covariance: np.ndarray, variance_budgets: np.ndarray) -> np.ndar
 
 
 def _scale_targets(
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     multipliers: Mapping[SleeveName, float],
-) -> dict[SleeveName, dict[InstrumentRef, float]]:
-    scaled_targets: dict[SleeveName, dict[InstrumentRef, float]] = {}
+) -> dict[SleeveName, dict[InstrumentId, float]]:
+    scaled_targets: dict[SleeveName, dict[InstrumentId, float]] = {}
     for name, targets in sleeve_targets.items():
         if name not in multipliers:
             continue
@@ -700,13 +700,13 @@ def _scale_targets(
 
 
 def _scale_sleeve_targets(
-    targets: Mapping[InstrumentRef, float],
+    targets: Mapping[InstrumentId, float],
     *,
     multiplier: float,
-) -> dict[InstrumentRef, float]:
-    scaled_targets: dict[InstrumentRef, float] = {}
-    for figi, weight in targets.items():
+) -> dict[InstrumentId, float]:
+    scaled_targets: dict[InstrumentId, float] = {}
+    for instrument_id, weight in targets.items():
         scaled = float(weight) * multiplier
         if abs(scaled) > _EPS:
-            scaled_targets[figi] = scaled
+            scaled_targets[instrument_id] = scaled
     return scaled_targets

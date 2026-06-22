@@ -10,22 +10,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
 from enum import Enum
 from typing import TYPE_CHECKING
 
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime import (
-    DataContract,
-    ExecutionBundle,
-    FuturesRef,
-    InstrumentRef,
-    ListedRef,
-    MarketDataBundle,
-)
-from aegis_runtime.currency import major_currency
+from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data.market_data import MarketBar
@@ -34,15 +25,11 @@ from aegis_trader.domain.integrity import check_account_integrity
 from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
-from aegis_trader.domain.types import OrderIntent, ResolvedContractId, SleeveName, WeightDelta
+from aegis_trader.domain.types import OrderIntent, SleeveName, WeightDelta
 
 if TYPE_CHECKING:
     from aegis_trader.data.market_data import MarketDataPort
     from aegis_trader.portfolio import BookStatePort
-
-
-InstrumentResolver = Callable[[InstrumentRef, date], InstrumentId]
-RefCurrencyReconciler = Callable[[InstrumentRef, str], str]
 
 
 class GateOutcome(str, Enum):
@@ -88,15 +75,6 @@ class StartupResult:
 
 
 @dataclass(frozen=True)
-class IdentityResolutionChange:
-    """A ref whose current resolved InstrumentId changed as-of a date."""
-
-    ref: InstrumentRef
-    previous: InstrumentId
-    current: InstrumentId
-
-
-@dataclass(frozen=True)
 class CompletedRebalancePeriod:
     """Completed rebalance-period coordinates for Cache-backed bar reads."""
 
@@ -113,27 +91,13 @@ class RebalanceResult:
     halt_reason: str | None = None
 
 
-class FixtureInstrumentResolver:
-    """Deterministic InstrumentRef→InstrumentId resolver for tests/backtests."""
-
-    def __init__(self, mapping: Mapping[InstrumentRef, InstrumentId]) -> None:
-        self._mapping = dict(mapping)
-
-    def __call__(self, ref: InstrumentRef, _as_of: date) -> InstrumentId:
-        try:
-            return self._mapping[ref]
-        except KeyError:
-            raise ValueError(
-                f"InstrumentRef {ref.value!r} is not in the fixture resolver"
-            ) from None
-
-
 class RebalancePipeline:
     """Per-period rebalance orchestrator behind a value-object API.
 
     Constructor injection keeps the Nautilus lifecycle at the edge: the Strategy
-    supplies cache-backed ports and an identity resolver; the pipeline only sees
-    canonical InstrumentRefs, plain market bars, and value-object requests.
+    supplies cache-backed ports.  The pipeline works only with native
+    InstrumentIds declared by the bundle contracts, plain market bars, and
+    value-object requests.
     """
 
     def __init__(
@@ -144,25 +108,21 @@ class RebalancePipeline:
         book: BookConfig,
         sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle],
         ledger: SleeveLedger,
-        resolve_instrument: InstrumentResolver,
-        reconcile_ref_currency: RefCurrencyReconciler | None = None,
     ) -> None:
         self._book_state = book_state
         self._market_data = market_data
         self._book = book
         self._sleeve_to_bundle = sleeve_to_bundle
         self._ledger = ledger
-        self._resolve_instrument = resolve_instrument
-        self._reconcile_ref_currency = reconcile_ref_currency or _identity_currency
         self._last_sleeve_weights: dict[SleeveName, float] = {}
-        self._all_refs = frozenset(
-            ref
+        self._all_instrument_ids = frozenset(
+            instrument_id
             for bundle in self._sleeve_to_bundle.values()
-            for ref in bundle.contract.refs
+            for instrument_id in bundle.contract.instrument_ids
         )
-        self._timeframe_by_ref = _timeframe_by_ref(self._sleeve_to_bundle)
-        self._ref_to_instrument_id: dict[InstrumentRef, InstrumentId] = {}
-        self._instrument_id_to_ref: dict[str, InstrumentRef] = {}
+        self._timeframe_by_instrument_id = _timeframe_by_instrument_id(
+            self._sleeve_to_bundle
+        )
 
     @property
     def sleeve_ledger(self) -> SleeveLedger:
@@ -173,51 +133,6 @@ class RebalancePipeline:
     def last_sleeve_weights(self) -> dict[SleeveName, float]:
         """Last allocator-applied sleeve multipliers, for evidence/backtest seams."""
         return dict(self._last_sleeve_weights)
-
-    def initialize_identity(self, as_of: date) -> None:
-        """Resolve every sleeve InstrumentRef for the boot date."""
-        for ref in sorted(self._all_refs, key=_ref_sort_key):
-            self._record_resolution(ref, self._resolve_instrument(ref, as_of))
-
-    def instrument_id_for_ref(self, ref: InstrumentRef) -> InstrumentId:
-        """Current venue-specific InstrumentId for an InstrumentRef."""
-        instr_id = self._ref_to_instrument_id.get(ref)
-        if instr_id is None:
-            raise ValueError(
-                f"InstrumentRef {ref!r} is not resolved; refusing to act on "
-                f"an unidentified instrument"
-            )
-        return instr_id
-
-    def ref_for_instrument_value(self, instrument_id_value: str) -> InstrumentRef | None:
-        """InstrumentRef previously resolved for a Nautilus InstrumentId value."""
-        return self._instrument_id_to_ref.get(instrument_id_value)
-
-    def refresh_resolution(self, as_of: date) -> tuple[IdentityResolutionChange, ...]:
-        """Re-resolve FuturesRefs and retain inverse mappings for old contracts."""
-        changes: list[IdentityResolutionChange] = []
-        futures_refs = sorted(
-            (ref for ref in self._all_refs if isinstance(ref, FuturesRef)),
-            key=_ref_sort_key,
-        )
-        for ref in futures_refs:
-            previous = self.instrument_id_for_ref(ref)
-            current = self._resolve_instrument(ref, as_of)
-            if current == previous:
-                continue
-            self._record_resolution(ref, current)
-            changes.append(IdentityResolutionChange(ref=ref, previous=previous, current=current))
-        return tuple(changes)
-
-    def resolve_contract_id_for_roll(self, ref: InstrumentRef, as_of: date) -> ResolvedContractId:
-        """Resolve a roll target and fold the resolved id back to its ref."""
-        instrument_id = self._resolve_instrument(ref, as_of)
-        self._record_resolution(ref, instrument_id)
-        return ResolvedContractId(instrument_id.value)
-
-    def resolved_identity_snapshot(self) -> dict[InstrumentRef, InstrumentId]:
-        """Current pipeline-owned identity map for logging and risk wiring."""
-        return dict(self._ref_to_instrument_id)
 
     def startup_check(self) -> StartupResult:
         """Run startup gates and return the decision as a value object."""
@@ -263,12 +178,6 @@ class RebalancePipeline:
             )
         return StartupResult(trading_enabled=True, nav=nav, cash=cash)
 
-    def _record_resolution(self, ref: InstrumentRef, instrument_id: InstrumentId) -> None:
-        self._ref_to_instrument_id[ref] = instrument_id
-        # Deliberately do not delete old inverse entries: a held stale futures
-        # contract must still fold back to its continuous FuturesRef for Roll.
-        self._instrument_id_to_ref[instrument_id.value] = ref
-
     def rebalance_period(self, period: CompletedRebalancePeriod) -> RebalanceResult:
         """Run one completed-period rebalance and return orders plus summary."""
         pending = self._compute_sleeve_targets(period)
@@ -291,7 +200,10 @@ class RebalancePipeline:
 
         self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
         sized_orders, prices = self._size_plan(plan.deltas, nav, period)
-        executable_orders = _orders_for_fresh_refs(sized_orders, self._fresh_refs(period))
+        executable_orders = _orders_for_fresh_instruments(
+            sized_orders,
+            self._fresh_instrument_ids(period),
+        )
         total_notional = sum(abs(order.quantity) for order in executable_orders)
 
         self._record_period(nav, realized_weights, pending, prices)
@@ -324,19 +236,14 @@ class RebalancePipeline:
                 name: _combine_array_series(sleeve_bars, name)
                 for name in contract.required_arrays
             }
-            fx_series = self._fx_series_for(contract, next(iter(arrays.values())).index)
-            if fx_series is None:
-                continue
-            pending[sleeve.name] = bundle.compute_weights(
-                MarketDataBundle(arrays), fx_series=fx_series
-            )
+            pending[sleeve.name] = bundle.compute_weights(MarketDataBundle(arrays))
         return pending
 
     def _build_rebalance_plan(
         self,
         pending: dict[SleeveName, pd.DataFrame],
-        nav: float,
-        realized_weights: dict[InstrumentRef, float],
+        _nav: float,
+        realized_weights: dict[InstrumentId, float],
     ) -> RebalancePlan:
         return rebalance_plan(
             pending,
@@ -346,7 +253,7 @@ class RebalancePipeline:
                 self._positive_risk_sleeve_names()
             ),
             previous_sleeve_weights=self._last_sleeve_weights,
-            realized_drawdown=self._ledger.current_drawdown(nav),
+            realized_drawdown=self._ledger.current_drawdown(_nav),
         )
 
     def _size_plan(
@@ -354,7 +261,7 @@ class RebalancePipeline:
         deltas: tuple[WeightDelta, ...],
         nav: float,
         period: CompletedRebalancePeriod,
-    ) -> tuple[tuple[OrderIntent, ...], dict[InstrumentRef, float]]:
+    ) -> tuple[tuple[OrderIntent, ...], dict[InstrumentId, float]]:
         instrument_metas, fx_rates, prices = self._collect_sizing_params(period)
         orders = size_deltas(
             deltas,
@@ -368,9 +275,9 @@ class RebalancePipeline:
     def _record_period(
         self,
         nav: float,
-        realized_weights: Mapping[InstrumentRef, float],
+        realized_weights: Mapping[InstrumentId, float],
         pending: Mapping[SleeveName, pd.DataFrame],
-        prices: Mapping[InstrumentRef, float],
+        prices: Mapping[InstrumentId, float],
     ) -> None:
         self._ledger.record(
             nav=nav,
@@ -383,32 +290,38 @@ class RebalancePipeline:
         self,
         contract: DataContract,
         period: CompletedRebalancePeriod,
-    ) -> dict[InstrumentRef, Sequence[MarketBar]] | None:
+    ) -> dict[InstrumentId, Sequence[MarketBar]] | None:
         needed = contract.lookback_bars + 1
-        sleeve_bars: dict[InstrumentRef, Sequence[MarketBar]] = {}
-        for ref in contract.refs:
-            bars = self._lookback_window(ref, contract.timeframe, period, limit=needed)
+        sleeve_bars: dict[InstrumentId, Sequence[MarketBar]] = {}
+        for instrument_id in contract.instrument_ids:
+            bars = self._lookback_window(
+                instrument_id,
+                contract.timeframe,
+                period,
+                limit=needed,
+            )
             if len(bars) < needed:
                 return None
-            sleeve_bars[ref] = bars
+            sleeve_bars[instrument_id] = bars
         return sleeve_bars
 
-    def _fresh_refs(self, period: CompletedRebalancePeriod) -> frozenset[InstrumentRef]:
+    def _fresh_instrument_ids(self, period: CompletedRebalancePeriod) -> frozenset[InstrumentId]:
         return frozenset(
-            ref for ref in self._all_refs if self._has_bar_in_period(ref, period)
+            instrument_id
+            for instrument_id in self._all_instrument_ids
+            if self._has_bar_in_period(instrument_id, period)
         )
 
     def _lookback_window(
         self,
-        ref: InstrumentRef,
+        instrument_id: InstrumentId,
         timeframe: str,
         period: CompletedRebalancePeriod,
         *,
         limit: int,
     ) -> tuple[MarketBar, ...]:
         return self._market_data.lookback_window(
-            ref,
-            self.instrument_id_for_ref(ref),
+            instrument_id,
             timeframe,
             period=period.period,
             period_ns=period.period_ns,
@@ -416,12 +329,11 @@ class RebalancePipeline:
         )
 
     def _has_bar_in_period(
-        self, ref: InstrumentRef, period: CompletedRebalancePeriod
+        self, instrument_id: InstrumentId, period: CompletedRebalancePeriod
     ) -> bool:
         return self._market_data.has_bar_in_period(
-            ref,
-            self.instrument_id_for_ref(ref),
-            self._timeframe_by_ref[ref],
+            instrument_id,
+            self._timeframe_by_instrument_id[instrument_id],
             period=period.period,
             period_ns=period.period_ns,
         )
@@ -429,25 +341,25 @@ class RebalancePipeline:
     def _collect_sizing_params(
         self,
         period: CompletedRebalancePeriod,
-    ) -> tuple[dict[InstrumentRef, InstrumentSizing], dict[str, float], dict[InstrumentRef, float]]:
-        instrument_metas: dict[InstrumentRef, InstrumentSizing] = {}
-        prices: dict[InstrumentRef, float] = {}
+    ) -> tuple[dict[InstrumentId, InstrumentSizing], dict[str, float], dict[InstrumentId, float]]:
+        instrument_metas: dict[InstrumentId, InstrumentSizing] = {}
+        prices: dict[InstrumentId, float] = {}
         currencies: set[str] = set()
 
-        for ref in self._all_refs:
-            resolved_id = self.instrument_id_for_ref(ref)
-            sizing = self._market_data.instrument_sizing(resolved_id)
+        for instrument_id in self._all_instrument_ids:
+            sizing = self._market_data.instrument_sizing(instrument_id)
             if sizing is None:
                 continue
-            quote_currency = self._reconcile_ref_currency(ref, sizing.currency)
-            instrument_metas[ref] = InstrumentSizing(
-                currency=quote_currency,
-                size_increment=sizing.size_increment,
+            instrument_metas[instrument_id] = sizing
+            bars = self._lookback_window(
+                instrument_id,
+                self._timeframe_by_instrument_id[instrument_id],
+                period,
+                limit=1,
             )
-            bars = self._lookback_window(ref, self._timeframe_by_ref[ref], period, limit=1)
             if bars:
-                prices[ref] = float(bars[-1].close)
-            currencies.add(quote_currency)
+                prices[instrument_id] = float(bars[-1].close)
+            currencies.add(sizing.currency)
 
         fx_rates: dict[str, float] = {}
         for currency in currencies:
@@ -456,24 +368,10 @@ class RebalancePipeline:
                 fx_rates[currency] = rate
         return instrument_metas, fx_rates, prices
 
-    def _fx_series_for(
-        self, contract: DataContract, index: pd.Index
-    ) -> dict[str, pd.Series] | None:
-        if not contract.required_fx_currencies:
-            return {}
-        series: dict[str, pd.Series] = {}
-        for currency in contract.required_fx_currencies:
-            rate = self._market_data.fx_rate(self._book.base_currency, currency)
-            if rate is None:
-                return None
-            series[currency] = pd.Series(rate, index=index)
-        return series
-
     def _get_fx_rate(self, target_currency: str) -> float | None:
-        major = major_currency(target_currency)
-        if major == self._book.base_currency:
+        if target_currency == self._book.base_currency:
             return 1.0
-        return self._market_data.fx_rate(self._book.base_currency, major)
+        return self._market_data.fx_rate(self._book.base_currency, target_currency)
 
     def _positive_risk_sleeve_names(self) -> tuple[SleeveName, ...]:
         risk_shares = self._book.allocator_risk_shares()
@@ -482,19 +380,13 @@ class RebalancePipeline:
         )
 
 
-def _ref_sort_key(ref: InstrumentRef) -> tuple[int, str]:
-    if isinstance(ref, ListedRef):
-        return (0, ref.value)
-    return (1, ref.value)
-
-
-def _timeframe_by_ref(
+def _timeframe_by_instrument_id(
     sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle]
-) -> dict[InstrumentRef, str]:
-    timeframes: dict[InstrumentRef, str] = {}
+) -> dict[InstrumentId, str]:
+    timeframes: dict[InstrumentId, str] = {}
     for bundle in sleeve_to_bundle.values():
-        for ref in bundle.contract.refs:
-            timeframes.setdefault(ref, bundle.contract.timeframe)
+        for instrument_id in bundle.contract.instrument_ids:
+            timeframes.setdefault(instrument_id, bundle.contract.timeframe)
     return timeframes
 
 
@@ -508,52 +400,48 @@ _BAR_ARRAY_ACCESSORS: dict[str, Callable[[MarketBar], float]] = {
 
 
 def _bars_to_array_series(
-    bars: Sequence[MarketBar], ref: InstrumentRef, array_name: str
+    bars: Sequence[MarketBar], instrument_id: InstrumentId, array_name: str
 ) -> pd.DataFrame:
     accessor = _BAR_ARRAY_ACCESSORS[array_name]
     index = pd.DatetimeIndex([bar.ts_event for bar in bars])
     values = [accessor(bar) for bar in bars]
-    return pd.DataFrame({ref: values}, index=index)
+    return pd.DataFrame({instrument_id: values}, index=index)
 
 
 def _combine_array_series(
-    bars_by_ref: Mapping[InstrumentRef, Sequence[MarketBar]], array_name: str
+    bars_by_instrument_id: Mapping[InstrumentId, Sequence[MarketBar]], array_name: str
 ) -> pd.DataFrame:
     frames = {
-        ref: _bars_to_array_series(bars, ref, array_name)
-        for ref, bars in bars_by_ref.items()
+        instrument_id: _bars_to_array_series(bars, instrument_id, array_name)
+        for instrument_id, bars in bars_by_instrument_id.items()
     }
     if len(frames) == 1:
         return next(iter(frames.values()))
     return pd.concat(frames.values(), axis=1)
 
 
-def _orders_for_fresh_refs(
-    orders: Sequence[OrderIntent], fresh_refs: frozenset[InstrumentRef]
+def _orders_for_fresh_instruments(
+    orders: Sequence[OrderIntent], fresh_instrument_ids: frozenset[InstrumentId]
 ) -> tuple[OrderIntent, ...]:
-    return tuple(order for order in orders if order.ref in fresh_refs)
+    return tuple(order for order in orders if order.instrument_id in fresh_instrument_ids)
 
 
 def _sleeve_target_snapshot(
     pending: Mapping[SleeveName, pd.DataFrame],
-) -> dict[SleeveName, dict[InstrumentRef, float]]:
+) -> dict[SleeveName, dict[InstrumentId, float]]:
     return {
         name: {
-            _column_ref(ref): float(weight)
-            for ref, weight in target_df.iloc[-1].to_dict().items()
+            _column_instrument_id(instrument_id): float(weight)
+            for instrument_id, weight in target_df.iloc[-1].to_dict().items()
         }
         for name, target_df in pending.items()
     }
 
 
-def _column_ref(column: object) -> InstrumentRef:
-    if isinstance(column, ListedRef | FuturesRef):
+def _column_instrument_id(column: object) -> InstrumentId:
+    if isinstance(column, InstrumentId):
         return column
-    return ListedRef(str(column))
-
-
-def _identity_currency(_ref: InstrumentRef, currency: str) -> str:
-    return currency
+    raise ValueError(f"target weight columns must be InstrumentId values; got {column!r}")
 
 
 def _summary(

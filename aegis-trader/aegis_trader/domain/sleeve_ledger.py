@@ -12,7 +12,7 @@ import math
 from collections.abc import Mapping, Sequence
 
 import numpy as np
-from aegis_runtime import InstrumentRef
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.allocator import portfolio_skew
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
@@ -44,9 +44,9 @@ class SleeveLedger:
         self,
         *,
         nav: float,
-        realized_weights: Mapping[InstrumentRef, float],
-        sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
-        closes: Mapping[InstrumentRef, float],
+        realized_weights: Mapping[InstrumentId, float],
+        sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
+        closes: Mapping[InstrumentId, float],
     ) -> None:
         """Record one completed rebalance period's observation."""
         observation = AttributionPeriod(

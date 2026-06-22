@@ -15,13 +15,10 @@ from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
-from aegis_runtime import ListedRef
-
 from aegis_trader.data import NautilusMarketData, bar_type
 from aegis_trader.domain.sizing import InstrumentSizing
 
 _IID = InstrumentId(symbol=Symbol("VUSA"), venue=Venue("XLON"))
-_REF = ListedRef("BBG000BARS01")
 _DAY_NS = 86_400_000_000_000
 
 
@@ -86,7 +83,6 @@ def test_lookback_window_reads_completed_bars_from_cache_without_trigger_bar():
     md = NautilusMarketData(cache=cache)
 
     bars = md.lookback_window(
-        _REF,
         _IID,
         "1D",
         period=1,
@@ -104,7 +100,6 @@ def test_freshness_true_when_cache_has_bar_in_completed_period():
     md = NautilusMarketData(cache=cache)
 
     fresh = md.has_bar_in_period(
-        _REF,
         _IID,
         "1D",
         period=1,
@@ -121,7 +116,6 @@ def test_freshness_false_when_cache_has_no_bar_in_completed_period():
     md = NautilusMarketData(cache=cache)
 
     fresh = md.has_bar_in_period(
-        _REF,
         _IID,
         "1D",
         period=1,

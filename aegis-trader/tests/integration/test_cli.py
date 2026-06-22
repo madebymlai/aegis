@@ -14,8 +14,8 @@ import logging
 import types
 
 import pytest
-from aegis_runtime import ListedRef
 from nautilus_trader.model.enums import TimeInForce
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.cli import build_ib_client_configs, build_strategy_config, main
 from aegis_trader.config import ConnectionConfigError, IBConnectionSettings
@@ -88,6 +88,7 @@ def test_strategy_config_for_paper_uses_market_on_close():
     """Paper/live -> AT_THE_CLOSE (Market-on-Close into the auction)."""
     cfg = build_strategy_config(_book(), "paper")
     assert cfg.fill_time_in_force == TimeInForce.AT_THE_CLOSE
+    assert cfg.warmup_cache_on_start is True
 
 
 def test_ib_client_configs_wire_account_from_settings():
@@ -100,17 +101,10 @@ def test_ib_client_configs_wire_account_from_settings():
     data, execution = build_ib_client_configs(
         settings,
         "paper",
-        listed_refs=(ListedRef("BBG000R20GS9"),),
+        instrument_ids=(InstrumentId.from_str("VUSA.XLON"),),
     )
 
-    assert data["instrument_provider"]["load_contracts"] == [
-        {
-            "secType": "STK",
-            "secIdType": "FIGI",
-            "secId": "BBG000R20GS9",
-            "exchange": "SMART",
-        }
-    ]
+    assert data["instrument_provider"] == {"load_ids": ["VUSA.XLON"]}
     assert execution["instrument_provider"] == data["instrument_provider"]
     assert execution["account_id"] == "DU1234567"
     assert execution["ibg_host"] == "10.0.0.5"
@@ -134,7 +128,7 @@ def test_backtest_subcommand_runs_the_runner(tmp_path, monkeypatch):
         calls.update(path=path, start=start, end=end, store_dir=store_dir)
         return _FakeEngine()
 
-    monkeypatch.setattr("aegis_trader.cli.run_book_backtest", fake_runner)
+    monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
     rc = main(
         ["backtest", "--start", "2020-01-01", "--end", "2020-06-01",
@@ -158,7 +152,7 @@ def test_backtest_subcommand_passes_store_dir_override(tmp_path, monkeypatch):
         captured["store_dir"] = store_dir
         return _FakeEngine()
 
-    monkeypatch.setattr("aegis_trader.cli.run_book_backtest", fake_runner)
+    monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
     rc = main(
         ["backtest", "--start", "2020-01-01", "--end", "2020-06-01",
@@ -181,7 +175,7 @@ def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
         seen["path"] = path
         return _FakeEngine()
 
-    monkeypatch.setattr("aegis_trader.cli.run_book_backtest", fake_runner)
+    monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
     rc = main(["backtest", "--start", "2020-01-01", "--end", "2020-06-01"])
 
@@ -196,10 +190,10 @@ def test_backtest_subcommand_reports_performance_stats(tmp_path, monkeypatch, ca
     account (aegis-rd-syp)."""
     book_path = _write_book(tmp_path)
     monkeypatch.setattr(
-        "aegis_trader.cli.run_book_backtest", lambda path, **kw: _FakeEngine()
+        "aegis_trader.backtest.run_book_backtest", lambda path, **kw: _FakeEngine()
     )
     monkeypatch.setattr(
-        "aegis_trader.cli.book_return_stats",
+        "aegis_trader.backtest.book_return_stats",
         lambda engine: {"Sharpe Ratio (252 days)": 0.87},
     )
 

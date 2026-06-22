@@ -17,19 +17,16 @@ are tested separately in an integration environment.
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
 
 import pytest
-from aegis_data.roll import DatedContract
-from aegis_runtime import FuturesRef, ListedRef
 from nautilus_trader.config import (
     CacheConfig,
     LoggingConfig,
     TradingNodeConfig,
 )
 from nautilus_trader.common import Environment
-
 from nautilus_trader.model.enums import TimeInForce
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.book_config import BookConfig, CostModelConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
@@ -59,7 +56,6 @@ from aegis_trader.trader.modes import (
     IB_PAPER_ACCOUNT_ID,
     IB_PAPER_PORT,
 )
-from aegis_trader.trader.instrument_provider import InstrumentResolutionError
 
 
 # --------------------------------------------------------------------------- #
@@ -70,7 +66,10 @@ def test_fx_reference_instrument_ids_for_eur_book():
     """Each non-base currency yields a base/ccy IDEALPRO FX pair id for the
     InstrumentProvider to load; the base currency itself is never a pair."""
     ids = fx_reference_instrument_ids("EUR", ["USD", "GBP", "EUR"])
-    assert set(ids) == {f"EUR/USD.{IB_FX_VENUE}", f"EUR/GBP.{IB_FX_VENUE}"}
+    assert set(ids) == {
+        InstrumentId.from_str(f"EUR/USD.{IB_FX_VENUE}"),
+        InstrumentId.from_str(f"EUR/GBP.{IB_FX_VENUE}"),
+    }
 
 
 def test_fx_reference_instrument_ids_empty_when_single_currency():
@@ -95,7 +94,6 @@ def test_paper_and_live_modes_use_market_on_close():
 
 
 def test_unknown_mode_rejected():
-    import pytest
     with pytest.raises(ValueError, match="unknown mode"):
         fill_time_in_force_for_mode("sandbox")
 
@@ -233,7 +231,7 @@ def test_paper_data_client_config_defaults():
     assert cfg["ibg_host"] == IB_HOST
     assert cfg["ibg_port"] == IB_PAPER_PORT
     assert cfg["ibg_client_id"] == IB_CLIENT_ID
-    assert cfg["market_data_type"] == "realtime"
+    assert cfg["market_data_type"] == "REALTIME"
 
 
 def test_paper_data_client_config_custom_host():
@@ -247,111 +245,33 @@ def test_paper_data_client_config_custom_client_id():
     assert cfg["ibg_client_id"] == 99
 
 
-def test_data_client_loads_fx_reference_pairs_into_instrument_provider():
-    """FX reference pairs are wired into the InstrumentProvider's load_ids so the
-    venue streams their quotes and the overlay can mark the cache xrates."""
-    fx_ids = fx_reference_instrument_ids("EUR", ["USD", "GBP"])
-    cfg = build_paper_data_client_config(fx_instrument_ids=fx_ids)
-    assert cfg["instrument_provider"]["load_ids"] == fx_ids
-    # live builder wires it identically
-    live = build_live_data_client_config(fx_instrument_ids=fx_ids)
-    assert live["instrument_provider"]["load_ids"] == fx_ids
-
-
-def test_data_client_loads_listed_refs_as_ib_figi_contracts():
-    """ListedRefs are preloaded by FIGI through the IB InstrumentProvider."""
-    refs = [ListedRef("BBG000R20GS9")]
-
-    cfg = build_paper_data_client_config(listed_refs=refs)
-
-    assert cfg["instrument_provider"] == {
-        "load_contracts": [
-            {
-                "secType": "STK",
-                "secIdType": "FIGI",
-                "secId": "BBG000R20GS9",
-                "exchange": "SMART",
-            }
-        ],
-        "convert_exchange_to_mic_venue": True,
-        "symbol_to_mic_venue": {"IGLN": "XLON", "GC": "XCEC", "SI": "XCEC", "HG": "XCEC"},
-    }
-
-
-def test_data_client_merges_fx_ids_and_listed_figi_contracts():
-    fx_ids = fx_reference_instrument_ids("EUR", ["USD"])
-    refs = [ListedRef("BBG000R20GS9")]
-
-    cfg = build_live_data_client_config(fx_instrument_ids=fx_ids, listed_refs=refs)
-
-    assert cfg["instrument_provider"]["load_ids"] == fx_ids
-    assert cfg["instrument_provider"]["load_contracts"] == [
-        {
-            "secType": "STK",
-            "secIdType": "FIGI",
-            "secId": "BBG000R20GS9",
-            "exchange": "SMART",
-        }
-    ]
-    assert cfg["instrument_provider"]["convert_exchange_to_mic_venue"] is True
-
-
-def test_data_client_loads_futures_refs_as_ib_local_symbol_contracts():
-    ref = FuturesRef("6E", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
-    chains = {"6E": (DatedContract("6EU6", date(2026, 9, 14)),)}
-
-    cfg = build_paper_data_client_config(
-        futures_refs=[ref], futures_as_of=date(2026, 8, 1), futures_contract_chains=chains,
-        bar_cadence=timedelta(days=1),
+def test_data_client_loads_native_instrument_ids_into_instrument_provider():
+    """The IBKR InstrumentProvider preloads exactly the config's native IDs."""
+    instrument_ids = (
+        InstrumentId.from_str("VUSA.XLON"),
+        InstrumentId.from_str("EUR/USD.IDEALPRO"),
     )
 
+    cfg = build_paper_data_client_config(instrument_ids=instrument_ids)
+
     assert cfg["instrument_provider"] == {
-        "load_contracts": [{"secType": "FUT", "localSymbol": "6EU6", "exchange": "CME"}],
-        "convert_exchange_to_mic_venue": True,
-        "symbol_to_mic_venue": {"IGLN": "XLON", "GC": "XCEC", "SI": "XCEC", "HG": "XCEC"},
+        "load_ids": ["EUR/USD.IDEALPRO", "VUSA.XLON"],
     }
 
 
-@pytest.mark.parametrize(
-    ("bar_cadence", "expected_local_symbol"),
-    [
-        (timedelta(days=1), "6EM6"),   # daily lead 5: still holds the front contract
-        (timedelta(weeks=1), "6EU6"),  # weekly lead 14: rolls earlier, already advanced
-    ],
-)
-def test_data_client_derives_roll_lead_from_bar_cadence(bar_cadence, expected_local_symbol):
-    # The lead is derived from the book's bar cadence, never configured. With the same
-    # as_of, a daily book (lead 5) still holds the front 6EM6, while a weekly book
-    # (lead 14, rolls earlier) has already advanced to 6EU6 — proving the data client
-    # reads the *actual* cadence, not a daily constant.
-    ref = FuturesRef("6E", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
-    chains = {
-        "6E": (
-            DatedContract("6EM6", date(2026, 6, 15)),
-            DatedContract("6EU6", date(2026, 9, 14)),
-        )
-    }
+def test_data_and_exec_clients_share_native_instrument_provider_ids():
+    """Paper/live data and execution clients use the same native load_ids."""
+    instrument_ids = (InstrumentId.from_str("AAPL.NASDAQ"),)
 
-    cfg = build_paper_data_client_config(
-        futures_refs=[ref], futures_as_of=date(2026, 6, 1), futures_contract_chains=chains,
-        bar_cadence=bar_cadence,
-    )
+    paper_data = build_paper_data_client_config(instrument_ids=instrument_ids)
+    paper_exec = build_paper_exec_client_config(instrument_ids=instrument_ids)
+    live_data = build_live_data_client_config(instrument_ids=instrument_ids)
+    live_exec = build_live_exec_client_config(instrument_ids=instrument_ids)
 
-    assert cfg["instrument_provider"]["load_contracts"] == [
-        {"secType": "FUT", "localSymbol": expected_local_symbol, "exchange": "CME"}
-    ]
-
-
-def test_data_client_requires_bar_cadence_to_load_futures():
-    # Mirrors the futures_as_of guard: futures cannot be selected without the cadence
-    # the roll lead derives from.
-    ref = FuturesRef("6E", "GLBX.MDP3", roll_rule="calendar", adjustment="back_adjust")
-    chains = {"6E": (DatedContract("6EU6", date(2026, 9, 14)),)}
-
-    with pytest.raises(InstrumentResolutionError, match="bar_cadence"):
-        build_paper_data_client_config(
-            futures_refs=[ref], futures_as_of=date(2026, 8, 1), futures_contract_chains=chains
-        )
+    assert paper_data["instrument_provider"] == {"load_ids": ["AAPL.NASDAQ"]}
+    assert paper_exec["instrument_provider"] == paper_data["instrument_provider"]
+    assert live_data["instrument_provider"] == paper_data["instrument_provider"]
+    assert live_exec["instrument_provider"] == paper_data["instrument_provider"]
 
 
 def test_data_client_omits_instrument_provider_when_no_fx_pairs():
@@ -447,7 +367,7 @@ def test_live_data_client_config_defaults():
     assert cfg["ibg_host"] == IB_HOST
     assert cfg["ibg_port"] == IB_LIVE_PORT
     assert cfg["ibg_client_id"] == IB_CLIENT_ID
-    assert cfg["market_data_type"] == "realtime"
+    assert cfg["market_data_type"] == "REALTIME"
 
 
 def test_live_data_client_config_custom_host():
