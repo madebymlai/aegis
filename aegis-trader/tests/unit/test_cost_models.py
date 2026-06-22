@@ -5,16 +5,25 @@ from __future__ import annotations
 import sys
 
 import pytest
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
+from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.objects import Currency, Price, Quantity
 
-from aegis_trader.data import InstrumentSpec, build_equity
 from aegis_trader.domain.book_config import CostModelConfig
 from aegis_trader.trader.costs import IbkrPerShareFeeModel, build_simulated_fill_model
 
 
 def _equity(currency: str = "EUR"):
-    return build_equity(
-        InstrumentSpec(figi=f"FIGI_{currency}", venue="SIM", quote_currency=currency)
+    instrument_id = InstrumentId.from_str(f"TEST_{currency}.SIM")
+    return Equity(
+        instrument_id=instrument_id,
+        raw_symbol=Symbol(instrument_id.symbol.value),
+        currency=Currency.from_str(currency),
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
     )
 
 

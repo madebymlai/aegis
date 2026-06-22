@@ -4,9 +4,7 @@ contract timeframe -> Nautilus bar type mapping (bar_type) is the single source
 of truth shared by the LOAD and SUBSCRIBE sides."""
 
 from aegis_trader.data.backtest_data import (
-    InstrumentSpec,
     build_currency_pair,
-    build_equity,
     wrangle_bars,
     wrangle_fx_quotes,
 )
@@ -20,7 +18,6 @@ from aegis_trader.data.bar_type import (
 from aegis_trader.data.market_data import MarketBar, MarketDataPort, NautilusMarketData
 
 __all__ = [
-    "InstrumentSpec",
     "MarketBar",
     "MarketDataPort",
     "MixedTimeframeError",
@@ -28,7 +25,6 @@ __all__ = [
     "UnsupportedTimeframeError",
     "bar_type",
     "build_currency_pair",
-    "build_equity",
     "resolve_book_timeframe",
     "timeframe_to_ns",
     "wrangle_bars",

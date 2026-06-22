@@ -92,8 +92,8 @@ def build_ib_client_configs(
 def _run_backtest(args: argparse.Namespace) -> int:
     """Run an offline backtest of the book end-to-end and summarize the outcome.
 
-    Fully independent of ``--mode``: it resolves the book, runs the Store Read
-    runner, and reports the result.
+    Fully independent of ``--mode``: it resolves the book, runs the catalog-backed
+    Nautilus engine runner, and reports the result.
     """
     from aegis_trader.backtest import book_return_stats, run_book_backtest
 
@@ -102,7 +102,7 @@ def _run_backtest(args: argparse.Namespace) -> int:
         book_path,
         start=args.start,
         end=args.end,
-        store_dir=args.store_dir,
+        catalog_path=args.catalog_path,
     )
     result = engine.get_result()
     fills = [order for order in engine.cache.orders() if order.is_closed]
@@ -160,11 +160,11 @@ def main(argv: list[str] | None = None) -> int:
         "(default: discover book.toml by walking up from the cwd)",
     )
     backtest_p.add_argument(
-        "--store-dir",
+        "--catalog-path",
         default=None,
         metavar="DIR",
         type=Path,
-        help="read Historical Store data from DIR (default: aegis-data OS store)",
+        help="read the Nautilus ParquetDataCatalog from DIR (default: aegis-data OS catalog)",
     )
     args = parser.parse_args(argv)
 

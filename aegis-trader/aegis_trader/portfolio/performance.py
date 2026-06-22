@@ -55,11 +55,15 @@ class BookEquityRecorder(Actor):
         self._book_state: NautilusBookState | None = None
 
     def on_start(self) -> None:
+        covered = frozenset(
+            BarType.from_str(raw).instrument_id
+            for raw in self._bar_types
+        )
         self._book_state = NautilusBookState(
             portfolio=self.portfolio,
             cache=self.cache,
             base_currency=Currency.from_str(self._base_currency),
-            instrument_ref_for_id=lambda _instrument_id: None,
+            covered_instrument_ids=covered,
         )
         for raw in self._bar_types:
             self.subscribe_bars(BarType.from_str(raw))

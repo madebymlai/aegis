@@ -4,7 +4,7 @@ The CLI is the seam that closes the 'no run configuration' gap (finding a5): a
 ``book.toml`` + the environment assemble into the real Nautilus config objects —
 the strategy config (with the mode-correct next-close TIF), the backtest engine
 config, or the paper/live node config plus IBKR client dicts whose account comes
-from the environment.  Backtests run from the Historical Store; paper/live still
+from the environment. Backtests run from the Nautilus catalog; paper/live still
 leave venue data and ``node.run()`` to the operator.
 """
 
@@ -120,12 +120,12 @@ def test_main_backtest_assembles_run_from_book(tmp_path):
 
 def test_backtest_subcommand_runs_the_runner(tmp_path, monkeypatch):
     """`aegis-trader backtest --start --end` runs run_book_backtest with the book
-    and window, using Store Read inputs."""
+    and window, using catalog inputs."""
     book_path = _write_book(tmp_path)
     calls: dict = {}
 
-    def fake_runner(path, *, start, end, store_dir=None, **kwargs):
-        calls.update(path=path, start=start, end=end, store_dir=store_dir)
+    def fake_runner(path, *, start, end, catalog_path=None, **kwargs):
+        calls.update(path=path, start=start, end=end, catalog_path=catalog_path)
         return _FakeEngine()
 
     monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
@@ -139,28 +139,28 @@ def test_backtest_subcommand_runs_the_runner(tmp_path, monkeypatch):
     assert calls["path"] == str(book_path)
     assert calls["start"] == "2020-01-01"
     assert calls["end"] == "2020-06-01"
-    assert calls["store_dir"] is None
+    assert calls["catalog_path"] is None
 
 
-def test_backtest_subcommand_passes_store_dir_override(tmp_path, monkeypatch):
-    """`--store-dir DIR` passes the Historical Store override to the runner."""
+def test_backtest_subcommand_passes_catalog_path_override(tmp_path, monkeypatch):
+    """`--catalog-path DIR` passes the catalog override to the runner."""
     book_path = _write_book(tmp_path)
-    store_dir = tmp_path / "store"
+    catalog_path = tmp_path / "catalog"
     captured: dict = {}
 
-    def fake_runner(path, *, start, end, store_dir=None, **kwargs):
-        captured["store_dir"] = store_dir
+    def fake_runner(path, *, start, end, catalog_path=None, **kwargs):
+        captured["catalog_path"] = catalog_path
         return _FakeEngine()
 
     monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
     rc = main(
         ["backtest", "--start", "2020-01-01", "--end", "2020-06-01",
-         "--book", str(book_path), "--store-dir", str(store_dir)]
+         "--book", str(book_path), "--catalog-path", str(catalog_path)]
     )
 
     assert rc == 0
-    assert captured["store_dir"] == store_dir
+    assert captured["catalog_path"] == catalog_path
 
 
 def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
@@ -171,7 +171,7 @@ def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
     monkeypatch.chdir(work)
     seen: dict = {}
 
-    def fake_runner(path, *, start, end, store_dir=None, **kwargs):
+    def fake_runner(path, *, start, end, catalog_path=None, **kwargs):
         seen["path"] = path
         return _FakeEngine()
 
