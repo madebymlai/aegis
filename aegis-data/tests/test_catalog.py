@@ -13,6 +13,7 @@ from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogCoverageGapError,
     RawBarRequest,
+    catalog_data_port,
     catalog_root,
     raw_bar_type,
 )
@@ -152,6 +153,73 @@ def test_catalog_port_backfills_missing_tail_with_update_catalog(tmp_path: Path)
     assert first[instrument_id]["Close"].tolist() == [10.0, 11.0]
     assert second[instrument_id]["Close"].tolist() == [10.0, 11.0]
     assert provider.requests == [bar_type]
+
+
+def test_catalog_data_port_factory_wires_fill_and_definition_seeder(tmp_path: Path) -> None:
+    """The factory returns a ready CatalogBackedDataPort with the fill provider and
+    the definition seeder wired — callers depend only on the abstraction (DIP)."""
+    port = catalog_data_port(tmp_path / "catalog")
+
+    assert isinstance(port, CatalogBackedDataPort)
+    assert port.provider is not None
+    assert port.definition_seeder is not None
+
+
+def test_catalog_port_seeds_instrument_definition_on_backfill(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("AAPL.NASDAQ")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [_bar(bar_type, "2024-01-01", 10.0)],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+    provider = _ProviderPort([_bar(bar_type, "2024-01-02", 11.0)])
+    seeded: list[InstrumentId] = []
+    port = CatalogBackedDataPort(
+        catalog, provider=provider, definition_seeder=seeded.append
+    )
+
+    port.load_raw_bars(
+        RawBarRequest(
+            instrument_ids=(instrument_id,),
+            start="2024-01-01",
+            end="2024-01-03",
+        )
+    )
+
+    assert seeded == [instrument_id]
+
+
+def test_catalog_port_does_not_seed_definition_on_cache_hit(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("AAPL.NASDAQ")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [_bar(bar_type, "2024-01-01", 10.0)],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+    seeded: list[InstrumentId] = []
+    port = CatalogBackedDataPort(
+        catalog, provider=_ProviderPort([]), definition_seeder=seeded.append
+    )
+
+    port.load_raw_bars(
+        RawBarRequest(
+            instrument_ids=(instrument_id,),
+            start="2024-01-01",
+            end="2024-01-02",
+        )
+    )
+
+    assert seeded == []
 
 
 def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Path) -> None:

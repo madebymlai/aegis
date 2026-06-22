@@ -109,21 +109,62 @@ def test_provider_satisfies_the_pure_fetch_port() -> None:
     assert callable(port.request_bars)
 
 
-def test_seed_instrument_definitions_is_a_step1_write_through_the_catalog() -> None:
-    instruments = [object(), object()]
-    fake = _FakeHistoricClient(bars=[], instruments=instruments)
+class _Instr:
+    def __init__(self, instrument_id: InstrumentId) -> None:
+        self.id = instrument_id
+
+
+class _FakeCatalog:
+    def __init__(self, present: list[_Instr] | None = None) -> None:
+        self._present = present or []
+        self.writes: list[list[Any]] = []
+
+    def instruments(self, *, instrument_ids: list[str]) -> list[_Instr]:
+        wanted = set(instrument_ids)
+        return [
+            instrument for instrument in self._present if instrument.id.value in wanted
+        ]
+
+    def write_data(self, data: list[Any]) -> None:
+        self.writes.append(data)
+
+
+def test_seed_writes_all_definitions_when_none_present() -> None:
+    aapl = InstrumentId.from_str("AAPL.NASDAQ")
+    vusa = InstrumentId.from_str("VUSA.XLON")
+    fetched = [_Instr(aapl), _Instr(vusa)]
+    fake = _FakeHistoricClient(bars=[], instruments=fetched)
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
-    writes: list[list[Any]] = []
+    catalog = _FakeCatalog()
 
-    class _Catalog:
-        def write_data(self, data: list[Any]) -> None:
-            writes.append(data)
-
-    seed_instrument_definitions(
-        _Catalog(),
-        provider,
-        (InstrumentId.from_str("AAPL.NASDAQ"), InstrumentId.from_str("VUSA.XLON")),
-    )
+    seed_instrument_definitions(catalog, provider, (aapl, vusa))
 
     assert fake.instrument_calls[0]["instrument_ids"] == ["AAPL.NASDAQ", "VUSA.XLON"]
-    assert writes == [instruments]
+    assert catalog.writes == [fetched]
+
+
+def test_seed_fetches_only_the_missing_definitions() -> None:
+    aapl = InstrumentId.from_str("AAPL.NASDAQ")
+    vusa = InstrumentId.from_str("VUSA.XLON")
+    fetched = [_Instr(vusa)]
+    fake = _FakeHistoricClient(bars=[], instruments=fetched)
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+    catalog = _FakeCatalog(present=[_Instr(aapl)])
+
+    seed_instrument_definitions(catalog, provider, (aapl, vusa))
+
+    assert fake.instrument_calls[0]["instrument_ids"] == ["VUSA.XLON"]
+    assert catalog.writes == [fetched]
+
+
+def test_seed_is_a_noop_and_never_connects_when_all_present() -> None:
+    aapl = InstrumentId.from_str("AAPL.NASDAQ")
+    fake = _FakeHistoricClient(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+    catalog = _FakeCatalog(present=[_Instr(aapl)])
+
+    seed_instrument_definitions(catalog, provider, (aapl,))
+
+    assert fake.events == []
+    assert fake.instrument_calls == []
+    assert catalog.writes == []

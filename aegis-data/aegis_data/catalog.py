@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -53,6 +53,10 @@ class RawBarRequest:
 class CatalogBackedDataPort:
     catalog: Any
     provider: NautilusDataProviderPort | None = None
+    # Optional Step-1 definition write, fired only when a fill actually serves an
+    # instrument (ADR-0008): the bar port stays pure-fetch — definitions are a
+    # separate, idempotent lifecycle wired in by the caller, not a port method.
+    definition_seeder: Callable[[InstrumentId], None] | None = None
 
     def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
         frames: dict[InstrumentId, pd.DataFrame] = {}
@@ -89,6 +93,10 @@ class CatalogBackedDataPort:
         remaining = self._missing_intervals(bar_type, request)
         if remaining:
             raise _coverage_gap(bar_type, remaining)
+        # The fill served this instrument's bars; persist its definition too so the
+        # shared corpus never holds bars without a definition (ADR-0008).
+        if self.definition_seeder is not None:
+            self.definition_seeder(bar_type.instrument_id)
 
     def _missing_intervals(
         self, bar_type: BarType, request: RawBarRequest
@@ -115,6 +123,32 @@ def parquet_data_catalog(path: str | Path | None = None) -> Any:
     from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
     return ParquetDataCatalog(root)
+
+
+def catalog_data_port(path: str | Path | None = None) -> CatalogBackedDataPort:
+    """The standard catalog-backed data port (ADR-0006/0008).
+
+    Composition lives here — in the package that owns both the port *and* the IBKR
+    adapter — so callers depend only on the :class:`CatalogBackedDataPort`
+    abstraction (DIP) and never name the concrete provider.  A backfill fills bars
+    from IBKR and persists the instrument definition (an idempotent Step-1 write);
+    a warm read never connects.  The IBKR adapter is imported lazily so this port
+    module stays adapter-agnostic at import time.
+    """
+    from aegis_data.ibkr_provider import (
+        IbkrHistoricalProvider,
+        seed_instrument_definitions,
+    )
+
+    catalog = parquet_data_catalog(path)
+    provider = IbkrHistoricalProvider()
+    return CatalogBackedDataPort(
+        catalog,
+        provider=provider,
+        definition_seeder=lambda instrument_id: seed_instrument_definitions(
+            catalog, provider, (instrument_id,)
+        ),
+    )
 
 
 def _coverage_gap(
@@ -163,6 +197,7 @@ __all__ = [
     "CatalogCoverageGapError",
     "NautilusDataProviderPort",
     "RawBarRequest",
+    "catalog_data_port",
     "catalog_root",
     "parquet_data_catalog",
     "raw_bar_type",

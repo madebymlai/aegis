@@ -140,16 +140,30 @@ def seed_instrument_definitions(
     """Persist instrument definitions to *catalog* (the Step-1 write, ADR-0008).
 
     Definitions are a **separate lifecycle** from the per-window bar fill — static
-    setup, not windowed data — so this is the one-time setup primitive an operator
-    or the r8b.3 seed runs to satisfy AC6 ("a definition for every served
-    InstrumentId"); it is deliberately **not** called from the read/fill hot path
-    (that would couple the lifecycles and make a warm read connect to IBKR). The
-    provider *fetches* definitions, aegis-data *writes* them, so the bar fill's
-    port stays a single pure-fetch method (ADR-0008, ISP).
+    setup, not windowed data (ADR-0008, ISP: the bar port is not widened). It is
+    **idempotent**: only the definitions missing from *catalog* are fetched and
+    written, so calling it is free when they are already present — which is what
+    lets the lazy fill trigger it on a backfill without making a warm read connect
+    to IBKR. The provider *fetches* definitions, aegis-data *writes* them.
     """
-    instruments = provider.request_instruments(instrument_ids)
+    missing = _missing_definitions(catalog, instrument_ids)
+    if not missing:
+        return
+    instruments = provider.request_instruments(missing)
     if instruments:
         catalog.write_data(list(instruments))
+
+
+def _missing_definitions(
+    catalog: Any, instrument_ids: Sequence[InstrumentId]
+) -> list[InstrumentId]:
+    present = {
+        instrument.id
+        for instrument in catalog.instruments(
+            instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
+        )
+    }
+    return [instrument_id for instrument_id in instrument_ids if instrument_id not in present]
 
 
 __all__ = [

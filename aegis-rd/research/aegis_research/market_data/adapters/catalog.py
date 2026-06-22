@@ -6,9 +6,8 @@ import pandas as pd
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     RawBarRequest,
-    parquet_data_catalog,
+    catalog_data_port,
 )
-from aegis_data.ibkr_provider import IbkrHistoricalProvider
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import DataConfig
@@ -26,16 +25,11 @@ def load_catalog_source(
     *,
     port: CatalogBackedDataPort | None = None,
 ) -> MarketDataAdapterResult:
-    # ADR-0006: research fills like live — a catalog miss backfills from IBKR
-    # through the port (unconditional, ungated); a warm read never connects.
-    data_port = (
-        port
-        if port is not None
-        else CatalogBackedDataPort(
-            parquet_data_catalog(config.path),
-            provider=IbkrHistoricalProvider(),
-        )
-    )
+    # ADR-0006: research fills like live — a catalog miss backfills through the
+    # port (unconditional, ungated); a warm read never connects. The concrete
+    # provider is wired inside aegis-data's factory, so this module depends only on
+    # the CatalogBackedDataPort abstraction (DIP).
+    data_port = port if port is not None else catalog_data_port(config.path)
     requested_instrument_ids = instrument_ids(config.native_instrument_ids)
     frames = data_port.load_raw_bars(
         RawBarRequest(

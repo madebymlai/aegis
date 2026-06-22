@@ -57,6 +57,15 @@ existing draft conflated several concerns:
 
 - A future reader who wants "the provider to just write" or "a `request_instruments`
   on the port" has a recorded reason not to: one writer, one pure-fetch method.
+- **How "RD's fill must persist definitions" is honoured without widening the port:**
+  a successful backfill (a miss the provider served) triggers an *idempotent*
+  definition Step-1 write through a **separate injected seeder**
+  (`CatalogBackedDataPort.definition_seeder`), not a port method. The seeder
+  (`seed_instrument_definitions`) writes only the definitions missing from the
+  catalog, so it is free when they are already present — which is why it can fire on
+  the fill yet a *warm* read (a cache hit, no miss) never seeds and never connects.
+  The bar port stays a single pure-fetch method; definitions remain a distinct
+  lifecycle, merely *triggered* at the point a new instrument is first served.
 - The catalog partitions one folder per `bar_type`, so a partial-instrument write
   cannot clobber other instruments (a known hazard for bucketed parquet caches). Do
   not consolidate multiple instruments into shared files.
