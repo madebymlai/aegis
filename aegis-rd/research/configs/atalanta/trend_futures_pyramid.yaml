@@ -26,12 +26,13 @@ output_dir: runs/atalanta/trend_futures_pyramid
 #   FX    : 6E 3.5k  6J 2.6k  6B 2.2k  6A 2.3k  6C 1.3k  6S 4.7k  DX 2.3k
 #   energy: CL 19k   BZ 16k   NG 7k    RB 24k   HO 30k
 #   metals: GC 40k   SI 12k   HG 21k   PL 13k   PA 29k
-#   ags   : ZC 1.5k  ZW 2.7k  ZS 3.7k  SB 1.6k  KC 17k  CC 7.3k  CT 3.2k
+#   ags   : ZC 1.5k  ZW 2.7k  ZS 3.7k  SB 1.6k  KC 17k  CT 3.2k
+#   live  : LE 1.8k  (live cattle, CME/Globex — replaced cocoa CC)
 # Per-symbol dataset (schema v10): each root carries its own Databento dataset, so CME/Globex and ICE
 # roots mix in one universe. Coverage verified 2026-06-20 (subscription has GLBX.MDP3 + IFUS.IMPACT +
 # IFEU.IMPACT). Venue map: TN and BZ are CME Globex (BZ = NYMEX Brent Last Day on GLBX.MDP3 — NOT the
-# ICE "BRN"); DX and the softs SB/KC/CC/CT are ICE-US (IFUS.IMPACT). All 30 roots are IBKR
-# short-tradeable and now active.
+# ICE "BRN"); DX and the softs SB/KC/CT are ICE-US (IFUS.IMPACT); LE (live cattle) is CME/Globex.
+# All 30 roots are IBKR short-tradeable and now active.
 data:
   source: store
   provider: databento     # futures bars (GLBX / IFUS)
@@ -68,9 +69,9 @@ data:
   - {root: ZS, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
   - {root: SB, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}  # Sugar #11 (ICE-US); IBKR short-tradeable ~$1.6k
   - {root: KC, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}  # Coffee C (ICE-US); IBKR short-tradeable ~$17k
-  - {root: CC, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}  # Cocoa (ICE-US); IBKR short-tradeable ~$7.3k
   - {root: CT, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}  # Cotton #2 (ICE-US); IBKR short-tradeable ~$3.2k
-  start: '2019-01-01'   # IFUS.IMPACT (ICE roots DX/SB/KC/CC/CT) history begins 2018-12-23;
+  - {root: LE, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}    # Live Cattle (CME/Globex); IBKR short-tradeable ~$1.8k. Livestock diversifier replacing cocoa (CC), which a 2024 +148% melt-up made a single-name concentration; LE adds an uncorrelated sector the book lacked.
+  start: '2019-01-01'   # IFUS.IMPACT (ICE roots DX/SB/KC/CT) history begins 2018-12-23;
                         # uniform 2019 start aligns all 30 roots on one clean window.
   end: '2025-01-01'
   timeframe: 1D
@@ -96,7 +97,7 @@ portfolio:
   fx_conversion_cost: 0.0003
 
 ranking:
-  metric: quarterly_return_skew
+  metric: crisis_quarter_return
 
 optimization:
   search: grid
