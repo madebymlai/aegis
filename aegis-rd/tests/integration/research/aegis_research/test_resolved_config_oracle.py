@@ -21,6 +21,9 @@ from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION, resolve_run_config
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
+from tests.support.research.aegis_research.market_data_fixtures import (
+    native_data_config_payload,
+)
 
 _SPLIT = {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10}
 
@@ -29,7 +32,7 @@ def _raw(name: str, portfolio: dict[str, object]) -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": name,
-        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120, "arrays": ["OHLCV"]},
+        "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
         "portfolio": portfolio,
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
@@ -45,8 +48,8 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 }
 
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "4481147bad8bfe5ac999162b1139c38a76f21701324b2242491f78ec45fa3779",
-    "int_valued_caps": "8eceaa745dd60815a3668d7e83adc183da3b956abb8ad6b54ec201b3a4c03adb",
+    "canonical_grid": "e7754ef2e27ec8f7cba4e9d919332c34d18d6af663117db267099d28bd79cde2",
+    "int_valued_caps": "83a54eaad31b3c084b8c947e0d2e7ebe89f133573e7e86f579599740d9479081",
 }
 
 

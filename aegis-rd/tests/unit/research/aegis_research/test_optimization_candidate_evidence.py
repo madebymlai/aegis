@@ -19,8 +19,9 @@ from research.aegis_research.optimization.ranking import (
 )
 
 DATA_IDENTITY = {
-    "source": "synthetic",
-    "symbols": ["SYN"],
+    "schema_version": "candidate_data_identity.v2",
+    "requested_instrument_ids": ["SYN.XNAS"],
+    "instrument_ids": ["SYN.XNAS"],
     "timeframe": "1D",
     "index_start": "2026-01-01",
     "index_end": "2026-01-31",
@@ -160,7 +161,11 @@ def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> N
     different_data = _single_candidate_row(
         params,
         source_identity={"source_hash": "abc"},
-        data_identity={**DATA_IDENTITY, "symbols": ["ALT"]},
+        data_identity={
+            **DATA_IDENTITY,
+            "requested_instrument_ids": ["ALT.XNAS"],
+            "instrument_ids": ["ALT.XNAS"],
+        },
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     different_store = _single_candidate_row(

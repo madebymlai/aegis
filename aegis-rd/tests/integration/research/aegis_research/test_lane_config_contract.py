@@ -21,6 +21,9 @@ from tests.support.research.aegis_research.factories import (
     make_run_source_ref_config,
     make_run_split_config,
 )
+from tests.support.research.aegis_research.market_data_fixtures import (
+    native_data_config_payload,
+)
 
 
 def test_valid_run_config_resolves_without_lane_identity(tmp_path: Path) -> None:
@@ -395,7 +398,7 @@ def _run_config() -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "strategy_demo",
-        "data": {"source": "synthetic", "rows": 50, "arrays": ["OHLCV"]},
+        "data": native_data_config_payload(end="2024-02-20"),
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.indicator"}],

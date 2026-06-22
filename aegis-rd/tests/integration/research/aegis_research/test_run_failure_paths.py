@@ -15,6 +15,11 @@ from research.aegis_research.optimization.param_namespace import (
 )
 from research.aegis_research.optimization.pipeline import completion, publishing
 from research.aegis_research.provenance.manifest import RunStatus
+from tests.support.research.aegis_research.market_data_fixtures import (
+    DEFAULT_INSTRUMENT_ID_VALUES,
+    native_data_config_payload,
+    seed_catalog_ohlcv,
+)
 
 
 def test_component_optimization_uses_component_native_candidate_grid(
@@ -284,6 +289,11 @@ def _write_run_config(
     strategy_id: str = "demo.ma_opt",
     optimization: dict[str, object] | None = None,
 ) -> Path:
+    seed_catalog_ohlcv(
+        tmp_path / "catalog",
+        DEFAULT_INSTRUMENT_ID_VALUES,
+        periods=80,
+    )
     path = tmp_path / "run.yaml"
     path.write_text(
         yaml.safe_dump(
@@ -291,6 +301,7 @@ def _write_run_config(
                 strategy=strategy or {"id": strategy_id},
                 indicators=[],
                 optimization=optimization or {"search": "grid", "split": _rolling_split_config()},
+                catalog_path=tmp_path / "catalog",
             ),
             sort_keys=False,
         )
@@ -310,17 +321,17 @@ def _run_config_payload(
     strategy: dict[str, object],
     indicators: list[dict[str, object]],
     optimization: dict[str, object] | None = None,
+    catalog_path: Path,
 ) -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "component_optimization_contract",
         "output_dir": "runs",
-        "data": {
-            "source": "synthetic",
-            "symbols": [{"ticker": "SYN", "ccy": "EUR"}, {"ticker": "SYN2", "ccy": "EUR"}],
-            "rows": 80,
-            "arrays": ["OHLCV"],
-        },
+        "data": native_data_config_payload(
+            instruments=DEFAULT_INSTRUMENT_ID_VALUES,
+            end="2024-03-21",
+            path=catalog_path,
+        ),
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": strategy,
         "indicators": indicators,

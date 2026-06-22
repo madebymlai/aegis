@@ -9,22 +9,25 @@ import yaml
 
 from research.aegis_research import cli
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
+from tests.support.research.aegis_research.market_data_fixtures import (
+    ETF_INSTRUMENT_ID_VALUES,
+    native_data_config_payload,
+    seed_catalog_ohlcv,
+)
 
 COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components"
-_TICKERS = ("SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU")
 
 
-def _config(symbols: list[dict[str, str]], *, fx_conversion_cost: float) -> dict:
+def _config(*, catalog_path: Path, fx_conversion_cost: float) -> dict:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "fx_conversion_e2e",
         "output_dir": "runs",
-        "data": {
-            "source": "synthetic",
-            "symbols": symbols,
-            "rows": 300,
-            "arrays": ["OHLCV"],
-        },
+        "data": native_data_config_payload(
+            instruments=ETF_INSTRUMENT_ID_VALUES,
+            end="2024-10-27",
+            path=catalog_path,
+        ),
         "portfolio": {
             "gross_cap": 1.0,
             "direction": "longonly",
@@ -64,6 +67,10 @@ def _run(tmp_path: Path, capsys: pytest.CaptureFixture[str], config: dict, run_i
     return json.loads((tmp_path / "runs" / run_id / "strategy_run.json").read_text())
 
 
+@pytest.mark.xfail(
+    reason="r8b.4 owns non-base conversion; r8b.1 keeps raw native prices",
+    strict=True,
+)
 def test_foreign_currency_book_converts_and_charges_the_fx_surcharge_e2e(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -71,19 +78,26 @@ def test_foreign_currency_book_converts_and_charges_the_fx_surcharge_e2e(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     shutil.copytree(COMPONENTS_ROOT, tmp_path / "research" / "components")
-
-    eur_only = [{"ticker": t, "ccy": "EUR"} for t in _TICKERS]
-    # Half the legs quote in USD - so the pipeline must fetch the (synthetic)
-    # EURUSD=X series, convert those panels to EUR, and surcharge their trades.
-    mixed = [
-        {"ticker": t, "ccy": "USD" if i % 2 else "EUR"}
-        for i, t in enumerate(_TICKERS)
-    ]
+    seed_catalog_ohlcv(
+        tmp_path / "catalog",
+        ETF_INSTRUMENT_ID_VALUES,
+        periods=300,
+    )
 
     # No-op baseline: all-EUR book, no surcharge - conversion is identity.
-    baseline = _run(tmp_path, capsys, _config(eur_only, fx_conversion_cost=0.0), "fx-baseline")
+    baseline = _run(
+        tmp_path,
+        capsys,
+        _config(catalog_path=tmp_path / "catalog", fx_conversion_cost=0.0),
+        "fx-baseline",
+    )
     # The foreign path: USD legs + a per-conversion surcharge.
-    foreign = _run(tmp_path, capsys, _config(mixed, fx_conversion_cost=0.001), "fx-foreign")
+    foreign = _run(
+        tmp_path,
+        capsys,
+        _config(catalog_path=tmp_path / "catalog", fx_conversion_cost=0.001),
+        "fx-foreign",
+    )
 
     # It completes end to end, so FX fetch + conversion + surcharge all executed.
     assert [c["role"] for c in foreign["candidates"]] == ["best", "median", "worst"]

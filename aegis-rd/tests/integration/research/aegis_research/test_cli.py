@@ -13,6 +13,10 @@ from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
     write_strategy_component,
 )
+from tests.support.research.aegis_research.market_data_fixtures import (
+    native_data_config_payload,
+    seed_catalog_ohlcv,
+)
 
 
 def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
@@ -220,12 +224,7 @@ def test_run_rejects_removed_labeler_without_train_guidance(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "bad_run",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-                    "rows": 120,
-                    "arrays": ["OHLCV"],
-                },
+                "data": native_data_config_payload(instruments=["SYN.XNAS"]),
                 "portfolio": {"entry_budget": 1.0},
                 "strategy": {"id": "missing_strategy"},
                 "labeler": {"id": "demo.fixlb"},
@@ -245,17 +244,20 @@ def test_run_rejects_removed_labeler_without_train_guidance(
     assert not (tmp_path / "runs" / "bad-run").exists()
 
 
-def _signed_book_run_config(direction: str) -> dict[str, object]:
+def _signed_book_run_config(
+    direction: str,
+    *,
+    catalog_path: Path | None = None,
+) -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "directional_run",
         "output_dir": "runs",
-        "data": {
-            "source": "synthetic",
-            "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-            "rows": 120,
-            "arrays": ["OHLCV"],
-        },
+        "data": native_data_config_payload(
+            instruments=["SYN.XNAS"],
+            end="2024-04-30",
+            path=catalog_path,
+        ),
         "portfolio": {"gross_cap": 1.0, "direction": direction},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
@@ -298,9 +300,13 @@ def test_run_accepts_shortonly_portfolio_direction(
     monkeypatch.chdir(tmp_path)
     write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
     write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    seed_catalog_ohlcv(tmp_path / "catalog", ["SYN.XNAS"], periods=120)
     config_path = tmp_path / "run.yaml"
     config_path.write_text(
-        yaml.safe_dump(_signed_book_run_config("shortonly"), sort_keys=False)
+        yaml.safe_dump(
+            _signed_book_run_config("shortonly", catalog_path=tmp_path / "catalog"),
+            sort_keys=False,
+        )
     )
 
     cli.main(["run", str(config_path), "--run-id", "short-dir"])
@@ -310,8 +316,12 @@ def test_run_accepts_shortonly_portfolio_direction(
     assert "portfolio.direction" not in combined
 
 
-def _carry_run_config(short_borrow_rate: float | None) -> dict[str, object]:
-    config = _signed_book_run_config("both")
+def _carry_run_config(
+    short_borrow_rate: float | None,
+    *,
+    catalog_path: Path,
+) -> dict[str, object]:
+    config = _signed_book_run_config("both", catalog_path=catalog_path)
     config["name"] = "carry_run"
     if short_borrow_rate is not None:
         config["portfolio"]["short_borrow_rate"] = short_borrow_rate  # type: ignore[index]
@@ -324,7 +334,13 @@ def _run_candidate_returns(
 ) -> list[object]:
     config_path = tmp_path / f"{run_id}.yaml"
     config_path.write_text(
-        yaml.safe_dump(_carry_run_config(short_borrow_rate), sort_keys=False)
+        yaml.safe_dump(
+            _carry_run_config(
+                short_borrow_rate,
+                catalog_path=tmp_path / "catalog",
+            ),
+            sort_keys=False,
+        )
     )
     assert cli.main(["run", str(config_path), "--run-id", run_id]) == 0
     artifact = json.loads(
@@ -344,6 +360,7 @@ def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
     monkeypatch.chdir(tmp_path)
     write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
     write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    seed_catalog_ohlcv(tmp_path / "catalog", ["SYN.XNAS"], periods=120)
 
     carry_on = _run_candidate_returns(tmp_path, short_borrow_rate=None, run_id="carry-on")
     carry_off = _run_candidate_returns(tmp_path, short_borrow_rate=0.0, run_id="carry-off")
@@ -365,12 +382,7 @@ def test_run_rejects_stale_train_shaped_config_before_run_directory(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "stale_train",
                 "output_dir": "runs",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-                    "rows": 120,
-                    "arrays": ["OHLCV"],
-                },
+                "data": native_data_config_payload(instruments=["SYN.XNAS"]),
                 "portfolio": {"entry_budget": 1.0},
                 "labeler": {"id": "demo.fixlb"},
                 "indicators": [{"id": "demo.returns"}],
@@ -752,7 +764,7 @@ def test_show_config_schema_coherence_optimization_required(
     raw_no_optimization = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "test",
-        "data": {"source": "synthetic", "symbols": [{"ticker": "A", "ccy": "EUR"}], "rows": 100, "arrays": ["OHLCV"]},
+        "data": native_data_config_payload(instruments=["A.XNAS"], end="2024-04-10"),
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
@@ -1193,12 +1205,10 @@ def test_authoring_story_round_trip(
     example_raw = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "authoring.story",
-        "data": {
-            "source": "synthetic",
-            "symbols": [{"ticker": "A", "ccy": "EUR"}, {"ticker": "B", "ccy": "EUR"}, {"ticker": "C", "ccy": "EUR"}],
-            "rows": 250,
-            "arrays": ["OHLCV"],
-        },
+        "data": native_data_config_payload(
+            instruments=["A.XNAS", "B.XNAS", "C.XNAS"],
+            end="2024-09-07",
+        ),
         "portfolio": {
             "gross_cap": 1.0,
             "direction": "longonly",

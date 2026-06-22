@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from research.aegis_research.data import close_from_ohlcv, load_market_data_result
+from research.aegis_research.data import close_from_ohlcv
 from research.aegis_research.provenance.manifest import RunStatus
 from research.aegis_research.provenance.recorder import RunRecorder
 from tests.support.research.aegis_research.factories import make_data_config
+from tests.support.research.aegis_research.market_data_fixtures import (
+    loaded_market_data_result,
+)
 
 
 def test_recorder_run_refs_returns_six_field_snapshot(tmp_path: Path) -> None:
@@ -70,7 +73,7 @@ def test_recorder_run_refs_reflects_failed_and_interrupted_terminal_states(
 
 
 def test_data_stage_result_exposes_metadata_without_recorder_ids() -> None:
-    result = load_market_data_result(make_data_config(rows=10, symbols=[{"ticker": "SYN", "ccy": "EUR"}]))
+    result = loaded_market_data_result(make_data_config(), periods=10)
 
     assert result.native_data.feature_oriented
     assert close_from_ohlcv(result.native_data).shape == (10, 1)

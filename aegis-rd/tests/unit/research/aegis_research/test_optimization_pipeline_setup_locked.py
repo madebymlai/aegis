@@ -30,6 +30,9 @@ from research.aegis_research.optimization.run_data_contract import (
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
 )
+from tests.support.research.aegis_research.market_data_fixtures import (
+    native_data_config_payload,
+)
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -41,6 +44,12 @@ from tests.support.research.aegis_research.test_doubles import (
 _OHLCV_METADATA = default_metadata(
     effective_arrays=["OHLCV"], start=None, end=None
 )
+_DATA_IDENTITY = {
+    "schema_version": "candidate_data_identity.v2",
+    "requested_instrument_ids": ["SYN.XNAS"],
+    "instrument_ids": ["SYN.XNAS"],
+    "timeframe": "1D",
+}
 
 
 class _FakeData:
@@ -66,7 +75,7 @@ def _locked_raw_config(candidate_key: str) -> dict[str, Any]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "locked_run_fixture",
-        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120, "arrays": ["OHLCV"]},
+        "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
@@ -95,7 +104,7 @@ def _seed_candidate_store(config: Any) -> str:
     rows = candidate_rows_from_result(
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
         source_identity=_source_evidence(),
-        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        data_identity=_DATA_IDENTITY,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
@@ -295,7 +304,7 @@ def _seed_parameterized_candidate(config: Any) -> str:
     rows = candidate_rows_from_result(
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
         source_identity=_parameterized_source_evidence(),
-        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        data_identity=_DATA_IDENTITY,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )

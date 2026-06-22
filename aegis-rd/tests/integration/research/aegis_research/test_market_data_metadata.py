@@ -149,10 +149,10 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
 
 
 def test_provider_failure_routes_through_the_same_describe_builder() -> None:
-    config = make_data_config(source="future", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
+    config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
     quality = MarketDataQuality(
         state="provider_failed",
-        reasons=("future provider failed before usable native data was available",),
+        reasons=("provider failed before usable native data was available",),
     )
     diagnostics = (
         DataDiagnostics(
@@ -171,7 +171,7 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
         source_metadata={
             "provider_error_type": "RemoteDataPullError",
             "provider_error_summary": (
-                "future provider failed before usable native data was available"
+                "provider failed before usable native data was available"
             ),
         },
         evidence={"source": "provider_failed"},
@@ -187,30 +187,29 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
     result = load_market_data_result(
         config,
         required_arrays=("OpenInterest",),
-        adapters={"future": fail},
+        adapter=fail,
     )
 
     assert result.metadata == expected
 
 
 def test_failed_shape_equals_success_shape_minus_data() -> None:
+    config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
     success = load_market_data_result(
-        make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
-        adapters={
-            "frozen": lambda _config: MarketDataAdapterResult(
+        config,
+        adapter=lambda _config: MarketDataAdapterResult(
                 native_data=_FrozenData(),
                 source_metadata={"frozen": True},
                 evidence={"source": "test_evidence", "raw_rows": 3},
-            )
-        },
+        ),
     )
 
     def fail(_config: DataConfig) -> MarketDataAdapterResult:
         raise RemoteDataPullError("frozen", "network unavailable")
 
     failure = load_market_data_result(
-        make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
-        adapters={"frozen": fail},
+        config,
+        adapter=fail,
     )
 
     assert failure.metadata.schema_version == success.metadata.schema_version
@@ -226,7 +225,7 @@ def test_failed_shape_equals_success_shape_minus_data() -> None:
 
 
 def test_describe_tolerates_empty_provider_internals() -> None:
-    config = make_data_config(source="future", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
+    config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
 
     metadata = data_metadata.describe(
         config,
@@ -265,15 +264,13 @@ def test_loaded_metadata_round_trips_through_the_public_loader() -> None:
     native_data = _FrozenData()
 
     result = load_market_data_result(
-        make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
-        adapters={
-            "frozen": lambda _config: MarketDataAdapterResult(
+        make_data_config(instruments=["SYN.XNAS"], arrays=["Close"]),
+        adapter=lambda _config: MarketDataAdapterResult(
                 native_data=native_data,
                 source_metadata={"frozen": True},
                 evidence={"source": "test_evidence", "raw_rows": 3},
                 provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
-            )
-        },
+        ),
     )
 
     loaded = [d.name for d in result.metadata.arrays if d.loaded]

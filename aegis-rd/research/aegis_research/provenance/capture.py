@@ -53,9 +53,9 @@ def capture_run_start_evidence(
         "packages": capture_package_versions(),
         "vectorbt_settings": capture_vectorbt_settings(),
         "seed_policy": {
-            "data_seed": config.config.data.seed,
-            "run_seed": config.config.data.seed,
-            "vectorbt_set_seed": True,
+            "data_seed": None,
+            "run_seed": None,
+            "vectorbt_set_seed": False,
         },
     }
 
