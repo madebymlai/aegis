@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Local prototypes / scratch scripts kept local, not committed.
+scripts/
