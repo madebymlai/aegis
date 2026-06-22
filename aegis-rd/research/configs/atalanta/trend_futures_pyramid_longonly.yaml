@@ -1,0 +1,89 @@
+name: atalanta_trend_futures_pyramid_longonly
+schema_version: 10
+output_dir: runs/atalanta/trend_futures_pyramid_longonly
+
+# LONG-ONLY A/B of trend_futures_pyramid.yaml. Same 30-root GLBX+IFUS book, same pinned signal params
+# (trend_score lb252 + realized_vol vw63) and same pyramid ramp grid, but the strategy is
+# atalanta.trendStraddleBufferedPyramidLongOnly and portfolio direction is longonly: downtrends take no
+# position (budget held as cash; gross <= 1) instead of a short. This isolates the L/S-vs-long-only lever
+# the ETF champion (trend.yaml) already measured on the non-equity book — held-out Sharpe 0.62 L/S ->
+# 0.89 long-only (aegis-rd-167) — and asks whether the same lift carries onto the futures substrate.
+# ramp_steps == 1 recovers the champion's no-pyramid long-only baseline EXACTLY, so this single run gives
+# both "long-only no-pyramid on futures" (vs the ETF champion's 0.89) and "long-only + pyramid".
+#
+# DATA: identical to trend_futures_pyramid.yaml (aegis historical store, source: store, databento bars +
+# yfinance EUR FX gap-fill). Bars are already cached from the L/S pyramid run; this run reads the cache.
+data:
+  source: store
+  provider: databento     # futures bars (GLBX / IFUS)
+  fx_provider: yfinance   # base-currency (EUR) FX gap-fill, decoupled from the bars provider
+  arrays:
+  - OHLCV
+  symbols:
+  - {root: ZT, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZF, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZN, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: TN, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: UB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6E, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6J, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6B, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6A, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6C, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: 6S, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: DX, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}
+  - {root: CL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: NG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: RB, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: HO, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: BZ, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: GC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: SI, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: HG, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: PL, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: PA, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZC, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZW, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: ZS, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}
+  - {root: SB, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}
+  - {root: KC, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}
+  - {root: CT, ccy: USD, dataset: IFUS.IMPACT, adjustment: backward_ratio}
+  - {root: LE, ccy: USD, dataset: GLBX.MDP3, adjustment: backward_ratio}    # Live Cattle (CME/Globex)
+  start: '2019-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.trend_score
+  params:
+    lookback: 252
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: atalanta.trendStraddleBufferedPyramidLongOnly
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: longonly
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+
+ranking:
+  metric: crisis_quarter_return
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
