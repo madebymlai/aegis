@@ -106,6 +106,12 @@ class ExecutionBundle:
         plan leaves net exposure bounded only by the gross cap."""
         return self._plan.net_cap
 
+    @property
+    def direction(self) -> str:
+        """The locked plan's allowed exposure direction
+        (``longonly`` / ``shortonly`` / ``both``)."""
+        return self._plan.direction
+
     def compute_weights(
         self,
         prices: MarketDataBundle,

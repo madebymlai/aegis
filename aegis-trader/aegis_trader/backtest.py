@@ -204,8 +204,12 @@ def _contract_instrument_ids(sleeves: _SleeveBundles) -> tuple[InstrumentId, ...
     return tuple(sorted(unique.values(), key=lambda instrument_id: instrument_id.value))
 
 
+class _InstrumentCatalog(Protocol):
+    def instruments(self, *, instrument_ids: list[str]) -> Sequence[Instrument]: ...
+
+
 def _catalog_instruments(
-    catalog: object,
+    catalog: _InstrumentCatalog,
     instrument_ids: tuple[InstrumentId, ...],
 ) -> dict[InstrumentId, Instrument]:
     loaded = {
@@ -421,12 +425,7 @@ def _zero_balances(currencies: tuple[str, ...]) -> list[Money]:
 
 
 def _requires_margin_account(sleeves: _SleeveBundles) -> bool:
-    return any(_bundle_direction(bundle) in {"both", "shortonly"} for _name, bundle in sleeves)
-
-
-def _bundle_direction(bundle: object) -> str:
-    plan = getattr(bundle, "plan", None) or getattr(bundle, "_plan", None)
-    return str(getattr(plan, "direction", "longonly"))
+    return any(bundle.direction in {"both", "shortonly"} for _name, bundle in sleeves)
 
 
 def _account_currencies(

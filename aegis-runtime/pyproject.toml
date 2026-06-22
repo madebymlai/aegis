@@ -19,6 +19,21 @@ include = ["aegis_runtime*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.mypy]
+python_version = "3.12"
+files = ["aegis_runtime", "tests"]
+
+# nautilus_trader ships no type stubs and pandas' stubs aren't installed, so
+# neither exposes types to mypy.  Suppress the missing-import noise without
+# weakening checks on our own code.
+[[tool.mypy.overrides]]
+module = [
+    "nautilus_trader.*",
+    "pandas",
+    "pandas.*",
+]
+ignore_missing_imports = true
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.0",

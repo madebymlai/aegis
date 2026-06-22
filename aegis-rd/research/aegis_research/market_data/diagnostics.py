@@ -23,6 +23,7 @@ from research.aegis_research.market_data.contracts import (
     DataArrayDiagnostics,
     DataDiagnostics,
 )
+from research.aegis_research.market_data.identity import as_instrument_id, instrument_ids
 
 _MISSING = object()
 
@@ -246,10 +247,8 @@ def _column_for_instrument_id(panel: pd.DataFrame, instrument_id: InstrumentId) 
 
 
 def _config_instrument_ids(config: DataConfig) -> tuple[InstrumentId, ...]:
-    return tuple(InstrumentId.from_str(value) for value in config.instruments)
+    return instrument_ids(config.instruments)
 
 
 def _instrument_id(value: Any) -> InstrumentId:
-    if isinstance(value, InstrumentId):
-        return value
-    return InstrumentId.from_str(str(value))
+    return as_instrument_id(value)

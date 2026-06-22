@@ -47,4 +47,4 @@ def test_startup_warmup_requests_bars_with_catalog_update() -> None:
     assert str(args[0]) == "VUSA.XLON-1-DAY-LAST-EXTERNAL"
     assert kwargs["update_catalog"] is True
     assert kwargs["end"] == datetime(2026, 6, 22, 12, 0, tzinfo=timezone.utc)
-    assert kwargs["start"] < kwargs["end"]
+    assert kwargs["start"] == datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
