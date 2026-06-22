@@ -4,11 +4,16 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 from platformdirs import user_data_dir
+
+from aegis_data.bar_type import raw_bar_type
+
+if TYPE_CHECKING:
+    from nautilus_trader.model.data import Bar, BarType
 
 AEGIS_DATA_DIR_ENV = "AEGIS_DATA_DIR"
 CATALOG_DIRNAME = "catalog"
@@ -19,14 +24,21 @@ class CatalogCoverageGapError(ValueError):
 
 
 class NautilusDataProviderPort(Protocol):
+    """A pure fetch of bars for a window (ADR-0008): a query, never a write.
+
+    The catalog's write format, ``EXTERNAL`` identity, window, and merge are the
+    :class:`CatalogBackedDataPort`'s secret; it is the single writer of record.
+    Mirrors Nautilus's standalone ``HistoricInteractiveBrokersClient``, which
+    *returns* bars for the caller to persist.
+    """
+
     def request_bars(
         self,
-        bar_type: str,
+        bar_type: BarType,
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        update_catalog: bool,
-    ) -> Sequence[Any] | None: ...
+    ) -> Sequence[Bar]: ...
 
 
 @dataclass(frozen=True)
@@ -50,14 +62,14 @@ class CatalogBackedDataPort:
             frames[instrument_id] = _bars_to_ohlcv(
                 self.catalog.query(
                     _bar_cls(),
-                    identifiers=[bar_type],
+                    identifiers=[str(bar_type)],
                     start=request.start,
                     end=request.end,
                 )
             )
         return frames
 
-    def _ensure_covered(self, bar_type: str, request: RawBarRequest) -> None:
+    def _ensure_covered(self, bar_type: BarType, request: RawBarRequest) -> None:
         missing = self._missing_intervals(bar_type, request)
         if not missing:
             return
@@ -68,23 +80,24 @@ class CatalogBackedDataPort:
                 bar_type,
                 start=pd.Timestamp(start_ns, tz="UTC"),
                 end=pd.Timestamp(end_ns, tz="UTC"),
-                update_catalog=True,
             )
             if pulled:
                 self.catalog.write_data(list(pulled), start=start_ns, end=end_ns)
-        self.catalog.consolidate_data(_bar_cls(), identifier=bar_type, deduplicate=True)
+        self.catalog.consolidate_data(
+            _bar_cls(), identifier=str(bar_type), deduplicate=True
+        )
         remaining = self._missing_intervals(bar_type, request)
         if remaining:
             raise _coverage_gap(bar_type, remaining)
 
     def _missing_intervals(
-        self, bar_type: str, request: RawBarRequest
+        self, bar_type: BarType, request: RawBarRequest
     ) -> list[tuple[int, int]]:
         return self.catalog.get_missing_intervals_for_request(
             _timestamp_ns(request.start),
             _timestamp_ns(request.end),
             _bar_cls(),
-            identifier=bar_type,
+            identifier=str(bar_type),
         )
 
 
@@ -104,13 +117,9 @@ def parquet_data_catalog(path: str | Path | None = None) -> Any:
     return ParquetDataCatalog(root)
 
 
-def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> str:
-    if timeframe.upper() not in {"1D", "1-DAY"}:
-        raise ValueError(f"catalog source supports only 1D raw bars; got {timeframe!r}")
-    return f"{instrument_id.value}-1-DAY-LAST-INTERNAL"
-
-
-def _coverage_gap(bar_type: str, intervals: Sequence[tuple[int, int]]) -> CatalogCoverageGapError:
+def _coverage_gap(
+    bar_type: BarType, intervals: Sequence[tuple[int, int]]
+) -> CatalogCoverageGapError:
     ranges = [
         f"{pd.Timestamp(start, tz='UTC').isoformat()}..{pd.Timestamp(end, tz='UTC').isoformat()}"
         for start, end in intervals
@@ -131,14 +140,14 @@ def _bar_cls() -> type:
 
 
 def _bars_to_ohlcv(bars: Sequence[Any]) -> pd.DataFrame:
-    rows = {
+    rows: dict[str, list[float]] = {
         "Open": [],
         "High": [],
         "Low": [],
         "Close": [],
         "Volume": [],
     }
-    index = []
+    index: list[pd.Timestamp] = []
     for bar in bars:
         index.append(pd.Timestamp(bar.ts_event, tz="UTC").tz_localize(None))
         rows["Open"].append(float(bar.open.as_double()))

@@ -19,7 +19,7 @@ from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency, Quantity
-from aegis_trader.data.bar_type import bar_type
+from aegis_trader.data.bar_type import raw_bar_type
 from aegis_trader.domain.sizing import InstrumentSizing
 
 
@@ -146,7 +146,7 @@ class NautilusMarketData:
         )
 
     def _cache_bars(self, instrument_id: InstrumentId, timeframe: str) -> list[Bar]:
-        return self._cache.bars(bar_type(instrument_id.value, timeframe))
+        return self._cache.bars(raw_bar_type(instrument_id, timeframe))
 
 
 def _period_bounds(period: int, period_ns: int) -> tuple[int, int]:

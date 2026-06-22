@@ -48,7 +48,7 @@ from aegis_runtime import DataContract, ExecutionBundle
 from aegis_trader.data import (
     MarketDataPort,
     NautilusMarketData,
-    bar_type,
+    raw_bar_type,
     resolve_book_timeframe,
     timeframe_to_ns,
 )
@@ -188,21 +188,26 @@ class RebalanceStrategy(Strategy):
         }
         return tuple(sorted(instrument_ids, key=lambda instrument_id: instrument_id.value))
 
-    def _request_startup_bars(
-        self,
-        instrument_ids: tuple[InstrumentId, ...],
-        timeframe: str,
-    ) -> None:
-        """Warm the live Cache from catalog/provider before subscribing bars."""
+    def _warm_startup_cache(self, book_timeframe: str) -> None:
+        """Warm the Cache via Nautilus's native catalog seam (ADR-0006).
+
+        The genuine upgrade over the old bespoke warmup: with the node's
+        ``catalogs=[DataCatalogConfig]`` wired (``trader/modes.py``), the *plain*
+        native ``request_bars(update_catalog=True)`` serves history from the shared
+        catalog and tops up only the missing IBKR tail (persisted) in one call —
+        the prototype-confirmed split.  The request is still issued (a configured
+        catalog is not auto-loaded and ``subscribe_bars`` is real-time only), but it
+        is now the native call, not a hand-rolled provider-warmup loop.
+        """
         if not self.config.warmup_cache_on_start:
             return
+        instrument_ids = self._registered_instrument_ids()
         if not instrument_ids:
             return
-
         end = self.clock.utc_now()
         start = _startup_history_start(
             end,
-            timeframe=timeframe,
+            timeframe=book_timeframe,
             lookback_bars=max(
                 contract.lookback_bars
                 for contract in self._sleeve_to_contract.values()
@@ -210,7 +215,7 @@ class RebalanceStrategy(Strategy):
         )
         for instrument_id in instrument_ids:
             self.request_bars(
-                bar_type(instrument_id.value, timeframe),
+                raw_bar_type(instrument_id, book_timeframe),
                 start=start,
                 end=end,
                 update_catalog=True,
@@ -258,10 +263,10 @@ class RebalanceStrategy(Strategy):
         self._book_timeframe = book_timeframe
         self._period_ns = timeframe_to_ns(book_timeframe)
 
+        self._warm_startup_cache(book_timeframe)
         instrument_ids = self._registered_instrument_ids()
-        self._request_startup_bars(instrument_ids, book_timeframe)
         for instrument_id in instrument_ids:
-            self.subscribe_bars(bar_type(instrument_id.value, book_timeframe))
+            self.subscribe_bars(raw_bar_type(instrument_id, book_timeframe))
 
         # Subscribe to FX reference-pair quotes so the cache mark xrates stay
         # current from live data — both the sizer (MarketDataPort.fx_rate) and

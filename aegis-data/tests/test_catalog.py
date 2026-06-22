@@ -18,10 +18,10 @@ from aegis_data.catalog import (
 )
 
 
-def _bar(bar_type: str, day: str, close: float) -> Bar:
+def _bar(bar_type: BarType, day: str, close: float) -> Bar:
     ts_event = pd.Timestamp(day, tz="UTC").value
     return Bar(
-        BarType.from_str(bar_type),
+        bar_type,
         Price.from_str(f"{close:.2f}"),
         Price.from_str(f"{close + 1:.2f}"),
         Price.from_str(f"{close - 1:.2f}"),
@@ -53,17 +53,16 @@ def _write_span(
 class _ProviderPort:
     def __init__(self, bars: list[Bar]) -> None:
         self.bars = bars
-        self.requests: list[tuple[str, bool]] = []
+        self.requests: list[BarType] = []
 
     def request_bars(
         self,
-        bar_type: str,
+        bar_type: BarType,
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        update_catalog: bool,
     ) -> list[Bar]:
-        self.requests.append((bar_type, update_catalog))
+        self.requests.append(bar_type)
         return self.bars
 
 
@@ -90,7 +89,7 @@ def test_catalog_writes_nautilus_native_bar_layout(tmp_path: Path) -> None:
         path.relative_to(catalog_path).parts[:3] for path in catalog_path.rglob("*.parquet")
     )
 
-    assert layout == [("data", "bar", "AAPL.NASDAQ-1-DAY-LAST-INTERNAL")]
+    assert layout == [("data", "bar", "AAPL.NASDAQ-1-DAY-LAST-EXTERNAL")]
 
 
 def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:
@@ -152,7 +151,7 @@ def test_catalog_port_backfills_missing_tail_with_update_catalog(tmp_path: Path)
 
     assert first[instrument_id]["Close"].tolist() == [10.0, 11.0]
     assert second[instrument_id]["Close"].tolist() == [10.0, 11.0]
-    assert provider.requests == [(bar_type, True)]
+    assert provider.requests == [bar_type]
 
 
 def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Path) -> None:

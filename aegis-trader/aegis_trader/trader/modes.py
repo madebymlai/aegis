@@ -34,7 +34,10 @@ from nautilus_trader.common import Environment
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.persistence.config import DataCatalogConfig
 from nautilus_trader.risk.config import RiskEngineConfig
+
+from aegis_data.catalog import catalog_root
 
 from aegis_trader.domain.risk_guard import RiskGuardConfig
 
@@ -295,6 +298,11 @@ def _build_trading_node_config(
 ) -> TradingNodeConfig:
     """Build a TradingNodeConfig with cache, logging, and reconciliation.
 
+    The shared aegis-data catalog is wired in (ADR-0006): a startup
+    ``request_bars(update_catalog=True)`` then serves history from the catalog and
+    tops up only the missing tail from IBKR, persisting it — so research and live
+    warm from the *same* corpus and live has no cold-start lookback gap.
+
     IBKR client configs are NOT populated — use the dict builders to
     produce configs, then pass them through the IBKR config constructors
     at node-build time (requires ``ibapi``).
@@ -306,6 +314,7 @@ def _build_trading_node_config(
         risk_engine=build_live_risk_engine_config(),
         cache=CacheConfig(),
         logging=LoggingConfig(),
+        catalogs=[DataCatalogConfig(path=str(catalog_root()))],
     )
 
 

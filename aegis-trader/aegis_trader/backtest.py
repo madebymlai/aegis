@@ -33,7 +33,7 @@ from aegis_runtime import ExecutionBundle
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
-from aegis_trader.data import bar_type, resolve_book_timeframe, wrangle_bars
+from aegis_trader.data import raw_bar_type, resolve_book_timeframe, wrangle_bars
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.portfolio.performance import (
@@ -370,7 +370,7 @@ def _add_equity_recorder(
             BookEquityRecorderConfig(
                 base_currency=book.base_currency,
                 bar_types=tuple(
-                    str(bar_type(instrument_id.value, timeframe))
+                    str(raw_bar_type(instrument_id, timeframe))
                     for instrument_id in instrument_ids
                 ),
             )

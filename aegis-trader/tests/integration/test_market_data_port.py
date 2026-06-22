@@ -15,7 +15,7 @@ from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
-from aegis_trader.data import NautilusMarketData, bar_type
+from aegis_trader.data import NautilusMarketData, raw_bar_type
 from aegis_trader.domain.sizing import InstrumentSizing
 
 _IID = InstrumentId(symbol=Symbol("VUSA"), venue=Venue("XLON"))
@@ -72,7 +72,7 @@ def test_make_quantity_none_when_not_cached():
 
 def test_lookback_window_reads_completed_bars_from_cache_without_trigger_bar():
     cache = Cache()
-    bar_type_ = bar_type(_IID.value, "1D")
+    bar_type_ = raw_bar_type(_IID, "1D")
     cache.add_bars(
         [
             _bar(bar_type_, 0, 100.0),
@@ -95,7 +95,7 @@ def test_lookback_window_reads_completed_bars_from_cache_without_trigger_bar():
 
 def test_freshness_true_when_cache_has_bar_in_completed_period():
     cache = Cache()
-    bar_type_ = bar_type(_IID.value, "1D")
+    bar_type_ = raw_bar_type(_IID, "1D")
     cache.add_bars([_bar(bar_type_, _DAY_NS, 101.0)])
     md = NautilusMarketData(cache=cache)
 
@@ -111,7 +111,7 @@ def test_freshness_true_when_cache_has_bar_in_completed_period():
 
 def test_freshness_false_when_cache_has_no_bar_in_completed_period():
     cache = Cache()
-    bar_type_ = bar_type(_IID.value, "1D")
+    bar_type_ = raw_bar_type(_IID, "1D")
     cache.add_bars([_bar(bar_type_, 0, 100.0), _bar(bar_type_, 2 * _DAY_NS, 102.0)])
     md = NautilusMarketData(cache=cache)
 

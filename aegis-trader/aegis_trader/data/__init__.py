@@ -11,7 +11,7 @@ from aegis_trader.data.backtest_data import (
 from aegis_trader.data.bar_type import (
     MixedTimeframeError,
     UnsupportedTimeframeError,
-    bar_type,
+    raw_bar_type,
     resolve_book_timeframe,
     timeframe_to_ns,
 )
@@ -23,8 +23,8 @@ __all__ = [
     "MixedTimeframeError",
     "NautilusMarketData",
     "UnsupportedTimeframeError",
-    "bar_type",
     "build_currency_pair",
+    "raw_bar_type",
     "resolve_book_timeframe",
     "timeframe_to_ns",
     "wrangle_bars",

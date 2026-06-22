@@ -254,11 +254,11 @@ def _equity(instrument_id: InstrumentId) -> Equity:
     )
 
 
-def _bar(bar_type: str, day: pd.Timestamp, close: float) -> Bar:
+def _bar(bar_type: BarType, day: pd.Timestamp, close: float) -> Bar:
     ts_event = pd.Timestamp(day, tz="UTC").value
     price = Price.from_str(f"{close:.2f}")
     return Bar(
-        BarType.from_str(bar_type),
+        bar_type,
         price,
         price,
         price,

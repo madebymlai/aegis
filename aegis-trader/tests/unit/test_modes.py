@@ -28,6 +28,8 @@ from nautilus_trader.common import Environment
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.catalog import catalog_root
+
 from aegis_trader.domain.book_config import BookConfig, CostModelConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.costs import (
@@ -203,6 +205,19 @@ def test_paper_node_config_has_reconciliation():
     assert cfg.exec_engine.reconciliation is True, (
         f"Expected reconciliation=True, got {cfg.exec_engine.reconciliation}"
     )
+
+
+def test_paper_node_config_wires_shared_catalog():
+    """The paper node reads the shared aegis-data catalog so request_bars warmup
+    serves history from it and persists the IBKR tail (ADR-0006, no cold start)."""
+    cfg = build_paper_trading_node_config()
+    assert [c.path for c in cfg.catalogs] == [str(catalog_root())]
+
+
+def test_live_node_config_wires_shared_catalog():
+    """The live node reads the same shared catalog as research and paper."""
+    cfg = build_live_trading_node_config()
+    assert [c.path for c in cfg.catalogs] == [str(catalog_root())]
 
 
 def test_paper_node_config_is_msgspec_serializable():

@@ -35,6 +35,8 @@ module = [
   "aegis_runtime",
   "aegis_runtime.*",
   "databento.*",
+  "ibapi",
+  "ibapi.*",
   "nautilus_trader.*",
   "pandas",
   "pandas.*",

@@ -19,7 +19,7 @@ class _WarmupHarness:
     def __init__(self) -> None:
         self.config = SimpleNamespace(warmup_cache_on_start=True)
         self.clock = _Clock()
-        self.calls = []
+        self.calls: list[tuple[tuple, dict]] = []
         self._sleeve_to_contract = {
             SleeveName("trend"): DataContract(
                 instrument_ids=(InstrumentId.from_str("VUSA.XLON"),),
@@ -33,15 +33,19 @@ class _WarmupHarness:
     def request_bars(self, *args, **kwargs) -> None:
         self.calls.append((args, kwargs))
 
+    # Bound from the real strategy so the warmup runs against the production
+    # instrument-id resolution, not a re-implementation.
+    _registered_instrument_ids = RebalanceStrategy._registered_instrument_ids
 
-def test_startup_warmup_requests_bars_with_catalog_update() -> None:
+
+def test_startup_warmup_requests_native_catalog_bars() -> None:
+    """The startup warmup issues the plain native ``request_bars(update_catalog=
+    True)`` (catalog-served + IBKR-tail, ADR-0006) over the lookback window —
+    LAST-EXTERNAL, no bespoke provider loop."""
     harness = _WarmupHarness()
-    warmup = RebalanceStrategy._request_startup_bars.__get__(
-        harness,
-        _WarmupHarness,
-    )
+    warm = RebalanceStrategy._warm_startup_cache.__get__(harness, _WarmupHarness)
 
-    warmup((InstrumentId.from_str("VUSA.XLON"),), "1D")
+    warm("1D")
 
     args, kwargs = harness.calls[0]
     assert str(args[0]) == "VUSA.XLON-1-DAY-LAST-EXTERNAL"

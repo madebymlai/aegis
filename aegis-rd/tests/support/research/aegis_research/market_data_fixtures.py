@@ -163,7 +163,7 @@ def seed_catalog_ohlcv(
 
 
 def _bar(
-    bar_type: str,
+    bar_type: BarType,
     *,
     timestamp: pd.Timestamp,
     open_: float,
@@ -174,7 +174,7 @@ def _bar(
 ) -> Bar:
     ts_event = pd.Timestamp(timestamp, tz="UTC").value
     return Bar(
-        BarType.from_str(bar_type),
+        bar_type,
         Price.from_str(_price(open_)),
         Price.from_str(_price(high)),
         Price.from_str(_price(low)),
