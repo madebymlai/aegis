@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -82,8 +83,8 @@ class IbkrHistoricalProvider:
             self._with_client(
                 lambda client: client.request_bars(
                     bar_specifications=[str(bar_type.spec)],
-                    start_date_time=start.to_pydatetime(),
-                    end_date_time=end.to_pydatetime(),
+                    start_date_time=_naive_utc(start),
+                    end_date_time=_naive_utc(end),
                     tz_name="UTC",
                     instrument_ids=[bar_type.instrument_id.value],
                     use_rth=self.use_rth,
@@ -114,7 +115,7 @@ class IbkrHistoricalProvider:
         try:
             return await call(client)
         finally:
-            await client.disconnect()
+            await client.aclose()
 
     def _make_client(self) -> Any:
         if self.client_factory is not None:
@@ -124,12 +125,48 @@ class IbkrHistoricalProvider:
             HistoricInteractiveBrokersClient,
         )
 
-        return HistoricInteractiveBrokersClient(
-            host=self.host,
-            port=self.port,
-            client_id=self.client_id,
-            market_data_type=getattr(MarketDataTypeEnum, self.market_data_type),
+        return _HistoricSession(
+            HistoricInteractiveBrokersClient(
+                host=self.host,
+                port=self.port,
+                client_id=self.client_id,
+                market_data_type=getattr(MarketDataTypeEnum, self.market_data_type),
+            )
         )
+
+
+class _HistoricSession:
+    """Anti-corruption wrapper over ``HistoricInteractiveBrokersClient``.
+
+    The historic client exposes a connect-only public surface — no teardown and no
+    context manager — so this adapts it to a uniform ``connect`` / ``request_*`` /
+    ``aclose`` session, driving the inner client's connection lifecycle on close
+    (the only available teardown).  Isolating that one private reach here keeps the
+    provider testable against a clean session interface.
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    async def connect(self) -> None:
+        await self._client.connect()
+
+    async def request_bars(self, **kwargs: Any) -> Sequence[Bar]:
+        return await self._client.request_bars(**kwargs)
+
+    async def request_instruments(self, **kwargs: Any) -> Sequence[Instrument]:
+        return await self._client.request_instruments(**kwargs)
+
+    async def aclose(self) -> None:
+        await self._client._client._disconnect()
+
+
+def _naive_utc(timestamp: pd.Timestamp) -> datetime:
+    """A naive UTC ``datetime`` for the historic client, which applies ``tz_name``
+    itself (``pd.Timestamp(value, tz=tz_name)``) and so rejects a tz-aware input."""
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.tz_convert("UTC").tz_localize(None)
+    return timestamp.to_pydatetime()
 
 
 def seed_instrument_definitions(

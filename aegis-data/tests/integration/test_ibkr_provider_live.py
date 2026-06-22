@@ -29,7 +29,13 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
-    provider = IbkrHistoricalProvider(port=int(_GATEWAY_PORT))  # type: ignore[arg-type]
+    # DELAYED_FROZEN so the check runs without a real-time data subscription;
+    # it validates the read path + EXTERNAL identity, not live streaming.
+    provider = IbkrHistoricalProvider(
+        port=int(_GATEWAY_PORT),  # type: ignore[arg-type]
+        client_id=7,
+        market_data_type="DELAYED_FROZEN",
+    )
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
     bars = provider.request_bars(
