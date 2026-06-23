@@ -17,7 +17,6 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 
 import pandas as pd
-import pytest
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import AssetClass
@@ -246,25 +245,16 @@ def _early_crossover_es_port() -> tuple[_FakePort, dict[InstrumentId, pd.DataFra
     return _FakePort(catalog, frames), frames
 
 
-@pytest.mark.xfail(
-    reason="early-crossover roll bug (bd r8b9-wrongleg-bug): when end lands between a leg's liquidity "
-    "crossover and its calendar roll — always the case live, where end=now — roll_schedule(eligible, "
-    "start, end) truncates the new leg because its CALENDAR roll is past end, so the liquidity cap "
-    "(_cap_rolls) never rolls the series onto it. The continuous series then tracks the old, thinning "
-    "leg while front_contract (causal/volume) correctly names the liquid one: the series signals off "
-    "the wrong contract. Remove this marker when the series rolls to the liquidity leader at the "
-    "window edge.",
-    strict=True,
-)
 def test_series_and_execution_track_the_liquidity_leader_on_an_early_crossover() -> None:
-    """Both the signal series (its offset-0 leg) and the execution leg (``front_contract``) must track
-    the contract holding liquidity leadership as of ``end`` — else the strategy signals and/or trades
+    """Both the signal series (its offset-0 leg) and the execution leg (``front_contract``) track the
+    contract holding liquidity leadership as of ``end`` — else the strategy would signal and/or trade
     a thinning contract after the volume has migrated.  ESU4 takes the lead on 2024-04-17, well before
-    ESM4's calendar roll, so at ``end`` 2024-05-01 the liquidity leader is ESU4.  ``front_contract``
-    already names it; the series does not (``roll_schedule`` truncates ESU4 as its calendar roll is
-    past ``end``, leaving the series on ESM4) — so this currently fails on the series, the real bug.
-    Asserting the *liquidity leader* (not mere series/execution consistency) stops a fix that wrongly
-    pulls execution back onto the stale chain front from satisfying the test."""
+    ESM4's calendar roll, so at ``end`` 2024-05-01 the liquidity leader is ESU4.  Regression guard for
+    bd aegis-rd-6qp: ``liquid_roll_schedule`` previously let the calendar window truncate ESU4 (its
+    calendar roll is past ``end``), stranding the series on ESM4 while ``front_contract`` correctly
+    named ESU4 — execution off one leg, signal off another.  Asserting the *liquidity leader* (not mere
+    series/execution consistency) keeps a fix that wrongly pulls execution back onto the stale chain
+    front from satisfying the test."""
     from aegis_trader.data.continuous_feed import ContinuousFeed
 
     leader = InstrumentId.from_str("ESU4.XCME")  # liquidity crossover 2024-04-17, before the calendar roll

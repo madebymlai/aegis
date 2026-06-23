@@ -107,6 +107,14 @@ def front_contract(
     return None if index is None else ordered[index]
 
 
+def roll_date(contract: DatedContract, *, roll_lead_days: int) -> date:
+    """The calendar roll date for ``contract`` — ``roll_lead_days`` business days before its last
+    trade.  The chain switches off ``contract`` onto its successor here under the calendar rule (the
+    seam the liquidity cap may move earlier)."""
+    _require_non_negative_roll_lead(roll_lead_days)
+    return _roll_date(contract, roll_lead_days)
+
+
 def assert_roll_agreement(
     root: str,
     research_contracts: Sequence[DatedContract],
@@ -241,6 +249,7 @@ __all__ = [
     "assert_roll_agreement",
     "assert_universe_roll_agreement",
     "front_contract",
+    "roll_date",
     "roll_lead_days_for_cadence",
     "roll_schedule",
 ]

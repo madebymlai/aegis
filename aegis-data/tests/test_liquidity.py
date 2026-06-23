@@ -213,6 +213,39 @@ def test_liquid_roll_schedule_keeps_the_calendar_roll_when_liquidity_tracks_expi
     assert schedule.roll_dates[0] == date(2024, 2, 22)  # unchanged calendar roll
 
 
+def test_liquid_roll_schedule_recovers_a_liquidity_leader_truncated_by_the_window_end() -> None:
+    # Thin metal again, but the window END (2024-02-16) lands BETWEEN the early crossover
+    # (2024-02-05) and the front's calendar roll (2024-02-22) — the live case, where end=now is
+    # mid-roll-window.  By the calendar PAM4 is still front, so roll_schedule's window drops PAU4;
+    # but liquidity has already migrated to PAU4, so the chain must EXTEND onto it (rolling at the
+    # crossover) rather than strand the series on the thinning PAM4.
+    candidates = [
+        DatedContract("PAM4", date(2024, 2, 29)),
+        DatedContract("PAU4", date(2024, 5, 31)),
+    ]
+    crossover = pd.Timestamp("2024-02-05")
+    front = pd.Series(
+        [1000.0 if d < crossover else 1.0 for d in pd.bdate_range("2024-01-01", "2024-02-29")],
+        index=pd.bdate_range("2024-01-01", "2024-02-29"), dtype="float64",
+    )
+    back = pd.Series(
+        [10.0 if d < crossover else 5000.0 for d in pd.bdate_range("2024-01-01", "2024-04-01")],
+        index=pd.bdate_range("2024-01-01", "2024-04-01"), dtype="float64",
+    )
+    volume = {"PAM4": front, "PAU4": back}
+
+    windowed = liquid_roll_schedule(
+        candidates, volume, date(2024, 1, 1), date(2024, 2, 16), roll_lead_days=5
+    )
+    full = liquid_roll_schedule(
+        candidates, volume, date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
+    )
+
+    assert windowed.symbols == ("PAM4", "PAU4")        # PAU4 recovered, not truncated by the edge
+    assert windowed.roll_dates[0] < date(2024, 2, 22)  # rolled at the crossover, not the calendar
+    assert windowed.roll_dates == full.roll_dates      # the window edge does not move the roll date
+
+
 def test_liquid_roll_schedule_roll_dates_are_causal() -> None:
     # The roll only ever depends on trailing volume, so truncating every series to the
     # resulting roll date reproduces the same roll — the guarantee that the live (causal)

@@ -24,6 +24,7 @@ from aegis_data.roll import (
     FuturesChainSchedule,
     RollAgreement,
     assert_roll_agreement,
+    roll_date,
     roll_schedule,
 )
 
@@ -47,15 +48,55 @@ def liquid_roll_schedule(
     whose liquidity tracks expiry is unchanged.  Leadership is judged on trailing volume
     only, so the capped roll dates are identical whether computed acausally (research, full
     window) or causally (live, volume-so-far) — the backtest/live roll stays in parity.
+
+    ``roll_schedule`` selects the window's legs by the **calendar** front alone, so when ``end``
+    lands between a leg's liquidity crossover and its calendar roll — always the live case, where
+    ``end`` is now and is mid-roll-window for the current front — it truncates the next, already-liquid
+    leg (its calendar front-window starts after ``end``).  The cap alone could then only move existing
+    seams earlier, never recover the dropped leg, stranding the series on the thinning front.  So the
+    window's late edge is extended onto every eligible successor that has taken liquidity leadership by
+    ``end``, rolling onto it at the (capped) crossover.
     """
     eligible = liquid_cycle(candidates, volume_by_symbol, roll_lead_days=roll_lead_days)
     calendar = roll_schedule(eligible, start, end, roll_lead_days=roll_lead_days)
-    crossovers = _leadership_crossovers(calendar.symbols, volume_by_symbol, roll_lead_days)
-    return FuturesChainSchedule(
-        symbols=calendar.symbols,
-        expiries=calendar.expiries,
-        roll_dates=_cap_rolls(calendar.roll_dates, crossovers),
+    if not calendar.symbols:
+        return calendar
+    ordered = _by_expiry(eligible)
+    first = next(index for index, c in enumerate(ordered) if c.symbol == calendar.symbols[0])
+    forward = ordered[first:]
+    crossovers = _leadership_crossovers(
+        tuple(contract.symbol for contract in forward), volume_by_symbol, roll_lead_days
     )
+    count = _front_count_by_end(forward, len(calendar.symbols), crossovers, end)
+    chain = forward[:count]
+    calendar_rolls = tuple(roll_date(contract, roll_lead_days=roll_lead_days) for contract in chain[:-1])
+    return FuturesChainSchedule(
+        symbols=tuple(contract.symbol for contract in chain),
+        expiries=tuple(contract.last_trade for contract in chain),
+        roll_dates=_cap_rolls(calendar_rolls, crossovers[: count - 1]),
+    )
+
+
+def _front_count_by_end(
+    forward: Sequence[DatedContract],
+    calendar_count: int,
+    crossovers: Sequence[date | None],
+    end: date,
+) -> int:
+    """How many of ``forward`` (the eligible legs from the window start) are front by ``end``.
+
+    Begins at the calendar window's leg count and walks forward, taking each successor whose
+    smoothed leadership crossover is on/before ``end`` — recovering the legs ``roll_schedule``'s
+    calendar window truncated because their calendar roll falls after ``end``.  Stops at the first
+    successor not yet liquidity-leading by ``end``, so legs that have not taken over stay excluded.
+    """
+    count = calendar_count
+    while count < len(forward):
+        crossover = crossovers[count - 1]  # the seam forward[count - 1] -> forward[count]
+        if crossover is None or crossover > end:
+            break
+        count += 1
+    return count
 
 
 def liquid_cycle(
