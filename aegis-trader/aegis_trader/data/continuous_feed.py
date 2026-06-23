@@ -14,6 +14,7 @@ roll-transition table, or the engine.
 from __future__ import annotations
 
 from datetime import date
+from typing import TypeVar
 
 import pandas as pd
 from nautilus_trader.model.data import Bar
@@ -25,6 +26,8 @@ from aegis_data.catalog_contracts import catalog_contract_calendar, catalog_volu
 from aegis_data.continuous_catalog import continuous_ohlcv_frames
 from aegis_data.liquidity import liquid_cycle_causal
 from aegis_data.roll import roll_lead_days_for_cadence
+
+_T = TypeVar("_T")
 
 
 class ContinuousFeed:
@@ -57,9 +60,18 @@ class ContinuousFeed:
     @property
     def continuous_id(self) -> InstrumentId:
         """The synthetic continuous-root id (``ES.XCME``) the series is keyed by."""
-        if self._continuous_id is None:
+        return self._materialized(self._continuous_id)
+
+    def _materialized(self, value: _T | None) -> _T:
+        """Return *value*, or raise if the feed has not been materialized yet.
+
+        The single not-yet-materialized guard every accessor shares: :meth:`materialize` sets
+        the continuous id, the series, and the front leg together, so any one of them being
+        ``None`` means no materialization has run.
+        """
+        if value is None:
             raise ValueError(f"continuous feed for {self._root!r} has not been materialized yet")
-        return self._continuous_id
+        return value
 
     def materialize(self, *, end: str) -> None:
         """(Re)materialize the back-adjusted series over ``[start, end]`` off-cache.
@@ -76,9 +88,7 @@ class ContinuousFeed:
 
     def series(self) -> pd.DataFrame:
         """The current back-adjusted continuous OHLCV frame (the live read surface)."""
-        if self._series is None:
-            raise ValueError(f"continuous feed for {self._root!r} has not been materialized yet")
-        return self._series
+        return self._materialized(self._series)
 
     def front_contract(self) -> InstrumentId:
         """The current front leg's native id (the execution target root→front maps to).
@@ -87,9 +97,7 @@ class ContinuousFeed:
         ``end`` — judged causally (volume observed-to-date), so live picks the same leg research
         does; at the window end the two coincide (the liquid-cycle parity guarantee).
         """
-        if self._front_id is None:
-            raise ValueError(f"continuous feed for {self._root!r} has not been materialized yet")
-        return self._front_id
+        return self._materialized(self._front_id)
 
     def last_roll_spread(self) -> float:
         """The uniform additive spread Δ applied at the most recent roll (0.0 if none yet).
@@ -108,19 +116,18 @@ class ContinuousFeed:
         uses) gives today's continuous bar without waiting on IBKR historical.  A bar from any
         other leg is ignored (roll detection is handled separately).
         """
-        if self._series is None or self._front_id is None:
-            raise ValueError(f"continuous feed for {self._root!r} has not been materialized yet")
+        series = self._materialized(self._series)
+        front_id = self._materialized(self._front_id)
         bar_day = pd.Timestamp(bar.ts_event, tz="UTC").date()
-        if self._causal_front(bar_day) != self._front_id:
+        if self._causal_front(bar_day) != front_id:
             # A roll: the liquidity leader has advanced. Re-materialize the whole series re-based
             # at the new front (a non-event for the live cache) and advance the front leg, recording
             # the uniform additive spread Δ (BACKWARD_SPREAD shifts every earlier segment by the
             # same post−pre gap) so a caller can re-base co-moving state (the SleeveLedger) in step.
-            old_series = self._series
             self.materialize(end=bar_day.isoformat())
-            self._last_roll_spread = _rebase_spread(old_series, self._series)
+            self._last_roll_spread = _rebase_spread(series, self._materialized(self._series))
             return
-        if bar.bar_type.instrument_id != self._front_id:
+        if bar.bar_type.instrument_id != front_id:
             return
         row = bars_to_ohlcv([bar])
         # The materializer stamps each continuous bar at the bucket close of the leg bar's
@@ -132,7 +139,7 @@ class ContinuousFeed:
         # adjustment — the front is offset 0 (today's continuous value IS the raw front close).
         close_stamp = pd.Timestamp(bar.ts_init, tz="UTC").ceil(self._timeframe).tz_localize(None)
         row.index = pd.DatetimeIndex([close_stamp])
-        self._series = pd.concat([self._series, row])
+        self._series = pd.concat([series, row])
 
     def _causal_front(self, end: date) -> InstrumentId:
         start = pd.Timestamp(self._start).date()
