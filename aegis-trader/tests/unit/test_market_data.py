@@ -11,6 +11,7 @@ from nautilus_trader.cache.cache import Cache
 from nautilus_trader.model.currencies import EUR, GBP
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_trader.data.bar_type import raw_bar_type
@@ -44,14 +45,37 @@ class TestFxRate:
 
 
 class _StubFeed:
-    """A ContinuousFeed stand-in: the read port depends only on continuous_id + series()."""
+    """A ContinuousFeed stand-in: continuous_id + series() (the signal data) + front_contract()
+    (the real tradeable leg that sizing/execution resolve to)."""
 
-    def __init__(self, continuous_id: InstrumentId, frame: pd.DataFrame) -> None:
+    def __init__(
+        self,
+        continuous_id: InstrumentId,
+        frame: pd.DataFrame,
+        front: InstrumentId | None = None,
+    ) -> None:
         self.continuous_id = continuous_id
         self._frame = frame
+        self._front = front if front is not None else continuous_id
 
     def series(self) -> pd.DataFrame:
         return self._frame
+
+    def front_contract(self) -> InstrumentId:
+        return self._front
+
+
+def _equity(instrument_id: InstrumentId) -> Equity:
+    return Equity(
+        instrument_id=instrument_id,
+        raw_symbol=instrument_id.symbol,
+        currency=EUR,
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )
 
 
 def _ohlcv_frame(closes: list[float]) -> pd.DataFrame:
@@ -102,3 +126,38 @@ class TestContinuousReads:
 
         assert md.has_bar_in_period(es, "1D", period=1, period_ns=_DAY_NS)
         assert not md.has_bar_in_period(es, "1D", period=5, period_ns=_DAY_NS)
+
+    def test_instrument_sizing_for_a_continuous_root_resolves_to_the_front_leg(self):
+        """A continuous root is synthetic — its sizing metadata comes from the real front leg the
+        order will trade (the cache holds the leg, never the synthetic root)."""
+        es = InstrumentId.from_str("ES.XCME")
+        front = InstrumentId.from_str("ESM4.XCME")
+        cache = Cache()
+        cache.add_instrument(_equity(front))
+        md = NautilusMarketData(cache=cache, feeds=(_StubFeed(es, _ohlcv_frame([100.0]), front),))
+
+        assert md.instrument_sizing(es) == md.instrument_sizing(front)
+        assert md.instrument_sizing(es) is not None
+
+    def test_make_quantity_for_a_continuous_root_builds_a_front_leg_quantity(self):
+        es = InstrumentId.from_str("ES.XCME")
+        front = InstrumentId.from_str("ESM4.XCME")
+        cache = Cache()
+        cache.add_instrument(_equity(front))
+        md = NautilusMarketData(cache=cache, feeds=(_StubFeed(es, _ohlcv_frame([100.0]), front),))
+
+        qty = md.make_quantity(es, 7.0)
+
+        assert isinstance(qty, Quantity)
+        assert float(qty.as_double()) == 7.0
+
+    def test_execution_instrument_id_routes_continuous_root_and_passes_native_through(self):
+        """A continuous root resolves to its front leg; a native id passes through unchanged even
+        when feeds are present — the regression guard that the equity/native path is untouched."""
+        es = InstrumentId.from_str("ES.XCME")
+        front = InstrumentId.from_str("ESM4.XCME")
+        native = InstrumentId.from_str("VUSA.XLON")
+        md = NautilusMarketData(cache=Cache(), feeds=(_StubFeed(es, _ohlcv_frame([100.0]), front),))
+
+        assert md.execution_instrument_id(es) == front
+        assert md.execution_instrument_id(native) == native

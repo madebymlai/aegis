@@ -14,10 +14,11 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.objects import Quantity
 
 from aegis_runtime import DataContract
 from aegis_trader.data import raw_bar_type
-from aegis_trader.domain.types import SleeveName
+from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource, SleeveName
 from aegis_trader.trader.strategy import RebalanceStrategy
 
 
@@ -253,3 +254,62 @@ def test_install_feeds_registers_by_continuous_id_and_routes_the_front_leg() -> 
     assert set(harness._leg_to_feed) == {es_front, kc_front}
     assert harness._feeds[es].continuous_id == es
     assert harness._leg_to_feed[kc_front].continuous_id == kc
+
+
+# ── E2: orders for a continuous root are submitted on the front leg ───────────────────────────
+
+
+class _FakeMarketData:
+    def __init__(self, front_by_root: dict[InstrumentId, InstrumentId], qty: Quantity) -> None:
+        self._front_by_root = front_by_root
+        self._qty = qty
+
+    def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
+        return self._front_by_root.get(instrument_id, instrument_id)
+
+    def make_quantity(self, instrument_id: InstrumentId, raw_shares: float) -> Quantity:
+        return self._qty
+
+
+class _SubmitHarness:
+    _submit_order_intent = RebalanceStrategy._submit_order_intent
+    _require_market_data = RebalanceStrategy._require_market_data
+
+    def __init__(self, market_data: _FakeMarketData) -> None:
+        self._market_data = market_data
+        self.config = SimpleNamespace(fill_time_in_force=None)
+        self.log = SimpleNamespace(error=lambda *a: None, info=lambda *a: None)
+        self.order_factory = SimpleNamespace(market=lambda **kwargs: kwargs)  # order == its kwargs
+        self.submitted: list[dict[str, object]] = []
+
+    def submit_order(self, order: dict[str, object]) -> None:
+        self.submitted.append(order)
+
+
+def test_submit_order_intent_routes_a_continuous_root_to_the_front_leg() -> None:
+    """E2: an OrderIntent keyed by the continuous root is submitted on the dated front leg (the
+    synthetic root is not tradeable) — the order target rolls in lock-step with the data roll."""
+    cont = InstrumentId.from_str("ES.XCME")
+    front = InstrumentId.from_str("ESM4.XCME")
+    qty = Quantity.from_int(3)
+    harness = _SubmitHarness(_FakeMarketData({cont: front}, qty))
+
+    harness._submit_order_intent(
+        OrderIntent(instrument_id=cont, side=OrderSide.BUY, quantity=3.0, source=OrderSource.ALPHA)
+    )
+
+    order = harness.submitted[0]
+    assert order["instrument_id"] == front
+    assert order["quantity"] == qty
+
+
+def test_submit_order_intent_leaves_a_native_instrument_untouched() -> None:
+    native = InstrumentId.from_str("VUSA.XLON")
+    qty = Quantity.from_int(5)
+    harness = _SubmitHarness(_FakeMarketData({}, qty))
+
+    harness._submit_order_intent(
+        OrderIntent(instrument_id=native, side=OrderSide.SELL, quantity=5.0, source=OrderSource.ALPHA)
+    )
+
+    assert harness.submitted[0]["instrument_id"] == native

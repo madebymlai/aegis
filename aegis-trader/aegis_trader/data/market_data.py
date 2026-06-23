@@ -51,6 +51,11 @@ class MarketDataPort(Protocol):
         the instrument is not in the reconciled cache."""
         ...
 
+    def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
+        """The real instrument an order for ``instrument_id`` trades — a continuous root maps to
+        its current dated front leg; a native instrument is itself."""
+        ...
+
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         """FX rate as quote units per 1 base (base→quote, e.g. EUR→GBP = 0.85),
         or ``None`` when no rate is available — the overlay fails closed rather
@@ -88,7 +93,9 @@ class MarketDataPort(Protocol):
 
 @runtime_checkable
 class ContinuousSeriesPort(Protocol):
-    """The read port's view of a continuous-future feed: which root it owns, and its series."""
+    """The read port's view of a continuous-future feed: the synthetic root it owns, its series
+    (the signal data), and the current front leg (the real instrument sizing/execution resolve to).
+    """
 
     @property
     def continuous_id(self) -> InstrumentId:
@@ -97,6 +104,10 @@ class ContinuousSeriesPort(Protocol):
 
     def series(self) -> pd.DataFrame:
         """The current back-adjusted continuous OHLCV frame (UTC-naive index)."""
+        ...
+
+    def front_contract(self) -> InstrumentId:
+        """The current dated front leg — the real cached instrument an order trades."""
         ...
 
 
@@ -115,7 +126,7 @@ class NautilusMarketData:
         self._feeds = {feed.continuous_id: feed for feed in feeds}
 
     def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing | None:
-        instrument = self._cache.instrument(instrument_id)
+        instrument = self._cache.instrument(self.execution_instrument_id(instrument_id))
         if instrument is None:
             return None
         return InstrumentSizing(
@@ -124,10 +135,17 @@ class NautilusMarketData:
         )
 
     def make_quantity(self, instrument_id: InstrumentId, raw_shares: float) -> Quantity | None:
-        instrument = self._cache.instrument(instrument_id)
+        instrument = self._cache.instrument(self.execution_instrument_id(instrument_id))
         if instrument is None:
             return None
         return instrument.make_qty(raw_shares)
+
+    def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
+        """The real instrument an order trades for *instrument_id*: a continuous root resolves to
+        its feed's current front leg (the synthetic root is never a cached, tradeable instrument);
+        anything else is itself."""
+        feed = self._feeds.get(instrument_id)
+        return feed.front_contract() if feed is not None else instrument_id
 
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         if base_currency == quote_currency:

@@ -26,6 +26,7 @@ from aegis_trader.trader.pipeline import (
 )
 
 _INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")
+_ES = InstrumentId.from_str("ES.XCME")  # synthetic continuous-root id (root "ES")
 _SLEEVE = SleeveName("trend")
 _DAY_NS = 86_400_000_000_000
 
@@ -69,6 +70,49 @@ class _FixedWeightBundle(ExecutionBundle):
             {_INSTRUMENT_ID: [self._weight, self._weight]},
             index=close.index,
         )
+        target.columns.name = "instrument_id"
+        return target
+
+
+class _ContinuousWeightBundle(ExecutionBundle):
+    """A futures-only sleeve: it declares a bare root and signals on the continuous-root id."""
+
+    def __init__(self, weight: float) -> None:
+        self._weight = weight
+        contract = DataContract(
+            instrument_ids=(),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            lookback_bars=1,
+            futures=("ES",),
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+        close = prices.array("Close")
+        target = pd.DataFrame({_ES: [self._weight, self._weight]}, index=close.index)
         target.columns.name = "instrument_id"
         return target
 
@@ -201,6 +245,34 @@ def test_rebalance_pipeline_returns_sized_orders_and_summary() -> None:
     assert result.summary.gate_outcome == GateOutcome.PASS
     assert result.summary.num_sleeves == 1
     assert result.summary.num_orders == 1
+
+
+def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
+    """E3: a continuous root is a first-class rebalance target (mirroring research's tradeable set
+    = natives + continuous roots).  The pipeline reads its bars from the feed-backed series by the
+    continuous id and produces an order keyed by it (root→front routing happens at submission)."""
+    es_bars = {
+        _ES: (
+            MarketBar(0, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+            MarketBar(_DAY_NS, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+        )
+    }
+    market_data = _MarketData(
+        bars_by_instrument_id=es_bars, fresh_instrument_ids=frozenset({_ES})
+    )
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=market_data,
+        book=_book(),
+        sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
+        ledger=SleeveLedger(),
+        continuous_ids_by_root={"ES": _ES},
+    )
+
+    result = pipeline.rebalance_period(_period())
+
+    assert result.orders[0].instrument_id == _ES
+    assert result.orders[0].side == OrderSide.BUY
 
 
 def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_instrument() -> None:

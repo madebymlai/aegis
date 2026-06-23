@@ -318,6 +318,9 @@ class RebalanceStrategy(Strategy):
             book=self._book,
             sleeve_to_bundle=self._sleeve_to_bundle,
             ledger=self._sleeve_ledger,
+            continuous_ids_by_root={
+                feed.root: feed.continuous_id for feed in self._feeds.values()
+            },
         )
         self._pipeline = pipeline
 
@@ -568,19 +571,23 @@ class RebalanceStrategy(Strategy):
     def _submit_order_intent(self, oi: OrderIntent) -> None:
         """Translate a domain OrderIntent into a Nautilus MARKET order and submit.
 
-        The quantity is already a native share count (sized by the rebalancer),
-        so it is passed directly to ``make_qty``.
+        A continuous-root intent is a price-series signal; the order trades the real dated front
+        leg the market-data port maps it to (root→front, rolling in lock-step with the data roll).
+        The quantity is already a native share count (sized by the rebalancer), so it is passed
+        directly to ``make_qty``.
         """
-        quantity = self._require_market_data().make_quantity(oi.instrument_id, oi.quantity)
+        market_data = self._require_market_data()
+        execution_id = market_data.execution_instrument_id(oi.instrument_id)
+        quantity = market_data.make_quantity(execution_id, oi.quantity)
         if quantity is None:
             self.log.error(
-                f"Instrument not found for InstrumentId {oi.instrument_id.value}; skipping order"
+                f"Instrument not found for InstrumentId {execution_id.value}; skipping order"
             )
             return
 
         nt_side = NtOrderSide.BUY if oi.side == OrderSide.BUY else NtOrderSide.SELL
         kwargs: dict[str, Any] = {
-            "instrument_id": oi.instrument_id,
+            "instrument_id": execution_id,
             "order_side": nt_side,
             "quantity": quantity,
         }
@@ -590,7 +597,7 @@ class RebalanceStrategy(Strategy):
             kwargs["time_in_force"] = self.config.fill_time_in_force
         if oi.source == OrderSource.ROLL:
             self.log.info(
-                f"Roll order: {oi.side.value} {oi.quantity:.0f} {oi.instrument_id.value}"
+                f"Roll order: {oi.side.value} {oi.quantity:.0f} {execution_id.value}"
             )
         order = self.order_factory.market(**kwargs)
         self.submit_order(order)

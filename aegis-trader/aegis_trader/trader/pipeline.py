@@ -108,21 +108,25 @@ class RebalancePipeline:
         book: BookConfig,
         sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle],
         ledger: SleeveLedger,
+        continuous_ids_by_root: Mapping[str, InstrumentId] | None = None,
     ) -> None:
         self._book_state = book_state
         self._market_data = market_data
         self._book = book
         self._sleeve_to_bundle = sleeve_to_bundle
         self._ledger = ledger
+        # Continuous roots are first-class rebalance targets (mirroring research's tradeable set =
+        # natives + continuous roots): a sleeve's bare root maps here to its synthetic continuous id.
+        self._continuous_ids_by_root = dict(continuous_ids_by_root or {})
         self._last_sleeve_weights: dict[SleeveName, float] = {}
-        self._all_instrument_ids = frozenset(
-            instrument_id
-            for bundle in self._sleeve_to_bundle.values()
-            for instrument_id in bundle.contract.instrument_ids
-        )
-        self._timeframe_by_instrument_id = _timeframe_by_instrument_id(
-            self._sleeve_to_bundle
-        )
+        timeframe_by_instrument_id: dict[InstrumentId, str] = {}
+        for bundle in self._sleeve_to_bundle.values():
+            for instrument_id in self._contract_target_ids(bundle.contract):
+                timeframe_by_instrument_id.setdefault(
+                    instrument_id, bundle.contract.timeframe
+                )
+        self._all_instrument_ids = frozenset(timeframe_by_instrument_id)
+        self._timeframe_by_instrument_id = timeframe_by_instrument_id
 
     @property
     def sleeve_ledger(self) -> SleeveLedger:
@@ -286,6 +290,16 @@ class RebalancePipeline:
             closes=dict(prices),
         )
 
+    def _contract_target_ids(self, contract: DataContract) -> tuple[InstrumentId, ...]:
+        """A contract's full rebalance-target universe: its native instruments plus the synthetic
+        continuous-root id for each declared root (the continuous series is read by that id)."""
+        continuous = tuple(
+            self._continuous_ids_by_root[root]
+            for root in contract.futures
+            if root in self._continuous_ids_by_root
+        )
+        return (*contract.instrument_ids, *continuous)
+
     def _bars_for_contract(
         self,
         contract: DataContract,
@@ -293,7 +307,7 @@ class RebalancePipeline:
     ) -> dict[InstrumentId, Sequence[MarketBar]] | None:
         needed = contract.lookback_bars + 1
         sleeve_bars: dict[InstrumentId, Sequence[MarketBar]] = {}
-        for instrument_id in contract.instrument_ids:
+        for instrument_id in self._contract_target_ids(contract):
             bars = self._lookback_window(
                 instrument_id,
                 contract.timeframe,
@@ -378,16 +392,6 @@ class RebalancePipeline:
         return tuple(
             sleeve.name for sleeve in self._book.sleeves if risk_shares[sleeve.name] > 0
         )
-
-
-def _timeframe_by_instrument_id(
-    sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle]
-) -> dict[InstrumentId, str]:
-    timeframes: dict[InstrumentId, str] = {}
-    for bundle in sleeve_to_bundle.values():
-        for instrument_id in bundle.contract.instrument_ids:
-            timeframes.setdefault(instrument_id, bundle.contract.timeframe)
-    return timeframes
 
 
 _BAR_ARRAY_ACCESSORS: dict[str, Callable[[MarketBar], float]] = {
