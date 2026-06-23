@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_runtime.additive_invariance import assert_additive_invariance
 from aegis_runtime.futures_roots import validate_bare_root
 
 INSTRUMENT_ID_LEVEL = "instrument_id"
@@ -122,6 +123,31 @@ class ExecutionBundle:
         return self._plan.direction
 
     def compute_weights(
+        self,
+        prices: MarketDataBundle,
+    ) -> pd.DataFrame:
+        weights = self._decide_weights(prices)
+        # A continuous-future root is re-based at every roll; reject an allocation that
+        # reads its absolute price level (it would silently desync live-vs-research).
+        assert_additive_invariance(
+            weights=weights,
+            recompute=self._decide_weights,
+            window=prices,
+            continuous_ids=self._continuous_ids(),
+        )
+        return weights
+
+    def _continuous_ids(self) -> tuple[InstrumentId, ...]:
+        """The contract's instrument ids that materialise a declared continuous-future
+        root (matched by bare symbol) — the columns a roll re-bases."""
+        roots = set(self.contract.futures)
+        return tuple(
+            instrument_id
+            for instrument_id in self.contract.instrument_ids
+            if instrument_id.symbol.value in roots
+        )
+
+    def _decide_weights(
         self,
         prices: MarketDataBundle,
     ) -> pd.DataFrame:

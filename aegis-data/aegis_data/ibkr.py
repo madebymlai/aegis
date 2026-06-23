@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -164,6 +164,7 @@ class IbkrHistoricalProvider:
                 port=self.port,
                 client_id=self.client_id,
                 market_data_type=getattr(MarketDataTypeEnum, self.market_data_type),
+                instrument_provider_config=mic_instrument_provider_config(),
             )
         )
 
@@ -271,15 +272,14 @@ def attach_live_clients(
         IBMarketDataTypeEnum,
         InteractiveBrokersDataClientConfig,
         InteractiveBrokersExecClientConfig,
-        InteractiveBrokersInstrumentProviderConfig,
     )
     from nautilus_trader.adapters.interactive_brokers.factories import (
         InteractiveBrokersLiveDataClientFactory,
         InteractiveBrokersLiveExecClientFactory,
     )
 
-    provider = InteractiveBrokersInstrumentProviderConfig(
-        load_ids=frozenset(instrument_id.value for instrument_id in instrument_ids),
+    provider = mic_instrument_provider_config(
+        load_ids=(instrument_id.value for instrument_id in instrument_ids),
     )
     endpoint = _gateway_endpoint(connection)
     data_config = InteractiveBrokersDataClientConfig(
@@ -305,6 +305,28 @@ def attach_live_clients(
     )
     node.add_data_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveDataClientFactory)
     node.add_exec_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveExecClientFactory)
+
+
+def mic_instrument_provider_config(load_ids: Iterable[str] | None = None) -> Any:
+    """The IBKR instrument-provider config with the venue pin (r8b.9 Slice F(b)).
+
+    ``convert_exchange_to_mic_venue=True`` qualifies IBKR exchanges to their MIC venues
+    (``CME → XCME``, ``NYBOT → IFUS``; gateway probe ``resolved-r8b-9-probe6-ice-venue``),
+    so every IBKR contract — a static native, a live subscription, or a discovered
+    futures-chain leg — resolves to ONE deterministic venue.  The synthetic continuous-root
+    id ``{root}.{venue}`` then inherits it and aegis-data's single-venue chain build holds.
+    Shared by the live wiring (:func:`attach_live_clients`) and the historic seed/backfill so
+    both sides mint byte-identical ids.  Lazily imports the ibapi-backed config, preserving
+    the module's lazy-``ibapi`` boundary.
+    """
+    from nautilus_trader.adapters.interactive_brokers.config import (
+        InteractiveBrokersInstrumentProviderConfig,
+    )
+
+    kwargs: dict[str, Any] = {"convert_exchange_to_mic_venue": True}
+    if load_ids is not None:
+        kwargs["load_ids"] = frozenset(load_ids)
+    return InteractiveBrokersInstrumentProviderConfig(**kwargs)
 
 
 def _gateway_endpoint(connection: BrokerConnection) -> dict[str, Any]:
@@ -359,5 +381,6 @@ __all__ = [
     "IbkrHistoricalProvider",
     "attach_live_clients",
     "close_connection",
+    "mic_instrument_provider_config",
     "seed_instrument_definitions",
 ]

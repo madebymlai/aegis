@@ -106,11 +106,13 @@ def build_live_node_config(*, trader_id: str | None = None) -> TradingNodeConfig
     Nautilus's own ``TradingNodeConfig`` default applies — the default lives in one
     place, not mirrored here.
 
-    The data engine turns off ``time_bars_build_with_no_updates`` (r8b.2 AC6): the
-    continuous-future *subscription* path inherits the ``DataEngineConfig`` default
-    ``True``, which emits non-trading-day flat bars; the *request* path forces it off
-    internally.  Off here makes the live daily continuous series byte-exact with
-    research (prototype NOTES.md V5 CONFIG finding).
+    The data engine turns off ``time_bars_build_with_no_updates`` (r8b.2 AC6, still
+    governing under r8b.9 Model 2): the continuous series is materialised off-cache by the
+    feed, so the only thing subscribed on this node is each root's **raw front leg**
+    (execution routing + the feed's daily wake).  That daily subscription inherits the
+    ``DataEngineConfig`` default ``True``, which emits non-trading-day flat bars → spurious
+    ``on_bar`` wakes and stale marks; off here keeps the raw-leg cadence to real closes only
+    (prototype NOTES.md V5 CONFIG finding).
     """
     config = TradingNodeConfig(
         environment=Environment.LIVE,

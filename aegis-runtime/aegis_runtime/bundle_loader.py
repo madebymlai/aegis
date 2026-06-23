@@ -29,6 +29,7 @@ def dump_bundle_payload(
             "base_currency": contract.base_currency,
             "timeframe": contract.timeframe,
             "lookback_bars": contract.lookback_bars,
+            "futures": list(contract.futures),
         },
         "manifest": {
             "run_id": manifest.run_id,
@@ -62,6 +63,8 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
         base_currency=_required_value(contract_payload, "base_currency", "DataContract"),
         timeframe=_required_value(contract_payload, "timeframe", "DataContract"),
         lookback_bars=_required_value(contract_payload, "lookback_bars", "DataContract"),
+        # Optional: pre-r8b.9 wheels carry no continuous-future roots (forward-safe default).
+        futures=tuple(contract_payload.get("futures", ())),
     )
     manifest = BundleManifest(
         run_id=_required_value(manifest_payload, "run_id", "BundleManifest"),

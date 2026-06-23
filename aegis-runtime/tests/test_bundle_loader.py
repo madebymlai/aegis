@@ -85,6 +85,37 @@ def test_bundle_payload_round_trips_native_instrument_ids() -> None:
     assert bundle.net_cap == plan.net_cap
 
 
+def test_bundle_payload_round_trips_continuous_future_roots() -> None:
+    """The continuous-root declaration must survive the wheel payload, or the additive-
+    invariance guard (which keys off ``contract.futures``) is dead on a loaded bundle."""
+    contract = DataContract(
+        instrument_ids=(_id("ESZ6.XCME"),),
+        required_arrays=("Close",),
+        base_currency="USD",
+        timeframe="1D",
+        lookback_bars=20,
+        futures=("ES",),
+    )
+
+    payload = dump_bundle_payload(contract=contract, manifest=_manifest(contract), plan=_plan())
+    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
+
+    assert payload["contract"]["futures"] == ["ES"]
+    assert bundle.contract.futures == ("ES",)
+
+
+def test_bundle_payload_without_futures_loads_as_no_roots() -> None:
+    """A pre-r8b.9 wheel carries no ``futures`` key; it loads as no continuous roots
+    (forward-safe default), so old bundles keep loading."""
+    contract = _contract()
+    payload = dump_bundle_payload(contract=contract, manifest=_manifest(contract), plan=_plan())
+    payload["contract"].pop("futures", None)
+
+    bundle = load_bundle_payload(payload)
+
+    assert bundle.contract.futures == ()
+
+
 def test_bundle_payload_rejects_missing_instrument_ids() -> None:
     contract = _contract()
     payload = dump_bundle_payload(

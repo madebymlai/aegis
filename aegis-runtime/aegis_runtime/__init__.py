@@ -1,3 +1,4 @@
+from aegis_runtime.additive_invariance import AbsolutePriceLevelError
 from aegis_runtime.bundle import (
     BundleManifest,
     ComponentSpec,
@@ -16,6 +17,7 @@ from aegis_runtime.bundle_loader import (
 from aegis_runtime.futures_roots import validate_bare_root
 
 __all__ = [
+    "AbsolutePriceLevelError",
     "BundleManifest",
     "ComponentSpec",
     "ComponentStrategyInputs",

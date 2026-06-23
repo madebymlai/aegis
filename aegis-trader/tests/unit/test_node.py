@@ -125,11 +125,12 @@ def test_live_node_config_wires_the_shared_catalog():
 
 
 def test_live_node_config_disables_time_bars_build_with_no_updates():
-    """The continuous-future subscription path inherits ``DataEngineConfig``'s
-    ``time_bars_build_with_no_updates=True`` default, which emits non-trading-day
-    flat bars and breaks the byte-exact live≡research series; the request path
-    forces it off internally.  The live node must set it off too (prototype
-    NOTES.md V5 CONFIG finding)."""
+    """AC6 confirm (r8b.9 Slice F(c)).  Under Model 2 the continuous series is materialised
+    off-cache by the feed, so the node only subscribes each root's **raw front leg**
+    (execution + the feed's daily wake).  That daily subscription inherits
+    ``DataEngineConfig``'s ``time_bars_build_with_no_updates=True`` default, which emits
+    non-trading-day flat bars → spurious wakes/stale marks; the live node must keep it off
+    (prototype NOTES.md V5 CONFIG finding)."""
     cfg = build_live_node_config()
     assert isinstance(cfg.data_engine, LiveDataEngineConfig)
     assert cfg.data_engine.time_bars_build_with_no_updates is False
@@ -285,6 +286,43 @@ def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
     assert set(execution.instrument_provider.load_ids) == set(data.instrument_provider.load_ids)
     assert node.data_factories[IB_CLIENT_NAME] is InteractiveBrokersLiveDataClientFactory
     assert node.exec_factories[IB_CLIENT_NAME] is InteractiveBrokersLiveExecClientFactory
+
+
+def test_attach_live_clients_pins_mic_venues():
+    """Slice F(b) — ICE/CME venue-symbology pin.
+
+    The continuous-root id is ``{root}.{venue}`` and aegis-data's chain build rejects legs
+    spanning >1 venue, so the venue IBKR contracts resolve to must be ONE deterministic form.
+    The gateway probe (bd ``resolved-r8b-9-probe6-ice-venue``) showed the stock IBKR provider
+    defaults to the raw exchange (``CME`` / ``NYBOT``); ``convert_exchange_to_mic_venue=True``
+    flips it to the MIC form (``XCME`` / ``IFUS``) the catalog + continuous goldens use. Both
+    the data and exec instrument providers must carry the pin."""
+    pytest.importorskip("ibapi")
+    from aegis_data.ibkr import IB_CLIENT_NAME, attach_live_clients
+
+    node = _FakeNode(build_live_node_config(trader_id="BOOK-EU-01"))
+    connection = IBConnectionSettings(
+        host="10.0.0.5", port=4002, client_id=9,
+        account_id="DU1234567", trader_id="BOOK-EU-01",
+    )
+
+    attach_live_clients(node, connection, (InstrumentId.from_str("VUSA.XLON"),))
+
+    data = node._config.data_clients[IB_CLIENT_NAME]
+    execution = node._config.exec_clients[IB_CLIENT_NAME]
+    assert data.instrument_provider.convert_exchange_to_mic_venue is True
+    assert execution.instrument_provider.convert_exchange_to_mic_venue is True
+
+
+def test_historic_provider_config_pins_mic_venues():
+    """Slice F(b) — the seed/backfill path qualifies IBKR exchanges to MIC venues too, so
+    seeded catalog ids carry ``{root}.XCME`` / ``.IFUS`` (the form aegis-data's continuous
+    chain expects). The live and historic providers share one pinned config."""
+    pytest.importorskip("ibapi")
+    from aegis_data.ibkr import mic_instrument_provider_config
+
+    config = mic_instrument_provider_config()
+    assert config.convert_exchange_to_mic_venue is True
 
 
 # --------------------------------------------------------------------------- #
