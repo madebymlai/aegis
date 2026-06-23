@@ -1,22 +1,29 @@
-"""The concrete IBKR ``NautilusDataProviderPort`` for research (ADR-0006/0008).
+"""The single IBKR adapter — research historic fetch *and* live client wiring
+(ADR-0003 amendment / ADR-0006/0008).
 
-A research cache miss fills from IBKR identically to live.  This adapter wraps
-Nautilus's standalone ``HistoricInteractiveBrokersClient`` — the client "for
-backtesting and research" — and:
+One seam for IBKR: research and live connect to Interactive Brokers through this
+module, so the unified path (epic ``aegis-rd-r8b``) depends on the Nautilus
+DataProvider port with IBKR as its first — and only — adapter.
 
-- is **pure fetch**: ``request_bars`` *returns* bars; :class:`CatalogBackedDataPort`
-  is the single writer of record (ADR-0008).  Same for ``request_instruments``.
-- **hides ``asyncio``** behind the synchronous port: the historic client is async,
-  so calls run on a persistent event loop over one reused connection.
-- resolves identity through IB **simplified symbology** — the native
-  ``InstrumentId`` value (``SYMBOL.VENUE``) is the IBKR request id; no bespoke
-  resolver (ADR-0005).
+Two responsibilities behind one lazy ``ibapi`` boundary:
 
-IBKR (``ibapi``) is a true-external dependency, so the historic client is
-imported lazily — importing this module never requires ``ibapi``.  Connection
-parameters mirror the IB Gateway defaults; the operator points them at the
-running gateway.  Instrument *definitions* are a separate Step-1 write
-(:func:`seed_instrument_definitions`), not per-window fill data (ADR-0008).
+- **Historic fetch** (research / backfill): :class:`IbkrHistoricalProvider` wraps
+  Nautilus's standalone ``HistoricInteractiveBrokersClient`` — the client "for
+  backtesting and research".  It is **pure fetch** (``request_bars`` *returns*
+  bars; :class:`CatalogBackedDataPort` is the single writer of record, ADR-0008),
+  **hides ``asyncio``** behind a synchronous port, and resolves identity through
+  IB **simplified symbology** — the native ``InstrumentId`` value
+  (``SYMBOL.VENUE``) is the IBKR request id (ADR-0005).
+- **Live client wiring**: :func:`attach_live_clients` builds Nautilus's *stock*
+  ``InteractiveBrokers{Data,Exec}ClientConfig`` and registers the stock live
+  factories on a live ``TradingNode`` — no custom adapter code (epic thesis).
+  The Trader's broker-neutral ``node.py`` reaches IBKR through this one call.
+
+IBKR (``ibapi``) is a true-external dependency, so *every* IBKR import — the
+historic client and the live config/factory classes alike — is lazy: importing
+this module never requires ``ibapi``.  Instrument *definitions* are a separate
+Step-1 write (:func:`seed_instrument_definitions`), not per-window fill data
+(ADR-0008).
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ import atexit
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
@@ -218,6 +225,100 @@ def _naive_utc(timestamp: pd.Timestamp) -> datetime:
     return timestamp.to_pydatetime()
 
 
+# ── Live client wiring ───────────────────────────────────────────────────────
+
+# Nautilus client name shared by the IBKR data + exec clients (the key the
+# registered factories resolve against).
+IB_CLIENT_NAME = "INTERACTIVE_BROKERS"
+
+
+class BrokerConnection(Protocol):
+    """The Trader-owned Broker Connection this adapter translates into IBKR
+    client configs (the connection value object lives in the Trader; this adapter
+    depends only on its shape, never imports it — DIP).
+
+    ``dockerized_gateway`` is the seam for the Dockerized paper/live daemon
+    (bd ``aegis-rd-r8b.6``): when set, the gateway supplies the endpoint and the
+    explicit ``host``/``port`` are omitted; it is ``None`` in the skeleton.
+    """
+
+    host: str
+    port: int
+    client_id: int
+    account_id: str
+    dockerized_gateway: Any | None
+
+
+def attach_live_clients(
+    node: Any,
+    connection: BrokerConnection,
+    instrument_ids: Sequence[InstrumentId],
+) -> None:
+    """Wire IBKR's stock live data + exec clients onto *node* (before ``build()``).
+
+    The single live-broker call the Trader's broker-neutral ``node.py`` makes:
+    builds Nautilus's *stock* ``InteractiveBrokers{Data,Exec}ClientConfig`` —
+    ``market_data_type=REALTIME`` and an ``InstrumentProviderConfig`` whose
+    ``load_ids`` are exactly the declared native ids (the data-only FX ``exchange:``
+    natives ride in here too) — and registers the stock live factories.  No custom
+    adapter code: paper vs live is *only* ``connection.port`` (IBKR's own guidance).
+
+    The ibapi-backed config/factory classes are imported lazily so importing this
+    module never needs ``ibapi`` (the same lazy boundary as the historic client).
+    """
+    import msgspec
+    from nautilus_trader.adapters.interactive_brokers.config import (
+        IBMarketDataTypeEnum,
+        InteractiveBrokersDataClientConfig,
+        InteractiveBrokersExecClientConfig,
+        InteractiveBrokersInstrumentProviderConfig,
+    )
+    from nautilus_trader.adapters.interactive_brokers.factories import (
+        InteractiveBrokersLiveDataClientFactory,
+        InteractiveBrokersLiveExecClientFactory,
+    )
+
+    provider = InteractiveBrokersInstrumentProviderConfig(
+        load_ids=frozenset(instrument_id.value for instrument_id in instrument_ids),
+    )
+    endpoint = _gateway_endpoint(connection)
+    data_config = InteractiveBrokersDataClientConfig(
+        ibg_client_id=connection.client_id,
+        market_data_type=IBMarketDataTypeEnum.REALTIME,
+        use_regular_trading_hours=True,
+        instrument_provider=provider,
+        **endpoint,
+    )
+    exec_config = InteractiveBrokersExecClientConfig(
+        ibg_client_id=connection.client_id,
+        account_id=connection.account_id,
+        instrument_provider=provider,
+        **endpoint,
+    )
+    # Nautilus consumes ``data_clients``/``exec_clients`` from the node's stored
+    # config at ``build()``; there is no public setter, so swap the (immutable)
+    # config for one carrying the IBKR clients, then register the factories.
+    node._config = msgspec.structs.replace(
+        node._config,
+        data_clients={IB_CLIENT_NAME: data_config},
+        exec_clients={IB_CLIENT_NAME: exec_config},
+    )
+    node.add_data_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveDataClientFactory)
+    node.add_exec_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveExecClientFactory)
+
+
+def _gateway_endpoint(connection: BrokerConnection) -> dict[str, Any]:
+    """The endpoint kwargs shared by both IBKR client configs.
+
+    Dockerized seam (bd ``aegis-rd-r8b.6``): a ``dockerized_gateway`` supplies its
+    own host/port, so the two are mutually exclusive.  The skeleton always takes
+    the explicit-endpoint branch (the gateway is ``None``)."""
+    gateway = connection.dockerized_gateway
+    if gateway is not None:
+        return {"dockerized_gateway": gateway}
+    return {"ibg_host": connection.host, "ibg_port": connection.port}
+
+
 def seed_instrument_definitions(
     catalog: Any,
     provider: IbkrHistoricalProvider,
@@ -253,7 +354,10 @@ def _missing_definitions(
 
 
 __all__ = [
+    "IB_CLIENT_NAME",
+    "BrokerConnection",
     "IbkrHistoricalProvider",
+    "attach_live_clients",
     "close_connection",
     "seed_instrument_definitions",
 ]

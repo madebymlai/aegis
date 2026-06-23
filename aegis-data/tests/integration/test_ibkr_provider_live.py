@@ -3,7 +3,7 @@
 IBKR is a true-external dependency: these tests connect to a running gateway, so
 they are skipped unless ``ibapi`` is installed *and* ``AEGIS_IBKR_GATEWAY_PORT``
 is set to the gateway's port.  The adapter's own logic (param translation, asyncio
-hiding) is covered without IBKR in ``tests/test_ibkr_provider.py``; these pin the
+hiding) is covered without IBKR in ``tests/test_ibkr.py``; these pin the
 real contracts a fake cannot model — that the client returns ``EXTERNAL`` daily
 bars, that ``request_instruments`` round-trips the native identity, and that the
 full lazy fill persists real bars + the definition and then reads back warm.
@@ -23,7 +23,7 @@ from aegis_data.catalog import (
     RawBarRequest,
     parquet_data_catalog,
 )
-from aegis_data.ibkr_provider import IbkrHistoricalProvider, seed_instrument_definitions
+from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
 
 pytest.importorskip("ibapi")
 

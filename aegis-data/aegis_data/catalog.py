@@ -135,7 +135,7 @@ def catalog_data_port(path: str | Path | None = None) -> CatalogBackedDataPort:
     a warm read never connects.  The IBKR adapter is imported lazily so this port
     module stays adapter-agnostic at import time.
     """
-    from aegis_data.ibkr_provider import (
+    from aegis_data.ibkr import (
         IbkrHistoricalProvider,
         seed_instrument_definitions,
     )

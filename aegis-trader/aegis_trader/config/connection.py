@@ -1,14 +1,17 @@
-"""IBKR connection + account settings, read from the environment.
+"""The Broker Connection — IBKR connection + account, read from the environment.
 
 The broker connection is environment-specific and secret-ish — the account ID
 especially — so it is *never* part of the version-controlled ``book.toml``.
-``IBConnectionSettings.from_env`` reads it from the process environment and the
-result feeds the node builders in ``trader/modes.py``; ``account_id`` is
-required and fails closed, so the live path can never run a placeholder.
+:meth:`IBConnectionSettings.from_env` reads it from the process environment; the
+resolved value is handed to the single IBKR adapter
+(:func:`aegis_data.ibkr.attach_live_clients`), which translates it into Nautilus's
+stock client configs for the live ``TradingNode``.
 
-Port defaults follow IB Gateway conventions per mode (paper 4002, live 4001) —
-the headless adapter the automated trader deploys against; TWS users (paper
-7497, live 7496) override via ``IB_PORT``.
+There is **no mode**: paper and live are the same code path pointed at different
+gateway ports, so the **port alone** distinguishes them.  ``IB_PORT`` and
+``IB_ACCOUNT_ID`` are therefore both required and fail closed — Nautilus defaults
+``ibg_port`` to ``None`` and the port *is* the paper/live switch (IBKR's own
+guidance), so guessing it is never safe.
 """
 
 from __future__ import annotations
@@ -20,7 +23,6 @@ from dataclasses import dataclass
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_CLIENT_ID = 1
 _DEFAULT_TRADER_ID = "TRADER-001"
-_DEFAULT_PORT: Mapping[str, int] = {"paper": 4002, "live": 4001}
 
 
 class ConnectionConfigError(ValueError):
@@ -29,53 +31,70 @@ class ConnectionConfigError(ValueError):
 
 @dataclass(frozen=True)
 class IBConnectionSettings:
-    """Resolved IBKR connection for a paper/live run."""
+    """Resolved IBKR connection for a live (paper or live) trader run.
+
+    ``dockerized_gateway`` is the seam for the Dockerized paper/live daemon (bd
+    ``aegis-rd-r8b.6``): when set it supplies the gateway endpoint and the explicit
+    ``host``/``port`` are omitted downstream.  It is ``None`` in the skeleton —
+    ``from_env`` never sets it; r8b.6 wires it.
+    """
 
     host: str
     port: int
     client_id: int
     account_id: str
     trader_id: str
+    dockerized_gateway: object | None = None
 
     @classmethod
     def from_env(
         cls,
-        mode: str,
         *,
         env: Mapping[str, str] | None = None,
     ) -> IBConnectionSettings:
-        """Resolve connection settings for *mode* (``"paper"`` or ``"live"``).
+        """Resolve connection settings from the environment.
 
         Reads ``IB_HOST`` / ``IB_PORT`` / ``IB_CLIENT_ID`` / ``IB_ACCOUNT_ID`` /
-        ``TRADER_ID``.  Only ``account_id`` is required; the rest fall back to
-        mode-aware defaults.
+        ``TRADER_ID``.  ``IB_PORT`` (the paper/live switch) and ``IB_ACCOUNT_ID``
+        are **required** and fail closed; host, client id, and trader id fall back
+        to defaults.
         """
-        if mode not in _DEFAULT_PORT:
-            raise ConnectionConfigError(
-                f"unknown mode {mode!r}; expected 'paper' or 'live'"
-            )
         env = os.environ if env is None else env
 
         account_id = env.get("IB_ACCOUNT_ID")
         if not account_id:
             raise ConnectionConfigError(
-                "IB_ACCOUNT_ID is required for a "
-                f"{mode} run but is unset; refusing to use a placeholder account"
+                "IB_ACCOUNT_ID is required but is unset; "
+                "refusing to use a placeholder account"
             )
 
         return cls(
             host=env.get("IB_HOST", _DEFAULT_HOST),
-            port=_int_env(env, "IB_PORT", _DEFAULT_PORT[mode]),
+            port=_required_int_env(env, "IB_PORT"),
             client_id=_int_env(env, "IB_CLIENT_ID", _DEFAULT_CLIENT_ID),
             account_id=account_id,
             trader_id=env.get("TRADER_ID", _DEFAULT_TRADER_ID),
         )
 
 
+def _required_int_env(env: Mapping[str, str], key: str) -> int:
+    raw = env.get(key)
+    if raw is None:
+        raise ConnectionConfigError(
+            f"{key} is required (the port is the paper/live switch and Nautilus "
+            "has no safe default); refusing to guess the gateway"
+        )
+    return _as_int(key, raw)
+
+
 def _int_env(env: Mapping[str, str], key: str, default: int) -> int:
     raw = env.get(key)
     if raw is None:
         return default
+    return _as_int(key, raw)
+
+
+def _as_int(key: str, raw: str) -> int:
     try:
         return int(raw)
     except ValueError as exc:

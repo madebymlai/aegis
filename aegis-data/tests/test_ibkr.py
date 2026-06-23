@@ -1,15 +1,20 @@
-"""The concrete IBKR DataProvider port (ADR-0006/0008).
+"""The single IBKR adapter (ADR-0006/0008) — historic-fetch logic + live wiring.
 
 IBKR itself is a true-external dependency, so the live socket cannot be unit
 tested.  What *is* unit testable — and what these tests pin — is the adapter's
 own logic: translating a ``BarType`` + window into the historic client's request
 shape (naive UTC datetimes), hiding ``asyncio`` behind a synchronous port, and
-connecting/closing around every call.  A fake session stands in for IBKR.
+connecting/closing around every call.  A fake session stands in for IBKR.  The
+live client wiring (:func:`attach_live_clients`) needs ``ibapi`` and is covered
+from the Trader's node tests (where ``ibapi`` is installed); here we pin only that
+importing the adapter never pulls ``ibapi`` (the lazy boundary).
 """
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -18,7 +23,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import NautilusDataProviderPort
-from aegis_data.ibkr_provider import IbkrHistoricalProvider, seed_instrument_definitions
+from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
 
 
 class _FakeHistoricClient:
@@ -110,6 +115,47 @@ def test_provider_satisfies_the_pure_fetch_port() -> None:
         client_factory=lambda: _FakeHistoricClient(bars=[], instruments=[])
     )
     assert callable(port.request_bars)
+
+
+def test_importing_the_adapter_does_not_import_ibapi() -> None:
+    """The lazy-``ibapi`` boundary: importing the adapter (historic fetch *and*
+    live wiring both live here) must not pull ``ibapi`` — every IBKR import is
+    deferred to call time.  ``aegis-data`` runs without ``ibapi`` installed, so
+    its mere absence from ``sys.modules`` after import is the invariant."""
+    import aegis_data.ibkr  # noqa: F401 — import-for-effect
+
+    assert "ibapi" not in sys.modules
+
+
+# --------------------------------------------------------------------------- #
+# live-client endpoint seam (no ibapi: pure connection -> endpoint kwargs)
+# --------------------------------------------------------------------------- #
+
+
+def test_endpoint_uses_explicit_host_port_when_no_dockerized_gateway() -> None:
+    """The skeleton path: an explicit gateway endpoint, no dockerized variant."""
+    from aegis_data.ibkr import _gateway_endpoint
+
+    connection = SimpleNamespace(
+        host="10.0.0.5", port=4002, client_id=9,
+        account_id="DU1234567", dockerized_gateway=None,
+    )
+
+    assert _gateway_endpoint(connection) == {"ibg_host": "10.0.0.5", "ibg_port": 4002}
+
+
+def test_endpoint_defers_to_dockerized_gateway_when_set() -> None:
+    """The r8b.6 seam: a ``dockerized_gateway`` supplies its own endpoint, so the
+    explicit host/port are omitted (the two are mutually exclusive)."""
+    from aegis_data.ibkr import _gateway_endpoint
+
+    gateway = object()
+    connection = SimpleNamespace(
+        host="10.0.0.5", port=4002, client_id=9,
+        account_id="DU1234567", dockerized_gateway=gateway,
+    )
+
+    assert _gateway_endpoint(connection) == {"dockerized_gateway": gateway}
 
 
 class _Instr:

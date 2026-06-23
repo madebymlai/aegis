@@ -86,9 +86,9 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
 
     ``None`` (backtest): a plain ``MARKET`` order fills at the execution bar's
     close — the SimulatedExchange rejects session TIFs.  ``AT_THE_CLOSE``
-    (paper/live): a Market-on-Close order into the closing auction.  Set by the
-    mode builders in ``trader/modes.py`` so backtest and live model the same
-    fill point (the close)."""
+    (live): a Market-on-Close order into the closing auction.  Set by the backtest
+    runner (``backtest.py``) and the live node (``trader/node.py``) so backtest and
+    live model the same fill point (the close)."""
 
 
 def _startup_history_start(
@@ -192,7 +192,7 @@ class RebalanceStrategy(Strategy):
         """Warm the Cache via Nautilus's native catalog seam (ADR-0006).
 
         The genuine upgrade over the old bespoke warmup: with the node's
-        ``catalogs=[DataCatalogConfig]`` wired (``trader/modes.py``), the *plain*
+        ``catalogs=[DataCatalogConfig]`` wired (``trader/node.py``), the *plain*
         native ``request_bars(update_catalog=True)`` serves history from the shared
         catalog and tops up only the missing IBKR tail (persisted) in one call —
         the prototype-confirmed split.  The request is still issued (a configured

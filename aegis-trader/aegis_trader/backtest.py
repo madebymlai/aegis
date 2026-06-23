@@ -15,12 +15,15 @@ from pathlib import Path
 from typing import Protocol
 
 import pandas as pd
+from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
+from nautilus_trader.config import CacheConfig, LoggingConfig
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
+from nautilus_trader.risk.config import RiskEngineConfig
 
 from aegis_data.catalog import (
     CatalogBackedDataPort,
@@ -28,14 +31,18 @@ from aegis_data.catalog import (
     RawBarRequest,
     parquet_data_catalog,
 )
-from aegis_runtime import ExecutionBundle
 
+from aegis_trader.bundles.book_sleeves import (
+    SleeveBundles,
+    load_book_sleeves,
+    union_native_instrument_ids,
+)
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
 from aegis_trader.data import raw_bar_type, resolve_book_timeframe, wrangle_bars
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.types import SleeveName
+from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.portfolio.performance import (
     BookEquityRecorder,
     BookEquityRecorderConfig,
@@ -43,16 +50,15 @@ from aegis_trader.portfolio.performance import (
 )
 from aegis_trader.trader.costs import build_simulated_cost_models
 from aegis_trader.trader.financing import build_financing_modules
-from aegis_trader.trader.modes import (
-    DEFAULT_BACKTEST_BAR_CAPACITY,
-    build_backtest_engine_config,
-)
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _PRICE_COLS = ("Open", "High", "Low", "Close")
 _OHLCV_ARRAYS = (*_PRICE_COLS, "Volume")
 
-_SleeveBundles = tuple[tuple[SleeveName, ExecutionBundle], ...]
+# The backtest cache holds the rolling bar window the strategy reads each period;
+# at least the deepest sleeve's lookback (+1) must fit, so the runner widens it
+# from this floor when a contract needs more.
+DEFAULT_BACKTEST_BAR_CAPACITY = 10_000
 
 
 class CatalogInstrumentError(ValueError):
@@ -141,11 +147,11 @@ def run_book_backtest(
     """
     book = load_book_config(book_path)
     registry = registry if registry is not None else EntryPointBundleRegistry()
-    sleeves = _load_sleeves(book, registry)
+    sleeves = load_book_sleeves(book, registry)
     book_timeframe = resolve_book_timeframe(
         bundle.contract.timeframe for _name, bundle in sleeves
     )
-    instrument_ids = _contract_instrument_ids(sleeves)
+    instrument_ids = union_native_instrument_ids(sleeves)
     source = data_source or CatalogBacktestDataSource(
         catalog_path=catalog_path,
         provider=provider,
@@ -192,16 +198,45 @@ def book_return_stats(engine: BacktestEngine) -> dict[str, float]:
     return {}
 
 
-def _load_sleeves(book: BookConfig, registry: BundleRegistryPort) -> _SleeveBundles:
-    return tuple((s.name, registry.load(s.wheel_filename)) for s in book.sleeves)
+def build_risk_engine_config(
+    risk_guard_config: RiskGuardConfig | None = None,
+) -> RiskEngineConfig:
+    """The backtest RiskEngine config (``BacktestEngine`` requires the non-live
+    variant).
+
+    Mirrors the live node's RiskEngine wiring (:func:`aegis_trader.trader.node.
+    build_live_risk_engine_config`) so the overlay validated in backtest is
+    constructed the same way it trades — never bypassed, carrying the RiskGuard's
+    order submit/modify rate limits.
+    """
+    guard = risk_guard_config or RiskGuardConfig()
+    return RiskEngineConfig(
+        bypass=False,
+        max_order_submit_rate=guard.max_order_submit_rate,
+        max_order_modify_rate=guard.max_order_modify_rate,
+    )
 
 
-def _contract_instrument_ids(sleeves: _SleeveBundles) -> tuple[InstrumentId, ...]:
-    unique: dict[str, InstrumentId] = {}
-    for _name, bundle in sleeves:
-        for instrument_id in bundle.contract.instrument_ids:
-            unique.setdefault(instrument_id.value, instrument_id)
-    return tuple(sorted(unique.values(), key=lambda instrument_id: instrument_id.value))
+def build_backtest_engine_config(
+    *,
+    trader_id: str = "BACKTEST-001",
+    risk_guard_config: RiskGuardConfig | None = None,
+    bar_capacity: int = DEFAULT_BACKTEST_BAR_CAPACITY,
+) -> BacktestEngineConfig:
+    """Build the backtest engine config.
+
+    Mirrors the live node's RiskEngine wiring so the overlay validated in backtest
+    is constructed the same way it trades — "what you backtest is what you trade".
+    The runner adds venues, instruments, data, and the strategy to the resulting
+    ``BacktestEngine`` and pairs it with a plain ``MARKET`` (``fill_time_in_force``
+    ``None``), which fills at the execution bar's close.
+    """
+    return BacktestEngineConfig(
+        trader_id=trader_id,
+        cache=CacheConfig(bar_capacity=bar_capacity),
+        risk_engine=build_risk_engine_config(risk_guard_config),
+        logging=LoggingConfig(),
+    )
 
 
 class _InstrumentCatalog(Protocol):
@@ -231,7 +266,7 @@ def _catalog_instruments(
     return {instrument_id: loaded[instrument_id.value] for instrument_id in instrument_ids}
 
 
-def _validate_market_data(sleeves: _SleeveBundles, market_data: BacktestMarketData) -> None:
+def _validate_market_data(sleeves: SleeveBundles, market_data: BacktestMarketData) -> None:
     for sleeve_name, bundle in sleeves:
         contract = bundle.contract
         for instrument_id in contract.instrument_ids:
@@ -281,7 +316,7 @@ def _validate_contract_frame(
         )
 
 
-def _cache_bar_capacity(sleeves: _SleeveBundles) -> int:
+def _cache_bar_capacity(sleeves: SleeveBundles) -> int:
     required = max(bundle.contract.lookback_bars for _name, bundle in sleeves) + 1
     return max(DEFAULT_BACKTEST_BAR_CAPACITY, required)
 
@@ -291,7 +326,7 @@ def _add_venues(
     *,
     book: BookConfig,
     instruments: Sequence[Instrument],
-    sleeves: _SleeveBundles,
+    sleeves: SleeveBundles,
     starting_cash: float,
 ) -> None:
     account_currencies = _account_currencies(book, instruments)
@@ -382,7 +417,7 @@ def _add_strategy(
     engine: BacktestEngine,
     *,
     book: BookConfig,
-    sleeves: _SleeveBundles,
+    sleeves: SleeveBundles,
 ) -> None:
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
@@ -424,7 +459,7 @@ def _zero_balances(currencies: tuple[str, ...]) -> list[Money]:
     return [Money(0.0, Currency.from_str(currency)) for currency in currencies]
 
 
-def _requires_margin_account(sleeves: _SleeveBundles) -> bool:
+def _requires_margin_account(sleeves: SleeveBundles) -> bool:
     return any(bundle.direction in {"both", "shortonly"} for _name, bundle in sleeves)
 
 
