@@ -12,9 +12,11 @@ bundle registry.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+import pandas as pd
 from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
@@ -84,11 +86,33 @@ class MarketDataPort(Protocol):
         ...
 
 
-class NautilusMarketData:
-    """MarketDataPort backed by the Nautilus Cache read interface."""
+@runtime_checkable
+class ContinuousSeriesPort(Protocol):
+    """The read port's view of a continuous-future feed: which root it owns, and its series."""
 
-    def __init__(self, *, cache: CacheFacade) -> None:
+    @property
+    def continuous_id(self) -> InstrumentId:
+        """The synthetic continuous-root id this feed materializes (e.g. ``ES.XCME``)."""
+        ...
+
+    def series(self) -> pd.DataFrame:
+        """The current back-adjusted continuous OHLCV frame (UTC-naive index)."""
+        ...
+
+
+class NautilusMarketData:
+    """MarketDataPort backed by the Nautilus Cache, with continuous roots read from feeds.
+
+    Raw instruments are read from the cache by their raw bar type; continuous-future roots are
+    read from their feed's back-adjusted series (Model 2 — the continuous series never lives in
+    the live cache), so the rebalance lookback sees the adjusted series for either kind alike.
+    """
+
+    def __init__(
+        self, *, cache: CacheFacade, feeds: Sequence[ContinuousSeriesPort] = ()
+    ) -> None:
         self._cache = cache
+        self._feeds = {feed.continuous_id: feed for feed in feeds}
 
     def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing | None:
         instrument = self._cache.instrument(instrument_id)
@@ -125,11 +149,12 @@ class NautilusMarketData:
         limit: int,
     ) -> tuple[MarketBar, ...]:
         period_end = _period_end(period, period_ns)
-        bars = _completed_bars(
-            self._cache_bars(instrument_id, timeframe),
-            period_end=period_end,
-        )
-        return tuple(_to_market_bar(bar) for bar in bars[-limit:])
+        completed = [
+            bar
+            for bar in self._market_bars(instrument_id, timeframe)
+            if bar.ts_event < period_end
+        ]
+        return tuple(completed[-limit:])
 
     def has_bar_in_period(
         self,
@@ -142,11 +167,18 @@ class NautilusMarketData:
         period_start, period_end = _period_bounds(period, period_ns)
         return any(
             period_start <= bar.ts_event < period_end
-            for bar in self._cache_bars(instrument_id, timeframe)
+            for bar in self._market_bars(instrument_id, timeframe)
         )
 
-    def _cache_bars(self, instrument_id: InstrumentId, timeframe: str) -> list[Bar]:
-        return self._cache.bars(raw_bar_type(instrument_id, timeframe))
+    def _market_bars(self, instrument_id: InstrumentId, timeframe: str) -> list[MarketBar]:
+        """Chronological market bars for an instrument: a continuous root from its feed's
+        re-based series, a raw instrument from the cache by its raw bar type."""
+        feed = self._feeds.get(instrument_id)
+        if feed is not None:
+            return _frame_to_market_bars(feed.series())
+        # Cache.bars returns newest-first; bundles need chronological arrays.
+        cache_bars = self._cache.bars(raw_bar_type(instrument_id, timeframe))
+        return [_to_market_bar(bar) for bar in reversed(cache_bars)]
 
 
 def _period_bounds(period: int, period_ns: int) -> tuple[int, int]:
@@ -158,9 +190,19 @@ def _period_end(period: int, period_ns: int) -> int:
     return (period + 1) * period_ns
 
 
-def _completed_bars(bars: list[Bar], *, period_end: int) -> list[Bar]:
-    # Cache.bars returns newest-first; bundles need chronological arrays.
-    return [bar for bar in reversed(bars) if bar.ts_event < period_end]
+def _frame_to_market_bars(frame: pd.DataFrame) -> list[MarketBar]:
+    """Project a continuous feed's OHLCV frame (UTC-naive index) into chronological MarketBars."""
+    return [
+        MarketBar(
+            ts_event=pd.Timestamp(index, tz="UTC").value,
+            open=float(row["Open"]),
+            high=float(row["High"]),
+            low=float(row["Low"]),
+            close=float(row["Close"]),
+            volume=float(row["Volume"]),
+        )
+        for index, row in frame.iterrows()
+    ]
 
 
 def _to_market_bar(bar: Bar) -> MarketBar:
