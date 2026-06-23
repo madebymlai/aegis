@@ -18,7 +18,12 @@ from types import SimpleNamespace
 
 import pytest
 from nautilus_trader.common import Environment
-from nautilus_trader.config import CacheConfig, LoggingConfig, TradingNodeConfig
+from nautilus_trader.config import (
+    CacheConfig,
+    LiveDataEngineConfig,
+    LoggingConfig,
+    TradingNodeConfig,
+)
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -117,6 +122,17 @@ def test_live_node_config_wires_the_shared_catalog():
     request_bars serves history from it and persists the IBKR tail."""
     cfg = build_live_node_config()
     assert [c.path for c in cfg.catalogs] == [str(catalog_root())]
+
+
+def test_live_node_config_disables_time_bars_build_with_no_updates():
+    """The continuous-future subscription path inherits ``DataEngineConfig``'s
+    ``time_bars_build_with_no_updates=True`` default, which emits non-trading-day
+    flat bars and breaks the byte-exact live≡research series; the request path
+    forces it off internally.  The live node must set it off too (prototype
+    NOTES.md V5 CONFIG finding)."""
+    cfg = build_live_node_config()
+    assert isinstance(cfg.data_engine, LiveDataEngineConfig)
+    assert cfg.data_engine.time_bars_build_with_no_updates is False
 
 
 def test_live_node_config_carries_the_trader_id():

@@ -1,13 +1,15 @@
-"""Spread golden parity: the request-path continuous series is byte-exact (aegis-data).
+"""Spread golden parity: request- and subscribe-path continuous series are byte-exact.
 
-Path A's gate (AC4, request side): an in-process ``request_bars`` driven by the
-roll-transition table the producer builds must reproduce, byte-for-byte, the
-``BACKWARD_SPREAD`` continuous series of the independent Decimal oracle.  Spread is
-integer-exact, so this is an exact ``==`` over the OHLC raw ints (no tolerance).
+Path A's gate (AC4): both the in-process ``request_bars`` (research) and the live
+``subscribe_bars`` roll state machine, driven by the *same* roll-transition table the
+producer builds, must reproduce — byte-for-byte — the ``BACKWARD_SPREAD`` continuous
+series of the independent Decimal oracle.  Spread is integer-exact, so this is an exact
+``==`` over the OHLC raw ints (no tolerance) ⇒ live ≡ research.
 
 The engine stamps each composite bar at its bucket close and drops the final
-still-forming bucket, so its series is the head of the oracle's — the parity is
-asserted index-aligned over that overlap (prototype ``NOTES.md`` V1/V2/V4).
+still-forming bucket, so the *request* series is the head of the oracle's; the live
+*subscribe* series additionally emits that final bucket (it is exactly one bar longer).
+Parity is asserted index-aligned over the overlap (prototype ``NOTES.md`` V1/V2/V4/V5).
 """
 
 from __future__ import annotations
@@ -24,9 +26,12 @@ from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.chain import ContractChain
-from aegis_data.continuous_future import continuous_future
+from aegis_data.continuous_future import ContinuousFuture, continuous_future
 from aegis_data.continuous_materialize import materialize_continuous_bars
-from tests.support.continuous_spread_oracle import backward_spread_series
+from tests.support.continuous_spread_oracle import AdjustedBar, backward_spread_series
+from tests.support.continuous_subscribe import (
+    materialize_continuous_bars_via_subscription,
+)
 
 _UTC = timezone.utc
 _CLOSE = time(21, 0)  # intraday bar stamp, strictly after the midnight roll boundary
@@ -62,11 +67,11 @@ def _future(instrument_id: InstrumentId) -> FuturesContract:
     )
 
 
-def _bars(instrument_id: InstrumentId, frame: pd.DataFrame) -> list[Bar]:
+def _bars(instrument_id: InstrumentId, frame: pd.DataFrame, *, at: time = _CLOSE) -> list[Bar]:
     bar_type = raw_bar_type(instrument_id, "1D")
     bars: list[Bar] = []
     for day, row in frame.iterrows():
-        ts = int(datetime.combine(day.date(), _CLOSE, _UTC).timestamp() * 1e9)
+        ts = int(datetime.combine(day.date(), at, _UTC).timestamp() * 1e9)
         bars.append(
             Bar(
                 bar_type,
@@ -80,6 +85,32 @@ def _bars(instrument_id: InstrumentId, frame: pd.DataFrame) -> list[Bar]:
             )
         )
     return bars
+
+
+def _raws(bars: list[Bar]) -> list[tuple[int, int, int, int]]:
+    return [(b.open.raw, b.high.raw, b.low.raw, b.close.raw) for b in bars]
+
+
+def _oracle_raws(oracle: list[AdjustedBar]) -> list[tuple[int, int, int, int]]:
+    return [(o.open_raw, o.high_raw, o.low_raw, o.close_raw) for o in oracle]
+
+
+def _es_single_seam() -> tuple[ContinuousFuture, dict[InstrumentId, list[Bar]]]:
+    """The ES H4→M4 single-seam fixture (roll 2024-03-07) shared by the request- and
+    subscribe-path parity tests: overlapping pre/post leg frames and their native bars."""
+    esh4 = InstrumentId(Symbol("ESH4"), Venue("XCME"))
+    esm4 = InstrumentId(Symbol("ESM4"), Venue("XCME"))
+    pre = _frame(["2024-03-04", "2024-03-05", "2024-03-06", "2024-03-07", "2024-03-08"],
+                 [100.0, 101.0, 102.0, 103.0, 104.0])
+    post = _frame(["2024-03-06", "2024-03-07", "2024-03-08", "2024-03-11", "2024-03-12"],
+                  [120.0, 121.0, 122.0, 123.0, 124.0])
+    chain = ContractChain(
+        symbols=("ESH4.XCME", "ESM4.XCME"),
+        roll_dates=(pd.Timestamp("2024-03-07"),),
+        frames=(pre, post),
+    )
+    future = continuous_future(chain, "ES")
+    return future, {esh4: _bars(esh4, pre), esm4: _bars(esm4, post)}
 
 
 def test_request_path_series_is_byte_exact_with_the_spread_oracle() -> None:
@@ -148,3 +179,97 @@ def test_request_path_cumulative_offset_across_three_seams_is_byte_exact() -> No
     # spliced series into one continuous +1/day line across all three rolls.
     assert closes[:6] == [394.0, 395.0, 396.0, 397.0, 398.0, 399.0]
     assert engine_raws == oracle_raws  # byte-exact across three cumulative seams
+
+
+def test_request_path_is_byte_exact_when_bars_sit_on_the_midnight_roll_boundary() -> None:
+    """Real IBKR daily bars are stamped at 00:00 UTC — exactly on the midnight roll
+    transition (verified against a live gateway, r8b.2). The seam must then resolve to the
+    post leg with no gap or duplicate on the roll day, and stay byte-exact with the spread
+    oracle. The companion goldens use an off-boundary 21:00 stamp; production sits on it."""
+    esh4 = InstrumentId(Symbol("ESH4"), Venue("XCME"))
+    esm4 = InstrumentId(Symbol("ESM4"), Venue("XCME"))
+    pre = _frame(["2024-03-04", "2024-03-05", "2024-03-06", "2024-03-07", "2024-03-08"],
+                 [100.0, 101.0, 102.0, 103.0, 104.0])
+    post = _frame(["2024-03-06", "2024-03-07", "2024-03-08", "2024-03-11", "2024-03-12"],
+                  [120.0, 121.0, 122.0, 123.0, 124.0])
+    chain = ContractChain(symbols=("ESH4.XCME", "ESM4.XCME"),
+                          roll_dates=(pd.Timestamp("2024-03-07"),), frames=(pre, post))
+    future = continuous_future(chain, "ES")
+    leg_bars = {esh4: _bars(esh4, pre, at=time(0, 0)), esm4: _bars(esm4, post, at=time(0, 0))}
+
+    engine_bars = materialize_continuous_bars(
+        future, leg_instruments=(_future(esh4), _future(esm4)), leg_bars=leg_bars,
+        start=pd.Timestamp("2024-03-01", tz="UTC"), end=pd.Timestamp("2024-03-13", tz="UTC"),
+    )
+    oracle = backward_spread_series(leg_bars, future.transitions)
+
+    engine_raws = [(b.open.raw, b.high.raw, b.low.raw, b.close.raw) for b in engine_bars]
+    oracle_raws = [(o.open_raw, o.high_raw, o.low_raw, o.close_raw) for o in oracle[: len(engine_bars)]]
+    ts = [bar.ts_event for bar in engine_bars]
+    roll_ns = future.transitions[0].transition_time_ns
+    assert engine_bars
+    assert engine_raws == oracle_raws  # byte-exact with bars sitting on the boundary
+    assert ts == sorted(ts) and len(set(ts)) == len(ts)  # gap-free order, dupe-free seam
+    # The roll day resolves to exactly one bar, owned by the post leg (ESM4 121.0, offset 0)
+    # — the pre leg's coincident roll-day bar is not double-counted.
+    roll_day = [bar for bar in engine_bars if bar.ts_event == roll_ns]
+    assert len(roll_day) == 1
+    assert roll_day[0].close.as_double() == 121.0
+
+
+def test_subscribe_path_is_byte_exact_with_the_request_path_and_oracle() -> None:
+    """AC4 (live half): the live ``subscribe_bars`` roll state machine produces the
+    SAME adjusted series as the request path and the Decimal oracle — byte-exact, so
+    live ≡ research.  Live runs one bar longer (it emits the final still-forming
+    bucket the bounded request stops short of, V2)."""
+    future, leg_bars = _es_single_seam()
+
+    request_bars = materialize_continuous_bars(
+        future,
+        leg_instruments=tuple(_future(iid) for iid in leg_bars),
+        leg_bars=leg_bars,
+        start=pd.Timestamp("2024-03-01", tz="UTC"),
+        end=pd.Timestamp("2024-03-13", tz="UTC"),
+    )
+    run = materialize_continuous_bars_via_subscription(
+        future,
+        leg_instruments=tuple(_future(iid) for iid in leg_bars),
+        leg_bars=leg_bars,
+        start=pd.Timestamp("2024-03-01", tz="UTC"),
+    )
+    oracle = backward_spread_series(leg_bars, future.transitions)
+
+    assert run.bars  # the subscribe path emitted an adjusted live series
+    # Live is exactly one bar longer than the bounded request (the final bucket, V2)
+    # and spans the full oracle series.
+    assert len(run.bars) == len(request_bars) + 1
+    assert len(run.bars) == len(oracle)
+    # subscribe == oracle byte-exact over the whole live series ...
+    assert _raws(run.bars) == _oracle_raws(oracle)
+    # ... and subscribe == request byte-exact over their shared overlap.
+    assert _raws(run.bars[: len(request_bars)]) == _raws(request_bars)
+
+
+def test_subscribe_path_rolls_pre_off_post_on_gap_free() -> None:
+    """AC3: at the transition the engine deactivates the pre-leg (unsubscribe) then
+    activates the post-leg (subscribe + re-apply offset); the spliced live series is
+    dupe-free.  The new offset's correctness at the seam is pinned byte-exactly vs the
+    request path by the parity test above."""
+    future, leg_bars = _es_single_seam()
+    esh4, esm4 = tuple(leg_bars)
+
+    run = materialize_continuous_bars_via_subscription(
+        future,
+        leg_instruments=tuple(_future(iid) for iid in leg_bars),
+        leg_bars=leg_bars,
+        start=pd.Timestamp("2024-03-01", tz="UTC"),
+    )
+
+    # Segment 0 activated, then per seam: deactivate pre-leg, activate post-leg.
+    assert run.roll_events == (
+        ("subscribe", esh4),
+        ("unsubscribe", esh4),
+        ("subscribe", esm4),
+    )
+    event_ts = [bar.ts_event for bar in run.bars]
+    assert len(event_ts) == len(set(event_ts))  # dupe-free across the seam

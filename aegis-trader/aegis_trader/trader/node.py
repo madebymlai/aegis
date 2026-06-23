@@ -32,6 +32,7 @@ import msgspec
 from nautilus_trader.common import Environment
 from nautilus_trader.config import (
     CacheConfig,
+    LiveDataEngineConfig,
     LiveExecEngineConfig,
     LiveRiskEngineConfig,
     LoggingConfig,
@@ -104,9 +105,16 @@ def build_live_node_config(*, trader_id: str | None = None) -> TradingNodeConfig
     *trader_id* is the Broker Connection's (``connection.trader_id``); when omitted
     Nautilus's own ``TradingNodeConfig`` default applies — the default lives in one
     place, not mirrored here.
+
+    The data engine turns off ``time_bars_build_with_no_updates`` (r8b.2 AC6): the
+    continuous-future *subscription* path inherits the ``DataEngineConfig`` default
+    ``True``, which emits non-trading-day flat bars; the *request* path forces it off
+    internally.  Off here makes the live daily continuous series byte-exact with
+    research (prototype NOTES.md V5 CONFIG finding).
     """
     config = TradingNodeConfig(
         environment=Environment.LIVE,
+        data_engine=LiveDataEngineConfig(time_bars_build_with_no_updates=False),
         exec_engine=LiveExecEngineConfig(reconciliation=True),
         risk_engine=build_live_risk_engine_config(),
         cache=CacheConfig(),
