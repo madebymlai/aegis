@@ -17,7 +17,6 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 
 import pandas as pd
-import pytest
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import AssetClass
@@ -29,7 +28,7 @@ from aegis_data.bar_type import raw_bar_type
 from aegis_data.continuous_catalog import continuous_ohlcv_frames
 
 _UTC = timezone.utc
-_CLOSE = time(21, 0)  # bar stamp, strictly after the midnight roll boundary
+_DAY_NS = 86_400_000_000_000  # one daily bucket, in nanoseconds
 _PRECISION = 2
 _CROSSOVER = pd.Timestamp("2024-03-01")  # liquidity migrates ESH4 -> ESM4 here
 _START, _END = "2024-01-15", "2024-05-31"
@@ -72,11 +71,17 @@ def _frame(start: str, end: str, base: float, *, leads_early: bool) -> pd.DataFr
     )
 
 
-def _bars(instrument_id: InstrumentId, frame: pd.DataFrame, stamp: time = _CLOSE) -> list[Bar]:
+def _bars(instrument_id: InstrumentId, frame: pd.DataFrame) -> list[Bar]:
+    """Daily bars shaped like a real venue's (IBKR): ts_event = session open (00:00 UTC), ts_init =
+    session close (23:59:59.999999999 UTC).  ts_event != ts_init is the production reality — the
+    materializer selects on ts_event but stamps each continuous bar at ceil(ts_init) (its bucket
+    close), and the feed's offset-0 append must do the same.  A fixture with ts_event == ts_init
+    cannot exercise that, so it is built in here for every test."""
     bar_type = raw_bar_type(instrument_id, "1D")
     bars: list[Bar] = []
     for day, row in frame.iterrows():
-        ts = int(datetime.combine(day.date(), stamp, _UTC).timestamp() * 1e9)
+        open_ns = int(datetime.combine(day.date(), time(0, 0), _UTC).timestamp() * 1e9)
+        close_ns = open_ns + _DAY_NS - 1  # session close: 23:59:59.999999999 UTC
         bars.append(
             Bar(
                 bar_type,
@@ -85,8 +90,8 @@ def _bars(instrument_id: InstrumentId, frame: pd.DataFrame, stamp: time = _CLOSE
                 Price.from_str(str(row["Low"])),
                 Price.from_str(str(row["Close"])),
                 Quantity.from_int(int(row["Volume"])),
-                ts,
-                ts,
+                open_ns,
+                close_ns,
             )
         )
     return bars
@@ -154,14 +159,14 @@ class _FakePort:
         }
 
 
-def _es_port(stamp: time = _CLOSE) -> tuple[_FakePort, dict[InstrumentId, list[Bar]]]:
+def _es_port() -> tuple[_FakePort, dict[InstrumentId, list[Bar]]]:
     esh4 = InstrumentId.from_str("ESH4.XCME")
     esm4 = InstrumentId.from_str("ESM4.XCME")
     frames = {
         esh4: _frame(_START, "2024-03-15", 100.0, leads_early=True),
         esm4: _frame(_START, "2024-04-30", 200.0, leads_early=False),
     }
-    native = {iid: _bars(iid, frame, stamp) for iid, frame in frames.items()}
+    native = {iid: _bars(iid, frame) for iid, frame in frames.items()}
     catalog = _FakeCatalog(
         instruments=[_future("ESH4.XCME", "2024-03-15"), _future("ESM4.XCME", "2024-06-21")],
         bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
@@ -268,36 +273,34 @@ def test_feed_front_contract_follows_the_causal_liquid_cycle() -> None:
     assert feed.front_contract() == InstrumentId.from_str("ESM4.XCME")
 
 
-@pytest.mark.parametrize(
-    ("stamp", "materialize_end", "append_day"),
-    [
-        # A close-of-day (00:00 UTC, as real IBKR daily bars are) front bar appends verbatim;
-        # an intraday (21:00, the aegis-data golden convention) one rolls up to the next bucket.
-        # The append must reproduce the engine's row byte-for-byte under BOTH stamps.
-        (time(0, 0), "2024-04-29", date(2024, 4, 30)),
-        (time(21, 0), "2024-04-30", date(2024, 4, 29)),
-    ],
-)
-def test_offset_zero_append_reproduces_research_and_is_stamp_robust(
-    stamp: time, materialize_end: str, append_day: date
-) -> None:
+def test_offset_zero_append_reproduces_research_byte_exact() -> None:
     """B3: the live feed materializes the history (research minus its final still-forming bucket —
     the very row the bounded request omits), then appends today's front-leg bar verbatim (front
     offset 0 ⇒ today's continuous value IS the raw front close), recovering research-as-of-today
-    byte-for-byte without waiting on IBKR historical — proven stamp-robust over 00:00 and 21:00."""
+    byte-for-byte without waiting on IBKR historical.
+
+    The fixture bars are production-shaped (ts_event = session open 00:00 UTC, ts_init = session
+    close), so the materializer stamps each continuous bar at ceil(ts_init) = the NEXT day's bucket
+    close.  The append must stamp from ts_init too: appending from ts_event (00:00 → same day) would
+    land the live bar one bucket early and this assertion would fail — the .5 gateway bug, now caught
+    deterministically in CI by exercising the real ts_event ≠ ts_init shape."""
     from aegis_trader.data.continuous_feed import ContinuousFeed
 
-    port, native = _es_port(stamp)
+    port, native = _es_port()
     esm4 = InstrumentId.from_str("ESM4.XCME")
-    live_front_bar = next(
-        b for b in native[esm4] if pd.Timestamp(b.ts_event, tz="UTC").date() == append_day
-    )
     research = continuous_ohlcv_frames(
         port, ["ES"], start=_START, end="2024-05-10", timeframe="1D"
     )[_ES_XCME]
+    # The still-forming last row (bucket close D+1) is produced by session D's front bar — the bar a
+    # live node receives after materializing through "yesterday".
+    last_close = research.index[-1]
+    last_session = (last_close - pd.Timedelta("1D")).date()
+    live_front_bar = next(
+        b for b in native[esm4] if pd.Timestamp(b.ts_event, tz="UTC").date() == last_session
+    )
 
     feed = ContinuousFeed(port, "ES", start=_START, timeframe="1D")
-    feed.materialize(end=materialize_end)
+    feed.materialize(end=last_close.strftime("%Y-%m-%d"))  # omits the still-forming bucket close
     pd.testing.assert_frame_equal(feed.series(), research.iloc[:-1])  # history through yesterday
 
     feed.on_bar(live_front_bar)  # append today's front bar verbatim at offset 0
@@ -336,42 +339,6 @@ def test_last_roll_spread_is_the_uniform_additive_rebase_at_a_roll() -> None:
     pd.testing.assert_series_equal(
         post.loc[common, "Close"], pre.loc[common, "Close"] + spread, check_names=False
     )
-
-
-def test_offset_zero_append_stamps_from_ts_init_not_ts_event() -> None:
-    """The materializer stamps each continuous bar at ceil(ts_init).  Real venue daily bars carry
-    ts_event = session open (00:00 UTC) but ts_init = session close (23:59:59.999…), so they belong
-    to the bucket closing the NEXT day.  The offset-0 append must stamp from ts_init too — stamping
-    from ts_event (00:00 → same day) lands a live bar one bucket early, desyncing live from research.
-    Regression for the .5 gateway finding (synthetic fixtures set ts_init == ts_event, so this
-    crafts a real-IB-shaped bar to exercise ts_init ≠ ts_event deterministically in CI)."""
-    from aegis_trader.data.continuous_feed import ContinuousFeed
-
-    port, _native = _es_port_two_rolls()
-    feed = ContinuousFeed(port, "ES", start=_START, timeframe="1D")
-    feed.materialize(end="2024-07-15")  # deep in ESU4's lead: non-empty, front ESU4
-    front = feed.front_contract()
-    assert front == InstrumentId.from_str("ESU4.XCME")
-
-    session = date(2024, 7, 16)  # the next session's front bar, real-IB-stamped
-    open_ns = int(datetime.combine(session, time(0, 0), _UTC).timestamp() * 1e9)
-    close_ns = open_ns + 86_400_000_000_000 - 1  # 23:59:59.999999999 UTC
-    bar = Bar(
-        raw_bar_type(front, "1D"),
-        Price.from_str("5000.0"),
-        Price.from_str("5000.0"),
-        Price.from_str("5000.0"),
-        Price.from_str("5000.0"),
-        Quantity.from_int(1),
-        open_ns,
-        close_ns,
-    )
-
-    feed.on_bar(bar)
-
-    # ceil(ts_init) = session + 1 bucket (07-17); ceil(ts_event=00:00) would be 07-16 (the bug).
-    assert feed.series().index[-1] == pd.Timestamp(session) + pd.Timedelta("1D")
-    assert feed.series().index[-1] != pd.Timestamp(session)
 
 
 def test_roll_rematerializes_rebased_and_advances_the_front() -> None:
