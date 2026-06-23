@@ -125,6 +125,42 @@ def test_absolute_price_strategy_allowed_without_continuous_roots() -> None:
     assert weights.iloc[-1].sum() == pytest.approx(1.0)
 
 
+def test_root_colliding_with_a_same_symbol_native_is_rejected() -> None:
+    """A native instrument sharing a declared root's bare symbol (a stock ``ES`` beside the
+    ``ES.XCME`` continuous root) makes the continuous id ambiguous. The guard must refuse to
+    guess — re-basing the wrong column would corrupt the invariance check — so it raises rather
+    than matching by bare symbol alone."""
+    es_native = InstrumentId.from_str("ES.NASDAQ")  # same symbol, not the continuous root
+    contract = DataContract(
+        instrument_ids=(_ES, es_native),
+        required_arrays=("Close",),
+        base_currency="USD",
+        timeframe="1D",
+        lookback_bars=0,
+        futures=("ES",),
+    )
+    plan = LockedExecutionPlan(
+        strategy=_strategy_spec("equal_weight_strategy"),
+        indicators=(),
+        gross_cap=1.0,
+        net_cap=1.0,
+        direction="longonly",
+    )
+    manifest = BundleManifest(
+        run_id="r",
+        role="best",
+        candidate_key="k",
+        component_source_hashes={},
+        instrument_ids=contract.instrument_ids,
+    )
+    bundle = ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
+    close = pd.DataFrame(
+        {_ES: [10.0, 12.0, 15.0], es_native: [20.0, 19.0, 25.0]}, index=_index(3)
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        bundle.compute_weights(MarketDataBundle({"Close": close}))
+
+
 def test_difference_weights_are_byte_stable_across_a_rebase() -> None:
     """The integration-level property: a fully-built difference bundle reproduces its
     allocation exactly when the continuous-root price column is re-based — live ≡ research

@@ -138,14 +138,30 @@ class ExecutionBundle:
         return weights
 
     def _continuous_ids(self) -> tuple[InstrumentId, ...]:
-        """The contract's instrument ids that materialise a declared continuous-future
-        root (matched by bare symbol) — the columns a roll re-bases."""
-        roots = set(self.contract.futures)
-        return tuple(
-            instrument_id
-            for instrument_id in self.contract.instrument_ids
-            if instrument_id.symbol.value in roots
-        )
+        """The contract's instrument ids that materialise a declared continuous-future root —
+        the columns a roll re-bases.
+
+        Each bare root resolves to the *one* synthetic continuous id whose symbol matches it
+        (``ES`` → ``ES.XCME``). A root that matches more than one instrument id is ambiguous —
+        the contract cannot tell the continuous root from a same-symbol native (a stock ``ES``),
+        and re-basing the native's price column would corrupt the invariance check — so it is
+        rejected loudly rather than silently re-basing the wrong column.
+        """
+        continuous: list[InstrumentId] = []
+        for root in self.contract.futures:
+            matches = [
+                instrument_id
+                for instrument_id in self.contract.instrument_ids
+                if instrument_id.symbol.value == root
+            ]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"continuous-future root {root!r} is ambiguous: it matches instrument ids "
+                    f"{[match.value for match in matches]}; a continuous root must resolve to "
+                    f"exactly one column so the additive-invariance re-base targets it alone"
+                )
+            continuous.extend(matches)
+        return tuple(continuous)
 
     def _decide_weights(
         self,
