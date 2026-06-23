@@ -338,6 +338,42 @@ def test_last_roll_spread_is_the_uniform_additive_rebase_at_a_roll() -> None:
     )
 
 
+def test_offset_zero_append_stamps_from_ts_init_not_ts_event() -> None:
+    """The materializer stamps each continuous bar at ceil(ts_init).  Real venue daily bars carry
+    ts_event = session open (00:00 UTC) but ts_init = session close (23:59:59.999…), so they belong
+    to the bucket closing the NEXT day.  The offset-0 append must stamp from ts_init too — stamping
+    from ts_event (00:00 → same day) lands a live bar one bucket early, desyncing live from research.
+    Regression for the .5 gateway finding (synthetic fixtures set ts_init == ts_event, so this
+    crafts a real-IB-shaped bar to exercise ts_init ≠ ts_event deterministically in CI)."""
+    from aegis_trader.data.continuous_feed import ContinuousFeed
+
+    port, _native = _es_port_two_rolls()
+    feed = ContinuousFeed(port, "ES", start=_START, timeframe="1D")
+    feed.materialize(end="2024-07-15")  # deep in ESU4's lead: non-empty, front ESU4
+    front = feed.front_contract()
+    assert front == InstrumentId.from_str("ESU4.XCME")
+
+    session = date(2024, 7, 16)  # the next session's front bar, real-IB-stamped
+    open_ns = int(datetime.combine(session, time(0, 0), _UTC).timestamp() * 1e9)
+    close_ns = open_ns + 86_400_000_000_000 - 1  # 23:59:59.999999999 UTC
+    bar = Bar(
+        raw_bar_type(front, "1D"),
+        Price.from_str("5000.0"),
+        Price.from_str("5000.0"),
+        Price.from_str("5000.0"),
+        Price.from_str("5000.0"),
+        Quantity.from_int(1),
+        open_ns,
+        close_ns,
+    )
+
+    feed.on_bar(bar)
+
+    # ceil(ts_init) = session + 1 bucket (07-17); ceil(ts_event=00:00) would be 07-16 (the bug).
+    assert feed.series().index[-1] == pd.Timestamp(session) + pd.Timedelta("1D")
+    assert feed.series().index[-1] != pd.Timestamp(session)
+
+
 def test_roll_rematerializes_rebased_and_advances_the_front() -> None:
     """B4: when the causal liquid front advances (a roll), the feed re-materializes the whole
     series re-based at the new front and advances ``front_contract`` — live ≡ research across the

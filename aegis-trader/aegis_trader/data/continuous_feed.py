@@ -123,12 +123,15 @@ class ContinuousFeed:
         if bar.bar_type.instrument_id != self._front_id:
             return
         row = bars_to_ohlcv([bar])
-        # The engine stamps each continuous bar at its bucket boundary, not the raw event time:
-        # a close-of-day (00:00) bar already sits on the boundary, an intraday (e.g. 21:00) bar
-        # rolls up to the next one. ``ceil`` to the bucket captures both, so the appended row
-        # lands on the engine's index regardless of the venue's daily stamp. The value needs no
+        # The materializer stamps each continuous bar at the bucket close of the leg bar's
+        # AVAILABILITY time (ts_init), not its event time.  Real venue daily bars carry
+        # ts_event = session open (00:00 UTC) but ts_init = session close (23:59:59.999…), so the
+        # bar belongs to the bucket closing the NEXT day; a synthetic bar with ts_init == ts_event
+        # at 00:00 closes the same day.  ``bars_to_ohlcv`` indexes by ts_event, so re-stamp from
+        # ts_init's bucket close to land on the materializer's index for either.  The value needs no
         # adjustment — the front is offset 0 (today's continuous value IS the raw front close).
-        row.index = row.index.ceil(self._timeframe)
+        close_stamp = pd.Timestamp(bar.ts_init, tz="UTC").ceil(self._timeframe).tz_localize(None)
+        row.index = pd.DatetimeIndex([close_stamp])
         self._series = pd.concat([self._series, row])
 
     def _causal_front(self, end: date) -> InstrumentId:
