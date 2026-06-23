@@ -12,6 +12,8 @@ from typing import Annotated
 import pandas as pd
 from pydantic import AfterValidator, Field
 
+from aegis_runtime import validate_bare_root
+
 IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.-]+$"
 IDENTIFIER_RE = re.compile(IDENTIFIER_PATTERN)
 
@@ -33,3 +35,6 @@ NonEmptyStr = Annotated[str, Field(min_length=1)]
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
 TimedeltaStr = Annotated[str, AfterValidator(_validate_timedelta_str)]  # annualization calendar
+# A bare continuous-future root symbol (e.g. "ES"); rejects venue-qualified ids ("ES.XCME").
+# Shares one validator with live's DataContract.futures so research and live agree byte-for-byte.
+RootSymbol = Annotated[str, AfterValidator(validate_bare_root)]

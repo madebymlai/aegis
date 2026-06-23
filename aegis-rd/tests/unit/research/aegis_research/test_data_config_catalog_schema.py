@@ -123,12 +123,27 @@ def test_data_config_rejects_duplicate_futures_roots() -> None:
 
 
 def test_data_config_rejects_empty_futures_root() -> None:
-    with pytest.raises(ValidationError, match="continuous-future root symbols"):
+    with pytest.raises(ValidationError, match="bare root"):
         _DATA_ADAPTER.validate_python(
             {
                 "arrays": ["Close"],
                 "base_currency": "USD",
                 "futures": [""],
+                "start": "2024-01-01",
+                "end": "2024-01-03",
+            }
+        )
+
+
+def test_data_config_rejects_venue_qualified_futures_root() -> None:
+    # A continuous-future root is a bare symbol; a venue-qualified id (which parses as an
+    # InstrumentId) is rejected by the SAME shared validator live's DataContract uses.
+    with pytest.raises(ValidationError, match="bare root"):
+        _DATA_ADAPTER.validate_python(
+            {
+                "arrays": ["Close"],
+                "base_currency": "USD",
+                "futures": ["ES.XCME"],
                 "start": "2024-01-01",
                 "end": "2024-01-03",
             }

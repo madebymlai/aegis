@@ -185,6 +185,25 @@ def test_union_native_instrument_ids_unions_and_sorts_declared_natives():
     assert [i.value for i in ids] == ["EUR/USD.IDEALPRO", "VUSA.XLON"]
 
 
+def test_union_native_instrument_ids_excludes_continuous_future_roots():
+    """A continuous-future root is declared on ``DataContract.futures``, not loaded as a
+    static native: its legs arrive dynamically via the chain.  The union (the node's
+    ``load_ids``) must carry only the declared native ids, never the bare roots."""
+    contract = DataContract(
+        instrument_ids=(InstrumentId.from_str("VUSA.XLON"),),
+        required_arrays=("Close",),
+        base_currency="EUR",
+        timeframe="1D",
+        lookback_bars=1,
+        futures=("ES",),
+    )
+    sleeves = ((SleeveName("equity"), SimpleNamespace(contract=contract)),)
+
+    ids = union_native_instrument_ids(sleeves)
+
+    assert [i.value for i in ids] == ["VUSA.XLON"]
+
+
 def test_load_book_sleeves_resolves_each_sleeve_via_the_registry():
     book = _book()
     bundle = SimpleNamespace(contract=_contract("VUSA.XLON"))

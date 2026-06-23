@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_runtime.futures_roots import validate_bare_root
+
 INSTRUMENT_ID_LEVEL = "instrument_id"
 _EXPOSURE_TOLERANCE = 1e-9
 _DIRECTIONS = frozenset({"longonly", "shortonly", "both"})
@@ -37,9 +39,16 @@ class DataContract:
     base_currency: str
     timeframe: str
     lookback_bars: int = 0
+    # Bare continuous-future root symbols (e.g. ``("ES",)``), declared identically to
+    # research's ``DataConfig.futures``. Each is materialised on demand as an adjusted
+    # continuous series (Path A); venue and currency are catalog-authoritative from its
+    # dated legs, so a root carries no venue. Excluded from the native-id union — the
+    # legs load dynamically via the chain, not as static natives.
+    futures: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
+        _validate_bare_roots(self.futures, "DataContract.futures")
 
 
 @dataclass(frozen=True)
@@ -178,6 +187,18 @@ def _validate_instrument_ids(instrument_ids: Sequence[InstrumentId], label: str)
         seen.add(instrument_id.value)
     if duplicates:
         raise ValueError(f"{label} contains duplicates: {sorted(duplicates)}")
+
+
+def _validate_bare_roots(roots: Sequence[str], label: str) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for root in roots:
+        validate_bare_root(root)
+        if root in seen:
+            duplicates.add(root)
+        seen.add(root)
+    if duplicates:
+        raise ValueError(f"{label} contains duplicate roots: {sorted(duplicates)}")
 
 
 def _compute_indicators(

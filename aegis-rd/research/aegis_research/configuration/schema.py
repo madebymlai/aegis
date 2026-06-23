@@ -15,6 +15,7 @@ from research.aegis_research.configuration.field_types import (
     NonNegativeRate,
     PositiveCash,
     PositiveInt,
+    RootSymbol,
     StrictFloat,
     TimedeltaStr,
     UnitInterval,
@@ -113,7 +114,8 @@ class DataConfig:
     # Bare continuous-future root symbols (e.g. ``["ES", "KC"]``), not native ids: each
     # is materialised on demand as an adjusted continuous series (Path A), venue and
     # currency catalog-authoritative from its dated legs. Distinct from raw ``instruments``.
-    futures: list[str] = field(default_factory=list)
+    # ``RootSymbol`` rejects venue-qualified ids via the same validator live's DataContract uses.
+    futures: list[RootSymbol] = field(default_factory=list)
     start: str | None = None
     end: str | None = None
     timeframe: str = "1D"
