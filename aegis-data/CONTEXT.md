@@ -25,9 +25,18 @@ _Avoid_: IBKR dependency, provider-specific core API, custom fetch seam
 
 **Raw Bars**:
 OHLCV bars stored exactly as Nautilus `Bar` data for one native `InstrumentId`.
-Raw bars are the r8b.1 walking skeleton. Continuous futures, adjustments,
-currency conversion, and split/dividend handling are later slices.
+Raw bars are the r8b.1 walking skeleton. Currency conversion and split/dividend
+handling are later slices.
 _Avoid_: adjusted series, converted bars, continuous future
+
+**Roll-Transition Table**:
+The explicit list of roll seams — transition instant, the two legs by native
+`InstrumentId`, and each leg's seam Close — that aegis-data derives as a pure
+function over catalog legs (`continuous_future.py`). Handed to Nautilus via
+`request_bars`/`subscribe_bars` `params`; the engine materialises the back-adjusted
+continuous series on demand (Path A), `BACKWARD_SPREAD` (Panama), and it is never
+persisted. A spread golden test pins the engine's output byte-for-byte.
+_Avoid_: Panama transform, bespoke back-adjust, persisted continuous series
 
 **Coverage Gap**:
 A requested catalog interval that `get_missing_intervals_for_request` says is

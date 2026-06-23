@@ -1,7 +1,7 @@
 [project]
 name = "aegis-data"
 version = "0.1.0"
-description = "Shared historical market-data package: per-contract futures sourcing via the Nautilus databento port, an OS-global parquet store, and back-adjusted continuous series. Used by Aegis RD and Aegis Trader."
+description = "Shared market-data package: the Nautilus-native catalog (corpus), the DataProvider port (IBKR adapter) that fills it, and the roll-transition table for Path-A continuous futures. Used by Aegis RD and Aegis Trader."
 requires-python = ">=3.12"
 dependencies = [
   "aegis-runtime",
@@ -10,7 +10,6 @@ dependencies = [
   "pyarrow",
   "platformdirs",
   "nautilus_trader",
-  "databento",
 ]
 
 [project.scripts]
@@ -34,7 +33,6 @@ files = ["aegis_data"]
 module = [
   "aegis_runtime",
   "aegis_runtime.*",
-  "databento.*",
   "ibapi",
   "ibapi.*",
   "nautilus_trader.*",

@@ -2,7 +2,7 @@
 ``BarType`` of the shared corpus, and into a rebalance-period width.
 
 Daily Raw Bars are ``LAST-EXTERNAL`` (ADR-0007): the corpus is vendor-aggregated
-OHLCV (IBKR historical, the future Databento futures seed) — finished bars with
+OHLCV (IBKR historical) — finished bars with
 no tick feed to build a multi-year daily series from — and live can only receive
 IBKR's completed daily bar via an ``EXTERNAL`` subscription.
 
@@ -71,6 +71,22 @@ def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
     return BarType.from_str(f"{instrument_id.value}-{step}-{unit}-LAST-EXTERNAL")
 
 
+def continuous_bar_type(root_id: InstrumentId, timeframe: str) -> BarType:
+    """The continuous-future target ``BarType`` for a synthetic root at *timeframe*.
+
+    ``{root}.{venue}-{step}-{unit}-LAST-INTERNAL@{step}-{unit}-EXTERNAL``: an
+    internally-aggregated target over the per-leg ``LAST-EXTERNAL`` source (same
+    cadence — a 1:1 daily composite).  Nautilus requires the continuous target to be
+    internally aggregated and materialises each segment's real leg bars into it.
+    *root_id* is the **synthetic continuous root** (e.g. ``ES.XCME``), not a real
+    contract; the real legs are named in the roll transitions.
+    """
+    step, unit = _parse(timeframe)
+    return BarType.from_str(
+        f"{root_id.value}-{step}-{unit}-LAST-INTERNAL@{step}-{unit}-EXTERNAL"
+    )
+
+
 def timeframe_to_ns(timeframe: str) -> int:
     """The rebalance-period width, in nanoseconds, for *timeframe*."""
     step, unit = _parse(timeframe)
@@ -79,6 +95,7 @@ def timeframe_to_ns(timeframe: str) -> int:
 
 __all__ = [
     "UnsupportedTimeframeError",
+    "continuous_bar_type",
     "raw_bar_type",
     "timeframe_to_ns",
 ]

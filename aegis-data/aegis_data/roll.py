@@ -6,7 +6,7 @@ expiries are *supplied* by the caller (instrument definitions) — there is no h
 month cycle, so a monthly product rolls monthly and a serial/odd-cycle product rolls on
 whatever it actually lists.  This names the dated-contract chain over a date range and
 the roll date between consecutive contracts — the schedule the per-contract source
-fetches against and the back-adjustment transform stitches on.
+fetches against and the roll-transition table is built from.
 
 Pure: no I/O, no provider.  Holiday calendars are out of scope (business-day = Mon-Fri).
 """
@@ -43,7 +43,7 @@ class FuturesChainSchedule:
 @dataclass(frozen=True)
 class DatedContract:
     """A dated futures contract and its last-trade date, as named by an instrument
-    definition (Databento at research, the IBKR chain at live)."""
+    definition in the Nautilus catalog (IBKR-seeded)."""
 
     symbol: str
     last_trade: date
