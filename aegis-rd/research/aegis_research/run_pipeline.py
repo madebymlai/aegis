@@ -10,7 +10,6 @@ from research.aegis_research.configuration import (
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     ConfigValidationError,
     ConfigValidationIssue,
-    DataConfig,
     ResolvedRunConfig,
     RunConfig,
 )
@@ -107,8 +106,10 @@ def run_strategy_sweep(
         )
         write_data_metadata_artifact(recorder, data_result, array_contract)
         data_result.assert_usable()
-        data_bundle = _apply_futures_back_adjustment(config.data, market_data_bundle(data_result))
-        data_bundle = _to_base_currency(config, data_bundle=data_bundle)
+        # Continuous-future adjustment happens in the load path now (the catalog adapter
+        # materialises each declared root, Path A), so the bundle already carries adjusted
+        # continuous columns; only currency conversion remains before the sweep.
+        data_bundle = _to_base_currency(config, data_bundle=market_data_bundle(data_result))
         pnl_bundle = _pnl_bundle(config, data_result)
         metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
@@ -135,13 +136,6 @@ def run_strategy_sweep(
         if on_run_refs is not None:
             on_run_refs(recorder.run_refs())
         raise
-
-
-def _apply_futures_back_adjustment(
-    data_config: DataConfig, data_bundle: MarketDataBundle
-) -> MarketDataBundle:
-    """Raw-bar r8b.1 path: dated futures legs pass through unchanged."""
-    return data_bundle
 
 
 def _pnl_bundle(

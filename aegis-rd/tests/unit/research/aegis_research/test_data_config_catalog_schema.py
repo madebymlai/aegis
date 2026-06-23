@@ -63,13 +63,72 @@ def test_data_config_rejects_exchange_id_as_tradeable_duplicate() -> None:
         )
 
 
-def test_data_config_requires_tradeable_instrument_ids() -> None:
-    with pytest.raises(ValidationError, match="instruments is required"):
+def test_data_config_requires_a_tradeable_source() -> None:
+    with pytest.raises(ValidationError, match="at least one tradeable source"):
         _DATA_ADAPTER.validate_python(
             {
                 "arrays": ["Close"],
                 "base_currency": "USD",
                 "exchange": ["EUR/USD.IDEALPRO"],
+                "start": "2024-01-01",
+                "end": "2024-01-03",
+            }
+        )
+
+
+def test_data_config_accepts_bare_continuous_future_roots() -> None:
+    config = _DATA_ADAPTER.validate_python(
+        {
+            "arrays": ["OHLCV"],
+            "base_currency": "USD",
+            "instruments": ["AAPL.NASDAQ"],
+            "futures": ["ES", "KC"],
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+        }
+    )
+
+    assert config.futures == ["ES", "KC"]
+    # Continuous roots are synthetic, never raw-read from the catalog, so they stay
+    # out of the native-id request set.
+    assert config.native_instrument_ids == ("AAPL.NASDAQ",)
+
+
+def test_data_config_allows_a_futures_only_run() -> None:
+    config = _DATA_ADAPTER.validate_python(
+        {
+            "arrays": ["OHLCV"],
+            "base_currency": "USD",
+            "futures": ["ES"],
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+        }
+    )
+
+    assert config.instruments == []
+    assert config.futures == ["ES"]
+
+
+def test_data_config_rejects_duplicate_futures_roots() -> None:
+    with pytest.raises(ValidationError, match="duplicate futures"):
+        _DATA_ADAPTER.validate_python(
+            {
+                "arrays": ["Close"],
+                "base_currency": "USD",
+                "futures": ["ES", "ES"],
+                "start": "2024-01-01",
+                "end": "2024-01-03",
+            }
+        )
+
+
+def test_data_config_rejects_empty_futures_root() -> None:
+    with pytest.raises(ValidationError, match="continuous-future root symbols"):
+        _DATA_ADAPTER.validate_python(
+            {
+                "arrays": ["Close"],
+                "base_currency": "USD",
+                "futures": [""],
                 "start": "2024-01-01",
                 "end": "2024-01-03",
             }

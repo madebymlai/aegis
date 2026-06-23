@@ -628,24 +628,25 @@ def test_show_config_schema_documents_native_data_contract(
     assert "pnl_adjustment" not in guide
 
 
-def test_show_config_schema_embeds_dated_futures_leg_example(
+def test_show_config_schema_embeds_continuous_future_example(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The guide carries a worked raw dated futures leg example snippet."""
+    """The guide carries a worked continuous-future example snippet."""
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
 
-    assert "## Example: Dated Futures Leg" in guide
+    assert "## Example: Continuous Future" in guide
     assert "ESZ6.XCME" in guide
+    assert "futures: [ES]" in guide
     assert "source: store" not in guide
 
 
-def test_show_config_schema_dated_leg_example_validates(
+def test_show_config_schema_continuous_future_example_validates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The embedded dated-leg YAML validates through the real validation coordinator."""
+    """The embedded continuous-future YAML validates through the real validation coordinator."""
     monkeypatch.chdir(tmp_path)
     write_indicator_component(
         tmp_path / "research" / "components" / "indicators" / "returns.py"
@@ -657,12 +658,13 @@ def test_show_config_schema_dated_leg_example_validates(
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
 
-    raw = yaml.safe_load(_yaml_block_after(guide, "## Example: Dated Futures Leg"))
+    raw = yaml.safe_load(_yaml_block_after(guide, "## Example: Continuous Future"))
 
     from research.aegis_research.configuration import resolve_run_config
 
     resolved = resolve_run_config(raw)
     assert resolved.config.data.instruments == ["ESZ6.XCME"]
+    assert resolved.config.data.futures == ["ES"]
     assert resolved.config.data.exchange == []
     assert not hasattr(resolved.config.data, "source")
 

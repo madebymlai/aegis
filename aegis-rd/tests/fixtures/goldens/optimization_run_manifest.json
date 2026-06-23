@@ -1,7 +1,7 @@
 {
   "artifacts": [
     {
-      "hash": "cf6d2a1fadd8e10e0bb0a2816ad1e06f298bc2dabdb58f5173f66cc003d482df",
+      "hash": "5af512015926ee032bb7d46f57d0bc156d346847babc61f2593a81dd131e7928",
       "hash_algorithm": "sha256",
       "id": "data.metadata",
       "metadata": {},
@@ -10,14 +10,14 @@
       "role": "data_metadata",
       "schema_version": "data_metadata.v3",
       "shape": {},
-      "size": 18190,
+      "size": 18223,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
       "upstream_artifact_ids": []
     },
     {
-      "hash": "38ab4565eafe83a8fbe16fe6f3e73eeec5c38186b9874daf41f24609d85849b9",
+      "hash": "08570a462161f3da94ac39fe9c15add427924f3444d01a6e5063aa6ebd6387ed",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 61854,
+      "size": 62008,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -44,6 +44,7 @@
       "base_currency": "EUR",
       "end": "2026-10-05",
       "exchange": [],
+      "futures": [],
       "instruments": [
         "SPY.XNAS",
         "IWM.XNAS",
@@ -148,7 +149,7 @@
       "raw_config_identity": {
         "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
       },
-      "resolved_config_hash": "65ef20a66c3df2a8eaadc02a443fae706710ee782cd2a8383430f267e3587241",
+      "resolved_config_hash": "6adeb003d4a9a20358f580318c24c0abe893e96c3d1212956309674755dc41a7",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",
@@ -181,7 +182,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_32403fd0a415a1fcbd48e92e87c819d1",
+          "candidate_key": "cand_e2240a86c44c920f1c9988870ec18fbf",
           "held_out_metrics": {
             "0": {
               "max_dd": 17.34401245220606,
@@ -385,6 +386,7 @@
               "schema_version": "candidate_data_identity.v2",
               "source_metadata": {
                 "catalog_path": "catalog",
+                "continuous_root_ids": [],
                 "exchange_instrument_ids": [],
                 "requested_instrument_ids": [
                   "SPY.XNAS",
@@ -539,7 +541,7 @@
           }
         },
         {
-          "candidate_key": "cand_3d4c9fc78a57be5c71b0a938a8b53596",
+          "candidate_key": "cand_ed03aafa65dd0a4a2dda21b8722391db",
           "held_out_metrics": {
             "0": {
               "max_dd": 24.329296546012134,
@@ -743,6 +745,7 @@
               "schema_version": "candidate_data_identity.v2",
               "source_metadata": {
                 "catalog_path": "catalog",
+                "continuous_root_ids": [],
                 "exchange_instrument_ids": [],
                 "requested_instrument_ids": [
                   "SPY.XNAS",
@@ -897,7 +900,7 @@
           }
         },
         {
-          "candidate_key": "cand_72bf722bc6520d2e1e417cc456fad14b",
+          "candidate_key": "cand_038ed8912fb3e079a4d2692818e79451",
           "held_out_metrics": {
             "0": {
               "max_dd": 21.879582100013593,
@@ -1101,6 +1104,7 @@
               "schema_version": "candidate_data_identity.v2",
               "source_metadata": {
                 "catalog_path": "catalog",
+                "continuous_root_ids": [],
                 "exchange_instrument_ids": [],
                 "requested_instrument_ids": [
                   "SPY.XNAS",

@@ -68,6 +68,7 @@ def make_data_config(**overrides: Any) -> DataConfig:
         "base_currency": "EUR",
         "instruments": ["SYN.XNAS"],
         "exchange": [],
+        "futures": [],
         "start": "2024-01-01",
         "end": "2024-01-03",
         "timeframe": "1D",

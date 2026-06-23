@@ -8,6 +8,7 @@ from aegis_data.catalog import (
     RawBarRequest,
     catalog_data_port,
 )
+from aegis_data.continuous_catalog import continuous_ohlcv_frames
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import DataConfig
@@ -30,16 +31,31 @@ def load_catalog_source(
     # provider is wired inside aegis-data's factory, so this module depends only on
     # the CatalogBackedDataPort abstraction (DIP).
     data_port = port if port is not None else catalog_data_port(config.path)
-    requested_instrument_ids = instrument_ids(config.native_instrument_ids)
-    frames = data_port.load_raw_bars(
+    start = _required_window_edge(config.start, "start")
+    end = _required_window_edge(config.end, "end")
+    raw_frames = data_port.load_raw_bars(
         RawBarRequest(
-            instrument_ids=requested_instrument_ids,
-            start=_required_window_edge(config.start, "start"),
-            end=_required_window_edge(config.end, "end"),
+            instrument_ids=instrument_ids(config.native_instrument_ids),
+            start=start,
+            end=end,
             timeframe=config.timeframe,
         )
     )
-    tradeable_instrument_ids = instrument_ids(config.instruments)
+    # Continuous-future roots are synthetic: aegis-data materialises each as an adjusted
+    # series on demand (Path A) and hands it back as an OHLCV frame keyed by its root id,
+    # so it merges into native_data exactly like a raw leg — first-class through the same
+    # diagnostics/quality/bundle path, never persisted.
+    continuous_frames = continuous_ohlcv_frames(
+        data_port, config.futures, start=start, end=end, timeframe=config.timeframe
+    )
+    collisions = set(raw_frames) & set(continuous_frames)
+    if collisions:
+        raise ValueError(
+            "continuous-future root ids collide with raw instrument ids: "
+            f"{sorted(instrument_id.value for instrument_id in collisions)}"
+        )
+    frames = {**raw_frames, **continuous_frames}
+    tradeable_instrument_ids = (*instrument_ids(config.instruments), *continuous_frames)
     native_data = native_from_array_dict(
         _array_panels(config, frames, tradeable_instrument_ids), config
     )
@@ -50,6 +66,7 @@ def load_catalog_source(
             "requested_instrument_ids": list(config.native_instrument_ids),
             "tradeable_instrument_ids": list(config.instruments),
             "exchange_instrument_ids": list(config.exchange),
+            "continuous_root_ids": [root_id.value for root_id in continuous_frames],
         },
         evidence=index_evidence(native_index(native_data), source="nautilus_catalog"),
         provider_metadata={"source": "nautilus_data_provider_port"},

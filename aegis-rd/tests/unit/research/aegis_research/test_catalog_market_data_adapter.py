@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
+import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.data import load_market_data_result
+from research.aegis_research.market_data.adapters import catalog as catalog_adapter
 from research.aegis_research.market_data.adapters.catalog import load_catalog_source
 from research.aegis_research.market_data.panels import market_data_bundle
 from tests.support.research.aegis_research.factories import make_data_config
@@ -65,6 +67,80 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
     assert result.metadata.provenance.provider_metadata == {
         "source": "nautilus_data_provider_port"
     }
+
+
+def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    aapl = _id("AAPL.NASDAQ")
+    es = _id("ES.XCME")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    port = _RecordingCatalogPort(
+        frames={aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    )
+    continuous = {es: _frame(index, close=[5000.0, 5010.0], volume=[1.0, 2.0])}
+
+    seen_roots: list = []
+
+    def fake_continuous(port_arg, roots, **kwargs):
+        seen_roots.append(list(roots))
+        return continuous if list(roots) == ["ES"] else {}
+
+    monkeypatch.setattr(catalog_adapter, "continuous_ohlcv_frames", fake_continuous)
+
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="USD",
+        instruments=["AAPL.NASDAQ"],
+        futures=["ES"],
+        start="2024-01-01",
+        end="2024-01-03",
+    )
+
+    result = load_market_data_result(
+        config,
+        adapter=lambda current: load_catalog_source(current, port=port),
+    )
+
+    bundle = market_data_bundle(result)
+    # Continuous roots are synthetic — never raw-requested from the catalog.
+    assert port.requested_ids == (aapl,)
+    assert seen_roots == [["ES"]]
+    # The continuous root is a first-class tradeable column, ordered after raw instruments.
+    assert list(bundle.array("Close").columns) == [aapl, es]
+    assert bundle.array("Close")[es].tolist() == [5000.0, 5010.0]
+    assert bundle.array("Volume")[es].tolist() == [1.0, 2.0]
+    assert result.metadata.provenance.source_metadata["continuous_root_ids"] == ["ES.XCME"]
+
+
+def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A synthetic root id that equals a raw instrument id would silently clobber the raw
+    # column on merge — fail loud instead.
+    es = _id("ES.XCME")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    port = _RecordingCatalogPort(
+        frames={es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])}
+    )
+    monkeypatch.setattr(
+        catalog_adapter,
+        "continuous_ohlcv_frames",
+        lambda port_arg, roots, **kwargs: {
+            es: _frame(index, close=[99.0, 99.0], volume=[9.0, 9.0])
+        },
+    )
+    config = make_data_config(
+        arrays=["Close"],
+        base_currency="USD",
+        instruments=["ES.XCME"],
+        futures=["ES"],
+        start="2024-01-01",
+        end="2024-01-03",
+    )
+
+    with pytest.raises(ValueError, match="collide with raw instrument ids"):
+        load_catalog_source(config, port=port)
 
 
 def _id(value: str) -> InstrumentId:

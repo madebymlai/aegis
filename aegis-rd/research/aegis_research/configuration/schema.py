@@ -110,6 +110,10 @@ class DataConfig:
     base_currency: str = "EUR"
     instruments: list[str] = field(default_factory=list)
     exchange: list[str] = field(default_factory=list)
+    # Bare continuous-future root symbols (e.g. ``["ES", "KC"]``), not native ids: each
+    # is materialised on demand as an adjusted continuous series (Path A), venue and
+    # currency catalog-authoritative from its dated legs. Distinct from raw ``instruments``.
+    futures: list[str] = field(default_factory=list)
     start: str | None = None
     end: str | None = None
     timeframe: str = "1D"
@@ -151,21 +155,29 @@ def _require_catalog_window(config: DataConfig) -> None:
 
 
 def _require_catalog_ids(config: DataConfig) -> None:
-    if not config.instruments:
-        raise ValueError("instruments is required for catalog data")
+    if not config.instruments and not config.futures:
+        raise ValueError(
+            "at least one tradeable source is required: set data.instruments "
+            "(native ids) and/or data.futures (continuous-future roots)"
+        )
     _require_unique_non_empty(config.instruments, "instruments")
     _require_unique_non_empty(config.exchange, "exchange")
+    _require_unique_non_empty(
+        config.futures, "futures", value_desc="continuous-future root symbols"
+    )
     overlaps = sorted(set(config.instruments) & set(config.exchange))
     if overlaps:
         raise ValueError(f"instrument ids cannot be both tradeable and exchange-only: {overlaps}")
 
 
-def _require_unique_non_empty(values: list[str], field_name: str) -> None:
+def _require_unique_non_empty(
+    values: list[str], field_name: str, *, value_desc: str = "native InstrumentId strings"
+) -> None:
     seen: set[str] = set()
     duplicates: set[str] = set()
     for value in values:
         if not isinstance(value, str) or not value:
-            raise ValueError(f"{field_name} must contain non-empty native InstrumentId strings")
+            raise ValueError(f"{field_name} must contain non-empty {value_desc}")
         if value in seen:
             duplicates.add(value)
         seen.add(value)

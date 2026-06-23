@@ -59,19 +59,33 @@ class CatalogBackedDataPort:
     definition_seeder: Callable[[InstrumentId], None] | None = None
 
     def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
-        frames: dict[InstrumentId, pd.DataFrame] = {}
         for instrument_id in request.instrument_ids:
-            bar_type = raw_bar_type(instrument_id, request.timeframe)
-            self._ensure_covered(bar_type, request)
-            frames[instrument_id] = _bars_to_ohlcv(
+            self._ensure_covered(raw_bar_type(instrument_id, request.timeframe), request)
+        return {
+            instrument_id: bars_to_ohlcv(bars)
+            for instrument_id, bars in self.read_native_bars(request).items()
+        }
+
+    def read_native_bars(self, request: RawBarRequest) -> dict[InstrumentId, list[Bar]]:
+        """The window's stored native ``Bar``\\ s per instrument — a pure warm read.
+
+        The single owner of the catalog ``Bar`` query (``load_raw_bars`` layers the
+        coverage gate + OHLCV projection on top).  Unlike ``load_raw_bars`` it never
+        fills: callers that already warmed the catalog (e.g. the continuous-future leg
+        read after the chain fetch) get the fixed-point ``Bar``\\ s back, and a window
+        past an instrument's life yields only the bars that exist, not a coverage error.
+        """
+        return {
+            instrument_id: list(
                 self.catalog.query(
                     _bar_cls(),
-                    identifiers=[str(bar_type)],
+                    identifiers=[str(raw_bar_type(instrument_id, request.timeframe))],
                     start=request.start,
                     end=request.end,
                 )
             )
-        return frames
+            for instrument_id in request.instrument_ids
+        }
 
     def _ensure_covered(self, bar_type: BarType, request: RawBarRequest) -> None:
         missing = self._missing_intervals(bar_type, request)
@@ -173,7 +187,10 @@ def _bar_cls() -> type:
     return Bar
 
 
-def _bars_to_ohlcv(bars: Sequence[Any]) -> pd.DataFrame:
+def bars_to_ohlcv(bars: Sequence[Any]) -> pd.DataFrame:
+    """Project native ``Bar``\\ s into the corpus OHLCV frame (UTC-naive index, float
+    columns).  The single home for the Bar→OHLCV column shape, shared by the port's
+    ``load_raw_bars`` and the continuous-future composer."""
     rows: dict[str, list[float]] = {
         "Open": [],
         "High": [],
@@ -197,6 +214,7 @@ __all__ = [
     "CatalogCoverageGapError",
     "NautilusDataProviderPort",
     "RawBarRequest",
+    "bars_to_ohlcv",
     "catalog_data_port",
     "catalog_root",
     "parquet_data_catalog",

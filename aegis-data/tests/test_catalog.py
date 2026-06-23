@@ -222,6 +222,39 @@ def test_catalog_port_does_not_seed_definition_on_cache_hit(tmp_path: Path) -> N
     assert seeded == []
 
 
+def test_read_native_bars_is_a_warm_read_returning_bars_without_the_coverage_gate(
+    tmp_path: Path,
+) -> None:
+    """The native-bar read is a pure warm read: it returns the stored ``Bar``\\ s for the
+    window and never invokes the coverage gate/provider — so a rolled-off futures leg,
+    read over a window past its life, yields just its bars instead of a coverage error."""
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("AAPL.NASDAQ")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [_bar(bar_type, "2024-01-01", 10.0)],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+    provider = _ProviderPort([_bar(bar_type, "2024-01-15", 11.0)])
+    port = CatalogBackedDataPort(catalog, provider=provider)
+
+    bars = port.read_native_bars(
+        RawBarRequest(
+            instrument_ids=(instrument_id,),
+            start="2024-01-01",
+            end="2024-01-31",
+        )
+    )
+
+    assert isinstance(bars[instrument_id][0], Bar)
+    assert [bar.close.as_double() for bar in bars[instrument_id]] == [10.0]
+    assert provider.requests == []  # warm read: no coverage gate, no backfill
+
+
 def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Path) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()

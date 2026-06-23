@@ -200,6 +200,11 @@ def _render_data_section() -> str:
             "**`exchange`** — optional data-only native `InstrumentId` values requested from "
             "the same catalog/port but never exposed as tradeable bundle columns.",
             "",
+            "**`futures`** — optional bare continuous-future root symbols (e.g. `[ES, KC]`), "
+            "not native ids. Each is materialised on demand as a back-adjusted continuous "
+            "series (Path A); venue and quote currency are catalog-authoritative from its "
+            "dated legs. A run needs at least one of `instruments` or `futures`.",
+            "",
             "<br>**`quality.allowed_degradations`**: ",
         ],
     )
@@ -475,12 +480,13 @@ def _render_example() -> str:
 
 
 def _render_futures_example() -> str:
-    """Embed a worked futures dual continuous-series Run Config YAML snippet."""
+    """Embed a worked continuous-future Run Config YAML snippet."""
     return textwrap.dedent(f"""\
-    ## Example: Dated Futures Leg
+    ## Example: Continuous Future
 
-    A single dated futures leg read as raw bars. Continuous futures are handled by
-    the next market-data slice.
+    A back-adjusted continuous future declared by its bare root, alongside a raw dated
+    leg. The continuous series is materialised on demand from the dated-leg chain
+    (Path A) — never persisted — and its venue/currency come from the catalog legs.
 
     ```yaml
     schema_version: {CONFIG_SCHEMA_VERSION}
@@ -489,6 +495,7 @@ def _render_futures_example() -> str:
     data:
       base_currency: USD
       instruments: [ESZ6.XCME]
+      futures: [ES]
       arrays: [OHLCV]
       start: "2020-01-01"
       end: "2023-12-31"
@@ -518,9 +525,10 @@ def _render_futures_example() -> str:
         max_splits: 2
     ```
 
-    `ESZ6.XCME` is a native Nautilus `InstrumentId`. The catalog adapter requests
-    that id through the shared data-provider port and returns `InstrumentId`-keyed
-    OHLCV panels.""")
+    `ESZ6.XCME` is a native Nautilus `InstrumentId` read as raw bars. `ES` is a bare
+    continuous-future root: the catalog adapter builds its dated-leg chain, hands the
+    roll-transition table to Nautilus's engine, and exposes the adjusted series as the
+    synthetic `ES.<venue>` bundle column — `InstrumentId`-keyed like every other.""")
 
 
 # ── Field-tree helpers ────────────────────────────────────────────────────────
