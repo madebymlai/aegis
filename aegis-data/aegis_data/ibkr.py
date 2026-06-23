@@ -246,7 +246,7 @@ class BrokerConnection(Protocol):
     port: int
     client_id: int
     account_id: str
-    dockerized_gateway: Any | None
+    dockerized_gateway: object | None
 
 
 def attach_live_clients(

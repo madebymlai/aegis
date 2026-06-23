@@ -28,6 +28,7 @@ import signal
 import tempfile
 from pathlib import Path
 
+import msgspec
 from nautilus_trader.common import Environment
 from nautilus_trader.config import (
     CacheConfig,
@@ -62,7 +63,6 @@ _log = logging.getLogger("aegis_trader")
 # the backtest runner — the two model the same fill point (the close).
 LIVE_FILL_TIME_IN_FORCE: TimeInForce = TimeInForce.AT_THE_CLOSE
 
-_DEFAULT_TRADER_ID = "TRADER-001"
 _PID_FILE_NAME = "aegis-trader.pid"
 
 
@@ -91,7 +91,7 @@ def build_live_risk_engine_config(
     )
 
 
-def build_live_node_config(*, trader_id: str = _DEFAULT_TRADER_ID) -> TradingNodeConfig:
+def build_live_node_config(*, trader_id: str | None = None) -> TradingNodeConfig:
     """Build the live ``TradingNodeConfig`` (broker-neutral).
 
     Runs under ``Environment.LIVE`` with reconciliation, the live RiskEngine, a
@@ -100,16 +100,22 @@ def build_live_node_config(*, trader_id: str = _DEFAULT_TRADER_ID) -> TradingNod
     catalog and tops up only the missing IBKR tail, so research and live warm from
     the *same* corpus with no cold-start lookback gap.  The broker's data/exec
     clients are wired separately by :func:`aegis_data.ibkr.attach_live_clients`.
+
+    *trader_id* is the Broker Connection's (``connection.trader_id``); when omitted
+    Nautilus's own ``TradingNodeConfig`` default applies — the default lives in one
+    place, not mirrored here.
     """
-    return TradingNodeConfig(
+    config = TradingNodeConfig(
         environment=Environment.LIVE,
-        trader_id=trader_id,
         exec_engine=LiveExecEngineConfig(reconciliation=True),
         risk_engine=build_live_risk_engine_config(),
         cache=CacheConfig(),
         logging=LoggingConfig(),
         catalogs=[DataCatalogConfig(path=str(catalog_root()))],
     )
+    if trader_id is None:
+        return config
+    return msgspec.structs.replace(config, trader_id=trader_id)
 
 
 # ── live node assembly ────────────────────────────────────────────────────────
