@@ -247,30 +247,39 @@ def _early_crossover_es_port() -> tuple[_FakePort, dict[InstrumentId, pd.DataFra
 
 
 @pytest.mark.xfail(
-    reason="wrong-leg divergence (bd r8b9-wrongleg-bug): front_contract() uses the causal/volume "
-    "front, which rolls at an early crossover BEFORE the series' calendar chain does, so the "
-    "execution leg differs from the leg the signal series is anchored on. Remove this marker when "
-    "the front authority is unified to the chain.",
+    reason="early-crossover roll bug (bd r8b9-wrongleg-bug): when end lands between a leg's liquidity "
+    "crossover and its calendar roll — always the case live, where end=now — roll_schedule(eligible, "
+    "start, end) truncates the new leg because its CALENDAR roll is past end, so the liquidity cap "
+    "(_cap_rolls) never rolls the series onto it. The continuous series then tracks the old, thinning "
+    "leg while front_contract (causal/volume) correctly names the liquid one: the series signals off "
+    "the wrong contract. Remove this marker when the series rolls to the liquidity leader at the "
+    "window edge.",
     strict=True,
 )
-def test_front_contract_is_the_series_front_leg_on_an_early_crossover() -> None:
-    """The execution leg (``front_contract``) must be the leg the series is anchored on at offset 0:
-    otherwise the strategy sizes and signals off one leg's continuous series but subscribes and
-    trades another.  With an early crossover the two roll authorities (causal volume vs calendar
-    chain) pick different legs — this asserts the invariant that must hold and currently fails for
-    exactly that reason (the series' offset-0 close is not one of the execution leg's raw closes)."""
+def test_series_and_execution_track_the_liquidity_leader_on_an_early_crossover() -> None:
+    """Both the signal series (its offset-0 leg) and the execution leg (``front_contract``) must track
+    the contract holding liquidity leadership as of ``end`` — else the strategy signals and/or trades
+    a thinning contract after the volume has migrated.  ESU4 takes the lead on 2024-04-17, well before
+    ESM4's calendar roll, so at ``end`` 2024-05-01 the liquidity leader is ESU4.  ``front_contract``
+    already names it; the series does not (``roll_schedule`` truncates ESU4 as its calendar roll is
+    past ``end``, leaving the series on ESM4) — so this currently fails on the series, the real bug.
+    Asserting the *liquidity leader* (not mere series/execution consistency) stops a fix that wrongly
+    pulls execution back onto the stale chain front from satisfying the test."""
     from aegis_trader.data.continuous_feed import ContinuousFeed
 
+    leader = InstrumentId.from_str("ESU4.XCME")  # liquidity crossover 2024-04-17, before the calendar roll
     port, frames = _early_crossover_es_port()
     feed = ContinuousFeed(port, "ES", start=_START, timeframe="1D")
-    feed.materialize(end="2024-05-01")  # between ESU4's early crossover (04-15) and the calendar roll
+    feed.materialize(end="2024-05-01")
 
-    front = feed.front_contract()
+    assert feed.front_contract() == leader, (
+        f"execution leg {feed.front_contract()} is not the liquidity leader {leader}"
+    )
     offset0_close = round(float(feed.series()["Close"].iloc[-1]), _PRECISION)
-    front_raw_closes = {round(float(close), _PRECISION) for close in frames[front]["Close"]}
-    assert offset0_close in front_raw_closes, (
-        f"front_contract()={front} but the series' offset-0 close {offset0_close} is not one of that "
-        f"leg's raw closes — execution leg != signal leg (wrong-leg divergence)"
+    leader_closes = {round(float(close), _PRECISION) for close in frames[leader]["Close"]}
+    assert offset0_close in leader_closes, (
+        f"the continuous series' offset-0 close {offset0_close} is not one of the liquidity leader "
+        f"{leader}'s raw closes — the series is anchored on the old (thinning) leg"
     )
 
 
