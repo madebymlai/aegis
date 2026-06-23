@@ -222,6 +222,7 @@ def _bundle_contract(
         base_currency=config.data.base_currency,
         timeframe=config.data.timeframe,
         lookback_bars=components.lookback_bars,
+        futures=tuple(config.data.futures),
     )
 
 

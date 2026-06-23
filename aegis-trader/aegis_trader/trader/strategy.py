@@ -30,6 +30,7 @@ globally on failure.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -43,9 +44,11 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
+from aegis_data.catalog import CatalogBackedDataPort, catalog_root, parquet_data_catalog
 from aegis_runtime import DataContract, ExecutionBundle
 
 from aegis_trader.data import (
+    ContinuousFeed,
     MarketDataPort,
     NautilusMarketData,
     raw_bar_type,
@@ -133,6 +136,10 @@ class RebalanceStrategy(Strategy):
         # Wave B: reconciled book state behind a port (no direct cache/portfolio reads).
         self._book_state: BookStatePort | None = None
         self._market_data: MarketDataPort | None = None
+        # r8b.9 Model 2: one continuous-future feed per declared root, keyed by its synthetic
+        # continuous id; plus a routing map from each feed's current front leg to its feed.
+        self._feeds: dict[InstrumentId, ContinuousFeed] = {}
+        self._leg_to_feed: dict[InstrumentId, ContinuousFeed] = {}
         # Pure cross-period analytics ledger is injected into the per-period pipeline.
         self._sleeve_ledger: SleeveLedger = SleeveLedger()
         self._pipeline: RebalancePipeline | None = None
@@ -180,6 +187,11 @@ class RebalanceStrategy(Strategy):
             raise RuntimeError("rebalance pipeline queried before on_start wired it")
         return self._pipeline
 
+    def _require_book_timeframe(self) -> str:
+        if self._book_timeframe is None:
+            raise RuntimeError("book timeframe queried before on_start resolved it")
+        return self._book_timeframe
+
     def _registered_instrument_ids(self) -> tuple[InstrumentId, ...]:
         instrument_ids = {
             instrument_id
@@ -187,6 +199,51 @@ class RebalanceStrategy(Strategy):
             for instrument_id in contract.instrument_ids
         }
         return tuple(sorted(instrument_ids, key=lambda instrument_id: instrument_id.value))
+
+    def _declared_roots(self) -> tuple[str, ...]:
+        """The book's continuous-future universe: the de-duplicated union of every sleeve
+        contract's bare roots (two sleeves naming the same root share one feed)."""
+        roots = {root for contract in self._sleeve_to_contract.values() for root in contract.futures}
+        return tuple(sorted(roots))
+
+    def _init_feeds(self, book_timeframe: str) -> None:
+        """Build one off-cache continuous feed per declared root and register it (Model 2).
+
+        Each feed re-materializes the back-adjusted series via aegis-data's request path on its own
+        ephemeral engine — reading the legs from the node's shared catalog, never the live cache.
+        The materialization spans the same warmup history the raw instruments get, so the rebalance
+        lookback sees an adjusted series identical to research over that window.
+        """
+        roots = self._declared_roots()
+        if not roots:
+            return
+        port = self._continuous_port()
+        end = self.clock.utc_now()
+        start = _startup_history_start(
+            end,
+            timeframe=book_timeframe,
+            lookback_bars=max(c.lookback_bars for c in self._sleeve_to_contract.values()),
+        )
+        feeds: list[ContinuousFeed] = []
+        for root in roots:
+            feed = ContinuousFeed(
+                port, root, start=start.date().isoformat(), timeframe=book_timeframe
+            )
+            feed.materialize(end=end.date().isoformat())
+            feeds.append(feed)
+        self._install_feeds(feeds)
+
+    def _install_feeds(self, feeds: Iterable[ContinuousFeed]) -> None:
+        """Register built feeds: by synthetic continuous id (NautilusMarketData reads the root from
+        the feed) and by current front leg (on_bar routes that leg's bars to the feed)."""
+        for feed in feeds:
+            self._feeds[feed.continuous_id] = feed
+            self._leg_to_feed[feed.front_contract()] = feed
+
+    def _continuous_port(self) -> CatalogBackedDataPort:
+        """The catalog-backed read port the feeds re-materialize through — the node's shared
+        ParquetDataCatalog (the same corpus warmed via request_bars(update_catalog=True))."""
+        return CatalogBackedDataPort(parquet_data_catalog(catalog_root()))
 
     def _warm_startup_cache(self, book_timeframe: str) -> None:
         """Warm the Cache via Nautilus's native catalog seam (ADR-0006).
@@ -201,8 +258,12 @@ class RebalanceStrategy(Strategy):
         """
         if not self.config.warmup_cache_on_start:
             return
-        instrument_ids = self._registered_instrument_ids()
-        if not instrument_ids:
+        # Warm the book's raw instruments and every feed's current front leg in one native pass:
+        # the feed's adjusted series is off-cache, but the front leg's raw bars must be in the live
+        # cache to value and fill the rolled order target (execution marks).
+        front_legs = tuple(feed.front_contract() for feed in self._feeds.values())
+        to_warm = (*self._registered_instrument_ids(), *front_legs)
+        if not to_warm:
             return
         end = self.clock.utc_now()
         start = _startup_history_start(
@@ -213,7 +274,7 @@ class RebalanceStrategy(Strategy):
                 for contract in self._sleeve_to_contract.values()
             ),
         )
-        for instrument_id in instrument_ids:
+        for instrument_id in to_warm:
             self.request_bars(
                 raw_bar_type(instrument_id, book_timeframe),
                 start=start,
@@ -235,7 +296,21 @@ class RebalanceStrategy(Strategy):
             base_currency=base_ccy,
             covered_instrument_ids=frozenset(self._registered_instrument_ids()),
         )
-        self._market_data = NautilusMarketData(cache=self.cache)
+
+        # The book runs on one timeframe (all sleeves agree); resolve it once for the feed
+        # materialization, the bar subscriptions, and the rebalance-period width.
+        book_timeframe = resolve_book_timeframe(
+            contract.timeframe for contract in self._sleeve_to_contract.values()
+        )
+        self._book_timeframe = book_timeframe
+        self._period_ns = timeframe_to_ns(book_timeframe)
+
+        # r8b.9 Model 2: build the off-cache continuous feeds before the read port, so the rebalance
+        # lookback reads each declared root from its back-adjusted series (not the raw legs).
+        self._init_feeds(book_timeframe)
+        self._market_data = NautilusMarketData(
+            cache=self.cache, feeds=tuple(self._feeds.values())
+        )
 
         pipeline = RebalancePipeline(
             book_state=self._require_book_state(),
@@ -255,18 +330,14 @@ class RebalanceStrategy(Strategy):
 
         self._log_startup_pass(startup_result)
 
-        # The book runs on one timeframe (all sleeves agree); resolve it once for
-        # the bar subscription and the rebalance-period width.
-        book_timeframe = resolve_book_timeframe(
-            contract.timeframe for contract in self._sleeve_to_contract.values()
-        )
-        self._book_timeframe = book_timeframe
-        self._period_ns = timeframe_to_ns(book_timeframe)
-
         self._warm_startup_cache(book_timeframe)
         instrument_ids = self._registered_instrument_ids()
         for instrument_id in instrument_ids:
             self.subscribe_bars(raw_bar_type(instrument_id, book_timeframe))
+        # Subscribe each feed's current front leg — execution target + the wake that drives the
+        # offset-0 append and in-process roll (on_bar).
+        for front_leg in self._leg_to_feed:
+            self.subscribe_bars(raw_bar_type(front_leg, book_timeframe))
 
         # Subscribe to FX reference-pair quotes so the cache mark xrates stay
         # current from live data — both the sizer (MarketDataPort.fx_rate) and
@@ -313,6 +384,11 @@ class RebalanceStrategy(Strategy):
         if not self._sleeve_to_bundle or self._is_halted:
             return
 
+        # ── fold a front-leg bar into its continuous feed (Model 2) ──────────
+        # Drives today's offset-0 append and the in-process roll before the cadence reads the
+        # series, so the rebalance window already sees the live continuous bar.
+        self._drive_feed(bar)
+
         period = self._extract_period(bar)
 
         # ── period-advance → rebalance the completed period ──────────────
@@ -322,6 +398,35 @@ class RebalanceStrategy(Strategy):
         self._current_period = period
 
     # ── internal helpers ──────────────────────────────────────────────────────
+
+    def _drive_feed(self, bar: Bar) -> None:
+        """Fold a front-leg bar into its continuous feed; handle a roll if the front advances.
+
+        Only a bar from a feed's *current front leg* is routed (a native-instrument or stale-leg
+        bar is ignored) so the feed never recomputes its causal front off a foreign bar's day.
+        """
+        feed = self._leg_to_feed.get(bar.bar_type.instrument_id)
+        if feed is None:
+            return
+        front_before = feed.front_contract()
+        feed.on_bar(bar)
+        front_after = feed.front_contract()
+        if front_after != front_before:
+            self._on_feed_roll(feed, front_before, front_after)
+
+    def _on_feed_roll(
+        self, feed: ContinuousFeed, front_before: InstrumentId, front_after: InstrumentId
+    ) -> None:
+        """Carry a feed roll through the rest of the strategy: re-base the ledger by the roll spread
+        (Slice L) and roll the execution subscription from the old front leg to the new one."""
+        spread = feed.last_roll_spread()
+        if spread:
+            self.sleeve_ledger.rebase_closes({feed.continuous_id: spread})
+        del self._leg_to_feed[front_before]
+        self._leg_to_feed[front_after] = feed
+        timeframe = self._require_book_timeframe()
+        self.unsubscribe_bars(raw_bar_type(front_before, timeframe))
+        self.subscribe_bars(raw_bar_type(front_after, timeframe))
 
     def _extract_period(self, bar: Bar) -> int:
         """The rebalance period index for *bar*: its event timestamp floored to

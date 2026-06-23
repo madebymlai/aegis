@@ -19,6 +19,7 @@ class _WarmupHarness:
     def __init__(self) -> None:
         self.config = SimpleNamespace(warmup_cache_on_start=True)
         self.clock = _Clock()
+        self._feeds: dict[object, object] = {}  # no continuous feeds in this native-only book
         self.calls: list[tuple[tuple, dict]] = []
         self._sleeve_to_contract = {
             SleeveName("trend"): DataContract(

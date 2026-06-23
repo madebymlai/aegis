@@ -169,6 +169,51 @@ def _es_port(stamp: time = _CLOSE) -> tuple[_FakePort, dict[InstrumentId, list[B
     return _FakePort(catalog, frames), native
 
 
+def _lead_frame(start: str, end: str, base: float, lead_lo: str, lead_hi: str) -> pd.DataFrame:
+    """A leg frame whose volume dominates only inside ``[lead_lo, lead_hi]`` (its liquidity-lead
+    window), so a chain of legs hands the lead off in expiry order."""
+    idx = pd.bdate_range(start, end)
+    close = [base + i for i in range(len(idx))]
+    lo, hi = pd.Timestamp(lead_lo), pd.Timestamp(lead_hi)
+    volume = [1000.0 if lo <= day <= hi else 50.0 for day in idx]
+    return pd.DataFrame(
+        {
+            "Open": [c - 0.5 for c in close],
+            "High": [c + 1 for c in close],
+            "Low": [c - 1 for c in close],
+            "Close": close,
+            "Volume": volume,
+        },
+        index=idx,
+    )
+
+
+def _es_port_two_rolls() -> tuple[_FakePort, dict[InstrumentId, list[Bar]]]:
+    """A three-leg ES chain (ESH4 -> ESM4 -> ESU4) with two liquidity handoffs, so a roll can be
+    exercised from a NON-empty pre-roll series (the realistic mid-run case)."""
+    esh4 = InstrumentId.from_str("ESH4.XCME")
+    esm4 = InstrumentId.from_str("ESM4.XCME")
+    esu4 = InstrumentId.from_str("ESU4.XCME")
+    # Each leg loses the lead ~2 weeks before it expires (mirroring the proven single-seam
+    # fixture: ESH4 crosses over 2024-03-01, expires 2024-03-15), so the volume-causal front
+    # and the chain's expiry-aware roll agree on both seams.
+    frames = {
+        esh4: _lead_frame(_START, "2024-03-15", 100.0, _START, "2024-02-29"),
+        esm4: _lead_frame(_START, "2024-06-21", 200.0, "2024-03-01", "2024-06-06"),
+        esu4: _lead_frame("2024-03-01", "2024-09-19", 300.0, "2024-06-07", "2024-09-19"),
+    }
+    native = {iid: _bars(iid, frame) for iid, frame in frames.items()}
+    catalog = _FakeCatalog(
+        instruments=[
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("ESM4.XCME", "2024-06-21"),
+            _future("ESU4.XCME", "2024-09-20"),
+        ],
+        bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
+    )
+    return _FakePort(catalog, frames), native
+
+
 def test_materializing_never_writes_the_continuous_series_into_the_live_cache() -> None:
     """B0 (isolation, the safety the feed relies on): the feed re-materializes on aegis-data's
     own ephemeral engine + cache, so a live node cache holding raw legs is untouched — the
@@ -258,6 +303,39 @@ def test_offset_zero_append_reproduces_research_and_is_stamp_robust(
     feed.on_bar(live_front_bar)  # append today's front bar verbatim at offset 0
 
     pd.testing.assert_frame_equal(feed.series(), research)  # == research-as-of-today, gap/dupe-free
+
+
+def test_last_roll_spread_is_the_uniform_additive_rebase_at_a_roll() -> None:
+    """D2: across a roll the whole series re-bases by one uniform additive spread Δ (BACKWARD_SPREAD
+    shifts every earlier segment by the same post−pre gap).  The feed exposes that Δ as a query so
+    the strategy can re-base the SleeveLedger's stored closes in lock-step (Slice L), keeping the
+    allocator input basis-consistent across the roll.  Before any roll the spread is 0.0."""
+    from aegis_trader.data.continuous_feed import ContinuousFeed
+
+    port, native = _es_port_two_rolls()
+    esu4 = InstrumentId.from_str("ESU4.XCME")
+
+    feed = ContinuousFeed(port, "ES", start=_START, timeframe="1D")
+    feed.materialize(end="2024-06-10")  # mid-run: front is ESM4, series already non-empty
+    assert feed.last_roll_spread() == 0.0
+    assert not feed.series().empty
+    assert feed.front_contract() == InstrumentId.from_str("ESM4.XCME")
+
+    pre = feed.series().copy()
+    roll_bar = next(
+        b for b in native[esu4] if pd.Timestamp(b.ts_event, tz="UTC").date() == date(2024, 6, 14)
+    )
+    feed.on_bar(roll_bar)  # second roll (ESM4 → ESU4) → re-base the whole series at the new front
+    post = feed.series()
+    assert feed.front_contract() == esu4
+
+    common = pre.index.intersection(post.index)
+    spread = feed.last_roll_spread()
+    assert spread != 0.0
+    # Δ is exactly the uniform shift carrying every pre-roll close from the old basis to the new.
+    pd.testing.assert_series_equal(
+        post.loc[common, "Close"], pre.loc[common, "Close"] + spread, check_names=False
+    )
 
 
 def test_roll_rematerializes_rebased_and_advances_the_front() -> None:
