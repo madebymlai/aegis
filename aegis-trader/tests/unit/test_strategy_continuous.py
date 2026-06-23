@@ -110,15 +110,25 @@ class _DriveHarness:
     sleeve_ledger = RebalanceStrategy.sleeve_ledger
     _drive_feed = RebalanceStrategy._drive_feed
     _on_feed_roll = RebalanceStrategy._on_feed_roll
+    _ensure_leg_subscribed = RebalanceStrategy._ensure_leg_subscribed
     _require_book_timeframe = RebalanceStrategy._require_book_timeframe
 
-    def __init__(self, feed: _FakeFeed, ledger: _FakeLedger, book_timeframe: str = "1D") -> None:
+    def __init__(
+        self,
+        feed: _FakeFeed,
+        ledger: _FakeLedger,
+        book_timeframe: str = "1D",
+        cache: _FakeCache | None = None,
+    ) -> None:
         self._leg_to_feed = {feed.front_contract(): feed}  # routing keyed by the current front leg
         self._sleeve_ledger = ledger
         self._pipeline = None
         self._book_timeframe = book_timeframe
+        self.cache = cache or _FakeCache()
+        self._pending_leg_subscriptions: set[InstrumentId] = set()
         self.subscribed: list[object] = []
         self.unsubscribed: list[object] = []
+        self.requested_instruments: list[InstrumentId] = []
 
     def subscribe_bars(self, bar_type: object) -> None:
         self.subscribed.append(bar_type)
@@ -126,28 +136,33 @@ class _DriveHarness:
     def unsubscribe_bars(self, bar_type: object) -> None:
         self.unsubscribed.append(bar_type)
 
+    def request_instrument(self, instrument_id: InstrumentId) -> None:
+        self.requested_instruments.append(instrument_id)
+
 
 def _front_leg_bar(instrument_id: InstrumentId) -> object:
     return SimpleNamespace(bar_type=SimpleNamespace(instrument_id=instrument_id))
 
 
-def test_on_bar_roll_rebases_the_ledger_and_re_subscribes_the_new_front() -> None:
-    """D4: when a front-leg bar advances the feed's causal front (a roll), the strategy re-bases the
-    SleeveLedger by the roll spread (Slice L — keep the allocator basis-consistent) and rolls the
-    execution subscription from the old front leg to the new one, in lock-step with the data roll."""
+def test_on_bar_roll_rebases_the_ledger_and_rolls_to_the_new_front() -> None:
+    """D4+G: when a front-leg bar advances the feed's causal front (a roll), the strategy re-bases
+    the SleeveLedger by the roll spread (Slice L — keep the allocator basis-consistent) and rolls
+    the execution target off the old front leg.  The new front is not preloaded (Slice G), so it is
+    dynamically requested (subscription deferred to on_instrument), in lock-step with the data roll."""
     cont = InstrumentId.from_str("ES.XCME")
     old_front = InstrumentId.from_str("ESM4.XCME")
     new_front = InstrumentId.from_str("ESU4.XCME")
     feed = _FakeFeed(cont, old_front, roll_to=new_front, spread=67.0)
     ledger = _FakeLedger()
-    harness = _DriveHarness(feed, ledger)
+    harness = _DriveHarness(feed, ledger)  # new_front absent from the (empty) cache
 
     harness._drive_feed(_front_leg_bar(old_front))
 
     assert len(feed.bars) == 1  # the bar was folded into the feed
     assert ledger.rebased == [{cont: 67.0}]  # ledger re-based by the uniform roll spread
     assert str(harness.unsubscribed[0]) == str(raw_bar_type(old_front, "1D"))
-    assert str(harness.subscribed[0]) == str(raw_bar_type(new_front, "1D"))
+    assert harness.requested_instruments == [new_front]  # new front loaded on demand
+    assert new_front in harness._pending_leg_subscriptions
     assert harness._leg_to_feed == {new_front: feed}  # routing now follows the new front
 
 
@@ -313,3 +328,84 @@ def test_submit_order_intent_leaves_a_native_instrument_untouched() -> None:
     )
 
     assert harness.submitted[0]["instrument_id"] == native
+
+
+# ── G: dynamic mid-run leg loading (request_instrument → on_instrument → subscribe) ───────────
+
+
+class _FakeCache:
+    def __init__(self, present: tuple[InstrumentId, ...] = ()) -> None:
+        self._present = set(present)
+
+    def instrument(self, instrument_id: InstrumentId) -> object | None:
+        return object() if instrument_id in self._present else None
+
+
+class _LegLoadHarness:
+    _ensure_leg_subscribed = RebalanceStrategy._ensure_leg_subscribed
+    on_instrument = RebalanceStrategy.on_instrument
+    _require_book_timeframe = RebalanceStrategy._require_book_timeframe
+
+    def __init__(self, cache: _FakeCache, book_timeframe: str = "1D") -> None:
+        self.cache = cache
+        self._book_timeframe = book_timeframe
+        self._pending_leg_subscriptions: set[InstrumentId] = set()
+        self.requested_instruments: list[InstrumentId] = []
+        self.subscribed: list[object] = []
+
+    def request_instrument(self, instrument_id: InstrumentId) -> None:
+        self.requested_instruments.append(instrument_id)
+
+    def subscribe_bars(self, bar_type: object) -> None:
+        self.subscribed.append(bar_type)
+
+
+def test_ensure_leg_subscribed_dynamically_loads_an_uncached_leg() -> None:
+    """G: a leg that is not yet in the cache (no preloaded horizon — IB has no load_all) is loaded
+    at runtime via request_instrument; the subscription is deferred to on_instrument, since
+    subscribe/order methods require the instrument to be present first."""
+    leg = InstrumentId.from_str("ESU4.XCME")
+    harness = _LegLoadHarness(_FakeCache())
+
+    harness._ensure_leg_subscribed(leg)
+
+    assert harness.requested_instruments == [leg]
+    assert leg in harness._pending_leg_subscriptions
+    assert harness.subscribed == []  # not subscribed until the definition arrives
+
+
+def test_ensure_leg_subscribed_subscribes_an_already_cached_leg_immediately() -> None:
+    """A leg whose definition is already present (preloaded or loaded by an earlier roll) is
+    subscribed straight away — no redundant request_instrument."""
+    leg = InstrumentId.from_str("ESM4.XCME")
+    harness = _LegLoadHarness(_FakeCache(present=(leg,)))
+
+    harness._ensure_leg_subscribed(leg)
+
+    assert harness.requested_instruments == []
+    assert harness._pending_leg_subscriptions == set()
+    assert str(harness.subscribed[0]) == str(raw_bar_type(leg, "1D"))
+
+
+def test_on_instrument_subscribes_a_pending_leg_when_its_definition_arrives() -> None:
+    """G: the async on_instrument callback completes the deferred subscription for a leg we
+    requested, then clears it from the pending set."""
+    leg = InstrumentId.from_str("ESU4.XCME")
+    harness = _LegLoadHarness(_FakeCache())
+    harness._pending_leg_subscriptions.add(leg)
+
+    harness.on_instrument(SimpleNamespace(id=leg))
+
+    assert str(harness.subscribed[0]) == str(raw_bar_type(leg, "1D"))
+    assert leg not in harness._pending_leg_subscriptions
+
+
+def test_on_instrument_ignores_an_instrument_we_did_not_request() -> None:
+    """Reconciled venue instruments (and anything else we did not dynamically request) arrive via
+    on_instrument too — they must not trigger a spurious bar subscription."""
+    other = InstrumentId.from_str("VUSA.XLON")
+    harness = _LegLoadHarness(_FakeCache())
+
+    harness.on_instrument(SimpleNamespace(id=other))
+
+    assert harness.subscribed == []

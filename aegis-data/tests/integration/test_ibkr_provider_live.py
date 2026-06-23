@@ -16,6 +16,7 @@ import os
 import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.instruments import FuturesContract
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import (
@@ -63,6 +64,39 @@ def test_request_instruments_round_trips_native_identity() -> None:
     instruments = _provider().request_instruments((_AAPL,))
 
     assert any(instrument.id == _AAPL for instrument in instruments)
+
+
+def _upcoming_es_quarterly_legs(now: pd.Timestamp, count: int = 4) -> list[InstrumentId]:
+    """The next ``count`` ES quarterly leg ids (IB simplified symbology, MIC venue) after ``now``.
+
+    ES rolls on the quarterly cycle H(Mar)/M(Jun)/U(Sep)/Z(Dec); the leg id is
+    ``ES{code}{single-digit-year}.XCME``.  Generated from the date — starting two months out to
+    skip a near-expiry front — so the check never rots as contracts roll."""
+    code = {3: "H", 6: "M", 9: "U", 12: "Z"}
+    legs: list[InstrumentId] = []
+    cursor = (now + pd.DateOffset(months=2)).replace(day=1)
+    while len(legs) < count:
+        if cursor.month in code:
+            legs.append(InstrumentId.from_str(f"ES{code[cursor.month]}{cursor.year % 10}.XCME"))
+        cursor = cursor + pd.DateOffset(months=1)
+    return legs
+
+
+def test_request_instruments_loads_dated_futures_legs_mic_qualified() -> None:
+    """A continuous book rolls into dated legs at runtime (Slice G — the live daemon has no
+    preloaded horizon, so each new front is loaded via request_instrument).  The provider must
+    qualify a leg's simplified-symbology id to a FuturesContract whose venue is MIC-pinned
+    (IB exchange CME → XCME) with underlying ES — the identity the continuous-root id, the catalog
+    lookup, and root→front execution all rely on."""
+    legs = _upcoming_es_quarterly_legs(pd.Timestamp.now(tz="UTC"))
+
+    by_id = {inst.id: inst for inst in _provider().request_instruments(legs)}
+
+    assert len(by_id) >= 2  # the front and at least one roll-ahead leg load
+    for leg_id, leg in by_id.items():
+        assert isinstance(leg, FuturesContract)
+        assert leg_id.venue.value == "XCME"  # CME exchange MIC-pinned (request used .XCME)
+        assert str(leg.underlying) == "ES"
 
 
 def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:

@@ -39,7 +39,7 @@ from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.events import OrderDenied
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.instruments import CurrencyPair
+from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
@@ -140,6 +140,8 @@ class RebalanceStrategy(Strategy):
         # continuous id; plus a routing map from each feed's current front leg to its feed.
         self._feeds: dict[InstrumentId, ContinuousFeed] = {}
         self._leg_to_feed: dict[InstrumentId, ContinuousFeed] = {}
+        # Front legs awaiting their definition (request_instrument is async; subscribe on_instrument).
+        self._pending_leg_subscriptions: set[InstrumentId] = set()
         # Pure cross-period analytics ledger is injected into the per-period pipeline.
         self._sleeve_ledger: SleeveLedger = SleeveLedger()
         self._pipeline: RebalancePipeline | None = None
@@ -338,9 +340,11 @@ class RebalanceStrategy(Strategy):
         for instrument_id in instrument_ids:
             self.subscribe_bars(raw_bar_type(instrument_id, book_timeframe))
         # Subscribe each feed's current front leg — execution target + the wake that drives the
-        # offset-0 append and in-process roll (on_bar).
+        # offset-0 append and in-process roll (on_bar).  Loaded on demand (Slice G): a long-running
+        # daemon's legs are not preloaded, so an uncached front is requested and subscribed on
+        # on_instrument.
         for front_leg in self._leg_to_feed:
-            self.subscribe_bars(raw_bar_type(front_leg, book_timeframe))
+            self._ensure_leg_subscribed(front_leg)
 
         # Subscribe to FX reference-pair quotes so the cache mark xrates stay
         # current from live data — both the sizer (MarketDataPort.fx_rate) and
@@ -429,7 +433,32 @@ class RebalanceStrategy(Strategy):
         self._leg_to_feed[front_after] = feed
         timeframe = self._require_book_timeframe()
         self.unsubscribe_bars(raw_bar_type(front_before, timeframe))
-        self.subscribe_bars(raw_bar_type(front_after, timeframe))
+        self._ensure_leg_subscribed(front_after)
+
+    def _ensure_leg_subscribed(self, leg_id: InstrumentId) -> None:
+        """Subscribe a front leg, loading it on demand first (Slice G — no preloaded leg horizon).
+
+        A long-running daemon rolls into legs that were never preloaded (IB has no ``load_all``).
+        If the leg's definition is already in the cache it is subscribed immediately; otherwise it
+        is requested at runtime (``request_instrument``) and the subscription is deferred to
+        ``on_instrument`` — subscribe/order methods require the instrument to be present first.
+        """
+        if self.cache.instrument(leg_id) is not None:
+            self.subscribe_bars(raw_bar_type(leg_id, self._require_book_timeframe()))
+            return
+        self._pending_leg_subscriptions.add(leg_id)
+        self.request_instrument(leg_id)
+
+    def on_instrument(self, instrument: Instrument) -> None:
+        """Complete a deferred front-leg subscription once its definition has loaded.
+
+        Instruments we did not request (e.g. reconciled venue instruments) are ignored.
+        """
+        instrument_id = instrument.id
+        if instrument_id not in self._pending_leg_subscriptions:
+            return
+        self._pending_leg_subscriptions.discard(instrument_id)
+        self.subscribe_bars(raw_bar_type(instrument_id, self._require_book_timeframe()))
 
     def _extract_period(self, bar: Bar) -> int:
         """The rebalance period index for *bar*: its event timestamp floored to
