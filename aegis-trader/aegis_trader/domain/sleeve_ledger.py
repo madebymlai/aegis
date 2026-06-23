@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 import numpy as np
 from nautilus_trader.model.identifiers import InstrumentId
@@ -56,6 +57,23 @@ class SleeveLedger:
             closes=dict(closes),
         )
         self._observations.append(observation)
+
+    def rebase_closes(self, deltas: Mapping[InstrumentId, float]) -> None:
+        """Shift every recorded close for each ref by its additive delta.
+
+        A back-adjusted continuous future re-bases its whole price history by a
+        uniform additive spread Δ at each roll (``BACKWARD_SPREAD``: newest =
+        offset 0, older segments shift).  The recorded closes were frozen in the
+        *previous* basis, so cross-period returns spanning the roll would divide a
+        new-basis ``curr`` by an old-basis ``prev`` — a cross-basis return that
+        desyncs the allocator inputs from research.  Applying the same Δ to the
+        stored closes keeps the whole recorded history in one basis (the current
+        one), so every return — pre-roll, the roll period, and after — is computed
+        in a single consistent basis, matching a single-basis research read.
+        """
+        if not deltas:
+            return
+        self._observations = [_rebased_period(period, deltas) for period in self._observations]
 
     def realized_covariance(
         self,
@@ -106,6 +124,18 @@ class SleeveLedger:
             return 0.0
         drawdown = 1.0 - float(current_nav) / peak
         return min(max(drawdown, 0.0), 1.0)
+
+
+def _rebased_period(
+    period: AttributionPeriod,
+    deltas: Mapping[InstrumentId, float],
+) -> AttributionPeriod:
+    """Return *period* with each ref's close shifted by its delta (others untouched)."""
+    closes = dict(period.closes)
+    for ref, delta in deltas.items():
+        if ref in closes:
+            closes[ref] = closes[ref] + float(delta)
+    return replace(period, closes=closes)
 
 
 def _complete_sleeve_return_rows(
