@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 
 import pandas as pd
+import pytest
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import AssetClass
@@ -217,6 +218,60 @@ def _es_port_two_rolls() -> tuple[_FakePort, dict[InstrumentId, list[Bar]]]:
         bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
     )
     return _FakePort(catalog, frames), native
+
+
+def _early_crossover_es_port() -> tuple[_FakePort, dict[InstrumentId, pd.DataFrame]]:
+    """A 3-leg ES chain where ESU4 takes the volume lead ~9 weeks BEFORE ESM4 expires — an EARLY
+    crossover, unlike the near-expiry crossovers of real CME cycles (which the other fixtures model).
+    In the window between that crossover and the calendar roll, the causal front (volume) and the
+    chain front (calendar/last-trade) name different legs.  Disjoint per-leg price ranges
+    (100s/200s/300s) make the series' anchor leg identifiable by its close."""
+    esh4 = InstrumentId.from_str("ESH4.XCME")
+    esm4 = InstrumentId.from_str("ESM4.XCME")
+    esu4 = InstrumentId.from_str("ESU4.XCME")
+    frames = {
+        esh4: _lead_frame(_START, "2024-03-15", 100.0, _START, "2024-02-29"),
+        esm4: _lead_frame(_START, "2024-06-21", 200.0, "2024-03-01", "2024-04-14"),
+        esu4: _lead_frame("2024-03-01", "2024-09-19", 300.0, "2024-04-15", "2024-09-19"),
+    }
+    native = {iid: _bars(iid, frame) for iid, frame in frames.items()}
+    catalog = _FakeCatalog(
+        instruments=[
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("ESM4.XCME", "2024-06-21"),
+            _future("ESU4.XCME", "2024-09-20"),
+        ],
+        bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
+    )
+    return _FakePort(catalog, frames), frames
+
+
+@pytest.mark.xfail(
+    reason="wrong-leg divergence (bd r8b9-wrongleg-bug): front_contract() uses the causal/volume "
+    "front, which rolls at an early crossover BEFORE the series' calendar chain does, so the "
+    "execution leg differs from the leg the signal series is anchored on. Remove this marker when "
+    "the front authority is unified to the chain.",
+    strict=True,
+)
+def test_front_contract_is_the_series_front_leg_on_an_early_crossover() -> None:
+    """The execution leg (``front_contract``) must be the leg the series is anchored on at offset 0:
+    otherwise the strategy sizes and signals off one leg's continuous series but subscribes and
+    trades another.  With an early crossover the two roll authorities (causal volume vs calendar
+    chain) pick different legs — this asserts the invariant that must hold and currently fails for
+    exactly that reason (the series' offset-0 close is not one of the execution leg's raw closes)."""
+    from aegis_trader.data.continuous_feed import ContinuousFeed
+
+    port, frames = _early_crossover_es_port()
+    feed = ContinuousFeed(port, "ES", start=_START, timeframe="1D")
+    feed.materialize(end="2024-05-01")  # between ESU4's early crossover (04-15) and the calendar roll
+
+    front = feed.front_contract()
+    offset0_close = round(float(feed.series()["Close"].iloc[-1]), _PRECISION)
+    front_raw_closes = {round(float(close), _PRECISION) for close in frames[front]["Close"]}
+    assert offset0_close in front_raw_closes, (
+        f"front_contract()={front} but the series' offset-0 close {offset0_close} is not one of that "
+        f"leg's raw closes — execution leg != signal leg (wrong-leg divergence)"
+    )
 
 
 def test_materializing_never_writes_the_continuous_series_into_the_live_cache() -> None:
