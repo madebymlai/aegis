@@ -25,6 +25,7 @@ from aegis_data.catalog import CatalogBackedDataPort, bars_to_ohlcv
 from aegis_data.catalog_contracts import catalog_contract_calendar, catalog_volume_probe
 from aegis_data.continuous_catalog import continuous_ohlcv_frames
 from aegis_data.liquidity import liquid_cycle_causal
+from aegis_data.rebasing import IDENTITY, Rebasing, rebasing_between
 from aegis_data.roll import roll_lead_days_for_cadence
 
 _T = TypeVar("_T")
@@ -50,7 +51,7 @@ class ContinuousFeed:
         self._continuous_id: InstrumentId | None = None
         self._series: pd.DataFrame | None = None
         self._front_id: InstrumentId | None = None
-        self._last_roll_spread: float = 0.0
+        self._last_rebasing: Rebasing = IDENTITY
 
     @property
     def root(self) -> str:
@@ -99,14 +100,16 @@ class ContinuousFeed:
         """
         return self._materialized(self._front_id)
 
-    def last_roll_spread(self) -> float:
-        """The uniform additive spread Δ applied at the most recent roll (0.0 if none yet).
+    def last_rebasing(self) -> Rebasing:
+        """The re-basing applied at the most recent roll (a no-op identity if none yet).
 
-        At a roll the whole series re-bases by one Δ (post−pre at the new roll); a caller holding
-        co-moving absolute state from before the roll (the SleeveLedger's stored closes) adds Δ to
-        carry it into the new basis, keeping live ≡ research across the seam (Slice L).
+        At a roll the whole series re-bases at the new front — additively under a spread mode,
+        multiplicatively under a ratio mode (the :class:`Rebasing` owns which).  A caller holding
+        co-moving absolute state from before the roll (the SleeveLedger's stored closes) applies this
+        to carry it into the new basis, keeping live ≡ research across the seam (Slice L) for whichever
+        adjustment mode is in force.
         """
-        return self._last_roll_spread
+        return self._last_rebasing
 
     def on_bar(self, bar: Bar) -> None:
         """Fold a closed front-leg bar into the series, appended verbatim at offset 0.
@@ -122,10 +125,11 @@ class ContinuousFeed:
         if self._causal_front(bar_day) != front_id:
             # A roll: the liquidity leader has advanced. Re-materialize the whole series re-based
             # at the new front (a non-event for the live cache) and advance the front leg, recording
-            # the uniform additive spread Δ (BACKWARD_SPREAD shifts every earlier segment by the
-            # same post−pre gap) so a caller can re-base co-moving state (the SleeveLedger) in step.
+            # the roll's Rebasing (additive under a spread mode, multiplicative under a ratio mode,
+            # read off the two materializations) so a caller can carry co-moving state (the
+            # SleeveLedger) into the new basis in step — for whichever adjustment mode is in force.
             self.materialize(end=bar_day.isoformat())
-            self._last_roll_spread = _rebase_spread(series, self._materialized(self._series))
+            self._last_rebasing = rebasing_between(series, self._materialized(self._series))
             return
         if bar.bar_type.instrument_id != front_id:
             return
@@ -154,16 +158,3 @@ class ContinuousFeed:
                 f"continuous-future root {self._root!r} has no liquid front leg by {end}"
             )
         return InstrumentId.from_str(cycle[-1].symbol)
-
-
-def _rebase_spread(old: pd.DataFrame, new: pd.DataFrame) -> float:
-    """The uniform additive spread Δ between two materializations of the same series.
-
-    A BACKWARD_SPREAD roll shifts every pre-roll close by one Δ, so the gap on any date present in
-    both bases is the same; read it off the earliest overlapping close (unambiguously pre-roll).
-    """
-    common = old.index.intersection(new.index)
-    if len(common) == 0:
-        return 0.0
-    anchor = common[0]
-    return float(new.loc[anchor, "Close"] - old.loc[anchor, "Close"])

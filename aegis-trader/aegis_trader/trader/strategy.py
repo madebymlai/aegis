@@ -424,11 +424,9 @@ class RebalanceStrategy(Strategy):
     def _on_feed_roll(
         self, feed: ContinuousFeed, front_before: InstrumentId, front_after: InstrumentId
     ) -> None:
-        """Carry a feed roll through the rest of the strategy: re-base the ledger by the roll spread
-        (Slice L) and roll the execution subscription from the old front leg to the new one."""
-        spread = feed.last_roll_spread()
-        if spread:
-            self.sleeve_ledger.rebase_closes({feed.continuous_id: spread})
+        """Carry a feed roll through the rest of the strategy: re-base the ledger by the roll's
+        Rebasing (Slice L) and roll the execution subscription from the old front leg to the new one."""
+        self.sleeve_ledger.rebase_closes({feed.continuous_id: feed.last_rebasing()})
         del self._leg_to_feed[front_before]
         self._leg_to_feed[front_after] = feed
         timeframe = self._require_book_timeframe()

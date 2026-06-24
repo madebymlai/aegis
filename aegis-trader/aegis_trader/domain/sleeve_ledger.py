@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
 import numpy as np
+from aegis_data.rebasing import Rebasing
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.allocator import portfolio_skew
@@ -58,22 +59,21 @@ class SleeveLedger:
         )
         self._observations.append(observation)
 
-    def rebase_closes(self, deltas: Mapping[InstrumentId, float]) -> None:
-        """Shift every recorded close for each ref by its additive delta.
+    def rebase_closes(self, rebasings: Mapping[InstrumentId, Rebasing]) -> None:
+        """Carry every recorded close for each ref into the new basis via its :class:`Rebasing`.
 
-        A back-adjusted continuous future re-bases its whole price history by a
-        uniform additive spread Δ at each roll (``BACKWARD_SPREAD``: newest =
-        offset 0, older segments shift).  The recorded closes were frozen in the
-        *previous* basis, so cross-period returns spanning the roll would divide a
-        new-basis ``curr`` by an old-basis ``prev`` — a cross-basis return that
-        desyncs the allocator inputs from research.  Applying the same Δ to the
-        stored closes keeps the whole recorded history in one basis (the current
-        one), so every return — pre-roll, the roll period, and after — is computed
-        in a single consistent basis, matching a single-basis research read.
+        A back-adjusted continuous future re-bases its whole price history at each roll — additively
+        under a spread mode, multiplicatively under a ratio mode (the :class:`Rebasing` owns which).
+        The recorded closes were frozen in the *previous* basis, so cross-period returns spanning the
+        roll would divide a new-basis ``curr`` by an old-basis ``prev`` — a cross-basis return that
+        desyncs the allocator inputs from research.  Applying the roll's ``Rebasing`` to the stored
+        closes keeps the whole recorded history in one basis (the current one), so every return —
+        pre-roll, the roll period, and after — is computed in a single consistent basis, matching a
+        single-basis research read, for whichever adjustment mode is in force.
         """
-        if not deltas:
+        if not rebasings:
             return
-        self._observations = [_rebased_period(period, deltas) for period in self._observations]
+        self._observations = [_rebased_period(period, rebasings) for period in self._observations]
 
     def realized_covariance(
         self,
@@ -128,13 +128,14 @@ class SleeveLedger:
 
 def _rebased_period(
     period: AttributionPeriod,
-    deltas: Mapping[InstrumentId, float],
+    rebasings: Mapping[InstrumentId, Rebasing],
 ) -> AttributionPeriod:
-    """Return *period* with each ref's close shifted by its delta (others untouched)."""
+    """Return *period* with each ref's close carried into the new basis by its Rebasing (others
+    untouched)."""
     closes = dict(period.closes)
-    for ref, delta in deltas.items():
+    for ref, rebasing in rebasings.items():
         if ref in closes:
-            closes[ref] = closes[ref] + float(delta)
+            closes[ref] = rebasing.apply(closes[ref])
     return replace(period, closes=closes)
 
 

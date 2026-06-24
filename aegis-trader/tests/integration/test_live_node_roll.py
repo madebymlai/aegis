@@ -35,6 +35,7 @@ from nautilus_trader.test_kit.functions import eventually
 from nautilus_trader.test_kit.mocks.data import MockMarketDataClient
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
+from aegis_data.rebasing import Rebasing, spread_rebasing
 from aegis_trader.data import raw_bar_type
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
@@ -70,10 +71,10 @@ class _RecordingClient(MockMarketDataClient):
 
 class _RecordingLedger:
     def __init__(self) -> None:
-        self.rebased: list[dict[InstrumentId, float]] = []
+        self.rebased: list[dict[InstrumentId, Rebasing]] = []
 
-    def rebase_closes(self, deltas: dict[InstrumentId, float]) -> None:
-        self.rebased.append(dict(deltas))
+    def rebase_closes(self, rebasings: dict[InstrumentId, Rebasing]) -> None:
+        self.rebased.append(dict(rebasings))
 
 
 class _RollingFeed:
@@ -91,8 +92,8 @@ class _RollingFeed:
     def on_bar(self, _bar: object) -> None:
         self._front = self._roll_to
 
-    def last_roll_spread(self) -> float:
-        return _SPREAD
+    def last_rebasing(self) -> Rebasing:
+        return spread_rebasing(_SPREAD)
 
 
 class _RollHarnessStrategy(RebalanceStrategy):
@@ -156,7 +157,7 @@ async def test_forced_roll_drives_request_instrument_on_instrument_subscribe_on_
         assert client.requested == [_NEW]  # dynamic load issued for the uncached new front
         assert cache.instrument(_NEW) is not None  # engine's reply loaded it into the cache
         assert client.unsubscribed == [raw_bar_type(_OLD, "1D")]  # old front execution sub dropped
-        assert ledger.rebased == [{_CONT: _SPREAD}]  # ledger re-based by the roll Δ
+        assert ledger.rebased == [{_CONT: spread_rebasing(_SPREAD)}]  # ledger carried into new basis
         assert set(strategy._leg_to_feed) == {_NEW}  # routing now follows the new front
     finally:
         strategy.stop()

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 
+from aegis_data.rebasing import IDENTITY, Rebasing, spread_rebasing
 from aegis_runtime import DataContract
 from aegis_trader.data import raw_bar_type
 from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource, SleeveName
@@ -76,12 +77,12 @@ class _FakeFeed:
         front: InstrumentId,
         *,
         roll_to: InstrumentId | None = None,
-        spread: float = 0.0,
+        rebasing: Rebasing = IDENTITY,
     ) -> None:
         self.continuous_id = continuous_id
         self._front = front
         self._roll_to = roll_to
-        self._spread = spread
+        self._rebasing = rebasing
         self.bars: list[object] = []
 
     def front_contract(self) -> InstrumentId:
@@ -92,16 +93,16 @@ class _FakeFeed:
         if self._roll_to is not None:  # simulate the causal roll the real feed performs
             self._front = self._roll_to
 
-    def last_roll_spread(self) -> float:
-        return self._spread
+    def last_rebasing(self) -> Rebasing:
+        return self._rebasing
 
 
 class _FakeLedger:
     def __init__(self) -> None:
-        self.rebased: list[dict[InstrumentId, float]] = []
+        self.rebased: list[dict[InstrumentId, Rebasing]] = []
 
-    def rebase_closes(self, deltas: dict[InstrumentId, float]) -> None:
-        self.rebased.append(dict(deltas))
+    def rebase_closes(self, rebasings: dict[InstrumentId, Rebasing]) -> None:
+        self.rebased.append(dict(rebasings))
 
 
 class _DriveHarness:
@@ -152,14 +153,14 @@ def test_on_bar_roll_rebases_the_ledger_and_rolls_to_the_new_front() -> None:
     cont = InstrumentId.from_str("ES.XCME")
     old_front = InstrumentId.from_str("ESM4.XCME")
     new_front = InstrumentId.from_str("ESU4.XCME")
-    feed = _FakeFeed(cont, old_front, roll_to=new_front, spread=67.0)
+    feed = _FakeFeed(cont, old_front, roll_to=new_front, rebasing=spread_rebasing(67.0))
     ledger = _FakeLedger()
     harness = _DriveHarness(feed, ledger)  # new_front absent from the (empty) cache
 
     harness._drive_feed(_front_leg_bar(old_front))
 
     assert len(feed.bars) == 1  # the bar was folded into the feed
-    assert ledger.rebased == [{cont: 67.0}]  # ledger re-based by the uniform roll spread
+    assert ledger.rebased == [{cont: spread_rebasing(67.0)}]  # ledger carried into the new basis
     assert str(harness.unsubscribed[0]) == str(raw_bar_type(old_front, "1D"))
     assert harness.requested_instruments == [new_front]  # new front loaded on demand
     assert new_front in harness._pending_leg_subscriptions

@@ -362,11 +362,11 @@ def test_offset_zero_append_reproduces_research_byte_exact() -> None:
     pd.testing.assert_frame_equal(feed.series(), research)  # == research-as-of-today, gap/dupe-free
 
 
-def test_last_roll_spread_is_the_uniform_additive_rebase_at_a_roll() -> None:
-    """D2: across a roll the whole series re-bases by one uniform additive spread Δ (BACKWARD_SPREAD
-    shifts every earlier segment by the same post−pre gap).  The feed exposes that Δ as a query so
-    the strategy can re-base the SleeveLedger's stored closes in lock-step (Slice L), keeping the
-    allocator input basis-consistent across the roll.  Before any roll the spread is 0.0."""
+def test_last_rebasing_carries_pre_roll_closes_into_the_new_basis() -> None:
+    """D2: across a roll the whole series re-bases at the new front.  The feed exposes that re-basing
+    as a :class:`Rebasing` so the strategy can carry the SleeveLedger's stored closes in lock-step
+    (Slice L), keeping the allocator input basis-consistent across the roll for whichever adjustment
+    mode is in force.  Before any roll the re-basing is a no-op."""
     from aegis_trader.data.continuous_feed import ContinuousFeed
 
     port, native = _es_port_two_rolls()
@@ -374,7 +374,7 @@ def test_last_roll_spread_is_the_uniform_additive_rebase_at_a_roll() -> None:
 
     feed = ContinuousFeed(port, "ES", start=_START, timeframe="1D")
     feed.materialize(end="2024-06-10")  # mid-run: front is ESM4, series already non-empty
-    assert feed.last_roll_spread() == 0.0
+    assert feed.last_rebasing().apply(123.0) == 123.0  # no roll yet -> identity (no-op)
     assert not feed.series().empty
     assert feed.front_contract() == InstrumentId.from_str("ESM4.XCME")
 
@@ -387,11 +387,11 @@ def test_last_roll_spread_is_the_uniform_additive_rebase_at_a_roll() -> None:
     assert feed.front_contract() == esu4
 
     common = pre.index.intersection(post.index)
-    spread = feed.last_roll_spread()
-    assert spread != 0.0
-    # Δ is exactly the uniform shift carrying every pre-roll close from the old basis to the new.
+    rebasing = feed.last_rebasing()
+    assert rebasing.apply(pre.loc[common[0], "Close"]) != pre.loc[common[0], "Close"]  # a real shift
+    # the Rebasing carries every pre-roll close from the old basis onto the new.
     pd.testing.assert_series_equal(
-        post.loc[common, "Close"], pre.loc[common, "Close"] + spread, check_names=False
+        post.loc[common, "Close"], pre.loc[common, "Close"].map(rebasing.apply), check_names=False
     )
 
 
