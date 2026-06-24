@@ -141,7 +141,7 @@ def test_continuous_future_targets_the_internally_aggregated_root_bar_type() -> 
     )
 
 
-def test_request_params_carry_transitions_and_backward_spread_mode() -> None:
+def test_request_params_carry_transitions_and_the_default_backward_ratio_mode() -> None:
     pre = _frame(["2024-03-06", "2024-03-07"], [100.0, 102.0])
     post = _frame(["2024-03-07", "2024-03-08"], [120.0, 122.0])
     chain = ContractChain(
@@ -154,7 +154,7 @@ def test_request_params_carry_transitions_and_backward_spread_mode() -> None:
 
     assert (
         params["continuous_future_adjustment_mode"]
-        == ContinuousFutureAdjustmentType.BACKWARD_SPREAD
+        == ContinuousFutureAdjustmentType.BACKWARD_RATIO
     )
     assert params["continuous_future_transitions"] == [
         {

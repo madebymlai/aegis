@@ -85,13 +85,19 @@ def rebasing_between(
     *,
     mode: ContinuousFutureAdjustmentType = DEFAULT_ADJUSTMENT_MODE,
 ) -> Rebasing:
-    """The re-basing carrying a pre-roll close from ``old`` into ``new`` after one roll, read off the
-    earliest overlapping close (the per-seam term of Nautilus's cumulative offset): additive
-    ``new - old`` for a spread mode, multiplicative ``new / old`` for a ratio mode."""
+    """The re-basing carrying a pre-roll close from ``old`` into ``new`` after one roll: additive
+    ``new - old`` for a spread mode, multiplicative ``new / old`` for a ratio mode (the per-seam term
+    of Nautilus's cumulative offset).
+
+    Read off the **most-recent** overlapping close — the current front's own segment, which is the
+    unadjusted anchor of the old basis, so the read is the clean seam shift: exact for spread, and a
+    single price-rounding for ratio (reading deep history instead would compound the per-bar rounding
+    of both scaled materializations).  No overlap (or a non-positive anchor under ratio) is a no-op.
+    """
     common = old.index.intersection(new.index)
     if len(common) == 0:
         return IDENTITY
-    anchor = common[0]
+    anchor = common[-1]
     old_close = float(old.loc[anchor, "Close"])
     new_close = float(new.loc[anchor, "Close"])
     if mode.is_ratio:

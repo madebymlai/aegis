@@ -19,10 +19,14 @@ from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from aegis_data.bar_type import continuous_bar_type
 from aegis_data.chain import ContractChain
 
-# Spread (Panama): the offset is added straight onto the fixed-point PriceRaw, so the
-# adjusted series is integer-exact at any precision and stable across Nautilus releases
-# (prototype NOTES.md V4).  This is the one mode Aegis ships.
-DEFAULT_ADJUSTMENT_MODE = ContinuousFutureAdjustmentType.BACKWARD_SPREAD
+# Ratio (proportional): each prior segment is scaled by the cumulative post/pre factor, so the
+# adjusted series preserves percentage returns exactly — what the returns-based research metrics
+# (Sharpe/vol from value.pct_change) consume, and what keeps research↔live in the percentage frame.
+# Byte-exact at every trading precision (float drift only beyond 8dp, prototype NOTES.md V4); the live
+# SleeveLedger re-bases multiplicatively in lock-step via aegis_data.rebasing.  This is the default mode
+# Aegis ships (aegis-rd-iwx); BACKWARD_SPREAD stays reachable via the explicit adjustment_mode for any
+# caller needing integer-exact additive offsets.
+DEFAULT_ADJUSTMENT_MODE = ContinuousFutureAdjustmentType.BACKWARD_RATIO
 
 
 @dataclass(frozen=True)
@@ -72,18 +76,26 @@ class ContinuousFuture:
         }
 
 
-def continuous_future(chain: ContractChain, root: str, *, timeframe: str = "1D") -> ContinuousFuture:
+def continuous_future(
+    chain: ContractChain,
+    root: str,
+    *,
+    timeframe: str = "1D",
+    adjustment_mode: ContinuousFutureAdjustmentType = DEFAULT_ADJUSTMENT_MODE,
+) -> ContinuousFuture:
     """Assemble the :class:`ContinuousFuture` for ``root`` from its dated-leg chain.
 
     The target root inherits the legs' venue (every leg of a root trades one venue), so
     the synthetic root id is ``{root}.{venue}`` (e.g. ``ES`` over ``XCME`` legs →
     ``ES.XCME``); ``root`` is supplied because it is not a derivable prefix of the leg
-    symbols.
+    symbols.  ``adjustment_mode`` defaults to the one switch (:data:`DEFAULT_ADJUSTMENT_MODE`)
+    that also drives the live re-basing, so a caller never names spread or ratio.
     """
     root_id = InstrumentId(Symbol(root), _chain_venue(chain))
     return ContinuousFuture(
         target_bar_type=continuous_bar_type(root_id, timeframe),
         transitions=roll_transitions(chain),
+        adjustment_mode=adjustment_mode,
     )
 
 

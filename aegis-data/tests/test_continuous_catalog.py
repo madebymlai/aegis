@@ -33,7 +33,8 @@ from aegis_data.catalog_contracts import (
 from aegis_data.chain import fetch_contract_chain
 from aegis_data.continuous_catalog import continuous_ohlcv_frames
 from aegis_data.continuous_future import continuous_future
-from tests.support.continuous_spread_oracle import backward_spread_series
+from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
+from tests.support.continuous_oracle import backward_series
 
 _UTC = timezone.utc
 _CLOSE = time(21, 0)  # bar stamp, strictly after the midnight roll boundary
@@ -183,11 +184,11 @@ def _es_port() -> tuple[_FakePort, dict[InstrumentId, list[Bar]]]:
     return _FakePort(catalog, frames), native
 
 
-def test_continuous_ohlcv_frames_match_the_spread_oracle_keyed_by_root_id() -> None:
+def test_continuous_ohlcv_frames_match_the_oracle_keyed_by_root_id() -> None:
     port, native = _es_port()
 
     # Build the chain through the same catalog seams the composer uses, then cross-check
-    # the engine's adjusted series against the independent Decimal oracle.
+    # the engine's adjusted series against the independent Decimal oracle for the default mode.
     chain = fetch_contract_chain(
         "ES", date(2024, 1, 15), date(2024, 5, 31),
         list_contracts=catalog_contract_calendar(port.catalog),
@@ -196,7 +197,7 @@ def test_continuous_ohlcv_frames_match_the_spread_oracle_keyed_by_root_id() -> N
         probe_volume=catalog_volume_probe(port),
     )
     future = continuous_future(chain, "ES")
-    oracle = backward_spread_series(native, future.transitions)
+    oracle = backward_series(native, future.transitions, mode=DEFAULT_ADJUSTMENT_MODE)
 
     frames = continuous_ohlcv_frames(
         port, ["ES"], start=_START, end=_END, timeframe="1D"

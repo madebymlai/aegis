@@ -1,10 +1,11 @@
-"""Spread golden parity: request- and subscribe-path continuous series are byte-exact.
+"""Adjustment golden parity: request- and subscribe-path continuous series are byte-exact.
 
 Path A's gate (AC4): both the in-process ``request_bars`` (research) and the live
 ``subscribe_bars`` roll state machine, driven by the *same* roll-transition table the
-producer builds, must reproduce — byte-for-byte — the ``BACKWARD_SPREAD`` continuous
-series of the independent Decimal oracle.  Spread is integer-exact, so this is an exact
-``==`` over the OHLC raw ints (no tolerance) ⇒ live ≡ research.
+producer builds, must reproduce — byte-for-byte — the continuous series of the independent
+Decimal oracle, for BOTH shipped backward modes (parametrized).  Spread is integer-exact and
+ratio is exact at this trading precision, so this is an exact ``==`` over the OHLC raw ints
+(no tolerance) ⇒ live ≡ research.
 
 The engine stamps each composite bar at its bucket close and drops the final
 still-forming bucket, so the *request* series is the head of the oracle's; the live
@@ -17,18 +18,23 @@ from __future__ import annotations
 from datetime import datetime, time, timezone
 
 import pandas as pd
+import pytest
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
-from nautilus_trader.model.enums import AssetClass
+from nautilus_trader.model.enums import AssetClass, ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.instruments import FuturesContract
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.chain import ContractChain
-from aegis_data.continuous_future import ContinuousFuture, continuous_future
+from aegis_data.continuous_future import (
+    DEFAULT_ADJUSTMENT_MODE,
+    ContinuousFuture,
+    continuous_future,
+)
 from aegis_data.continuous_materialize import materialize_continuous_bars
-from tests.support.continuous_spread_oracle import AdjustedBar, backward_spread_series
+from tests.support.continuous_oracle import AdjustedBar, backward_series
 from tests.support.continuous_subscribe import (
     materialize_continuous_bars_via_subscription,
 )
@@ -36,6 +42,11 @@ from tests.support.continuous_subscribe import (
 _UTC = timezone.utc
 _CLOSE = time(21, 0)  # intraday bar stamp, strictly after the midnight roll boundary
 _PRECISION = 2
+# Both shipped backward modes — the series must be byte-exact with the independent oracle for each.
+_MODES = (
+    ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+    ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+)
 
 
 def _frame(dates: list[str], close: list[float]) -> pd.DataFrame:
@@ -95,7 +106,9 @@ def _oracle_raws(oracle: list[AdjustedBar]) -> list[tuple[int, int, int, int]]:
     return [(o.open_raw, o.high_raw, o.low_raw, o.close_raw) for o in oracle]
 
 
-def _es_single_seam() -> tuple[ContinuousFuture, dict[InstrumentId, list[Bar]]]:
+def _es_single_seam(
+    *, mode: ContinuousFutureAdjustmentType = DEFAULT_ADJUSTMENT_MODE
+) -> tuple[ContinuousFuture, dict[InstrumentId, list[Bar]]]:
     """The ES H4→M4 single-seam fixture (roll 2024-03-07) shared by the request- and
     subscribe-path parity tests: overlapping pre/post leg frames and their native bars."""
     esh4 = InstrumentId(Symbol("ESH4"), Venue("XCME"))
@@ -109,11 +122,12 @@ def _es_single_seam() -> tuple[ContinuousFuture, dict[InstrumentId, list[Bar]]]:
         roll_dates=(pd.Timestamp("2024-03-07"),),
         frames=(pre, post),
     )
-    future = continuous_future(chain, "ES")
+    future = continuous_future(chain, "ES", adjustment_mode=mode)
     return future, {esh4: _bars(esh4, pre), esm4: _bars(esm4, post)}
 
 
-def test_request_path_series_is_byte_exact_with_the_spread_oracle() -> None:
+@pytest.mark.parametrize("mode", _MODES)
+def test_request_path_series_is_byte_exact_with_the_oracle(mode) -> None:
     esh4 = InstrumentId(Symbol("ESH4"), Venue("XCME"))
     esm4 = InstrumentId(Symbol("ESM4"), Venue("XCME"))
     pre = _frame(["2024-03-04", "2024-03-05", "2024-03-06", "2024-03-07", "2024-03-08"],
@@ -125,7 +139,7 @@ def test_request_path_series_is_byte_exact_with_the_spread_oracle() -> None:
         roll_dates=(pd.Timestamp("2024-03-07"),),
         frames=(pre, post),
     )
-    future = continuous_future(chain, "ES")
+    future = continuous_future(chain, "ES", adjustment_mode=mode)
     leg_bars = {esh4: _bars(esh4, pre), esm4: _bars(esm4, post)}
 
     engine_bars = materialize_continuous_bars(
@@ -135,16 +149,19 @@ def test_request_path_series_is_byte_exact_with_the_spread_oracle() -> None:
         start=pd.Timestamp("2024-03-01", tz="UTC"),
         end=pd.Timestamp("2024-03-13", tz="UTC"),
     )
-    oracle = backward_spread_series(leg_bars, future.transitions)
+    oracle = backward_series(leg_bars, future.transitions, mode=mode)
 
     engine_raws = [(b.open.raw, b.high.raw, b.low.raw, b.close.raw) for b in engine_bars]
     oracle_raws = [(o.open_raw, o.high_raw, o.low_raw, o.close_raw) for o in oracle[: len(engine_bars)]]
     assert engine_bars  # the request path emitted an adjusted series
-    assert engine_raws == oracle_raws  # byte-exact, no tolerance
-    assert engine_bars[0].close.as_double() == 118.0  # pre leg 100.0 + spread (121 - 103)
+    assert engine_raws == oracle_raws  # byte-exact, no tolerance (spread exact; ratio exact at this precision)
+    # the first pre-leg close (100.0) carried into the new basis: spread 100 + (121-103); ratio 100 * 121/103
+    expected_first = 118.0 if mode is ContinuousFutureAdjustmentType.BACKWARD_SPREAD else 117.5
+    assert engine_bars[0].close.as_double() == expected_first
 
 
-def test_request_path_cumulative_offset_across_three_seams_is_byte_exact() -> None:
+@pytest.mark.parametrize("mode", _MODES)
+def test_request_path_cumulative_offset_across_three_seams_is_byte_exact(mode) -> None:
     legs = {
         "ESH4.XCME": _frame(["2024-03-04", "2024-03-05", "2024-03-06"], [100.0, 101.0, 102.0]),
         "ESM4.XCME": _frame(["2024-03-06", "2024-03-07", "2024-03-08"], [200.0, 201.0, 202.0]),
@@ -160,7 +177,7 @@ def test_request_path_cumulative_offset_across_three_seams_is_byte_exact() -> No
         ),
         frames=tuple(legs.values()),
     )
-    future = continuous_future(chain, "ES")
+    future = continuous_future(chain, "ES", adjustment_mode=mode)
     leg_bars = {InstrumentId.from_str(sym): _bars(InstrumentId.from_str(sym), fr) for sym, fr in legs.items()}
 
     engine_bars = materialize_continuous_bars(
@@ -170,22 +187,24 @@ def test_request_path_cumulative_offset_across_three_seams_is_byte_exact() -> No
         start=pd.Timestamp("2024-03-01", tz="UTC"),
         end=pd.Timestamp("2024-03-15", tz="UTC"),
     )
-    oracle = backward_spread_series(leg_bars, future.transitions)
+    oracle = backward_series(leg_bars, future.transitions, mode=mode)
 
     engine_raws = [(b.open.raw, b.high.raw, b.low.raw, b.close.raw) for b in engine_bars]
     oracle_raws = [(o.open_raw, o.high_raw, o.low_raw, o.close_raw) for o in oracle[: len(engine_bars)]]
-    closes = [b.close.as_double() for b in engine_bars]
-    # Each seam gap is +98 (e.g. 200 - 102); cumulative offsets 294/196/98/0 ramp the
-    # spliced series into one continuous +1/day line across all three rolls.
-    assert closes[:6] == [394.0, 395.0, 396.0, 397.0, 398.0, 399.0]
-    assert engine_raws == oracle_raws  # byte-exact across three cumulative seams
+    assert engine_raws == oracle_raws  # byte-exact across three cumulative seams (spread Σ / ratio Π)
+    if mode is ContinuousFutureAdjustmentType.BACKWARD_SPREAD:
+        closes = [b.close.as_double() for b in engine_bars]
+        # Each seam gap is +98 (e.g. 200 - 102); cumulative offsets 294/196/98/0 ramp the
+        # spliced series into one continuous +1/day line across all three rolls.
+        assert closes[:6] == [394.0, 395.0, 396.0, 397.0, 398.0, 399.0]
 
 
-def test_request_path_is_byte_exact_when_bars_sit_on_the_midnight_roll_boundary() -> None:
+@pytest.mark.parametrize("mode", _MODES)
+def test_request_path_is_byte_exact_when_bars_sit_on_the_midnight_roll_boundary(mode) -> None:
     """Real IBKR daily bars are stamped at 00:00 UTC — exactly on the midnight roll
     transition (verified against a live gateway, r8b.2). The seam must then resolve to the
-    post leg with no gap or duplicate on the roll day, and stay byte-exact with the spread
-    oracle. The companion goldens use an off-boundary 21:00 stamp; production sits on it."""
+    post leg with no gap or duplicate on the roll day, and stay byte-exact with the oracle for
+    either mode. The companion goldens use an off-boundary 21:00 stamp; production sits on it."""
     esh4 = InstrumentId(Symbol("ESH4"), Venue("XCME"))
     esm4 = InstrumentId(Symbol("ESM4"), Venue("XCME"))
     pre = _frame(["2024-03-04", "2024-03-05", "2024-03-06", "2024-03-07", "2024-03-08"],
@@ -194,14 +213,14 @@ def test_request_path_is_byte_exact_when_bars_sit_on_the_midnight_roll_boundary(
                   [120.0, 121.0, 122.0, 123.0, 124.0])
     chain = ContractChain(symbols=("ESH4.XCME", "ESM4.XCME"),
                           roll_dates=(pd.Timestamp("2024-03-07"),), frames=(pre, post))
-    future = continuous_future(chain, "ES")
+    future = continuous_future(chain, "ES", adjustment_mode=mode)
     leg_bars = {esh4: _bars(esh4, pre, at=time(0, 0)), esm4: _bars(esm4, post, at=time(0, 0))}
 
     engine_bars = materialize_continuous_bars(
         future, leg_instruments=(_future(esh4), _future(esm4)), leg_bars=leg_bars,
         start=pd.Timestamp("2024-03-01", tz="UTC"), end=pd.Timestamp("2024-03-13", tz="UTC"),
     )
-    oracle = backward_spread_series(leg_bars, future.transitions)
+    oracle = backward_series(leg_bars, future.transitions, mode=mode)
 
     engine_raws = [(b.open.raw, b.high.raw, b.low.raw, b.close.raw) for b in engine_bars]
     oracle_raws = [(o.open_raw, o.high_raw, o.low_raw, o.close_raw) for o in oracle[: len(engine_bars)]]
@@ -217,12 +236,13 @@ def test_request_path_is_byte_exact_when_bars_sit_on_the_midnight_roll_boundary(
     assert roll_day[0].close.as_double() == 121.0
 
 
-def test_subscribe_path_is_byte_exact_with_the_request_path_and_oracle() -> None:
+@pytest.mark.parametrize("mode", _MODES)
+def test_subscribe_path_is_byte_exact_with_the_request_path_and_oracle(mode) -> None:
     """AC4 (live half): the live ``subscribe_bars`` roll state machine produces the
     SAME adjusted series as the request path and the Decimal oracle — byte-exact, so
     live ≡ research.  Live runs one bar longer (it emits the final still-forming
     bucket the bounded request stops short of, V2)."""
-    future, leg_bars = _es_single_seam()
+    future, leg_bars = _es_single_seam(mode=mode)
 
     request_bars = materialize_continuous_bars(
         future,
@@ -237,7 +257,7 @@ def test_subscribe_path_is_byte_exact_with_the_request_path_and_oracle() -> None
         leg_bars=leg_bars,
         start=pd.Timestamp("2024-03-01", tz="UTC"),
     )
-    oracle = backward_spread_series(leg_bars, future.transitions)
+    oracle = backward_series(leg_bars, future.transitions, mode=mode)
 
     assert run.bars  # the subscribe path emitted an adjusted live series
     # Live is exactly one bar longer than the bounded request (the final bucket, V2)

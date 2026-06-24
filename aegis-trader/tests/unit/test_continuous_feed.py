@@ -388,10 +388,13 @@ def test_last_rebasing_carries_pre_roll_closes_into_the_new_basis() -> None:
 
     common = pre.index.intersection(post.index)
     rebasing = feed.last_rebasing()
-    assert rebasing.apply(pre.loc[common[0], "Close"]) != pre.loc[common[0], "Close"]  # a real shift
-    # the Rebasing carries every pre-roll close from the old basis onto the new.
+    carried = pre.loc[common, "Close"].map(rebasing.apply)
+    assert carried.iloc[-1] != pre.loc[common[-1], "Close"]  # a real shift at the seam anchor
+    # the Rebasing carries every pre-roll close from the old basis onto the new — to the series' own
+    # price precision (ratio is a multiply-then-round, so bit-exact only at the seam anchor; the rtol
+    # still separates the correct transform from identity or the wrong additive/multiplicative mode).
     pd.testing.assert_series_equal(
-        post.loc[common, "Close"], pre.loc[common, "Close"].map(rebasing.apply), check_names=False
+        post.loc[common, "Close"], carried, check_names=False, rtol=5e-3
     )
 
 
