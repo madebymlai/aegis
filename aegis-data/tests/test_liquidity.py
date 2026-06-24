@@ -246,6 +246,36 @@ def test_liquid_roll_schedule_recovers_a_liquidity_leader_truncated_by_the_windo
     assert windowed.roll_dates == full.roll_dates        # the window edge does not move the roll date
 
 
+def test_liquid_roll_schedule_does_not_roll_onto_an_eligible_leg_before_its_crossover() -> None:
+    # The correctness gate: the late-edge extension triggers on a CONFIRMED leadership crossover
+    # (smoothed, on/before end), not on eligibility.  A leg that is eligible — it *ever* leads, so it
+    # is in the Liquid Cycle — but whose crossover has not happened by end must NOT be pulled in;
+    # rolling on eligibility alone would trade the back month before liquidity actually migrated.
+    candidates = [
+        DatedContract("PAM4", date(2024, 2, 29)),
+        DatedContract("PAU4", date(2024, 5, 31)),
+    ]
+    crossover = pd.Timestamp("2024-02-05")
+    front = pd.Series(
+        [1000.0 if d < crossover else 1.0 for d in pd.bdate_range("2024-01-01", "2024-02-29")],
+        index=pd.bdate_range("2024-01-01", "2024-02-29"), dtype="float64",
+    )
+    back = pd.Series(
+        [10.0 if d < crossover else 5000.0 for d in pd.bdate_range("2024-01-01", "2024-04-01")],
+        index=pd.bdate_range("2024-01-01", "2024-04-01"), dtype="float64",
+    )
+    volume = {"PAM4": front, "PAU4": back}
+
+    # PAU4 is eligible (it will take the lead) ...
+    assert tuple(c.symbol for c in liquid_cycle(candidates, volume, roll_lead_days=5)) == ("PAM4", "PAU4")
+    # ... but with end (2024-02-02) before its crossover (2024-02-05) the chain stays on PAM4: no early roll.
+    schedule = liquid_roll_schedule(
+        candidates, volume, date(2024, 1, 1), date(2024, 2, 2), roll_lead_days=5
+    )
+    assert schedule.symbols == ("PAM4",)
+    assert schedule.roll_dates == ()
+
+
 def test_liquid_roll_schedule_roll_dates_are_causal() -> None:
     # The roll only ever depends on trailing volume, so truncating every series to the
     # resulting roll date reproduces the same roll — the guarantee that the live (causal)
