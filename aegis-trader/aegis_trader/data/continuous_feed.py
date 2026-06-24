@@ -1,7 +1,7 @@
 """Continuous-future feed — the RebalanceStrategy-owned deep module (r8b.9, Model 2).
 
 One feed per bare root.  It owns the back-adjusted continuous series, re-materializing it via
-aegis-data's request path (:func:`continuous_ohlcv_frames`), which runs on its **own** ephemeral
+aegis-data's request path (:func:`continuous_frame_and_future`), which runs on its **own** ephemeral
 ``DataEngine`` + ``Cache`` and never touches the live node cache.  The live cache holds only raw
 legs; the continuous series lives here.  Because the feed literally runs the research
 materializer, ``live@T ≡ research over [start, T]`` holds by construction.
@@ -23,9 +23,10 @@ from nautilus_trader.model.identifiers import InstrumentId
 from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, bars_to_ohlcv
 from aegis_data.catalog_contracts import catalog_contract_calendar, catalog_volume_probe
-from aegis_data.continuous_catalog import continuous_ohlcv_frames
+from aegis_data.continuous_catalog import continuous_frame_and_future
+from aegis_data.continuous_future import ContinuousFuture
 from aegis_data.liquidity import liquid_cycle_causal
-from aegis_data.rebasing import IDENTITY, Rebasing, rebasing_between
+from aegis_data.rebasing import IDENTITY, Rebasing
 from aegis_data.roll import roll_lead_days_for_cadence
 
 _T = TypeVar("_T")
@@ -51,6 +52,7 @@ class ContinuousFeed:
         self._continuous_id: InstrumentId | None = None
         self._series: pd.DataFrame | None = None
         self._front_id: InstrumentId | None = None
+        self._future: ContinuousFuture | None = None
         self._last_rebasing: Rebasing = IDENTITY
 
     @property
@@ -67,8 +69,8 @@ class ContinuousFeed:
         """Return *value*, or raise if the feed has not been materialized yet.
 
         The single not-yet-materialized guard every accessor shares: :meth:`materialize` sets
-        the continuous id, the series, and the front leg together, so any one of them being
-        ``None`` means no materialization has run.
+        the continuous id, the series, the front leg, and the future together, so any one of them
+        being ``None`` means no materialization has run.
         """
         if value is None:
             raise ValueError(f"continuous feed for {self._root!r} has not been materialized yet")
@@ -79,12 +81,15 @@ class ContinuousFeed:
 
         Runs aegis-data's request path on its own ephemeral engine + cache, so it re-bases the
         whole history at the current front without ever writing the continuous series into the
-        live node cache.
+        live node cache.  Keeps the materialized :class:`ContinuousFuture` so a roll can read its
+        exact seam re-basing from the transition leg closes.
         """
-        frames = continuous_ohlcv_frames(
-            self._port, [self._root], start=self._start, end=end, timeframe=self._timeframe
+        future, frame = continuous_frame_and_future(
+            self._port, self._root, start=self._start, end=end, timeframe=self._timeframe
         )
-        ((self._continuous_id, self._series),) = frames.items()
+        self._future = future
+        self._continuous_id = future.instrument_id
+        self._series = frame
         self._front_id = self._causal_front(pd.Timestamp(end).date())
 
     def series(self) -> pd.DataFrame:
@@ -123,13 +128,15 @@ class ContinuousFeed:
         front_id = self._materialized(self._front_id)
         bar_day = pd.Timestamp(bar.ts_event, tz="UTC").date()
         if self._causal_front(bar_day) != front_id:
-            # A roll: the liquidity leader has advanced. Re-materialize the whole series re-based
-            # at the new front (a non-event for the live cache) and advance the front leg, recording
-            # the roll's Rebasing (additive under a spread mode, multiplicative under a ratio mode,
-            # read off the two materializations) so a caller can carry co-moving state (the
-            # SleeveLedger) into the new basis in step — for whichever adjustment mode is in force.
+            # A roll: the liquidity leader has advanced. Re-materialize the whole series re-based at
+            # the new front (a non-event for the live cache) and advance the front leg, recording the
+            # roll's Rebasing read EXACTLY from the seam transition leg closes (additive under a
+            # spread mode, multiplicative under a ratio mode) so a caller can carry co-moving state
+            # (the SleeveLedger) into the new basis in step — for whichever adjustment mode is in force.
             self.materialize(end=bar_day.isoformat())
-            self._last_rebasing = rebasing_between(series, self._materialized(self._series))
+            self._last_rebasing = self._materialized(self._future).rebasing_for_roll(
+                front_id, self._materialized(self._front_id)
+            )
             return
         if bar.bar_type.instrument_id != front_id:
             return

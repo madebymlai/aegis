@@ -31,7 +31,7 @@ from aegis_data.catalog_contracts import (
     catalog_volume_probe,
 )
 from aegis_data.chain import fetch_contract_chain
-from aegis_data.continuous_catalog import continuous_ohlcv_frames
+from aegis_data.continuous_catalog import continuous_frame_and_future, continuous_ohlcv_frames
 from aegis_data.continuous_future import continuous_future
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from tests.support.continuous_oracle import backward_series
@@ -211,8 +211,20 @@ def test_continuous_ohlcv_frames_match_the_oracle_keyed_by_root_id() -> None:
     head = oracle[: len(frame)]
     assert frame["Close"].tolist() == pytest.approx([o.close_raw / _RAW_SCALE for o in head])
     assert frame["Open"].tolist() == pytest.approx([o.open_raw / _RAW_SCALE for o in head])
-    # The first emitted bar is a pre-leg bar carried up by the seam spread (not raw 99.5).
+    # The first emitted bar is a pre-leg bar carried up by the seam (not raw 99.5).
     assert frame["Open"].iloc[0] != pytest.approx(99.5)
+
+
+def test_continuous_frame_and_future_exposes_the_roll_transitions() -> None:
+    port, _ = _es_port()
+    future, frame = continuous_frame_and_future(port, "ES", start=_START, end=_END, timeframe="1D")
+
+    # the same adjusted frame the dict entry point returns ...
+    expected = continuous_ohlcv_frames(port, ["ES"], start=_START, end=_END, timeframe="1D")
+    pd.testing.assert_frame_equal(frame, expected[future.target_bar_type.instrument_id])
+    # ... plus the ContinuousFuture (its seam transitions + mode) the live feed re-bases from.
+    assert future.transitions
+    assert future.target_bar_type.instrument_id == InstrumentId.from_str("ES.XCME")
 
 
 def test_continuous_ohlcv_frames_reject_legs_across_venues() -> None:

@@ -390,11 +390,12 @@ def test_last_rebasing_carries_pre_roll_closes_into_the_new_basis() -> None:
     rebasing = feed.last_rebasing()
     carried = pre.loc[common, "Close"].map(rebasing.apply)
     assert carried.iloc[-1] != pre.loc[common[-1], "Close"]  # a real shift at the seam anchor
-    # the Rebasing carries every pre-roll close from the old basis onto the new — to the series' own
-    # price precision (ratio is a multiply-then-round, so bit-exact only at the seam anchor; the rtol
-    # still separates the correct transform from identity or the wrong additive/multiplicative mode).
+    # the Rebasing carries every pre-roll close from the old basis onto the new.  The factor is read
+    # exactly from the seam transition leg closes (not estimated), so the residual is only the engine's
+    # per-bar multiply-then-round under ratio — ≤½ ULP per bar at the price precision (~1e-4 relative
+    # here), comfortably inside rtol; the prior diff-of-materializations estimate would miss by ~bp.
     pd.testing.assert_series_equal(
-        post.loc[common, "Close"], carried, check_names=False, rtol=5e-3
+        post.loc[common, "Close"], carried, check_names=False, rtol=1e-3
     )
 
 

@@ -13,8 +13,40 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.bar_type import continuous_bar_type
 from aegis_data.chain import ContractChain
-from aegis_data.continuous_future import continuous_future, roll_transitions
+from aegis_data.continuous_future import (
+    ContinuousFuture,
+    RollTransition,
+    continuous_future,
+    roll_transitions,
+)
+
+_SPREAD = ContinuousFutureAdjustmentType.BACKWARD_SPREAD
+_RATIO = ContinuousFutureAdjustmentType.BACKWARD_RATIO
+_ESM4 = InstrumentId.from_str("ESM4.XCME")
+_ESU4 = InstrumentId.from_str("ESU4.XCME")
+_ESZ4 = InstrumentId.from_str("ESZ4.XCME")
+
+
+def _transition(pre: str, post: str, pre_price: float, post_price: float) -> RollTransition:
+    return RollTransition(
+        transition_time_ns=0,
+        pre_instrument_id=InstrumentId.from_str(pre),
+        post_instrument_id=InstrumentId.from_str(post),
+        pre_price=pre_price,
+        post_price=post_price,
+    )
+
+
+def _future_with(
+    transitions: list[RollTransition], mode: ContinuousFutureAdjustmentType
+) -> ContinuousFuture:
+    return ContinuousFuture(
+        target_bar_type=continuous_bar_type(InstrumentId.from_str("ES.XCME"), "1D"),
+        transitions=tuple(transitions),
+        adjustment_mode=mode,
+    )
 
 
 def _frame(dates: list[str], close: list[float]) -> pd.DataFrame:
@@ -165,3 +197,44 @@ def test_request_params_carry_transitions_and_the_default_backward_ratio_mode() 
             "post_price": "120.0",
         }
     ]
+
+
+def test_rebasing_for_roll_is_the_exact_ratio_factor_from_the_seam() -> None:
+    # one roll ESM4 -> ESU4; the carry factor is post/pre of the seam leg closes — exact, read from
+    # the transition prices (no series rounding, unlike diffing two materializations).
+    future = _future_with([_transition("ESM4.XCME", "ESU4.XCME", 100.0, 103.0)], _RATIO)
+    assert future.rebasing_for_roll(_ESM4, _ESU4).apply(50.0) == 50.0 * (103.0 / 100.0)
+
+
+def test_rebasing_for_roll_is_the_exact_spread_delta_from_the_seam() -> None:
+    future = _future_with([_transition("ESM4.XCME", "ESU4.XCME", 100.0, 103.0)], _SPREAD)
+    assert future.rebasing_for_roll(_ESM4, _ESU4).apply(50.0) == 50.0 + (103.0 - 100.0)
+
+
+def test_rebasing_for_roll_composes_a_multi_contract_front_jump() -> None:
+    # the front jumped ESM4 -> ESU4 -> ESZ4 in one step; the carry composes both seams' factors.
+    future = _future_with(
+        [
+            _transition("ESM4.XCME", "ESU4.XCME", 100.0, 103.0),
+            _transition("ESU4.XCME", "ESZ4.XCME", 103.0, 106.0),
+        ],
+        _RATIO,
+    )
+    assert future.rebasing_for_roll(_ESM4, _ESZ4).apply(50.0) == 50.0 * (103.0 / 100.0) * (106.0 / 103.0)
+
+
+def test_rebasing_for_roll_is_a_no_op_when_the_chain_does_not_connect_the_fronts() -> None:
+    future = _future_with([_transition("ESM4.XCME", "ESU4.XCME", 100.0, 103.0)], _RATIO)
+    esh4 = InstrumentId.from_str("ESH4.XCME")
+    assert future.rebasing_for_roll(esh4, _ESM4).apply(123.0) == 123.0  # ESH4 absent -> identity
+
+
+def test_rebasing_for_roll_ratio_with_a_non_positive_seam_price_is_a_no_op() -> None:
+    # ratio carry needs strictly positive prices (Nautilus); degrade to identity, never divide by zero.
+    future = _future_with([_transition("ESM4.XCME", "ESU4.XCME", 0.0, 103.0)], _RATIO)
+    assert future.rebasing_for_roll(_ESM4, _ESU4).apply(123.0) == 123.0
+
+
+def test_instrument_id_is_the_synthetic_continuous_root() -> None:
+    future = _future_with([_transition("ESM4.XCME", "ESU4.XCME", 100.0, 103.0)], _RATIO)
+    assert future.instrument_id == InstrumentId.from_str("ES.XCME")

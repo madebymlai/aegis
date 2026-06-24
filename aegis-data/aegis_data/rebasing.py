@@ -2,32 +2,26 @@
 
 Owns the back-adjustment ALGEBRA in one place — additive for spread modes, multiplicative for ratio
 modes — mirroring Nautilus's own cumulative-offset formulas (``docs/concepts/continuous_futures.md``):
-
-    BACKWARD_SPREAD: sum of (post_i - pre_i)      -> additive offset on the fixed-point PriceRaw
-    BACKWARD_RATIO:  product of (post_i / pre_i)  -> multiplicative factor (requires positive prices)
+spread adds a ``post - pre`` offset, ratio multiplies by a ``post / pre`` factor.
 
 A caller that carries co-moving absolute state across a roll — the live ``ContinuousFeed`` re-materializes
 the series while the ``SleeveLedger`` still holds closes recorded in the old basis — stays **mode-blind**:
 it holds a :class:`Rebasing` and calls :meth:`~Rebasing.apply`, never naming spread or ratio.  The
-adjustment mode is read in exactly one place (:data:`~aegis_data.continuous_future.DEFAULT_ADJUSTMENT_MODE`),
-so flipping that one constant switches both the Nautilus series arithmetic and this re-basing together.
+:class:`~aegis_data.continuous_future.ContinuousFuture` builds the right :class:`Rebasing` for a roll from
+its own adjustment mode (:meth:`~aegis_data.continuous_future.ContinuousFuture.rebasing_for_roll`), so the
+mode is chosen in exactly one place.
 
 The aegis-rd-r8b.3 prototype verified empirically that under ratio the carry MUST be multiplicative — an
-additive carry is wrong on every roll-spanning return — so this module makes that correctness follow from
-the mode rather than from a hand-edit at each call site.
+additive carry is wrong on every roll-spanning return — so this module makes that correctness a property
+of the adapter, not a hand-edit at each call site.
 
-Pure: no I/O.
+Pure: no I/O, and a leaf (no dependency on the roll table).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
-
-import pandas as pd
-from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
-
-from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 
 
 class Rebasing(Protocol):
@@ -60,7 +54,7 @@ class _Ratio:
 
 @dataclass(frozen=True)
 class _Identity:
-    """No re-basing — the pre-first-roll state, or a seam with no overlap to read the shift from."""
+    """No re-basing — the pre-first-roll state, or a seam that carries no shift."""
 
     def apply(self, value: float) -> float:
         return value
@@ -79,30 +73,4 @@ def ratio_rebasing(factor: float) -> Rebasing:
     return _Ratio(factor)
 
 
-def rebasing_between(
-    old: pd.DataFrame,
-    new: pd.DataFrame,
-    *,
-    mode: ContinuousFutureAdjustmentType = DEFAULT_ADJUSTMENT_MODE,
-) -> Rebasing:
-    """The re-basing carrying a pre-roll close from ``old`` into ``new`` after one roll: additive
-    ``new - old`` for a spread mode, multiplicative ``new / old`` for a ratio mode (the per-seam term
-    of Nautilus's cumulative offset).
-
-    Read off the **most-recent** overlapping close — the current front's own segment, which is the
-    unadjusted anchor of the old basis, so the read is the clean seam shift: exact for spread, and a
-    single price-rounding for ratio (reading deep history instead would compound the per-bar rounding
-    of both scaled materializations).  No overlap (or a non-positive anchor under ratio) is a no-op.
-    """
-    common = old.index.intersection(new.index)
-    if len(common) == 0:
-        return IDENTITY
-    anchor = common[-1]
-    old_close = float(old.loc[anchor, "Close"])
-    new_close = float(new.loc[anchor, "Close"])
-    if mode.is_ratio:
-        return ratio_rebasing(new_close / old_close) if old_close > 0 else IDENTITY
-    return spread_rebasing(new_close - old_close)
-
-
-__all__ = ["IDENTITY", "Rebasing", "ratio_rebasing", "rebasing_between", "spread_rebasing"]
+__all__ = ["IDENTITY", "Rebasing", "ratio_rebasing", "spread_rebasing"]

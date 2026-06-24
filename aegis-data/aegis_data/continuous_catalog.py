@@ -32,7 +32,7 @@ from aegis_data.catalog_contracts import (
     catalog_volume_probe,
 )
 from aegis_data.chain import fetch_contract_chain
-from aegis_data.continuous_future import continuous_future
+from aegis_data.continuous_future import ContinuousFuture, continuous_future
 from aegis_data.continuous_materialize import materialize_continuous_bars
 from aegis_data.roll import DatedContract
 
@@ -52,10 +52,26 @@ def continuous_ohlcv_frames(
     series over ``[start, end]`` (OHLCV columns, event-time-ordered index) — identical in
     shape to a raw-leg frame, so the caller merges it like any other instrument.
     """
-    return dict(
-        _continuous_frame(port, root, start=start, end=end, timeframe=timeframe)
-        for root in roots
-    )
+    frames = (_continuous_frame(port, root, start=start, end=end, timeframe=timeframe) for root in roots)
+    return {future.instrument_id: frame for future, frame in frames}
+
+
+def continuous_frame_and_future(
+    port: CatalogBackedDataPort,
+    root: str,
+    *,
+    start: str,
+    end: str,
+    timeframe: str = "1D",
+) -> tuple[ContinuousFuture, pd.DataFrame]:
+    """The adjusted continuous OHLCV for one ``root`` **and** the :class:`ContinuousFuture` it was
+    materialised from (its roll transitions + adjustment mode).
+
+    The live feed needs the future so it can re-base co-moving state from the exact seam leg closes at
+    a roll, rather than inferring the shift by diffing two rounded materialisations.  The frame is
+    identical to the matching :func:`continuous_ohlcv_frames` entry.
+    """
+    return _continuous_frame(port, root, start=start, end=end, timeframe=timeframe)
 
 
 def _continuous_frame(
@@ -65,7 +81,7 @@ def _continuous_frame(
     start: str,
     end: str,
     timeframe: str,
-) -> tuple[InstrumentId, pd.DataFrame]:
+) -> tuple[ContinuousFuture, pd.DataFrame]:
     catalog = port.catalog
     legs = _root_legs(catalog, root, start, end)
     chain = fetch_contract_chain(
@@ -94,7 +110,7 @@ def _continuous_frame(
         start=pd.Timestamp(start, tz="UTC"),
         end=pd.Timestamp(end, tz="UTC"),
     )
-    return future.target_bar_type.instrument_id, bars_to_ohlcv(bars)
+    return future, bars_to_ohlcv(bars)
 
 
 def _root_legs(catalog: object, root: str, start: str, end: str) -> Sequence[DatedContract]:
@@ -119,4 +135,4 @@ def _bar_cadence(timeframe: str) -> timedelta:
     return pd.Timedelta(timeframe_to_ns(timeframe), unit="ns").to_pytimedelta()
 
 
-__all__ = ["continuous_ohlcv_frames"]
+__all__ = ["continuous_frame_and_future", "continuous_ohlcv_frames"]

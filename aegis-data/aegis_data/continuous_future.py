@@ -9,6 +9,7 @@ Pure: no I/O, no Nautilus engine.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pandas as pd
@@ -18,6 +19,7 @@ from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 
 from aegis_data.bar_type import continuous_bar_type
 from aegis_data.chain import ContractChain
+from aegis_data.rebasing import IDENTITY, Rebasing, ratio_rebasing, spread_rebasing
 
 # Ratio (proportional): each prior segment is scaled by the cumulative post/pre factor, so the
 # adjusted series preserves percentage returns exactly — what the returns-based research metrics
@@ -68,12 +70,30 @@ class ContinuousFuture:
     transitions: tuple[RollTransition, ...]
     adjustment_mode: ContinuousFutureAdjustmentType = DEFAULT_ADJUSTMENT_MODE
 
+    @property
+    def instrument_id(self) -> InstrumentId:
+        """The synthetic continuous-root id (``ES.XCME``) the materialized series is keyed by."""
+        return self.target_bar_type.instrument_id
+
     def request_params(self) -> dict[str, object]:
         """The ``params`` for ``request_bars`` / ``subscribe_bars`` of this future."""
         return {
             "continuous_future_transitions": [t.as_param() for t in self.transitions],
             "continuous_future_adjustment_mode": self.adjustment_mode,
         }
+
+    def rebasing_for_roll(self, rolled_from: InstrumentId, rolled_to: InstrumentId) -> Rebasing:
+        """The exact re-basing carrying ``rolled_from``'s basis onto ``rolled_to``'s across the seam(s)
+        between them — additive under a spread :attr:`adjustment_mode`, multiplicative under a ratio one.
+
+        Read from the seam transition leg closes (the same prices Nautilus's engine uses), so the carry
+        is byte-exact — unlike inferring the shift by diffing two rounded materializations.  A chain that
+        does not connect the two legs carries no shift (a no-op).
+        """
+        seam = _seam_between(self.transitions, rolled_from, rolled_to)
+        if not seam:
+            return IDENTITY
+        return _ratio_factor(seam) if self.adjustment_mode.is_ratio else _spread_delta(seam)
 
 
 def continuous_future(
@@ -125,6 +145,42 @@ def _midnight_ns(roll_date: pd.Timestamp) -> int:
     sit at/after it on the roll day (post leg) and strictly before it the prior day
     (pre leg), so the seam is a clean day boundary."""
     return pd.Timestamp(roll_date).normalize().tz_localize("UTC").value
+
+
+def _seam_between(
+    transitions: Sequence[RollTransition], rolled_from: InstrumentId, rolled_to: InstrumentId
+) -> list[RollTransition]:
+    """The contiguous transition(s) carrying ``rolled_from``'s basis onto ``rolled_to``'s (empty if the
+    chain does not connect them)."""
+    seam: list[RollTransition] = []
+    collecting = False
+    for transition in transitions:
+        if transition.pre_instrument_id == rolled_from:
+            collecting = True
+        if collecting:
+            seam.append(transition)
+            if transition.post_instrument_id == rolled_to:
+                return seam
+    return []
+
+
+def _ratio_factor(seam: Sequence[RollTransition]) -> Rebasing:
+    """The cumulative ``post / pre`` factor over ``seam`` — a no-op if a seam price is non-positive
+    (Nautilus's ratio adjustment requires strictly positive prices)."""
+    factor = 1.0
+    for transition in seam:
+        if transition.pre_price <= 0:
+            return IDENTITY
+        factor *= transition.post_price / transition.pre_price
+    return ratio_rebasing(factor)
+
+
+def _spread_delta(seam: Sequence[RollTransition]) -> Rebasing:
+    """The cumulative ``post - pre`` offset over ``seam``."""
+    delta = 0.0
+    for transition in seam:
+        delta += transition.post_price - transition.pre_price
+    return spread_rebasing(delta)
 
 
 def _chain_venue(chain: ContractChain) -> Venue:
