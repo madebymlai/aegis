@@ -241,9 +241,9 @@ def test_liquid_roll_schedule_recovers_a_liquidity_leader_truncated_by_the_windo
         candidates, volume, date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
     )
 
-    assert windowed.symbols == ("PAM4", "PAU4")        # PAU4 recovered, not truncated by the edge
-    assert windowed.roll_dates[0] < date(2024, 2, 22)  # rolled at the crossover, not the calendar
-    assert windowed.roll_dates == full.roll_dates      # the window edge does not move the roll date
+    assert windowed.symbols == ("PAM4", "PAU4")          # PAU4 recovered, not truncated by the edge
+    assert windowed.roll_dates == (date(2024, 2, 5),)    # rolled at the crossover, not the 02-22 calendar
+    assert windowed.roll_dates == full.roll_dates        # the window edge does not move the roll date
 
 
 def test_liquid_roll_schedule_roll_dates_are_causal() -> None:

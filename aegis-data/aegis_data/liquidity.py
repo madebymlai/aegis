@@ -61,13 +61,20 @@ def liquid_roll_schedule(
     calendar = roll_schedule(eligible, start, end, roll_lead_days=roll_lead_days)
     if not calendar.symbols:
         return calendar
-    ordered = _by_expiry(eligible)
-    first = next(index for index, c in enumerate(ordered) if c.symbol == calendar.symbols[0])
-    forward = ordered[first:]
+    forward = _legs_from_window_front(_by_expiry(eligible), calendar.symbols[0])
     crossovers = _leadership_crossovers(
         tuple(contract.symbol for contract in forward), volume_by_symbol, roll_lead_days
     )
     count = _front_count_by_end(forward, len(calendar.symbols), crossovers, end)
+    if count == len(calendar.symbols):
+        # No successor was truncated, so the calendar window already names every leg front by `end`:
+        # pass its legs through verbatim (only capping the seam dates onto any earlier crossover,
+        # exactly as before), keeping an unextended chain byte-identical to the calendar rule.
+        return FuturesChainSchedule(
+            symbols=calendar.symbols,
+            expiries=calendar.expiries,
+            roll_dates=_cap_rolls(calendar.roll_dates, crossovers[: count - 1]),
+        )
     chain = forward[:count]
     calendar_rolls = tuple(roll_date(contract, roll_lead_days=roll_lead_days) for contract in chain[:-1])
     return FuturesChainSchedule(
@@ -75,6 +82,17 @@ def liquid_roll_schedule(
         expiries=tuple(contract.last_trade for contract in chain),
         roll_dates=_cap_rolls(calendar_rolls, crossovers[: count - 1]),
     )
+
+
+def _legs_from_window_front(
+    ordered: Sequence[DatedContract], window_front_symbol: str
+) -> tuple[DatedContract, ...]:
+    """The expiry-ordered eligible legs from the calendar window's front leg onward — the forward
+    chain the late-edge extension walks, including successors ``roll_schedule``'s window truncated."""
+    first = next(
+        index for index, contract in enumerate(ordered) if contract.symbol == window_front_symbol
+    )
+    return tuple(ordered[first:])
 
 
 def _front_count_by_end(
