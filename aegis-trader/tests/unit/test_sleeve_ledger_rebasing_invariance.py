@@ -13,11 +13,23 @@ desyncs ``live`` from ``research``.
 
 holds for BOTH modes — the algebra is the Rebasing's, not the ledger's, so flipping the one adjustment-mode
 constant switches the live re-basing with no ledger edit.
+
+How *exact* that agreement is differs by mode, and the test asserts each honestly rather than rigging an
+exact match:
+
+  * **Spread** carry is additive (``close + Δ``).  With a tick-valued Δ it introduces no rounding, so the
+    live carry reproduces the single-basis research read **bit-for-bit** — asserted with ``==``.
+  * **Ratio** carry is multiplicative (``close × factor``).  The materializer quantizes every adjusted
+    price to the instrument tick, but the ledger does NOT re-quantize after multiplying its stored closes,
+    so the live carry agrees with research only to **floating-point tolerance** — sub-tick, here ≈5e-6 on
+    the covariance and ≈3e-5 on the skew, negligible for the allocator but NOT byte-exact.  A power-of-two
+    factor would hide this; the deliberately non-dyadic factor below exposes it.  Asserted with
+    ``pytest.approx``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 import pytest
 from aegis_data.rebasing import Rebasing, ratio_rebasing, spread_rebasing
@@ -26,19 +38,28 @@ from aegis_trader.domain.types import SleeveName
 from nautilus_trader.model.identifiers import InstrumentId
 
 _MOM = SleeveName("mom")
-_ROOT = InstrumentId.from_str("ES.XCME")  # the stable continuous-root id (re-bases at a roll)
+_ROOT = InstrumentId.from_str(
+    "ES.XCME"
+)  # the stable continuous-root id (re-bases at a roll)
 
-# Final-basis (research) continuous closes; a roll occurs before index _ROLL. Returns vary so the
-# covariance/skew are non-degenerate.
-_RESEARCH_CLOSES = [100.0, 103.0, 101.0, 105.0, 102.0, 106.0, 104.0, 108.0]
+_PRECISION = 2  # the instrument tick: the materializer rounds every adjusted close to this many dp
 _ROLL = 4  # observations [0.._ROLL) are pre-roll; [_ROLL:] are post-roll
+# The un-quantized ratio carry drifts ~3e-5 from the quantized research read; this tolerance clears that
+# with margin yet is astronomically below a real cross-basis error (order 1), so a missed re-base fails.
+_RATIO_CARRY_TOL = 1e-4
 
-# Each case: the Rebasing applied at the roll, and how a final-basis close looks in the OLD (pre-roll)
-# basis (the inverse of the carry). spread: old = final − Δ; ratio: old = final / k. Δ/k are large so a
-# missed re-base is unmistakable; the ratio factor is a power of two so the round-trip is bit-exact.
-_CASES: dict[str, tuple[Rebasing, Callable[[float], float]]] = {
-    "spread": (spread_rebasing(50.0), lambda close: close - 50.0),
-    "ratio": (ratio_rebasing(2.0), lambda close: close / 2.0),
+# Raw front-leg closes (already tick-valued), one observation per period; the front segment carries no
+# adjustment (offset 0 / factor 1), so a period recorded live IS its raw close.  Returns vary so the
+# covariance/skew are non-degenerate.
+_RAW_CLOSES = [100.00, 103.00, 101.00, 105.00, 102.00, 106.00, 104.00, 108.00]
+
+# The roll's re-basing per mode, and whether the live carry is bit-exact.  spread: a large tick-valued
+# additive offset, so the carry round-trips exactly.  ratio: a non-power-of-two factor (≈1.529), so the
+# un-quantized carry drifts sub-tick from the quantized research read.  Both are large enough that a
+# MISSED re-base is unmistakable, not lost in the tolerance.
+_CASES: dict[str, tuple[Rebasing, bool]] = {
+    "spread": (spread_rebasing(50.0), True),
+    "ratio": (ratio_rebasing(145.70 / 95.30), False),
 }
 
 
@@ -60,26 +81,40 @@ def _ledger(closes: Sequence[float]) -> SleeveLedger:
     return ledger
 
 
-def _live_ledger_across_roll(rebasing: Rebasing, to_old: Callable[[float], float]) -> SleeveLedger:
-    """The live ledger: pre-roll closes in the OLD basis, ``rebase_closes`` at the roll (as the feed
-    re-materializes the re-based series), then post-roll closes in the new basis."""
+def _research_closes(rebasing: Rebasing) -> list[float]:
+    """The closes a single end-to-end materialization yields: each pre-roll raw close carried into the
+    final basis and quantized to the instrument tick (the materializer rounds every adjusted price),
+    then the post-roll front closes recorded as-is."""
+    pre_roll = [
+        round(rebasing.apply(close), _PRECISION) for close in _RAW_CLOSES[:_ROLL]
+    ]
+    return pre_roll + list(_RAW_CLOSES[_ROLL:])
+
+
+def _live_ledger_across_roll(rebasing: Rebasing) -> SleeveLedger:
+    """The live ledger: pre-roll closes recorded in the OLD basis (the front — offset 0 / factor 1 — so the
+    raw close), then ``rebase_closes`` carries the recorded history into the new basis as the feed
+    re-materializes; the ledger multiplies/shifts its stored closes and does NOT re-quantize to the tick."""
     ledger = SleeveLedger()
-    for close in _RESEARCH_CLOSES[:_ROLL]:
-        _record(ledger, to_old(close))
+    for close in _RAW_CLOSES[:_ROLL]:
+        _record(ledger, close)
     ledger.rebase_closes({_ROOT: rebasing})
-    for close in _RESEARCH_CLOSES[_ROLL:]:
+    for close in _RAW_CLOSES[_ROLL:]:
         _record(ledger, close)
     return ledger
 
 
 @pytest.mark.parametrize("case", ["spread", "ratio"])
-def test_ledger_allocator_input_matches_research_across_a_roll_via_rebase(case: str) -> None:
+def test_ledger_allocator_input_matches_research_across_a_roll_via_rebase(
+    case: str,
+) -> None:
     """Golden: a live ledger that re-bases its recorded history at the roll (additively for spread,
     multiplicatively for ratio) produces the SAME allocator inputs as the single-basis research ledger —
-    byte-identical covariance and book skew, with no cross-basis return at the roll period."""
-    rebasing, to_old = _CASES[case]
-    live = _live_ledger_across_roll(rebasing, to_old)
-    research = _ledger(_RESEARCH_CLOSES)
+    bit-for-bit for the additive spread carry, to floating-point tolerance for the un-quantized
+    multiplicative ratio carry — with no cross-basis return at the roll period."""
+    rebasing, bit_exact = _CASES[case]
+    live = _live_ledger_across_roll(rebasing)
+    research = _ledger(_research_closes(rebasing))
 
     live_cov = live.realized_covariance((_MOM,), min_returns=6)
     research_cov = research.realized_covariance((_MOM,), min_returns=6)
@@ -87,18 +122,24 @@ def test_ledger_allocator_input_matches_research_across_a_roll_via_rebase(case: 
     research_skew = research.realized_book_skew({_MOM: 1.0}, (_MOM,), min_returns=6)
 
     assert live_cov is not None
-    assert (live_cov, live_skew) == (research_cov, research_skew)
+    assert research_cov is not None
+    if bit_exact:
+        assert (live_cov, live_skew) == (research_cov, research_skew)
+        return
+    for sleeve, row in live_cov.items():
+        assert row == pytest.approx(research_cov[sleeve], rel=_RATIO_CARRY_TOL)
+    assert live_skew == pytest.approx(research_skew, rel=_RATIO_CARRY_TOL)
 
 
 def test_ledger_is_invariant_when_there_is_no_roll() -> None:
     """GREEN control: with no re-base, live and research record identical closes, so the allocator
     inputs are byte-identical — confirming the construction is otherwise sound."""
-    research = _ledger(_RESEARCH_CLOSES)
-    live_no_roll = _ledger(_RESEARCH_CLOSES)
+    research = _ledger(_RAW_CLOSES)
+    live_no_roll = _ledger(_RAW_CLOSES)
 
-    assert live_no_roll.realized_covariance((_MOM,), min_returns=6) == research.realized_covariance(
+    assert live_no_roll.realized_covariance(
         (_MOM,), min_returns=6
-    )
+    ) == research.realized_covariance((_MOM,), min_returns=6)
     assert live_no_roll.realized_book_skew({_MOM: 1.0}, (_MOM,), min_returns=6) == (
         research.realized_book_skew({_MOM: 1.0}, (_MOM,), min_returns=6)
     )
