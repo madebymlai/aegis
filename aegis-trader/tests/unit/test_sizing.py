@@ -254,6 +254,23 @@ class TestSizeOrderGbpPence:
         assert qty == pytest.approx(500.0)
 
 
+class TestSizeOrderFuturesMultiplier:
+    """Contract multiplier — one futures contract controls ``price × multiplier``
+    of native notional, so the contract count divides by ``price × multiplier``."""
+
+    def test_es_multiplier_divides_contract_count(self):
+        """ES ×50: count = notional / (price × 50), not notional / price."""
+        meta = InstrumentSizing(currency="USD", size_increment=1.0, multiplier=50.0)
+        qty = size_order(
+            notional_eur=250_000.0,
+            price=5_000.0,
+            fx_rate=1.0,
+            instrument=meta,
+        )
+        # 250_000 / (5_000 × 50) = 1 contract — not 50.
+        assert qty == pytest.approx(1.0)
+
+
 class TestSizeOrderSizeIncrement:
     """Increment rounding edge cases."""
 

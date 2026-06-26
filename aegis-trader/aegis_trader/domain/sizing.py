@@ -23,6 +23,7 @@ class InstrumentSizing:
 
     currency: str
     size_increment: float
+    multiplier: float = 1.0
 
 
 def size_order(
@@ -58,7 +59,9 @@ def size_order(
     if instrument.currency == _GBP_CURRENCY:
         notional_native *= _PENCE_FACTOR
 
-    raw_quantity = notional_native / price
+    # One contract controls ``price × multiplier`` of native notional (the
+    # contract multiplier is 1 for equities/FX, ≠1 for futures — e.g. ES ×50).
+    raw_quantity = notional_native / (price * instrument.multiplier)
     rounded = _round_to_increment(raw_quantity, instrument.size_increment)
 
     if rounded <= 0.0:

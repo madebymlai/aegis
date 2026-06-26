@@ -132,6 +132,7 @@ class NautilusMarketData:
         return InstrumentSizing(
             currency=instrument.quote_currency.code,
             size_increment=float(instrument.size_increment),
+            multiplier=float(instrument.multiplier),
         )
 
     def make_quantity(self, instrument_id: InstrumentId, raw_shares: float) -> Quantity | None:

@@ -8,10 +8,11 @@ the overlay fails closed rather than fabricating a rate.
 import pandas as pd
 import pytest
 from nautilus_trader.cache.cache import Cache
-from nautilus_trader.model.currencies import EUR, GBP
+from nautilus_trader.model.currencies import EUR, GBP, USD
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.enums import AssetClass
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.instruments import Equity, FuturesContract
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_trader.data.bar_type import raw_bar_type
@@ -78,6 +79,25 @@ def _equity(instrument_id: InstrumentId) -> Equity:
     )
 
 
+def _future(instrument_id: InstrumentId, *, multiplier: int) -> FuturesContract:
+    return FuturesContract(
+        instrument_id=instrument_id,
+        raw_symbol=instrument_id.symbol,
+        asset_class=AssetClass.INDEX,
+        exchange=instrument_id.venue.value,
+        currency=USD,
+        price_precision=2,
+        price_increment=Price.from_str("0.25"),
+        multiplier=Quantity.from_int(multiplier),
+        lot_size=Quantity.from_int(1),
+        underlying="ES",
+        activation_ns=0,
+        expiration_ns=pd.Timestamp("2024-03-15", tz="UTC").value,
+        ts_event=0,
+        ts_init=0,
+    )
+
+
 def _ohlcv_frame(closes: list[float]) -> pd.DataFrame:
     idx = pd.to_datetime([i * _DAY_NS for i in range(len(closes))])  # tz-naive, one bar per day
     return pd.DataFrame(
@@ -138,6 +158,20 @@ class TestContinuousReads:
 
         assert md.instrument_sizing(es) == md.instrument_sizing(front)
         assert md.instrument_sizing(es) is not None
+
+    def test_instrument_sizing_carries_the_futures_contract_multiplier(self):
+        """A futures front leg's sizing metadata must carry its contract multiplier (ES ×50),
+        not silently drop it — dropping it over-sizes the order by the multiplier."""
+        es = InstrumentId.from_str("ES.XCME")
+        front = InstrumentId.from_str("ESH4.XCME")
+        cache = Cache()
+        cache.add_instrument(_future(front, multiplier=50))
+        md = NautilusMarketData(cache=cache, feeds=(_StubFeed(es, _ohlcv_frame([100.0]), front),))
+
+        sizing = md.instrument_sizing(es)
+
+        assert sizing is not None
+        assert sizing.multiplier == pytest.approx(50.0)
 
     def test_make_quantity_for_a_continuous_root_builds_a_front_leg_quantity(self):
         es = InstrumentId.from_str("ES.XCME")
