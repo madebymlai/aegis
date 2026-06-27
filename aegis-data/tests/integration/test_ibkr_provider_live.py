@@ -30,7 +30,10 @@ from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
 pytest.importorskip("ibapi")
 
 _GATEWAY_PORT = os.environ.get("AEGIS_IBKR_GATEWAY_PORT")
-_AAPL = InstrumentId.from_str("AAPL.NASDAQ")
+# The MIC-pinned venue IB resolves NASDAQ to under convert_exchange_to_mic_venue
+# (r8b.9): request_bars keys returned bars by the deterministic MIC venue, so the
+# corpus id — request, fill, and warm read alike — is AAPL.XNAS, not AAPL.NASDAQ.
+_AAPL = InstrumentId.from_str("AAPL.XNAS")
 _EUR_USD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 _START = pd.Timestamp("2024-01-02", tz="UTC")
 _END = pd.Timestamp("2024-02-01", tz="UTC")
