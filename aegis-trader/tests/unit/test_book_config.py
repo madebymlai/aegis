@@ -263,15 +263,15 @@ class TestBookConfigCapsAndBands:
     def test_default_bands(self):
         """Default bands are 0.02 symmetric."""
         book = BookConfig(sleeves=(make_sleeve("trend"),))
-        assert book.band_for("ANY_FIGI") == (0.02, 0.02)
+        assert book.band_for("ANY_ID") == (0.02, 0.02)
 
     def test_band_override(self):
-        """Per-FIGI asymmetric band override."""
+        """Per-instrument asymmetric band override."""
         book = BookConfig(
             sleeves=(make_sleeve("trend"),),
-            band_overrides=(("FIGI_TAIL", 0.01, 0.05),),
+            band_overrides=(("TAIL_ID", 0.01, 0.05),),
         )
-        assert book.band_for("FIGI_TAIL") == (0.01, 0.05)
+        assert book.band_for("TAIL_ID") == (0.01, 0.05)
         assert book.band_for("OTHER") == (0.02, 0.02)
 
     def test_caps_default_none(self):

@@ -388,7 +388,7 @@ class BookConfig:
     # ── bands ──
     default_band_up: float = 0.02    # symmetric default: ±2%
     default_band_down: float = 0.02
-    # Per-FIGI asymmetric overrides: [(figi, band_up, band_down), ...]
+    # Per-instrument asymmetric overrides: [(instrument_id, band_up, band_down), ...]
     band_overrides: tuple[tuple[str, float, float], ...] = ()
 
     # ── Target tail convexity budget ──
@@ -475,10 +475,10 @@ class BookConfig:
         shares.update(self.tail_convexity_budget.risk_shares())
         return shares
 
-    def band_for(self, figi: str) -> tuple[float, float]:
-        """Return (band_up, band_down) for *figi*, honouring overrides."""
-        for override_figi, up, down in self.band_overrides:
-            if override_figi == figi:
+    def band_for(self, instrument_id: str) -> tuple[float, float]:
+        """Return (band_up, band_down) for *instrument_id*, honouring overrides."""
+        for override_id, up, down in self.band_overrides:
+            if override_id == instrument_id:
                 return (up, down)
         return (self.default_band_up, self.default_band_down)
 
