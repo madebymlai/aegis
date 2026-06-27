@@ -11,7 +11,7 @@ Aegis Trader is a NautilusTrader overlay (ADR-0001). Nautilus already provides t
 | Market data | `data/market_data.py` | `MarketDataPort` + `NautilusMarketData` in one module | Cache-backed native bar windows, per-period freshness, instrument sizing, native quantity construction, and FX marks. |
 | Book state | `portfolio/book_state.py` | `BookStatePort` + `NautilusBookState` in one module | NAV/cash aggregation, cache health, and base-currency realized weights from Nautilus portfolio/cache reads. |
 | Bundle loading | `bundles/` | `BundleRegistryPort` with stub and entry-point implementations | Installed Execution Bundle discovery, wheel-label lookup, and cap provenance against the bundle's locked plan. This is the only remaining justified port/adapter file split because it has multiple implementations. |
-| Rebalance orchestration | `trader/pipeline.py` | `RebalancePipeline` value-object API | Startup gates, pipeline-owned `InstrumentRef`↔`InstrumentId` identity, Cache-backed market-data reads through ports, Execution Bundle calls, netting/gating, sizing, freshness filtering, and the `SleeveLedger`. Imports no Strategy or Nautilus event-loop types. |
+| Rebalance orchestration | `trader/pipeline.py` | `RebalancePipeline` value-object API | Startup gates, Cache-backed market-data reads through ports, Execution Bundle calls, netting/gating, sizing, freshness filtering, and the `SleeveLedger`. Imports no Strategy or Nautilus event-loop types. |
 | Nautilus adapter | `trader/strategy.py`, `trader/node.py` | Native Nautilus `Strategy`; broker-neutral `TradingNode`/backtest config + the live run/stop lifecycle | Lifecycle, bar-driven period rollover, futures roll refresh, FX quote mirroring into Cache marks, translating `OrderIntent`s into Nautilus orders, RiskEngine config, the `trader start`/`stop` daemon, and structured `self.log` records. IBKR client/connection config is **not** here — it lives in the one IBKR adapter (`aegis-data/ibkr.py`); `node.py` carries no broker vocabulary. |
 
 ## Dependency rule
@@ -34,7 +34,7 @@ backtest.py         -> backtest engine + non-live RiskEngine config (was trader/
 `RebalancePipeline` is the deep module ADR-0003 originally intended:
 
 - `startup_check() -> StartupResult` runs cap-provenance and account-integrity gates. A failed gate returns a typed halt gate plus human reason; the Strategy logs it and idles before any order can be submitted.
-- `initialize_identity(as_of)`, `refresh_resolution(as_of)`, and `resolve_contract_id_for_roll(...)` own `InstrumentRef`↔Nautilus `InstrumentId` identity behind one injected resolver. Live uses the provider-backed resolver; backtests and e2e tests inject `FixtureInstrumentResolver`.
+- Identity needs no pipeline resolver: each Execution Bundle declares its native Nautilus `InstrumentId`s, `union_native_instrument_ids` unions them across sleeves (`bundles/book_sleeves.py`), and IBKR's `InstrumentProvider.load_ids` resolves them at boot (root ADR-0007). The futures roll is owned by the continuous data feed (`data/continuous_feed.py`) — live, causal, keyed by `InstrumentId` — not by a pipeline resolution step.
 - `rebalance_period(CompletedRebalancePeriod) -> RebalanceResult` reads completed-period windows and freshness through `MarketDataPort`, computes sleeve targets from Execution Bundles, builds the rebalance plan, sizes deltas, filters stale instruments, records the `SleeveLedger`, and returns `OrderIntent`s plus a `RebalanceSummary` carrying the real gate outcome.
 - The owned `SleeveLedger` supplies realized covariance for the next rebalance and end-of-run evidence (realized book skew and per-sleeve P&L attribution).
 
@@ -42,9 +42,9 @@ backtest.py         -> backtest engine + non-live RiskEngine config (was trader/
 
 ## Explicit non-ports
 
-- **No `ExecutionPort`.** Order submission goes through Nautilus's venue-agnostic order factory, `ExecutionEngine`, and `RiskEngine` from the Strategy. IBKR-specific behavior belongs in the single IBKR adapter (`aegis-data/ibkr.py`) — connection-config translation only, building Nautilus's *stock* `InteractiveBrokers{Data,Exec}ClientConfig` + registering the stock live factories — and the injected provider resolver, not in the Trader's `node.py` or a Trader execution adapter.
+- **No `ExecutionPort`.** Order submission goes through Nautilus's venue-agnostic order factory, `ExecutionEngine`, and `RiskEngine` from the Strategy. IBKR-specific behavior belongs in the single IBKR adapter (`aegis-data/ibkr.py`) — connection-config translation only, building Nautilus's *stock* `InteractiveBrokers{Data,Exec}ClientConfig` + registering the stock live factories — not in the Trader's `node.py` or a Trader execution adapter.
 - **No `ObservabilityPort`.** The shipped sink is Nautilus's native logger (`self.log`). A future subscriber-based backend should attach to Nautilus `MessageBus` (`publish_signal` / `publish_data`) rather than reintroducing a shallow Trader port.
-- **No Cache wrapper.** Cache remains Nautilus's reconciled source of truth. Trader-owned state is limited to regenerable pipeline identity and the pure `SleeveLedger` observations.
+- **No Cache wrapper.** Cache remains Nautilus's reconciled source of truth. Trader-owned state is limited to the continuous feed's regenerable roll state and the pure `SleeveLedger` observations.
 
 ## Directory layout
 
@@ -55,7 +55,6 @@ aegis_trader/
   domain/                      # pure algorithms and value types
   portfolio/book_state.py      # BookStatePort + NautilusBookState
   trader/
-    instrument_provider.py     # provider-loaded InstrumentRef -> InstrumentId helpers
     pipeline.py                # StartupResult/RebalanceResult orchestration
     strategy.py                # Nautilus Strategy adapter
     node.py                    # broker-neutral live TradingNode + run/stop lifecycle (trader start/stop)

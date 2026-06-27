@@ -31,7 +31,7 @@ destabilising (ECB *Financial Stability Review*, May 2020) and adds negligible S
 non-equity / bond books (Harvey et al., "The Impact of Volatility Targeting"); and once a hard
 gross constraint binds, the achievable risk budget is necessarily the constrained one (Richard
 & Roncalli, "Constrained Risk Budgeting"). The clamp lives in the rebalancer (which owns
-per-FIGI netting) because it must scale the *netted* book gross, not a per-sleeve sum — a long
+per-InstrumentId netting) because it must scale the *netted* book gross, not a per-sleeve sum — a long
 in one sleeve and a short in another cancel, so the netted gross is what the cap governs.
 
 ## Amendment (`aegis-rd-ytr.2`): the live net-convex skew solve is removed; net-convexity is by construction

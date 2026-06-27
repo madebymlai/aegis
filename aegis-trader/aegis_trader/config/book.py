@@ -86,7 +86,7 @@ def load_book_config(path: str | Path) -> BookConfig:
             for s in data.get("sleeves", [])
         )
         band_overrides = tuple(
-            (o["figi"], float(o["band_up"]), float(o["band_down"]))
+            (o["instrument_id"], float(o["band_up"]), float(o["band_down"]))
             for o in data.get("band_overrides", [])
         )
         drawdown_delever = _drawdown_delever_curve(data.get("drawdown_delever"))

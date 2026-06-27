@@ -1,6 +1,14 @@
 # Futures Dataset is per-symbol, with no block default
 
-Status: accepted
+Status: superseded (the per-symbol `dataset` attribute was removed).
+
+> **Superseded.** Futures are now declared as bare `RootSymbol` strings in `data.futures`
+> (`configuration/field_types.py`, `configuration/schema.py:119`); there is no `SymbolSpec`,
+> no per-symbol `dataset` field, and no `FuturesRef` type. Cross-boundary identity is the
+> Nautilus `InstrumentId` (root ADR-0007); a continuous-future root materializes as
+> `{root}.{venue}` (e.g. `ES.XCME`), and the Dataset / Gap-Fill Provider is no longer a
+> per-symbol identity attribute. The text below is retained as the rationale at the time it
+> was accepted.
 
 Futures `SymbolSpec.dataset` is the single home for the Databento Dataset that
 becomes `FuturesRef.dataset`. `DataConfig` has no `dataset` field, and a futures

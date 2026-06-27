@@ -66,7 +66,7 @@ stance this is a fail-closed correctness requirement, not an optimisation.
 
 ## Consequences
 
-- **Rebalance pipeline:** `targets → net by FIGI → size→qty→round → per-instrument band
+- **Rebalance pipeline:** `targets → net by InstrumentId → size→qty→round → per-instrument band
   selects a tentative trade set → book-level band may widen it → assemble the realized
   post-band book → gate the realized book → if breach, widen toward target deterministically
   until compliant (fail closed if even full-target breaches) → emit (open venues only)`.

@@ -61,18 +61,17 @@ failure, not a multi-timeframe simulation.
 _Avoid_: per-sleeve timeframe, mixed cadence backtest, implicit resampling
 
 **Security Master**:
-The resolution of an **InstrumentRef** to its live, tradable venue contract — a
-*responsibility fulfilled by vendor-native services, not a bespoke Aegis module* (ADR-0005).
-A **ListedRef** is resolved by handing its **FIGI** to Interactive Brokers'
-`InstrumentProvider` (`secIdType='FIGI'` + `convert_exchange_to_mic_venue`), which returns the
-qualified listing and MIC venue. A **FuturesRef** is resolved at **IBKR** (live/paper is
-IBKR-only, on a delayed subscription): the **roll rule** picks the front dated contract, qualified
-by its exchange-native Globex `localSymbol` — never IB `CONTFUT`. **Databento** and **yfinance**
-are research-only substrates (`dataset` is a research tag, not in the live loop). Resolution is
-fail-closed, and a **Roll** is detected when the roll rule advances the front contract. The
-cross-context *identity* (the **InstrumentRef**) is still single and authoritative; only its
-*resolution* is vendor-native.
-_Avoid_: symbol map, instrument map, ticker table, security database, FIGI resolver, VenueContract (resolution is vendor-native — no bespoke resolver or intermediate contract type)
+The resolution of an **InstrumentId** to its live, tradable venue contract — a
+*responsibility fulfilled by vendor-native services, not a bespoke Aegis module* (ADR-0005, root ADR-0007).
+An instrument is resolved by handing its declared `InstrumentId` to Interactive Brokers'
+`InstrumentProvider` (`load_ids` + `convert_exchange_to_mic_venue`), which returns the
+qualified listing and MIC venue (`CME → XCME`). Live/paper is **IBKR-only**, on a delayed
+subscription. A continuous future is declared as a bare **root**; its live front leg is chosen by
+causal, volume-based liquidity detection, and a **Roll** is detected when that front advances —
+keyed by `InstrumentId`, with no declarative roll calendar. **Databento** and **yfinance** are
+research-only substrates, never in the live loop. Resolution is fail-closed. The cross-context
+*identity* is the single, authoritative **InstrumentId**; only its *resolution* is vendor-native.
+_Avoid_: symbol map, instrument map, ticker table, security database, FIGI, FIGI resolver, VenueContract, InstrumentRef (resolution is vendor-native — no bespoke resolver or intermediate contract type)
 
 **Broker Connection**:
 The environment-resolved IBKR connection (`IBConnectionSettings`: host, port, client

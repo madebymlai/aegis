@@ -104,7 +104,7 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         weight_band_up = 0.04
 
         [[band_overrides]]
-        figi = "BBG000B9XRY4"
+        instrument_id = "IDTL.LSEETF"
         band_up = 0.05
         band_down = 0.02
     """)
@@ -131,7 +131,7 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         per_name_cap=0.1,
         default_band_up=0.03,
         default_band_down=0.01,
-        band_overrides=(("BBG000B9XRY4", 0.05, 0.02),),
+        band_overrides=(("IDTL.LSEETF", 0.05, 0.02),),
         aggregate_drift_threshold=0.5,
         drawdown_delever=DrawdownDeleverCurve(
             start_drawdown=0.05,

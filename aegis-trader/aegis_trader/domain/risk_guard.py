@@ -91,9 +91,9 @@ def compute_risk_engine_max_notionals(
 ) -> dict[str, int]:
     """Pure function: compute max notional per instrument as NAV x fraction.
 
-    Keyed by the *resolved* InstrumentId string (e.g. ``"BBG...XLON"``), so each
+    Keyed by the *resolved* InstrumentId string (e.g. ``"IDTL.LSEETF"``), so each
     instrument carries its own venue and identity is never reconstructed by
-    string-joining a FIGI to a book-wide venue (ADR-0002).
+    string-joining a symbol to a book-wide venue (root ADR-0007).
     """
     cap = int(nav * fraction)
     return {instrument_id: cap for instrument_id in instrument_ids}

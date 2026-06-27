@@ -80,8 +80,8 @@ aggregate_drift_threshold = 0.5
 # USD = 0.055                        # annual rate charged on USD debit balances
 
 # Sleeves — each a risk-budgeted sub-portfolio backed by one content-addressed
-# bundle wheel. Instruments carry their own venue (resolved per FIGI); the book
-# never names a single venue.
+# bundle wheel. Instruments carry their own venue (each is a Nautilus
+# InstrumentId, {symbol}.{venue}); the book never names a single venue.
 [[sleeves]]
 name = "trend_lse"
 wheel_filename = "trend_lse-abc123.whl"
@@ -120,8 +120,8 @@ annual_carry = 0.08
 crisis_reliability = 0.75
 capacity_risk_share = 0.05
 
-# Per-FIGI asymmetric band overrides (optional).
+# Per-instrument asymmetric band overrides (optional).
 [[band_overrides]]
-figi = "BBG000B9XRY4"
+instrument_id = "IDTL.LSEETF"
 band_up = 0.05
 band_down = 0.02
