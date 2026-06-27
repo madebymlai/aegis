@@ -13,8 +13,7 @@ output_dir: runs/atalanta/trend
 #   hysteretic FORGO + drift band, 4-name incl equity   0.294        (7.5 fills/yr)
 #   DROP EQUITY -> non-equity substrate                 0.365        (5.0 fills/yr)   <- the big lever
 #   + band 0.15                                          0.376        (4.0 fills/yr)
-#   + IDTL short                                         0.372        (~6 fills/yr)   <- drawdown-payer
-#   + asymmetric drift band (this config)                0.424        (8.7 fills)
+#   + IDTL short (this config)                           0.372        (~6 fills/yr)   <- drawdown-payer
 # The IDTL short ties the long-only book on average convexity but concentrates payoff into the
 # inflation-crisis dislocation (2022: +30% vs +21%, conv +0.85 vs +0.68) and lands its give-back in
 # the recovery when the hedge is not needed — the purer drawdown-payer shape, so it is the default.
@@ -31,17 +30,17 @@ output_dir: runs/atalanta/trend
 #    regression slope on convexity; uranium/leveraged/CTA universes are blocked on data (youth,
 #    null-Close illiquidity, non-existence) — see archived configs.
 #  - SIGNAL: trend_score_regress — annualized OLS slope of log price (smooth sign, few whipsaw
-#    flips). Champion lookback fixed at 189.
+#    flips). Lookback swept (the ranker picks the slow end, ~252).
 #  - SIZING: realized_vol pinned at a LONG 126-bar window — a long lookback paired with a SHORT vol
 #    window negates positive skew (Research Affiliates); pinned so the skew-preserving choice is
 #    baked, not left to the ranker.
 #  - STRATEGY: trendStraddleHystereticShortable — hysteretic Schmitt-trigger sign (sticky, low
 #    turnover) + continuous magnitude (convex) + FORGO cash-when-flat (gross <= 1). IDTL is shorted
 #    on a confirmed down-trend (borrow-gated, parity-safe); IGLN/ICOM forgo to cash. enter/exit
-#    dead-zone fixed at the promoted champion.
-#  - HOLDING: portfolio drift band, NOT a per-bar buffer or NaN-hold — the only holding mechanism
-#    the LIVE rebalancer mirrors (a realized-space per-name drift band). The promoted champion uses
-#    asymmetric buy/hold spread semantics: band_down=0.20 gates adds, band_up=0.10 gates trims.
+#    dead-zone swept.
+#  - HOLDING: portfolio rebalance_band (vbt min_size), NOT a per-bar buffer or NaN-hold — the only
+#    holding mechanism the LIVE rebalancer mirrors (a realized-space per-name drift band). 0.15 is
+#    past the convexity knee (plateau 0.36-0.38) and minimizes fills.
 #
 # EUR base (Italy/IBKR-IE retail, ~EUR 5k): the three USD-quoted legs convert via the EUR/USD FX
 # pair (the FX-fetch fix is required and in place). First run needs the IB gateway up to fetch
@@ -58,17 +57,12 @@ data:
 
 indicators:
   - id: atalanta.trend_score_regress
-    params:
-      lookback: 189
   - id: atalanta.realized_vol
     params:
       vol_window: 126
 
 strategy:
   id: atalanta.keystone
-  params:
-    enter_band: 0.10
-    exit_band: 0.05
 
 portfolio:
   base_currency: EUR
@@ -81,8 +75,6 @@ portfolio:
   fx_conversion_cost: 0.0003
   fixed_fee: 1.25
   rebalance_band: 0.15
-  band_up: 0.10
-  band_down: 0.20
 
 ranking:
   metric: trend_convexity_payoff
