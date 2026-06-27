@@ -12,8 +12,11 @@ from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 from tests.support.research.aegis_research.market_data_fixtures import (
     ETF_INSTRUMENT_ID_VALUES,
     native_data_config_payload,
+    seed_catalog_fx,
     seed_catalog_ohlcv,
 )
+
+_FX_PAIR = "EUR/USD.IDEALPRO"
 
 COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components"
 
@@ -27,6 +30,7 @@ def _config(*, catalog_path: Path, fx_conversion_cost: float) -> dict:
             instruments=ETF_INSTRUMENT_ID_VALUES,
             end="2024-10-27",
             path=catalog_path,
+            exchange=[_FX_PAIR],
         ),
         "portfolio": {
             "gross_cap": 1.0,
@@ -67,10 +71,6 @@ def _run(tmp_path: Path, capsys: pytest.CaptureFixture[str], config: dict, run_i
     return json.loads((tmp_path / "runs" / run_id / "strategy_run.json").read_text())
 
 
-@pytest.mark.xfail(
-    reason="r8b.4 owns non-base conversion; r8b.1 keeps raw native prices",
-    strict=True,
-)
 def test_foreign_currency_book_converts_and_charges_the_fx_surcharge_e2e(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -82,7 +82,11 @@ def test_foreign_currency_book_converts_and_charges_the_fx_surcharge_e2e(
         tmp_path / "catalog",
         ETF_INSTRUMENT_ID_VALUES,
         periods=300,
+        currency="USD",
     )
+    # The USD legs convert to the EUR book via this FX pair; without it the run would
+    # fail loud (non-base quote currency, no matching exchange: pair).
+    seed_catalog_fx(tmp_path / "catalog", _FX_PAIR, periods=300)
 
     # No-op baseline: all-EUR book, no surcharge - conversion is identity.
     baseline = _run(

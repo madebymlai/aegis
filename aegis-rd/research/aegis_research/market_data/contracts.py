@@ -8,6 +8,7 @@ from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration import DataConfig
+from research.aegis_research.market_data.currency import CurrencyConversion
 
 LOGICAL_ARRAYS = {
     "open": "Open",
@@ -63,6 +64,9 @@ class MarketDataAdapterResult:
     # Optional second continuous series (the ``pnl_adjustment`` mode) the portfolio
     # simulates P&L on; ``None`` when no instrument declares a P&L series.
     pnl_native_data: Any = None
+    # Non-base → base FX conversion derived from the catalog's resolved instruments and
+    # ``exchange:`` FX series; ``None`` for a single-currency book (no ``exchange:``).
+    currency_conversion: CurrencyConversion | None = None
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -177,6 +181,7 @@ class MarketDataResult:
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
     pnl_native_data: Any = None
+    currency_conversion: CurrencyConversion | None = None
 
     def assert_usable(self) -> None:
         if not self.quality.usable:

@@ -10,6 +10,7 @@ from aegis_data.catalog import (
 )
 from aegis_data.continuous_catalog import continuous_ohlcv_frames
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.instruments import Instrument
 
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data.adapters._support import (
@@ -18,6 +19,11 @@ from research.aegis_research.market_data.adapters._support import (
     native_index,
 )
 from research.aegis_research.market_data.contracts import MarketDataAdapterResult
+from research.aegis_research.market_data.currency import (
+    CurrencyConversion,
+    MissingInstrumentDefinitionError,
+    build_currency_conversion,
+)
 from research.aegis_research.market_data.identity import instrument_ids
 
 
@@ -59,6 +65,10 @@ def load_catalog_source(
     native_data = native_from_array_dict(
         _array_panels(config, frames, tradeable_instrument_ids), config
     )
+    # The exchange: FX legs rode in via native_instrument_ids and stay OUT of the
+    # tradeable native_data above (no weights/signals/positions); here they become a
+    # conversion view instead — native prices in the catalog, base prices per consumer.
+    currency_conversion = _currency_conversion(config, data_port, raw_frames)
     return MarketDataAdapterResult(
         native_data=native_data,
         source_metadata={
@@ -70,7 +80,49 @@ def load_catalog_source(
         },
         evidence=index_evidence(native_index(native_data), source="nautilus_catalog"),
         provider_metadata={"source": "nautilus_data_provider_port"},
+        currency_conversion=currency_conversion,
     )
+
+
+def _currency_conversion(
+    config: DataConfig,
+    data_port: CatalogBackedDataPort,
+    raw_frames: dict[InstrumentId, pd.DataFrame],
+) -> CurrencyConversion | None:
+    """Build the non-base → base conversion from resolved instruments + exchange FX.
+
+    Every tradeable leg's currency is read from its resolved catalog ``Instrument``
+    (never configured) and matched to a declared ``exchange:`` FX pair. A non-base leg
+    with no matching pair fails loud — whether the pair is simply absent or no
+    ``exchange:`` was declared at all — so a multi-currency book can never run silently
+    unconverted. An all-base book converts nothing (raw instruments only, no synthetic
+    continuous-future roots, which carry no catalog definition and are out of scope).
+    """
+    tradeable_ids = instrument_ids(config.instruments)
+    exchange_ids = instrument_ids(config.exchange)
+    if not tradeable_ids and not exchange_ids:
+        return None
+    definitions = _resolve_definitions(data_port, (*tradeable_ids, *exchange_ids))
+    return build_currency_conversion(
+        instruments={instrument_id: definitions[instrument_id] for instrument_id in tradeable_ids},
+        fx_pairs={instrument_id: definitions[instrument_id] for instrument_id in exchange_ids},
+        fx_close={instrument_id: raw_frames[instrument_id]["Close"] for instrument_id in exchange_ids},
+        base_currency=config.base_currency,
+    )
+
+
+def _resolve_definitions(
+    data_port: CatalogBackedDataPort,
+    requested: tuple[InstrumentId, ...],
+) -> dict[InstrumentId, Instrument]:
+    loaded = {instrument.id: instrument for instrument in data_port.instruments(requested)}
+    missing = [instrument_id.value for instrument_id in requested if instrument_id not in loaded]
+    if missing:
+        raise MissingInstrumentDefinitionError(
+            "currency conversion needs a catalog instrument definition for every tradeable "
+            f"and exchange: id, but the catalog is missing definitions for: {sorted(missing)}"
+        )
+    return loaded
 
 
 def _array_panels(

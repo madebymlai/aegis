@@ -96,6 +96,7 @@ def load_market_data_result(
         diagnostics=diagnostics,
         quality=quality,
         pnl_native_data=adapter_result.pnl_native_data,
+        currency_conversion=adapter_result.currency_conversion,
     )
 
 

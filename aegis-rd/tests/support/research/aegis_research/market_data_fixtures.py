@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 from aegis_data.catalog import raw_bar_type
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
+from nautilus_trader.model.instruments import CurrencyPair, Equity
+from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from research.aegis_research.configuration import DataConfig
@@ -130,6 +131,7 @@ def seed_catalog_ohlcv(
     periods: int,
     start: str = "2024-01-01",
     seed: int = 0,
+    currency: str = "EUR",
 ) -> tuple[str, str]:
     catalog_path.mkdir(parents=True, exist_ok=True)
     catalog = ParquetDataCatalog(catalog_path)
@@ -142,6 +144,9 @@ def seed_catalog_ohlcv(
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = start_ts + pd.Timedelta(days=periods)
     for current_id in instrument_ids(instrument_id_values):
+        # The shared corpus holds a definition for every instrument with bars (ADR-0008);
+        # currency conversion reads each leg's quote currency from it.
+        catalog.write_data([equity_definition(current_id, currency)])
         bar_type = raw_bar_type(current_id, "1D")
         catalog.write_data(
             [
@@ -160,6 +165,76 @@ def seed_catalog_ohlcv(
             end=end_ts.value,
         )
     return start_ts.date().isoformat(), end_ts.date().isoformat()
+
+
+def seed_catalog_fx(
+    catalog_path: Path,
+    pair_value: str = "EUR/USD.IDEALPRO",
+    *,
+    periods: int,
+    start: str = "2024-01-01",
+    base_rate: float = 1.10,
+    drift: float = 0.0004,
+) -> None:
+    """Seed a moving FX ``CurrencyPair`` (definition + daily bars) for conversion.
+
+    The rate drifts each bar so a converted book's *returns* (not just price levels)
+    differ from the native book — a flat rate would cancel out of return metrics.
+    """
+    catalog_path.mkdir(parents=True, exist_ok=True)
+    catalog = ParquetDataCatalog(catalog_path)
+    pair_id = instrument_id(pair_value)
+    catalog.write_data([currency_pair_definition(pair_id)])
+    index = pd.date_range(start, periods=periods, freq="D")
+    rates = base_rate * np.exp(np.arange(periods) * drift)
+    bar_type = raw_bar_type(pair_id, "1D")
+    start_ts = pd.Timestamp(start, tz="UTC")
+    end_ts = start_ts + pd.Timedelta(days=periods)
+    catalog.write_data(
+        [
+            _bar(
+                bar_type,
+                timestamp=timestamp,
+                open_=rate,
+                high=rate,
+                low=rate,
+                close=rate,
+                volume=1_000_000.0,
+            )
+            for timestamp, rate in zip(index, rates, strict=True)
+        ],
+        start=start_ts.value,
+        end=end_ts.value,
+    )
+
+
+def equity_definition(instrument_id: InstrumentId, currency: str) -> Equity:
+    return Equity(
+        instrument_id=instrument_id,
+        raw_symbol=Symbol(instrument_id.symbol.value),
+        currency=Currency.from_str(currency),
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )
+
+
+def currency_pair_definition(instrument_id: InstrumentId) -> CurrencyPair:
+    base, quote = instrument_id.symbol.value.split("/")
+    return CurrencyPair(
+        instrument_id=instrument_id,
+        raw_symbol=Symbol(instrument_id.symbol.value),
+        base_currency=Currency.from_str(base),
+        quote_currency=Currency.from_str(quote),
+        price_precision=5,
+        size_precision=0,
+        price_increment=Price(1e-5, 5),
+        size_increment=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )
 
 
 def _bar(

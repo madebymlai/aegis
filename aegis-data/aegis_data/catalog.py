@@ -14,6 +14,7 @@ from aegis_data.bar_type import raw_bar_type
 
 if TYPE_CHECKING:
     from nautilus_trader.model.data import Bar, BarType
+    from nautilus_trader.model.instruments import Instrument
 
 AEGIS_DATA_DIR_ENV = "AEGIS_DATA_DIR"
 CATALOG_DIRNAME = "catalog"
@@ -86,6 +87,19 @@ class CatalogBackedDataPort:
             )
             for instrument_id in request.instrument_ids
         }
+
+    def instruments(self, instrument_ids: Sequence[InstrumentId]) -> list[Instrument]:
+        """Resolve native instrument definitions for *instrument_ids* from the catalog.
+
+        A consumer (e.g. the currency-conversion view) derives each leg's quote
+        currency from its resolved definition; this exposes that read as a port
+        method instead of reaching past the port into its catalog.
+        """
+        return list(
+            self.catalog.instruments(
+                instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
+            )
+        )
 
     def _ensure_covered(self, bar_type: BarType, request: RawBarRequest) -> None:
         missing = self._missing_intervals(bar_type, request)

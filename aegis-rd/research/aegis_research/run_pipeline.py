@@ -109,8 +109,8 @@ def run_strategy_sweep(
         # Continuous-future adjustment happens in the load path now (the catalog adapter
         # materialises each declared root, Path A), so the bundle already carries adjusted
         # continuous columns; only currency conversion remains before the sweep.
-        data_bundle = _to_base_currency(config, data_bundle=market_data_bundle(data_result))
-        pnl_bundle = _pnl_bundle(config, data_result)
+        data_bundle = _to_base_currency(data_result, data_bundle=market_data_bundle(data_result))
+        pnl_bundle = _pnl_bundle(data_result)
         metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
             config,
@@ -139,7 +139,7 @@ def run_strategy_sweep(
 
 
 def _pnl_bundle(
-    config: RunConfig, data_result: MarketDataResult
+    data_result: MarketDataResult,
 ) -> MarketDataBundle | None:
     """The P&L continuous series (a future's ``pnl_adjustment`` mode), in base currency.
 
@@ -153,14 +153,22 @@ def _pnl_bundle(
     bundle = MarketDataBundle(
         {name: canonical_array_panel(data_result.pnl_native_data, name) for name in loaded}
     )
-    return _to_base_currency(config, data_bundle=bundle)
+    return _to_base_currency(data_result, data_bundle=bundle)
 
 
 def _to_base_currency(
-    config: RunConfig, *, data_bundle: MarketDataBundle
+    data_result: MarketDataResult, *, data_bundle: MarketDataBundle
 ) -> MarketDataBundle:
-    """Currency conversion is split to r8b.4; r8b.1 keeps raw native prices."""
-    return data_bundle
+    """Convert native-priced arrays to the book's base currency (a per-consumer view).
+
+    A single-currency book carries no conversion and passes through untouched; a
+    multi-currency book applies the FX series the catalog derived from its
+    ``exchange:`` pairs. The catalog itself keeps native, account-agnostic prices.
+    """
+    conversion = data_result.currency_conversion
+    if conversion is None:
+        return data_bundle
+    return MarketDataBundle(conversion.apply(data_bundle.arrays))
 
 
 def _failure_diagnostic(error: Exception) -> dict[str, str]:
@@ -205,6 +213,7 @@ def _run_optimization_strategy_sweep(
         setup=setup,
         metric_registry=metric_registry,
         run_evidence=run_evidence,
+        currency_conversion=data_result.currency_conversion,
     )
 
     # Stage 3: Publishing — three representative candidates, candidate store

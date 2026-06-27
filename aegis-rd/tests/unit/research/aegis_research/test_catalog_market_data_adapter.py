@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pandas as pd
 import pytest
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
+from nautilus_trader.model.instruments import CurrencyPair, Equity, Instrument
+from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.data import load_market_data_result
@@ -12,6 +15,37 @@ from research.aegis_research.market_data.adapters import catalog as catalog_adap
 from research.aegis_research.market_data.adapters.catalog import load_catalog_source
 from research.aegis_research.market_data.panels import market_data_bundle
 from tests.support.research.aegis_research.factories import make_data_config
+
+
+def _definition(instrument_id: InstrumentId) -> Instrument:
+    """A native definition for the fake catalog: an FX symbol resolves to a
+    ``CurrencyPair`` (so currency conversion can read its base/quote), anything
+    else to a USD ``Equity`` (these adapter tests run USD-base books)."""
+    symbol = instrument_id.symbol.value
+    if "/" in symbol:
+        base, quote = symbol.split("/")
+        return CurrencyPair(
+            instrument_id=instrument_id,
+            raw_symbol=Symbol(symbol),
+            base_currency=Currency.from_str(base),
+            quote_currency=Currency.from_str(quote),
+            price_precision=5,
+            size_precision=0,
+            price_increment=Price(1e-5, 5),
+            size_increment=Quantity.from_int(1),
+            ts_event=0,
+            ts_init=0,
+        )
+    return Equity(
+        instrument_id=instrument_id,
+        raw_symbol=Symbol(symbol),
+        currency=Currency.from_str("USD"),
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )
 
 
 @dataclass
@@ -22,6 +56,9 @@ class _RecordingCatalogPort:
     def load_raw_bars(self, request) -> dict[InstrumentId, pd.DataFrame]:
         self.requested_ids = tuple(request.instrument_ids)
         return self.frames
+
+    def instruments(self, instrument_ids: Sequence[InstrumentId]) -> list[Instrument]:
+        return [_definition(instrument_id) for instrument_id in instrument_ids]
 
 
 def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_columns() -> None:
