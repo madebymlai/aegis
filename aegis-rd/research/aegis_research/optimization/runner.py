@@ -42,6 +42,7 @@ from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
     invalid_candidates,
 )
+from research.aegis_research.optimization.portfolio_params import optimization_params
 from research.aegis_research.optimization.precompute import candidate_keys
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -97,7 +98,8 @@ def execute_optimization(
     pnl_close: pd.DataFrame | None = None,
     pnl_open: pd.DataFrame | None = None,
 ) -> OptimizationResult:
-    _validate_source_param_names(source.params)
+    params = optimization_params(source.params, optimization)
+    _validate_source_param_names(params)
     if ranking.metric not in metric_registry:
         raise OptimizationRunnerError(
             f"optimization ranking metric {ranking.metric!r} is not in the "
@@ -112,7 +114,7 @@ def execute_optimization(
 
     # Stage 0: materialise the sampled candidate set once, deterministically, and
     # feed the same set to BOTH the precompute and the selection sweep.
-    sampled_lists = _materialize_candidates(source.params, optimization)
+    sampled_lists = _materialize_candidates(params, optimization)
     n_candidates = len(next(iter(sampled_lists.values()))) if sampled_lists else 0
     sampled_params = {
         name: vbt.Param(values, level=0) for name, values in sampled_lists.items()
@@ -310,4 +312,3 @@ def _validate_source_param_names(params: Mapping[str, vbt.Param]) -> None:
             f"optimization param names {reserved} are reserved for Aegis/VBT result "
             "coordinates; choose distinct parameter names"
         )
-

@@ -21,6 +21,7 @@ dependencies = [
   "vectorbtpro",
   "nautilus-ibapi==10.45.1",
   "protobuf>=7.35.1",
+  "yfinance",
 ]
 
 [project.scripts]
@@ -60,6 +61,8 @@ module = [
   "aegis_runtime.*",
   "aegis_data",
   "aegis_data.*",
+  "numba",
+  "numba.*",
   "nautilus_trader.*",
 ]
 ignore_missing_imports = true

@@ -2,6 +2,7 @@
 
 import pytest
 
+from aegis_runtime import DriftBand
 from aegis_trader.domain.book_config import (
     BookConfig,
     CostModelConfig,
@@ -263,7 +264,7 @@ class TestBookConfigCapsAndBands:
     def test_default_bands(self):
         """Default bands are 0.02 symmetric."""
         book = BookConfig(sleeves=(make_sleeve("trend"),))
-        assert book.band_for("ANY_ID") == (0.02, 0.02)
+        assert book.band_for("ANY_ID") == DriftBand.symmetric(0.02)
 
     def test_band_override(self):
         """Per-instrument asymmetric band override."""
@@ -271,8 +272,8 @@ class TestBookConfigCapsAndBands:
             sleeves=(make_sleeve("trend"),),
             band_overrides=(("TAIL_ID", 0.01, 0.05),),
         )
-        assert book.band_for("TAIL_ID") == (0.01, 0.05)
-        assert book.band_for("OTHER") == (0.02, 0.02)
+        assert book.band_for("TAIL_ID") == DriftBand(up=0.01, down=0.05)
+        assert book.band_for("OTHER") == DriftBand.symmetric(0.02)
 
     def test_caps_default_none(self):
         """Caps default to None (unlimited)."""

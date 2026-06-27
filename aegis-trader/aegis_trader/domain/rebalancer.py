@@ -169,33 +169,28 @@ def rebalance_plan(
     for instrument_id in all_instrument_ids:
         target_w = net_target_by_instrument_id.get(instrument_id, 0.0)
         realized_w = rw.get(instrument_id, 0.0)
-        has_realized = instrument_id in rw
 
         if abs(target_w) < _ZERO_GUARD and abs(realized_w) < _ZERO_GUARD:
             continue
 
-        delta = target_w - realized_w
-
         # -- band gate (skipped on a forced full cleanup) --
-        if has_realized and not force_cleanup:
-            band_up, band_down = book.band_for(instrument_id.value)
+        resolved_w = (
+            target_w
+            if force_cleanup
+            else book.band_for(instrument_id.value).resolve(
+                realized=realized_w,
+                target=target_w,
+            )
+        )
+        delta = resolved_w - realized_w
 
-            if delta > 0 and delta <= band_down:
-                # realised below target but within lower band -> no trade
-                post_book[instrument_id] = realized_w
-                continue
-            if delta < 0 and -delta <= band_up:
-                # realised above target but within upper band -> no trade
-                post_book[instrument_id] = realized_w
-                continue
-
-        # Outside band (or no band) -> trade delta.
+        # Outside band (or no band) -> trade delta; inside band -> hold realized.
         if abs(delta) < _ZERO_GUARD:
             post_book[instrument_id] = realized_w
             continue
 
         deltas.append(WeightDelta(instrument_id=instrument_id, delta=delta))
-        post_book[instrument_id] = target_w
+        post_book[instrument_id] = resolved_w
 
     # -- Step 3: per-name cap gate on the realised book (widen-to-compliance) --
     _gate_per_name_caps(

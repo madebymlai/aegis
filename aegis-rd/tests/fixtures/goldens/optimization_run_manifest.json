@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "7a98513c8c62a989aaba5b45f1895179cd7e7eccc4c07ec9cdbaca0283cc3199",
+      "hash": "379225f97369c5eea5866808b17112e55bedf4a34c8491ba05834f968ff28ae1",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 62140,
+      "size": 62638,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -95,6 +95,10 @@
     "name": "golden_bytes_oracle",
     "optimization": {
       "execute": {},
+      "portfolio": {
+        "band_down": [],
+        "band_up": []
+      },
       "random_subset": null,
       "search": "grid",
       "seed": null,
@@ -112,6 +116,8 @@
     },
     "output_dir": "runs",
     "portfolio": {
+      "band_down": null,
+      "band_up": null,
       "base_currency": "EUR",
       "direction": "longonly",
       "fees": 0.0005,
@@ -121,6 +127,7 @@
       "gross_cap": 1.0,
       "init_cash": 10000.0,
       "net_cap": 1.0,
+      "rebalance_band": 0.0,
       "short_borrow_rate": 0.005,
       "short_rebate_rate": 0.0,
       "slippage": 0.0005
@@ -150,7 +157,7 @@
       "raw_config_identity": {
         "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
       },
-      "resolved_config_hash": "060ed9191569ded7f6a83d52fff12b07a1cefe20cce41c3058bcc3a7b3b3c775",
+      "resolved_config_hash": "d131683672f94a791f401342d9d93e86236291ec9004763ddd049121e7741a49",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",
@@ -183,43 +190,45 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_da1b97cfe0c264cda8347b1da51d69c8",
+          "candidate_key": "cand_185aef4e9905eb72e5622005788877c1",
           "held_out_metrics": {
             "0": {
-              "max_dd": 17.34401245220606,
-              "sharpe_ratio": -0.9377433414033812,
-              "total_fees_paid": 512.2184438987695,
-              "total_return": -9.83846094292214,
+              "max_dd": 17.34401245220589,
+              "sharpe_ratio": -0.9377433414033789,
+              "total_fees_paid": 512.2184438987694,
+              "total_return": -9.838460942922067,
               "total_trades": 325.0,
               "win_rate": 44.30769230769231
             },
             "1": {
-              "max_dd": 8.601433864303065,
-              "sharpe_ratio": 0.465060957786892,
+              "max_dd": 8.601433864303099,
+              "sharpe_ratio": 0.4650609577868894,
               "total_fees_paid": 382.00815212236967,
               "total_return": 3.8789721500852496,
               "total_trades": 262.0,
               "win_rate": 61.45038167938931
             },
             "2": {
-              "max_dd": 10.763094267372608,
-              "sharpe_ratio": 0.1693435415444191,
-              "total_fees_paid": 444.3281607641557,
-              "total_return": 1.2371712976740854,
+              "max_dd": 10.76309426737263,
+              "sharpe_ratio": 0.16934354154441397,
+              "total_fees_paid": 444.32816076415565,
+              "total_return": 1.237171297674147,
               "total_trades": 270.0,
               "win_rate": 56.2962962962963
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 12.236180194627243,
-            "sharpe_ratio": -0.10111294735735671,
-            "total_fees_paid": 446.1849189284316,
-            "total_return": -1.574105831720935,
+            "max_dd": 12.236180194627208,
+            "sharpe_ratio": -0.1011129473573585,
+            "total_fees_paid": 446.1849189284315,
+            "total_return": -1.57410583172089,
             "total_trades": 285.6666666666667,
             "win_rate": 54.01812342779264
           },
           "identity": {
             "book_settings": {
+              "band_down": null,
+              "band_up": null,
               "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
@@ -229,6 +238,7 @@
               "gross_cap": 1.0,
               "init_cash": 10000.0,
               "net_cap": 1.0,
+              "rebalance_band": 0.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
               "slippage": 0.0005
@@ -495,10 +505,10 @@
             }
           },
           "metrics": {
-            "max_dd": 10.085390787581835,
-            "sharpe_ratio": -0.1424150430753429,
-            "total_fees_paid": 345.5258397781989,
-            "total_return": -1.9523038960683652,
+            "max_dd": 10.085390787581789,
+            "sharpe_ratio": -0.14241504307534547,
+            "total_fees_paid": 345.5258397781988,
+            "total_return": -1.9523038960683445,
             "total_trades": 222.33333333333334,
             "win_rate": 53.586024662360536
           },
@@ -510,27 +520,27 @@
           "rank": 1,
           "role": "best",
           "schema_version": "candidate_eval_row.v2",
-          "score": -0.38101353257375437,
+          "score": -0.3810135325737555,
           "selection_metrics": {
             "0": {
               "max_dd": 4.310726046236379,
-              "sharpe_ratio": 0.04543725439046059,
+              "sharpe_ratio": 0.0454372543904531,
               "total_fees_paid": 142.35092331345749,
-              "total_return": 0.10257710463179477,
+              "total_return": 0.1025771046317834,
               "total_trades": 80.0,
               "win_rate": 55.00000000000001
             },
             "1": {
-              "max_dd": 17.34401245220606,
-              "sharpe_ratio": -0.9377433414033812,
-              "total_fees_paid": 512.2184438987695,
-              "total_return": -9.83846094292214,
+              "max_dd": 17.34401245220589,
+              "sharpe_ratio": -0.9377433414033789,
+              "total_fees_paid": 512.2184438987694,
+              "total_return": -9.838460942922067,
               "total_trades": 325.0,
               "win_rate": 44.30769230769231
             },
             "2": {
-              "max_dd": 8.601433864303065,
-              "sharpe_ratio": 0.465060957786892,
+              "max_dd": 8.601433864303099,
+              "sharpe_ratio": 0.4650609577868894,
               "total_fees_paid": 382.00815212236967,
               "total_return": 3.8789721500852496,
               "total_trades": 262.0,
@@ -543,43 +553,45 @@
           }
         },
         {
-          "candidate_key": "cand_c762a579ee34412833752405a3b9db5b",
+          "candidate_key": "cand_7ebbb776d6f3e4f6b45f6cf59cc4207d",
           "held_out_metrics": {
             "0": {
-              "max_dd": 24.329296546012134,
-              "sharpe_ratio": -1.4262372912155579,
-              "total_fees_paid": 525.1667527777108,
-              "total_return": -15.982858522098514,
+              "max_dd": 24.329296546012046,
+              "sharpe_ratio": -1.426237291215558,
+              "total_fees_paid": 525.1667527777109,
+              "total_return": -15.982858522098464,
               "total_trades": 299.0,
               "win_rate": 40.802675585284284
             },
             "1": {
-              "max_dd": 8.532463690456405,
-              "sharpe_ratio": 0.607708661583153,
-              "total_fees_paid": 495.12918756269573,
-              "total_return": 5.510887068065416,
+              "max_dd": 8.53246369045635,
+              "sharpe_ratio": 0.6077086615831506,
+              "total_fees_paid": 495.12918756269545,
+              "total_return": 5.5108870680653546,
               "total_trades": 319.0,
               "win_rate": 63.322884012539184
             },
             "2": {
               "max_dd": 8.651810163535655,
-              "sharpe_ratio": 0.14521730386967582,
-              "total_fees_paid": 573.0186174123247,
-              "total_return": 1.0211851600155546,
+              "sharpe_ratio": 0.1452173038696819,
+              "total_fees_paid": 573.018617412325,
+              "total_return": 1.0211851600157273,
               "total_trades": 269.0,
               "win_rate": 52.78810408921933
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 13.837856800001399,
-            "sharpe_ratio": -0.22443710858757637,
+            "max_dd": 13.837856800001349,
+            "sharpe_ratio": -0.22443710858757518,
             "total_fees_paid": 531.1048525842438,
-            "total_return": -3.150262098005848,
+            "total_return": -3.150262098005794,
             "total_trades": 295.6666666666667,
             "win_rate": 52.3045545623476
           },
           "identity": {
             "book_settings": {
+              "band_down": null,
+              "band_up": null,
               "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
@@ -589,6 +601,7 @@
               "gross_cap": 1.0,
               "init_cash": 10000.0,
               "net_cap": 1.0,
+              "rebalance_band": 0.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
               "slippage": 0.0005
@@ -855,10 +868,10 @@
             }
           },
           "metrics": {
-            "max_dd": 12.629108018112795,
-            "sharpe_ratio": -0.48689778164367814,
-            "total_fees_paid": 388.50221855184304,
-            "total_return": -4.641797154442309,
+            "max_dd": 12.629108018112753,
+            "sharpe_ratio": -0.48689778164367864,
+            "total_fees_paid": 388.502218551843,
+            "total_return": -4.641797154442308,
             "total_trades": 229.66666666666666,
             "win_rate": 51.60992831664538
           },
@@ -870,29 +883,29 @@
           "rank": 2,
           "role": "median",
           "schema_version": "candidate_eval_row.v2",
-          "score": -0.768699634515242,
+          "score": -0.7686996345152424,
           "selection_metrics": {
             "0": {
-              "max_dd": 5.025563817869849,
-              "sharpe_ratio": -0.6421647152986295,
+              "max_dd": 5.025563817869861,
+              "sharpe_ratio": -0.6421647152986285,
               "total_fees_paid": 145.21071531512257,
-              "total_return": -3.4534200092938296,
+              "total_return": -3.453420009293816,
               "total_trades": 71.0,
               "win_rate": 50.70422535211267
             },
             "1": {
-              "max_dd": 24.329296546012134,
-              "sharpe_ratio": -1.4262372912155579,
-              "total_fees_paid": 525.1667527777108,
-              "total_return": -15.982858522098514,
+              "max_dd": 24.329296546012046,
+              "sharpe_ratio": -1.426237291215558,
+              "total_fees_paid": 525.1667527777109,
+              "total_return": -15.982858522098464,
               "total_trades": 299.0,
               "win_rate": 40.802675585284284
             },
             "2": {
-              "max_dd": 8.532463690456405,
-              "sharpe_ratio": 0.607708661583153,
-              "total_fees_paid": 495.12918756269573,
-              "total_return": 5.510887068065416,
+              "max_dd": 8.53246369045635,
+              "sharpe_ratio": 0.6077086615831506,
+              "total_fees_paid": 495.12918756269545,
+              "total_return": 5.5108870680653546,
               "total_trades": 319.0,
               "win_rate": 63.322884012539184
             }
@@ -903,43 +916,45 @@
           }
         },
         {
-          "candidate_key": "cand_84255daec732cf69c8d7e1adf36c0283",
+          "candidate_key": "cand_7946c250c2cbd8b33efc1dff8ca11169",
           "held_out_metrics": {
             "0": {
-              "max_dd": 21.879582100013593,
-              "sharpe_ratio": -1.0981432385490355,
-              "total_fees_paid": 525.839931014373,
-              "total_return": -13.559462831561001,
+              "max_dd": 21.879582100013717,
+              "sharpe_ratio": -1.0981432385490384,
+              "total_fees_paid": 525.8399310143731,
+              "total_return": -13.559462831561081,
               "total_trades": 157.0,
               "win_rate": 41.40127388535032
             },
             "1": {
-              "max_dd": 23.467150318536756,
-              "sharpe_ratio": -1.4579875045660875,
+              "max_dd": 23.467150318536678,
+              "sharpe_ratio": -1.4579875045660868,
               "total_fees_paid": 717.1581945003381,
-              "total_return": -15.973959150408277,
+              "total_return": -15.973959150408263,
               "total_trades": 220.0,
               "win_rate": 45.909090909090914
             },
             "2": {
               "max_dd": 8.34292908726334,
-              "sharpe_ratio": 0.742194334364928,
+              "sharpe_ratio": 0.7421943343649329,
               "total_fees_paid": 585.1851206084048,
-              "total_return": 8.698702755798028,
+              "total_return": 8.698702755798058,
               "total_trades": 171.0,
               "win_rate": 50.877192982456144
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 17.89655383527123,
-            "sharpe_ratio": -0.6046454695833984,
+            "max_dd": 17.896553835271245,
+            "sharpe_ratio": -0.6046454695833975,
             "total_fees_paid": 609.394415374372,
-            "total_return": -6.94490640872375,
+            "total_return": -6.944906408723763,
             "total_trades": 182.66666666666666,
             "win_rate": 46.0625192589658
           },
           "identity": {
             "book_settings": {
+              "band_down": null,
+              "band_up": null,
               "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
@@ -949,6 +964,7 @@
               "gross_cap": 1.0,
               "init_cash": 10000.0,
               "net_cap": 1.0,
+              "rebalance_band": 0.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
               "slippage": 0.0005
@@ -1215,10 +1231,10 @@
             }
           },
           "metrics": {
-            "max_dd": 16.27716514714388,
-            "sharpe_ratio": -0.7608370679354644,
-            "total_fees_paid": 453.1442089391765,
-            "total_return": -9.365764672402095,
+            "max_dd": 16.277165147143887,
+            "sharpe_ratio": -0.7608370679354649,
+            "total_fees_paid": 453.1442089391766,
+            "total_return": -9.365764672402113,
             "total_trades": 136.33333333333334,
             "win_rate": 44.72845493148041
           },
@@ -1233,26 +1249,26 @@
           "score": -0.9699821989246513,
           "selection_metrics": {
             "0": {
-              "max_dd": 3.4847630228812876,
-              "sharpe_ratio": 0.27361953930873,
-              "total_fees_paid": 116.43450130281849,
-              "total_return": 1.4361279647629954,
+              "max_dd": 3.4847630228812654,
+              "sharpe_ratio": 0.2736195393087304,
+              "total_fees_paid": 116.43450130281852,
+              "total_return": 1.4361279647630045,
               "total_trades": 32.0,
               "win_rate": 46.875
             },
             "1": {
-              "max_dd": 21.879582100013593,
-              "sharpe_ratio": -1.0981432385490355,
-              "total_fees_paid": 525.839931014373,
-              "total_return": -13.559462831561001,
+              "max_dd": 21.879582100013717,
+              "sharpe_ratio": -1.0981432385490384,
+              "total_fees_paid": 525.8399310143731,
+              "total_return": -13.559462831561081,
               "total_trades": 157.0,
               "win_rate": 41.40127388535032
             },
             "2": {
-              "max_dd": 23.467150318536756,
-              "sharpe_ratio": -1.4579875045660875,
+              "max_dd": 23.467150318536678,
+              "sharpe_ratio": -1.4579875045660868,
               "total_fees_paid": 717.1581945003381,
-              "total_return": -15.973959150408277,
+              "total_return": -15.973959150408263,
               "total_trades": 220.0,
               "win_rate": 45.909090909090914
             }
@@ -1310,43 +1326,43 @@
         "best": {
           "held_out_metrics": {
             "0": {
-              "max_dd": 17.34401245220606,
-              "sharpe_ratio": -0.9377433414033812,
-              "total_fees_paid": 512.2184438987695,
-              "total_return": -9.83846094292214,
+              "max_dd": 17.34401245220589,
+              "sharpe_ratio": -0.9377433414033789,
+              "total_fees_paid": 512.2184438987694,
+              "total_return": -9.838460942922067,
               "total_trades": 325.0,
               "win_rate": 44.30769230769231
             },
             "1": {
-              "max_dd": 8.601433864303065,
-              "sharpe_ratio": 0.465060957786892,
+              "max_dd": 8.601433864303099,
+              "sharpe_ratio": 0.4650609577868894,
               "total_fees_paid": 382.00815212236967,
               "total_return": 3.8789721500852496,
               "total_trades": 262.0,
               "win_rate": 61.45038167938931
             },
             "2": {
-              "max_dd": 10.763094267372608,
-              "sharpe_ratio": 0.1693435415444191,
-              "total_fees_paid": 444.3281607641557,
-              "total_return": 1.2371712976740854,
+              "max_dd": 10.76309426737263,
+              "sharpe_ratio": 0.16934354154441397,
+              "total_fees_paid": 444.32816076415565,
+              "total_return": 1.237171297674147,
               "total_trades": 270.0,
               "win_rate": 56.2962962962963
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 12.236180194627243,
-            "sharpe_ratio": -0.10111294735735671,
-            "total_fees_paid": 446.1849189284316,
-            "total_return": -1.574105831720935,
+            "max_dd": 12.236180194627208,
+            "sharpe_ratio": -0.1011129473573585,
+            "total_fees_paid": 446.1849189284315,
+            "total_return": -1.57410583172089,
             "total_trades": 285.6666666666667,
             "win_rate": 54.01812342779264
           },
           "metrics": {
-            "max_dd": 10.085390787581835,
-            "sharpe_ratio": -0.1424150430753429,
-            "total_fees_paid": 345.5258397781989,
-            "total_return": -1.9523038960683652,
+            "max_dd": 10.085390787581789,
+            "sharpe_ratio": -0.14241504307534547,
+            "total_fees_paid": 345.5258397781988,
+            "total_return": -1.9523038960683445,
             "total_trades": 222.33333333333334,
             "win_rate": 53.586024662360536
           },
@@ -1355,27 +1371,27 @@
             "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
             "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
           },
-          "score": -0.38101353257375437,
+          "score": -0.3810135325737555,
           "selection_metrics": {
             "0": {
               "max_dd": 4.310726046236379,
-              "sharpe_ratio": 0.04543725439046059,
+              "sharpe_ratio": 0.0454372543904531,
               "total_fees_paid": 142.35092331345749,
-              "total_return": 0.10257710463179477,
+              "total_return": 0.1025771046317834,
               "total_trades": 80.0,
               "win_rate": 55.00000000000001
             },
             "1": {
-              "max_dd": 17.34401245220606,
-              "sharpe_ratio": -0.9377433414033812,
-              "total_fees_paid": 512.2184438987695,
-              "total_return": -9.83846094292214,
+              "max_dd": 17.34401245220589,
+              "sharpe_ratio": -0.9377433414033789,
+              "total_fees_paid": 512.2184438987694,
+              "total_return": -9.838460942922067,
               "total_trades": 325.0,
               "win_rate": 44.30769230769231
             },
             "2": {
-              "max_dd": 8.601433864303065,
-              "sharpe_ratio": 0.465060957786892,
+              "max_dd": 8.601433864303099,
+              "sharpe_ratio": 0.4650609577868894,
               "total_fees_paid": 382.00815212236967,
               "total_return": 3.8789721500852496,
               "total_trades": 262.0,
@@ -1388,43 +1404,43 @@
         "median": {
           "held_out_metrics": {
             "0": {
-              "max_dd": 24.329296546012134,
-              "sharpe_ratio": -1.4262372912155579,
-              "total_fees_paid": 525.1667527777108,
-              "total_return": -15.982858522098514,
+              "max_dd": 24.329296546012046,
+              "sharpe_ratio": -1.426237291215558,
+              "total_fees_paid": 525.1667527777109,
+              "total_return": -15.982858522098464,
               "total_trades": 299.0,
               "win_rate": 40.802675585284284
             },
             "1": {
-              "max_dd": 8.532463690456405,
-              "sharpe_ratio": 0.607708661583153,
-              "total_fees_paid": 495.12918756269573,
-              "total_return": 5.510887068065416,
+              "max_dd": 8.53246369045635,
+              "sharpe_ratio": 0.6077086615831506,
+              "total_fees_paid": 495.12918756269545,
+              "total_return": 5.5108870680653546,
               "total_trades": 319.0,
               "win_rate": 63.322884012539184
             },
             "2": {
               "max_dd": 8.651810163535655,
-              "sharpe_ratio": 0.14521730386967582,
-              "total_fees_paid": 573.0186174123247,
-              "total_return": 1.0211851600155546,
+              "sharpe_ratio": 0.1452173038696819,
+              "total_fees_paid": 573.018617412325,
+              "total_return": 1.0211851600157273,
               "total_trades": 269.0,
               "win_rate": 52.78810408921933
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 13.837856800001399,
-            "sharpe_ratio": -0.22443710858757637,
+            "max_dd": 13.837856800001349,
+            "sharpe_ratio": -0.22443710858757518,
             "total_fees_paid": 531.1048525842438,
-            "total_return": -3.150262098005848,
+            "total_return": -3.150262098005794,
             "total_trades": 295.6666666666667,
             "win_rate": 52.3045545623476
           },
           "metrics": {
-            "max_dd": 12.629108018112795,
-            "sharpe_ratio": -0.48689778164367814,
-            "total_fees_paid": 388.50221855184304,
-            "total_return": -4.641797154442309,
+            "max_dd": 12.629108018112753,
+            "sharpe_ratio": -0.48689778164367864,
+            "total_fees_paid": 388.502218551843,
+            "total_return": -4.641797154442308,
             "total_trades": 229.66666666666666,
             "win_rate": 51.60992831664538
           },
@@ -1433,29 +1449,29 @@
             "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
             "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
           },
-          "score": -0.768699634515242,
+          "score": -0.7686996345152424,
           "selection_metrics": {
             "0": {
-              "max_dd": 5.025563817869849,
-              "sharpe_ratio": -0.6421647152986295,
+              "max_dd": 5.025563817869861,
+              "sharpe_ratio": -0.6421647152986285,
               "total_fees_paid": 145.21071531512257,
-              "total_return": -3.4534200092938296,
+              "total_return": -3.453420009293816,
               "total_trades": 71.0,
               "win_rate": 50.70422535211267
             },
             "1": {
-              "max_dd": 24.329296546012134,
-              "sharpe_ratio": -1.4262372912155579,
-              "total_fees_paid": 525.1667527777108,
-              "total_return": -15.982858522098514,
+              "max_dd": 24.329296546012046,
+              "sharpe_ratio": -1.426237291215558,
+              "total_fees_paid": 525.1667527777109,
+              "total_return": -15.982858522098464,
               "total_trades": 299.0,
               "win_rate": 40.802675585284284
             },
             "2": {
-              "max_dd": 8.532463690456405,
-              "sharpe_ratio": 0.607708661583153,
-              "total_fees_paid": 495.12918756269573,
-              "total_return": 5.510887068065416,
+              "max_dd": 8.53246369045635,
+              "sharpe_ratio": 0.6077086615831506,
+              "total_fees_paid": 495.12918756269545,
+              "total_return": 5.5108870680653546,
               "total_trades": 319.0,
               "win_rate": 63.322884012539184
             }
@@ -1467,43 +1483,43 @@
         "worst": {
           "held_out_metrics": {
             "0": {
-              "max_dd": 21.879582100013593,
-              "sharpe_ratio": -1.0981432385490355,
-              "total_fees_paid": 525.839931014373,
-              "total_return": -13.559462831561001,
+              "max_dd": 21.879582100013717,
+              "sharpe_ratio": -1.0981432385490384,
+              "total_fees_paid": 525.8399310143731,
+              "total_return": -13.559462831561081,
               "total_trades": 157.0,
               "win_rate": 41.40127388535032
             },
             "1": {
-              "max_dd": 23.467150318536756,
-              "sharpe_ratio": -1.4579875045660875,
+              "max_dd": 23.467150318536678,
+              "sharpe_ratio": -1.4579875045660868,
               "total_fees_paid": 717.1581945003381,
-              "total_return": -15.973959150408277,
+              "total_return": -15.973959150408263,
               "total_trades": 220.0,
               "win_rate": 45.909090909090914
             },
             "2": {
               "max_dd": 8.34292908726334,
-              "sharpe_ratio": 0.742194334364928,
+              "sharpe_ratio": 0.7421943343649329,
               "total_fees_paid": 585.1851206084048,
-              "total_return": 8.698702755798028,
+              "total_return": 8.698702755798058,
               "total_trades": 171.0,
               "win_rate": 50.877192982456144
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 17.89655383527123,
-            "sharpe_ratio": -0.6046454695833984,
+            "max_dd": 17.896553835271245,
+            "sharpe_ratio": -0.6046454695833975,
             "total_fees_paid": 609.394415374372,
-            "total_return": -6.94490640872375,
+            "total_return": -6.944906408723763,
             "total_trades": 182.66666666666666,
             "win_rate": 46.0625192589658
           },
           "metrics": {
-            "max_dd": 16.27716514714388,
-            "sharpe_ratio": -0.7608370679354644,
-            "total_fees_paid": 453.1442089391765,
-            "total_return": -9.365764672402095,
+            "max_dd": 16.277165147143887,
+            "sharpe_ratio": -0.7608370679354649,
+            "total_fees_paid": 453.1442089391766,
+            "total_return": -9.365764672402113,
             "total_trades": 136.33333333333334,
             "win_rate": 44.72845493148041
           },
@@ -1515,26 +1531,26 @@
           "score": -0.9699821989246513,
           "selection_metrics": {
             "0": {
-              "max_dd": 3.4847630228812876,
-              "sharpe_ratio": 0.27361953930873,
-              "total_fees_paid": 116.43450130281849,
-              "total_return": 1.4361279647629954,
+              "max_dd": 3.4847630228812654,
+              "sharpe_ratio": 0.2736195393087304,
+              "total_fees_paid": 116.43450130281852,
+              "total_return": 1.4361279647630045,
               "total_trades": 32.0,
               "win_rate": 46.875
             },
             "1": {
-              "max_dd": 21.879582100013593,
-              "sharpe_ratio": -1.0981432385490355,
-              "total_fees_paid": 525.839931014373,
-              "total_return": -13.559462831561001,
+              "max_dd": 21.879582100013717,
+              "sharpe_ratio": -1.0981432385490384,
+              "total_fees_paid": 525.8399310143731,
+              "total_return": -13.559462831561081,
               "total_trades": 157.0,
               "win_rate": 41.40127388535032
             },
             "2": {
-              "max_dd": 23.467150318536756,
-              "sharpe_ratio": -1.4579875045660875,
+              "max_dd": 23.467150318536678,
+              "sharpe_ratio": -1.4579875045660868,
               "total_fees_paid": 717.1581945003381,
-              "total_return": -15.973959150408277,
+              "total_return": -15.973959150408263,
               "total_trades": 220.0,
               "win_rate": 45.909090909090914
             }
@@ -1546,6 +1562,10 @@
       "open_prices_available": true,
       "optimization": {
         "execute": {},
+        "portfolio": {
+          "band_down": [],
+          "band_up": []
+        },
         "random_subset": null,
         "search": "grid",
         "seed": null,

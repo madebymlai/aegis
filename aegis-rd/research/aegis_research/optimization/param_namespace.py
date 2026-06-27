@@ -15,6 +15,7 @@ from research.aegis_research.component_registry import (
     COMPONENT_FAMILIES,
     ComponentFamily,
 )
+from research.aegis_research.optimization.portfolio_params import is_portfolio_param_key
 
 FIXED_CANDIDATE_PARAM = "__aegis_fixed_candidate__"
 PARAM_KEY_PREFIX = "component"
@@ -74,10 +75,10 @@ def decode(key: str) -> tuple[ComponentRef, str]:
 def slice_by_component(
     param_row: Mapping[str, Any],
 ) -> dict[ComponentRef, dict[str, Any]]:
-    """Group a Candidate's flat param row by Component, skipping the sentinel."""
+    """Group a Candidate's flat param row by Component, skipping non-component axes."""
     slices: dict[ComponentRef, dict[str, Any]] = {}
     for key, value in param_row.items():
-        if key == FIXED_CANDIDATE_PARAM:
+        if key == FIXED_CANDIDATE_PARAM or is_portfolio_param_key(key):
             continue
         ref, param_name = decode(key)
         slices.setdefault(ref, {})[param_name] = value

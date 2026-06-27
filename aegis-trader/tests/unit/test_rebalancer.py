@@ -265,7 +265,11 @@ class TestRebalanceMultiSleeve:
         assert sum(abs(d.delta) for d in correlated) < sum(abs(d.delta) for d in uncorrelated)
 
     def test_three_sleeves_complex_netting(self):
-        book = make_book([("a", "a.whl", 0.4), ("b", "b.whl", 0.3), ("c", "c.whl", 0.3)])
+        book = make_book(
+            [("a", "a.whl", 0.4), ("b", "b.whl", 0.3), ("c", "c.whl", 0.3)],
+            default_band_up=0.0,
+            default_band_down=0.0,
+        )
         result = rebalance(
             {book.sleeves[0].name: _target({"X": 0.5, "Y": -0.2}),
              book.sleeves[1].name: _target({"X": -0.3, "Z": 0.4}),
@@ -314,6 +318,12 @@ class TestRebalanceSlice4:
                            realized_weights={_iid("FIGI_A"): 0.51})
         assert result == ()
 
+    def test_band_gate_holds_at_inclusive_boundary(self):
+        book = self._book(default_band_up=0.02, default_band_down=0.02)
+        result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50})}, book,
+                           realized_weights={_iid("FIGI_A"): 0.52})
+        assert result == ()
+
     def test_band_gate_trades_when_outside_band(self):
         book = self._book(default_band_up=0.02, default_band_down=0.02)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50})}, book,
@@ -348,12 +358,18 @@ class TestRebalanceSlice4:
                                 realized_weights={_iid("FIGI_TAIL"): 0.48})
         assert result_down == ()
 
-    def test_band_only_applied_when_realized_present(self):
+    def test_sub_band_new_position_is_gated(self):
         book = self._book(default_band_up=0.02, default_band_down=0.02)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.01})}, book,
                            realized_weights=None)
+        assert result == ()
+
+    def test_new_position_opens_when_outside_band(self):
+        book = self._book(default_band_up=0.02, default_band_down=0.02)
+        result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.03})}, book,
+                           realized_weights=None)
         assert len(result) == 1
-        assert result[0].delta == pytest.approx(0.01)
+        assert result[0].delta == pytest.approx(0.03)
 
     def test_per_name_cap_breach_band_creates_corrective_verified(self):
         book = self._book(per_name_cap=0.10, default_band_up=0.02, default_band_down=0.02)

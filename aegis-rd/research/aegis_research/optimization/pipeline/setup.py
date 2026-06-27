@@ -42,6 +42,7 @@ from research.aegis_research.optimization.lock_run import (
     ResolvedLockRun,
     resolve_lock_run,
 )
+from research.aegis_research.optimization.portfolio_params import optimization_params
 from research.aegis_research.optimization.run_data_contract import (
     DataArrayContract,
     build_run_data_evidence_payload,
@@ -131,6 +132,7 @@ def run_pipeline_setup(
     optimization_builtin = to_builtin(config.optimization)
     run_evidence.initialize_optimization(
         _optimization_evidence_baseline(
+            optimization_params=optimization_params(optimization_source.params, config.optimization),
             optimization_source=optimization_source,
             optimization_builtin=optimization_builtin,
             split_metadata=split_result.metadata,
@@ -176,6 +178,7 @@ def _lock_evidence(config: RunConfig, lock_run: ResolvedLockRun) -> dict[str, An
 def _optimization_evidence_baseline(
     *,
     optimization_source: Any,
+    optimization_params: Mapping[str, Any],
     optimization_builtin: Mapping[str, Any],
     split_metadata: Mapping[str, Any],
     data_result: MarketDataResult,
@@ -187,7 +190,7 @@ def _optimization_evidence_baseline(
         "schema_version": OPTIMIZATION_ROUTE_SCHEMA_VERSION,
         "contract": OPTIMIZATION_SOURCE_CONTRACT,
         "source": optimization_source.evidence,
-        "param_names": list(optimization_source.params),
+        "param_names": list(optimization_params),
         "optimization": optimization_builtin,
         "split": split_metadata,
         "data": build_run_data_evidence_payload(data_result, array_contract),

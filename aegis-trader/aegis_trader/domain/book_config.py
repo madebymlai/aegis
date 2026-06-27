@@ -15,6 +15,7 @@ import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from aegis_runtime import DriftBand
 from aegis_trader.domain.types import SleeveName
 
 _EPS = 1e-12
@@ -475,12 +476,12 @@ class BookConfig:
         shares.update(self.tail_convexity_budget.risk_shares())
         return shares
 
-    def band_for(self, instrument_id: str) -> tuple[float, float]:
-        """Return (band_up, band_down) for *instrument_id*, honouring overrides."""
+    def band_for(self, instrument_id: str) -> DriftBand:
+        """Return the trade band for *instrument_id*, honouring overrides."""
         for override_id, up, down in self.band_overrides:
             if override_id == instrument_id:
-                return (up, down)
-        return (self.default_band_up, self.default_band_down)
+                return DriftBand(up=up, down=down)
+        return DriftBand(up=self.default_band_up, down=self.default_band_down)
 
     def _validate_tail_convexity_budget(self) -> None:
         if self.tail_convexity_budget is None:

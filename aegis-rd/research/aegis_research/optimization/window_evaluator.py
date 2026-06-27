@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from vectorbtpro import vbt
 
+from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig, ReportConfig
 from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
@@ -82,6 +83,13 @@ class WindowEvaluator:
         allocations = self.source.simulate(
             close_window, indicator_window, n_combos, **combo_lists
         )
+        allocations = _with_candidate_columns(
+            allocations,
+            close_window.columns,
+            combo_lists=combo_lists,
+            param_names=param_names,
+            n_combos=n_combos,
+        )
         return self._metrics_from_allocations(
             close_window, open_window, allocations, metric_keys, param_names
         )
@@ -138,6 +146,32 @@ def _combo_values(value: Any) -> list[Any]:
     if pd.api.types.is_list_like(value):
         return list(value)
     return [value]
+
+
+def _with_candidate_columns(
+    allocations: Any,
+    symbols: pd.Index,
+    *,
+    combo_lists: Mapping[str, list[Any]],
+    param_names: list[str],
+    n_combos: int,
+) -> Any:
+    if allocations is vbt.NoResult:
+        return allocations
+    if not isinstance(allocations, pd.DataFrame):
+        return allocations
+    if allocations.empty:
+        return allocations
+    expected_columns = n_combos * len(symbols)
+    if len(allocations.columns) != expected_columns:
+        return allocations
+    tuples = [
+        (*(combo_lists[name][candidate_idx] for name in param_names), symbol)
+        for candidate_idx in range(n_combos)
+        for symbol in symbols
+    ]
+    columns = pd.MultiIndex.from_tuples(tuples, names=[*param_names, SYMBOL_LEVEL])
+    return pd.DataFrame(allocations.to_numpy(), index=allocations.index, columns=columns)
 
 
 def _nan_metric_frame(

@@ -5,8 +5,11 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from aegis_runtime import gate
 from nautilus_trader.model.identifiers import InstrumentId
+from numba import njit
 from vectorbtpro import vbt
+from vectorbtpro.base.flex_indexing import flex_select_1d_pc_nb, flex_select_nb
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
@@ -14,16 +17,19 @@ from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.exposure_validation import (
     validate_exposure,
 )
+from research.aegis_research.optimization.portfolio_params import (
+    PORTFOLIO_BAND_DOWN_PARAM,
+    PORTFOLIO_BAND_UP_PARAM,
+)
 
 _SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
 # of ``(net_rate / periods_per_year) * close``. ``* live position`` gives drifted notional,
 # only-while-open, and the cost-on-short / credit-on-long sign for free — hence the long-leg
 # mask (a positive per-share value would otherwise *credit* a long position).
-# Margin interest (``int_rate x borrowed_cash``) needs ``vbt.pf_nb.get_debt_nb(c)``, which is
-# unavailable on ``from_orders``; charging it would require ``from_signals``/``from_order_func``.
-# Deferred by architectural boundary, not punted (see ADR-0008).
-VBT_PF_METHOD = "from_orders"
+# Margin interest (``int_rate x borrowed_cash``) needs ``vbt.pf_nb.get_debt_nb(c)``;
+# the from-signals substrate exposes the callback context needed for that future work.
+VBT_PF_METHOD = "from_signals"
 VBT_RESOLVED_SIZE_TYPE = "targetpercent"
 VBT_LEVERAGE_MODE = "eager"
 # Surplus buying power for the VBT engine, expressed as a multiple of gross_cap.
@@ -52,6 +58,68 @@ _VBT_PRICE_BY_FILL_TIMING: dict[str, str | None] = {
     "next_close": VBT_NEXT_CLOSE_PRICE,
     "same_close": None,
 }
+_gate_nb = njit(gate)
+
+
+@njit
+def _order_val_price_nb(c, price, val_price, order_i, col):
+    order_price = flex_select_nb(price, order_i, col)
+    order_val_price = flex_select_nb(val_price, c.i, col)
+    if np.isinf(order_val_price) and order_val_price > 0:
+        if np.isinf(order_price) and order_price > 0:
+            return flex_select_nb(c.close, c.i, col)
+        if np.isinf(order_price) and order_price < 0:
+            return flex_select_nb(c.open, c.i, col)
+        return order_price
+    if np.isnan(order_val_price) or (np.isinf(order_val_price) and order_val_price < 0):
+        return c.last_val_price[col]
+    return order_val_price
+
+
+@njit
+def _current_group_value_nb(c, price, val_price, order_i):
+    if c.cash_sharing:
+        group_value = c.last_cash[c.group]
+        for col in range(c.from_col, c.to_col):
+            col_price = _order_val_price_nb(c, price, val_price, order_i, col)
+            multiplier = flex_select_1d_pc_nb(c.multiplier, col)
+            group_value += c.last_position[col] * col_price * multiplier
+        return group_value
+
+    col_price = _order_val_price_nb(c, price, val_price, order_i, c.col)
+    multiplier = flex_select_1d_pc_nb(c.multiplier, c.col)
+    return c.last_cash[c.col] + c.last_position[c.col] * col_price * multiplier
+
+
+@njit
+def _band_adjust_func_nb(c, size, price, val_price, from_ago, up_arr, down_arr):
+    order_i = c.i - abs(int(flex_select_nb(from_ago, c.i, c.col)))
+    if order_i < 0:
+        return
+
+    target_w = float(flex_select_nb(size, order_i, c.col))
+    if np.isnan(target_w):
+        return
+
+    current_group_value = _current_group_value_nb(c, price, val_price, order_i)
+    position = c.last_position[c.col]
+    if position == 0.0:
+        realized_w = 0.0
+    else:
+        order_val_price = _order_val_price_nb(c, price, val_price, order_i, c.col)
+        multiplier = flex_select_1d_pc_nb(c.multiplier, c.col)
+        realized_w = position * order_val_price * multiplier / current_group_value
+
+    up = float(flex_select_nb(up_arr, order_i, c.col))
+    down = float(flex_select_nb(down_arr, order_i, c.col))
+    resolved_w = _gate_nb(realized_w, target_w, up, down)
+    if resolved_w == realized_w:
+        size[order_i, c.col] = np.nan
+        return
+
+    sizing_group_value = c.last_value[c.group] if c.cash_sharing else c.last_value[c.col]
+    if sizing_group_value != 0.0:
+        size[order_i, c.col] = resolved_w * current_group_value / sizing_group_value
 
 
 def _execution_settings(
@@ -126,18 +194,22 @@ def _build_portfolio(
         unique_only=False,
     )
     exec_kwargs = _execution_settings(config.fill_timing, open_frame)
+    band_up, band_down = _band_arrays(masked, config)
     pf = vbt.Portfolio.from_optimizer(
         price_frame,
         pfo,
         pf_method=VBT_PF_METHOD,
         size_type=VBT_RESOLVED_SIZE_TYPE,
-        # Per-name no-trade band (live-research parity, ADR-0008 family): a rebalance order
-        # smaller than ``rebalance_band`` (a fraction of NAV, matching targetpercent) is
-        # ignored, so a position is held through small drift and only traded back to target
-        # once it drifts past the band - gated against the drifted weight inside the engine,
-        # the same symmetric per-instrument drift gate the live rebalancer applies. 0 = off
-        # (rebalance every executable bar).
-        min_size=config.rebalance_band,
+        min_size=np.nan,
+        adjust_func_nb=_band_adjust_func_nb,
+        adjust_args=(
+            vbt.Rep("size"),
+            vbt.Rep("price"),
+            vbt.Rep("val_price"),
+            vbt.Rep("from_ago"),
+            band_up,
+            band_down,
+        ),
         direction=config.direction,
         cash_sharing=True,
         call_seq="auto",
@@ -156,6 +228,20 @@ def _build_portfolio(
     )
     _assert_no_nocash_rejection(pf)
     return pf
+
+
+def _band_arrays(
+    allocations: pd.DataFrame,
+    config: PortfolioConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    shape = (1, len(allocations.columns))
+    if PORTFOLIO_BAND_UP_PARAM in allocations.columns.names:
+        up = allocations.columns.get_level_values(PORTFOLIO_BAND_UP_PARAM).to_numpy(dtype=float)
+        down = allocations.columns.get_level_values(PORTFOLIO_BAND_DOWN_PARAM).to_numpy(dtype=float)
+        return up.reshape(shape), down.reshape(shape)
+    up = np.full(shape, config.effective_band_up, dtype=float)
+    down = np.full(shape, config.effective_band_down, dtype=float)
+    return up, down
 
 
 def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:

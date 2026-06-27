@@ -22,6 +22,7 @@ from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
     OptimizationConfig,
+    PortfolioOptimizationConfig,
     RunSplitConfig,
     resolve_run_config,
 )
@@ -88,6 +89,7 @@ def test_optimization_construction_accepts_grid_without_subset_or_seed() -> None
     config = _OPTIMIZATION_ADAPTER.validate_python({"search": "grid", "split": _SPLIT})
     assert config.random_subset is None
     assert config.seed is None
+    assert config.portfolio == PortfolioOptimizationConfig()
 
 
 def test_optimization_construction_accepts_random_with_subset_and_seed() -> None:
@@ -96,6 +98,32 @@ def test_optimization_construction_accepts_random_with_subset_and_seed() -> None
     )
     assert config.random_subset == 100
     assert config.seed == 42
+
+
+def test_optimization_accepts_portfolio_band_grid() -> None:
+    config = _OPTIMIZATION_ADAPTER.validate_python(
+        {
+            "search": "grid",
+            "split": _SPLIT,
+            "portfolio": {"band_up": [0.05], "band_down": [0.15, 0.20]},
+        }
+    )
+
+    assert config.portfolio.band_up == [0.05]
+    assert config.portfolio.band_down == [0.15, 0.20]
+
+
+def test_optimization_rejects_partial_portfolio_band_grid() -> None:
+    with pytest.raises(ValidationError) as e:
+        _OPTIMIZATION_ADAPTER.validate_python(
+            {
+                "search": "grid",
+                "split": _SPLIT,
+                "portfolio": {"band_up": [0.05]},
+            }
+        )
+
+    assert any(err["loc"] == ("portfolio",) for err in e.value.errors())
 
 
 def test_run_split_construction_accepts_defaults() -> None:

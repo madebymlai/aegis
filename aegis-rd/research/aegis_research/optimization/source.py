@@ -21,11 +21,10 @@ same full-series store for the representative candidates.
 
 Limitations carried by this contract:
 
-- Portfolio-side params (``sl_stop``, ``tp_stop``, ``fees``, ``slippage``,
-  ``init_cash``, ``gross_cap``, ``net_cap``, ``direction``) cannot currently be wrapped
-  in ``vbt.Param``. ``simulate_portfolio_batch`` receives a static
-  ``PortfolioConfig`` per run, so any portfolio-axis sweep would not flow
-  through the Aegis-owned portfolio policy boundary.
+- Portfolio-side params are not part of a signal source. The runner may append
+  Aegis-owned portfolio axes (currently the directional drift-band widths) after
+  the source is built; the evaluator then keeps those levels in candidate
+  identity while the portfolio policy consumes them at simulation time.
 
 - Hidden params (``vbt.Param(..., hide=True)``) are rejected where the source is
   built. They are excluded from the VBT result index, so candidate identity
@@ -60,10 +59,10 @@ class OptimizationSource:
     """A signal-side optimization source: two stages plus the axes to sweep.
 
     These fields and no more — a source is **signal-side only**. Authoritative
-    metrics, portfolio configuration, and candidate-axis fields never live on a
-    source: metrics are computed downstream by the central-metrics step and the
-    portfolio policy owns its own configuration. The fixed field set is what
-    enforces that boundary; ``params`` names must avoid
+    metrics and portfolio configuration never live on a source: metrics are
+    computed downstream by the central-metrics step and the portfolio policy
+    owns its own configuration. The fixed field set is what enforces that
+    boundary; signal ``params`` names must avoid
     ``OPTIMIZATION_PARAM_RESERVED_NAMES`` (the runner re-checks this at the
     simulation boundary) and ``output_name`` is constrained where the producing
     Component's manifest is built.

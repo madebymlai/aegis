@@ -14,6 +14,7 @@ from aegis_runtime.bundle_loader import (
     load_bundle_payload,
     load_installed_bundle,
 )
+from aegis_runtime.drift_band import DriftBand, gate
 from aegis_runtime.futures_roots import validate_bare_root
 
 __all__ = [
@@ -22,8 +23,10 @@ __all__ = [
     "ComponentSpec",
     "ComponentStrategyInputs",
     "DataContract",
+    "DriftBand",
     "dump_bundle_payload",
     "ExecutionBundle",
+    "gate",
     "InstrumentId",
     "LockedExecutionPlan",
     "load_bundle_payload",

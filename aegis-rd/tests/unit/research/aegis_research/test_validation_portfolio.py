@@ -147,6 +147,41 @@ def test_portfolio_construction_accepts_net_cap_zero() -> None:
     assert config.net_cap == 0.0
 
 
+def test_portfolio_construction_defaults_directional_bands_to_rebalance_band() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python(
+        {"gross_cap": 1.0, "direction": "longonly", "rebalance_band": 0.02}
+    )
+    assert config.effective_band_up == 0.02
+    assert config.effective_band_down == 0.02
+
+
+def test_portfolio_construction_accepts_asymmetric_directional_bands() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python(
+        {
+            "gross_cap": 1.0,
+            "direction": "longonly",
+            "rebalance_band": 0.02,
+            "band_up": 0.01,
+            "band_down": 0.05,
+        }
+    )
+    assert config.effective_band_up == 0.01
+    assert config.effective_band_down == 0.05
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"gross_cap": 1.0, "direction": "longonly", "band_up": 0.01},
+        {"gross_cap": 1.0, "direction": "longonly", "band_down": 0.05},
+    ],
+)
+def test_portfolio_construction_rejects_partial_asymmetric_band(payload: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python(payload)
+    assert any(err["loc"] == () for err in e.value.errors())
+
+
 def test_portfolio_construction_admits_direction_both() -> None:
     config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 2.0, "direction": "both"})
     assert config.direction == "both"
