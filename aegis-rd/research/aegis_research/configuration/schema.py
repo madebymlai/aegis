@@ -11,6 +11,7 @@ from research.aegis_research.configuration.field_types import (
     IDENTIFIER_RE,  # noqa: F401 — re-exported for configuration
     ComponentIdStr,
     NonEmptyStr,
+    NonNegativeCash,
     NonNegativeInt,
     NonNegativeRate,
     PositiveCash,
@@ -241,6 +242,13 @@ class PortfolioConfig:
     init_cash: PositiveCash = 10_000.0
     fees: NonNegativeRate = 0.001
     slippage: NonNegativeRate = 0.0005
+    # Flat per-order commission in the book's base currency (the broker's
+    # per-order MINIMUM, e.g. IBKR's EUR 1.25), charged on every fill on top of
+    # ``fees``. Unlike the proportional ``fees``/``slippage``, a fixed charge is
+    # absolute, so its drag scales with ``init_cash``: it only carries the real
+    # cost when ``init_cash`` is set to the modelled account NAV. Default 0 = off,
+    # so a returns-scaled book (the historical behaviour) is unaffected.
+    fixed_fee: NonNegativeCash = 0.0
     # Where a target decided from bar t's close fills: ``next_close`` (bar t+1 close,
     # the default), ``next_open`` (bar t+1 open — the only mode needing the Open array),
     # or ``same_close`` (bar t's own close — look-ahead, for mechanics tests). All non-

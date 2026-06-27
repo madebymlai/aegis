@@ -61,9 +61,19 @@ strategy:
 portfolio:
   gross_cap: 1.0
   direction: longonly
+  # Account NAV the book is sized and costed against. A fixed per-order fee is
+  # ABSOLUTE, so its drag is NAV-dependent — 5000 models the live EUR retail account
+  # (at the default 10_000 the same fee halves to ~half the drag).
+  init_cash: 5000.0
   fees: 0.0005
   slippage: 0.0005
   fx_conversion_cost: 0.0003
+  # IBKR EUR Tiered per-order MINIMUM commission, charged per fill on top of `fees`.
+  # Execution-side counterpart: aegis-trader's IbkrPerShareFeeModel.min_commission_per_order
+  # (Nautilus). vbt's `fixed_fees` charges it as a flat add-on rather than a true
+  # max(min, per_share*qty) floor, which matches the trader model in the small-order
+  # regime where the floor binds — i.e. exactly the 5k case.
+  fixed_fee: 1.25
 
 ranking:
   metric: ulcer_performance_index

@@ -136,6 +136,7 @@ def _build_portfolio(
         call_seq="auto",
         group_by=group_by,
         fees=_resolve_fees(price_frame, config, fees_by_symbol),
+        fixed_fees=config.fixed_fee,
         slippage=config.slippage,
         init_cash=config.init_cash,
         leverage=config.gross_cap * _GROSS_CAP_LEVERAGE_MULTIPLIER,

@@ -87,7 +87,11 @@ class CostModelConfig:
     cost-free behaviour when a book omits ``[costs]``.
     """
 
+    # Variable commission basis: ``per_share_commission`` is charged per share (IBKR
+    # US pricing); ``commission_pct`` is charged as a fraction of notional (IBKR Europe
+    # pricing). A venue sets the one it uses and leaves the other at 0.
     per_share_commission: float = 0.0
+    commission_pct: float = 0.0
     min_commission_per_order: float = 0.0
     max_commission_pct: float = 0.0
     slippage_probability: float = 0.0
@@ -98,6 +102,7 @@ class CostModelConfig:
     def __post_init__(self) -> None:
         for name, value in (
             ("per_share_commission", self.per_share_commission),
+            ("commission_pct", self.commission_pct),
             ("min_commission_per_order", self.min_commission_per_order),
             ("max_commission_pct", self.max_commission_pct),
         ):

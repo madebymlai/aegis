@@ -64,8 +64,9 @@ aggregate_drift_threshold = 0.5
 # short borrow); paper and live take broker-reported costs from IBKR instead.
 # Omit this block for zero-cost backtest behavior.
 # [costs]
-# per_share_commission = 0.0035      # commission per share in quote currency
-# min_commission_per_order = 1.0     # per-fill/order floor
+# per_share_commission = 0.0035      # per-share commission (IBKR US); leave 0 for Europe
+# commission_pct = 0.0005            # per-value commission (IBKR Europe, 0.05%); leave 0 for US
+# min_commission_per_order = 1.25    # per-fill/order floor (e.g. IBKR Europe EUR 1.25)
 # max_commission_pct = 0.01          # cap as fraction of trade notional
 # slippage_probability = 0.25        # probability of one-tick adverse slippage
 # slippage_seed = 42                 # pinned RNG seed for deterministic fills

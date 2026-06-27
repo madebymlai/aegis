@@ -133,6 +133,7 @@ def _parse_costs(raw: object) -> CostModelConfig:
         raise TypeError("costs must be a TOML table")
     return CostModelConfig(
         per_share_commission=float(raw.get("per_share_commission", 0.0)),
+        commission_pct=float(raw.get("commission_pct", 0.0)),
         min_commission_per_order=float(raw.get("min_commission_per_order", 0.0)),
         max_commission_pct=float(raw.get("max_commission_pct", 0.0)),
         slippage_probability=float(raw.get("slippage_probability", 0.0)),

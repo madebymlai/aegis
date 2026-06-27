@@ -26,6 +26,16 @@ net_cap = 1.0
 [starting_balances]
 EUR = 1_000_000.0
 
+# Backtest transaction costs (paper/live use broker-reported costs instead).
+# IBKR Europe pricing for this UCITS / LSE / Xetra book: 0.05% of trade value with a
+# EUR 1.25 per-order minimum. per_share_commission stays 0 (per-share is IBKR US).
+# NOTE: IBKR Europe's EUR 29 absolute per-order cap is not modelled (only a percentage
+# cap exists today); it binds on fills above ~EUR 58k, so on this 1,000,000 EUR book the
+# largest rebalance fills are marginally overstated.
+[costs]
+commission_pct = 0.0005
+min_commission_per_order = 1.25
+
 # Floor risk keeps a fixed 60/40 trend/carry conviction tilt.
 # atalanta — trend floor pole (20-name orthogonal non-equity LSE universe).
 # Long-only FORGO pole (aegis-rd-167): downtrends take no position; shorting is net-negative on
