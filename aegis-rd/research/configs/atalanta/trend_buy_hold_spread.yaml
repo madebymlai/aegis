@@ -3,8 +3,8 @@ schema_version: 10
 output_dir: runs/atalanta/trend-buy-hold-spread
 
 # Buy-hold-spread experiment derived from atalanta/trend.yaml:
-# keep the definitive EUR non-equity Atalanta sleeve, but sweep the portfolio
-# drift-band asymmetry. Semantics: band_down gates adds, band_up gates trims.
+# keep the definitive EUR non-equity Atalanta sleeve, but fix an asymmetric
+# portfolio drift-band policy. Semantics: band_down gates adds, band_up gates trims.
 data:
   base_currency: EUR
   instruments: [IDTL.LSEETF, IGLN.LSEETF, ICOM.LSEETF]
