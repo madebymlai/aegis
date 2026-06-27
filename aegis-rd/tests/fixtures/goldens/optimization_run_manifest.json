@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "379225f97369c5eea5866808b17112e55bedf4a34c8491ba05834f968ff28ae1",
+      "hash": "e8f0b094df2c83468a8c867181a2532d269086fbb74b7ba1caf3b5f7c7aa2b0f",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 62638,
+      "size": 62569,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -95,10 +95,6 @@
     "name": "golden_bytes_oracle",
     "optimization": {
       "execute": {},
-      "portfolio": {
-        "band_down": [],
-        "band_up": []
-      },
       "random_subset": null,
       "search": "grid",
       "seed": null,
@@ -157,7 +153,7 @@
       "raw_config_identity": {
         "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
       },
-      "resolved_config_hash": "d131683672f94a791f401342d9d93e86236291ec9004763ddd049121e7741a49",
+      "resolved_config_hash": "b72cc8856441abb155b9f8dd63433f783e9cc328fe00370609c434feaf36c267",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",
@@ -1562,10 +1558,6 @@
       "open_prices_available": true,
       "optimization": {
         "execute": {},
-        "portfolio": {
-          "band_down": [],
-          "band_up": []
-        },
         "random_subset": null,
         "search": "grid",
         "seed": null,

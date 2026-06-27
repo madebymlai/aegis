@@ -17,10 +17,6 @@ from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.exposure_validation import (
     validate_exposure,
 )
-from research.aegis_research.optimization.portfolio_params import (
-    PORTFOLIO_BAND_DOWN_PARAM,
-    PORTFOLIO_BAND_UP_PARAM,
-)
 
 _SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
@@ -235,10 +231,6 @@ def _band_arrays(
     config: PortfolioConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
     shape = (1, len(allocations.columns))
-    if PORTFOLIO_BAND_UP_PARAM in allocations.columns.names:
-        up = allocations.columns.get_level_values(PORTFOLIO_BAND_UP_PARAM).to_numpy(dtype=float)
-        down = allocations.columns.get_level_values(PORTFOLIO_BAND_DOWN_PARAM).to_numpy(dtype=float)
-        return up.reshape(shape), down.reshape(shape)
     up = np.full(shape, config.effective_band_up, dtype=float)
     down = np.full(shape, config.effective_band_down, dtype=float)
     return up, down

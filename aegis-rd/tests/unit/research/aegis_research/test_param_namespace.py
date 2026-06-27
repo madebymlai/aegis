@@ -11,10 +11,6 @@ from research.aegis_research.optimization.param_namespace import (
     encode,
     slice_by_component,
 )
-from research.aegis_research.optimization.portfolio_params import (
-    PORTFOLIO_BAND_DOWN_PARAM,
-    PORTFOLIO_BAND_UP_PARAM,
-)
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -37,8 +33,6 @@ def test_component_param_keys_round_trip_to_component_slices() -> None:
         {
             key: 5,
             FIXED_CANDIDATE_PARAM: 0,
-            PORTFOLIO_BAND_UP_PARAM: 0.05,
-            PORTFOLIO_BAND_DOWN_PARAM: 0.15,
         }
     ) == {ref: {"window": 5}}
 

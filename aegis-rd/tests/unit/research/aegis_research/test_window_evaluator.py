@@ -18,11 +18,6 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.metrics import make_default_metric_registry
-from research.aegis_research.optimization import window_evaluator
-from research.aegis_research.optimization.portfolio_params import (
-    PORTFOLIO_BAND_DOWN_PARAM,
-    PORTFOLIO_BAND_UP_PARAM,
-)
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.source import OptimizationSource
 from research.aegis_research.optimization.window_evaluator import WindowEvaluator
@@ -169,62 +164,6 @@ def test_evaluate_slices_windows_and_delegates_for_a_partly_invalid_chunk() -> N
     assert store.calls == [(range_, [(0.5,), (1.0,)])]
     # A NoResult from simulate propagates out unchanged.
     assert result is vbt.NoResult
-
-
-def test_evaluate_preserves_portfolio_band_levels_for_portfolio_sim(monkeypatch) -> None:
-    close = _uptrend_close()
-    recorded: dict[str, Any] = {}
-
-    def _fake_simulate_portfolio_batch(
-        close_window: pd.DataFrame,
-        allocations: pd.DataFrame,
-        *args: Any,
-        **kwargs: Any,
-    ) -> object:
-        recorded["allocation_columns"] = allocations.columns
-        return object()
-
-    def _fake_metrics(
-        pf: object,
-        report: object,
-        metric_keys: list[tuple],
-        param_names: list[str],
-        extractors: object,
-    ) -> pd.DataFrame:
-        index = pd.MultiIndex.from_tuples(metric_keys, names=param_names)
-        return pd.DataFrame({"total_return": [0.0] * len(metric_keys)}, index=index)
-
-    monkeypatch.setattr(
-        window_evaluator,
-        "simulate_portfolio_batch",
-        _fake_simulate_portfolio_batch,
-    )
-    monkeypatch.setattr(
-        window_evaluator,
-        "central_metrics_from_grouped_accessors",
-        _fake_metrics,
-    )
-    evaluator = _evaluator(close, _exposure_simulate)
-
-    frame = evaluator.evaluate(
-        slice(0, len(close)),
-        alpha=[0.5, 1.0],
-        **{
-            PORTFOLIO_BAND_UP_PARAM: [0.05, 0.10],
-            PORTFOLIO_BAND_DOWN_PARAM: [0.15, 0.25],
-        },
-    )
-
-    assert list(frame.index.names) == [
-        "alpha",
-        PORTFOLIO_BAND_UP_PARAM,
-        PORTFOLIO_BAND_DOWN_PARAM,
-    ]
-    columns = recorded["allocation_columns"]
-    assert PORTFOLIO_BAND_UP_PARAM in columns.names
-    assert PORTFOLIO_BAND_DOWN_PARAM in columns.names
-    assert list(columns.get_level_values(PORTFOLIO_BAND_UP_PARAM)) == [0.05, 0.10]
-    assert list(columns.get_level_values(PORTFOLIO_BAND_DOWN_PARAM)) == [0.15, 0.25]
 
 
 def test_evaluate_returns_no_result_for_empty_allocations() -> None:

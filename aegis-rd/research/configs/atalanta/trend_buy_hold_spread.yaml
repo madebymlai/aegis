@@ -34,6 +34,8 @@ portfolio:
   fx_conversion_cost: 0.0003
   fixed_fee: 1.25
   rebalance_band: 0.15
+  band_up: 0.10
+  band_down: 0.20
 
 ranking:
   metric: trend_convexity_payoff
@@ -41,9 +43,6 @@ ranking:
 optimization:
   search: grid
   seed: 42
-  portfolio:
-    band_up: [0.05, 0.10]
-    band_down: [0.15, 0.20, 0.25]
   split:
     method: from_rolling
     params:

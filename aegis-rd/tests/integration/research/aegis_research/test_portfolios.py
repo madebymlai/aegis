@@ -6,10 +6,6 @@ from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.optimization.portfolio_params import (
-    PORTFOLIO_BAND_DOWN_PARAM,
-    PORTFOLIO_BAND_UP_PARAM,
-)
 from research.aegis_research.portfolios import (
     _SINGLE_CANDIDATE_ID,
     expand_market_frame_to_candidate_columns,
@@ -206,39 +202,6 @@ def test_asymmetric_band_up_gates_trims_more_than_adds() -> None:
         pd.Timestamp("2024-01-02"), (_SINGLE_CANDIDATE_ID, "A")
     ]
     assert trim_realized == pytest.approx(gate(trim_realized_before_gate, 0.5, 0.03, 0.01))
-
-
-def test_candidate_specific_band_levels_drive_batched_gate() -> None:
-    index = pd.date_range("2024-01-01", periods=4)
-    close = pd.DataFrame({"A": [100.0, 90.0, 90.0, 90.0]}, index=index)
-    hold_key = ("hold-add", 0.01, 0.03, "A")
-    trade_key = ("trade-add", 0.01, 0.01, "A")
-    columns = pd.MultiIndex.from_tuples(
-        [hold_key, trade_key],
-        names=["candidate_id", PORTFOLIO_BAND_UP_PARAM, PORTFOLIO_BAND_DOWN_PARAM, "symbol"],
-    )
-    allocations = pd.DataFrame(
-        [[0.5, 0.5], [0.5, 0.5], [np.nan, np.nan], [np.nan, np.nan]],
-        index=index,
-        columns=columns,
-    )
-    config = make_portfolio_config(
-        fees=0,
-        slippage=0,
-        fixed_fee=0,
-        direction="longonly",
-        rebalance_band=0.0,
-    )
-
-    pf = simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
-
-    second_bar_orders = _orders_on(pf.orders.records_readable, "2024-01-02")
-    assert list(second_bar_orders["Column"]) == [trade_key]
-
-    realized_before_gate = (50.0 * 90.0) / (50.0 * 90.0 + 5_000.0)
-    realized = pf.get_allocations(group_by=None).loc[index[1]]
-    assert realized[hold_key] == pytest.approx(gate(realized_before_gate, 0.5, 0.01, 0.03))
-    assert realized[trade_key] == pytest.approx(gate(realized_before_gate, 0.5, 0.01, 0.01))
 
 
 def _simulate_drift_rebalance(

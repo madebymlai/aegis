@@ -21,10 +21,9 @@ same full-series store for the representative candidates.
 
 Limitations carried by this contract:
 
-- Portfolio-side params are not part of a signal source. The runner may append
-  Aegis-owned portfolio axes (currently the directional drift-band widths) after
-  the source is built; the evaluator then keeps those levels in candidate
-  identity while the portfolio policy consumes them at simulation time.
+- Portfolio-side settings are not part of a signal source or Candidate identity.
+  They remain fixed run-level policy owned by ``PortfolioConfig`` and are applied
+  downstream by the portfolio simulation.
 
 - Hidden params (``vbt.Param(..., hide=True)``) are rejected where the source is
   built. They are excluded from the VBT result index, so candidate identity

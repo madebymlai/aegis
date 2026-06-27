@@ -23,7 +23,6 @@ from research.aegis_research.optimization.evidence_ledger import (
     RunEvidence,
 )
 from research.aegis_research.optimization.pipeline.setup import SetupResult
-from research.aegis_research.optimization.portfolio_params import optimization_params
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
@@ -83,7 +82,7 @@ def run_pipeline_execution(
     assert config.optimization is not None
     try:
         preflight = build_preflight(
-            params=optimization_params(setup.optimization_source.params, config.optimization),
+            params=setup.optimization_source.params,
             optimization=config.optimization,
             splits=setup.split_result.splits,
             symbol_count=len(setup.close.columns),

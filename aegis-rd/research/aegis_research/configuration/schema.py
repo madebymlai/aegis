@@ -338,20 +338,6 @@ class RankingConfig:
     min_trades: NonNegativeInt = 0
 
 
-@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
-class PortfolioOptimizationConfig:
-    # Portfolio-owned candidate axes. These are distinct from ``portfolio.band_up`` /
-    # ``portfolio.band_down``, which remain scalar run defaults.
-    band_up: list[NonNegativeRate] = field(default_factory=list)
-    band_down: list[NonNegativeRate] = field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _validate_directional_band_pair(self) -> PortfolioOptimizationConfig:
-        if bool(self.band_up) != bool(self.band_down):
-            raise ValueError("band_up and band_down must be supplied together")
-        return self
-
-
 OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
     {
         "random_subset",
@@ -370,7 +356,6 @@ class OptimizationConfig:
     random_subset: PositiveInt | None = None
     seed: NonNegativeInt | None = None
     execute: dict[str, Any] = field(default_factory=dict)
-    portfolio: PortfolioOptimizationConfig = field(default_factory=PortfolioOptimizationConfig)
 
     @model_validator(mode="after")
     def _random_needs_subset_and_seed(self):
