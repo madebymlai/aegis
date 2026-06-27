@@ -61,6 +61,21 @@ _IB_MARKET_DATA_TYPES = frozenset({"REALTIME", "FROZEN", "DELAYED", "DELAYED_FRO
 _IB_CONNECTION: dict[str, Any] = {}
 
 
+class IbkrRequestError(RuntimeError):
+    """A historic IBKR fetch could not complete, named by its subject.
+
+    A fetch can fail deep in the asyncio/Nautilus stack — a dropped or lost gateway
+    connection (IB code 1100), a per-request timeout, or a failed contract
+    qualification — and those surface as bare, context-free errors (notably an
+    ``int``-vs-``None`` ``TypeError`` from the adapter's reconnect path).  The
+    provider translates them into this one error so a caller learns *which* fetch
+    failed and *why*, rather than an opaque stack trace; the original is chained as
+    the cause.  Per-request *latency* on a no-data fetch (IB error 162) is bounded by
+    the underlying client's request timeout — internal to the vendor adapter — so
+    this clarifies the failure, it does not pre-empt that wait.
+    """
+
+
 @dataclass(frozen=True)
 class IbkrHistoricalProvider:
     """Pure-fetch IBKR data provider over the standalone historic client.
@@ -100,7 +115,8 @@ class IbkrHistoricalProvider:
         end: pd.Timestamp,
     ) -> Sequence[Bar]:
         """The vendor-aggregated bars for *bar_type* over ``[start, end]``."""
-        return self._run(
+        return self._request(
+            f"historical bars {bar_type}",
             lambda session: session.request_bars(
                 bar_specifications=[str(bar_type.spec)],
                 start_date_time=_naive_utc(start),
@@ -109,20 +125,39 @@ class IbkrHistoricalProvider:
                 instrument_ids=[bar_type.instrument_id.value],
                 use_rth=self.use_rth,
                 timeout=self.timeout,
-            )
+            ),
         )
 
     def request_instruments(
         self, instrument_ids: Sequence[InstrumentId]
     ) -> Sequence[Instrument]:
         """The IBKR instrument definitions for *instrument_ids* (Step-1 write)."""
-        return self._run(
+        return self._request(
+            "instrument definitions "
+            f"[{', '.join(instrument_id.value for instrument_id in instrument_ids)}]",
             lambda session: session.request_instruments(
                 instrument_ids=[
                     instrument_id.value for instrument_id in instrument_ids
                 ],
-            )
+            ),
         )
+
+    def _request(self, subject: str, call: Callable[[Any], Awaitable[Any]]) -> Any:
+        """Run an IBKR fetch, surfacing any fault as a named :class:`IbkrRequestError`.
+
+        The single fault boundary for the historic client: a connection drop, a
+        timeout, or a failed qualification arrives as a bare asyncio/Nautilus error
+        with no context (e.g. an ``int``-vs-``None`` reconnect ``TypeError``).
+        Re-raising it as one error named by *subject*, with the original chained,
+        tells the caller which fetch failed and why.  ``BaseException``
+        (``KeyboardInterrupt``, ``CancelledError``) is left to propagate untouched.
+        """
+        try:
+            return self._run(call)
+        except Exception as exc:  # noqa: BLE001 - any IB/asyncio fault -> one clear error
+            raise IbkrRequestError(
+                f"IBKR could not fetch {subject}: {type(exc).__name__}: {exc}"
+            ) from exc
 
     def _run(self, call: Callable[[Any], Awaitable[Any]]) -> Any:
         if self.client_factory is not None:
@@ -379,6 +414,7 @@ __all__ = [
     "IB_CLIENT_NAME",
     "BrokerConnection",
     "IbkrHistoricalProvider",
+    "IbkrRequestError",
     "attach_live_clients",
     "close_connection",
     "mic_instrument_provider_config",

@@ -23,7 +23,11 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import NautilusDataProviderPort
-from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
+from aegis_data.ibkr import (
+    IbkrHistoricalProvider,
+    IbkrRequestError,
+    seed_instrument_definitions,
+)
 
 
 class _FakeHistoricClient:
@@ -86,7 +90,10 @@ def test_request_bars_connects_and_closes_around_the_call() -> None:
     assert fake.events == ["connect", "aclose"]
 
 
-def test_request_bars_closes_even_when_the_fetch_raises() -> None:
+def test_request_bars_wraps_a_fault_in_a_named_error_and_still_closes() -> None:
+    """A fault during the fetch surfaces as one ``IbkrRequestError`` naming the
+    bar type (not a bare error), with the original chained — and the session is
+    still closed."""
     class _Boom(_FakeHistoricClient):
         async def request_bars(self, **kwargs: Any) -> list[Any]:
             raise RuntimeError("ib down")
@@ -95,13 +102,36 @@ def test_request_bars_closes_even_when_the_fetch_raises() -> None:
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
-    with pytest.raises(RuntimeError, match="ib down"):
+    with pytest.raises(IbkrRequestError) as excinfo:
         provider.request_bars(
             bar_type,
             start=pd.Timestamp("2024-01-01", tz="UTC"),
             end=pd.Timestamp("2024-02-01", tz="UTC"),
         )
 
+    assert str(bar_type) in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert str(excinfo.value.__cause__) == "ib down"
+    assert fake.events == ["connect", "aclose"]
+
+
+def test_request_instruments_wraps_a_failed_qualification_in_a_named_error() -> None:
+    """The opaque-crash case: a failed contract qualification (modelled by the
+    adapter's ``int``-vs-``None`` reconnect ``TypeError``) becomes a clear error
+    naming the instrument, instead of leaking the bare ``TypeError``."""
+    class _Boom(_FakeHistoricClient):
+        async def request_instruments(self, **kwargs: Any) -> list[Any]:
+            raise TypeError("'<=' not supported between instances of 'int' and 'NoneType'")
+
+    fake = _Boom(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+    eur_usd = InstrumentId.from_str("EUR/USD.IDEALPRO")
+
+    with pytest.raises(IbkrRequestError) as excinfo:
+        provider.request_instruments((eur_usd,))
+
+    assert "EUR/USD.IDEALPRO" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, TypeError)
     assert fake.events == ["connect", "aclose"]
 
 
