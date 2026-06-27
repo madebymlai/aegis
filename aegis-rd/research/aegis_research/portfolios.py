@@ -131,6 +131,13 @@ def _build_portfolio(
         pfo,
         pf_method=VBT_PF_METHOD,
         size_type=VBT_RESOLVED_SIZE_TYPE,
+        # Per-name no-trade band (live-research parity, ADR-0008 family): a rebalance order
+        # smaller than ``rebalance_band`` (a fraction of NAV, matching targetpercent) is
+        # ignored, so a position is held through small drift and only traded back to target
+        # once it drifts past the band - gated against the drifted weight inside the engine,
+        # the same symmetric per-instrument drift gate the live rebalancer applies. 0 = off
+        # (rebalance every executable bar).
+        min_size=config.rebalance_band,
         direction=config.direction,
         cash_sharing=True,
         call_seq="auto",

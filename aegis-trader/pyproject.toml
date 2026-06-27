@@ -60,4 +60,8 @@ aegis-data = { path = "../aegis-data", editable = true }
 dev = [
     "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
+    # tests/e2e/conftest.py marks each engine test `forked` so Nautilus's
+    # process-global Rust runtime (logger/clock) can't poison later tests;
+    # the marker is a silent no-op without this plugin (second engine aborts).
+    "pytest-forked>=1.6.0",
 ]

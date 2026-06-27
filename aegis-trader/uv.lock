@@ -68,6 +68,7 @@ ib = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-forked" },
 ]
 
 [package.metadata]
@@ -84,6 +85,7 @@ provides-extras = ["ib"]
 dev = [
     { name = "pytest", specifier = ">=9.1.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
+    { name = "pytest-forked", specifier = ">=1.6.0" },
 ]
 
 [[package]]
@@ -194,7 +196,7 @@ wheels = [
 
 [[package]]
 name = "nautilus-trader"
-version = "1.228.0"
+version = "1.229.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -208,20 +210,20 @@ dependencies = [
     { name = "tqdm" },
     { name = "uvloop", marker = "sys_platform != 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/81/32be00d64a719cf3381f3dd2b00e7e74b945fb8a089f38fd2ba8214c186f/nautilus_trader-1.228.0.tar.gz", hash = "sha256:1708eec65aa57135883720cd53643a2d36cc186802a91d1e725bd36d283fc7a7", size = 9160615, upload-time = "2026-06-08T18:12:15.409Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/54/c2c5420b6541541eeb1137fe76f997ae01136ed2266f85e3b0b23e299118/nautilus_trader-1.229.0.tar.gz", hash = "sha256:0006fded769a80fc7199bb0c73b1c362e66be39e2f206d4d8e57149ecb0e196a", size = 9442129, upload-time = "2026-06-25T12:52:14.845Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/ac/f1af510bcea274fc31b13cda740be454c7f5ec5d7b06027de0886484c301/nautilus_trader-1.228.0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:e14cecd5480efb1b33f8a0faeb66bcc690e4f4d71baad3f205a8872fc6986f63", size = 150287708, upload-time = "2026-06-08T17:22:06.525Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/13/c86b6e1d898f5e96c6a39fe28b59df99d42280b7d6b4ccc49d975973f9e4/nautilus_trader-1.228.0-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:949b77e8854988096ac3bf11a766bdb239332e1df3c86ac0c3518d62c7271682", size = 162259084, upload-time = "2026-06-08T17:22:59.76Z" },
-    { url = "https://files.pythonhosted.org/packages/ac/78/14ada6a5b18e6e10fa6941535b58f7b1672093e3563a97b1046c954b6cd0/nautilus_trader-1.228.0-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:46bd4f8d719a960f3062b68ab8328be88e796f5bd102e79ea002cabe1e526d2b", size = 175051187, upload-time = "2026-06-08T17:21:04.592Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/41/a3b103115d8b9d75edd16fdefac04b7780f6ffb1e3e133c9b8f807a4bbd8/nautilus_trader-1.228.0-cp312-cp312-win_amd64.whl", hash = "sha256:cfbba976a0ac882396a93b1c5a89a67392c6e98bfb888c54fb604cc61f7d9ba2", size = 106014843, upload-time = "2026-06-08T17:23:09.794Z" },
-    { url = "https://files.pythonhosted.org/packages/37/22/131759aa2c9cb3e8a87306ea8c0da78c4110e21108528d94fa3fa41cea3a/nautilus_trader-1.228.0-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:281795b998278affc16a134e132c7cd9d3dcdf6a2ef0c9e24c22d34e61e0eff6", size = 150361378, upload-time = "2026-06-08T17:23:21.695Z" },
-    { url = "https://files.pythonhosted.org/packages/15/e4/d1fe8206208f72aa86d86f04f07696d83e1e86a2749da4f6192105674de6/nautilus_trader-1.228.0-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:232859bd16ff8e2c3e24b074189d62fbb0876db74008b6b7b18621a1587fc506", size = 162316605, upload-time = "2026-06-08T17:21:43.804Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/0f/0e9a1a8b82161a1187bb735620260bff93f3fe1f1419c45a1eb886976d69/nautilus_trader-1.228.0-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:997608689f5f87e8e08e18a9ab29fd20d468c2d5783a38106ff3a27fbc58c6c7", size = 174977297, upload-time = "2026-06-08T17:22:33.218Z" },
-    { url = "https://files.pythonhosted.org/packages/88/78/a08c0841d423dca4f3969b8c9ffa6e6b88d9cbe634695653c37de220dd26/nautilus_trader-1.228.0-cp313-cp313-win_amd64.whl", hash = "sha256:3f5d86b873c648253b2f25e75f359ea4cd1a2f97c0d7de89efab9c8a1519c541", size = 105983975, upload-time = "2026-06-08T17:21:54.192Z" },
-    { url = "https://files.pythonhosted.org/packages/4a/54/38b71515fbd125a61687d4f7f805b67227c3753574154771b608af4a8250/nautilus_trader-1.228.0-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:9d599000940fbdacb18ba0f2baf1cc9254eadfa6bf14da63ead13e5c6efc92d0", size = 150485628, upload-time = "2026-06-08T17:22:19.201Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/40/19c486244f72403da25281342b8f58636ed9d8a4a7ca199f5637b166650f/nautilus_trader-1.228.0-cp314-cp314-manylinux_2_35_aarch64.whl", hash = "sha256:0e5cf89eeeb9ca00ebc11c43c7911c0f17ec197378ada603eb2ac84dffd07b15", size = 162390204, upload-time = "2026-06-08T17:22:46.534Z" },
-    { url = "https://files.pythonhosted.org/packages/26/18/f1c9df529f0f232dd14d6ecea5968560e52387465e8ffbbff22ad6d8f261/nautilus_trader-1.228.0-cp314-cp314-manylinux_2_35_x86_64.whl", hash = "sha256:78bba92b73eba716bd894023ac161b4a4174aa5fc1346ae8ed21c5d01fb313ee", size = 175029063, upload-time = "2026-06-08T17:21:29.382Z" },
-    { url = "https://files.pythonhosted.org/packages/8e/09/bd277d5b6b1a37af490a7e1a428eeb4e5b81d79b443069f0b65e1d157e2e/nautilus_trader-1.228.0-cp314-cp314-win_amd64.whl", hash = "sha256:8a7df87fada86bc3e5055a57957b4c276194c00975e9c6815760859edf2cd3de", size = 108415137, upload-time = "2026-06-08T17:21:15.142Z" },
+    { url = "https://files.pythonhosted.org/packages/48/e3/8524a3aea3d2b150b613e47131e4b89477065b9866c99c438fcd1ee07120/nautilus_trader-1.229.0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:4428b50bd7670585744faab5c7a2e0a5d7abd60d6a0e39371fc57e8e30a84c54", size = 156039344, upload-time = "2026-06-25T12:45:44.529Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/0a/d8a73b021c7aa595598b33a676d07197a25204032b04591beaf6d825291a/nautilus_trader-1.229.0-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:31f605049465bb62f36d0edc302c664aa7f79f940c251a67a11e212fa308e700", size = 168315863, upload-time = "2026-06-25T12:45:54.147Z" },
+    { url = "https://files.pythonhosted.org/packages/97/b4/215a80747f1fcae85744b2fa02f1d42da628cadab5540cfb96b54062df0a/nautilus_trader-1.229.0-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:4f374e8d76fd797c34c438b7c73cbe5ea3a0b58af236352544ccab8890c15db7", size = 182607968, upload-time = "2026-06-25T12:46:04.417Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/8f/54d8adc28ae82d01a549ebce99bb22c8dc6b8c4d95b0ce6209345a74e1f3/nautilus_trader-1.229.0-cp312-cp312-win_amd64.whl", hash = "sha256:f559a382d635f191a0f86623ec8366c05e2175b7d3e14627145f6cd762091280", size = 109520920, upload-time = "2026-06-25T12:46:13.459Z" },
+    { url = "https://files.pythonhosted.org/packages/99/40/5f7f03f72ed1b5f489712fc09a7e5b5abd2bbb5326dfc42155aea2b665ad/nautilus_trader-1.229.0-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:94b7d129d9bbb8dda96177c098ea4a8ccc03a14f47afba6e662c8343503c0316", size = 156114906, upload-time = "2026-06-25T12:46:22.293Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/ec/6a3b509cdb5e3f518a7f3c3a01c8412d34dbfec552b5801699176c714473/nautilus_trader-1.229.0-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:c86e9cd815e0d5d9adec974bffa899ba89db1127cbbab582cfe99f91c9f5fae2", size = 168374452, upload-time = "2026-06-25T12:46:31.789Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/34/73456f184ad6936fbca14b5f54a5b855206f6e453b4e75e1bf3bd28bb7ae/nautilus_trader-1.229.0-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:6b9c9cd8a5d6f1217e97840a1daf9e2dd4025f13b918f53c5c436f61fda0f4cb", size = 182543747, upload-time = "2026-06-25T12:46:41.958Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/f9/6b53e20d8eb0055e63b454e36a33bd1c970a355e2e7adbbd1a5be1cef251/nautilus_trader-1.229.0-cp313-cp313-win_amd64.whl", hash = "sha256:ec96c757970829e89bd8a2fe561a9289d3972a76ec67add360cd9459123670b5", size = 109488715, upload-time = "2026-06-25T12:46:49.88Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/0d/4a21b3188ffe58e832225784a166f4484d36e7c45ee0add340935caf7734/nautilus_trader-1.229.0-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:abbb725911b836318112bfd9dd39b78efd1defe7ece592c72b46c738db858fb8", size = 156266144, upload-time = "2026-06-25T12:46:59.21Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/51/b5060dc3a87d53352b4766d035dfd9f4b0e3ddd6ddec8603908c4c367b54/nautilus_trader-1.229.0-cp314-cp314-manylinux_2_35_aarch64.whl", hash = "sha256:789f301e3ade397e0445c5d1bb3f03588e8416f862583f23ad3bec518bbca08b", size = 168482071, upload-time = "2026-06-25T12:47:09.126Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/08/c9c8c204605597426bc63a269fbc120221dc7b1d6b4b44cae59a7f23b867/nautilus_trader-1.229.0-cp314-cp314-manylinux_2_35_x86_64.whl", hash = "sha256:462875147ee1180ae4a736adb99daf88e31aa5c5ab7045a257b5928ff58f43ff", size = 182626526, upload-time = "2026-06-25T12:47:19.17Z" },
+    { url = "https://files.pythonhosted.org/packages/35/a7/dc6bd84eb1b2dbf8ce5ead0e2c48230c7061f8d9cd1d509a8934fa6f5aa7/nautilus_trader-1.229.0-cp314-cp314-win_amd64.whl", hash = "sha256:435d0c3856a9082026d13d6d3a7b221dfc93aa2924317980696c207b4220c8cf", size = 111978485, upload-time = "2026-06-25T12:47:26.906Z" },
 ]
 
 [package.optional-dependencies]
@@ -380,16 +382,25 @@ wheels = [
 
 [[package]]
 name = "protobuf"
-version = "5.29.5"
+version = "5.29.6"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/43/29/d09e70352e4e88c9c7a198d5645d7277811448d76c23b00345670f7c8a38/protobuf-5.29.5.tar.gz", hash = "sha256:bc1463bafd4b0929216c35f437a8e28731a2b7fe3d98bb77a600efced5a15c84", size = 425226, upload-time = "2025-05-28T23:51:59.82Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/57/394a763c103e0edf87f0938dafcd918d53b4c011dfc5c8ae80f3b0452dbb/protobuf-5.29.6.tar.gz", hash = "sha256:da9ee6a5424b6b30fd5e45c5ea663aef540ca95f9ad99d1e887e819cdf9b8723", size = 425623, upload-time = "2026-02-04T22:54:40.584Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5f/11/6e40e9fc5bba02988a214c07cf324595789ca7820160bfd1f8be96e48539/protobuf-5.29.5-cp310-abi3-win32.whl", hash = "sha256:3f1c6468a2cfd102ff4703976138844f78ebd1fb45f49011afc5139e9e283079", size = 422963, upload-time = "2025-05-28T23:51:41.204Z" },
-    { url = "https://files.pythonhosted.org/packages/81/7f/73cefb093e1a2a7c3ffd839e6f9fcafb7a427d300c7f8aef9c64405d8ac6/protobuf-5.29.5-cp310-abi3-win_amd64.whl", hash = "sha256:3f76e3a3675b4a4d867b52e4a5f5b78a2ef9565549d4037e06cf7b0942b1d3fc", size = 434818, upload-time = "2025-05-28T23:51:44.297Z" },
-    { url = "https://files.pythonhosted.org/packages/dd/73/10e1661c21f139f2c6ad9b23040ff36fee624310dc28fba20d33fdae124c/protobuf-5.29.5-cp38-abi3-macosx_10_9_universal2.whl", hash = "sha256:e38c5add5a311f2a6eb0340716ef9b039c1dfa428b28f25a7838ac329204a671", size = 418091, upload-time = "2025-05-28T23:51:45.907Z" },
-    { url = "https://files.pythonhosted.org/packages/6c/04/98f6f8cf5b07ab1294c13f34b4e69b3722bb609c5b701d6c169828f9f8aa/protobuf-5.29.5-cp38-abi3-manylinux2014_aarch64.whl", hash = "sha256:fa18533a299d7ab6c55a238bf8629311439995f2e7eca5caaff08663606e9015", size = 319824, upload-time = "2025-05-28T23:51:47.545Z" },
-    { url = "https://files.pythonhosted.org/packages/85/e4/07c80521879c2d15f321465ac24c70efe2381378c00bf5e56a0f4fbac8cd/protobuf-5.29.5-cp38-abi3-manylinux2014_x86_64.whl", hash = "sha256:63848923da3325e1bf7e9003d680ce6e14b07e55d0473253a690c3a8b8fd6e61", size = 319942, upload-time = "2025-05-28T23:51:49.11Z" },
-    { url = "https://files.pythonhosted.org/packages/7e/cc/7e77861000a0691aeea8f4566e5d3aa716f2b1dece4a24439437e41d3d25/protobuf-5.29.5-py3-none-any.whl", hash = "sha256:6cf42630262c59b2d8de33954443d94b746c952b01434fc58a417fdbd2e84bd5", size = 172823, upload-time = "2025-05-28T23:51:58.157Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/88/9ee58ff7863c479d6f8346686d4636dd4c415b0cbeed7a6a7d0617639c2a/protobuf-5.29.6-cp310-abi3-win32.whl", hash = "sha256:62e8a3114992c7c647bce37dcc93647575fc52d50e48de30c6fcb28a6a291eb1", size = 423357, upload-time = "2026-02-04T22:54:25.805Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/66/2dc736a4d576847134fb6d80bd995c569b13cdc7b815d669050bf0ce2d2c/protobuf-5.29.6-cp310-abi3-win_amd64.whl", hash = "sha256:7e6ad413275be172f67fdee0f43484b6de5a904cc1c3ea9804cb6fe2ff366eda", size = 435175, upload-time = "2026-02-04T22:54:28.592Z" },
+    { url = "https://files.pythonhosted.org/packages/06/db/49b05966fd208ae3f44dcd33837b6243b4915c57561d730a43f881f24dea/protobuf-5.29.6-cp38-abi3-macosx_10_9_universal2.whl", hash = "sha256:b5a169e664b4057183a34bdc424540e86eea47560f3c123a0d64de4e137f9269", size = 418619, upload-time = "2026-02-04T22:54:30.266Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/d7/48cbf6b0c3c39761e47a99cb483405f0fde2be22cf00d71ef316ce52b458/protobuf-5.29.6-cp38-abi3-manylinux2014_aarch64.whl", hash = "sha256:a8866b2cff111f0f863c1b3b9e7572dc7eaea23a7fae27f6fc613304046483e6", size = 320284, upload-time = "2026-02-04T22:54:31.782Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/dd/cadd6ec43069247d91f6345fa7a0d2858bef6af366dbd7ba8f05d2c77d3b/protobuf-5.29.6-cp38-abi3-manylinux2014_x86_64.whl", hash = "sha256:e3387f44798ac1106af0233c04fb8abf543772ff241169946f698b3a9a3d3ab9", size = 320478, upload-time = "2026-02-04T22:54:32.909Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/cb/e3065b447186cb70aa65acc70c86baf482d82bf75625bf5a2c4f6919c6a3/protobuf-5.29.6-py3-none-any.whl", hash = "sha256:6b9edb641441b2da9fa8f428760fc136a49cf97a52076010cf22a2ff73438a86", size = 173126, upload-time = "2026-02-04T22:54:39.462Z" },
+]
+
+[[package]]
+name = "py"
+version = "1.11.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/ff/fec109ceb715d2a6b4c4a85a61af3b40c723a961e8828319fbcb15b868dc/py-1.11.0.tar.gz", hash = "sha256:51c75c4126074b472f746a24399ad32f6053d1b34b68d2fa41e558e6f4a98719", size = 207796, upload-time = "2021-11-04T17:17:01.377Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/f0/10642828a8dfb741e5f3fbaac830550a518a775c7fff6f04a007259b0548/py-1.11.0-py2.py3-none-any.whl", hash = "sha256:607c53218732647dff4acdfcd50cb62615cedf612e72d1724fb1a0cc6405b378", size = 98708, upload-time = "2021-11-04T17:17:00.152Z" },
 ]
 
 [[package]]
@@ -564,6 +575,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-forked"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "py" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8c/c9/93ad2ba2413057ee694884b88cf7467a46c50c438977720aeac26e73fdb7/pytest-forked-1.6.0.tar.gz", hash = "sha256:4dafd46a9a600f65d822b8f605133ecf5b3e1941ebb3588e943b4e3eb71a5a3f", size = 9977, upload-time = "2023-02-12T23:22:27.544Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f4/af/9c0bda43e486a3c9bf1e0f876d0f241bc3f229d7d65d09331a0868db9629/pytest_forked-1.6.0-py3-none-any.whl", hash = "sha256:810958f66a91afb1a1e2ae83089d8dc1cd2437ac96b12963042fbb9fb4d16af0", size = 4897, upload-time = "2023-02-12T23:22:26.022Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -604,14 +628,14 @@ wheels = [
 
 [[package]]
 name = "tqdm"
-version = "4.68.2"
+version = "4.68.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/85/05/0d5260f1f1ca784f4a4a0def9cbe6affe587f5b4025328d446c3d67765f4/tqdm-4.68.2.tar.gz", hash = "sha256:89c230e8dbc67c7615c142487111222f878c77427ea09549960f62389e258add", size = 171923, upload-time = "2026-06-09T13:26:42.539Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/d7/0535a28b1f5f24f6612fb3ff1e89fb1a8d160fee0f976e0aa6803862134b/tqdm-4.68.3.tar.gz", hash = "sha256:00dfa48452b6b6cfae3dd9885636c23d3422d1ec97c66d96818cbd5e0821d482", size = 170596, upload-time = "2026-06-17T07:36:52.105Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/75/1a0392bcc21c44dcdf87b3cf2d137e7829be2c083a1e38d44efca3d57a16/tqdm-4.68.2-py3-none-any.whl", hash = "sha256:d4240441fb5353290b87d6a85968c9decc131a99b8c7faa28269d829de669ede", size = 78578, upload-time = "2026-06-09T13:26:40.731Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/8e/bb97bb0c71802080bfc8952937d174e49cfc50de5c951dd47b2496f0dcdb/tqdm-4.68.3-py3-none-any.whl", hash = "sha256:39832cc2def2789a6f29df83f172db7416cea70052c0907a57801c5f2fdccb03", size = 78337, upload-time = "2026-06-17T07:36:50.132Z" },
 ]
 
 [[package]]

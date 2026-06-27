@@ -19,6 +19,8 @@ dependencies = [
   "pyyaml",
   "tomlkit",
   "vectorbtpro",
+  "nautilus-ibapi==10.45.1",
+  "protobuf>=7.35.1",
 ]
 
 [project.scripts]

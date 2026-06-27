@@ -262,6 +262,16 @@ class PortfolioConfig:
     # book is unaffected.
     fx_conversion_cost: NonNegativeRate = 0.0
     net_cap: NonNegativeRate = 1.0
+    # Per-name no-trade band as a fraction of NAV (live-research parity). A position is left
+    # to drift and is rebalanced to target only once its weight deviates from target by more
+    # than this fraction - the symmetric per-instrument drift band the live rebalancer applies
+    # (aegis-trader BookConfig.default_band_up/down). Enforced in the research sim as vbt
+    # ``min_size`` under targetpercent: a rebalance order smaller than the band is ignored,
+    # gated against the DRIFTED weight inside the sim, so the same drift gate yields the same
+    # trades in both paths. This - not an in-strategy buffer - is the turnover / "few-trades"
+    # lever; a slow signal makes the target stable, so target ~ realized stays inside the band
+    # and the book holds. Default 0 = rebalance every executable bar (the historical behaviour).
+    rebalance_band: NonNegativeRate = 0.0
     # Short financing carry: flat annual rates. Effective net carry = borrow - rebate,
     # charged only on short legs (see ADR-0008). The non-zero borrow default means carry
     # is ON by default; a long-only book has no short legs and is unaffected.

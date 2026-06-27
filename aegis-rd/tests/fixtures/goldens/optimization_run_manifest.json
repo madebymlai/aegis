@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "08570a462161f3da94ac39fe9c15add427924f3444d01a6e5063aa6ebd6387ed",
+      "hash": "7a98513c8c62a989aaba5b45f1895179cd7e7eccc4c07ec9cdbaca0283cc3199",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 62008,
+      "size": 62140,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -116,6 +116,7 @@
       "direction": "longonly",
       "fees": 0.0005,
       "fill_timing": "next_close",
+      "fixed_fee": 0.0,
       "fx_conversion_cost": 0.0,
       "gross_cap": 1.0,
       "init_cash": 10000.0,
@@ -149,7 +150,7 @@
       "raw_config_identity": {
         "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
       },
-      "resolved_config_hash": "6adeb003d4a9a20358f580318c24c0abe893e96c3d1212956309674755dc41a7",
+      "resolved_config_hash": "060ed9191569ded7f6a83d52fff12b07a1cefe20cce41c3058bcc3a7b3b3c775",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",
@@ -182,7 +183,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_e2240a86c44c920f1c9988870ec18fbf",
+          "candidate_key": "cand_da1b97cfe0c264cda8347b1da51d69c8",
           "held_out_metrics": {
             "0": {
               "max_dd": 17.34401245220606,
@@ -223,6 +224,7 @@
               "direction": "longonly",
               "fees": 0.0005,
               "fill_timing": "next_close",
+              "fixed_fee": 0.0,
               "fx_conversion_cost": 0.0,
               "gross_cap": 1.0,
               "init_cash": 10000.0,
@@ -541,7 +543,7 @@
           }
         },
         {
-          "candidate_key": "cand_ed03aafa65dd0a4a2dda21b8722391db",
+          "candidate_key": "cand_c762a579ee34412833752405a3b9db5b",
           "held_out_metrics": {
             "0": {
               "max_dd": 24.329296546012134,
@@ -582,6 +584,7 @@
               "direction": "longonly",
               "fees": 0.0005,
               "fill_timing": "next_close",
+              "fixed_fee": 0.0,
               "fx_conversion_cost": 0.0,
               "gross_cap": 1.0,
               "init_cash": 10000.0,
@@ -900,7 +903,7 @@
           }
         },
         {
-          "candidate_key": "cand_038ed8912fb3e079a4d2692818e79451",
+          "candidate_key": "cand_84255daec732cf69c8d7e1adf36c0283",
           "held_out_metrics": {
             "0": {
               "max_dd": 21.879582100013593,
@@ -941,6 +944,7 @@
               "direction": "longonly",
               "fees": 0.0005,
               "fill_timing": "next_close",
+              "fixed_fee": 0.0,
               "fx_conversion_cost": 0.0,
               "gross_cap": 1.0,
               "init_cash": 10000.0,

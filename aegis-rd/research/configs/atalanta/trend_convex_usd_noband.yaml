@@ -1,0 +1,53 @@
+name: atalanta_trend_convex_usd_noband
+schema_version: 10
+output_dir: runs/atalanta/trend_convex_usd_noband
+
+# A/B BASELINE for the live-research-parity drift band: byte-identical to trend_convex_usd.yaml
+# EXCEPT rebalance_band: 0.0 (band OFF = rebalance to target every executable bar, the historical
+# behaviour). Isolates the band's effect - compare fills/yr and held-out trend_convexity_payoff
+# against trend_convex_usd.yaml (band 0.05). Expectation: band ON cuts fills sharply while holding
+# (or raising) convexity.
+data:
+  base_currency: USD
+  instruments: [VWRD.LSEETF, IDTL.LSEETF, IGLN.LSEETF, ICOM.LSEETF]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.trend_score_regress
+  - id: atalanta.realized_vol
+    params:
+      vol_window: 126
+
+strategy:
+  id: atalanta.trendStraddleBufferedLongOnly
+  params:
+    buffer_band: 0.0
+
+portfolio:
+  base_currency: USD
+  gross_cap: 1.0
+  direction: longonly
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0
+  fixed_fee: 1.25
+  rebalance_band: 0.0   # <-- band OFF (the only difference vs trend_convex_usd.yaml)
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
