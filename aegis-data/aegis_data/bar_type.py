@@ -1,10 +1,13 @@
 """The single home for turning a ``DataContract`` timeframe into the Nautilus
 ``BarType`` of the shared corpus, and into a rebalance-period width.
 
-Daily Raw Bars are ``LAST-EXTERNAL`` (ADR-0007): the corpus is vendor-aggregated
+Daily Raw Bars are ``EXTERNAL`` (ADR-0007): the corpus is vendor-aggregated
 OHLCV (IBKR historical) — finished bars with
 no tick feed to build a multi-year daily series from — and live can only receive
-IBKR's completed daily bar via an ``EXTERNAL`` subscription.
+IBKR's completed daily bar via an ``EXTERNAL`` subscription.  The price type is
+``LAST`` for tradeables but ``MID`` for cash FX, which has no trades print: IBKR
+serves MIDPOINT/BID/ASK for IDEALPRO, not TRADES, so a ``LAST`` request fails (IB
+error 162).
 
 This is the lower, shared context both Aegis RD and Aegis Trader depend on, so
 the helper lives here and neither side re-derives the bar identity (the r8b
@@ -66,9 +69,29 @@ def _parse(timeframe: str) -> tuple[int, str]:
 
 
 def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
-    """The ``LAST-EXTERNAL`` ``BarType`` for *instrument_id* at *timeframe*."""
+    """The ``EXTERNAL`` ``BarType`` for *instrument_id* at *timeframe*.
+
+    ``LAST`` for tradeables, ``MID`` for cash FX (ADR-0007).  Deciding the price
+    type here — a pure function of the id — keeps write and read on one identity:
+    both the lazy-fill/write and the warm read build the bar type through this
+    helper, so an FX pair always keys as ``…-MID-EXTERNAL`` and never desyncs.
+    """
     step, unit = _parse(timeframe)
-    return BarType.from_str(f"{instrument_id.value}-{step}-{unit}-LAST-EXTERNAL")
+    return BarType.from_str(
+        f"{instrument_id.value}-{step}-{unit}-{_price_type(instrument_id)}-EXTERNAL"
+    )
+
+
+def _price_type(instrument_id: InstrumentId) -> str:
+    """``MID`` for cash FX, ``LAST`` for everything else.
+
+    A cash-FX pair carries the FX tell in its symbol shape — ``BASE/QUOTE`` — which
+    is known from the id alone, before the instrument definition is resolved (on a
+    cold fill the definition is seeded only *after* the bars are fetched, so the
+    asset class is not yet available at request time).  IBKR has no TRADES print for
+    cash FX, so its raw bars are ``MID``; everything else is ``LAST``.
+    """
+    return "MID" if "/" in instrument_id.symbol.value else "LAST"
 
 
 def continuous_bar_type(root_id: InstrumentId, timeframe: str) -> BarType:

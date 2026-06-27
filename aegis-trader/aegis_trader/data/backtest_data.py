@@ -23,7 +23,8 @@ _FX_SIZE = 1_000_000
 
 def wrangle_bars(instrument: Instrument, ohlcv: pd.DataFrame, timeframe: str) -> list[Bar]:
     """Wrangle an OHLCV frame into the instrument's ``Bar`` list at *timeframe*
-    (the contract timeframe; the LAST-EXTERNAL bar type is derived from it)."""
+    (the contract timeframe; the EXTERNAL bar type — LAST, or MID for cash FX — is
+    derived from it)."""
     wrangler = BarDataWrangler(raw_bar_type(instrument.id, timeframe), instrument)
     return wrangler.process(ohlcv)
 

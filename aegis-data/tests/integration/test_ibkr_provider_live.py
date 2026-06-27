@@ -15,6 +15,7 @@ import os
 
 import pandas as pd
 import pytest
+from nautilus_trader.model.enums import PriceType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import FuturesContract
 
@@ -30,6 +31,7 @@ pytest.importorskip("ibapi")
 
 _GATEWAY_PORT = os.environ.get("AEGIS_IBKR_GATEWAY_PORT")
 _AAPL = InstrumentId.from_str("AAPL.NASDAQ")
+_EUR_USD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 _START = pd.Timestamp("2024-01-02", tz="UTC")
 _END = pd.Timestamp("2024-02-01", tz="UTC")
 
@@ -56,6 +58,20 @@ def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
 
     assert bars
     assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in bars)
+
+
+def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
+    """Cash FX has no TRADES print on IDEALPRO — a LAST request fails with IB error
+    162 — so its raw bars are MID (``…-MID-EXTERNAL``, ADR-0007).  This pins that IB
+    actually serves the MIDPOINT daily series the corpus keys FX under; the bar type
+    is derived through ``raw_bar_type`` exactly as the lazy fill builds it."""
+    bar_type = raw_bar_type(_EUR_USD, "1D")
+    assert bar_type.spec.price_type == PriceType.MID
+
+    bars = _provider().request_bars(bar_type, start=_START, end=_END)
+
+    assert bars
+    assert all(bar.bar_type == bar_type for bar in bars)
 
 
 def test_request_instruments_round_trips_native_identity() -> None:
