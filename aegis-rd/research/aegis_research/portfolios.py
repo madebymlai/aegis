@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import os
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -31,6 +34,7 @@ _SINGLE_CANDIDATE_ID = "single"
 VBT_PF_METHOD = "from_signals"
 VBT_RESOLVED_SIZE_TYPE = "targetpercent"
 VBT_LEVERAGE_MODE = "eager"
+VBT_STATICIZED_CACHE_ENV = "AERD_VBT_STATICIZED_CACHE_DIR"
 # Surplus buying power for the VBT engine, expressed as a multiple of gross_cap.
 # Exposure Validation is the sole gross_cap enforcer (ADR-0007 amended 2026-06-09);
 # giving the engine k x gross_cap of headroom (k >= 2) prevents the engine from silently
@@ -60,6 +64,49 @@ _VBT_PRICE_BY_FILL_TIMING: dict[str, str | None] = {
 _gate_nb = njit(gate)
 _SIZE_TYPE_TARGET_PERCENT = int(SizeType.TargetPercent)
 _DIRECTION_BOTH = int(Direction.Both)
+
+
+def _vbt_staticized_callback_path() -> Path:
+    return Path(__file__).with_name("portfolio_callbacks.py").resolve()
+
+
+def _vbt_staticized_source_paths() -> tuple[Path, ...]:
+    return (
+        _vbt_staticized_callback_path(),
+        Path(__file__).resolve(),
+        Path(gate.__code__.co_filename).resolve(),
+    )
+
+
+def _vbt_staticized_cache_key() -> str:
+    fingerprint = hashlib.sha256()
+    for path in _vbt_staticized_source_paths():
+        fingerprint.update(str(path).encode("utf-8"))
+        fingerprint.update(b"\0")
+        fingerprint.update(path.read_bytes())
+        fingerprint.update(b"\0")
+    return fingerprint.hexdigest()[:12]
+
+
+def _vbt_staticized_cache_dir() -> Path:
+    override = os.environ.get(VBT_STATICIZED_CACHE_ENV)
+    if override:
+        cache_dir = Path(override).expanduser()
+    else:
+        xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+        cache_root = (
+            Path(xdg_cache_home).expanduser()
+            if xdg_cache_home is not None
+            else Path.home() / ".cache"
+        )
+        cache_dir = (
+            cache_root
+            / "aegis-rd"
+            / "vbt-staticization"
+            / f"driftband-{_vbt_staticized_cache_key()}"
+        )
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
 
 
 @njit
@@ -264,7 +311,7 @@ def _build_portfolio(
         pf_method=VBT_PF_METHOD,
         size_type=VBT_RESOLVED_SIZE_TYPE,
         min_size=np.nan,
-        pre_order_segment_func_nb=_band_pre_order_segment_nb,
+        pre_order_segment_func_nb=_vbt_staticized_callback_path(),
         pre_order_segment_args=(
             target_alloc,
             vbt.Rep("price"),
@@ -273,6 +320,7 @@ def _build_portfolio(
             band_up,
             band_down,
         ),
+        staticized={"path": _vbt_staticized_cache_dir()},
         direction=config.direction,
         cash_sharing=True,
         call_seq="auto",
