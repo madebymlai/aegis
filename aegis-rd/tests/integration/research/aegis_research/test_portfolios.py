@@ -1,14 +1,17 @@
 import numpy as np
 import pandas as pd
 import pytest
+from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, gate
 from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.configuration import PortfolioConfig
+from research.aegis_research.market_data.currency import CurrencyConversion
 from research.aegis_research.portfolios import (
     _SINGLE_CANDIDATE_ID,
+    distribution_cash_dividends,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
     simulate_single_book,
@@ -647,6 +650,94 @@ def test_short_leg_carry_drops_return_and_long_leg_is_never_charged() -> None:
     assert short_off == pytest.approx(0.0, abs=1e-9)
     # The long-only flat book is unaffected by carry — long legs are never charged.
     assert long_on == pytest.approx(0.0, abs=1e-9)
+
+
+def test_distribution_cash_dividends_places_unmasked_cash_on_ex_date() -> None:
+    instrument_id = InstrumentId.from_str("DIV.SIM")
+    index = pd.date_range("2024-01-01", periods=4)
+    columns = pd.MultiIndex.from_tuples(
+        [("candidate-a", instrument_id), ("candidate-b", instrument_id)],
+        names=["candidate_id", "symbol"],
+    )
+    close = pd.DataFrame(100.0, index=index, columns=columns)
+    distribution = Distribution.from_ex_date(
+        instrument_id,
+        "2024-01-03",
+        amount=1.25,
+        currency="USD",
+    )
+
+    cash = distribution_cash_dividends(close, [distribution])
+
+    assert cash.loc[pd.Timestamp("2024-01-01")].tolist() == [0.0, 0.0]
+    assert cash.loc[pd.Timestamp("2024-01-03")].tolist() == [1.25, 1.25]
+
+
+def test_distribution_cash_dividends_converts_non_base_cash() -> None:
+    instrument_id = InstrumentId.from_str("DIV.SIM")
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({instrument_id: np.full(4, 100.0)}, index=index)
+    distribution = Distribution.from_ex_date(
+        instrument_id,
+        "2024-01-03",
+        amount=2.00,
+        currency="USD",
+    )
+    conversion = CurrencyConversion(
+        {instrument_id: pd.Series([0.90, 0.95], index=index[[0, 2]])}
+    )
+
+    cash = distribution_cash_dividends(
+        close,
+        [distribution],
+        currency_conversion=conversion,
+    )
+
+    assert cash.loc[pd.Timestamp("2024-01-03"), instrument_id] == pytest.approx(1.90)
+
+
+def test_distribution_cash_increases_long_total_return() -> None:
+    instrument_id = InstrumentId.from_str("DIV.SIM")
+    index = pd.date_range("2024-01-01", periods=5)
+    close = pd.DataFrame({instrument_id: np.full(5, 100.0)}, index=index)
+    columns = pd.MultiIndex.from_tuples(
+        [("candidate-a", instrument_id)],
+        names=["candidate_id", "symbol"],
+    )
+    allocations = pd.DataFrame(
+        [[1.0], [np.nan], [np.nan], [np.nan], [np.nan]],
+        index=index,
+        columns=columns,
+    )
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        direction="longonly",
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+    distribution = Distribution.from_ex_date(
+        instrument_id,
+        "2024-01-03",
+        amount=1.0,
+        currency="USD",
+    )
+
+    without = _total_return(
+        simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+    )
+    with_distribution = _total_return(
+        simulate_portfolio_batch(
+            close,
+            allocations,
+            config,
+            periods_per_year=252,
+            distributions=[distribution],
+        )
+    )
+
+    assert without == pytest.approx(0.0, abs=1e-9)
+    assert with_distribution == pytest.approx(0.01, abs=1e-9)
 
 
 def _total_return(pf: vbt.Portfolio) -> float:

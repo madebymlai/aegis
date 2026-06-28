@@ -10,9 +10,8 @@ import re
 from typing import Annotated
 
 import pandas as pd
-from pydantic import AfterValidator, Field
-
 from aegis_runtime import validate_bare_root
+from pydantic import AfterValidator, Field
 
 IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.-]+$"
 IDENTIFIER_RE = re.compile(IDENTIFIER_PATTERN)

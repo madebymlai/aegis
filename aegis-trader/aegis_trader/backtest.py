@@ -15,10 +15,11 @@ from pathlib import Path
 from typing import Protocol
 
 import pandas as pd
+from aegis_data.distributions import Distribution, query_distribution_data
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.config import CacheConfig, LoggingConfig
-from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import Bar, CustomData, DataType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.instruments import Instrument
@@ -49,6 +50,7 @@ from aegis_trader.portfolio.performance import (
     return_stats,
 )
 from aegis_trader.trader.costs import build_simulated_cost_models
+from aegis_trader.trader.dividends import build_dividend_modules
 from aegis_trader.trader.financing import build_financing_modules
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
@@ -80,6 +82,7 @@ class BacktestMarketData:
 
     instruments: Mapping[InstrumentId, Instrument]
     ohlcv: Mapping[InstrumentId, pd.DataFrame]
+    distributions: tuple[Distribution, ...] = ()
 
 
 class BacktestDataSource(Protocol):
@@ -122,7 +125,17 @@ class CatalogBacktestDataSource:
                 timeframe=timeframe,
             )
         )
-        return BacktestMarketData(instruments=instruments, ohlcv=frames)
+        distributions = query_distribution_data(
+            catalog,
+            instrument_ids,
+            start=start,
+            end=end,
+        )
+        return BacktestMarketData(
+            instruments=instruments,
+            ohlcv=frames,
+            distributions=distributions,
+        )
 
 
 def run_book_backtest(
@@ -175,6 +188,7 @@ def run_book_backtest(
         book=book,
         instruments=tuple(market_data.instruments.values()),
         sleeves=sleeves,
+        distributions=market_data.distributions,
         starting_cash=starting_cash,
     )
     _add_instruments_and_bars(
@@ -327,6 +341,7 @@ def _add_venues(
     book: BookConfig,
     instruments: Sequence[Instrument],
     sleeves: SleeveBundles,
+    distributions: Sequence[Distribution],
     starting_cash: float,
 ) -> None:
     account_currencies = _account_currencies(book, instruments)
@@ -343,7 +358,10 @@ def _add_venues(
     )
     for index, native_venue in enumerate(native_venues):
         cost_models = build_simulated_cost_models(book)
-        financing_modules = build_financing_modules(book.costs)
+        modules = [
+            *build_financing_modules(book.costs),
+            *build_dividend_modules(distributions),
+        ]
         engine.add_venue(
             native_venue,
             oms_type=OmsType.NETTING,
@@ -352,7 +370,7 @@ def _add_venues(
             starting_balances=starting_balances
             if index == 0
             else _zero_balances(balance_currencies),
-            modules=financing_modules,
+            modules=modules,
             fill_model=cost_models.fill_model,
             fee_model=cost_models.fee_model,
             book_type=BookType.L1_MBP,
@@ -371,6 +389,24 @@ def _add_instruments_and_bars(
         engine.add_instrument(instrument)
         bars = _wrangle_external_bars(instrument, market_data.ohlcv[instrument_id], timeframe)
         engine.add_data(bars, sort=False)
+    _add_distribution_data(engine, market_data.distributions)
+
+
+def _add_distribution_data(
+    engine: BacktestEngine,
+    distributions: Sequence[Distribution],
+) -> None:
+    if not distributions:
+        return
+    data_type = DataType(Distribution)
+    engine.add_data(
+        [
+            CustomData(data_type=data_type, data=distribution)
+            for distribution in distributions
+        ],
+        validate=False,
+        sort=False,
+    )
 
 
 def _wrangle_external_bars(

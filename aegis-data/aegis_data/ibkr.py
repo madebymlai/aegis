@@ -30,6 +30,10 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import itertools
+import math
+import threading
+import time
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -59,6 +63,7 @@ _IB_MARKET_DATA_TYPES = frozenset({"REALTIME", "FROZEN", "DELAYED", "DELAYED_FRO
 # The real connection is therefore a per-process singleton (one loop + one client),
 # created once and reused by every call across every provider instance.
 _IB_CONNECTION: dict[str, Any] = {}
+_RAW_CLIENT_ID_SEQUENCE = itertools.count(1)
 
 
 class IbkrRequestError(RuntimeError):
@@ -99,6 +104,7 @@ class IbkrHistoricalProvider:
     use_rth: bool = True
     timeout: int = IB_REQUEST_TIMEOUT
     client_factory: Callable[[], Any] | None = None
+    adjusted_last_client_factory: Callable[[], Any] | None = None
 
     def __post_init__(self) -> None:
         if self.market_data_type not in _IB_MARKET_DATA_TYPES:
@@ -141,6 +147,42 @@ class IbkrHistoricalProvider:
                 ],
             ),
         )
+
+    def request_adjusted_last(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        primary_exchange: str | None = None,
+        currency: str = "USD",
+    ) -> pd.Series:
+        """The raw-``ibapi`` daily ``ADJUSTED_LAST`` close series.
+
+        Nautilus' historic bar path cannot express IBKR's ``ADJUSTED_LAST``
+        ``whatToShow`` value, so this one derivation source uses a deliberately
+        narrow raw-IB seam.  Normal production ``TRADES`` bars still ride
+        :meth:`request_bars` through the generic data-provider port.
+        """
+        subject = f"ADJUSTED_LAST closes {instrument_id.value}"
+        try:
+            rows = self._adjusted_last_client().request_daily_closes(
+                instrument_id=instrument_id,
+                what_to_show="ADJUSTED_LAST",
+                start=start,
+                end=end,
+                primary_exchange=primary_exchange,
+                currency=currency,
+                timeout=self.timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 - any IB/raw socket fault -> one named error
+            raise IbkrRequestError(
+                f"IBKR could not fetch {subject}: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not rows:
+            return pd.Series(dtype=float)
+        index = pd.DatetimeIndex([timestamp for timestamp, _close in rows])
+        return pd.Series([close for _timestamp, close in rows], index=index).sort_index()
 
     def _request(self, subject: str, call: Callable[[Any], Awaitable[Any]]) -> Any:
         """Run an IBKR fetch, surfacing any fault as a named :class:`IbkrRequestError`.
@@ -203,6 +245,16 @@ class IbkrHistoricalProvider:
             )
         )
 
+    def _adjusted_last_client(self) -> Any:
+        if self.adjusted_last_client_factory is not None:
+            return self.adjusted_last_client_factory()
+        return _IbapiDailyCloseClient(
+            host=self.host,
+            port=self.port,
+            client_id=self.client_id + 7_000 + next(_RAW_CLIENT_ID_SEQUENCE),
+            use_rth=self.use_rth,
+        )
+
 
 class _HistoricSession:
     """Anti-corruption wrapper over ``HistoricInteractiveBrokersClient``.
@@ -230,6 +282,160 @@ class _HistoricSession:
         # The historic client has no public teardown; stopping the inner client
         # drains its background tasks cleanly (so closing the loop is quiet).
         await self._client._client._stop_async()
+
+
+@dataclass(frozen=True)
+class _IbapiDailyCloseClient:
+    """Small raw-``ibapi`` client for daily ``whatToShow`` close series."""
+
+    host: str
+    port: int
+    client_id: int
+    use_rth: bool
+
+    def request_daily_closes(
+        self,
+        *,
+        instrument_id: InstrumentId,
+        what_to_show: str,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        primary_exchange: str | None,
+        currency: str,
+        timeout: int,
+    ) -> list[tuple[pd.Timestamp, float]]:
+        app = _build_raw_historical_app()
+        app.connect(self.host, self.port, clientId=self.client_id)
+        threading.Thread(target=app.run, daemon=True).start()
+        if not app.ready.wait(timeout=15):
+            app.disconnect()
+            raise TimeoutError("IBKR raw client did not receive nextValidId")
+        req_id = 1
+        app.reqHistoricalData(
+            reqId=req_id,
+            contract=_stock_contract(
+                instrument_id,
+                primary_exchange=primary_exchange,
+                currency=currency,
+            ),
+            endDateTime=_ib_request_end_datetime(what_to_show, end),
+            durationStr=_ib_request_duration(what_to_show, start, end),
+            barSizeSetting="1 day",
+            whatToShow=what_to_show,
+            useRTH=1 if self.use_rth else 0,
+            formatDate=1,
+            keepUpToDate=False,
+            chartOptions=[],
+        )
+        deadline = time.time() + timeout
+        while time.time() < deadline and req_id not in app.done:
+            time.sleep(0.05)
+        app.disconnect()
+        if req_id not in app.done:
+            raise TimeoutError(f"IBKR raw {what_to_show} request timed out")
+        if app.errors.get(req_id) and not app.bars.get(req_id):
+            raise RuntimeError("; ".join(app.errors[req_id]))
+        return _bounded_daily_closes(app.bars.get(req_id, []), start=start, end=end)
+
+
+def _build_raw_historical_app() -> Any:
+    from collections import defaultdict
+
+    from ibapi.client import EClient
+    from ibapi.wrapper import EWrapper
+
+    class _RawHistoricalApp(EWrapper, EClient):
+        def __init__(self) -> None:
+            EClient.__init__(self, self)
+            self.bars: dict[int, list[tuple[str, float]]] = defaultdict(list)
+            self.done: set[int] = set()
+            self.errors: dict[int, list[str]] = defaultdict(list)
+            self.ready = threading.Event()
+
+        def nextValidId(self, orderId: int) -> None:  # noqa: N802, ARG002
+            self.ready.set()
+
+        def historicalData(self, reqId, bar) -> None:  # noqa: N802, ANN001
+            self.bars[reqId].append((bar.date, float(bar.close)))
+
+        def historicalDataEnd(self, reqId, start, end) -> None:  # noqa: N802, ANN001, ARG002
+            self.done.add(reqId)
+
+        def error(self, reqId, *args) -> None:  # noqa: ANN001
+            msg = " ".join(str(arg) for arg in args)
+            if reqId is not None and reqId >= 0:
+                self.errors[reqId].append(msg)
+                if any(code in msg for code in ("354", "10167", "162", "200", "165", "321")):
+                    self.done.add(reqId)
+
+    return _RawHistoricalApp()
+
+
+def _stock_contract(
+    instrument_id: InstrumentId,
+    *,
+    primary_exchange: str | None,
+    currency: str,
+) -> Any:
+    from ibapi.contract import Contract
+
+    contract = Contract()
+    contract.symbol = instrument_id.symbol.value
+    contract.secType = "STK"
+    contract.exchange = "SMART"
+    contract.primaryExchange = primary_exchange or instrument_id.venue.value
+    contract.currency = currency.upper()
+    return contract
+
+
+def _ib_duration(start: pd.Timestamp, end: pd.Timestamp) -> str:
+    days = max(1, math.ceil((_utc(end) - _utc(start)) / pd.Timedelta(days=1)))
+    if days <= 365:
+        return f"{days} D"
+    return f"{math.ceil(days / 365)} Y"
+
+
+def _ib_request_end_datetime(what_to_show: str, end: pd.Timestamp) -> str:
+    if what_to_show.upper() == "ADJUSTED_LAST":
+        return ""
+    return _ib_datetime(end)
+
+
+def _ib_request_duration(
+    what_to_show: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> str:
+    if what_to_show.upper() == "ADJUSTED_LAST":
+        return _ib_duration(start, max(_utc(end), pd.Timestamp.now(tz="UTC")))
+    return _ib_duration(start, end)
+
+
+def _ib_datetime(timestamp: pd.Timestamp) -> str:
+    return _utc(timestamp).strftime("%Y%m%d %H:%M:%S UTC")
+
+
+def _bounded_daily_closes(
+    rows: Sequence[tuple[str, float]],
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> list[tuple[pd.Timestamp, float]]:
+    start_ts = _utc(start)
+    end_ts = _utc(end)
+    bounded: list[tuple[pd.Timestamp, float]] = []
+    for date_value, close in rows:
+        timestamp = pd.Timestamp(str(date_value), tz="UTC")
+        if start_ts <= timestamp <= end_ts:
+            bounded.append((timestamp, close))
+    return bounded
+
+
+def _utc(timestamp: pd.Timestamp) -> pd.Timestamp:
+    value = pd.Timestamp(timestamp)
+    if value.tzinfo is None:
+        return value.tz_localize("UTC")
+    return value.tz_convert("UTC")
 
 
 def close_connection() -> None:

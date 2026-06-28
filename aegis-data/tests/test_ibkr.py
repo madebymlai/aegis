@@ -26,6 +26,7 @@ from aegis_data.catalog import NautilusDataProviderPort
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
     IbkrRequestError,
+    _ib_request_end_datetime,
     seed_instrument_definitions,
 )
 
@@ -140,6 +141,13 @@ def test_unknown_market_data_type_fails_at_construction() -> None:
         IbkrHistoricalProvider(market_data_type="BOGUS")
 
 
+def test_adjusted_last_raw_request_omits_unsupported_end_datetime() -> None:
+    end = pd.Timestamp("2026-06-01", tz="UTC")
+
+    assert _ib_request_end_datetime("ADJUSTED_LAST", end) == ""
+    assert _ib_request_end_datetime("TRADES", end) == "20260601 00:00:00 UTC"
+
+
 def test_provider_satisfies_the_pure_fetch_port() -> None:
     port: NautilusDataProviderPort = IbkrHistoricalProvider(
         client_factory=lambda: _FakeHistoricClient(bars=[], instruments=[])
@@ -150,8 +158,12 @@ def test_provider_satisfies_the_pure_fetch_port() -> None:
 def test_importing_the_adapter_does_not_import_ibapi() -> None:
     """The lazy-``ibapi`` boundary: importing the adapter (historic fetch *and*
     live wiring both live here) must not pull ``ibapi`` — every IBKR import is
-    deferred to call time.  ``aegis-data`` runs without ``ibapi`` installed, so
-    its mere absence from ``sys.modules`` after import is the invariant."""
+    deferred to call time, so non-IBKR code does not initialize the vendor stack."""
+    sys.modules.pop("aegis_data.ibkr", None)
+    for module_name in tuple(sys.modules):
+        if module_name == "ibapi" or module_name.startswith("ibapi."):
+            sys.modules.pop(module_name)
+
     import aegis_data.ibkr  # noqa: F401 — import-for-effect
 
     assert "ibapi" not in sys.modules

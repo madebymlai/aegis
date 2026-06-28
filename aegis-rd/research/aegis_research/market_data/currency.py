@@ -76,6 +76,17 @@ class CurrencyConversion:
         """Convert every price array to base currency; pass non-price arrays through."""
         return {name: self._convert(name, frame) for name, frame in arrays.items()}
 
+    def rate_for(self, instrument_id: InstrumentId, index: pd.Index) -> pd.Series:
+        """Native → base FX rate for one instrument over *index*.
+
+        Base-currency legs are absent from ``rate_by_instrument`` and therefore
+        return an identity rate.  Non-base legs reuse the same aligned, coverage-
+        checked series the price conversion uses.
+        """
+        if instrument_id not in self.rate_by_instrument:
+            return pd.Series(1.0, index=index)
+        return self._aligned_rate(instrument_id, index)
+
     def _convert(self, name: str, frame: pd.DataFrame) -> pd.DataFrame:
         if name not in _PRICE_ARRAYS:
             return frame

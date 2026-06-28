@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from aegis_data.distributions import Distribution, write_distribution_data
+from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from research.aegis_research.data import load_market_data_result
 from research.aegis_research.market_data.currency import MissingFxPairError
@@ -89,3 +91,30 @@ def test_catalog_keeps_native_prices_conversion_is_a_per_consumer_view(tmp_path:
     converted_close = result.currency_conversion.apply(native_bundle.arrays)["Close"][aapl]
     # Catalog/native_data is native (USD); the base-currency (EUR) view differs from it.
     assert not converted_close.equals(native_close)
+
+
+def test_catalog_source_carries_distribution_events(tmp_path: Path) -> None:
+    catalog = tmp_path / "catalog"
+    seed_catalog_ohlcv(catalog, ["AAPL.XNAS"], periods=_PERIODS, currency="USD")
+    aapl = instrument_id("AAPL.XNAS")
+    distribution = Distribution.from_ex_date(
+        aapl,
+        "2024-01-15",
+        amount=0.42,
+        currency="USD",
+    )
+    write_distribution_data(ParquetDataCatalog(catalog), [distribution])
+    config = make_data_config(
+        arrays=["Close"],
+        base_currency="USD",
+        instruments=["AAPL.XNAS"],
+        start="2024-01-01",
+        end=_END,
+        path=str(catalog),
+    )
+
+    result = load_market_data_result(config, required_arrays=("Close",))
+
+    assert [(item.instrument_id, item.ex_date, item.amount) for item in result.distributions] == [
+        (aapl, distribution.ex_date, pytest.approx(0.42))
+    ]

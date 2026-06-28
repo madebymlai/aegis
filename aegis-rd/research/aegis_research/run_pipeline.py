@@ -214,6 +214,7 @@ def _run_optimization_strategy_sweep(
         metric_registry=metric_registry,
         run_evidence=run_evidence,
         currency_conversion=data_result.currency_conversion,
+        distributions=data_result.distributions,
     )
 
     # Stage 3: Publishing — three representative candidates, candidate store

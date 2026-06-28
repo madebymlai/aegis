@@ -23,8 +23,10 @@ from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     RawBarRequest,
+    bars_to_ohlcv,
     parquet_data_catalog,
 )
+from aegis_data.distributions import request_distribution_data
 from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
 
 pytest.importorskip("ibapi")
@@ -35,6 +37,8 @@ _GATEWAY_PORT = os.environ.get("AEGIS_IBKR_GATEWAY_PORT")
 # corpus id — request, fill, and warm read alike — is AAPL.XNAS, not AAPL.NASDAQ.
 _AAPL = InstrumentId.from_str("AAPL.XNAS")
 _EUR_USD = InstrumentId.from_str("EUR/USD.IDEALPRO")
+_SPY = InstrumentId.from_str("SPY.ARCA")
+_GLD = InstrumentId.from_str("GLD.ARCA")
 _START = pd.Timestamp("2024-01-02", tz="UTC")
 _END = pd.Timestamp("2024-02-01", tz="UTC")
 
@@ -147,3 +151,41 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
         instrument_ids=[_AAPL.value]
     )
     assert any(instrument.id == _AAPL for instrument in definitions)
+
+
+def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
+    """Operator-run dividend source check: TRADES rides the standard bar path,
+    ADJUSTED_LAST rides the raw-ibapi seam, and the ratio recovers real gross
+    distributions while the GLD non-distributor stays empty."""
+    provider = _provider()
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    end = pd.Timestamp("2026-06-01", tz="UTC")
+
+    spy_trades = bars_to_ohlcv(
+        provider.request_bars(raw_bar_type(_SPY, "1D"), start=start, end=end)
+    )["Close"]
+    gld_trades = bars_to_ohlcv(
+        provider.request_bars(raw_bar_type(_GLD, "1D"), start=start, end=end)
+    )["Close"]
+    spy = request_distribution_data(
+        provider,
+        _SPY,
+        trades=spy_trades,
+        start=start,
+        end=end,
+        primary_exchange="ARCA",
+        currency="USD",
+    )
+    gld = request_distribution_data(
+        provider,
+        _GLD,
+        trades=gld_trades,
+        start=start,
+        end=end,
+        primary_exchange="ARCA",
+        currency="USD",
+    )
+
+    assert len(spy) >= 6
+    assert sum(event.amount for event in spy) > 10.0
+    assert gld == ()

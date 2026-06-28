@@ -9,7 +9,9 @@ dependencies = [
   "pandas",
   "pyarrow",
   "platformdirs",
-  "nautilus_trader",
+  "nautilus-trader>=1.229.0",
+  "nautilus-ibapi==10.45.1",
+  "protobuf>=5.29.6",
 ]
 
 [project.scripts]

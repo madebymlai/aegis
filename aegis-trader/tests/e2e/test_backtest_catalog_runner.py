@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+from aegis_data.distributions import Distribution, write_distribution_data
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity
@@ -26,7 +27,11 @@ from aegis_runtime import (
     MarketDataBundle,
 )
 
-from aegis_trader.backtest import CatalogInstrumentError, run_book_backtest
+from aegis_trader.backtest import (
+    CatalogBacktestDataSource,
+    CatalogInstrumentError,
+    run_book_backtest,
+)
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.portfolio import NautilusBookState
 
@@ -189,6 +194,61 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path
     ).nav()
     assert len(fills) == 2
     assert nav == pytest.approx(1_000_000.0, abs=100.0)
+    engine.dispose()
+
+
+def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> None:
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
+    distribution = Distribution.from_ex_date(
+        _INSTRUMENT_ID,
+        "2020-01-03",
+        amount=0.75,
+        currency="EUR",
+    )
+    write_distribution_data(ParquetDataCatalog(catalog_path), [distribution])
+
+    data = CatalogBacktestDataSource(catalog_path=catalog_path).load(
+        (_INSTRUMENT_ID,),
+        timeframe="1D",
+        start="2020-01-01",
+        end="2020-01-05",
+    )
+
+    assert [(item.instrument_id, item.ex_date, item.amount) for item in data.distributions] == [
+        (_INSTRUMENT_ID, distribution.ex_date, pytest.approx(0.75))
+    ]
+
+
+def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0, 100.0])
+    distribution = Distribution.from_ex_date(
+        _INSTRUMENT_ID,
+        "2020-01-04",
+        amount=1.0,
+        currency="EUR",
+    )
+    write_distribution_data(ParquetDataCatalog(catalog_path), [distribution])
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+
+    engine = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-06",
+        catalog_path=catalog_path,
+        registry=registry,
+    )
+
+    nav = NautilusBookState(
+        portfolio=engine.portfolio,
+        cache=engine.cache,
+        base_currency=Currency.from_str("EUR"),
+        covered_instrument_ids=frozenset((_INSTRUMENT_ID,)),
+    ).nav()
+    assert nav == pytest.approx(1_005_000.0, abs=100.0)
     engine.dispose()
 
 

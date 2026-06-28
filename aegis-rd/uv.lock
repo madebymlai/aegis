@@ -16,20 +16,24 @@ version = "0.1.0"
 source = { editable = "../aegis-data" }
 dependencies = [
     { name = "aegis-runtime" },
+    { name = "nautilus-ibapi" },
     { name = "nautilus-trader" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "platformdirs" },
+    { name = "protobuf" },
     { name = "pyarrow" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aegis-runtime", editable = "../aegis-runtime" },
-    { name = "nautilus-trader" },
+    { name = "nautilus-ibapi", specifier = "==10.45.1" },
+    { name = "nautilus-trader", specifier = ">=1.229.0" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "platformdirs" },
+    { name = "protobuf", specifier = ">=5.29.6" },
     { name = "pyarrow" },
 ]
 

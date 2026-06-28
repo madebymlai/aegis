@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, gate
 from nautilus_trader.model.identifiers import InstrumentId
 from numba import njit
@@ -17,6 +18,7 @@ from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.exposure_validation import (
     validate_exposure,
 )
+from research.aegis_research.market_data.currency import CurrencyConversion
 from research.aegis_research.market_data.identity import as_instrument_id
 
 _SINGLE_CANDIDATE_ID = "single"
@@ -224,6 +226,8 @@ def _build_portfolio(
     periods_per_year: int,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    distributions: Sequence[Distribution] | None = None,
+    currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
     """Build a simulated portfolio from allocations.
 
@@ -247,6 +251,13 @@ def _build_portfolio(
     # overwrites its internal ``size`` array with resolved order amounts before the
     # pre-order-segment callback runs.
     target_alloc = np.ascontiguousarray(masked.to_numpy(), dtype=np.float64)
+    cash_dividends = short_masked_cash_dividends(
+        price_frame, allocations, config, periods_per_year=periods_per_year
+    ) + distribution_cash_dividends(
+        price_frame,
+        distributions or (),
+        currency_conversion=currency_conversion,
+    )
     pf = vbt.Portfolio.from_optimizer(
         price_frame,
         pfo,
@@ -272,9 +283,7 @@ def _build_portfolio(
         init_cash=config.init_cash,
         leverage=config.gross_cap * _GROSS_CAP_LEVERAGE_MULTIPLIER,
         leverage_mode=VBT_LEVERAGE_MODE,
-        cash_dividends=short_masked_cash_dividends(
-            price_frame, allocations, config, periods_per_year=periods_per_year
-        ),
+        cash_dividends=cash_dividends,
         log=True,
         **exec_kwargs,
     )
@@ -352,6 +361,73 @@ def short_masked_cash_dividends(
     return cash_dividends
 
 
+def distribution_cash_dividends(
+    close: pd.DataFrame,
+    distributions: Sequence[Distribution],
+    *,
+    currency_conversion: CurrencyConversion | None = None,
+) -> pd.DataFrame:
+    """Build the unmasked per-share distribution cash array for vbt.
+
+    VBT multiplies ``cash_dividends`` by the signed live position, so a positive
+    per-share distribution credits longs and charges shorts without masking.
+    """
+    cash_dividends = pd.DataFrame(0.0, index=close.index, columns=close.columns)
+    if not distributions:
+        return cash_dividends
+    columns_by_instrument = _columns_by_instrument(close.columns)
+    for distribution in distributions:
+        target_columns = columns_by_instrument.get(distribution.instrument_id.value, [])
+        if not target_columns:
+            continue
+        ex_date = _matching_index_label(distribution, close.index)
+        if ex_date not in cash_dividends.index:
+            continue
+        amount = _distribution_amount(
+            distribution,
+            close.index,
+            ex_date,
+            currency_conversion=currency_conversion,
+        )
+        cash_dividends.loc[ex_date, target_columns] += amount
+    return cash_dividends
+
+
+def _columns_by_instrument(columns: pd.Index) -> dict[str, list[Any]]:
+    values = (
+        columns.get_level_values(SYMBOL_LEVEL)
+        if isinstance(columns, pd.MultiIndex)
+        else columns
+    )
+    out: dict[str, list[Any]] = {}
+    for column, value in zip(columns, values, strict=True):
+        key = value.value if isinstance(value, InstrumentId) else str(value)
+        out.setdefault(key, []).append(column)
+    return out
+
+
+def _matching_index_label(distribution: Distribution, index: pd.Index) -> pd.Timestamp:
+    ex_date = pd.Timestamp(distribution.ts_event, tz="UTC")
+    if isinstance(index, pd.DatetimeIndex):
+        if index.tz is None:
+            return ex_date.tz_localize(None)
+        return ex_date.tz_convert(index.tz)
+    return ex_date
+
+
+def _distribution_amount(
+    distribution: Distribution,
+    index: pd.Index,
+    ex_date: pd.Timestamp,
+    *,
+    currency_conversion: CurrencyConversion | None,
+) -> float:
+    if currency_conversion is None:
+        return distribution.amount
+    rate = currency_conversion.rate_for(distribution.instrument_id, index)
+    return distribution.amount * float(rate.loc[ex_date])
+
+
 def fx_adjusted_fees(
     instrument_ids: Sequence[InstrumentId],
     currency_by_instrument_id: Mapping[InstrumentId, str],
@@ -393,6 +469,8 @@ def simulate_single_book(
     periods_per_year: int = 252,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    distributions: Sequence[Distribution] | None = None,
+    currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
     """Test-support wrapper: simulate one book through the batched path.
 
@@ -416,6 +494,8 @@ def simulate_single_book(
         periods_per_year=periods_per_year,
         fees_by_symbol=fees_by_symbol,
         instrument_bands=instrument_bands,
+        distributions=distributions,
+        currency_conversion=currency_conversion,
     )
 
 
@@ -429,6 +509,8 @@ def simulate_portfolio_batch(
     periods_per_year: int,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    distributions: Sequence[Distribution] | None = None,
+    currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
     """Simulate a batch of candidate portfolios."""
     _validate_candidate_columns(allocations.columns, field_name="allocations")
@@ -461,6 +543,8 @@ def simulate_portfolio_batch(
         periods_per_year=periods_per_year,
         fees_by_symbol=fees_by_symbol,
         instrument_bands=instrument_bands,
+        distributions=distributions,
+        currency_conversion=currency_conversion,
     )
 
 

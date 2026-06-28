@@ -9,6 +9,7 @@ from aegis_data.catalog import (
     catalog_data_port,
 )
 from aegis_data.continuous_catalog import continuous_ohlcv_frames
+from aegis_data.distributions import Distribution, query_distribution_data
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 
@@ -69,6 +70,12 @@ def load_catalog_source(
     # tradeable native_data above (no weights/signals/positions); here they become a
     # conversion view instead — native prices in the catalog, base prices per consumer.
     currency_conversion = _currency_conversion(config, data_port, raw_frames)
+    distributions = _distribution_data(
+        data_port,
+        tradeable_instrument_ids,
+        start=start,
+        end=end,
+    )
     return MarketDataAdapterResult(
         native_data=native_data,
         source_metadata={
@@ -81,7 +88,21 @@ def load_catalog_source(
         evidence=index_evidence(native_index(native_data), source="nautilus_catalog"),
         provider_metadata={"source": "nautilus_data_provider_port"},
         currency_conversion=currency_conversion,
+        distributions=distributions,
     )
+
+
+def _distribution_data(
+    data_port: CatalogBackedDataPort,
+    instrument_ids: tuple[InstrumentId, ...],
+    *,
+    start: str,
+    end: str,
+) -> tuple[Distribution, ...]:
+    catalog = getattr(data_port, "catalog", None)
+    if catalog is None:
+        return ()
+    return query_distribution_data(catalog, instrument_ids, start=start, end=end)
 
 
 def _currency_conversion(

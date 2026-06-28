@@ -45,6 +45,19 @@ def test_apply_forward_fills_a_sparser_fx_calendar_onto_the_bar_index() -> None:
     assert out["Close"][_USD_LEG].tolist() == pytest.approx([90.0, 90.0, 95.0, 95.0])
 
 
+def test_rate_for_returns_aligned_native_to_base_rate_or_identity() -> None:
+    bars = pd.date_range("2024-01-01", periods=4, freq="D")
+    rate = pd.Series([0.90, 0.95], index=bars[[0, 2]])
+    conversion = CurrencyConversion({_USD_LEG: rate})
+
+    assert conversion.rate_for(_USD_LEG, bars).tolist() == pytest.approx(
+        [0.90, 0.90, 0.95, 0.95]
+    )
+    assert conversion.rate_for(_BASE_LEG, bars).tolist() == pytest.approx(
+        [1.0, 1.0, 1.0, 1.0]
+    )
+
+
 def test_apply_fails_loud_when_the_rate_starts_after_the_first_bar() -> None:
     bars = pd.date_range("2024-01-01", periods=3, freq="D")
     close = pd.DataFrame({_USD_LEG: [100.0, 100.0, 100.0]}, index=bars)

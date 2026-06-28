@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
+from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
@@ -37,6 +38,7 @@ from research.aegis_research.configuration import (
     RankingConfig,
     ReportConfig,
 )
+from research.aegis_research.market_data.currency import CurrencyConversion
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (
@@ -96,6 +98,8 @@ def execute_optimization(
     split_result: RunSplitsResult,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    distributions: tuple[Distribution, ...] = (),
+    currency_conversion: CurrencyConversion | None = None,
     pnl_close: pd.DataFrame | None = None,
     pnl_open: pd.DataFrame | None = None,
 ) -> OptimizationResult:
@@ -146,6 +150,8 @@ def execute_optimization(
         extractors=extractors,
         fees_by_symbol=fees_by_symbol,
         instrument_bands=instrument_bands,
+        distributions=distributions,
+        currency_conversion=currency_conversion,
     )
 
     # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+from aegis_data.distributions import Distribution
 from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
@@ -67,6 +68,8 @@ class MarketDataAdapterResult:
     # Non-base → base FX conversion derived from the catalog's resolved instruments and
     # ``exchange:`` FX series; ``None`` for a single-currency book (no ``exchange:``).
     currency_conversion: CurrencyConversion | None = None
+    # Listed-ETF cash events read from the same Nautilus catalog as bars.
+    distributions: tuple[Distribution, ...] = ()
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -182,6 +185,7 @@ class MarketDataResult:
     quality: MarketDataQuality
     pnl_native_data: Any = None
     currency_conversion: CurrencyConversion | None = None
+    distributions: tuple[Distribution, ...] = ()
 
     def assert_usable(self) -> None:
         if not self.quality.usable:

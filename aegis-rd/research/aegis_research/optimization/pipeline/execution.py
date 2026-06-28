@@ -9,11 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
+from aegis_data.distributions import Distribution
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import (
     RunConfig,
 )
+from research.aegis_research.drift_bands import resolve_instrument_bands
 from research.aegis_research.market_data.currency import CurrencyConversion
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_evidence import result_evidence
@@ -32,7 +34,6 @@ from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
-from research.aegis_research.drift_bands import resolve_instrument_bands
 from research.aegis_research.portfolios import fx_adjusted_fees
 
 
@@ -76,6 +77,7 @@ def run_pipeline_execution(
     metric_registry: FrozenMetricRegistry,
     run_evidence: RunEvidence,
     currency_conversion: CurrencyConversion | None = None,
+    distributions: tuple[Distribution, ...] = (),
 ) -> ExecutionResult:
     """Execute the preflight gate and two-phase optimization sweep."""
     # The public entry point rejects runs without an optimization block, so by the
@@ -110,6 +112,8 @@ def run_pipeline_execution(
             split_result=setup.split_result,
             fees_by_symbol=_fx_fees(config, currency_conversion),
             instrument_bands=resolve_instrument_bands(config),
+            distributions=distributions,
+            currency_conversion=currency_conversion,
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)
