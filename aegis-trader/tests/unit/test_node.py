@@ -191,7 +191,10 @@ def test_union_native_instrument_ids_excludes_continuous_future_roots():
     static native: its legs arrive dynamically via the chain.  The union (the node's
     ``load_ids``) must carry only the declared native ids, never the bare roots."""
     contract = DataContract(
-        instrument_ids=(InstrumentId.from_str("VUSA.XLON"),),
+        instrument_ids=(
+            InstrumentId.from_str("VUSA.XLON"),
+            InstrumentId.from_str("ES.XCME"),
+        ),
         required_arrays=("Close",),
         base_currency="EUR",
         timeframe="1D",
@@ -202,6 +205,7 @@ def test_union_native_instrument_ids_excludes_continuous_future_roots():
 
     ids = union_native_instrument_ids(sleeves)
 
+    # The continuous id ES.XCME (matching root ES) is excluded; only the true native rides.
     assert [i.value for i in ids] == ["VUSA.XLON"]
 
 

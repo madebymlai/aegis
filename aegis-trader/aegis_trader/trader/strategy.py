@@ -195,10 +195,12 @@ class RebalanceStrategy(Strategy):
         return self._book_timeframe
 
     def _registered_instrument_ids(self) -> tuple[InstrumentId, ...]:
+        # Natives only: a continuous root's synthetic id warms/subscribes via its front
+        # leg (see ``_warmup`` / ``_leg_to_feed``), not as a static raw-bar column.
         instrument_ids = {
             instrument_id
             for contract in self._sleeve_to_contract.values()
-            for instrument_id in contract.instrument_ids
+            for instrument_id in contract.native_instrument_ids
         }
         return tuple(sorted(instrument_ids, key=lambda instrument_id: instrument_id.value))
 

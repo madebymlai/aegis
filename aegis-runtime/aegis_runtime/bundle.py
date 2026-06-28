@@ -52,6 +52,22 @@ class DataContract:
         _validate_bare_roots(self.futures, "DataContract.futures")
         _continuous_instrument_ids(self.instrument_ids, self.futures)
 
+    @property
+    def native_instrument_ids(self) -> tuple[InstrumentId, ...]:
+        """The declared ids that load as static columns — continuous ids excluded.
+
+        A continuous-future root's synthetic id (e.g. ``ES.XCME``) lives in
+        ``instrument_ids`` for band/identity resolution, but its bars arrive
+        dynamically through the leg chain, not as a static native column. Callers that
+        warm, subscribe, or union the loadable natives take this, not ``instrument_ids``.
+        """
+        continuous = set(_continuous_instrument_ids(self.instrument_ids, self.futures))
+        return tuple(
+            instrument_id
+            for instrument_id in self.instrument_ids
+            if instrument_id not in continuous
+        )
+
 
 @dataclass(frozen=True)
 class BundleManifest:

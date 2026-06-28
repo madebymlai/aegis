@@ -30,9 +30,13 @@ def load_book_sleeves(book: BookConfig, registry: BundleRegistryPort) -> SleeveB
 
 
 def union_native_instrument_ids(sleeves: SleeveBundles) -> tuple[InstrumentId, ...]:
-    """The sorted union of the sleeves' declared native ``InstrumentId`` values."""
+    """The sorted union of the sleeves' declared native ``InstrumentId`` values.
+
+    Continuous-future synthetic ids are excluded — their legs load dynamically via the
+    chain, never as static native columns (see ``DataContract.native_instrument_ids``).
+    """
     unique: dict[str, InstrumentId] = {}
     for _name, bundle in sleeves:
-        for instrument_id in bundle.contract.instrument_ids:
+        for instrument_id in bundle.contract.native_instrument_ids:
             unique.setdefault(instrument_id.value, instrument_id)
     return tuple(sorted(unique.values(), key=lambda instrument_id: instrument_id.value))

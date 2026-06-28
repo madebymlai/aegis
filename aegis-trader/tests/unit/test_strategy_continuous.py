@@ -26,8 +26,11 @@ from aegis_trader.trader.strategy import RebalanceStrategy
 def _contract(
     *, futures: tuple[str, ...], instrument_ids: tuple[InstrumentId, ...] = ()
 ) -> DataContract:
+    # Each declared root must resolve to its synthetic continuous id in instrument_ids
+    # (the DataContract invariant); the venue is irrelevant to these tests.
+    continuous = tuple(InstrumentId.from_str(f"{root}.XCME") for root in futures)
     return DataContract(
-        instrument_ids=instrument_ids,
+        instrument_ids=(*instrument_ids, *continuous),
         required_arrays=("Close",),
         base_currency="USD",
         timeframe="1D",
