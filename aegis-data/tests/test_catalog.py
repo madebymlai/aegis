@@ -90,7 +90,7 @@ def test_catalog_writes_nautilus_native_bar_layout(tmp_path: Path) -> None:
         path.relative_to(catalog_path).parts[:3] for path in catalog_path.rglob("*.parquet")
     )
 
-    assert layout == [("data", "bar", "AAPL.NASDAQ-1-DAY-LAST-EXTERNAL")]
+    assert layout == [("data", "bar", "AAPL.XNAS-1-DAY-LAST-EXTERNAL")]
 
 
 def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:
@@ -117,6 +117,36 @@ def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:
     )
 
     assert frames[instrument_id]["Close"].tolist() == [10.0]
+    assert provider.requests == []
+
+
+def test_catalog_port_reads_mic_cache_hit_for_ib_exchange_alias(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    requested_id = _id("TLT.NASDAQ")
+    canonical_id = _id("TLT.XNAS")
+    canonical_bar_type = raw_bar_type(canonical_id, "1D")
+    _write_span(
+        catalog,
+        [_bar(canonical_bar_type, "2024-01-01", 99.0)],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+    provider = _ProviderPort([])
+    port = CatalogBackedDataPort(catalog, provider=provider)
+
+    frames = port.load_raw_bars(
+        RawBarRequest(
+            instrument_ids=(requested_id,),
+            start="2024-01-01",
+            end="2024-01-02",
+        )
+    )
+
+    assert frames[requested_id]["Close"].tolist() == [99.0]
     assert provider.requests == []
 
 
@@ -191,7 +221,7 @@ def test_catalog_port_seeds_instrument_definition_on_backfill(tmp_path: Path) ->
         )
     )
 
-    assert seeded == [instrument_id]
+    assert seeded == [_id("AAPL.XNAS")]
 
 
 def test_catalog_port_does_not_seed_definition_on_cache_hit(tmp_path: Path) -> None:
@@ -261,7 +291,7 @@ def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Pa
     catalog = ParquetDataCatalog(catalog_path)
     port = CatalogBackedDataPort(catalog)
 
-    with pytest.raises(CatalogCoverageGapError, match="catalog cannot serve AAPL.NASDAQ"):
+    with pytest.raises(CatalogCoverageGapError, match="catalog cannot serve AAPL.XNAS"):
         port.load_raw_bars(
             RawBarRequest(
                 instrument_ids=(_id("AAPL.NASDAQ"),),

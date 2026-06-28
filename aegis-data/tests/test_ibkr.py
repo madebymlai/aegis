@@ -14,11 +14,17 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pytest
+from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import NautilusDataProviderPort
@@ -68,7 +74,7 @@ def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
     assert list(out) == sentinel_bars
     call = fake.bar_calls[0]
     assert call["bar_specifications"] == ["1-DAY-LAST"]
-    assert call["instrument_ids"] == ["AAPL.NASDAQ"]
+    assert call["instrument_ids"] == ["AAPL.XNAS"]
     assert call["tz_name"] == "UTC"
     # The historic client applies tz_name itself, so it must get NAIVE datetimes.
     assert call["start_date_time"] == datetime(2024, 1, 1)
@@ -195,6 +201,10 @@ class _Instr:
         self.id = instrument_id
 
 
+class _IneligibilityReasonLike:
+    pass
+
+
 class _FakeCatalog:
     def __init__(self, present: list[_Instr] | None = None) -> None:
         self._present = present or []
@@ -249,3 +259,36 @@ def test_seed_is_a_noop_and_never_connects_when_all_present() -> None:
     assert fake.events == []
     assert fake.instrument_calls == []
     assert catalog.writes == []
+
+
+def test_seed_strips_ibkr_ineligibility_reasons_before_catalog_write(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    gld = InstrumentId.from_str("GLD.ARCX")
+    fetched = [
+        Equity(
+            instrument_id=gld,
+            raw_symbol=Symbol("GLD"),
+            currency=USD,
+            price_precision=2,
+            price_increment=Price.from_str("0.01"),
+            lot_size=Quantity.from_int(100),
+            ts_event=0,
+            ts_init=0,
+            info={
+                "ineligibilityReasons": [_IneligibilityReasonLike()],
+                "serializable": "kept",
+            },
+        )
+    ]
+    fake = _FakeHistoricClient(bars=[], instruments=fetched)
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+
+    seed_instrument_definitions(catalog, provider, (gld,))
+
+    loaded = catalog.instruments(instrument_ids=[gld.value])
+    assert [instrument.id for instrument in loaded] == [gld]
+    assert loaded[0].info == {"serializable": "kept"}

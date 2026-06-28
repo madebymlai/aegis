@@ -71,15 +71,30 @@ def _parse(timeframe: str) -> tuple[int, str]:
 def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
     """The ``EXTERNAL`` ``BarType`` for *instrument_id* at *timeframe*.
 
-    ``LAST`` for tradeables, ``MID`` for cash FX (ADR-0007).  Deciding the price
-    type here — a pure function of the id — keeps write and read on one identity:
-    both the lazy-fill/write and the warm read build the bar type through this
-    helper, so an FX pair always keys as ``…-MID-EXTERNAL`` and never desyncs.
+    Known IBKR exchange venues are canonicalized to their MIC venue before the
+    corpus key is built, matching the IBKR provider's MIC-pinned definitions and
+    fetched bars. ``LAST`` is used for tradeables, ``MID`` for cash FX (ADR-0007).
     """
     step, unit = _parse(timeframe)
+    corpus_id = _canonical_instrument_id(instrument_id)
     return BarType.from_str(
-        f"{instrument_id.value}-{step}-{unit}-{_price_type(instrument_id)}-EXTERNAL"
+        f"{corpus_id.value}-{step}-{unit}-{_price_type(corpus_id)}-EXTERNAL"
     )
+
+
+def _canonical_instrument_id(instrument_id: InstrumentId) -> InstrumentId:
+    mic_venue = _mic_venue(instrument_id.venue.value)
+    if mic_venue is None:
+        return instrument_id
+    return InstrumentId.from_str(f"{instrument_id.symbol.value}.{mic_venue}")
+
+
+def _mic_venue(venue: str) -> str | None:
+    from nautilus_trader.adapters.interactive_brokers.parsing.instruments import (
+        exchange_to_mic_venue,
+    )
+
+    return exchange_to_mic_venue(venue)
 
 
 def _price_type(instrument_id: InstrumentId) -> str:

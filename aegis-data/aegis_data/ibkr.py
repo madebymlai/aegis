@@ -36,12 +36,14 @@ import itertools
 import math
 import threading
 import time
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+import msgspec
 import pandas as pd
+from nautilus_trader.common.config import msgspec_encoding_hook
 from nautilus_trader.model.identifiers import InstrumentId
 
 if TYPE_CHECKING:
@@ -620,7 +622,9 @@ def seed_instrument_definitions(
         return
     instruments = provider.request_instruments(missing)
     if instruments:
-        catalog.write_data(list(instruments))
+        catalog.write_data(
+            [_catalog_safe_instrument(instrument) for instrument in instruments]
+        )
 
 
 def _missing_definitions(
@@ -633,6 +637,58 @@ def _missing_definitions(
         )
     }
     return [instrument_id for instrument_id in instrument_ids if instrument_id not in present]
+
+
+_DROP_INFO_VALUE = object()
+_IBKR_PROVIDER_ONLY_INFO_KEYS = frozenset({"ineligibilityReasons"})
+
+
+def _catalog_safe_instrument(instrument: Instrument) -> Instrument:
+    if not hasattr(type(instrument), "to_dict") or not hasattr(
+        type(instrument), "from_dict"
+    ):
+        return instrument
+    values = type(instrument).to_dict(instrument)
+    values["info"] = _catalog_safe_info(values.get("info"))
+    return type(instrument).from_dict(values)
+
+
+def _catalog_safe_info(info: Any) -> dict[str, Any] | None:
+    if info is None:
+        return None
+    safe = _catalog_safe_info_value(info)
+    return safe if isinstance(safe, dict) else {}
+
+
+def _catalog_safe_info_value(value: Any) -> Any:
+    if _catalog_info_encodable(value):
+        return value
+    if isinstance(value, Mapping):
+        safe: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text in _IBKR_PROVIDER_ONLY_INFO_KEYS:
+                continue
+            safe_item = _catalog_safe_info_value(item)
+            if safe_item is not _DROP_INFO_VALUE:
+                safe[key_text] = safe_item
+        return safe
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        safe_items = [
+            safe_item
+            for item in value
+            if (safe_item := _catalog_safe_info_value(item)) is not _DROP_INFO_VALUE
+        ]
+        return safe_items
+    return _DROP_INFO_VALUE
+
+
+def _catalog_info_encodable(value: Any) -> bool:
+    try:
+        msgspec.json.encode(value, enc_hook=msgspec_encoding_hook)
+    except TypeError:
+        return False
+    return True
 
 
 __all__ = [

@@ -24,7 +24,7 @@ _ID = InstrumentId.from_str("AAPL.NASDAQ")
 )
 def test_raw_bar_type_is_last_external_for_the_timeframe(timeframe, step):
     assert raw_bar_type(_ID, timeframe) == BarType.from_str(
-        f"{_ID.value}-{step}-LAST-EXTERNAL"
+        f"AAPL.XNAS-{step}-LAST-EXTERNAL"
     )
 
 
