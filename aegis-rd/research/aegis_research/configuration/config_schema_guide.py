@@ -215,6 +215,16 @@ def _render_portfolio_section() -> str:
         "portfolio",
         title="### `portfolio` (required)",
         tag="keyword-only (no silent default); requires explicit `gross_cap` and `direction`",
+        extra_lines=[
+            "**`band_up` / `band_down`** — sleeve-wide no-trade band widths. "
+            "`band_up` gates trims and `band_down` gates adds. Defaults are zero, "
+            "which means rebalance every executable bar.",
+            "",
+            "**`band_overrides`** — optional per-tradeable override map. Keys are "
+            "native `data.instruments` ids (for example `AAPL.NASDAQ`) or bare "
+            "`data.futures` roots (for example `ES`). Each value must carry explicit "
+            "`up` and `down` widths.",
+        ],
     )
 
 
@@ -452,6 +462,12 @@ def _render_example() -> str:
       gross_cap: 1.0
       direction: longonly
       base_currency: EUR
+      band_up: 0.0
+      band_down: 0.0
+      band_overrides:
+        AAPL.NASDAQ:
+          up: 0.01
+          down: 0.03
 
     strategy:
       id: demo.strategy
@@ -505,6 +521,12 @@ def _render_futures_example() -> str:
       gross_cap: 1.0
       direction: longonly
       base_currency: EUR
+      band_up: 0.0
+      band_down: 0.0
+      band_overrides:
+        ES:
+          up: 0.03
+          down: 0.08
 
     strategy:
       id: demo.strategy

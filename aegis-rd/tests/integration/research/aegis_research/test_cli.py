@@ -1345,6 +1345,18 @@ def test_config_schema_guide_states_native_data_contract() -> None:
     assert "`csv`" not in guide
 
 
+def test_config_schema_guide_documents_band_override_shape() -> None:
+    """Drift: per-instrument bands document native-id and futures-root keys."""
+    guide = _render_guide("config-schema")
+    assert "`band_overrides`" in guide
+    assert "native `data.instruments` ids" in guide
+    assert "bare `data.futures` roots" in guide
+    assert "AAPL.NASDAQ:" in guide
+    assert "ES:" in guide
+    assert "up: 0.03" in guide
+    assert "down: 0.08" in guide
+
+
 def test_config_schema_guide_states_removed_fields_unknown() -> None:
     """Drift: labeler/train/model are called out as removed/unknown."""
     guide = _render_guide("config-schema")
