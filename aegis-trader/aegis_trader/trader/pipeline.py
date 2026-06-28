@@ -11,12 +11,13 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
+from aegis_runtime import DataContract, DriftBand, ExecutionBundle, MarketDataBundle
 
 from aegis_trader.bundles.bands import InstrumentBandError, build_instrument_bands
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
@@ -55,7 +56,7 @@ class RebalanceSummary:
 class StartupGate(str, Enum):
     """Startup gate responsible for a startup halt."""
 
-    BAND_PROVENANCE = "band_provenance"
+    BAND_OWNERSHIP = "band_ownership"
     CAP_PROVENANCE = "cap_provenance"
     ACCOUNT_INTEGRITY = "account_integrity"
 
@@ -117,11 +118,13 @@ class RebalancePipeline:
         self._book = book
         self._sleeve_to_bundle = sleeve_to_bundle
         self._ledger = ledger
+        self._instrument_bands: Mapping[InstrumentId, DriftBand]
         try:
             self._instrument_bands = build_instrument_bands(self._sleeve_to_bundle)
             self._instrument_band_error: InstrumentBandError | None = None
         except InstrumentBandError as exc:
-            self._instrument_bands = {}
+            # Match the happy path's read-only mapping; the gate halts before any read.
+            self._instrument_bands = MappingProxyType({})
             self._instrument_band_error = exc
         # Continuous roots are first-class rebalance targets (mirroring research's tradeable set =
         # natives + continuous roots): a sleeve's bare root maps here to its synthetic continuous id.
@@ -148,7 +151,7 @@ class RebalancePipeline:
 
     def startup_check(self) -> StartupResult:
         """Run startup gates and return the decision as a value object."""
-        band_result = self._band_provenance_startup_result()
+        band_result = self._band_ownership_startup_result()
         if band_result is not None:
             return band_result
         cap_result = self._cap_provenance_startup_result()
@@ -156,12 +159,12 @@ class RebalancePipeline:
             return cap_result
         return self._account_integrity_startup_result()
 
-    def _band_provenance_startup_result(self) -> StartupResult | None:
+    def _band_ownership_startup_result(self) -> StartupResult | None:
         if self._instrument_band_error is None:
             return None
         return StartupResult(
             trading_enabled=False,
-            halt_gate=StartupGate.BAND_PROVENANCE,
+            halt_gate=StartupGate.BAND_OWNERSHIP,
             halt_reason=str(self._instrument_band_error),
         )
 

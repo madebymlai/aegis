@@ -347,7 +347,7 @@ def test_startup_check_halts_when_bundle_bands_overlap() -> None:
     result = pipeline.startup_check()
 
     assert result.should_halt is True
-    assert result.halt_gate == StartupGate.BAND_PROVENANCE
+    assert result.halt_gate == StartupGate.BAND_OWNERSHIP
     assert result.halt_reason is not None
     assert "PIPE.XNYS" in result.halt_reason
     assert "carry" in result.halt_reason
