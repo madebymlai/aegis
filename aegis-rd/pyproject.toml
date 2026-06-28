@@ -19,6 +19,7 @@ dependencies = [
   "pyyaml",
   "tomlkit",
   "vectorbtpro",
+  "vectorbtpro-rust",
   "nautilus-ibapi==10.45.1",
   "protobuf>=7.35.1",
   "yfinance",
@@ -44,6 +45,7 @@ filterwarnings = [
 aegis-runtime = { path = "../aegis-runtime", editable = true }
 aegis-data = { path = "../aegis-data", editable = true }
 vectorbtpro = { git = "https://github.com/polakowo/vectorbt.pro.git", branch = "develop" }
+vectorbtpro-rust = { git = "https://github.com/polakowo/vectorbt.pro.git", branch = "develop", subdirectory = "rust" }
 
 [tool.mypy]
 python_version = "3.12"

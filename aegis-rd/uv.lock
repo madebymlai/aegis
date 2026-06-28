@@ -54,6 +54,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "tomlkit" },
     { name = "vectorbtpro" },
+    { name = "vectorbtpro-rust" },
     { name = "yfinance" },
 ]
 
@@ -84,6 +85,7 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "tomlkit" },
     { name = "vectorbtpro", git = "https://github.com/polakowo/vectorbt.pro.git?branch=develop" },
+    { name = "vectorbtpro-rust", git = "https://github.com/polakowo/vectorbt.pro.git?subdirectory=rust&branch=develop" },
     { name = "yfinance" },
 ]
 
@@ -2404,6 +2406,14 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions" },
     { name = "websocket-client" },
+]
+
+[[package]]
+name = "vectorbtpro-rust"
+version = "2026.4.7"
+source = { git = "https://github.com/polakowo/vectorbt.pro.git?subdirectory=rust&branch=develop#7801c7849838fdc2ee1b6b441dd93660d6c24f71" }
+dependencies = [
+    { name = "numpy" },
 ]
 
 [[package]]
