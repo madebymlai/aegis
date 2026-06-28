@@ -2385,7 +2385,7 @@ wheels = [
 [[package]]
 name = "vectorbtpro"
 version = "2026.4.7"
-source = { git = "https://github.com/polakowo/vectorbt.pro.git?branch=develop#e445df1bb1ab2fd0bad871d2116e4a692f5f3d4a" }
+source = { git = "https://github.com/polakowo/vectorbt.pro.git?branch=develop#7801c7849838fdc2ee1b6b441dd93660d6c24f71" }
 dependencies = [
     { name = "attrs" },
     { name = "dateparser" },
