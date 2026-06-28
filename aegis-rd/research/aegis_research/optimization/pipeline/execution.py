@@ -32,6 +32,7 @@ from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
+from research.aegis_research.drift_bands import resolve_instrument_bands
 from research.aegis_research.portfolios import fx_adjusted_fees
 
 
@@ -108,6 +109,7 @@ def run_pipeline_execution(
             metric_registry=metric_registry,
             split_result=setup.split_result,
             fees_by_symbol=_fx_fees(config, currency_conversion),
+            instrument_bands=resolve_instrument_bands(config),
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)

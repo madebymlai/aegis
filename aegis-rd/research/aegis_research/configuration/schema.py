@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, get_args
 
 import pandas as pd
+from aegis_runtime import DriftBand
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -294,6 +295,21 @@ class PortfolioConfig:
     gross_cap: PositiveCash = field(kw_only=True)
     # Required (validation rejects a config missing it); no silent long-only default.
     direction: Literal["longonly", "shortonly", "both"] = field(kw_only=True)
+
+    def resolved_band_for(self, key: str) -> DriftBand:
+        """Resolve one instrument's no-trade band: an override beats the sleeve default.
+
+        *key* is the instrument's single override key — the one the author writes in
+        ``band_overrides``: a native InstrumentId string, or a continuous future's bare
+        ``data.futures`` root. The caller resolves the instrument to that one canonical
+        key (no try-this-then-that); an exact miss means no override, so the sleeve-wide
+        ``band_up``/``band_down`` applies. This is the single authority for that
+        precedence — both research export and the sim resolve here.
+        """
+        override = self.band_overrides.get(key)
+        if override is None:
+            return DriftBand(up=self.band_up, down=self.band_down)
+        return DriftBand(up=override.up, down=override.down)
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

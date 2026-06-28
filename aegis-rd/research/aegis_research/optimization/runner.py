@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
+from aegis_runtime import DriftBand, InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
 
@@ -94,6 +95,7 @@ def execute_optimization(
     metric_registry: FrozenMetricRegistry,
     split_result: RunSplitsResult,
     fees_by_symbol: pd.Series | None = None,
+    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
     pnl_close: pd.DataFrame | None = None,
     pnl_open: pd.DataFrame | None = None,
 ) -> OptimizationResult:
@@ -143,6 +145,7 @@ def execute_optimization(
         invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,
         fees_by_symbol=fees_by_symbol,
+        instrument_bands=instrument_bands,
     )
 
     # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.

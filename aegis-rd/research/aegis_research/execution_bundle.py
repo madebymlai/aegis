@@ -6,13 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from aegis_data.catalog import catalog_data_port
-from aegis_data.continuous_catalog import continuous_instrument_ids
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
-    DriftBand,
     InstrumentId,
     LockedExecutionPlan,
 )
@@ -29,6 +26,8 @@ from research.aegis_research.configuration import (
     RunConfig,
     load_run_config,
 )
+from research.aegis_research.drift_bands import instrument_bands_from
+from research.aegis_research.market_data.identity import resolved_instruments
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.lock_run import ResolvedComponentParams, resolve_lock_run
@@ -78,7 +77,8 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
         )
     with CandidateStore(candidate_store_path(config)) as store:
         lock_run = resolve_lock_run(config.lock, store=store)
-    instrument_ids = _instrument_ids(config)
+    instruments = resolved_instruments(config)
+    instrument_ids = tuple(instrument_id for instrument_id, _ in instruments)
     strategy_definition = component_registry.get(
         ComponentSelection("strategies", config.strategy.id)
     )
@@ -105,7 +105,7 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
     plan = LockedExecutionPlan(
         strategy=components.strategy,
         indicators=components.indicators,
-        instrument_bands=_instrument_bands(config, instrument_ids),
+        instrument_bands=instrument_bands_from(instruments, config.portfolio),
         gross_cap=config.portfolio.gross_cap,
         net_cap=config.portfolio.net_cap,
         direction=config.portfolio.direction,
@@ -230,52 +230,6 @@ def _bundle_contract(
     )
 
 
-def _instrument_ids(config: RunConfig) -> tuple[InstrumentId, ...]:
-    native_ids = tuple(InstrumentId.from_str(value) for value in config.data.instruments)
-    if not config.data.futures:
-        return native_ids
-    future_ids = continuous_instrument_ids(
-        catalog_data_port(config.data.path),
-        config.data.futures,
-        start=_required_catalog_window_edge(config.data.start, "start"),
-        end=_required_catalog_window_edge(config.data.end, "end"),
-    )
-    return (*native_ids, *future_ids)
-
-
-def _instrument_bands(
-    config: RunConfig, instrument_ids: Sequence[InstrumentId]
-) -> dict[InstrumentId, DriftBand]:
-    native_count = len(config.data.instruments)
-    future_roots_by_id = dict(
-        zip(instrument_ids[native_count:], config.data.futures, strict=True)
-    )
-    return {
-        instrument_id: _instrument_band(
-            config, instrument_id, future_root=future_roots_by_id.get(instrument_id)
-        )
-        for instrument_id in instrument_ids
-    }
-
-
-def _instrument_band(
-    config: RunConfig,
-    instrument_id: InstrumentId,
-    *,
-    future_root: str | None = None,
-) -> DriftBand:
-    override = config.portfolio.band_overrides.get(instrument_id.value)
-    if override is None and future_root is not None:
-        override = config.portfolio.band_overrides.get(future_root)
-    if override is None:
-        return DriftBand(up=config.portfolio.band_up, down=config.portfolio.band_down)
-    return DriftBand(up=override.up, down=override.down)
-
-
-def _required_catalog_window_edge(value: str | None, label: str) -> str:
-    if value is None:
-        raise ValueError(f"data.{label} is required to resolve continuous-future roots")
-    return value
 
 
 def _call_lookback(definition: ComponentDefinition, params: Mapping[str, Any]) -> int:

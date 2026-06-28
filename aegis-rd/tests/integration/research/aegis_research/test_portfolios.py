@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from aegis_runtime import gate
+from aegis_runtime import DriftBand, gate
 from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
@@ -208,18 +208,19 @@ def test_asymmetric_band_up_gates_trims_more_than_adds() -> None:
     assert trim_realized == pytest.approx(gate(trim_realized_before_gate, 0.5, 0.03, 0.01))
 
 
-def test_band_overrides_gate_each_symbol_independently() -> None:
+def test_instrument_bands_gate_each_symbol_independently() -> None:
     index = pd.date_range("2024-01-01", periods=4)
-    continuous_es = InstrumentId.from_str("ES.XCME")
+    es = InstrumentId.from_str("ES.XCME")
+    spy = InstrumentId.from_str("SPY.ARCA")
     close = pd.DataFrame(
         {
-            continuous_es: [100.0, 110.0, 110.0, 110.0],
-            "B": [100.0, 100.0, 100.0, 100.0],
+            es: [100.0, 110.0, 110.0, 110.0],
+            spy: [100.0, 100.0, 100.0, 100.0],
         },
         index=index,
     )
     allocations = pd.DataFrame(
-        {continuous_es: [0.5, 0.5, np.nan, np.nan], "B": [0.0, 0.5, np.nan, np.nan]},
+        {es: [0.5, 0.5, np.nan, np.nan], spy: [0.0, 0.5, np.nan, np.nan]},
         index=index,
     )
     config = make_portfolio_config(
@@ -229,17 +230,19 @@ def test_band_overrides_gate_each_symbol_independently() -> None:
         direction="longonly",
         band_up=0.01,
         band_down=0.01,
-        band_overrides={"ES": {"up": 0.03, "down": 0.03}},
     )
+    # ES carries a wide override band; SPY is absent from the map, so it gates at the
+    # sleeve-wide default (0.01) and trades the same drift ES holds.
+    instrument_bands = {es: DriftBand(up=0.03, down=0.03)}
 
-    pf = simulate_single_book(close, allocations, config)
+    pf = simulate_single_book(close, allocations, config, instrument_bands=instrument_bands)
 
     second_bar = _orders_on(pf.orders.records_readable, "2024-01-02")
-    assert set(second_bar["Column"]) == {(_SINGLE_CANDIDATE_ID, "B")}
+    assert set(second_bar["Column"]) == {(_SINGLE_CANDIDATE_ID, spy)}
     assert set(second_bar["Side"]) == {"Buy"}
     realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
     realized = pf.get_allocations(group_by=None).loc[
-        index[1], (_SINGLE_CANDIDATE_ID, continuous_es)
+        index[1], (_SINGLE_CANDIDATE_ID, es)
     ]
     assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.03, 0.03))
 

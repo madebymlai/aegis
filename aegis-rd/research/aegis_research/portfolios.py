@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from aegis_runtime import gate
+from aegis_runtime import DriftBand, gate
 from nautilus_trader.model.identifiers import InstrumentId
 from numba import njit
 from vectorbtpro import vbt
@@ -13,10 +13,11 @@ from vectorbtpro.base.flex_indexing import flex_select_1d_pc_nb, flex_select_nb
 from vectorbtpro.portfolio.enums import Direction, OrderStatusInfo, SizeType
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
-from research.aegis_research.configuration import InstrumentBandConfig, PortfolioConfig
+from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.exposure_validation import (
     validate_exposure,
 )
+from research.aegis_research.market_data.identity import as_instrument_id
 
 _SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
@@ -222,6 +223,7 @@ def _build_portfolio(
     group_by: Any,
     periods_per_year: int,
     fees_by_symbol: pd.Series | None = None,
+    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
 ) -> vbt.Portfolio:
     """Build a simulated portfolio from allocations.
 
@@ -240,7 +242,7 @@ def _build_portfolio(
         unique_only=False,
     )
     exec_kwargs = _execution_settings(config.fill_timing, open_frame)
-    band_up, band_down = _band_arrays(masked, config)
+    band_up, band_down = _band_arrays(masked, config, instrument_bands)
     # The gate reads targets from our own copy of the allocations: ``order_mode``
     # overwrites its internal ``size`` array with resolved order amounts before the
     # pre-order-segment callback runs.
@@ -283,30 +285,27 @@ def _build_portfolio(
 def _band_arrays(
     allocations: pd.DataFrame,
     config: PortfolioConfig,
+    instrument_bands: Mapping[InstrumentId, DriftBand] | None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Per-column ``(up, down)`` band widths over a sleeve-default base.
+
+    *instrument_bands* is the run's resolved instrument → :class:`DriftBand` map (the
+    same one the bundle carries), so the sim gates each column with exactly the band the
+    export resolved. A column absent from the map gates at the sleeve-wide default.
+    """
     shape = (1, len(allocations.columns))
     up = np.full(shape, config.band_up, dtype=float)
     down = np.full(shape, config.band_down, dtype=float)
-    if not config.band_overrides:
+    if not instrument_bands:
         return up, down
     symbols = allocations.columns.get_level_values(SYMBOL_LEVEL)
     for col, symbol in enumerate(symbols):
-        override = _band_override_for_symbol(config, symbol)
-        if override is None:
+        band = instrument_bands.get(as_instrument_id(symbol))
+        if band is None:
             continue
-        up[0, col] = override.up
-        down[0, col] = override.down
+        up[0, col] = band.up
+        down[0, col] = band.down
     return up, down
-
-
-def _band_override_for_symbol(
-    config: PortfolioConfig, symbol: object
-) -> InstrumentBandConfig | None:
-    exact_key = symbol.value if isinstance(symbol, InstrumentId) else str(symbol)
-    override = config.band_overrides.get(exact_key)
-    if override is None and isinstance(symbol, InstrumentId):
-        override = config.band_overrides.get(symbol.symbol.value)
-    return override
 
 
 def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
@@ -393,6 +392,7 @@ def simulate_single_book(
     market_index: pd.Index | None = None,
     periods_per_year: int = 252,
     fees_by_symbol: pd.Series | None = None,
+    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
 ) -> vbt.Portfolio:
     """Test-support wrapper: simulate one book through the batched path.
 
@@ -415,6 +415,7 @@ def simulate_single_book(
         market_index=market_index,
         periods_per_year=periods_per_year,
         fees_by_symbol=fees_by_symbol,
+        instrument_bands=instrument_bands,
     )
 
 
@@ -427,6 +428,7 @@ def simulate_portfolio_batch(
     market_index: pd.Index | None = None,
     periods_per_year: int,
     fees_by_symbol: pd.Series | None = None,
+    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
 ) -> vbt.Portfolio:
     """Simulate a batch of candidate portfolios."""
     _validate_candidate_columns(allocations.columns, field_name="allocations")
@@ -458,6 +460,7 @@ def simulate_portfolio_batch(
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
         periods_per_year=periods_per_year,
         fees_by_symbol=fees_by_symbol,
+        instrument_bands=instrument_bands,
     )
 
 

@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from aegis_runtime import DriftBand, InstrumentId
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import PortfolioConfig, ReportConfig
@@ -63,6 +64,9 @@ class WindowEvaluator:
     # Per-symbol trade fees (FX-conversion surcharge on non-base legs); None keeps
     # the scalar-fee path, byte-identical to a single-currency book.
     fees_by_symbol: pd.Series | None = None
+    # Resolved instrument → DriftBand map (the same one the bundle carries); None gates
+    # every instrument at the sleeve-wide default.
+    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None
 
     def evaluate(self, range_: slice, **params: Any) -> Any:
         """Metric frame for the Candidate chunk ``params`` over the window ``range_``."""
@@ -107,6 +111,7 @@ class WindowEvaluator:
             market_index=self.close.index,
             periods_per_year=self.report.periods_per_year,
             fees_by_symbol=self.fees_by_symbol,
+            instrument_bands=self.instrument_bands,
         )
         return central_metrics_from_grouped_accessors(
             pf, self.report, metric_keys, param_names, self.extractors
