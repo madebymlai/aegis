@@ -9,8 +9,13 @@ test_sizing.py; the composition is exercised by ``TestRebalancePipeline`` below.
 import pandas as pd
 import pytest
 
+from aegis_runtime import DriftBand
 from aegis_trader.domain.book_config import BookConfig, DrawdownDeleverCurve, SleeveConfig
-from aegis_trader.domain.rebalancer import _gate_book_caps, rebalance, rebalance_plan
+from aegis_trader.domain.rebalancer import (
+    _gate_book_caps,
+    rebalance as _rebalance,
+    rebalance_plan as _rebalance_plan,
+)
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.types import OrderSide, SleeveName, WeightDelta
 from nautilus_trader.model.identifiers import InstrumentId
@@ -39,6 +44,61 @@ def _target(figi_to_weight: dict[str, float]) -> pd.DataFrame:
     )
     df.columns.name = "instrument_id"
     return df
+
+
+def _band_map(
+    sleeve_targets: dict[SleeveName, pd.DataFrame],
+    realized_weights: dict[InstrumentId, float] | None,
+    band: DriftBand,
+) -> dict[InstrumentId, DriftBand]:
+    instrument_ids: set[InstrumentId] = set()
+    for target in sleeve_targets.values():
+        instrument_ids.update(target.columns)
+    if realized_weights is not None:
+        instrument_ids.update(realized_weights)
+    return {instrument_id: band for instrument_id in instrument_ids}
+
+
+def _bands(*instrument_ids: InstrumentId, up: float, down: float) -> dict[InstrumentId, DriftBand]:
+    return {instrument_id: DriftBand(up=up, down=down) for instrument_id in instrument_ids}
+
+
+def rebalance(
+    sleeve_targets: dict[SleeveName, pd.DataFrame],
+    book: BookConfig,
+    *,
+    instrument_bands: dict[InstrumentId, DriftBand] | None = None,
+    realized_weights: dict[InstrumentId, float] | None = None,
+    **kwargs,
+) -> tuple[WeightDelta, ...]:
+    if instrument_bands is None:
+        instrument_bands = _band_map(sleeve_targets, realized_weights, DriftBand.symmetric(0.0))
+    return _rebalance(
+        sleeve_targets,
+        book,
+        instrument_bands=instrument_bands,
+        realized_weights=realized_weights,
+        **kwargs,
+    )
+
+
+def rebalance_plan(
+    sleeve_targets: dict[SleeveName, pd.DataFrame],
+    book: BookConfig,
+    *,
+    instrument_bands: dict[InstrumentId, DriftBand] | None = None,
+    realized_weights: dict[InstrumentId, float] | None = None,
+    **kwargs,
+):
+    if instrument_bands is None:
+        instrument_bands = _band_map(sleeve_targets, realized_weights, DriftBand.symmetric(0.0))
+    return _rebalance_plan(
+        sleeve_targets,
+        book,
+        instrument_bands=instrument_bands,
+        realized_weights=realized_weights,
+        **kwargs,
+    )
 
 
 class TestRebalanceSingleSleeve:
@@ -267,8 +327,6 @@ class TestRebalanceMultiSleeve:
     def test_three_sleeves_complex_netting(self):
         book = make_book(
             [("a", "a.whl", 0.4), ("b", "b.whl", 0.3), ("c", "c.whl", 0.3)],
-            default_band_up=0.0,
-            default_band_down=0.0,
         )
         result = rebalance(
             {book.sleeves[0].name: _target({"X": 0.5, "Y": -0.2}),
@@ -312,21 +370,28 @@ class TestRebalanceSlice4:
             **kwargs,
         )
 
+    @staticmethod
+    def _bands(width: float, *symbols: str) -> dict[InstrumentId, DriftBand]:
+        return _bands(*(_iid(symbol) for symbol in symbols), up=width, down=width)
+
     def test_band_gate_suppresses_small_drift(self):
-        book = self._book(default_band_up=0.02, default_band_down=0.02)
+        book = self._book()
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50})}, book,
+                           instrument_bands=self._bands(0.02, "FIGI_A"),
                            realized_weights={_iid("FIGI_A"): 0.51})
         assert result == ()
 
     def test_band_gate_holds_at_inclusive_boundary(self):
-        book = self._book(default_band_up=0.02, default_band_down=0.02)
+        book = self._book()
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50})}, book,
+                           instrument_bands=self._bands(0.02, "FIGI_A"),
                            realized_weights={_iid("FIGI_A"): 0.52})
         assert result == ()
 
     def test_band_gate_trades_when_outside_band(self):
-        book = self._book(default_band_up=0.02, default_band_down=0.02)
+        book = self._book()
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50})}, book,
+                           instrument_bands=self._bands(0.02, "FIGI_A"),
                            realized_weights={_iid("FIGI_A"): 0.55})
         assert len(result) == 1
         assert result[0].side == OrderSide.SELL
@@ -337,7 +402,7 @@ class TestRebalanceSlice4:
         order, not the hash-seed-dependent order of the netted-vs-realised figi
         union — otherwise the order-submission sequence (and the backtest) varies
         run-to-run."""
-        book = self._book(default_band_up=0.0, default_band_down=0.0)
+        book = self._book()
         target = _target({"FIGI_C": 0.20, "FIGI_A": 0.20, "FIGI_D": 0.20})
         result = rebalance(
             {book.sleeves[0].name: target}, book,
@@ -347,55 +412,74 @@ class TestRebalanceSlice4:
         assert figis == ["FIGI_A", "FIGI_B", "FIGI_C", "FIGI_D"]  # sorted, stable
 
     def test_asymmetric_band_tail(self):
-        book = self._book(default_band_up=0.02, default_band_down=0.02,
-                          band_overrides=((_iid("FIGI_TAIL").value, 0.01, 0.05),))
+        book = self._book()
         target = _target({"FIGI_TAIL": 0.50})
         result_up = rebalance({book.sleeves[0].name: target}, book,
+                              instrument_bands=_bands(_iid("FIGI_TAIL"), up=0.01, down=0.05),
                               realized_weights={_iid("FIGI_TAIL"): 0.52})
         assert len(result_up) == 1
         assert result_up[0].side == OrderSide.SELL
         result_down = rebalance({book.sleeves[0].name: target}, book,
+                                instrument_bands=_bands(_iid("FIGI_TAIL"), up=0.01, down=0.05),
                                 realized_weights={_iid("FIGI_TAIL"): 0.48})
         assert result_down == ()
 
     def test_sub_band_new_position_is_gated(self):
-        book = self._book(default_band_up=0.02, default_band_down=0.02)
+        book = self._book()
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.01})}, book,
+                           instrument_bands=self._bands(0.02, "FIGI_A"),
                            realized_weights=None)
         assert result == ()
 
     def test_new_position_opens_when_outside_band(self):
-        book = self._book(default_band_up=0.02, default_band_down=0.02)
+        book = self._book()
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.03})}, book,
+                           instrument_bands=self._bands(0.02, "FIGI_A"),
                            realized_weights=None)
         assert len(result) == 1
         assert result[0].delta == pytest.approx(0.03)
 
+    def test_unowned_realized_position_trades_straight_to_flat(self):
+        book = self._book()
+        result = rebalance(
+            {book.sleeves[0].name: _target({"FIGI_A": 0.50})},
+            book,
+            instrument_bands=self._bands(0.02, "FIGI_A"),
+            realized_weights={_iid("FIGI_Z"): 0.04},
+        )
+
+        by_figi = {delta.instrument_id.symbol.value: delta for delta in result}
+        assert by_figi["FIGI_Z"].delta == pytest.approx(-0.04)
+
     def test_per_name_cap_breach_band_creates_corrective_verified(self):
-        book = self._book(per_name_cap=0.10, default_band_up=0.02, default_band_down=0.02)
+        book = self._book(per_name_cap=0.10)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.08})}, book,
+                           instrument_bands=self._bands(0.02, "FIGI_A"),
                            realized_weights={_iid("FIGI_A"): 0.12})
         assert len(result) == 1
         assert result[0].side == OrderSide.SELL
         assert result[0].delta == pytest.approx(-0.04)
 
     def test_per_name_cap_breach_band_suppressed_corrective_order(self):
-        book = self._book(per_name_cap=0.10, default_band_up=0.10, default_band_down=0.10)
+        book = self._book(per_name_cap=0.10)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.08})}, book,
+                           instrument_bands=self._bands(0.10, "FIGI_A"),
                            realized_weights={_iid("FIGI_A"): 0.12})
         assert len(result) == 1
         assert result[0].side == OrderSide.SELL
         assert result[0].delta == pytest.approx(-0.02)  # widen to cap 0.10
 
     def test_per_name_cap_breach_unfixable_fails_closed(self):
-        book = self._book(per_name_cap=0.10, default_band_up=0.10, default_band_down=0.10)
+        book = self._book(per_name_cap=0.10)
         with pytest.raises(ValueError, match="unfixable"):
             rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.15})}, book,
+                      instrument_bands=self._bands(0.10, "FIGI_A"),
                       realized_weights={_iid("FIGI_A"): 0.15})
 
     def test_per_name_cap_breach_short_position(self):
-        book = self._book(per_name_cap=0.10, default_band_up=0.10, default_band_down=0.10)
+        book = self._book(per_name_cap=0.10)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": -0.08})}, book,
+                           instrument_bands=self._bands(0.10, "FIGI_A"),
                            realized_weights={_iid("FIGI_A"): -0.12})
         assert len(result) == 1
         assert result[0].side == OrderSide.BUY
@@ -443,11 +527,11 @@ class TestRebalanceSlice4:
         back to the ceiling (bands yield) instead of tripping the hard gross gate."""
         book = self._book(
             max_book_gross=1.0, gross_cap=1.0,
-            default_band_up=0.05, default_band_down=0.05,
         )
         result = rebalance(
             {book.sleeves[0].name: _target({"FIGI_A": 0.5, "FIGI_B": 0.5})},
             book,
+            instrument_bands=self._bands(0.05, "FIGI_A", "FIGI_B"),
             realized_weights={_iid("FIGI_A"): 0.53, _iid("FIGI_B"): 0.53},
         )
         # Drift 0.03 <= band 0.05, so without the projected clamp the book sits at
@@ -464,17 +548,19 @@ class TestRebalanceSlice4:
             rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.15, "FIGI_B": -0.01})}, book)
 
     def test_aggregate_drift_within_threshold_no_error(self):
-        book = self._book(aggregate_drift_threshold=0.05, default_band_up=0.10, default_band_down=0.10)
+        book = self._book(aggregate_drift_threshold=0.05)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50, "FIGI_B": 0.30})}, book,
+                           instrument_bands=self._bands(0.10, "FIGI_A", "FIGI_B"),
                            realized_weights={_iid("FIGI_A"): 0.52, _iid("FIGI_B"): 0.28})
         assert result == ()
 
     def test_aggregate_drift_triggers_full_cleanup(self):
         """Drift over threshold → ignore bands, trade everything back to target."""
-        book = self._book(aggregate_drift_threshold=0.03, default_band_up=0.10, default_band_down=0.10)
+        book = self._book(aggregate_drift_threshold=0.03)
         # Drift = |0.50-0.52| + |0.30-0.28| = 0.04 > 0.03.  Bands (0.10) would
         # normally suppress both; the trip forces a fuller cleanup.
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.50, "FIGI_B": 0.30})}, book,
+                           instrument_bands=self._bands(0.10, "FIGI_A", "FIGI_B"),
                            realized_weights={_iid("FIGI_A"): 0.52, _iid("FIGI_B"): 0.28})
         by_figi = {d.instrument_id.symbol.value: d for d in result}
         assert by_figi["FIGI_A"].delta == pytest.approx(-0.02)
@@ -486,9 +572,10 @@ class TestRebalanceSlice4:
         pulls the projected book to max_book_gross (== gross_cap), so the cleanup
         never breaches the cap."""
         book = self._book(aggregate_drift_threshold=0.03, max_book_gross=0.50, gross_cap=0.50,
-                          default_band_up=0.10, default_band_down=0.10)
+                          )
         # Drift trips; cleanup targets 0.40+0.30 (gross 0.70) > ceiling 0.50 -> clamped.
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.40, "FIGI_B": 0.30})}, book,
+                           instrument_bands=self._bands(0.10, "FIGI_A", "FIGI_B"),
                            realized_weights={_iid("FIGI_A"): 0.36, _iid("FIGI_B"): 0.26})
         after = {_iid("FIGI_A"): 0.36, _iid("FIGI_B"): 0.26}
         for d in result:
@@ -499,13 +586,13 @@ class TestRebalanceSlice4:
 
     def test_correlated_drift_triggers_cleanup(self):
         """N small within-band drifts trip the aggregate threshold → cleanup all."""
-        book = self._book(per_name_cap=0.25, aggregate_drift_threshold=0.03,
-                          default_band_up=0.02, default_band_down=0.02)
+        book = self._book(per_name_cap=0.25, aggregate_drift_threshold=0.03)
         # Each drifts +0.01 (within 0.02 band); aggregate 0.04 > 0.03 → cleanup.
         result = rebalance(
             {book.sleeves[0].name: _target(
                 {"FIGI_A": 0.20, "FIGI_B": 0.20, "FIGI_C": 0.20, "FIGI_D": 0.20})},
             book,
+            instrument_bands=self._bands(0.02, "FIGI_A", "FIGI_B", "FIGI_C", "FIGI_D"),
             realized_weights={_iid("FIGI_A"): 0.21, _iid("FIGI_B"): 0.21, _iid("FIGI_C"): 0.21, _iid("FIGI_D"): 0.21},
         )
         assert len(result) == 4
@@ -513,8 +600,9 @@ class TestRebalanceSlice4:
             assert d.delta == pytest.approx(-0.01)
 
     def test_cap_gate_sees_realized_not_target(self):
-        book = self._book(per_name_cap=0.10, default_band_up=0.10, default_band_down=0.10)
+        book = self._book(per_name_cap=0.10)
         result = rebalance({book.sleeves[0].name: _target({"FIGI_A": 0.08})}, book,
+                           instrument_bands=self._bands(0.10, "FIGI_A"),
                            realized_weights={_iid("FIGI_A"): 0.12})
         assert len(result) == 1
         assert result[0].side == OrderSide.SELL

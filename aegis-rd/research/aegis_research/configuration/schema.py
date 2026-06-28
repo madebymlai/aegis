@@ -238,6 +238,12 @@ class SignalConfig:
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class InstrumentBandConfig:
+    up: NonNegativeRate
+    down: NonNegativeRate
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class PortfolioConfig:
     init_cash: PositiveCash = 10_000.0
     fees: NonNegativeRate = 0.001
@@ -262,19 +268,22 @@ class PortfolioConfig:
     # book is unaffected.
     fx_conversion_cost: NonNegativeRate = 0.0
     net_cap: NonNegativeRate = 1.0
-    # Per-name no-trade band as a fraction of NAV (live-research parity). A position is left
-    # to drift and is rebalanced to target only once its weight deviates from target by more
-    # than this fraction - the symmetric per-instrument drift band the live rebalancer applies
-    # (aegis-trader BookConfig.default_band_up/down). Enforced in the research sim by the
-    # shared DriftBand gate against the DRIFTED weight, so the same gate yields the same
-    # trades in both paths. This - not an in-strategy buffer - is the turnover / "few-trades"
-    # lever; a slow signal makes the target stable, so target ~ realized stays inside the band
-    # and the book holds. Default 0 = rebalance every executable bar (the historical behaviour).
-    rebalance_band: NonNegativeRate = 0.0
-    # Optional asymmetric no-trade band. When omitted, both directions use
-    # ``rebalance_band``; when supplied, both directional widths must be present.
-    band_up: NonNegativeRate | None = None
-    band_down: NonNegativeRate | None = None
+    # Per-name no-trade band as a fraction of NAV (live-research parity). A
+    # position is left to drift and is rebalanced to target only once its weight
+    # crosses the directional width: ``band_up`` gates trims and ``band_down``
+    # gates adds. Enforced in the research sim by the shared DriftBand gate
+    # against the DRIFTED weight, so the same gate yields the same trades in
+    # both paths. This - not an in-strategy buffer - is the turnover /
+    # "few-trades" lever; a slow signal makes the target stable, so target ~
+    # realized stays inside the band and the book holds. Default 0 = rebalance
+    # every executable bar (the historical behaviour).
+    band_up: NonNegativeRate = 0.0
+    band_down: NonNegativeRate = 0.0
+    # Per-tradeable override for the sleeve-wide no-trade band. Keys are the
+    # configured tradeable names: native InstrumentId strings from data.instruments
+    # or bare roots from data.futures. Validation against the run's tradeable
+    # universe lives in the coordinator, where data and portfolio are both visible.
+    band_overrides: dict[str, InstrumentBandConfig] = field(default_factory=dict)
     # Short financing carry: flat annual rates. Effective net carry = borrow - rebate,
     # charged only on short legs (see ADR-0008). The non-zero borrow default means carry
     # is ON by default; a long-only book has no short legs and is unaffected.
@@ -285,20 +294,6 @@ class PortfolioConfig:
     gross_cap: PositiveCash = field(kw_only=True)
     # Required (validation rejects a config missing it); no silent long-only default.
     direction: Literal["longonly", "shortonly", "both"] = field(kw_only=True)
-
-    @model_validator(mode="after")
-    def _validate_directional_band_pair(self) -> PortfolioConfig:
-        if (self.band_up is None) != (self.band_down is None):
-            raise ValueError("band_up and band_down must be supplied together")
-        return self
-
-    @property
-    def effective_band_up(self) -> float:
-        return self.rebalance_band if self.band_up is None else self.band_up
-
-    @property
-    def effective_band_down(self) -> float:
-        return self.rebalance_band if self.band_down is None else self.band_down
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

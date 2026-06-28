@@ -31,7 +31,11 @@ from aegis_data.catalog_contracts import (
     catalog_volume_probe,
 )
 from aegis_data.chain import fetch_contract_chain
-from aegis_data.continuous_catalog import continuous_frame_and_future, continuous_ohlcv_frames
+from aegis_data.continuous_catalog import (
+    continuous_frame_and_future,
+    continuous_instrument_ids,
+    continuous_ohlcv_frames,
+)
 from aegis_data.continuous_future import continuous_future
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from tests.support.continuous_oracle import backward_series
@@ -147,6 +151,7 @@ class _FakePort:
     ) -> None:
         self.catalog = catalog
         self._frames = frames
+        self.read_native_bars_count = 0
 
     def load_raw_bars(self, request: object) -> dict[InstrumentId, pd.DataFrame]:
         start, end = pd.Timestamp(request.start), pd.Timestamp(request.end)  # type: ignore[attr-defined]
@@ -158,6 +163,7 @@ class _FakePort:
         }
 
     def read_native_bars(self, request: object) -> dict[InstrumentId, list[Bar]]:
+        self.read_native_bars_count += 1
         return {
             iid: self.catalog.query(  # type: ignore[attr-defined]
                 Bar,
@@ -227,6 +233,15 @@ def test_continuous_frame_and_future_exposes_the_roll_transitions() -> None:
     assert future.target_bar_type.instrument_id == InstrumentId.from_str("ES.XCME")
 
 
+def test_continuous_instrument_ids_resolve_without_materialising_bars() -> None:
+    port, _ = _es_port()
+
+    resolved = continuous_instrument_ids(port, ["ES"], start=_START, end=_END)
+
+    assert resolved == (InstrumentId.from_str("ES.XCME"),)
+    assert port.read_native_bars_count == 0
+
+
 def test_continuous_ohlcv_frames_reject_legs_across_venues() -> None:
     # A continuous future is one venue's cycle; mismatched-venue legs fail loud.
     catalog = _FakeCatalog(
@@ -237,6 +252,17 @@ def test_continuous_ohlcv_frames_reject_legs_across_venues() -> None:
 
     with pytest.raises(ValueError, match="span multiple venues"):
         continuous_ohlcv_frames(port, ["ES"], start=_START, end=_END)
+
+
+def test_continuous_instrument_ids_reject_legs_across_venues() -> None:
+    catalog = _FakeCatalog(
+        instruments=[_future("ESH4.XCME", "2024-03-15"), _future("ESM4.XEUR", "2024-06-21")],
+        bars={},
+    )
+    port = _FakePort(catalog, {})
+
+    with pytest.raises(ValueError, match="span multiple venues"):
+        continuous_instrument_ids(port, ["ES"], start=_START, end=_END)
 
 
 def test_continuous_ohlcv_frames_reject_a_root_with_no_legs() -> None:

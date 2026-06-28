@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 import pandas as pd
+from aegis_runtime import DriftBand
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.allocator import (
@@ -53,6 +54,7 @@ def rebalance(
     sleeve_targets: dict[SleeveName, pd.DataFrame],
     book: BookConfig,
     *,
+    instrument_bands: Mapping[InstrumentId, DriftBand],
     realized_weights: dict[InstrumentId, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
@@ -63,6 +65,7 @@ def rebalance(
     return rebalance_plan(
         sleeve_targets,
         book,
+        instrument_bands=instrument_bands,
         realized_weights=realized_weights,
         realized_vols=realized_vols,
         realized_covariance=realized_covariance,
@@ -75,6 +78,7 @@ def rebalance_plan(
     sleeve_targets: dict[SleeveName, pd.DataFrame],
     book: BookConfig,
     *,
+    instrument_bands: Mapping[InstrumentId, DriftBand],
     realized_weights: dict[InstrumentId, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
@@ -91,9 +95,13 @@ def rebalance_plan(
     Each sleeve's latest row is scaled by the risk-budget allocator, then all
     scaled weights are netted per InstrumentId.
 
-    *realized_weights* maps each covered :class:`InstrumentId` -> current realized weight
-    (signed fraction of NAV).  When supplied, the realised book is gated against caps and
-    drift bands before any delta is emitted.
+    *instrument_bands* maps each current bundle-owned :class:`InstrumentId` to the
+    research-validated drift band.  A realised instrument absent from this map is no
+    longer in any current bundle and trades straight to its target.
+
+    *realized_weights* maps each covered :class:`InstrumentId` -> current realized
+    weight (signed fraction of NAV).  When supplied, the realised book is gated against
+    caps and drift bands before any delta is emitted.
 
     *realized_covariance* selects the covariance-aware ERC/HRP allocator.  When
     it is absent (a cold book with no estimate yet) the rebalancer routes to the
@@ -174,10 +182,11 @@ def rebalance_plan(
             continue
 
         # -- band gate (skipped on a forced full cleanup) --
+        band = instrument_bands.get(instrument_id)
         resolved_w = (
             target_w
-            if force_cleanup
-            else book.band_for(instrument_id.value).resolve(
+            if force_cleanup or band is None
+            else band.resolve(
                 realized=realized_w,
                 target=target_w,
             )

@@ -10,6 +10,7 @@ from aegis_runtime.bundle import (
     LockedExecutionPlan,
     MarketDataBundle,
 )
+from aegis_runtime.drift_band import DriftBand
 
 
 def _index(n: int) -> pd.DatetimeIndex:
@@ -41,6 +42,9 @@ def _bundle(
     plan = LockedExecutionPlan(
         strategy=_spec(strategy_module, "strategies", "target_weights"),
         indicators=indicators,
+        instrument_bands={
+            instrument_id: DriftBand.symmetric(0.0) for instrument_id in contract.instrument_ids
+        },
         gross_cap=1.0,
         net_cap=1.0,
         direction=direction,

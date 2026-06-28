@@ -1,5 +1,5 @@
 name: demeter_eu_credit_carry_duration
-schema_version: 8
+schema_version: 10
 output_dir: runs/demeter_eu/credit_carry_duration
 
 # Pinned winner of the latest sweep (role: best) for execution-bundle export.
@@ -25,16 +25,10 @@ lock: 20260615T033157551406Z_demeter_eu_credit_carry_duration
 # Prototype: research/prototypes/demeter_marketneutral_carry_test.py
 # (Add IEMB.L back for EM breadth = the RATEHEDGE variant, but it re-injects rates-beta -> 0.066.)
 data:
-  source: yf
-  arrays:
-  - OHLCV
-  # ccy = each LSE line's native yfinance quote currency. Prices are converted to
-  # portfolio.base_currency (EUR) before indicators/portfolio.
-  # mic = the ISO 10383 venue (provider-agnostic), used only by aerd export to
-  # resolve each ticker to one FIGI; the research runtime ignores it.
-  symbols:
-  - {ticker: IHYU.L, ccy: USD, mic: XLON}
-  - {ticker: LQDH.L, ccy: USD, mic: XLON}
+  base_currency: EUR
+  instruments: [IHYU.LSEETF, LQDH.LSEETF]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

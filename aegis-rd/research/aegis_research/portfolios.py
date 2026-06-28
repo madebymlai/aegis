@@ -10,10 +10,10 @@ from nautilus_trader.model.identifiers import InstrumentId
 from numba import njit
 from vectorbtpro import vbt
 from vectorbtpro.base.flex_indexing import flex_select_1d_pc_nb, flex_select_nb
-from vectorbtpro.portfolio.enums import OrderStatusInfo
+from vectorbtpro.portfolio.enums import Direction, OrderStatusInfo, SizeType
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
-from research.aegis_research.configuration import PortfolioConfig
+from research.aegis_research.configuration import InstrumentBandConfig, PortfolioConfig
 from research.aegis_research.exposure_validation import (
     validate_exposure,
 )
@@ -55,6 +55,8 @@ _VBT_PRICE_BY_FILL_TIMING: dict[str, str | None] = {
     "same_close": None,
 }
 _gate_nb = njit(gate)
+_SIZE_TYPE_TARGET_PERCENT = int(SizeType.TargetPercent)
+_DIRECTION_BOTH = int(Direction.Both)
 
 
 @njit
@@ -73,49 +75,97 @@ def _order_val_price_nb(c, price, val_price, order_i, col):
 
 
 @njit
-def _current_group_value_nb(c, price, val_price, order_i):
-    if c.cash_sharing:
-        group_value = c.last_cash[c.group]
-        for col in range(c.from_col, c.to_col):
-            col_price = _order_val_price_nb(c, price, val_price, order_i, col)
-            multiplier = flex_select_1d_pc_nb(c.multiplier, col)
-            group_value += c.last_position[col] * col_price * multiplier
-        return group_value
-
-    col_price = _order_val_price_nb(c, price, val_price, order_i, c.col)
-    multiplier = flex_select_1d_pc_nb(c.multiplier, c.col)
-    return c.last_cash[c.col] + c.last_position[c.col] * col_price * multiplier
+def _position_value_nb(c, price, val_price, order_i, col):
+    """Drifted notional of one column's position at the order valuation price."""
+    col_price = _order_val_price_nb(c, price, val_price, order_i, col)
+    multiplier = flex_select_1d_pc_nb(c.multiplier, col)
+    return c.last_position[col] * col_price * multiplier
 
 
 @njit
-def _band_adjust_func_nb(c, size, price, val_price, from_ago, up_arr, down_arr):
-    order_i = c.i - abs(int(flex_select_nb(from_ago, c.i, c.col)))
+def _group_value_nb(c, price, val_price, order_i):
+    """Group value at the order valuation price (cash + drifted positions).
+
+    Recomputed from current-bar prices rather than read off ``c.last_value``,
+    which lags a bar at the pre-order-segment stage (the engine sizes the pending
+    order off that same stale value). Cash sharing is always on for the batched
+    sim, so the group's cash is ``last_cash[group]``.
+    """
+    group_value = c.last_cash[c.group]
+    for col in range(c.from_col, c.to_col):
+        group_value += _position_value_nb(c, price, val_price, order_i, col)
+    return group_value
+
+
+@njit
+def _realized_weight_nb(c, price, val_price, order_i, col, group_value):
+    """The column's live-drifted weight: its position value as a fraction of group value."""
+    if c.last_position[col] == 0.0:
+        return 0.0
+    return _position_value_nb(c, price, val_price, order_i, col) / group_value
+
+
+@njit
+def _band_pre_order_segment_nb(c, target_alloc, price, val_price, from_ago, up_arr, down_arr):
+    """Apply the shared DriftBand no-trade gate to each pending order in the segment.
+
+    Runs once per order-bearing segment, after ``order_mode`` has resolved the
+    pending orders but before they execute. ``skip_empty`` omits segments with no
+    pending order, so the gate fires only on rebalance bars - not on every bar like
+    a per-element ``adjust_func_nb`` would (the dominant cost was the per-cell
+    callback invocation, not its body).
+
+    The gate decides on the *target weight* read from ``target_alloc`` (the original
+    allocations - by this stage ``order_mode`` has overwritten its own ``size`` array
+    with resolved order amounts) against the live-drifted ``realized`` weight, valued
+    at the order price exactly as the retired adjust path did. ``gate`` returns either
+    ``realized`` (hold) or the original ``target`` (trade): a hold suppresses the
+    pending order; a trade rewrites it to the target weight with the same
+    ``current/sizing`` correction the adjust used, because the engine's pending order
+    was sized off ``last_value`` which lags a bar at this stage.
+    """
+    # ``from_ago`` is column-uniform here (one fill-timing price string for the whole
+    # book - see ``_VBT_PRICE_BY_FILL_TIMING``), so a single ``order_i`` read off
+    # ``c.from_col`` indexes every column's row correctly. A per-column ``from_ago``
+    # would need ``order_i`` recomputed inside the loop.
+    order_i = c.i - abs(int(flex_select_nb(from_ago, c.i, c.from_col)))
     if order_i < 0:
-        return
-
-    target_w = float(flex_select_nb(size, order_i, c.col))
-    if np.isnan(target_w):
-        return
-
-    current_group_value = _current_group_value_nb(c, price, val_price, order_i)
-    position = c.last_position[c.col]
-    if position == 0.0:
-        realized_w = 0.0
-    else:
-        order_val_price = _order_val_price_nb(c, price, val_price, order_i, c.col)
-        multiplier = flex_select_1d_pc_nb(c.multiplier, c.col)
-        realized_w = position * order_val_price * multiplier / current_group_value
-
-    up = float(flex_select_nb(up_arr, order_i, c.col))
-    down = float(flex_select_nb(down_arr, order_i, c.col))
-    resolved_w = _gate_nb(realized_w, target_w, up, down)
-    if resolved_w == realized_w:
-        size[order_i, c.col] = np.nan
-        return
-
-    sizing_group_value = c.last_value[c.group] if c.cash_sharing else c.last_value[c.col]
-    if sizing_group_value != 0.0:
-        size[order_i, c.col] = resolved_w * current_group_value / sizing_group_value
+        return ()
+    group_value = _group_value_nb(c, price, val_price, order_i)
+    # A zero-NAV group has no weights to gate; no-op the segment rather than divide
+    # by it (Define-Errors-Out-of-Existence). Unreachable on real runs - the shared
+    # cash term keeps group value positive - so it never perturbs scored results.
+    if group_value == 0.0:
+        return ()
+    sizing_group_value = c.last_value[c.group]
+    for col in range(c.from_col, c.to_col):
+        if np.isnan(c.order_info[col]["size"]):
+            continue
+        target_w = float(flex_select_nb(target_alloc, order_i, col))
+        if np.isnan(target_w):
+            continue
+        realized_w = _realized_weight_nb(c, price, val_price, order_i, col, group_value)
+        up = float(flex_select_nb(up_arr, order_i, col))
+        down = float(flex_select_nb(down_arr, order_i, col))
+        resolved_w = _gate_nb(realized_w, target_w, up, down)
+        if resolved_w == realized_w:
+            c.order_info[col]["size"] = np.nan
+        elif sizing_group_value != 0.0:
+            # Re-express the order as a signed target-percent so the executor
+            # re-resolves it against ``last_value`` (sizing_group_value) - which lags
+            # a bar - cancelling the engine's stale sizing back to ``resolved_w`` of
+            # the current value. ``order_mode`` resolves orders to plain amounts; the
+            # gate deliberately normalizes every traded order to one signed
+            # target-percent under direction Both (the buy/sell and long/short sign
+            # live in the value, not a LongOnly/ShortOnly flag), so set both fields
+            # together regardless of ``config.direction``. Sign-safe because exposure
+            # validation already constrains each target's sign to ``config.direction``
+            # (longonly => target >= 0, shortonly => target <= 0), so Both never admits
+            # a position the configured direction forbids.
+            c.order_info[col]["size"] = resolved_w * group_value / sizing_group_value
+            c.order_info[col]["size_type"] = _SIZE_TYPE_TARGET_PERCENT
+            c.order_info[col]["direction"] = _DIRECTION_BOTH
+    return ()
 
 
 def _execution_settings(
@@ -191,15 +241,19 @@ def _build_portfolio(
     )
     exec_kwargs = _execution_settings(config.fill_timing, open_frame)
     band_up, band_down = _band_arrays(masked, config)
+    # The gate reads targets from our own copy of the allocations: ``order_mode``
+    # overwrites its internal ``size`` array with resolved order amounts before the
+    # pre-order-segment callback runs.
+    target_alloc = np.ascontiguousarray(masked.to_numpy(), dtype=np.float64)
     pf = vbt.Portfolio.from_optimizer(
         price_frame,
         pfo,
         pf_method=VBT_PF_METHOD,
         size_type=VBT_RESOLVED_SIZE_TYPE,
         min_size=np.nan,
-        adjust_func_nb=_band_adjust_func_nb,
-        adjust_args=(
-            vbt.Rep("size"),
+        pre_order_segment_func_nb=_band_pre_order_segment_nb,
+        pre_order_segment_args=(
+            target_alloc,
             vbt.Rep("price"),
             vbt.Rep("val_price"),
             vbt.Rep("from_ago"),
@@ -231,9 +285,28 @@ def _band_arrays(
     config: PortfolioConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
     shape = (1, len(allocations.columns))
-    up = np.full(shape, config.effective_band_up, dtype=float)
-    down = np.full(shape, config.effective_band_down, dtype=float)
+    up = np.full(shape, config.band_up, dtype=float)
+    down = np.full(shape, config.band_down, dtype=float)
+    if not config.band_overrides:
+        return up, down
+    symbols = allocations.columns.get_level_values(SYMBOL_LEVEL)
+    for col, symbol in enumerate(symbols):
+        override = _band_override_for_symbol(config, symbol)
+        if override is None:
+            continue
+        up[0, col] = override.up
+        down[0, col] = override.down
     return up, down
+
+
+def _band_override_for_symbol(
+    config: PortfolioConfig, symbol: object
+) -> InstrumentBandConfig | None:
+    exact_key = symbol.value if isinstance(symbol, InstrumentId) else str(symbol)
+    override = config.band_overrides.get(exact_key)
+    if override is None and isinstance(symbol, InstrumentId):
+        override = config.band_overrides.get(symbol.symbol.value)
+    return override
 
 
 def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:

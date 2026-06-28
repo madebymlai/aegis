@@ -16,6 +16,7 @@ from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
+    DriftBand,
     ExecutionBundle,
     LockedExecutionPlan,
 )
@@ -47,7 +48,11 @@ def _bundle(*, gross_cap: float, net_cap: float | None = None) -> ExecutionBundl
             family="strategy", component_id="s", module="m",
             input_names=(), output_names=(), params={},
         ),
-        indicators=(), gross_cap=gross_cap, net_cap=net_cap, direction="both",
+        indicators=(),
+        instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
+        gross_cap=gross_cap,
+        net_cap=net_cap,
+        direction="both",
     )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
 

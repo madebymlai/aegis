@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from datetime import timedelta
 
 import pandas as pd
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import FuturesContract
 
 from aegis_data.bar_type import timeframe_to_ns
@@ -56,6 +56,25 @@ def continuous_ohlcv_frames(
     return {future.instrument_id: frame for future, frame in frames}
 
 
+def continuous_instrument_ids(
+    port: CatalogBackedDataPort,
+    roots: Sequence[str],
+    *,
+    start: str,
+    end: str,
+) -> tuple[InstrumentId, ...]:
+    """Resolve bare continuous-future roots to synthetic continuous InstrumentIds.
+
+    The venue is catalog-authoritative from the dated legs. This is the cheap resolver
+    for callers that need the live/research column id but not the materialised bars.
+    """
+    catalog = port.catalog
+    return tuple(
+        _continuous_instrument_id(root, _root_legs(catalog, root, start, end))
+        for root in roots
+    )
+
+
 def continuous_frame_and_future(
     port: CatalogBackedDataPort,
     root: str,
@@ -84,6 +103,7 @@ def _continuous_frame(
 ) -> tuple[ContinuousFuture, pd.DataFrame]:
     catalog = port.catalog
     legs = _root_legs(catalog, root, start, end)
+    resolved_id = _continuous_instrument_id(root, legs)
     chain = fetch_contract_chain(
         root,
         pd.Timestamp(start).date(),
@@ -94,6 +114,11 @@ def _continuous_frame(
         probe_volume=catalog_volume_probe(port, timeframe=timeframe),
     )
     future = continuous_future(chain, root, timeframe=timeframe)
+    if future.instrument_id != resolved_id:
+        raise ValueError(
+            f"continuous-future root {root!r} resolved to {resolved_id.value!r}, "
+            f"but materialisation built {future.instrument_id.value!r}"
+        )
     # Native ``Bar``\s (not the chain's float OHLCV) preserve the fixed-point ``PriceRaw``
     # the spread is integer-exact in, so research's series matches live's byte-for-byte.
     # The chain fetch already warmed these legs, so the port read is a warm hit; the leg
@@ -114,25 +139,30 @@ def _continuous_frame(
 
 
 def _root_legs(catalog: object, root: str, start: str, end: str) -> Sequence[DatedContract]:
-    """The root's dated legs, validated to a single venue — fail loud, not silent first-wins.
-
-    A continuous future is one venue's contract cycle; legs spanning venues (or none at
-    all) cannot form a chain, so the build aborts here rather than quietly picking one.
-    """
+    """The root's dated legs — fail loud when the catalog has no cycle."""
     legs = catalog_contract_calendar(catalog)(root, pd.Timestamp(start).date(), pd.Timestamp(end).date())
     if not legs:
         raise ValueError(f"no dated legs in the catalog for continuous-future root {root!r}")
+    return legs
+
+
+def _continuous_instrument_id(root: str, legs: Sequence[DatedContract]) -> InstrumentId:
+    """The synthetic root id, with venue validated from the dated legs."""
     venues = {InstrumentId.from_str(leg.symbol).venue for leg in legs}
     if len(venues) != 1:
         raise ValueError(
             f"continuous-future root {root!r} legs span multiple venues "
             f"{sorted(venue.value for venue in venues)}; expected one"
         )
-    return legs
+    return InstrumentId(Symbol(root), next(iter(venues)))
 
 
 def _bar_cadence(timeframe: str) -> timedelta:
     return pd.Timedelta(timeframe_to_ns(timeframe), unit="ns").to_pytimedelta()
 
 
-__all__ = ["continuous_frame_and_future", "continuous_ohlcv_frames"]
+__all__ = [
+    "continuous_frame_and_future",
+    "continuous_instrument_ids",
+    "continuous_ohlcv_frames",
+]

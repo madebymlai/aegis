@@ -15,11 +15,17 @@ from aegis_runtime import DataContract, validate_bare_root
 from nautilus_trader.model.identifiers import InstrumentId
 
 _AAPL = InstrumentId.from_str("AAPL.NASDAQ")
+_ES = InstrumentId.from_str("ES.XCME")
+_KC = InstrumentId.from_str("KC.XNYM")
 
 
-def _contract(*, futures: tuple[str, ...]) -> DataContract:
+def _contract(
+    *,
+    futures: tuple[str, ...],
+    instrument_ids: tuple[InstrumentId, ...] = (_AAPL,),
+) -> DataContract:
     return DataContract(
-        instrument_ids=(_AAPL,),
+        instrument_ids=instrument_ids,
         required_arrays=("Close",),
         base_currency="EUR",
         timeframe="1D",
@@ -59,7 +65,22 @@ def test_data_contract_defaults_to_no_futures() -> None:
 
 
 def test_data_contract_accepts_bare_roots() -> None:
-    assert _contract(futures=("ES", "KC")).futures == ("ES", "KC")
+    contract = _contract(futures=("ES", "KC"), instrument_ids=(_AAPL, _ES, _KC))
+
+    assert contract.futures == ("ES", "KC")
+
+
+def test_data_contract_rejects_root_without_matching_continuous_id() -> None:
+    with pytest.raises(ValueError, match="no matching instrument_id"):
+        _contract(futures=("ES",))
+
+
+def test_data_contract_rejects_ambiguous_matching_continuous_id() -> None:
+    with pytest.raises(ValueError, match="ambiguous"):
+        _contract(
+            futures=("ES",),
+            instrument_ids=(_ES, InstrumentId.from_str("ES.NASDAQ")),
+        )
 
 
 def test_data_contract_rejects_venue_qualified_root() -> None:

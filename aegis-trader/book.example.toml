@@ -52,9 +52,7 @@ gross_cap = 1.0       # max sum |w_i|
 net_cap = 0.5         # max |sum w_i|
 per_name_cap = 0.1    # max |w_i| per instrument
 
-# Symmetric default drift bands (no-trade region around target weights).
-default_band_up = 0.02
-default_band_down = 0.02
+# Per-instrument drift bands are research-validated inside each sleeve bundle.
 
 # Book-level aggregate fidelity: max sum |w_realized - w_target| before tripping.
 aggregate_drift_threshold = 0.5
@@ -119,9 +117,3 @@ payoff_at_attachment = 0.20
 annual_carry = 0.08
 crisis_reliability = 0.75
 capacity_risk_share = 0.05
-
-# Per-instrument asymmetric band overrides (optional).
-[[band_overrides]]
-instrument_id = "IDTL.LSEETF"
-band_up = 0.05
-band_down = 0.02

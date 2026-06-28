@@ -20,6 +20,7 @@ from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
+    DriftBand,
     ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
@@ -74,6 +75,7 @@ class _FixedWeightBundle(ExecutionBundle):
                 params={},
             ),
             indicators=(),
+            instrument_bands={instrument_id: DriftBand.symmetric(0.02)},
             gross_cap=1.0,
             net_cap=None,
             direction="longonly",
@@ -119,6 +121,9 @@ class _TwoVenueBundle(ExecutionBundle):
                 params={},
             ),
             indicators=(),
+            instrument_bands={
+                instrument_id: DriftBand.symmetric(0.0) for instrument_id in self._instrument_ids
+            },
             gross_cap=1.0,
             net_cap=None,
             direction="longonly",

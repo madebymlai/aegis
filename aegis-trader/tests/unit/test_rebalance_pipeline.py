@@ -9,6 +9,7 @@ from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
+    DriftBand,
     ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
@@ -58,6 +59,7 @@ class _FixedWeightBundle(ExecutionBundle):
                 params={},
             ),
             indicators=(),
+            instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
             gross_cap=1.0,
             net_cap=None,
             direction="both",
@@ -80,7 +82,7 @@ class _ContinuousWeightBundle(ExecutionBundle):
     def __init__(self, weight: float) -> None:
         self._weight = weight
         contract = DataContract(
-            instrument_ids=(),
+            instrument_ids=(_ES,),
             required_arrays=("Close",),
             base_currency="EUR",
             timeframe="1D",
@@ -92,7 +94,7 @@ class _ContinuousWeightBundle(ExecutionBundle):
             role="best",
             candidate_key="candidate",
             component_source_hashes={},
-            instrument_ids=(),
+            instrument_ids=(_ES,),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(
@@ -104,6 +106,7 @@ class _ContinuousWeightBundle(ExecutionBundle):
                 params={},
             ),
             indicators=(),
+            instrument_bands={_ES: DriftBand.symmetric(0.0)},
             gross_cap=1.0,
             net_cap=None,
             direction="both",
@@ -318,6 +321,37 @@ def test_startup_check_halts_when_book_cap_exceeds_bundle_cap() -> None:
     assert result.halt_reason == (
         "book per_name_cap (1.5) exceeds sleeve 'trend' bundle gross_cap (1.0)"
     )
+
+
+def test_startup_check_halts_when_bundle_bands_overlap() -> None:
+    trend = SleeveName("trend")
+    carry = SleeveName("carry")
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=trend, wheel_filename="trend.whl", risk_share=0.5),
+            SleeveConfig(name=carry, wheel_filename="carry.whl", risk_share=0.5),
+        ),
+        base_currency="EUR",
+    )
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(),
+        book=book,
+        sleeve_to_bundle={
+            trend: _FixedWeightBundle(0.5),
+            carry: _FixedWeightBundle(0.5),
+        },
+        ledger=SleeveLedger(),
+    )
+
+    result = pipeline.startup_check()
+
+    assert result.should_halt is True
+    assert result.halt_gate == StartupGate.BAND_PROVENANCE
+    assert result.halt_reason is not None
+    assert "PIPE.XNYS" in result.halt_reason
+    assert "carry" in result.halt_reason
+    assert "trend" in result.halt_reason
 
 
 def test_startup_check_halts_when_book_state_query_fails() -> None:

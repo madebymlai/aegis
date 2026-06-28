@@ -15,6 +15,7 @@ from aegis_runtime.bundle_loader import (
     load_bundle_payload,
     load_installed_bundle,
 )
+from aegis_runtime.drift_band import DriftBand
 
 
 def _contract() -> DataContract:
@@ -37,7 +38,9 @@ def _manifest(contract: DataContract) -> BundleManifest:
     )
 
 
-def _plan() -> LockedExecutionPlan:
+def _plan(instrument_ids: tuple[InstrumentId, ...] | None = None) -> LockedExecutionPlan:
+    if instrument_ids is None:
+        instrument_ids = _contract().instrument_ids
     strategy = ComponentSpec(
         family="strategies",
         component_id="tests.strategy",
@@ -57,6 +60,9 @@ def _plan() -> LockedExecutionPlan:
     return LockedExecutionPlan(
         strategy=strategy,
         indicators=(indicator,),
+        instrument_bands={
+            instrument_id: DriftBand(up=0.10, down=0.20) for instrument_id in instrument_ids
+        },
         gross_cap=1.0,
         net_cap=None,
         direction="longonly",
@@ -69,7 +75,7 @@ def _id(value: str) -> InstrumentId:
 
 def test_bundle_payload_round_trips_native_instrument_ids() -> None:
     contract = _contract()
-    plan = _plan()
+    plan = _plan(contract.instrument_ids)
 
     payload = dump_bundle_payload(
         contract=contract,
@@ -79,8 +85,13 @@ def test_bundle_payload_round_trips_native_instrument_ids() -> None:
     bundle = load_bundle_payload(json.loads(json.dumps(payload)))
 
     assert payload["contract"]["instrument_ids"] == ["AAPL.NASDAQ", "ESZ6.XCME"]
+    assert payload["plan"]["instrument_bands"] == {
+        "AAPL.NASDAQ": {"up": 0.10, "down": 0.20},
+        "ESZ6.XCME": {"up": 0.10, "down": 0.20},
+    }
     assert bundle.contract == contract
     assert bundle.manifest == _manifest(contract)
+    assert bundle.instrument_bands == plan.instrument_bands
     assert bundle.gross_cap == plan.gross_cap
     assert bundle.net_cap == plan.net_cap
 
@@ -89,7 +100,7 @@ def test_bundle_payload_round_trips_continuous_future_roots() -> None:
     """The continuous-root declaration must survive the wheel payload, or the additive-
     invariance guard (which keys off ``contract.futures``) is dead on a loaded bundle."""
     contract = DataContract(
-        instrument_ids=(_id("ESZ6.XCME"),),
+        instrument_ids=(_id("ES.XCME"),),
         required_arrays=("Close",),
         base_currency="USD",
         timeframe="1D",
@@ -97,7 +108,9 @@ def test_bundle_payload_round_trips_continuous_future_roots() -> None:
         futures=("ES",),
     )
 
-    payload = dump_bundle_payload(contract=contract, manifest=_manifest(contract), plan=_plan())
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
     bundle = load_bundle_payload(json.loads(json.dumps(payload)))
 
     assert payload["contract"]["futures"] == ["ES"]
@@ -108,7 +121,9 @@ def test_bundle_payload_without_futures_loads_as_no_roots() -> None:
     """A pre-r8b.9 wheel carries no ``futures`` key; it loads as no continuous roots
     (forward-safe default), so old bundles keep loading."""
     contract = _contract()
-    payload = dump_bundle_payload(contract=contract, manifest=_manifest(contract), plan=_plan())
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
     payload["contract"].pop("futures", None)
 
     bundle = load_bundle_payload(payload)
@@ -116,12 +131,30 @@ def test_bundle_payload_without_futures_loads_as_no_roots() -> None:
     assert bundle.contract.futures == ()
 
 
+def test_bundle_payload_rejects_future_root_without_matching_continuous_id() -> None:
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract,
+        manifest=_manifest(contract),
+        plan=_plan(contract.instrument_ids),
+    )
+    payload["contract"]["instrument_ids"] = ["ESZ6.XCME"]
+    payload["contract"]["futures"] = ["ES"]
+    payload["manifest"]["instrument_ids"] = ["ESZ6.XCME"]
+    payload["plan"]["instrument_bands"] = {
+        "ESZ6.XCME": {"up": 0.10, "down": 0.20},
+    }
+
+    with pytest.raises(ValueError, match="no matching instrument_id"):
+        load_bundle_payload(payload)
+
+
 def test_bundle_payload_rejects_missing_instrument_ids() -> None:
     contract = _contract()
     payload = dump_bundle_payload(
         contract=contract,
         manifest=_manifest(contract),
-        plan=_plan(),
+        plan=_plan(contract.instrument_ids),
     )
     del payload["contract"]["instrument_ids"]
 
@@ -134,11 +167,38 @@ def test_bundle_payload_rejects_invalid_instrument_id() -> None:
     payload = dump_bundle_payload(
         contract=contract,
         manifest=_manifest(contract),
-        plan=_plan(),
+        plan=_plan(contract.instrument_ids),
     )
     payload["manifest"]["instrument_ids"][1] = ""
 
     with pytest.raises(ValueError, match="InstrumentId"):
+        load_bundle_payload(payload)
+
+
+def test_bundle_payload_rejects_missing_instrument_bands() -> None:
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract,
+        manifest=_manifest(contract),
+        plan=_plan(contract.instrument_ids),
+    )
+    del payload["plan"]["instrument_bands"]
+
+    with pytest.raises(ValueError, match="instrument_bands"):
+        load_bundle_payload(payload)
+
+
+def test_bundle_payload_rejects_instrument_band_contract_mismatch() -> None:
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract,
+        manifest=_manifest(contract),
+        plan=_plan(contract.instrument_ids),
+    )
+    del payload["plan"]["instrument_bands"]["ESZ6.XCME"]
+    payload["plan"]["instrument_bands"]["MSFT.NASDAQ"] = {"up": 0.10, "down": 0.20}
+
+    with pytest.raises(ValueError, match="instrument_bands.*missing=.*ESZ6.*extra=.*MSFT"):
         load_bundle_payload(payload)
 
 
@@ -152,7 +212,7 @@ def test_load_installed_bundle_reads_package_manifest(tmp_path) -> None:
             dump_bundle_payload(
                 contract=contract,
                 manifest=_manifest(contract),
-                plan=_plan(),
+                plan=_plan(contract.instrument_ids),
             )
         )
     )

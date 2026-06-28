@@ -18,6 +18,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import DataContract, ExecutionBundle, MarketDataBundle
 
+from aegis_trader.bundles.bands import InstrumentBandError, build_instrument_bands
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig
@@ -54,6 +55,7 @@ class RebalanceSummary:
 class StartupGate(str, Enum):
     """Startup gate responsible for a startup halt."""
 
+    BAND_PROVENANCE = "band_provenance"
     CAP_PROVENANCE = "cap_provenance"
     ACCOUNT_INTEGRITY = "account_integrity"
 
@@ -115,6 +117,12 @@ class RebalancePipeline:
         self._book = book
         self._sleeve_to_bundle = sleeve_to_bundle
         self._ledger = ledger
+        try:
+            self._instrument_bands = build_instrument_bands(self._sleeve_to_bundle)
+            self._instrument_band_error: InstrumentBandError | None = None
+        except InstrumentBandError as exc:
+            self._instrument_bands = {}
+            self._instrument_band_error = exc
         # Continuous roots are first-class rebalance targets (mirroring research's tradeable set =
         # natives + continuous roots): a sleeve's bare root maps here to its synthetic continuous id.
         self._continuous_ids_by_root = dict(continuous_ids_by_root or {})
@@ -140,10 +148,22 @@ class RebalancePipeline:
 
     def startup_check(self) -> StartupResult:
         """Run startup gates and return the decision as a value object."""
+        band_result = self._band_provenance_startup_result()
+        if band_result is not None:
+            return band_result
         cap_result = self._cap_provenance_startup_result()
         if cap_result is not None:
             return cap_result
         return self._account_integrity_startup_result()
+
+    def _band_provenance_startup_result(self) -> StartupResult | None:
+        if self._instrument_band_error is None:
+            return None
+        return StartupResult(
+            trading_enabled=False,
+            halt_gate=StartupGate.BAND_PROVENANCE,
+            halt_reason=str(self._instrument_band_error),
+        )
 
     def _cap_provenance_startup_result(self) -> StartupResult | None:
         try:
@@ -184,6 +204,13 @@ class RebalancePipeline:
 
     def rebalance_period(self, period: CompletedRebalancePeriod) -> RebalanceResult:
         """Run one completed-period rebalance and return orders plus summary."""
+        if self._instrument_band_error is not None:
+            nav = self._book_state.nav()
+            return RebalanceResult(
+                orders=(),
+                summary=_summary(nav, 0, 0, 0, GateOutcome.ERROR, 0.0),
+                halt_reason=str(self._instrument_band_error),
+            )
         pending = self._compute_sleeve_targets(period)
         nav = self._book_state.nav()
         if not pending:
@@ -253,6 +280,7 @@ class RebalancePipeline:
             pending,
             self._book,
             realized_weights=realized_weights,
+            instrument_bands=self._instrument_bands,
             realized_covariance=self._ledger.realized_covariance(
                 self._positive_risk_sleeve_names()
             ),
@@ -298,7 +326,7 @@ class RebalancePipeline:
             for root in contract.futures
             if root in self._continuous_ids_by_root
         )
-        return (*contract.instrument_ids, *continuous)
+        return tuple(dict.fromkeys((*contract.instrument_ids, *continuous)))
 
     def _bars_for_contract(
         self,

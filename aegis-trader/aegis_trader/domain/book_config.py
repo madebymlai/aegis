@@ -3,7 +3,7 @@ the Commingled Book.
 
 Declares one or more sleeves, each bound to a content-addressed wheel filename
 with a static risk share and risk group, plus the book's risk controls (vol
-target, caps, bands, per-instrument overrides, aggregate-drift threshold).  Cap
+target, caps, sleeve bands, aggregate-drift threshold).  Cap
 *provenance* — that the caps never exceed what research validated — is grounded
 in the sleeves' bundles and checked at load by
 ``bundles.provenance.check_cap_provenance``, not on this config.
@@ -15,7 +15,6 @@ import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from aegis_runtime import DriftBand
 from aegis_trader.domain.types import SleeveName
 
 _EPS = 1e-12
@@ -354,9 +353,9 @@ class SleeveConfig:
 class BookConfig:
     """The full Commingled Book declaration.
 
-    Risk controls: book volatility target, gross/net/per-name caps, asymmetric
-    drift bands with per-instrument overrides, and a book-level aggregate drift
-    threshold.  Cap *provenance* — that these caps never exceed what research
+    Risk controls: book volatility target, gross/net/per-name caps, sleeve
+    no-churn bands, and a book-level aggregate drift threshold.  Cap
+    *provenance* — that these caps never exceed what research
     validated — is a bundle-grounded load-time check
     (``bundles.provenance.check_cap_provenance``), not a self-referential field
     on this config.
@@ -385,12 +384,6 @@ class BookConfig:
     gross_cap: float | None = None   # max Σ|w_i|
     net_cap: float | None = None     # max |Σ w_i|
     per_name_cap: float | None = None  # max |w_i| per instrument
-
-    # ── bands ──
-    default_band_up: float = 0.02    # symmetric default: ±2%
-    default_band_down: float = 0.02
-    # Per-instrument asymmetric overrides: [(instrument_id, band_up, band_down), ...]
-    band_overrides: tuple[tuple[str, float, float], ...] = ()
 
     # ── Target tail convexity budget ──
     tail_convexity_budget: TailConvexityBudget | None = None
@@ -475,13 +468,6 @@ class BookConfig:
                 shares[sleeve.name] = 0.0
         shares.update(self.tail_convexity_budget.risk_shares())
         return shares
-
-    def band_for(self, instrument_id: str) -> DriftBand:
-        """Return the trade band for *instrument_id*, honouring overrides."""
-        for override_id, up, down in self.band_overrides:
-            if override_id == instrument_id:
-                return DriftBand(up=up, down=down)
-        return DriftBand(up=self.default_band_up, down=self.default_band_down)
 
     def _validate_tail_convexity_budget(self) -> None:
         if self.tail_convexity_budget is None:

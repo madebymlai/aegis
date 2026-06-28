@@ -37,12 +37,12 @@ commission_pct = 0.0005
 min_commission_per_order = 1.25
 
 # Floor risk keeps a fixed 60/40 trend/carry conviction tilt.
-# atalanta — trend floor pole (20-name orthogonal non-equity LSE universe).
-# Long-only FORGO pole (aegis-rd-167): downtrends take no position; shorting is net-negative on
-# this non-equity universe and half the names are un-borrowable for retail. Bundle direction=longonly.
+# atalanta — trend floor pole (IDTL/IGLN/ICOM non-equity crisis substrate).
+# Hysteretic buy-hold-spread sleeve: long gold/commodities, borrow-gated IDTL short,
+# with research-validated asymmetric drift bands carried by the bundle.
 [[sleeves]]
 name = "atalanta_trend"
-wheel_filename = "aegis_exec_atalanta_trendstraddlebufferedlongonly_cand_5ea-1.0.0-py3-none-any.whl"
+wheel_filename = "aegis_exec_atalanta_keystone_cand_726-1.0.0-py3-none-any.whl"
 risk_share = 0.42
 group = "Floor"
 weight_band_down = 0.02

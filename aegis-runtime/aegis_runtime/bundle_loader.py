@@ -14,6 +14,7 @@ from aegis_runtime.bundle import (
     ExecutionBundle,
     LockedExecutionPlan,
 )
+from aegis_runtime.drift_band import DriftBand
 
 
 def dump_bundle_payload(
@@ -41,6 +42,7 @@ def dump_bundle_payload(
         "plan": {
             "strategy": _dump_component_spec(plan.strategy),
             "indicators": [_dump_component_spec(spec) for spec in plan.indicators],
+            "instrument_bands": _dump_instrument_bands(plan.instrument_bands),
             "gross_cap": plan.gross_cap,
             "net_cap": plan.net_cap,
             "direction": plan.direction,
@@ -84,6 +86,9 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
             _load_component_spec(_ensure_mapping(item, "LockedExecutionPlan.indicators item"))
             for item in _required_sequence(plan_payload, "indicators", "LockedExecutionPlan")
         ),
+        instrument_bands=_load_instrument_bands(
+            _required_mapping(plan_payload, "instrument_bands", "LockedExecutionPlan")
+        ),
         gross_cap=_required_value(plan_payload, "gross_cap", "LockedExecutionPlan"),
         net_cap=plan_payload.get("net_cap"),
         direction=_required_value(plan_payload, "direction", "LockedExecutionPlan"),
@@ -115,6 +120,33 @@ def _load_component_spec(payload: Mapping[str, Any]) -> ComponentSpec:
         input_names=tuple(_required_sequence(payload, "input_names", "ComponentSpec")),
         output_names=tuple(_required_sequence(payload, "output_names", "ComponentSpec")),
         params=_required_mapping(payload, "params", "ComponentSpec"),
+    )
+
+
+def _dump_instrument_bands(bands: Mapping[InstrumentId, DriftBand]) -> dict[str, dict[str, float]]:
+    return {
+        instrument_id.value: _dump_drift_band(bands[instrument_id])
+        for instrument_id in sorted(bands, key=lambda item: item.value)
+    }
+
+
+def _load_instrument_bands(payload: Mapping[str, Any]) -> dict[InstrumentId, DriftBand]:
+    return {
+        _load_instrument_id(instrument_id): _load_drift_band(
+            _ensure_mapping(value, "LockedExecutionPlan.instrument_bands item")
+        )
+        for instrument_id, value in payload.items()
+    }
+
+
+def _dump_drift_band(band: DriftBand) -> dict[str, float]:
+    return {"up": band.up, "down": band.down}
+
+
+def _load_drift_band(payload: Mapping[str, Any]) -> DriftBand:
+    return DriftBand(
+        up=_required_value(payload, "up", "DriftBand"),
+        down=_required_value(payload, "down", "DriftBand"),
     )
 
 

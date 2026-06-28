@@ -10,6 +10,7 @@ import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.additive_invariance import assert_additive_invariance
+from aegis_runtime.drift_band import DriftBand
 from aegis_runtime.futures_roots import validate_bare_root
 
 INSTRUMENT_ID_LEVEL = "instrument_id"
@@ -41,15 +42,15 @@ class DataContract:
     timeframe: str
     lookback_bars: int = 0
     # Bare continuous-future root symbols (e.g. ``("ES",)``), declared identically to
-    # research's ``DataConfig.futures``. Each is materialised on demand as an adjusted
-    # continuous series (Path A); venue and currency are catalog-authoritative from its
-    # dated legs, so a root carries no venue. Excluded from the native-id union — the
-    # legs load dynamically via the chain, not as static natives.
+    # research's ``DataConfig.futures``. Each root must resolve to exactly one synthetic
+    # continuous id in ``instrument_ids`` (e.g. ``ES.XCME``); dated legs still load
+    # dynamically via the chain, not as static contract columns.
     futures: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
         _validate_bare_roots(self.futures, "DataContract.futures")
+        _continuous_instrument_ids(self.instrument_ids, self.futures)
 
 
 @dataclass(frozen=True)
@@ -78,9 +79,21 @@ class ComponentSpec:
 class LockedExecutionPlan:
     strategy: ComponentSpec
     indicators: tuple[ComponentSpec, ...]
+    instrument_bands: Mapping[InstrumentId, DriftBand]
     gross_cap: float
     net_cap: float | None
     direction: str
+
+    def __post_init__(self) -> None:
+        for instrument_id, band in self.instrument_bands.items():
+            if not isinstance(instrument_id, InstrumentId):
+                raise ValueError(
+                    "LockedExecutionPlan.instrument_bands keys must be InstrumentId values"
+                )
+            if not isinstance(band, DriftBand):
+                raise ValueError(
+                    "LockedExecutionPlan.instrument_bands values must be DriftBand values"
+                )
 
 
 @dataclass(frozen=True)
@@ -100,6 +113,7 @@ class ExecutionBundle:
         manifest: BundleManifest,
         plan: LockedExecutionPlan,
     ) -> None:
+        _validate_instrument_band_contract(contract=contract, plan=plan)
         self.contract = contract
         self.manifest = manifest
         self._plan = plan
@@ -121,6 +135,11 @@ class ExecutionBundle:
         """The locked plan's allowed exposure direction
         (``longonly`` / ``shortonly`` / ``both``)."""
         return self._plan.direction
+
+    @property
+    def instrument_bands(self) -> Mapping[InstrumentId, DriftBand]:
+        """Per-instrument drift bands validated by research for this bundle."""
+        return self._plan.instrument_bands
 
     def compute_weights(
         self,
@@ -147,21 +166,7 @@ class ExecutionBundle:
         and re-basing the native's price column would corrupt the invariance check — so it is
         rejected loudly rather than silently re-basing the wrong column.
         """
-        continuous: list[InstrumentId] = []
-        for root in self.contract.futures:
-            matches = [
-                instrument_id
-                for instrument_id in self.contract.instrument_ids
-                if instrument_id.symbol.value == root
-            ]
-            if len(matches) > 1:
-                raise ValueError(
-                    f"continuous-future root {root!r} is ambiguous: it matches instrument ids "
-                    f"{[match.value for match in matches]}; a continuous root must resolve to "
-                    f"exactly one column so the additive-invariance re-base targets it alone"
-                )
-            continuous.extend(matches)
-        return tuple(continuous)
+        return _continuous_instrument_ids(self.contract.instrument_ids, self.contract.futures)
 
     def _decide_weights(
         self,
@@ -231,6 +236,20 @@ def _validate_instrument_ids(instrument_ids: Sequence[InstrumentId], label: str)
         raise ValueError(f"{label} contains duplicates: {sorted(duplicates)}")
 
 
+def _validate_instrument_band_contract(
+    *, contract: DataContract, plan: LockedExecutionPlan
+) -> None:
+    contract_ids = set(contract.instrument_ids)
+    band_ids = set(plan.instrument_bands)
+    missing = sorted(instrument_id.value for instrument_id in contract_ids - band_ids)
+    extra = sorted(instrument_id.value for instrument_id in band_ids - contract_ids)
+    if missing or extra:
+        raise ValueError(
+            "LockedExecutionPlan.instrument_bands must match DataContract.instrument_ids; "
+            f"missing={missing}, extra={extra}"
+        )
+
+
 def _validate_bare_roots(roots: Sequence[str], label: str) -> None:
     seen: set[str] = set()
     duplicates: set[str] = set()
@@ -241,6 +260,30 @@ def _validate_bare_roots(roots: Sequence[str], label: str) -> None:
         seen.add(root)
     if duplicates:
         raise ValueError(f"{label} contains duplicate roots: {sorted(duplicates)}")
+
+
+def _continuous_instrument_ids(
+    instrument_ids: Sequence[InstrumentId],
+    roots: Sequence[str],
+) -> tuple[InstrumentId, ...]:
+    continuous: list[InstrumentId] = []
+    for root in roots:
+        matches = [
+            instrument_id for instrument_id in instrument_ids if instrument_id.symbol.value == root
+        ]
+        if not matches:
+            raise ValueError(
+                f"continuous-future root {root!r} has no matching instrument_id; "
+                "expected exactly one synthetic continuous id in DataContract.instrument_ids"
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"continuous-future root {root!r} is ambiguous: it matches instrument ids "
+                f"{[match.value for match in matches]}; a continuous root must resolve to "
+                f"exactly one column so the additive-invariance re-base targets it alone"
+            )
+        continuous.append(matches[0])
+    return tuple(continuous)
 
 
 def _compute_indicators(

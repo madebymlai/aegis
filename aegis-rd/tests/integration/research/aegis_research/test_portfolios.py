@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from aegis_runtime import gate
+from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
@@ -97,7 +98,7 @@ def test_full_a_to_full_b_switch_under_shared_cash_executes_single_rebalance() -
     assert pf.assets.iloc[2][(_SINGLE_CANDIDATE_ID, "B")] > 0
 
 
-def test_symmetric_rebalance_band_holds_drift_inside_shared_gate() -> None:
+def test_symmetric_directional_band_holds_drift_inside_shared_gate() -> None:
     index = pd.date_range("2024-01-01", periods=4)
     close = pd.DataFrame({"A": [100.0, 110.0, 110.0, 110.0]}, index=index)
     allocations = pd.DataFrame({"A": [0.5, 0.5, np.nan, np.nan]}, index=index)
@@ -106,7 +107,8 @@ def test_symmetric_rebalance_band_holds_drift_inside_shared_gate() -> None:
         slippage=0,
         fixed_fee=0,
         direction="longonly",
-        rebalance_band=0.03,
+        band_up=0.03,
+        band_down=0.03,
     )
 
     pf = simulate_single_book(close, allocations, config)
@@ -117,7 +119,7 @@ def test_symmetric_rebalance_band_holds_drift_inside_shared_gate() -> None:
     assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.03, 0.03))
 
 
-def test_symmetric_rebalance_band_trades_drift_outside_shared_gate() -> None:
+def test_symmetric_directional_band_trades_drift_outside_shared_gate() -> None:
     index = pd.date_range("2024-01-01", periods=4)
     close = pd.DataFrame({"A": [100.0, 110.0, 110.0, 110.0]}, index=index)
     allocations = pd.DataFrame({"A": [0.5, 0.5, np.nan, np.nan]}, index=index)
@@ -126,7 +128,8 @@ def test_symmetric_rebalance_band_trades_drift_outside_shared_gate() -> None:
         slippage=0,
         fixed_fee=0,
         direction="longonly",
-        rebalance_band=0.01,
+        band_up=0.01,
+        band_down=0.01,
     )
 
     pf = simulate_single_book(close, allocations, config)
@@ -137,7 +140,7 @@ def test_symmetric_rebalance_band_trades_drift_outside_shared_gate() -> None:
     assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.01, 0.01))
 
 
-def test_symmetric_rebalance_band_holds_at_inclusive_boundary() -> None:
+def test_symmetric_directional_band_holds_at_inclusive_boundary() -> None:
     index = pd.date_range("2024-01-01", periods=4)
     boundary_price = 2600.0 / 24.0
     close = pd.DataFrame({"A": [100.0, boundary_price, boundary_price, boundary_price]}, index=index)
@@ -147,7 +150,8 @@ def test_symmetric_rebalance_band_holds_at_inclusive_boundary() -> None:
         slippage=0,
         fixed_fee=0,
         direction="longonly",
-        rebalance_band=0.02,
+        band_up=0.02,
+        band_down=0.02,
     )
 
     pf = simulate_single_book(close, allocations, config)
@@ -204,6 +208,42 @@ def test_asymmetric_band_up_gates_trims_more_than_adds() -> None:
     assert trim_realized == pytest.approx(gate(trim_realized_before_gate, 0.5, 0.03, 0.01))
 
 
+def test_band_overrides_gate_each_symbol_independently() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    continuous_es = InstrumentId.from_str("ES.XCME")
+    close = pd.DataFrame(
+        {
+            continuous_es: [100.0, 110.0, 110.0, 110.0],
+            "B": [100.0, 100.0, 100.0, 100.0],
+        },
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {continuous_es: [0.5, 0.5, np.nan, np.nan], "B": [0.0, 0.5, np.nan, np.nan]},
+        index=index,
+    )
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        fixed_fee=0,
+        direction="longonly",
+        band_up=0.01,
+        band_down=0.01,
+        band_overrides={"ES": {"up": 0.03, "down": 0.03}},
+    )
+
+    pf = simulate_single_book(close, allocations, config)
+
+    second_bar = _orders_on(pf.orders.records_readable, "2024-01-02")
+    assert set(second_bar["Column"]) == {(_SINGLE_CANDIDATE_ID, "B")}
+    assert set(second_bar["Side"]) == {"Buy"}
+    realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
+    realized = pf.get_allocations(group_by=None).loc[
+        index[1], (_SINGLE_CANDIDATE_ID, continuous_es)
+    ]
+    assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.03, 0.03))
+
+
 def _simulate_drift_rebalance(
     *,
     second_price: float,
@@ -222,6 +262,53 @@ def _simulate_drift_rebalance(
         band_down=band_down,
     )
     return simulate_single_book(close, allocations, config)
+
+
+def test_shortonly_drift_resizes_short_to_target_through_shared_gate() -> None:
+    """A short leg traverses the gate's trade (resize) branch correctly.
+
+    The resize branch rewrites the order as a signed target-percent with direction
+    Both; a short must therefore rebalance back to its negative target, not collapse
+    to zero. Price rises, so the short drifts more negative than its -0.5 target: a
+    wide band holds that drift (and proves the short *entered*), a narrow band trades
+    it back to -0.5.
+    """
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({"A": [100.0, 110.0, 110.0, 110.0]}, index=index)
+    allocations = pd.DataFrame({"A": [-0.5, -0.5, np.nan, np.nan]}, index=index)
+
+    def realized_at_drift(band: float) -> tuple[float, list[str]]:
+        pf = simulate_single_book(
+            close,
+            allocations,
+            make_portfolio_config(
+                fees=0,
+                slippage=0,
+                fixed_fee=0,
+                direction="shortonly",
+                band_up=band,
+                band_down=band,
+            ),
+        )
+        realized = pf.get_allocations(group_by=None).loc[
+            index[1], (_SINGLE_CANDIDATE_ID, "A")
+        ]
+        return realized, _order_dates(pf.orders.records_readable)
+
+    # Wide band: enters the short at bar 0, then holds bar 1's drift. The held
+    # weight is the undisturbed drift, and being < -0.5 proves the short entry
+    # (a resize from flat) filled to target rather than to zero.
+    drifted, held_dates = realized_at_drift(0.20)
+    assert held_dates == ["2024-01-01", "2024-01-04"]
+    assert drifted < -0.5
+
+    # Narrow band: the drift is outside it, so the short resizes back to target.
+    realized, traded_dates = realized_at_drift(0.01)
+    assert "2024-01-02" in traded_dates
+    # The resized short lands on its -0.5 target (not 0.0, the pre-fix bug, nor the
+    # held drift); abs tolerance covers the engine's short-rebalance residual.
+    assert realized == pytest.approx(gate(drifted, -0.5, 0.01, 0.01), abs=1e-4)
+    assert realized == pytest.approx(-0.5, abs=1e-4)
 
 
 def test_terminal_liquidation_sells_all_held_positions_at_last_close() -> None:

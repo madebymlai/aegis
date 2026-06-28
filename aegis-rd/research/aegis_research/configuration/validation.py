@@ -71,6 +71,7 @@ def validate_run_config(
     if config is not None:
         _post_validate_name(config.name, issues)
         _check_lock_shape(config.lock, raw.get("lock"), issues)
+        _check_portfolio_band_overrides(config, issues)
 
     # ── Registry cross-checks (always run, even when pydantic failed) ─────
     from research.aegis_research.configuration.cross_checks import cross_check_registries
@@ -158,6 +159,25 @@ def _post_validate_name(
             ConfigValidationIssue(
                 "name",
                 "must contain only letters, numbers, dots, underscores, and hyphens",
+            )
+        )
+
+
+def _check_portfolio_band_overrides(
+    config: RunConfig,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if not config.portfolio.band_overrides:
+        return
+    allowed = set(config.data.instruments) | set(config.data.futures)
+    unknown = sorted(set(config.portfolio.band_overrides) - allowed)
+    if unknown:
+        issues.append(
+            ConfigValidationIssue(
+                "portfolio.band_overrides",
+                "unknown tradeable keys "
+                f"{unknown}; expected keys from data.instruments or data.futures: "
+                f"{sorted(allowed)}",
             )
         )
 

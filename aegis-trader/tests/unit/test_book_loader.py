@@ -78,8 +78,6 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         gross_cap = 2.0
         net_cap = 0.5
         per_name_cap = 0.1
-        default_band_up = 0.03
-        default_band_down = 0.01
         aggregate_drift_threshold = 0.5
 
         [drawdown_delever]
@@ -103,10 +101,6 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         weight_band_down = 0.02
         weight_band_up = 0.04
 
-        [[band_overrides]]
-        instrument_id = "IDTL.LSEETF"
-        band_up = 0.05
-        band_down = 0.02
     """)
 
     book = load_book_config(path)
@@ -129,9 +123,6 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         gross_cap=2.0,
         net_cap=0.5,
         per_name_cap=0.1,
-        default_band_up=0.03,
-        default_band_down=0.01,
-        band_overrides=(("IDTL.LSEETF", 0.05, 0.02),),
         aggregate_drift_threshold=0.5,
         drawdown_delever=DrawdownDeleverCurve(
             start_drawdown=0.05,
@@ -283,11 +274,24 @@ def test_defaults_applied_when_keys_omitted(tmp_path):
     assert book.sleeve_reversion_fraction == 1.0
     assert book.max_book_gross == 1.0
     assert book.gross_cap is None
-    assert book.default_band_up == 0.02
     assert book.sleeves[0].weight_band_down == 0.0
     assert book.sleeves[0].weight_band_up == 0.0
-    assert book.band_overrides == ()
     assert book.tail_convexity_budget is None
+
+
+def test_removed_live_drift_band_keys_fail_closed(tmp_path):
+    path = _write(tmp_path, """
+        default_band_up = 0.03
+
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+
+    with pytest.raises(BookConfigError, match="removed live drift-band keys"):
+        load_book_config(path)
 
 
 def test_tail_convexity_budget_loads(tmp_path):

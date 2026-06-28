@@ -104,7 +104,13 @@ def test_optimization_rejects_portfolio_policy_axes() -> None:
             {
                 "search": "grid",
                 "split": _SPLIT,
-                "portfolio": {"band_up": [0.05], "band_down": [0.20]},
+                "portfolio": {
+                    "band_up": [0.05],
+                    "band_down": [0.20],
+                    "band_overrides": {
+                        "SYN.XNAS": [{"up": 0.05, "down": 0.20}],
+                    },
+                },
             }
         )
 

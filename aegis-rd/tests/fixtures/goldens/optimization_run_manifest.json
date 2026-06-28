@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "e8f0b094df2c83468a8c867181a2532d269086fbb74b7ba1caf3b5f7c7aa2b0f",
+      "hash": "7b00e2298339438bd3a4a88b0a2c28e3b7592bb384ed35a0765135ce7905551a",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 62569,
+      "size": 62554,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -112,8 +112,9 @@
     },
     "output_dir": "runs",
     "portfolio": {
-      "band_down": null,
-      "band_up": null,
+      "band_down": 0.0,
+      "band_overrides": {},
+      "band_up": 0.0,
       "base_currency": "EUR",
       "direction": "longonly",
       "fees": 0.0005,
@@ -123,7 +124,6 @@
       "gross_cap": 1.0,
       "init_cash": 10000.0,
       "net_cap": 1.0,
-      "rebalance_band": 0.0,
       "short_borrow_rate": 0.005,
       "short_rebate_rate": 0.0,
       "slippage": 0.0005
@@ -153,7 +153,7 @@
       "raw_config_identity": {
         "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
       },
-      "resolved_config_hash": "b72cc8856441abb155b9f8dd63433f783e9cc328fe00370609c434feaf36c267",
+      "resolved_config_hash": "5ad3a1692072b241dbaacde60267d737a36fd4922645ff4af1ca014bccf858f0",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",
@@ -186,7 +186,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_185aef4e9905eb72e5622005788877c1",
+          "candidate_key": "cand_5ac51982c7eb693e4cb15adb127b8b63",
           "held_out_metrics": {
             "0": {
               "max_dd": 17.34401245220589,
@@ -223,8 +223,9 @@
           },
           "identity": {
             "book_settings": {
-              "band_down": null,
-              "band_up": null,
+              "band_down": 0.0,
+              "band_overrides": {},
+              "band_up": 0.0,
               "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
@@ -234,7 +235,6 @@
               "gross_cap": 1.0,
               "init_cash": 10000.0,
               "net_cap": 1.0,
-              "rebalance_band": 0.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
               "slippage": 0.0005
@@ -549,7 +549,7 @@
           }
         },
         {
-          "candidate_key": "cand_7ebbb776d6f3e4f6b45f6cf59cc4207d",
+          "candidate_key": "cand_4fe0ef7bddf5af421c8d663e182028b9",
           "held_out_metrics": {
             "0": {
               "max_dd": 24.329296546012046,
@@ -586,8 +586,9 @@
           },
           "identity": {
             "book_settings": {
-              "band_down": null,
-              "band_up": null,
+              "band_down": 0.0,
+              "band_overrides": {},
+              "band_up": 0.0,
               "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
@@ -597,7 +598,6 @@
               "gross_cap": 1.0,
               "init_cash": 10000.0,
               "net_cap": 1.0,
-              "rebalance_band": 0.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
               "slippage": 0.0005
@@ -912,7 +912,7 @@
           }
         },
         {
-          "candidate_key": "cand_7946c250c2cbd8b33efc1dff8ca11169",
+          "candidate_key": "cand_f6db8a2e6888433b1907fa3c5dab1413",
           "held_out_metrics": {
             "0": {
               "max_dd": 21.879582100013717,
@@ -949,8 +949,9 @@
           },
           "identity": {
             "book_settings": {
-              "band_down": null,
-              "band_up": null,
+              "band_down": 0.0,
+              "band_overrides": {},
+              "band_up": 0.0,
               "base_currency": "EUR",
               "direction": "longonly",
               "fees": 0.0005,
@@ -960,7 +961,6 @@
               "gross_cap": 1.0,
               "init_cash": 10000.0,
               "net_cap": 1.0,
-              "rebalance_band": 0.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
               "slippage": 0.0005

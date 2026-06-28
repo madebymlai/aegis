@@ -7,6 +7,7 @@ from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
+    DriftBand,
     InstrumentId,
     LockedExecutionPlan,
 )
@@ -58,6 +59,7 @@ def _artifact(
         plan=LockedExecutionPlan(
             strategy=strategy,
             indicators=(),
+            instrument_bands={instrument_id: DriftBand(up=0.10, down=0.20)},
             gross_cap=1.0,
             net_cap=None,
             direction="longonly",
@@ -85,6 +87,9 @@ def test_write_wheel_materializes_data_manifest_and_constant_loader(tmp_path) ->
     assert "CONTRACT =" not in loader
     assert "PLAN =" not in loader
     assert manifest["contract"]["instrument_ids"] == ["AAPL.NASDAQ"]
+    assert manifest["plan"]["instrument_bands"] == {
+        "AAPL.NASDAQ": {"up": 0.10, "down": 0.20}
+    }
 
     sys.path.insert(0, str(wheel_path))
     try:

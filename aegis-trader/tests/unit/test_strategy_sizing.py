@@ -4,6 +4,7 @@ from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
+    DriftBand,
     ExecutionBundle,
     LockedExecutionPlan,
 )
@@ -104,6 +105,7 @@ class _PenceBundle(ExecutionBundle):
                 params={},
             ),
             indicators=(),
+            instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
             gross_cap=1.0,
             net_cap=None,
             direction="both",

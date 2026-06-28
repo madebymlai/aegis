@@ -33,6 +33,7 @@ from aegis_runtime.bundle import (
     LockedExecutionPlan,
     MarketDataBundle,
 )
+from aegis_runtime.drift_band import DriftBand
 
 _ES = InstrumentId.from_str("ES.XCME")  # a materialised continuous-future root column
 _AAPL = InstrumentId.from_str("AAPL.NASDAQ")  # a native equity (never re-based)
@@ -69,6 +70,9 @@ def _bundle(strategy_module: str, *, futures: tuple[str, ...]) -> ExecutionBundl
     plan = LockedExecutionPlan(
         strategy=_strategy_spec(strategy_module),
         indicators=(),
+        instrument_bands={
+            instrument_id: DriftBand.symmetric(0.0) for instrument_id in contract.instrument_ids
+        },
         gross_cap=1.0,
         net_cap=1.0,
         direction="longonly",
@@ -131,34 +135,15 @@ def test_root_colliding_with_a_same_symbol_native_is_rejected() -> None:
     guess — re-basing the wrong column would corrupt the invariance check — so it raises rather
     than matching by bare symbol alone."""
     es_native = InstrumentId.from_str("ES.NASDAQ")  # same symbol, not the continuous root
-    contract = DataContract(
-        instrument_ids=(_ES, es_native),
-        required_arrays=("Close",),
-        base_currency="USD",
-        timeframe="1D",
-        lookback_bars=0,
-        futures=("ES",),
-    )
-    plan = LockedExecutionPlan(
-        strategy=_strategy_spec("equal_weight_strategy"),
-        indicators=(),
-        gross_cap=1.0,
-        net_cap=1.0,
-        direction="longonly",
-    )
-    manifest = BundleManifest(
-        run_id="r",
-        role="best",
-        candidate_key="k",
-        component_source_hashes={},
-        instrument_ids=contract.instrument_ids,
-    )
-    bundle = ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
-    close = pd.DataFrame(
-        {_ES: [10.0, 12.0, 15.0], es_native: [20.0, 19.0, 25.0]}, index=_index(3)
-    )
     with pytest.raises(ValueError, match="ambiguous"):
-        bundle.compute_weights(MarketDataBundle({"Close": close}))
+        DataContract(
+            instrument_ids=(_ES, es_native),
+            required_arrays=("Close",),
+            base_currency="USD",
+            timeframe="1D",
+            lookback_bars=0,
+            futures=("ES",),
+        )
 
 
 def test_difference_weights_are_byte_stable_across_a_rebase() -> None:
