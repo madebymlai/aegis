@@ -271,7 +271,7 @@ def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
 
     node = _FakeNode(build_live_node_config(trader_id="BOOK-EU-01"))
     connection = IBConnectionSettings(
-        host="10.0.0.5", port=4002, client_id=9,
+        port=4002, client_id=9,
         account_id="DU1234567", trader_id="BOOK-EU-01",
     )
     instrument_ids = (
@@ -284,7 +284,12 @@ def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
     data = node._config.data_clients[IB_CLIENT_NAME]
     execution = node._config.exec_clients[IB_CLIENT_NAME]
     assert data.market_data_type == IBMarketDataTypeEnum.REALTIME
-    assert (data.ibg_host, data.ibg_port, data.ibg_client_id) == ("10.0.0.5", 4002, 9)
+    # Nautilus requires the default localhost host with DockerizedIBGatewayConfig;
+    # the gateway-owned port remains unset until the factory starts/reuses it.
+    assert (data.ibg_host, data.ibg_port, data.ibg_client_id) == ("127.0.0.1", None, 9)
+    assert data.dockerized_gateway.trading_mode == "paper"
+    assert data.dockerized_gateway.read_only_api is False
+    assert execution.dockerized_gateway == data.dockerized_gateway
     assert set(data.instrument_provider.load_ids) == {"VUSA.XLON", "EUR/USD.IDEALPRO"}
     assert execution.account_id == "DU1234567"
     assert set(execution.instrument_provider.load_ids) == set(data.instrument_provider.load_ids)
@@ -306,7 +311,7 @@ def test_attach_live_clients_pins_mic_venues():
 
     node = _FakeNode(build_live_node_config(trader_id="BOOK-EU-01"))
     connection = IBConnectionSettings(
-        host="10.0.0.5", port=4002, client_id=9,
+        port=4002, client_id=9,
         account_id="DU1234567", trader_id="BOOK-EU-01",
     )
 

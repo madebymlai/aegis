@@ -9,23 +9,32 @@ can never guess the gateway or silently run a placeholder account.
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 import pytest
 
 from aegis_trader.config import ConnectionConfigError, IBConnectionSettings
 
 
 def test_resolves_account_and_port_from_env_with_defaults():
-    """Account + port from env; host, client id, and trader id default."""
+    """Account + port from env; client id and trader id default."""
     settings = IBConnectionSettings.from_env(
         env={"IB_ACCOUNT_ID": "DU1234567", "IB_PORT": "4002"},
     )
 
     assert settings.account_id == "DU1234567"
     assert settings.port == 4002
-    assert settings.host == "127.0.0.1"
     assert settings.client_id == 1
     assert settings.trader_id == "TRADER-001"
-    assert settings.dockerized_gateway is None
+
+
+def test_connection_settings_shape_is_broker_neutral():
+    assert {field.name for field in fields(IBConnectionSettings)} == {
+        "port",
+        "client_id",
+        "account_id",
+        "trader_id",
+    }
 
 
 def test_port_is_the_paper_live_switch():
@@ -42,12 +51,10 @@ def test_port_is_the_paper_live_switch():
 def test_env_overrides_are_honoured():
     settings = IBConnectionSettings.from_env(env={
         "IB_ACCOUNT_ID": "DU1234567",
-        "IB_HOST": "10.0.0.5",
         "IB_PORT": "7497",  # TWS paper port
         "IB_CLIENT_ID": "9",
         "TRADER_ID": "BOOK-EU-01",
     })
-    assert settings.host == "10.0.0.5"
     assert settings.port == 7497
     assert settings.client_id == 9
     assert settings.trader_id == "BOOK-EU-01"

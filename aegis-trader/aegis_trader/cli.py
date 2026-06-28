@@ -70,8 +70,8 @@ def _trader_start(args: argparse.Namespace) -> int:
     book_path = args.book if args.book is not None else find_book_config()
     connection = IBConnectionSettings.from_env()
     _log.info(
-        "Starting live trader for account %s @ %s:%d (port decides paper vs live)",
-        connection.account_id, connection.host, connection.port,
+        "Starting live trader for account %s on IB_PORT=%d (port decides paper vs live)",
+        connection.account_id, connection.port,
     )
     return start_trader(book_path, connection, pid_file=args.pid_file)
 

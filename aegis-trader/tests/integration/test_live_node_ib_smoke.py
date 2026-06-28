@@ -7,10 +7,11 @@ single ``attach_live_clients`` seam) to a running gateway and asserts the LIVE d
 ``test_ibkr_provider_live`` and complementary to the deterministic live-engine golden in
 ``test_live_node_roll``.
 
-Gated on ``IB_PORT`` + ``IB_ACCOUNT_ID`` (the node reconciles the exec account), so it is skipped
-in CI and runs only against an operator's gateway.  No module-level ``importorskip('ibapi')`` —
-ibapi is imported lazily inside ``attach_live_clients`` only when a test runs, keeping collection
-ibapi-free (the lazy-import guard).
+Gated on ``IB_PORT`` + ``IB_ACCOUNT_ID`` + ``TWS_USERNAME`` + ``TWS_PASSWORD`` (the
+node reconciles the exec account and Nautilus starts/reuses the dockerized gateway),
+so it is skipped in CI and runs only against an operator's gateway.  No module-level
+``importorskip('ibapi')`` — ibapi is imported lazily inside ``attach_live_clients`` only
+when a test runs, keeping collection ibapi-free (the lazy-import guard).
 """
 
 from __future__ import annotations
@@ -33,12 +34,17 @@ from aegis_trader.trader.node import build_live_node_config
 
 _PORT = os.environ.get("IB_PORT")
 _ACCOUNT = os.environ.get("IB_ACCOUNT_ID")
+_TWS_USERNAME = os.environ.get("TWS_USERNAME")
+_TWS_PASSWORD = os.environ.get("TWS_PASSWORD")
 # An active dated ES quarterly leg (a real roll loads exactly this kind of leg at runtime).
 _LEG = InstrumentId.from_str("ESU6.XCME")
 
 pytestmark = pytest.mark.skipif(
-    not (_PORT and _ACCOUNT),
-    reason="set IB_PORT + IB_ACCOUNT_ID to run against a live IB Gateway",
+    not (_PORT and _ACCOUNT and _TWS_USERNAME and _TWS_PASSWORD),
+    reason=(
+        "set IB_PORT + IB_ACCOUNT_ID + TWS_USERNAME + TWS_PASSWORD to run "
+        "against the dockerized IB Gateway"
+    ),
 )
 
 

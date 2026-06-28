@@ -21,7 +21,7 @@ dependencies = [
 # IBKR adapter (ibapi) — required only for paper/live runs and the IBKR
 # verification script (scripts/verify_paper_ibkr.py); backtests don't need it.
 [project.optional-dependencies]
-ib = ["nautilus_trader[ib]"]
+ib = ["nautilus_trader[ib,docker]"]
 
 [project.scripts]
 # Operator entrypoint: `aegis-trader backtest --start --end` (offline) and

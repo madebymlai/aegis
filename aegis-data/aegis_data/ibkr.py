@@ -15,9 +15,11 @@ Two responsibilities behind one lazy ``ibapi`` boundary:
   IB **simplified symbology** — the native ``InstrumentId`` value
   (``SYMBOL.VENUE``) is the IBKR request id (ADR-0005).
 - **Live client wiring**: :func:`attach_live_clients` builds Nautilus's *stock*
-  ``InteractiveBrokers{Data,Exec}ClientConfig`` and registers the stock live
-  factories on a live ``TradingNode`` — no custom adapter code (epic thesis).
-  The Trader's broker-neutral ``node.py`` reaches IBKR through this one call.
+  ``InteractiveBrokers{Data,Exec}ClientConfig`` with a Nautilus-managed
+  Dockerized IB Gateway and registers the stock live factories on a live
+  ``TradingNode`` — no custom adapter code or container lifecycle code (epic
+  thesis).  The Trader's broker-neutral ``node.py`` reaches IBKR through this
+  one call.
 
 IBKR (``ibapi``) is a true-external dependency, so *every* IBKR import — the
 historic client and the live config/factory classes alike — is lazy: importing
@@ -37,7 +39,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
@@ -479,16 +481,14 @@ class BrokerConnection(Protocol):
     client configs (the connection value object lives in the Trader; this adapter
     depends only on its shape, never imports it — DIP).
 
-    ``dockerized_gateway`` is the seam for the Dockerized paper/live daemon
-    (bd ``aegis-rd-r8b.6``): when set, the gateway supplies the endpoint and the
-    explicit ``host``/``port`` are omitted; it is ``None`` in the skeleton.
+    The Trader stays broker-neutral and supplies only the gateway port/account
+    facts.  This adapter is the only place that maps IBKR's paper/live ports to
+    Nautilus's dockerized ``trading_mode`` spelling.
     """
 
-    host: str
     port: int
     client_id: int
     account_id: str
-    dockerized_gateway: object | None
 
 
 def attach_live_clients(
@@ -500,10 +500,12 @@ def attach_live_clients(
 
     The single live-broker call the Trader's broker-neutral ``node.py`` makes:
     builds Nautilus's *stock* ``InteractiveBrokers{Data,Exec}ClientConfig`` —
-    ``market_data_type=REALTIME`` and an ``InstrumentProviderConfig`` whose
-    ``load_ids`` are exactly the declared native ids (the data-only FX ``exchange:``
-    natives ride in here too) — and registers the stock live factories.  No custom
-    adapter code: paper vs live is *only* ``connection.port`` (IBKR's own guidance).
+    ``market_data_type=REALTIME``, a Nautilus-managed Dockerized IB Gateway, and
+    an ``InstrumentProviderConfig`` whose ``load_ids`` are exactly the declared
+    native ids (the data-only FX ``exchange:`` natives ride in here too) — and
+    registers the stock live factories.  No custom adapter code: paper vs live is
+    *only* ``connection.port``, translated here into the dockerized
+    ``trading_mode``.
 
     The ibapi-backed config/factory classes are imported lazily so importing this
     module never needs ``ibapi`` (the same lazy boundary as the historic client).
@@ -570,16 +572,33 @@ def mic_instrument_provider_config(load_ids: Iterable[str] | None = None) -> Any
     return InteractiveBrokersInstrumentProviderConfig(**kwargs)
 
 
-def _gateway_endpoint(connection: BrokerConnection) -> dict[str, Any]:
-    """The endpoint kwargs shared by both IBKR client configs.
+_GATEWAY_TRADING_MODE: dict[int, Literal["paper", "live"]] = {
+    4002: "paper",
+    4001: "live",
+}
 
-    Dockerized seam (bd ``aegis-rd-r8b.6``): a ``dockerized_gateway`` supplies its
-    own host/port, so the two are mutually exclusive.  The skeleton always takes
-    the explicit-endpoint branch (the gateway is ``None``)."""
-    gateway = connection.dockerized_gateway
-    if gateway is not None:
-        return {"dockerized_gateway": gateway}
-    return {"ibg_host": connection.host, "ibg_port": connection.port}
+
+def _trading_mode_for_port(port: int) -> Literal["paper", "live"]:
+    try:
+        return _GATEWAY_TRADING_MODE[port]
+    except KeyError as exc:
+        raise ValueError(
+            "IB_PORT must be 4002 (paper) or 4001 (live) for the dockerized "
+            f"gateway; got {port}"
+        ) from exc
+
+
+def _gateway_endpoint(connection: BrokerConnection) -> dict[str, Any]:
+    """The Dockerized IB Gateway kwargs shared by both IBKR client configs."""
+    from nautilus_trader.adapters.interactive_brokers.config import (
+        DockerizedIBGatewayConfig,
+    )
+
+    gateway = DockerizedIBGatewayConfig(
+        trading_mode=_trading_mode_for_port(connection.port),
+        read_only_api=False,
+    )
+    return {"dockerized_gateway": gateway}
 
 
 def seed_instrument_definitions(

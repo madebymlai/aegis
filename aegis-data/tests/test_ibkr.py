@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime
-from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -170,34 +169,25 @@ def test_importing_the_adapter_does_not_import_ibapi() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# live-client endpoint seam (no ibapi: pure connection -> endpoint kwargs)
+# live-client gateway-mode seam (no ibapi: pure port -> Nautilus trading mode)
 # --------------------------------------------------------------------------- #
 
 
-def test_endpoint_uses_explicit_host_port_when_no_dockerized_gateway() -> None:
-    """The skeleton path: an explicit gateway endpoint, no dockerized variant."""
-    from aegis_data.ibkr import _gateway_endpoint
+def test_trading_mode_for_port_maps_ib_gateway_ports() -> None:
+    from aegis_data.ibkr import _trading_mode_for_port
 
-    connection = SimpleNamespace(
-        host="10.0.0.5", port=4002, client_id=9,
-        account_id="DU1234567", dockerized_gateway=None,
-    )
-
-    assert _gateway_endpoint(connection) == {"ibg_host": "10.0.0.5", "ibg_port": 4002}
+    assert _trading_mode_for_port(4002) == "paper"
+    assert _trading_mode_for_port(4001) == "live"
 
 
-def test_endpoint_defers_to_dockerized_gateway_when_set() -> None:
-    """The r8b.6 seam: a ``dockerized_gateway`` supplies its own endpoint, so the
-    explicit host/port are omitted (the two are mutually exclusive)."""
-    from aegis_data.ibkr import _gateway_endpoint
+def test_trading_mode_for_port_rejects_any_other_port() -> None:
+    from aegis_data.ibkr import _trading_mode_for_port
 
-    gateway = object()
-    connection = SimpleNamespace(
-        host="10.0.0.5", port=4002, client_id=9,
-        account_id="DU1234567", dockerized_gateway=gateway,
-    )
-
-    assert _gateway_endpoint(connection) == {"dockerized_gateway": gateway}
+    with pytest.raises(
+        ValueError,
+        match=r"IB_PORT must be 4002 \(paper\) or 4001 \(live\).*7497",
+    ):
+        _trading_mode_for_port(7497)
 
 
 class _Instr:
