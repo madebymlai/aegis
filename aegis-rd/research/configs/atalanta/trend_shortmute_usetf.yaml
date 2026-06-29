@@ -1,0 +1,78 @@
+name: atalanta_trend_shortmute_usetf
+schema_version: 10
+output_dir: runs/atalanta/trend-shortmute-usetf
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# STRESS TEST of the one-sided short mute on a LONG (18.5yr) timeline, non-UCITS US-ETF analogs.
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# Does the interior-peak finding from the 7yr UCITS book (short_cap ~= 0.05 beats champion on
+# convexity + UPI + drawdown; long-only worse than a partial cap) survive a much longer history that
+# spans the 2008 GFC, 2011, 2013 taper, 2015-16, 2018, COVID-2020 and the 2022 inflation crisis?
+#
+# US-ETF analogs of the live UCITS book (USD base, no FX leg). All NYSE-Arca so IBKR HMDS serves full
+# history back to inception (the NASDAQ TLT line was depth-limited to ~2016 on this paper account and
+# hung on the pre-2016 no-data wall; SPTL on Arca pulls cleanly to 2007, recovering the 2008 GFC).
+# Native ids use the canonical Nautilus MIC venue (ARCA->ARCX); a non-MIC name re-fetches and collides
+# (the catalog port canonicalizes on write but checks coverage under the config venue -- see #73).
+#   EDV.ARCX    Vanguard Extended Duration Treasury (Arca, Dec-2007, never renamed) == IDTL/TLT -> SHORT leg (whitelisted)
+#   GLD.ARCX    SPDR Gold Shares                    (Arca, 2004)                     == IGLN     -> long-only gold
+#   DBC.ARCX    Invesco DB Commodity                (Arca, 2006)                     == ICOM     -> long-only broad commodity
+# EDV is the deep-history long-Treasury substitute: Arca (full IBKR depth, unlike NASDAQ TLT capped at
+# ~2016) AND never renamed (unlike SPTL = renamed TLO, history dead before 2017). Verified IBKR-served
+# 2008-01-02..2024-12-27 -> the 2008 GFC is finally in-window. ~17yr incl GFC/2011/2013/2018/COVID/2022.
+#
+# Same mechanism as the live sleeve: trend_score_regress lb189 + realized_vol vw126 +
+# keystone_shortmute, ranked on trend_convexity_payoff (max_dd per split is the drawdown read).
+# short_cap swept {0.0, 0.05, 0.10, 0.15, 0.20, 0.50, 1.0} via param_space (1.0 = champion control,
+# 0.0 = TLT long-only). Source: the unified Nautilus catalog/port (IBKR gateway lazy-fills on first
+# run, warm thereafter); no lock (a sweep). NOTE: only best/median/worst surface per run, so the full
+# 7-cap curve is read in batches (see the run diary).
+data:
+  base_currency: USD
+  # Option 2 (catalog-pristine): point at a DISPOSABLE scratch catalog holding the
+  # EDV/GLD/DBC INTERSECTION - the common 4249-day calendar, with the 18 ragged union
+  # dates (where the thinner EDV lacks a bar) dropped IN-MEMORY at staging time. The
+  # canonical catalog is never mutated. Re-stage via scratchpad/stage_intersection.py.
+  path: /tmp/claude-1000/-home-laimk-git-aegis/bcd83369-5afe-498d-b7d7-f99b5d45a2b9/scratchpad/gfc_catalog
+  instruments: [EDV.ARCX, GLD.ARCX, DBC.ARCX]
+  arrays: [OHLCV]
+  start: '2008-01-15'
+  end: '2024-12-26'   # = last intersected bar; exact coverage -> no IBKR fetch
+  timeframe: 1D
+  # pre-intersected at staging -> no ragged dates, so no missing_index/quality knob needed
+
+indicators:
+  - id: atalanta.trend_score_regress
+    params:
+      lookback: 189
+  - id: atalanta.realized_vol
+    params:
+      vol_window: 126
+
+strategy:
+  id: atalanta.keystone_shortmute           # short_cap swept via param_space; TLT is the whitelisted short
+
+portfolio:
+  base_currency: USD
+  gross_cap: 1.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 20

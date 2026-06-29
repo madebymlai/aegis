@@ -1,7 +1,7 @@
 name: atalanta_trend_buy_hold_spread
 schema_version: 10
 output_dir: runs/atalanta/trend-buy-hold-spread
-lock: 20260627T215641723341Z_atalanta_trend_buy_hold_spread
+lock: 20260629T000858802034Z_atalanta_trend_buy_hold_spread
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # ATALANTA — the definitive convex trend sleeve (the floor's long-gamma "drawdown payer").
@@ -15,7 +15,8 @@ lock: 20260627T215641723341Z_atalanta_trend_buy_hold_spread
 #   DROP EQUITY -> non-equity substrate                 0.365        (5.0 fills/yr)   <- the big lever
 #   + band 0.15                                          0.376        (4.0 fills/yr)
 #   + IDTL short                                         0.372        (~6 fills/yr)   <- drawdown-payer
-#   + asymmetric drift band (this config)                0.424        (8.7 fills)
+#   + asymmetric drift band                              0.424        (8.7 fills)
+#   + one-sided short cap (short_cap 0.10, this config)  0.447        (mean DD 8.58->7.18; worst-split DD 13.45->6.85; UPI 6.21->7.02)
 # The IDTL short ties the long-only book on average convexity but concentrates payoff into the
 # inflation-crisis dislocation (2022: +30% vs +21%, conv +0.85 vs +0.68) and lands its give-back in
 # the recovery when the hedge is not needed — the purer drawdown-payer shape, so it is the default.
@@ -36,10 +37,16 @@ lock: 20260627T215641723341Z_atalanta_trend_buy_hold_spread
 #  - SIZING: realized_vol pinned at a LONG 126-bar window — a long lookback paired with a SHORT vol
 #    window negates positive skew (Research Affiliates); pinned so the skew-preserving choice is
 #    baked, not left to the ranker.
-#  - STRATEGY: trendStraddleHystereticShortable — hysteretic Schmitt-trigger sign (sticky, low
-#    turnover) + continuous magnitude (convex) + FORGO cash-when-flat (gross <= 1). IDTL is shorted
-#    on a confirmed down-trend (borrow-gated, parity-safe); IGLN/ICOM forgo to cash. enter/exit
-#    dead-zone fixed at the promoted champion.
+#  - STRATEGY: keystone_shortmute — hysteretic Schmitt-trigger sign (sticky, low turnover) +
+#    continuous magnitude (convex) + FORGO cash-when-flat (gross <= 1). IDTL is shorted on a confirmed
+#    down-trend (borrow-gated, parity-safe); IGLN/ICOM forgo to cash. enter/exit dead-zone fixed.
+#  - SHORT CAP: the IDTL short *reading* is one-sided-capped at short_cap=0.10 (annualized-score
+#    units), longs uncapped, freed gross -> cash. The short at full size is mostly left-tail whipsaw
+#    (worst-split drawdown 13.45->6.85 when capped) while a small capped short keeps the crisis-
+#    conditional return a true long-only gives up. Pareto-promoted 2026-06-29 ([[runs/atalanta/2026-06-29]]):
+#    convexity 0.424->0.447, mean DD 8.58->7.18, UPI 6.21->7.02; trades ~5% crisis-conditional return
+#    for the gain. 0.10 is the robust middle - the metric-max peak moved 0.05 (UCITS) -> 0.2 (US-ETF
+#    2017-24 cross-instrument stress), so 0.10 over-fits neither.
 #  - HOLDING: portfolio drift band, NOT a per-bar buffer or NaN-hold — the only holding mechanism
 #    the LIVE rebalancer mirrors (a realized-space per-name drift band). The promoted champion uses
 #    asymmetric buy/hold spread semantics: band_down=0.20 gates adds, band_up=0.10 gates trims.
@@ -66,10 +73,11 @@ indicators:
       vol_window: 126
 
 strategy:
-  id: atalanta.keystone
+  id: atalanta.keystone_shortmute
   params:
     enter_band: 0.10
     exit_band: 0.05
+    short_cap: 0.10
 
 portfolio:
   base_currency: EUR

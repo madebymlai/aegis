@@ -1,0 +1,67 @@
+name: atalanta_trend_shortmute
+schema_version: 10
+output_dir: runs/atalanta/trend-shortmute
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# ONE-SIDED SHORT MUTE test on the live champion (atalanta trend.yaml).
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# Hypothesis ([[trend-following-in-whipsaw-regimes]], Invesco "Navigating Momentum Crashes" Q2 2024):
+# a one-sided mute of the most-negative readings - here the IDTL borrow-gated short, the book's only
+# short leg - compressing the deepest short conviction toward CASH while leaving the LONGS uncapped,
+# cuts held-out drawdown without flattening the longs. Drawdown control, not a convexity lever (the
+# short side carries skew, so muting it trades skew for drawdown). The follow-up to the killed
+# turning-point gate (2026-06-29 turngate): the gate's only genuine win was drawdown, which routes
+# here. CAVEAT: the IDTL short's largest readings are 2022 (the drawdown-payer's purpose year), so
+# the keep/kill guards the 2022 crisis split.
+#
+# Nested test: short_cap = 1.0 never binds (IDTL slope magnitude stays well under 100%/yr), so it
+# reproduces the champion EXACTLY. 0.20 mutes only the deepest ~2022-scale short; 0.10 mutes moderate
+# downtrends too. Everything except the cap is pinned to trend.yaml. Reuses the champion indicators
+# (no fast signal). Ranked on trend_convexity_payoff for apples-to-apples with the gate and champion;
+# max_dd per split is the drawdown read. No lock (a sweep). Data warm from the 2026-06-29 runs.
+data:
+  base_currency: EUR
+  instruments: [IDTL.LSEETF, IGLN.LSEETF, ICOM.LSEETF]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.trend_score_regress
+    params:
+      lookback: 189
+  - id: atalanta.realized_vol
+    params:
+      vol_window: 126
+
+strategy:
+  id: atalanta.keystone_shortmute           # short_cap swept {0.10, 0.20, 1.0} via param_space
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
