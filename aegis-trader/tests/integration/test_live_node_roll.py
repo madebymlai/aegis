@@ -36,7 +36,7 @@ from nautilus_trader.test_kit.mocks.data import MockMarketDataClient
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
 from aegis_data.rebasing import Rebasing, spread_rebasing
-from aegis_trader.data import raw_bar_type
+from aegis_data.bar_type import raw_bar_type
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import (
     RequestInstrument,

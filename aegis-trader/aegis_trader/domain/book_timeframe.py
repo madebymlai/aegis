@@ -1,22 +1,18 @@
-"""Bar identity for the overlay.
+"""The Backtest Timeframe rule — the single bar timeframe a Commingled Book runs.
 
-The contract-timeframe -> Nautilus ``BarType`` mapping (LAST + EXTERNAL) and the
-rebalance-period width live in ``aegis_data`` (ADR-0007): it is the shared lower
-context both Aegis RD and the trader depend on, so the bar identity is single
-sourced there and the two sides cannot desync.  This module re-exports the
-helper and keeps only the *book-cadence policy* that is the trader's alone — all
-commingled-book sleeves must agree on one rebalance period.
+Every sleeve installed in one book is bound to an Execution Bundle that declares
+its own contract timeframe; the overlay tracks a single rebalance period, so all
+sleeves must agree on one.  A book whose sleeves declare mixed timeframes is a
+closed failure (the ``BOOK_TIMEFRAME`` startup gate), not a multi-timeframe
+simulation.
+
+This is a pure book invariant over the sleeves' declared timeframes — it does
+not touch bar identity, which is single sourced in ``aegis_data.bar_type``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-
-from aegis_data.bar_type import (
-    UnsupportedTimeframeError,
-    raw_bar_type,
-    timeframe_to_ns,
-)
 
 
 class MixedTimeframeError(ValueError):
@@ -42,8 +38,5 @@ def resolve_book_timeframe(timeframes: Iterable[str]) -> str:
 
 __all__ = [
     "MixedTimeframeError",
-    "UnsupportedTimeframeError",
-    "raw_bar_type",
     "resolve_book_timeframe",
-    "timeframe_to_ns",
 ]

@@ -15,7 +15,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Equity, FuturesContract
 from nautilus_trader.model.objects import Price, Quantity
 
-from aegis_trader.data.bar_type import raw_bar_type
+from aegis_data.bar_type import raw_bar_type
 from aegis_trader.data.market_data import NautilusMarketData
 
 _DAY_NS = 86_400_000_000_000

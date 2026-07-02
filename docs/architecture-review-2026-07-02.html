@@ -403,17 +403,20 @@ flowchart TB
         </article>
 
         <!-- ══════════════ 8 ══════════════ -->
-        <article id="c8" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+        <article id="c8" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">8 · The trader bar-type wrapper fails the deletion test</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled &amp; shipped 2026-07-02 — beads aegis-rd-8kkn" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-8kkn</span>
               <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
             </div>
           </div>
           <p class="font-mono text-sm text-slate-600">
-            aegis-trader/aegis_trader/data/bar_type.py (49 lines) · market_data.py:24 · backtest_data.py:18 · continuous_feed.py:23
+            aegis-trader/aegis_trader/domain/book_timeframe.py (new) · data/__init__.py · backtest.py:47 · strategy.py:45 · book_startup.py:16
           </p>
+
+          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Shipped 2026-07-02</span> — grilling reframed this from "delete a pass-through" to a <em>split</em>: the module conflated two unrelated things — a pure re-export shim of <span class="font-mono text-xs">aegis_data.bar_type</span> (<span class="font-mono text-xs">raw_bar_type</span>, <span class="font-mono text-xs">timeframe_to_ns</span>, <span class="font-mono text-xs">UnsupportedTimeframeError</span>) and a genuine trader-owned invariant, <span class="font-mono text-xs">resolve_book_timeframe</span> + <span class="font-mono text-xs">MixedTimeframeError</span> (the <em>Backtest Timeframe</em> rule), which never touched the bar-identity helpers. The rule moved to a new <span class="font-mono text-xs">domain/book_timeframe.py</span> (first-class domain concept; <span class="font-mono text-xs">startup.py</span> stays pure halt vocabulary); the shim was deleted outright (Forward-First — no back-compat alias). Every importer now reads the true owner, collapsing <em>three</em> import paths to one: bar identity from <span class="font-mono text-xs">aegis_data.bar_type</span> (matching <span class="font-mono text-xs">continuous_feed</span>'s existing bypass), the rule from <span class="font-mono text-xs">domain.book_timeframe</span>. Behaviour unchanged; 44 backtest/startup + 40 data/roll tests green. Tracked as <span class="font-mono text-xs">aegis-rd-8kkn</span>.</div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
@@ -433,17 +436,17 @@ flowchart TB
                 <div class="border border-slate-300 bg-white rounded p-2 text-[11px] font-mono text-center">market_data · backtest_data · continuous_feed</div>
                 <div class="text-center text-slate-400 text-xs">│ import directly</div>
                 <div class="rounded p-2 text-white text-center text-[11px] font-mono" style="background: linear-gradient(135deg, #0f172a, #1e293b);">aegis_data.bar_type</div>
-                <p class="text-[11px] text-slate-600 text-center">resolve_book_timeframe (the <em>Backtest Timeframe</em> rule) moves next to its callers</p>
+                <p class="text-[11px] text-slate-600 text-center">bar identity direct from aegis-data; the <em>Backtest Timeframe</em> rule relocates to <span class="font-mono">domain/book_timeframe</span></p>
               </div>
             </div>
           </div>
 
-          <p class="text-sm"><span class="font-semibold">Problem</span> — the module re-exports aegis-data's bar-type helpers and adds one function; delete it and no complexity reappears — the definition of a pass-through.</p>
-          <p class="text-sm"><span class="font-semibold">Solution</span> — delete the re-export layer, keep the one real behaviour (<em>Backtest Timeframe</em> resolution) beside its callers, import the rest from aegis-data directly.</p>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — the module conflated a pure re-export shim of aegis-data's bar-identity helpers with one genuine trader invariant (the <em>Backtest Timeframe</em> rule) that never touched them; three separate import paths reached the same helpers, one already bypassing the shim.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — split, don't merely delete: relocate the <em>Backtest Timeframe</em> rule to <span class="font-mono text-xs">domain/book_timeframe.py</span>, drop the shim outright, and point every importer at the true owner.</p>
           <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
-            <li>delete a shallow module</li>
-            <li>one import path, not two</li>
-            <li>interface shrinks to one function</li>
+            <li>the Backtest Timeframe rule lands in the domain, where a book invariant belongs — not filed under bar identity</li>
+            <li>three import paths collapse to one: bar identity from aegis-data, the rule from the domain</li>
+            <li>the trader's <span class="font-mono text-xs">data</span> facade stops re-exporting borrowed helpers; the shim module is gone</li>
           </ul>
         </article>
 

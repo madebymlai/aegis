@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol, TypeAlias
 
+from aegis_data.bar_type import timeframe_to_ns
 from aegis_runtime import ExecutionBundle
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_trader.data import MixedTimeframeError, resolve_book_timeframe, timeframe_to_ns
 from aegis_trader.data.market_data import MarketDataPort
 from aegis_trader.domain.book_config import BookConfig
+from aegis_trader.domain.book_timeframe import MixedTimeframeError, resolve_book_timeframe
 from aegis_trader.domain.roll import Halt, RequestBars, RollIntent, RollIntentBatch, SubscribeBars
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.startup import StartupGate, StartupResult

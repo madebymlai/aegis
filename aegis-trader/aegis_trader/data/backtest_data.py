@@ -15,7 +15,7 @@ from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.wranglers import BarDataWrangler
 
-from aegis_trader.data.bar_type import raw_bar_type
+from aegis_data.bar_type import raw_bar_type
 
 _FX_PRICE_PRECISION = 5
 _FX_SIZE = 1_000_000

@@ -26,6 +26,7 @@ from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.risk.config import RiskEngineConfig
 
+from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     NautilusDataProviderPort,
@@ -41,8 +42,9 @@ from aegis_trader.bundles.book_sleeves import (
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
-from aegis_trader.data import raw_bar_type, resolve_book_timeframe, wrangle_bars
+from aegis_trader.data import wrangle_bars
 from aegis_trader.domain.book_config import BookConfig
+from aegis_trader.domain.book_timeframe import resolve_book_timeframe
 from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.portfolio.performance import (
     BookEquityRecorder,

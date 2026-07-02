@@ -42,14 +42,13 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
+from aegis_data.bar_type import raw_bar_type, timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, catalog_root, parquet_data_catalog
 from aegis_runtime import DataContract, ExecutionBundle
 
 from aegis_trader.data import (
     MarketDataPort,
     NautilusMarketData,
-    raw_bar_type,
-    timeframe_to_ns,
 )
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig

@@ -20,7 +20,7 @@ from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency, Quantity
-from aegis_trader.data.bar_type import raw_bar_type
+from aegis_data.bar_type import raw_bar_type
 from aegis_trader.domain.sizing import InstrumentSizing
 
 
