@@ -322,9 +322,6 @@ class RebalanceStrategy(Strategy):
             book=self._book,
             sleeve_to_bundle=self._sleeve_to_bundle,
             ledger=self._sleeve_ledger,
-            continuous_ids_by_root={
-                feed.root: feed.continuous_id for feed in self._feeds.values()
-            },
         )
         self._pipeline = pipeline
 

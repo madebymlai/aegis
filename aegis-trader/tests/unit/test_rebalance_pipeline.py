@@ -171,6 +171,9 @@ class _MarketData:
     def make_quantity(self, _instrument_id: InstrumentId, raw_shares: float) -> float:
         return raw_shares
 
+    def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
+        return instrument_id
+
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         if base_currency == quote_currency:
             return 1.0
@@ -254,7 +257,7 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
     """E3: a continuous root is a first-class rebalance target (mirroring research's tradeable set
     = natives + continuous roots).  The pipeline reads its bars from the feed-backed series by the
     continuous id and produces an order keyed by it (root→front routing happens at submission)."""
-    es_bars = {
+    es_bars: dict[InstrumentId, tuple[MarketBar, ...]] = {
         _ES: (
             MarketBar(0, 100.0, 100.0, 100.0, 100.0, 1_000.0),
             MarketBar(_DAY_NS, 100.0, 100.0, 100.0, 100.0, 1_000.0),
@@ -269,7 +272,6 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
         book=_book(),
         sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
         ledger=SleeveLedger(),
-        continuous_ids_by_root={"ES": _ES},
     )
 
     result = pipeline.rebalance_period(_period())

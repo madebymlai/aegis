@@ -70,6 +70,21 @@ def test_data_contract_accepts_bare_roots() -> None:
     assert contract.futures == ("ES", "KC")
 
 
+def test_data_contract_returns_declared_continuous_instrument_ids() -> None:
+    contract = _contract(futures=("ES", "KC"), instrument_ids=(_AAPL, _ES, _KC))
+
+    assert contract.continuous_instrument_ids == (_ES, _KC)
+    assert contract.native_instrument_ids == (_AAPL,)
+
+
+def test_data_contract_continuous_identity_agrees_across_sleeves() -> None:
+    trend = _contract(futures=("ES",), instrument_ids=(_AAPL, _ES))
+    carry = _contract(futures=("ES",), instrument_ids=(_ES,))
+
+    assert trend.continuous_instrument_ids == (_ES,)
+    assert carry.continuous_instrument_ids == (_ES,)
+
+
 def test_data_contract_rejects_root_without_matching_continuous_id() -> None:
     with pytest.raises(ValueError, match="no matching instrument_id"):
         _contract(futures=("ES",))

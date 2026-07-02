@@ -111,7 +111,6 @@ class RebalancePipeline:
         book: BookConfig,
         sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle],
         ledger: SleeveLedger,
-        continuous_ids_by_root: Mapping[str, InstrumentId] | None = None,
     ) -> None:
         self._book_state = book_state
         self._market_data = market_data
@@ -126,9 +125,6 @@ class RebalancePipeline:
             # Match the happy path's read-only mapping; the gate halts before any read.
             self._instrument_bands = MappingProxyType({})
             self._instrument_band_error = exc
-        # Continuous roots are first-class rebalance targets (mirroring research's tradeable set =
-        # natives + continuous roots): a sleeve's bare root maps here to its synthetic continuous id.
-        self._continuous_ids_by_root = dict(continuous_ids_by_root or {})
         self._last_sleeve_weights: dict[SleeveName, float] = {}
         timeframe_by_instrument_id: dict[InstrumentId, str] = {}
         for bundle in self._sleeve_to_bundle.values():
@@ -322,14 +318,15 @@ class RebalancePipeline:
         )
 
     def _contract_target_ids(self, contract: DataContract) -> tuple[InstrumentId, ...]:
-        """A contract's full rebalance-target universe: its native instruments plus the synthetic
-        continuous-root id for each declared root (the continuous series is read by that id)."""
-        continuous = tuple(
-            self._continuous_ids_by_root[root]
-            for root in contract.futures
-            if root in self._continuous_ids_by_root
+        """A contract's full rebalance-target universe, as declared by the bundle."""
+        target_ids = frozenset(
+            (*contract.native_instrument_ids, *contract.continuous_instrument_ids)
         )
-        return tuple(dict.fromkeys((*contract.instrument_ids, *continuous)))
+        return tuple(
+            instrument_id
+            for instrument_id in contract.instrument_ids
+            if instrument_id in target_ids
+        )
 
     def _bars_for_contract(
         self,

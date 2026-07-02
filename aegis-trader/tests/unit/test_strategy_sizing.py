@@ -28,6 +28,9 @@ class _MarketData:
     def make_quantity(self, instrument_id: InstrumentId, raw_shares: float) -> object:
         raise AssertionError("quantity construction is not part of this test")
 
+    def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
+        return instrument_id
+
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         assert (base_currency, quote_currency) == ("EUR", "GBp")
         return 0.85

@@ -53,6 +53,11 @@ class DataContract:
         _continuous_instrument_ids(self.instrument_ids, self.futures)
 
     @property
+    def continuous_instrument_ids(self) -> tuple[InstrumentId, ...]:
+        """The declared synthetic continuous ids, one for each bare root."""
+        return _continuous_instrument_ids(self.instrument_ids, self.futures)
+
+    @property
     def native_instrument_ids(self) -> tuple[InstrumentId, ...]:
         """The declared ids that load as static columns — continuous ids excluded.
 
@@ -61,7 +66,7 @@ class DataContract:
         dynamically through the leg chain, not as a static native column. Callers that
         warm, subscribe, or union the loadable natives take this, not ``instrument_ids``.
         """
-        continuous = set(_continuous_instrument_ids(self.instrument_ids, self.futures))
+        continuous = set(self.continuous_instrument_ids)
         return tuple(
             instrument_id
             for instrument_id in self.instrument_ids
@@ -182,7 +187,7 @@ class ExecutionBundle:
         and re-basing the native's price column would corrupt the invariance check — so it is
         rejected loudly rather than silently re-basing the wrong column.
         """
-        return _continuous_instrument_ids(self.contract.instrument_ids, self.contract.futures)
+        return self.contract.continuous_instrument_ids
 
     def _decide_weights(
         self,

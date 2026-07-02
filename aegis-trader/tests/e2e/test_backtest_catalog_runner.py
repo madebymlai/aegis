@@ -7,6 +7,9 @@ with native ``InstrumentId`` values -> Nautilus ``ParquetDataCatalog`` -> real
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import cast
+
 import pandas as pd
 import pytest
 from aegis_data.distributions import Distribution, write_distribution_data
@@ -28,15 +31,19 @@ from aegis_runtime import (
 )
 
 from aegis_trader.backtest import (
+    BacktestMarketData,
     CatalogBacktestDataSource,
     CatalogInstrumentError,
     run_book_backtest,
 )
 from aegis_trader.bundles.stub import StubBundleRegistry
+from aegis_trader.data.continuous_feed import ContinuousFeed
 from aegis_trader.portfolio import NautilusBookState
+from aegis_trader.trader.strategy import RebalanceStrategy
 
 _INSTRUMENT_ID = InstrumentId.from_str("VUSA.XLON")
 _SECOND_INSTRUMENT_ID = InstrumentId.from_str("AAPL.NASDAQ")
+_ES = InstrumentId.from_str("ES.XCME")
 _WHEEL = "synth-trend.whl"
 
 _BOOK_TOML = f"""
@@ -148,6 +155,87 @@ class _TwoVenueBundle(ExecutionBundle):
         return weights
 
 
+class _ContinuousRootBundle(ExecutionBundle):
+    """Synthetic bundle that targets the declared continuous-root id."""
+
+    def __init__(self) -> None:
+        contract = DataContract(
+            instrument_ids=(_ES,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            lookback_bars=1,
+            futures=("ES",),
+        )
+        manifest = BundleManifest(
+            run_id="catalog-runner-continuous-root",
+            role="synth",
+            candidate_key="catalog-runner-continuous-root-key",
+            component_source_hashes={},
+            instrument_ids=(_ES,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="continuous_root_fixed_weight",
+                module="synth",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={_ES: DriftBand.symmetric(0.02)},
+            gross_cap=1.0,
+            net_cap=None,
+            direction="longonly",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+        close = prices.array("Close")
+        weights = pd.DataFrame({_ES: [0.1] * len(close)}, index=close.index)
+        weights.columns.name = "instrument_id"
+        return weights
+
+
+class _StaticContinuousFeed:
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+
+    @property
+    def continuous_id(self) -> InstrumentId:
+        return _ES
+
+    def series(self) -> pd.DataFrame:
+        return self._frame
+
+    def front_contract(self) -> InstrumentId:
+        return _ES
+
+    def on_bar(self, _bar: Bar) -> None:
+        return None
+
+
+class _ContinuousRootDataSource:
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+
+    def load(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        *,
+        timeframe: str,
+        start: str,
+        end: str,
+    ) -> BacktestMarketData:
+        assert instrument_ids == ()
+        assert (timeframe, start, end) == ("1D", "2020-01-01", "2020-01-05")
+        return BacktestMarketData(
+            instruments={_ES: _equity(_ES)},
+            ohlcv={_ES: self._frame},
+        )
+
+
 def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
@@ -166,6 +254,36 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     fills = [order for order in engine.cache.orders() if order.is_closed]
     assert len(fills) == 1
     assert fills[0].instrument_id == _INSTRUMENT_ID
+    engine.dispose()
+
+
+def test_run_book_backtest_trades_a_declared_continuous_root(
+    tmp_path, monkeypatch
+) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    frame = _ohlcv_frame([100.0, 101.0, 102.0, 103.0])
+    feed = _StaticContinuousFeed(frame)
+
+    def install_static_feed(
+        self: RebalanceStrategy, _book_timeframe: str
+    ) -> None:
+        self._install_feeds(cast(Iterable[ContinuousFeed], (feed,)))
+
+    monkeypatch.setattr(RebalanceStrategy, "_init_feeds", install_static_feed)
+    registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
+
+    engine = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        data_source=_ContinuousRootDataSource(frame),
+        registry=registry,
+    )
+
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+    assert fills
+    assert {order.instrument_id for order in fills} == {_ES}
     engine.dispose()
 
 
@@ -303,6 +421,19 @@ def _seed_catalog(
         start=pd.Timestamp("2020-01-01", tz="UTC").value,
         end=pd.Timestamp("2020-01-01", tz="UTC").value
         + len(closes) * 86_400_000_000_000,
+    )
+
+
+def _ohlcv_frame(closes: list[float]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Open": closes,
+            "High": closes,
+            "Low": closes,
+            "Close": closes,
+            "Volume": [1_000.0] * len(closes),
+        },
+        index=pd.date_range("2020-01-01", periods=len(closes), freq="D"),
     )
 
 
