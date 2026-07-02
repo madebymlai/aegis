@@ -34,8 +34,6 @@ def _desk(port, *, present: tuple[InstrumentId, ...] = (), declared: InstrumentI
         catalog_port=port,
         instrument_present=present_set.__contains__,
         declared_continuous_ids_by_root={"ES": declared},
-        timeframe="1D",
-        history_start=_HISTORY_START,
     )
 
 
@@ -55,7 +53,12 @@ def test_start_returns_front_leg_warmup_and_subscribe_intents() -> None:
     port, _native = _es_port()
     desk = _desk(port)
 
-    intents = desk.start(end=_dt("2024-02-15"), warmup=True)
+    intents = desk.start(
+        timeframe="1D",
+        history_start=_HISTORY_START,
+        end=_dt("2024-02-15"),
+        warmup=True,
+    )
 
     assert intents == (
         RequestBars(_ESH4, "1D", _HISTORY_START, _dt("2024-02-15")),
@@ -69,7 +72,12 @@ def test_start_halts_when_materialized_continuous_venue_differs_from_declaration
     port, _native = _es_port()
     desk = _desk(port, declared=_ES_IFUS)
 
-    intents = desk.start(end=_dt("2024-02-15"), warmup=True)
+    intents = desk.start(
+        timeframe="1D",
+        history_start=_HISTORY_START,
+        end=_dt("2024-02-15"),
+        warmup=True,
+    )
 
     assert intents == (
         Halt(
@@ -82,7 +90,12 @@ def test_start_halts_when_materialized_continuous_venue_differs_from_declaration
 def test_on_bar_without_a_roll_appends_offset_zero_and_emits_no_intents() -> None:
     port, native = _es_port_two_rolls()
     desk = _desk(port)
-    desk.start(end=_dt("2024-05-10"), warmup=False)
+    desk.start(
+        timeframe="1D",
+        history_start=_HISTORY_START,
+        end=_dt("2024-05-10"),
+        warmup=False,
+    )
     series_before = desk.series(_ES)
     bar = _bar_on(native, _ESM4, date(2024, 5, 13))
 
@@ -98,7 +111,12 @@ def test_on_bar_without_a_roll_appends_offset_zero_and_emits_no_intents() -> Non
 def test_on_bar_with_a_roll_returns_unsubscribe_ensure_new_and_roll_event() -> None:
     port, native = _es_port_two_rolls()
     desk = _desk(port)
-    desk.start(end=_dt("2024-06-06"), warmup=False)
+    desk.start(
+        timeframe="1D",
+        history_start=_HISTORY_START,
+        end=_dt("2024-06-06"),
+        warmup=False,
+    )
     bar = _bar_on(native, _ESM4, date(2024, 6, 14))
 
     intents = desk.on_bar(bar)
@@ -115,7 +133,12 @@ def test_on_bar_with_a_roll_returns_unsubscribe_ensure_new_and_roll_event() -> N
 def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument() -> None:
     port, native = _es_port_two_rolls()
     desk = _desk(port, present=(_ESU4,))
-    desk.start(end=_dt("2024-06-06"), warmup=False)
+    desk.start(
+        timeframe="1D",
+        history_start=_HISTORY_START,
+        end=_dt("2024-06-06"),
+        warmup=False,
+    )
     bar = _bar_on(native, _ESM4, date(2024, 6, 14))
 
     intents = desk.on_bar(bar)
@@ -126,7 +149,12 @@ def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument(
 def test_on_instrument_completes_a_deferred_front_leg_subscription() -> None:
     port, native = _es_port_two_rolls()
     desk = _desk(port)
-    desk.start(end=_dt("2024-06-06"), warmup=False)
+    desk.start(
+        timeframe="1D",
+        history_start=_HISTORY_START,
+        end=_dt("2024-06-06"),
+        warmup=False,
+    )
     desk.on_bar(_bar_on(native, _ESM4, date(2024, 6, 14)))
 
     intents = desk.on_instrument(_ESU4)

@@ -36,6 +36,7 @@ from aegis_trader.backtest import (
 )
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.domain.roll import RollEvent, SubscribeBars, UnsubscribeBars
+from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.portfolio import NautilusBookState
 from aegis_trader.trader.strategy import RebalanceStrategy
@@ -50,6 +51,17 @@ _TREND = SleeveName("trend")
 
 _BOOK_TOML = f"""
 base_currency = "EUR"
+
+[[sleeves]]
+name = "trend"
+wheel_filename = "{_WHEEL}"
+risk_share = 1.0
+group = "Floor"
+"""
+
+_BAD_CAP_BOOK_TOML = f"""
+base_currency = "EUR"
+per_name_cap = 1.5
 
 [[sleeves]]
 name = "trend"
@@ -340,6 +352,29 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     engine.dispose()
 
 
+def test_run_book_backtest_halts_bad_cap_book_and_idles(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BAD_CAP_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+
+    engine = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=catalog_path,
+        registry=registry,
+    )
+    strategy = _strategy(engine)
+
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+    assert fills == []
+    assert strategy.startup_result is not None
+    assert strategy.startup_result.halt_gate == StartupGate.CAP_PROVENANCE
+    engine.dispose()
+
+
 def test_run_book_backtest_trades_a_declared_continuous_root(
     tmp_path, monkeypatch
 ) -> None:
@@ -348,10 +383,8 @@ def test_run_book_backtest_trades_a_declared_continuous_root(
     frame = _ohlcv_frame([100.0, 101.0, 102.0, 103.0])
     desk = _StaticContinuousDesk(frame)
 
-    def build_static_desk(
-        self: RebalanceStrategy, _book_timeframe: str, *, history_start: object
-    ) -> _StaticContinuousDesk:
-        _ = (self, history_start)
+    def build_static_desk(self: RebalanceStrategy) -> _StaticContinuousDesk:
+        _ = self
         return desk
 
     monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_static_desk)
@@ -384,10 +417,8 @@ def test_run_book_backtest_preserves_attribution_across_a_roll(
         rebasing=spread_rebasing(50.0),
     )
 
-    def build_rolling_desk(
-        self: RebalanceStrategy, _book_timeframe: str, *, history_start: object
-    ) -> _RollingContinuousDesk:
-        _ = (self, history_start)
+    def build_rolling_desk(self: RebalanceStrategy) -> _RollingContinuousDesk:
+        _ = self
         return desk
 
     monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_rolling_desk)

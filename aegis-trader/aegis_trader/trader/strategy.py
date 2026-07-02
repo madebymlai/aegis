@@ -30,7 +30,6 @@ globally on failure.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import Any
 
 from nautilus_trader.model.data import Bar, QuoteTick
@@ -50,7 +49,6 @@ from aegis_trader.data import (
     MarketDataPort,
     NautilusMarketData,
     raw_bar_type,
-    resolve_book_timeframe,
     timeframe_to_ns,
 )
 from aegis_trader.domain.book_config import BookConfig
@@ -80,10 +78,15 @@ from aegis_trader.trader.pipeline import (
     RebalanceSummary,
 )
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
+from aegis_trader.trader.book_startup import (
+    BootIntent,
+    BootIntentBatch,
+    SubscribeQuoteTicks,
+    bootstrap,
+)
 from aegis_trader.trader.roll_desk import RollDesk
 
 _NS_PER_DAY: int = 86_400_000_000_000
-_LIVE_WARMUP_CALENDAR_MULTIPLIER: int = 3
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -101,17 +104,6 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     (live): a Market-on-Close order into the closing auction.  Set by the backtest
     runner (``backtest.py``) and the live node (``trader/node.py``) so backtest and
     live model the same fill point (the close)."""
-
-
-def _startup_history_start(
-    end: datetime,
-    *,
-    timeframe: str,
-    lookback_bars: int,
-) -> datetime:
-    periods = max(lookback_bars + 1, 1) * _LIVE_WARMUP_CALENDAR_MULTIPLIER
-    span_ns = timeframe_to_ns(timeframe) * periods
-    return end - timedelta(microseconds=span_ns // 1000)
 
 
 class RebalanceStrategy(Strategy):
@@ -171,6 +163,11 @@ class RebalanceStrategy(Strategy):
         """Last realized per-sleeve attribution, for evidence/backtest seams."""
         return dict(self._last_attribution)
 
+    @property
+    def startup_result(self) -> StartupResult | None:
+        """Startup gate decision, for backtest/evidence inspection."""
+        return self._startup_result
+
     # ── port accessors ──────────────────────────────────────────────────────
     # The reconciled-book and market-data ports are wired in ``on_start``; every
     # trading path runs after it.  These accessors make that lifecycle invariant
@@ -228,14 +225,12 @@ class RebalanceStrategy(Strategy):
             raise RuntimeError("roll desk queried before on_start wired it")
         return self._roll_desk
 
-    def _build_roll_desk(self, book_timeframe: str, *, history_start: datetime) -> RollDesk:
+    def _build_roll_desk(self) -> RollDesk:
         return RollDesk(
             catalog_port=self._continuous_port(),
             instrument_present=lambda instrument_id: self.cache.instrument(instrument_id)
             is not None,
             declared_continuous_ids_by_root=self._declared_continuous_ids_by_root(),
-            timeframe=book_timeframe,
-            history_start=history_start,
         )
 
     def _continuous_port(self) -> CatalogBackedDataPort:
@@ -243,31 +238,17 @@ class RebalanceStrategy(Strategy):
         ParquetDataCatalog (the same corpus warmed via request_bars(update_catalog=True))."""
         return CatalogBackedDataPort(parquet_data_catalog(catalog_root()))
 
-    def _warm_startup_cache(
-        self, book_timeframe: str, *, start: datetime, end: datetime
-    ) -> None:
-        """Warm the Cache via Nautilus's native catalog seam (ADR-0006).
-
-        The genuine upgrade over the old bespoke warmup: with the node's
-        ``catalogs=[DataCatalogConfig]`` wired (``trader/node.py``), the *plain*
-        native ``request_bars(update_catalog=True)`` serves history from the shared
-        catalog and tops up only the missing IBKR tail (persisted) in one call —
-        the prototype-confirmed split.  The request is still issued (a configured
-        catalog is not auto-loaded and ``subscribe_bars`` is real-time only), but it
-        is now the native call, not a hand-rolled provider-warmup loop.
-        """
-        if not self.config.warmup_cache_on_start:
-            return
-        to_warm = self._registered_instrument_ids()
-        if not to_warm:
-            return
-        for instrument_id in to_warm:
-            self.request_bars(
-                raw_bar_type(instrument_id, book_timeframe),
-                start=start,
-                end=end,
-                update_catalog=True,
+    def _fx_reference_pairs(self) -> tuple[InstrumentId, ...]:
+        return tuple(
+            sorted(
+                (
+                    instrument.id
+                    for instrument in self.cache.instruments()
+                    if isinstance(instrument, CurrencyPair)
+                ),
+                key=lambda instrument_id: instrument_id.value,
             )
+        )
 
     # ── Nautilus lifecycle ────────────────────────────────────────────────────
 
@@ -283,70 +264,33 @@ class RebalanceStrategy(Strategy):
             base_currency=base_ccy,
             covered_instrument_ids=frozenset(self._registered_instrument_ids()),
         )
-
-        # The book runs on one timeframe (all sleeves agree); resolve it once for Roll Desk
-        # materialization, bar subscriptions, and the rebalance-period width.
-        book_timeframe = resolve_book_timeframe(
-            contract.timeframe for contract in self._sleeve_to_contract.values()
-        )
-        self._book_timeframe = book_timeframe
-        self._period_ns = timeframe_to_ns(book_timeframe)
-        end = self.clock.utc_now()
-        history_start = _startup_history_start(
-            end,
-            timeframe=book_timeframe,
-            lookback_bars=max(
-                contract.lookback_bars
-                for contract in self._sleeve_to_contract.values()
-            ),
-        )
-
-        roll_desk = self._build_roll_desk(book_timeframe, history_start=history_start)
+        roll_desk = self._build_roll_desk()
         self._roll_desk = roll_desk
-        roll_start_intents = roll_desk.start(
-            end=end,
-            warmup=self.config.warmup_cache_on_start,
-        )
-        if self._apply_roll_halt(roll_start_intents):
-            return
-
         self._market_data = NautilusMarketData(cache=self.cache, continuous=roll_desk)
 
-        pipeline = RebalancePipeline(
-            book_state=self._require_book_state(),
-            market_data=self._require_market_data(),
+        boot = bootstrap(
+            now=self.clock.utc_now(),
             book=self._book,
             sleeve_to_bundle=self._sleeve_to_bundle,
             ledger=self._sleeve_ledger,
+            book_state=self._require_book_state(),
+            market_data=self._require_market_data(),
+            roll_desk=roll_desk,
+            fx_reference_pairs=self._fx_reference_pairs(),
+            warmup_cache_on_start=self.config.warmup_cache_on_start,
         )
-        self._pipeline = pipeline
-
-        startup_result = pipeline.startup_check()
-        self._startup_result = startup_result
-        if startup_result.should_halt:
-            self._is_halted = True
-            self._log_startup_halt(startup_result)
+        if isinstance(boot, Halt):
+            self._halt_from_roll_intent(boot)
             return
 
-        self._log_startup_pass(startup_result)
-
-        self._warm_startup_cache(book_timeframe, start=history_start, end=end)
+        self._pipeline = boot.pipeline
+        self._book_timeframe = boot.timeframe
+        self._period_ns = timeframe_to_ns(boot.timeframe)
+        self._startup_result = boot.startup_result
+        self._log_startup_pass(boot.startup_result)
         instrument_ids = self._registered_instrument_ids()
-        for instrument_id in instrument_ids:
-            self.subscribe_bars(raw_bar_type(instrument_id, book_timeframe))
-        if self._apply_roll_intents(roll_start_intents):
+        if self._apply_boot_intents(boot.intents):
             return
-
-        # Subscribe to FX reference-pair quotes so the cache mark xrates stay
-        # current from live data — both the sizer (MarketDataPort.fx_rate) and
-        # base valuation (NautilusBookState) read get_mark_xrate.  The overlay
-        # never trades these pairs; it only mirrors their quotes into marks
-        # (on_quote_tick).  Pairs are discovered from the reconciled cache (loaded
-        # by the venue's instrument provider in live, fed as data in backtest), so
-        # no broker-specific ids are constructed here (ADR-0003).
-        for instrument in self.cache.instruments():
-            if isinstance(instrument, CurrencyPair):
-                self.subscribe_quote_ticks(instrument.id)
 
         names = [s.value for s in self._sleeve_to_bundle]
         self.log.info(
@@ -403,12 +347,17 @@ class RebalanceStrategy(Strategy):
             return
         self._apply_roll_intents(self._roll_desk.on_instrument(instrument.id))
 
-    def _apply_roll_halt(self, intents: RollIntentBatch) -> bool:
+    def _apply_boot_intents(self, intents: BootIntentBatch) -> bool:
         for intent in intents:
-            if isinstance(intent, Halt):
-                self._halt_from_roll_intent(intent)
+            if self._apply_boot_intent(intent):
                 return True
         return False
+
+    def _apply_boot_intent(self, intent: BootIntent) -> bool:
+        if isinstance(intent, SubscribeQuoteTicks):
+            self.subscribe_quote_ticks(intent.instrument_id)
+            return False
+        return self._apply_roll_intent(intent)
 
     def _apply_roll_intents(self, intents: RollIntentBatch) -> bool:
         for intent in intents:

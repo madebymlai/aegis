@@ -21,6 +21,7 @@ from aegis_trader.domain.roll import (
 )
 from aegis_trader.domain.startup import StartupGate, StartupResult
 from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource
+from aegis_trader.trader.book_startup import SubscribeQuoteTicks
 from aegis_trader.trader.strategy import RebalanceStrategy
 
 
@@ -35,6 +36,8 @@ class _FakePipeline:
 
 
 class _RelayHarness:
+    _apply_boot_intents: Any = RebalanceStrategy._apply_boot_intents
+    _apply_boot_intent: Any = RebalanceStrategy._apply_boot_intent
     _apply_roll_intents: Any = RebalanceStrategy._apply_roll_intents
     _apply_roll_intent: Any = RebalanceStrategy._apply_roll_intent
     _halt_from_roll_intent: Any = RebalanceStrategy._halt_from_roll_intent
@@ -49,6 +52,7 @@ class _RelayHarness:
         self.unsubscribed: list[object] = []
         self.requested_instruments: list[InstrumentId] = []
         self.requested_bars: list[dict[str, object]] = []
+        self.subscribed_quote_ticks: list[InstrumentId] = []
         self.logged_halts: list[StartupResult] = []
 
     def subscribe_bars(self, bar_type: object) -> None:
@@ -66,6 +70,10 @@ class _RelayHarness:
     def request_bars(self, bar_type: object, **kwargs: object) -> None:
         self.requested_bars.append({"bar_type": bar_type, **kwargs})
         self.applied.append(("request_bars", bar_type))
+
+    def subscribe_quote_ticks(self, instrument_id: InstrumentId) -> None:
+        self.subscribed_quote_ticks.append(instrument_id)
+        self.applied.append(("subscribe_quote_ticks", instrument_id))
 
     def _log_startup_halt(self, result: StartupResult) -> None:
         self.logged_halts.append(result)
@@ -120,6 +128,25 @@ def test_roll_relay_turns_halt_intent_into_startup_halt() -> None:
         halt_reason="venue mismatch",
     )
     assert harness.logged_halts == [harness._startup_result]
+
+
+def test_boot_relay_applies_bar_and_quote_subscriptions_in_order() -> None:
+    native = InstrumentId.from_str("VUSA.XLON")
+    quote = InstrumentId.from_str("EUR/USD.IDEALPRO")
+    harness = _RelayHarness()
+
+    halted = harness._apply_boot_intents(
+        (
+            SubscribeBars(native, "1D"),
+            SubscribeQuoteTicks(quote),
+        )
+    )
+
+    assert halted is False
+    assert harness.applied == [
+        ("subscribe", raw_bar_type(native, "1D")),
+        ("subscribe_quote_ticks", quote),
+    ]
 
 
 class _FakeMarketData:
