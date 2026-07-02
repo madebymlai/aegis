@@ -7,6 +7,8 @@ with native ``InstrumentId`` values -> Nautilus ``ParquetDataCatalog`` -> real
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 import pytest
 from aegis_data.distributions import Distribution, write_distribution_data
@@ -346,7 +348,7 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
         registry=registry,
     )
 
-    fills = [order for order in engine.cache.orders() if order.is_closed]
+    fills = _closed_orders(engine)
     assert len(fills) == 1
     assert fills[0].instrument_id == _INSTRUMENT_ID
     engine.dispose()
@@ -368,8 +370,7 @@ def test_run_book_backtest_halts_bad_cap_book_and_idles(tmp_path) -> None:
     )
     strategy = _strategy(engine)
 
-    fills = [order for order in engine.cache.orders() if order.is_closed]
-    assert fills == []
+    assert _closed_orders(engine) == []
     assert strategy.startup_result is not None
     assert strategy.startup_result.halt_gate == StartupGate.CAP_PROVENANCE
     engine.dispose()
@@ -398,9 +399,7 @@ def test_run_book_backtest_trades_a_declared_continuous_root(
         registry=registry,
     )
 
-    fills = [order for order in engine.cache.orders() if order.is_closed]
-    assert fills
-    assert {order.instrument_id for order in fills} == {_ES}
+    assert _closed_order_instrument_ids(engine) == {_ES}
     engine.dispose()
 
 
@@ -432,11 +431,9 @@ def test_run_book_backtest_preserves_attribution_across_a_roll(
         registry=registry,
     )
     strategy = _strategy(engine)
-    fills = [order for order in engine.cache.orders() if order.is_closed]
 
     assert desk.rolled is True
-    assert fills
-    assert {order.instrument_id for order in fills} == {_ES_NEW}
+    assert _closed_order_instrument_ids(engine) == {_ES_NEW}
     assert strategy.last_attribution[_TREND] == pytest.approx(0.0)
     engine.dispose()
 
@@ -457,14 +454,13 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path
         registry=registry,
     )
 
-    fills = [order for order in engine.cache.orders() if order.is_closed]
     nav = NautilusBookState(
         portfolio=engine.portfolio,
         cache=engine.cache,
         base_currency=Currency.from_str("EUR"),
         covered_instrument_ids=frozenset((_INSTRUMENT_ID, _SECOND_INSTRUMENT_ID)),
     ).nav()
-    assert len(fills) == 2
+    assert len(_closed_orders(engine)) == 2
     assert nav == pytest.approx(1_000_000.0, abs=100.0)
     engine.dispose()
 
@@ -617,6 +613,14 @@ def _bar(bar_type: BarType, day: pd.Timestamp, close: float) -> Bar:
         ts_event,
         ts_event,
     )
+
+
+def _closed_orders(engine: Any) -> list[Any]:
+    return [order for order in engine.cache.orders() if order.is_closed]
+
+
+def _closed_order_instrument_ids(engine: Any) -> set[InstrumentId]:
+    return {order.instrument_id for order in _closed_orders(engine)}
 
 
 def _strategy(engine) -> RebalanceStrategy:

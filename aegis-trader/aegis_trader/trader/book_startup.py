@@ -86,10 +86,7 @@ def bootstrap(
     )
     startup_result = pipeline.startup_check()
     if startup_result.should_halt:
-        return Halt(
-            startup_result.halt_gate or StartupGate.ACCOUNT_INTEGRITY,
-            startup_result.halt_reason or "unknown startup failure",
-        )
+        return _halt_from_startup_result(startup_result)
 
     history_start = startup_history_start(
         now,
@@ -157,3 +154,9 @@ def _halt_from(intents: RollIntentBatch) -> Halt | None:
         if isinstance(intent, Halt):
             return intent
     return None
+
+
+def _halt_from_startup_result(result: StartupResult) -> Halt:
+    if result.halt_gate is None or result.halt_reason is None:
+        raise RuntimeError("startup check halted without a gate and reason")
+    return Halt(result.halt_gate, result.halt_reason)

@@ -78,6 +78,10 @@ class _RelayHarness:
     def _log_startup_halt(self, result: StartupResult) -> None:
         self.logged_halts.append(result)
 
+    @property
+    def startup_result(self) -> StartupResult | None:
+        return self._startup_result
+
 
 def test_strategy_does_not_expose_mutable_ledger() -> None:
     exposes_mutable_ledger = hasattr(RebalanceStrategy, "sleeve_ledger")
@@ -115,19 +119,19 @@ def test_roll_relay_applies_subscription_warmup_and_roll_intents_in_order() -> N
 
 def test_roll_relay_turns_halt_intent_into_startup_halt() -> None:
     harness = _RelayHarness()
+    expected = StartupResult(
+        trading_enabled=False,
+        halt_gate=StartupGate.CONTINUOUS_IDENTITY,
+        halt_reason="venue mismatch",
+    )
 
     halted = harness._apply_roll_intents(
         (Halt(StartupGate.CONTINUOUS_IDENTITY, "venue mismatch"),)
     )
 
     assert halted is True
-    assert harness._is_halted is True
-    assert harness._startup_result == StartupResult(
-        trading_enabled=False,
-        halt_gate=StartupGate.CONTINUOUS_IDENTITY,
-        halt_reason="venue mismatch",
-    )
-    assert harness.logged_halts == [harness._startup_result]
+    assert harness.startup_result == expected
+    assert harness.logged_halts == [expected]
 
 
 def test_boot_relay_applies_bar_and_quote_subscriptions_in_order() -> None:

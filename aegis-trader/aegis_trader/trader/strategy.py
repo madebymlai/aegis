@@ -30,7 +30,7 @@ globally on failure.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, assert_never
 
 from nautilus_trader.model.data import Bar, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
@@ -389,7 +389,7 @@ class RebalanceStrategy(Strategy):
         if isinstance(intent, Halt):
             self._halt_from_roll_intent(intent)
             return True
-        return False
+        assert_never(intent)
 
     def _halt_from_roll_intent(self, intent: Halt) -> None:
         startup_result = StartupResult(
