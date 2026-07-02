@@ -58,6 +58,7 @@ from aegis_trader.data import (
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.startup import StartupResult
 from aegis_trader.domain.types import (
     OrderIntent,
     OrderSide,
@@ -69,7 +70,6 @@ from aegis_trader.trader.pipeline import (
     GateOutcome,
     RebalancePipeline,
     RebalanceSummary,
-    StartupResult,
 )
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
 

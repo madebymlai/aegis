@@ -18,12 +18,12 @@ from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
     GateOutcome,
     RebalancePipeline,
-    StartupGate,
 )
 
 _INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")

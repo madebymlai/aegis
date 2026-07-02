@@ -27,6 +27,7 @@ from aegis_trader.domain.integrity import check_account_integrity
 from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain import startup as _startup
 from aegis_trader.domain.types import OrderIntent, SleeveName, WeightDelta
 
 if TYPE_CHECKING:
@@ -51,30 +52,6 @@ class RebalanceSummary:
     num_orders: int
     gate_outcome: GateOutcome
     total_notional: float
-
-
-class StartupGate(str, Enum):
-    """Startup gate responsible for a startup halt."""
-
-    BAND_OWNERSHIP = "band_ownership"
-    CAP_PROVENANCE = "cap_provenance"
-    ACCOUNT_INTEGRITY = "account_integrity"
-
-
-@dataclass(frozen=True)
-class StartupResult:
-    """Result of the startup checks that decide whether the book may trade."""
-
-    trading_enabled: bool
-    halt_gate: StartupGate | None = None
-    halt_reason: str | None = None
-    nav: float | None = None
-    cash: float | None = None
-
-    @property
-    def should_halt(self) -> bool:
-        """Whether the Strategy must idle instead of trading."""
-        return not self.trading_enabled
 
 
 @dataclass(frozen=True)
@@ -145,7 +122,7 @@ class RebalancePipeline:
         """Last allocator-applied sleeve multipliers, for evidence/backtest seams."""
         return dict(self._last_sleeve_weights)
 
-    def startup_check(self) -> StartupResult:
+    def startup_check(self) -> _startup.StartupResult:
         """Run startup gates and return the decision as a value object."""
         band_result = self._band_ownership_startup_result()
         if band_result is not None:
@@ -155,34 +132,34 @@ class RebalancePipeline:
             return cap_result
         return self._account_integrity_startup_result()
 
-    def _band_ownership_startup_result(self) -> StartupResult | None:
+    def _band_ownership_startup_result(self) -> _startup.StartupResult | None:
         if self._instrument_band_error is None:
             return None
-        return StartupResult(
+        return _startup.StartupResult(
             trading_enabled=False,
-            halt_gate=StartupGate.BAND_OWNERSHIP,
+            halt_gate=_startup.StartupGate.BAND_OWNERSHIP,
             halt_reason=str(self._instrument_band_error),
         )
 
-    def _cap_provenance_startup_result(self) -> StartupResult | None:
+    def _cap_provenance_startup_result(self) -> _startup.StartupResult | None:
         try:
             check_cap_provenance(self._book, self._sleeve_to_bundle)
         except CapProvenanceError as exc:
-            return StartupResult(
+            return _startup.StartupResult(
                 trading_enabled=False,
-                halt_gate=StartupGate.CAP_PROVENANCE,
+                halt_gate=_startup.StartupGate.CAP_PROVENANCE,
                 halt_reason=str(exc),
             )
         return None
 
-    def _account_integrity_startup_result(self) -> StartupResult:
+    def _account_integrity_startup_result(self) -> _startup.StartupResult:
         try:
             nav = self._book_state.nav()
             cash = self._book_state.cash()
         except Exception as exc:
-            return StartupResult(
+            return _startup.StartupResult(
                 trading_enabled=False,
-                halt_gate=StartupGate.ACCOUNT_INTEGRITY,
+                halt_gate=_startup.StartupGate.ACCOUNT_INTEGRITY,
                 halt_reason=f"Failed to query book state for integrity check: {exc}",
             )
 
@@ -192,14 +169,14 @@ class RebalancePipeline:
             cache_healthy=self._book_state.is_cache_healthy(),
         )
         if not report.healthy:
-            return StartupResult(
+            return _startup.StartupResult(
                 trading_enabled=False,
-                halt_gate=StartupGate.ACCOUNT_INTEGRITY,
+                halt_gate=_startup.StartupGate.ACCOUNT_INTEGRITY,
                 halt_reason=report.reason or "Unknown integrity failure",
                 nav=nav,
                 cash=cash,
             )
-        return StartupResult(trading_enabled=True, nav=nav, cash=cash)
+        return _startup.StartupResult(trading_enabled=True, nav=nav, cash=cash)
 
     def rebalance_period(self, period: CompletedRebalancePeriod) -> RebalanceResult:
         """Run one completed-period rebalance and return orders plus summary."""
