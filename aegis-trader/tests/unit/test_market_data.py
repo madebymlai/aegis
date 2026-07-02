@@ -46,8 +46,7 @@ class TestFxRate:
 
 
 class _StubFeed:
-    """A ContinuousFeed stand-in: continuous_id + series() (the signal data) + front_contract()
-    (the real tradeable leg that sizing/execution resolve to)."""
+    """A RollDesk continuous-read stand-in."""
 
     def __init__(
         self,
@@ -59,10 +58,14 @@ class _StubFeed:
         self._frame = frame
         self._front = front if front is not None else continuous_id
 
-    def series(self) -> pd.DataFrame:
+    def series(self, instrument_id: InstrumentId) -> pd.DataFrame | None:
+        if instrument_id != self.continuous_id:
+            return None
         return self._frame
 
-    def front_contract(self) -> InstrumentId:
+    def front_leg(self, instrument_id: InstrumentId) -> InstrumentId | None:
+        if instrument_id != self.continuous_id:
+            return None
         return self._front
 
 
@@ -117,7 +120,10 @@ class TestContinuousReads:
         honouring the one-bar-lag/no-look-ahead contract: the trigger bar at the period edge
         is excluded."""
         es = InstrumentId.from_str("ES.XCME")
-        md = NautilusMarketData(cache=Cache(), feeds=(_StubFeed(es, _ohlcv_frame([100.0, 101.0, 102.0])),))
+        md = NautilusMarketData(
+            cache=Cache(),
+            continuous=_StubFeed(es, _ohlcv_frame([100.0, 101.0, 102.0])),
+        )
 
         bars = md.lookback_window(es, "1D", period=1, period_ns=_DAY_NS, limit=2)
 
@@ -134,7 +140,10 @@ class TestContinuousReads:
         cache.add_bars(
             [_bar(bar_type_, 0, 100.0), _bar(bar_type_, _DAY_NS, 101.0), _bar(bar_type_, 2 * _DAY_NS, 102.0)]
         )
-        md = NautilusMarketData(cache=cache, feeds=(_StubFeed(es, _ohlcv_frame([1.0, 2.0, 3.0])),))
+        md = NautilusMarketData(
+            cache=cache,
+            continuous=_StubFeed(es, _ohlcv_frame([1.0, 2.0, 3.0])),
+        )
 
         bars = md.lookback_window(raw_id, "1D", period=1, period_ns=_DAY_NS, limit=2)
 
@@ -142,7 +151,10 @@ class TestContinuousReads:
 
     def test_has_bar_in_period_reads_the_feed_for_a_continuous_root(self):
         es = InstrumentId.from_str("ES.XCME")
-        md = NautilusMarketData(cache=Cache(), feeds=(_StubFeed(es, _ohlcv_frame([100.0, 101.0])),))
+        md = NautilusMarketData(
+            cache=Cache(),
+            continuous=_StubFeed(es, _ohlcv_frame([100.0, 101.0])),
+        )
 
         assert md.has_bar_in_period(es, "1D", period=1, period_ns=_DAY_NS)
         assert not md.has_bar_in_period(es, "1D", period=5, period_ns=_DAY_NS)
@@ -154,7 +166,10 @@ class TestContinuousReads:
         front = InstrumentId.from_str("ESM4.XCME")
         cache = Cache()
         cache.add_instrument(_equity(front))
-        md = NautilusMarketData(cache=cache, feeds=(_StubFeed(es, _ohlcv_frame([100.0]), front),))
+        md = NautilusMarketData(
+            cache=cache,
+            continuous=_StubFeed(es, _ohlcv_frame([100.0]), front),
+        )
 
         assert md.instrument_sizing(es) == md.instrument_sizing(front)
         assert md.instrument_sizing(es) is not None
@@ -166,7 +181,10 @@ class TestContinuousReads:
         front = InstrumentId.from_str("ESH4.XCME")
         cache = Cache()
         cache.add_instrument(_future(front, multiplier=50))
-        md = NautilusMarketData(cache=cache, feeds=(_StubFeed(es, _ohlcv_frame([100.0]), front),))
+        md = NautilusMarketData(
+            cache=cache,
+            continuous=_StubFeed(es, _ohlcv_frame([100.0]), front),
+        )
 
         sizing = md.instrument_sizing(es)
 
@@ -178,7 +196,10 @@ class TestContinuousReads:
         front = InstrumentId.from_str("ESM4.XCME")
         cache = Cache()
         cache.add_instrument(_equity(front))
-        md = NautilusMarketData(cache=cache, feeds=(_StubFeed(es, _ohlcv_frame([100.0]), front),))
+        md = NautilusMarketData(
+            cache=cache,
+            continuous=_StubFeed(es, _ohlcv_frame([100.0]), front),
+        )
 
         qty = md.make_quantity(es, 7.0)
 
@@ -191,7 +212,10 @@ class TestContinuousReads:
         es = InstrumentId.from_str("ES.XCME")
         front = InstrumentId.from_str("ESM4.XCME")
         native = InstrumentId.from_str("VUSA.XLON")
-        md = NautilusMarketData(cache=Cache(), feeds=(_StubFeed(es, _ohlcv_frame([100.0]), front),))
+        md = NautilusMarketData(
+            cache=Cache(),
+            continuous=_StubFeed(es, _ohlcv_frame([100.0]), front),
+        )
 
         assert md.execution_instrument_id(es) == front
         assert md.execution_instrument_id(native) == native

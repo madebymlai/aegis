@@ -12,6 +12,7 @@ class StartupGate(str, Enum):
     BAND_OWNERSHIP = "band_ownership"
     CAP_PROVENANCE = "cap_provenance"
     ACCOUNT_INTEGRITY = "account_integrity"
+    CONTINUOUS_IDENTITY = "continuous_identity"
 
 
 @dataclass(frozen=True)

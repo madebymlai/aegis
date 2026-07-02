@@ -16,10 +16,16 @@ from aegis_trader.data.bar_type import (
     timeframe_to_ns,
 )
 from aegis_trader.data.continuous_feed import ContinuousFeed
-from aegis_trader.data.market_data import MarketBar, MarketDataPort, NautilusMarketData
+from aegis_trader.data.market_data import (
+    ContinuousReadPort,
+    MarketBar,
+    MarketDataPort,
+    NautilusMarketData,
+)
 
 __all__ = [
     "ContinuousFeed",
+    "ContinuousReadPort",
     "MarketBar",
     "MarketDataPort",
     "MixedTimeframeError",

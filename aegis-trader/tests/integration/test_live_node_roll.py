@@ -38,6 +38,13 @@ from nautilus_trader.test_kit.providers import TestInstrumentProvider
 from aegis_data.rebasing import Rebasing, spread_rebasing
 from aegis_trader.data import raw_bar_type
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.roll import (
+    RequestInstrument,
+    RollEvent,
+    RollIntentBatch,
+    SubscribeBars,
+    UnsubscribeBars,
+)
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.pipeline import RebalancePipeline
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
@@ -85,23 +92,40 @@ class _RecordingPipeline:
         self._ledger = ledger
 
 
-class _RollingFeed:
-    """A feed that advances its causal front to ``roll_to`` on the next bar (real causal detection is
-    unit-tested separately); exposes the front + the uniform roll Δ the strategy re-bases by."""
+class _RollingDesk:
+    """A Roll Desk stand-in that emits the forced-roll intent batch."""
 
     def __init__(self, continuous_id: InstrumentId, front: InstrumentId, roll_to: InstrumentId) -> None:
-        self.continuous_id = continuous_id
+        self._continuous_id = continuous_id
         self._front = front
         self._roll_to = roll_to
+        self._pending: set[InstrumentId] = set()
 
-    def front_contract(self) -> InstrumentId:
-        return self._front
+    def start(self, **_kwargs: object) -> tuple[SubscribeBars]:
+        return (SubscribeBars(self._front, "1D"),)
 
-    def on_bar(self, _bar: object) -> None:
+    def on_bar(self, bar: object) -> RollIntentBatch:
+        if bar.bar_type.instrument_id != self._front:  # type: ignore[attr-defined]
+            return ()
+        old_front = self._front
         self._front = self._roll_to
+        self._pending.add(self._front)
+        return (
+            UnsubscribeBars(old_front, "1D"),
+            RequestInstrument(self._front),
+            RollEvent(self._continuous_id, spread_rebasing(_SPREAD)),
+        )
 
-    def last_rebasing(self) -> Rebasing:
-        return spread_rebasing(_SPREAD)
+    def on_instrument(self, instrument_id: InstrumentId) -> RollIntentBatch:
+        if instrument_id not in self._pending:
+            return ()
+        self._pending.discard(instrument_id)
+        return (SubscribeBars(instrument_id, "1D"),)
+
+    def front_leg(self, instrument_id: InstrumentId) -> InstrumentId | None:
+        if instrument_id != self._continuous_id:
+            return None
+        return self._front
 
 
 class _RollHarnessStrategy(RebalanceStrategy):
@@ -147,18 +171,19 @@ async def test_forced_roll_drives_request_instrument_on_instrument_subscribe_on_
     ledger = _RecordingLedger()
     pipeline = _RecordingPipeline(ledger)
     strategy._pipeline = pipeline  # type: ignore[assignment]
-    strategy._install_feeds([_RollingFeed(_CONT, _OLD, _NEW)])  # type: ignore[list-item]
+    desk = _RollingDesk(_CONT, _OLD, _NEW)
+    strategy._roll_desk = desk  # type: ignore[assignment]
 
     engine.start()
     strategy.start()
     try:
         await eventually(lambda: engine.is_running)
         # live startup state: the current front leg is already subscribed (it is in the cache)
-        strategy._ensure_leg_subscribed(_OLD)
+        strategy._apply_roll_intents(desk.start())
         await eventually(lambda: raw_bar_type(_OLD, "1D") in client.subscribed)
 
-        # a front-leg bar advances the feed's causal front → the strategy's roll handler fires
-        strategy._drive_feed(_front_leg_bar(_OLD))
+        # a front-leg bar advances the desk's causal front → the relay applies the roll batch
+        strategy._apply_roll_intents(desk.on_bar(_front_leg_bar(_OLD)))
 
         # the new front is loaded on demand then subscribed in on_instrument — the live-async seam
         await eventually(lambda: raw_bar_type(_NEW, "1D") in client.subscribed, timeout=5.0)
@@ -167,7 +192,7 @@ async def test_forced_roll_drives_request_instrument_on_instrument_subscribe_on_
         assert cache.instrument(_NEW) is not None  # engine's reply loaded it into the cache
         assert client.unsubscribed == [raw_bar_type(_OLD, "1D")]  # old front execution sub dropped
         assert ledger.rebased == [{_CONT: spread_rebasing(_SPREAD)}]  # ledger carried into new basis
-        assert set(strategy._leg_to_feed) == {_NEW}  # routing now follows the new front
+        assert desk.front_leg(_CONT) == _NEW  # routing now follows the new front
     finally:
         strategy.stop()
         engine.stop()

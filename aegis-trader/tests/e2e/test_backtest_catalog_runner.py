@@ -7,9 +7,6 @@ with native ``InstrumentId`` values -> Nautilus ``ParquetDataCatalog`` -> real
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import cast
-
 import pandas as pd
 import pytest
 from aegis_data.distributions import Distribution, write_distribution_data
@@ -38,7 +35,7 @@ from aegis_trader.backtest import (
     run_book_backtest,
 )
 from aegis_trader.bundles.stub import StubBundleRegistry
-from aegis_trader.data.continuous_feed import ContinuousFeed
+from aegis_trader.domain.roll import RollEvent, SubscribeBars, UnsubscribeBars
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.portfolio import NautilusBookState
 from aegis_trader.trader.strategy import RebalanceStrategy
@@ -203,25 +200,31 @@ class _ContinuousRootBundle(ExecutionBundle):
         return weights
 
 
-class _StaticContinuousFeed:
+class _StaticContinuousDesk:
     def __init__(self, frame: pd.DataFrame) -> None:
         self._frame = frame
 
-    @property
-    def continuous_id(self) -> InstrumentId:
-        return _ES
+    def start(self, **_kwargs: object) -> tuple[object, ...]:
+        return (SubscribeBars(_ES, "1D"),)
 
-    def series(self) -> pd.DataFrame:
+    def series(self, instrument_id: InstrumentId) -> pd.DataFrame | None:
+        if instrument_id != _ES:
+            return None
         return self._frame
 
-    def front_contract(self) -> InstrumentId:
+    def front_leg(self, instrument_id: InstrumentId) -> InstrumentId | None:
+        if instrument_id != _ES:
+            return None
         return _ES
 
-    def on_bar(self, _bar: Bar) -> None:
-        return None
+    def on_bar(self, _bar: Bar) -> tuple[object, ...]:
+        return ()
+
+    def on_instrument(self, _instrument_id: InstrumentId) -> tuple[object, ...]:
+        return ()
 
 
-class _RollingContinuousFeed:
+class _RollingContinuousDesk:
     def __init__(
         self,
         frame: pd.DataFrame,
@@ -236,29 +239,37 @@ class _RollingContinuousFeed:
         self._rebasing = rebasing
         self._rolled = False
 
-    @property
-    def continuous_id(self) -> InstrumentId:
-        return _ES
+    def start(self, **_kwargs: object) -> tuple[object, ...]:
+        return (SubscribeBars(self._front, "1D"),)
 
-    def series(self) -> pd.DataFrame:
+    def series(self, instrument_id: InstrumentId) -> pd.DataFrame | None:
+        if instrument_id != _ES:
+            return None
         return self._frame
 
-    def front_contract(self) -> InstrumentId:
+    def front_leg(self, instrument_id: InstrumentId) -> InstrumentId | None:
+        if instrument_id != _ES:
+            return None
         return self._front
 
-    def on_bar(self, _bar: Bar) -> None:
-        if self._rolled:
-            return
+    def on_bar(self, bar: Bar) -> tuple[object, ...]:
+        if self._rolled or bar.bar_type.instrument_id != self._front:
+            return ()
+        old_front = self._front
         self._front = self._roll_to
         self._rolled = True
+        return (
+            UnsubscribeBars(old_front, "1D"),
+            SubscribeBars(self._front, "1D"),
+            RollEvent(continuous_id=_ES, rebasing=self._rebasing),
+        )
+
+    def on_instrument(self, _instrument_id: InstrumentId) -> tuple[object, ...]:
+        return ()
 
     @property
     def rolled(self) -> bool:
         return self._rolled
-
-    def last_rebasing(self) -> Rebasing:
-        return self._rebasing
-
 
 class _ContinuousRootDataSource:
     def __init__(self, frame: pd.DataFrame) -> None:
@@ -335,14 +346,15 @@ def test_run_book_backtest_trades_a_declared_continuous_root(
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     frame = _ohlcv_frame([100.0, 101.0, 102.0, 103.0])
-    feed = _StaticContinuousFeed(frame)
+    desk = _StaticContinuousDesk(frame)
 
-    def install_static_feed(
-        self: RebalanceStrategy, _book_timeframe: str
-    ) -> None:
-        self._install_feeds(cast(Iterable[ContinuousFeed], (feed,)))
+    def build_static_desk(
+        self: RebalanceStrategy, _book_timeframe: str, *, history_start: object
+    ) -> _StaticContinuousDesk:
+        _ = (self, history_start)
+        return desk
 
-    monkeypatch.setattr(RebalanceStrategy, "_init_feeds", install_static_feed)
+    monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_static_desk)
     registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
 
     engine = run_book_backtest(
@@ -365,19 +377,20 @@ def test_run_book_backtest_preserves_attribution_across_a_roll(
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     frame = _ohlcv_frame([100.0, 110.0, 120.0, 130.0, 140.0])
-    feed = _RollingContinuousFeed(
+    desk = _RollingContinuousDesk(
         frame,
         front=_ES_OLD,
         roll_to=_ES_NEW,
         rebasing=spread_rebasing(50.0),
     )
 
-    def install_rolling_feed(
-        self: RebalanceStrategy, _book_timeframe: str
-    ) -> None:
-        self._install_feeds(cast(Iterable[ContinuousFeed], (feed,)))
+    def build_rolling_desk(
+        self: RebalanceStrategy, _book_timeframe: str, *, history_start: object
+    ) -> _RollingContinuousDesk:
+        _ = (self, history_start)
+        return desk
 
-    monkeypatch.setattr(RebalanceStrategy, "_init_feeds", install_rolling_feed)
+    monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_rolling_desk)
     registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
 
     engine = run_book_backtest(
@@ -390,7 +403,7 @@ def test_run_book_backtest_preserves_attribution_across_a_roll(
     strategy = _strategy(engine)
     fills = [order for order in engine.cache.orders() if order.is_closed]
 
-    assert feed.rolled is True
+    assert desk.rolled is True
     assert fills
     assert {order.instrument_id for order in fills} == {_ES_NEW}
     assert strategy.last_attribution[_TREND] == pytest.approx(0.0)
