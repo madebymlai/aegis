@@ -27,6 +27,10 @@ _ESM6 = InstrumentId.from_str("ESM6.XCME")
 _ESU6 = InstrumentId.from_str("ESU6.XCME")
 _ES = InstrumentId.from_str("ES.XCME")
 _START, _END = "2026-03-02", "2026-06-23"
+# A pre-roll warmup end: ESM6 is still the liquid front here (the continuous
+# frame stays empty until the ESM6->ESU6 roll), so the incremental replay below
+# folds real bars through that roll via on_bar.
+_PRE_ROLL = "2026-06-05"
 
 _PAM6 = InstrumentId.from_str("PAM6.XNYM")
 _PAU6 = InstrumentId.from_str("PAU6.XNYM")
@@ -141,6 +145,53 @@ def test_model_offset_zero_append_recovers_research_on_real_data(tmp_path) -> No
 
     assert oracle_model.continuous_id == _ES
     pd.testing.assert_frame_equal(model.frame, oracle)
+
+
+def test_incremental_replay_across_the_roll_holds_additive_invariance(
+    tmp_path,
+) -> None:
+    warm = _warm_catalog(tmp_path, (_ESM6, _ESU6), _START, _END)
+    oracle = ContinuousContractModel(warm, "ES", start=_START, timeframe="1D")
+    oracle.materialize(end=_END)
+    oracle_last = oracle.frame.index[-1]
+
+    # Start pre-roll (front ESM6, empty frame) and fold every front-leg bar in
+    # the one-shot span through on_bar, crossing the ESM6->ESU6 roll.
+    model = ContinuousContractModel(warm, "ES", start=_START, timeframe="1D")
+    model.materialize(end=_PRE_ROLL)
+    assert model.front_leg == _ESM6
+
+    lower = pd.Timestamp(_PRE_ROLL)
+    bars = sorted(
+        (
+            bar
+            for leg in (_ESM6, _ESU6)
+            for bar in _front_leg_bars(warm, leg, _START, _END)
+        ),
+        key=lambda bar: bar.ts_event,
+    )
+    rolled = False
+    for bar in bars:
+        bucket = _bar_bucket_close(bar)
+        if not lower < bucket <= oracle_last:
+            continue
+        index = model.frame.index
+        if len(index) and bucket <= index[-1]:
+            continue
+        front_before = model.front_leg
+        model.on_bar(bar)
+        rolled = rolled or model.front_leg != front_before
+
+    assert rolled
+    assert model.front_leg == _ESU6
+    assert oracle.continuous_id == _ES
+
+    # Additive invariance: the incrementally folded series is byte-identical to
+    # the one-shot series, boundary buckets included. The roll re-materialize is
+    # bounded by the trigger bar's bucket close (the walk only emits a bucket a
+    # later bar has closed) and a new-front trigger is folded back in at offset
+    # zero, so no roll-boundary row is dropped (aegis-rd-y7fd).
+    pd.testing.assert_frame_equal(model.frame, oracle.frame)
 
 
 def test_thin_root_extends_the_model_onto_the_early_liquidity_leader(tmp_path) -> None:

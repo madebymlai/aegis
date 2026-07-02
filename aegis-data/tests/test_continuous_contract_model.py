@@ -134,6 +134,34 @@ def _materialized_two_roll_model() -> ContinuousContractModel:
     return model
 
 
+def _replayed_across_the_roll(
+    tie_order: tuple[InstrumentId, ...],
+) -> tuple[ContinuousContractModel, pd.DataFrame]:
+    """Warm a model pre-roll, then fold both legs' bars through ``on_bar`` across
+    the ESH4->ESM4 roll, mirroring the live incremental-replay seam. ``tie_order``
+    decides which leg's bar arrives first on a shared day — either leg's bar can
+    be the roll trigger in a live stream."""
+    port, native = _es_port()
+    oracle = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    oracle.materialize(end="2024-04-30")
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    model.materialize(end="2024-02-15")
+    lower = pd.Timestamp("2024-02-15")
+    bars = sorted(
+        (bar for leg in tie_order for bar in native[leg]),
+        key=lambda bar: bar.ts_event,
+    )
+    for bar in bars:
+        bucket = pd.Timestamp(bar.ts_init, tz="UTC").ceil("1D").tz_localize(None)
+        if not lower < bucket <= oracle.frame.index[-1]:
+            continue
+        index = model.frame.index
+        if len(index) and bucket <= index[-1]:
+            continue
+        model.on_bar(bar)
+    return model, oracle.frame
+
+
 def _live_cache_with_raw_bar() -> Cache:
     live_cache = Cache()
     live_cache.add_instrument(_future("ESH4.XCME", "2024-03-15"))
@@ -262,6 +290,22 @@ def test_roll_rematerializes_prior_closes_in_the_new_basis() -> None:
     )
 
     pd.testing.assert_series_equal(model.frame.loc[expected.index, "Close"], expected)
+
+
+def test_incremental_replay_across_the_roll_matches_the_one_shot_series() -> None:
+    # The old front's bar triggers the roll; the new front's same-day bar
+    # arrives after and closes the boundary bucket.
+    model, oracle = _replayed_across_the_roll((_ESH4, _ESM4))
+
+    pd.testing.assert_frame_equal(model.frame, oracle)
+
+
+def test_replay_where_the_new_front_bar_triggers_the_roll_matches_the_one_shot() -> None:
+    # The new front's bar itself triggers the roll — the boundary bucket can only
+    # come from folding the trigger bar back in after the re-materialize.
+    model, oracle = _replayed_across_the_roll((_ESM4, _ESH4))
+
+    pd.testing.assert_frame_equal(model.frame, oracle)
 
 
 def test_materialize_does_not_write_continuous_bars_into_a_live_cache() -> None:

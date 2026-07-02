@@ -125,19 +125,34 @@ class ContinuousContractModel:
         bar_day = pd.Timestamp(bar.ts_event, tz="UTC").date()
         front_after = self.front_leg_as_of(bar_day)
         if front_after != front_before:
-            self.materialize(end=bar_day.isoformat())
-            self._last_rebasing = self._materialized(self._future).rebasing_for_roll(
-                front_before, self.front_leg
-            )
+            self._roll_across(bar, front_before)
             return
         if bar.bar_type.instrument_id != front_before:
             return
+        self._frame = pd.concat([series, self._closed_row(bar)])
+
+    def _roll_across(self, bar: Bar, front_before: InstrumentId) -> None:
+        """Re-materialize across the roll ``bar`` triggered, without dropping the
+        boundary buckets.  The walk only emits a bucket once a later bar closes it,
+        so it is bounded by the trigger's bucket close — reaching the last complete
+        bucket — and a trigger owned by the new front is folded back in at offset
+        zero, where its raw bar equals the adjusted bar."""
+        self.materialize(end=self._bucket_close(bar).isoformat())
+        self._last_rebasing = self._materialized(self._future).rebasing_for_roll(
+            front_before, self.front_leg
+        )
+        if bar.bar_type.instrument_id == self.front_leg:
+            self._frame = pd.concat([self.frame, self._closed_row(bar)])
+
+    def _closed_row(self, bar: Bar) -> pd.DataFrame:
         row = bars_to_ohlcv([bar])
-        close_stamp = (
+        row.index = pd.DatetimeIndex([self._bucket_close(bar)])
+        return row
+
+    def _bucket_close(self, bar: Bar) -> pd.Timestamp:
+        return (
             pd.Timestamp(bar.ts_init, tz="UTC").ceil(self._timeframe).tz_localize(None)
         )
-        row.index = pd.DatetimeIndex([close_stamp])
-        self._frame = pd.concat([series, row])
 
     def _materialize_frame(self, end: str) -> tuple[ContinuousFuture, pd.DataFrame]:
         catalog = self._port.catalog
