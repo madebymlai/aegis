@@ -82,6 +82,50 @@ def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
     assert call["end_date_time"] == datetime(2024, 3, 1)
 
 
+def test_request_bars_can_pass_expired_future_contracts() -> None:
+    sentinel_bars = [object()]
+    fake = _FakeHistoricClient(bars=sentinel_bars, instruments=[])
+    provider = IbkrHistoricalProvider(
+        include_expired_futures=True,
+        client_factory=lambda: fake,
+    )
+    bar_type = raw_bar_type(InstrumentId.from_str("ESM6.XCME"), "1D")
+
+    out = provider.request_bars(
+        bar_type,
+        start=pd.Timestamp("2026-03-01", tz="UTC"),
+        end=pd.Timestamp("2026-06-23", tz="UTC"),
+    )
+
+    assert list(out) == sentinel_bars
+    call = fake.bar_calls[0]
+    assert "instrument_ids" not in call
+    contract = call["contracts"][0]
+    assert contract.secType == "FUT"
+    assert contract.exchange == "CME"
+    assert contract.localSymbol == "ESM6"
+    assert contract.includeExpired is True
+
+
+def test_request_bars_keeps_non_futures_on_instrument_ids_when_expired_enabled() -> None:
+    fake = _FakeHistoricClient(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(
+        include_expired_futures=True,
+        client_factory=lambda: fake,
+    )
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.XNAS"), "1D")
+
+    provider.request_bars(
+        bar_type,
+        start=pd.Timestamp("2024-01-01", tz="UTC"),
+        end=pd.Timestamp("2024-02-01", tz="UTC"),
+    )
+
+    call = fake.bar_calls[0]
+    assert call["instrument_ids"] == ["AAPL.XNAS"]
+    assert "contracts" not in call
+
+
 def test_request_bars_connects_and_closes_around_the_call() -> None:
     fake = _FakeHistoricClient(bars=[], instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
@@ -232,6 +276,54 @@ def test_seed_writes_all_definitions_when_none_present() -> None:
 
     assert fake.instrument_calls[0]["instrument_ids"] == ["AAPL.NASDAQ", "VUSA.XLON"]
     assert catalog.writes == [fetched]
+
+
+def test_request_instruments_can_pass_expired_future_contracts() -> None:
+    esm6 = InstrumentId.from_str("ESM6.XCME")
+    fetched = [_Instr(esm6)]
+    fake = _FakeHistoricClient(bars=[], instruments=fetched)
+    provider = IbkrHistoricalProvider(
+        include_expired_futures=True,
+        client_factory=lambda: fake,
+    )
+
+    out = provider.request_instruments((esm6,))
+
+    assert list(out) == fetched
+    call = fake.instrument_calls[0]
+    assert "instrument_ids" not in call
+    contract = call["contracts"][0]
+    assert contract.secType == "FUT"
+    assert contract.exchange == "CME"
+    assert contract.localSymbol == "ESM6"
+    assert contract.includeExpired is True
+
+
+def test_request_instruments_splits_expired_futures_from_plain_ids() -> None:
+    esm6 = InstrumentId.from_str("ESM6.XCME")
+    aapl = InstrumentId.from_str("AAPL.XNAS")
+
+    class _SplitFake(_FakeHistoricClient):
+        async def request_instruments(self, **kwargs: Any) -> list[Any]:
+            self.instrument_calls.append(kwargs)
+            if "instrument_ids" in kwargs:
+                return [_Instr(aapl)]
+            return [_Instr(esm6)]
+
+    fake = _SplitFake(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(
+        include_expired_futures=True,
+        client_factory=lambda: fake,
+    )
+
+    out = provider.request_instruments((aapl, esm6))
+
+    assert [instrument.id for instrument in out] == [aapl, esm6]
+    assert fake.instrument_calls[0]["instrument_ids"] == ["AAPL.XNAS"]
+    contract = fake.instrument_calls[1]["contracts"][0]
+    assert contract.secType == "FUT"
+    assert contract.localSymbol == "ESM6"
+    assert contract.includeExpired is True
 
 
 def test_seed_fetches_only_the_missing_definitions() -> None:

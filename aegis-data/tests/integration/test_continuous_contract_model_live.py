@@ -46,6 +46,7 @@ def _warm_catalog(
         port=int(_GATEWAY_PORT),  # type: ignore[arg-type]
         client_id=7,
         market_data_type="DELAYED_FROZEN",
+        include_expired_futures=True,
     )
     path = tmp_path / "catalog"
     catalog = parquet_data_catalog(path)

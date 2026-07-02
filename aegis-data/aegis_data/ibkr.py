@@ -107,6 +107,7 @@ class IbkrHistoricalProvider:
     market_data_type: str = IB_MARKET_DATA_TYPE
     use_rth: bool = True
     timeout: int = IB_REQUEST_TIMEOUT
+    include_expired_futures: bool = False
     client_factory: Callable[[], Any] | None = None
     adjusted_last_client_factory: Callable[[], Any] | None = None
 
@@ -125,6 +126,12 @@ class IbkrHistoricalProvider:
         end: pd.Timestamp,
     ) -> Sequence[Bar]:
         """The vendor-aggregated bars for *bar_type* over ``[start, end]``."""
+        contract = self._expired_future_contract(bar_type.instrument_id)
+        instrument_kwargs = (
+            {"contracts": [contract]}
+            if contract is not None
+            else {"instrument_ids": [bar_type.instrument_id.value]}
+        )
         return self._request(
             f"historical bars {bar_type}",
             lambda session: session.request_bars(
@@ -132,9 +139,9 @@ class IbkrHistoricalProvider:
                 start_date_time=_naive_utc(start),
                 end_date_time=_naive_utc(end),
                 tz_name="UTC",
-                instrument_ids=[bar_type.instrument_id.value],
                 use_rth=self.use_rth,
                 timeout=self.timeout,
+                **instrument_kwargs,
             ),
         )
 
@@ -142,14 +149,11 @@ class IbkrHistoricalProvider:
         self, instrument_ids: Sequence[InstrumentId]
     ) -> Sequence[Instrument]:
         """The IBKR instrument definitions for *instrument_ids* (Step-1 write)."""
+        plain_ids, contracts = self._instrument_request_parts(instrument_ids)
         return self._request(
             "instrument definitions "
             f"[{', '.join(instrument_id.value for instrument_id in instrument_ids)}]",
-            lambda session: session.request_instruments(
-                instrument_ids=[
-                    instrument_id.value for instrument_id in instrument_ids
-                ],
-            ),
+            lambda session: _request_instrument_parts(session, plain_ids, contracts),
         )
 
     def request_adjusted_last(
@@ -258,6 +262,52 @@ class IbkrHistoricalProvider:
             client_id=self.client_id + 7_000 + next(_RAW_CLIENT_ID_SEQUENCE),
             use_rth=self.use_rth,
         )
+
+    def _instrument_request_parts(
+        self, instrument_ids: Sequence[InstrumentId]
+    ) -> tuple[list[str], list[Any]]:
+        plain_ids: list[str] = []
+        contracts: list[Any] = []
+        for instrument_id in instrument_ids:
+            contract = self._expired_future_contract(instrument_id)
+            if contract is None:
+                plain_ids.append(instrument_id.value)
+            else:
+                contracts.append(contract)
+        return plain_ids, contracts
+
+    def _expired_future_contract(self, instrument_id: InstrumentId) -> Any | None:
+        if not self.include_expired_futures:
+            return None
+        return _expired_future_contract(instrument_id)
+
+
+async def _request_instrument_parts(
+    session: Any, plain_ids: Sequence[str], contracts: Sequence[Any]
+) -> list[Instrument]:
+    instruments: list[Instrument] = []
+    if plain_ids:
+        instruments.extend(await session.request_instruments(instrument_ids=list(plain_ids)))
+    if contracts:
+        instruments.extend(await session.request_instruments(contracts=list(contracts)))
+    return instruments
+
+
+def _expired_future_contract(instrument_id: InstrumentId) -> Any | None:
+    from nautilus_trader.adapters.interactive_brokers.parsing.instruments import (
+        instrument_id_to_ib_contract,
+        possible_exchanges_for_venue,
+    )
+
+    for exchange in possible_exchanges_for_venue(instrument_id.venue.value):
+        try:
+            contract = instrument_id_to_ib_contract(instrument_id, exchange)
+        except ValueError:
+            continue
+        if contract.secType == "FUT":
+            return msgspec.structs.replace(contract, includeExpired=True)
+        return None
+    return None
 
 
 class _HistoricSession:
