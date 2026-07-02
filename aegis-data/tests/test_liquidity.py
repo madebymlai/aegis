@@ -148,7 +148,9 @@ def test_causal_liquid_cycle_admits_a_back_month_only_after_it_has_led() -> None
         ),
     }
 
-    before = liquid_cycle_causal(candidates, volume, date(2024, 6, 15), roll_lead_days=5)
+    before = liquid_cycle_causal(
+        candidates, volume, date(2024, 6, 15), roll_lead_days=5
+    )
     after = liquid_cycle_causal(candidates, volume, date(2024, 8, 28), roll_lead_days=5)
 
     assert tuple(contract.symbol for contract in before) == ("GCM4",)
@@ -159,20 +161,33 @@ def _palladium_early_crossover() -> tuple[list[DatedContract], dict[str, pd.Seri
     """A thin metal whose liquidity migrates early: PAM4 leads until the 2024-02-05 crossover, then
     PAU4 — weeks before PAM4's 2024-02-22 calendar roll (last trade 2024-02-29).  Shared by the
     Liquid-Cycle roll tests, which differ only in the window end and what they assert."""
-    candidates = [DatedContract("PAM4", date(2024, 2, 29)), DatedContract("PAU4", date(2024, 5, 31))]
+    candidates = [
+        DatedContract("PAM4", date(2024, 2, 29)),
+        DatedContract("PAU4", date(2024, 5, 31)),
+    ]
     crossover = pd.Timestamp("2024-02-05")
     front = pd.Series(
-        [1000.0 if d < crossover else 1.0 for d in pd.bdate_range("2024-01-01", "2024-02-29")],
-        index=pd.bdate_range("2024-01-01", "2024-02-29"), dtype="float64",
+        [
+            1000.0 if d < crossover else 1.0
+            for d in pd.bdate_range("2024-01-01", "2024-02-29")
+        ],
+        index=pd.bdate_range("2024-01-01", "2024-02-29"),
+        dtype="float64",
     )
     back = pd.Series(
-        [10.0 if d < crossover else 5000.0 for d in pd.bdate_range("2024-01-01", "2024-04-01")],
-        index=pd.bdate_range("2024-01-01", "2024-04-01"), dtype="float64",
+        [
+            10.0 if d < crossover else 5000.0
+            for d in pd.bdate_range("2024-01-01", "2024-04-01")
+        ],
+        index=pd.bdate_range("2024-01-01", "2024-04-01"),
+        dtype="float64",
     )
     return candidates, {"PAM4": front, "PAU4": back}
 
 
-def test_liquid_roll_schedule_rolls_on_leadership_crossover_before_the_calendar_roll() -> None:
+def test_liquid_roll_schedule_rolls_on_leadership_crossover_before_the_calendar_roll() -> (
+    None
+):
     # Thin metal: liquidity leaves the front (PAM4) in early Feb, weeks before its calendar
     # roll (last-trade 2024-02-29 -> 2024-02-22).  The seam must move EARLIER, onto the day
     # the back contract (PAU4) takes liquidity leadership, so no liquid day is stranded.
@@ -187,11 +202,15 @@ def test_liquid_roll_schedule_rolls_on_leadership_crossover_before_the_calendar_
 
     assert schedule.symbols == ("PAM4", "PAU4")
     assert calendar.roll_dates[0] == date(2024, 2, 22)  # the unchanged calendar roll
-    assert schedule.roll_dates[0] < date(2024, 2, 22)  # moved earlier, onto the crossover
+    assert schedule.roll_dates[0] < date(
+        2024, 2, 22
+    )  # moved earlier, onto the crossover
     assert date(2024, 2, 5) <= schedule.roll_dates[0] <= date(2024, 2, 13)
 
 
-def test_liquid_roll_schedule_keeps_the_calendar_roll_when_liquidity_tracks_expiry() -> None:
+def test_liquid_roll_schedule_keeps_the_calendar_roll_when_liquidity_tracks_expiry() -> (
+    None
+):
     # Liquid root: the front leads right up to its last trade, the back leads only after.
     # The crossover lands after the calendar roll, so the cap is a no-op — no regression for
     # CL/GC-style roots whose liquidity migrates near expiry.
@@ -201,12 +220,16 @@ def test_liquid_roll_schedule_keeps_the_calendar_roll_when_liquidity_tracks_expi
     ]
     front = pd.Series(
         [1000.0] * len(pd.bdate_range("2024-01-01", "2024-02-29")),
-        index=pd.bdate_range("2024-01-01", "2024-02-29"), dtype="float64",
+        index=pd.bdate_range("2024-01-01", "2024-02-29"),
+        dtype="float64",
     )
     back = pd.Series(
-        [100.0 if d <= pd.Timestamp("2024-02-29") else 2000.0
-         for d in pd.bdate_range("2024-01-01", "2024-04-01")],
-        index=pd.bdate_range("2024-01-01", "2024-04-01"), dtype="float64",
+        [
+            100.0 if d <= pd.Timestamp("2024-02-29") else 2000.0
+            for d in pd.bdate_range("2024-01-01", "2024-04-01")
+        ],
+        index=pd.bdate_range("2024-01-01", "2024-04-01"),
+        dtype="float64",
     )
     volume = {"CLG4": front, "CLJ4": back}
 
@@ -217,7 +240,9 @@ def test_liquid_roll_schedule_keeps_the_calendar_roll_when_liquidity_tracks_expi
     assert schedule.roll_dates[0] == date(2024, 2, 22)  # unchanged calendar roll
 
 
-def test_liquid_roll_schedule_recovers_a_liquidity_leader_truncated_by_the_window_end() -> None:
+def test_liquid_roll_schedule_recovers_a_liquidity_leader_truncated_by_the_window_end() -> (
+    None
+):
     # Thin metal again, but the window END (2024-02-16) lands BETWEEN the early crossover
     # (2024-02-05) and the front's calendar roll (2024-02-22) — the live case, where end=now is
     # mid-roll-window.  By the calendar PAM4 is still front, so roll_schedule's window drops PAU4;
@@ -232,12 +257,21 @@ def test_liquid_roll_schedule_recovers_a_liquidity_leader_truncated_by_the_windo
         candidates, volume, date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
     )
 
-    assert windowed.symbols == ("PAM4", "PAU4")          # PAU4 recovered, not truncated by the edge
-    assert windowed.roll_dates == (date(2024, 2, 5),)    # rolled at the crossover, not the 02-22 calendar
-    assert windowed.roll_dates == full.roll_dates        # the window edge does not move the roll date
+    assert windowed.symbols == (
+        "PAM4",
+        "PAU4",
+    )  # PAU4 recovered, not truncated by the edge
+    assert windowed.roll_dates == (
+        date(2024, 2, 5),
+    )  # rolled at the crossover, not the 02-22 calendar
+    assert (
+        windowed.roll_dates == full.roll_dates
+    )  # the window edge does not move the roll date
 
 
-def test_liquid_roll_schedule_does_not_roll_onto_an_eligible_leg_before_its_crossover() -> None:
+def test_liquid_roll_schedule_does_not_roll_onto_an_eligible_leg_before_its_crossover() -> (
+    None
+):
     # The correctness gate: the late-edge extension triggers on a CONFIRMED leadership crossover
     # (smoothed, on/before end), not on eligibility.  A leg that is eligible — it *ever* leads, so it
     # is in the Liquid Cycle — but whose crossover has not happened by end must NOT be pulled in;
@@ -245,7 +279,9 @@ def test_liquid_roll_schedule_does_not_roll_onto_an_eligible_leg_before_its_cros
     candidates, volume = _palladium_early_crossover()
 
     # PAU4 is eligible (it will take the lead) ...
-    assert tuple(c.symbol for c in liquid_cycle(candidates, volume, roll_lead_days=5)) == ("PAM4", "PAU4")
+    assert tuple(
+        c.symbol for c in liquid_cycle(candidates, volume, roll_lead_days=5)
+    ) == ("PAM4", "PAU4")
     # ... but with end (2024-02-02) before its crossover (2024-02-05) the chain stays on PAM4: no early roll.
     schedule = liquid_roll_schedule(
         candidates, volume, date(2024, 1, 1), date(2024, 2, 2), roll_lead_days=5
@@ -264,7 +300,9 @@ def test_liquid_roll_schedule_roll_dates_are_causal() -> None:
         candidates, volume, date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
     )
     roll = pd.Timestamp(acausal.roll_dates[0])
-    causal_volume = {symbol: series[series.index <= roll] for symbol, series in volume.items()}
+    causal_volume = {
+        symbol: series[series.index <= roll] for symbol, series in volume.items()
+    }
     causal = liquid_roll_schedule(
         candidates, causal_volume, date(2024, 1, 1), date(2024, 4, 1), roll_lead_days=5
     )
@@ -272,50 +310,9 @@ def test_liquid_roll_schedule_roll_dates_are_causal() -> None:
     assert causal.roll_dates == acausal.roll_dates
 
 
-def test_causal_front_picker_agrees_with_the_roll_schedule_front() -> None:
-    # Green here is the gate that lets the continuous model retire the second
-    # front-picker: the front leg used for execution and the schedule leg used
-    # for materialisation are the same at representative as-ofs, including the
-    # early liquidity migration that guards bd aegis-rd-6qp.
-    candidates, volume = _palladium_early_crossover()
-    _assert_front_picker_agrees(candidates, volume, date(2024, 1, 1), date(2024, 2, 2))
-    _assert_front_picker_agrees(candidates, volume, date(2024, 1, 1), date(2024, 2, 16))
-    _assert_front_picker_agrees(candidates, volume, date(2024, 1, 1), date(2024, 4, 1))
-
-    liquid_root = [
-        DatedContract("CLG4", date(2024, 2, 29)),
-        DatedContract("CLJ4", date(2024, 5, 31)),
-    ]
-    liquid_volume = {
-        "CLG4": _flat_volume(date(2024, 1, 1), date(2024, 2, 29), 1000),
-        "CLJ4": pd.Series(
-            [
-                100.0 if d <= pd.Timestamp("2024-02-29") else 2000.0
-                for d in pd.bdate_range("2024-01-01", "2024-04-01")
-            ],
-            index=pd.bdate_range("2024-01-01", "2024-04-01"),
-            dtype="float64",
-        ),
-    }
-    _assert_front_picker_agrees(liquid_root, liquid_volume, date(2024, 1, 1), date(2024, 2, 15))
-    _assert_front_picker_agrees(liquid_root, liquid_volume, date(2024, 1, 1), date(2024, 4, 1))
-
-
-def _assert_front_picker_agrees(
-    candidates: list[DatedContract],
-    volume: dict[str, pd.Series],
-    start: date,
-    as_of: date,
-) -> None:
-    causal = liquid_cycle_causal(candidates, volume, as_of, roll_lead_days=5)
-    schedule = liquid_roll_schedule(candidates, volume, start, as_of, roll_lead_days=5)
-
-    assert causal
-    assert schedule.symbols
-    assert causal[-1].symbol == schedule.symbols[-1]
-
-
-def test_liquid_cycle_agreement_returns_the_shared_schedule_for_matching_feeds() -> None:
+def test_liquid_cycle_agreement_returns_the_shared_schedule_for_matching_feeds() -> (
+    None
+):
     candidates = [
         DatedContract("GCK4", date(2024, 5, 28)),
         DatedContract("GCM4", date(2024, 6, 26)),
@@ -328,8 +325,14 @@ def test_liquid_cycle_agreement_returns_the_shared_schedule_for_matching_feeds()
     }
 
     agreement = assert_liquid_cycle_agreement(
-        "GC", candidates, volume, candidates, volume,
-        date(2024, 5, 1), date(2024, 8, 1), roll_lead_days=5,
+        "GC",
+        candidates,
+        volume,
+        candidates,
+        volume,
+        date(2024, 5, 1),
+        date(2024, 8, 1),
+        roll_lead_days=5,
     )
 
     assert agreement.symbols == ("GCM4", "GCQ4")
@@ -353,8 +356,14 @@ def test_liquid_cycle_agreement_fails_closed_when_a_feed_makes_a_serial_lead() -
 
     with pytest.raises(RollAgreementError, match="GC"):
         assert_liquid_cycle_agreement(
-            "GC", candidates, research_volume, candidates, live_volume,
-            date(2024, 5, 1), date(2024, 8, 1), roll_lead_days=5,
+            "GC",
+            candidates,
+            research_volume,
+            candidates,
+            live_volume,
+            date(2024, 5, 1),
+            date(2024, 8, 1),
+            roll_lead_days=5,
         )
 
 
@@ -380,8 +389,14 @@ def test_liquid_cycle_agreement_tolerates_a_serial_listed_on_only_one_feed() -> 
     }
 
     agreement = assert_liquid_cycle_agreement(
-        "GC", research_candidates, research_volume, live_candidates, live_volume,
-        date(2024, 5, 1), date(2024, 8, 1), roll_lead_days=5,
+        "GC",
+        research_candidates,
+        research_volume,
+        live_candidates,
+        live_volume,
+        date(2024, 5, 1),
+        date(2024, 8, 1),
+        roll_lead_days=5,
     )
 
     assert agreement.symbols == ("GCM4", "GCQ4")

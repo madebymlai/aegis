@@ -30,6 +30,10 @@ from research.aegis_research.market_data.currency import (
 from research.aegis_research.market_data.identity import instrument_ids
 
 
+class ContinuousRootCollisionError(Exception):
+    """A synthetic continuous-root id collides with a requested raw instrument id."""
+
+
 def load_catalog_source(
     config: DataConfig,
     *,
@@ -57,7 +61,7 @@ def load_catalog_source(
     )
     collisions = set(raw_frames) & set(continuous_frames)
     if collisions:
-        raise ValueError(
+        raise ContinuousRootCollisionError(
             "continuous-future root ids collide with raw instrument ids: "
             f"{sorted(instrument_id.value for instrument_id in collisions)}"
         )
@@ -143,7 +147,9 @@ def _currency_conversion(
     return build_currency_conversion(
         instruments={instrument_id: definitions[instrument_id] for instrument_id in tradeable_ids},
         fx_pairs={instrument_id: definitions[instrument_id] for instrument_id in exchange_ids},
-        fx_close={instrument_id: raw_frames[instrument_id]["Close"] for instrument_id in exchange_ids},
+        fx_close={
+            instrument_id: raw_frames[instrument_id]["Close"] for instrument_id in exchange_ids
+        },
         base_currency=config.base_currency,
     )
 
@@ -169,10 +175,7 @@ def _array_panels(
 ) -> dict[str, pd.DataFrame]:
     return {
         array: pd.DataFrame(
-            {
-                instrument_id: frames[instrument_id][array]
-                for instrument_id in instrument_ids
-            }
+            {instrument_id: frames[instrument_id][array] for instrument_id in instrument_ids}
         )
         for array in config.effective_arrays
     }
@@ -184,4 +187,4 @@ def _required_window_edge(value: str | None, name: str) -> str:
     return value
 
 
-__all__ = ["load_catalog_source"]
+__all__ = ["ContinuousRootCollisionError", "load_catalog_source"]

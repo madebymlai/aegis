@@ -32,6 +32,8 @@ from aegis_data.catalog_contracts import (
 )
 from aegis_data.chain import fetch_contract_chain
 from aegis_data.continuous_catalog import (
+    ContinuousRootLegsNotFoundError,
+    ContinuousRootVenueMismatchError,
     continuous_instrument_ids,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
@@ -47,7 +49,9 @@ _CROSSOVER = pd.Timestamp("2024-03-01")  # liquidity migrates ESH4 -> ESM4 here
 _START, _END = "2024-01-15", "2024-05-31"
 
 
-def _future(instrument_id: str, expiry: str, *, underlying: str = "ES") -> FuturesContract:
+def _future(
+    instrument_id: str, expiry: str, *, underlying: str = "ES"
+) -> FuturesContract:
     iid = InstrumentId.from_str(instrument_id)
     return FuturesContract(
         instrument_id=iid,
@@ -72,12 +76,15 @@ def _frame(start: str, end: str, base: float, *, leads_early: bool) -> pd.DataFr
     close = [base + i for i in range(len(idx))]
     # ESH4 leads (high volume) before the crossover; ESM4 leads after — so both are ever
     # the Liquidity Leader and the chain rolls between them on the migration.
-    volume = [
-        (1000.0 if (day < _CROSSOVER) == leads_early else 100.0) for day in idx
-    ]
+    volume = [(1000.0 if (day < _CROSSOVER) == leads_early else 100.0) for day in idx]
     return pd.DataFrame(
-        {"Open": [c - 0.5 for c in close], "High": [c + 1 for c in close],
-         "Low": [c - 1 for c in close], "Close": close, "Volume": volume},
+        {
+            "Open": [c - 0.5 for c in close],
+            "High": [c + 1 for c in close],
+            "Low": [c - 1 for c in close],
+            "Close": close,
+            "Volume": volume,
+        },
         index=idx,
     )
 
@@ -183,7 +190,10 @@ def _es_port() -> tuple[_FakePort, dict[InstrumentId, list[Bar]]]:
     }
     native = {iid: _bars(iid, frame) for iid, frame in frames.items()}
     catalog = _FakeCatalog(
-        instruments=[_future("ESH4.XCME", "2024-03-15"), _future("ESM4.XCME", "2024-06-21")],
+        instruments=[
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("ESM4.XCME", "2024-06-21"),
+        ],
         bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
     )
     return _FakePort(catalog, frames), native
@@ -195,7 +205,9 @@ def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None
     # Build the chain through the same catalog seams the composer uses, then cross-check
     # the engine's adjusted series against the independent Decimal oracle for the default mode.
     chain = fetch_contract_chain(
-        "ES", date(2024, 1, 15), date(2024, 5, 31),
+        "ES",
+        date(2024, 1, 15),
+        date(2024, 5, 31),
         list_contracts=catalog_contract_calendar(port.catalog),
         fetch=catalog_contract_fetcher(port),
         bar_cadence=timedelta(days=1),
@@ -213,8 +225,12 @@ def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None
     assert frame.index.is_monotonic_increasing and not frame.index.has_duplicates
 
     head = oracle[: len(frame)]
-    assert frame["Close"].tolist() == pytest.approx([o.close_raw / _RAW_SCALE for o in head])
-    assert frame["Open"].tolist() == pytest.approx([o.open_raw / _RAW_SCALE for o in head])
+    assert frame["Close"].tolist() == pytest.approx(
+        [o.close_raw / _RAW_SCALE for o in head]
+    )
+    assert frame["Open"].tolist() == pytest.approx(
+        [o.open_raw / _RAW_SCALE for o in head]
+    )
     # The first emitted bar is a pre-leg bar carried up by the seam (not raw 99.5).
     assert frame["Open"].iloc[0] != pytest.approx(99.5)
 
@@ -231,24 +247,31 @@ def test_continuous_instrument_ids_resolve_without_materialising_bars() -> None:
 def test_continuous_contract_model_rejects_legs_across_venues() -> None:
     # A continuous future is one venue's cycle; mismatched-venue legs fail loud.
     catalog = _FakeCatalog(
-        instruments=[_future("ESH4.XCME", "2024-03-15"), _future("ESM4.XEUR", "2024-06-21")],
+        instruments=[
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("ESM4.XEUR", "2024-06-21"),
+        ],
         bars={},
     )
     port = _FakePort(catalog, {})
 
     model = ContinuousContractModel(port, "ES", start=_START)
 
-    with pytest.raises(ValueError, match="span multiple venues"):
+    with pytest.raises(ContinuousRootVenueMismatchError, match="span multiple venues"):
         model.materialize(end=_END)
+
 
 def test_continuous_instrument_ids_reject_legs_across_venues() -> None:
     catalog = _FakeCatalog(
-        instruments=[_future("ESH4.XCME", "2024-03-15"), _future("ESM4.XEUR", "2024-06-21")],
+        instruments=[
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("ESM4.XEUR", "2024-06-21"),
+        ],
         bars={},
     )
     port = _FakePort(catalog, {})
 
-    with pytest.raises(ValueError, match="span multiple venues"):
+    with pytest.raises(ContinuousRootVenueMismatchError, match="span multiple venues"):
         continuous_instrument_ids(port, ["ES"], start=_START, end=_END)
 
 
@@ -259,5 +282,5 @@ def test_continuous_contract_model_rejects_a_root_with_no_legs() -> None:
     port = _FakePort(catalog, {})
     model = ContinuousContractModel(port, "ES", start=_START)
 
-    with pytest.raises(ValueError, match="no dated legs"):
+    with pytest.raises(ContinuousRootLegsNotFoundError, match="no dated legs"):
         model.materialize(end=_END)

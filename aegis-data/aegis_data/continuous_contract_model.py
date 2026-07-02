@@ -24,6 +24,18 @@ from aegis_data.roll import roll_lead_days_for_cadence
 _T = TypeVar("_T")
 
 
+class ContinuousContractModelError(Exception):
+    """Base class for continuous-contract model lifecycle failures."""
+
+
+class ContinuousContractModelNotMaterializedError(ContinuousContractModelError):
+    """A model read was attempted before materialization."""
+
+
+class ContinuousFrontLegUnavailableError(ContinuousContractModelError):
+    """The roll schedule has no liquid front leg for the requested as-of."""
+
+
 class ContinuousContractModel:
     """The adjusted continuous series and front-leg lifecycle for one bare root."""
 
@@ -39,7 +51,9 @@ class ContinuousContractModel:
         self._root = root
         self._start = start
         self._timeframe = timeframe
-        self._bar_cadence = pd.Timedelta(timeframe_to_ns(timeframe), unit="ns").to_pytimedelta()
+        self._bar_cadence = pd.Timedelta(
+            timeframe_to_ns(timeframe), unit="ns"
+        ).to_pytimedelta()
         self._roll_lead_days = roll_lead_days_for_cadence(self._bar_cadence)
         self._continuous_id: InstrumentId | None = None
         self._frame: pd.DataFrame | None = None
@@ -88,7 +102,9 @@ class ContinuousContractModel:
             self._port.catalog, self._root, self._start, end.isoformat()
         )
         probe = catalog_volume_probe(self._port, timeframe=self._timeframe)
-        volume_by_symbol = {leg.symbol: probe(leg.symbol, start, end) for leg in candidates}
+        volume_by_symbol = {
+            leg.symbol: probe(leg.symbol, start, end) for leg in candidates
+        }
         schedule = liquid_roll_schedule(
             candidates,
             volume_by_symbol,
@@ -97,7 +113,7 @@ class ContinuousContractModel:
             roll_lead_days=self._roll_lead_days,
         )
         if not schedule.symbols:
-            raise ValueError(
+            raise ContinuousFrontLegUnavailableError(
                 f"continuous-future root {self._root!r} has no liquid front leg by {end}"
             )
         return InstrumentId.from_str(schedule.symbols[-1])
@@ -117,7 +133,9 @@ class ContinuousContractModel:
         if bar.bar_type.instrument_id != front_before:
             return
         row = bars_to_ohlcv([bar])
-        close_stamp = pd.Timestamp(bar.ts_init, tz="UTC").ceil(self._timeframe).tz_localize(None)
+        close_stamp = (
+            pd.Timestamp(bar.ts_init, tz="UTC").ceil(self._timeframe).tz_localize(None)
+        )
         row.index = pd.DatetimeIndex([close_stamp])
         self._frame = pd.concat([series, row])
 
@@ -153,10 +171,15 @@ class ContinuousContractModel:
 
     def _materialized(self, value: _T | None) -> _T:
         if value is None:
-            raise ValueError(
+            raise ContinuousContractModelNotMaterializedError(
                 f"continuous contract model for {self._root!r} has not been materialized yet"
             )
         return value
 
 
-__all__ = ["ContinuousContractModel"]
+__all__ = [
+    "ContinuousContractModel",
+    "ContinuousContractModelError",
+    "ContinuousContractModelNotMaterializedError",
+    "ContinuousFrontLegUnavailableError",
+]

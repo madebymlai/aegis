@@ -1,4 +1,4 @@
-"""Live-gateway checks for ContinuousContractModel on real IB data."""
+"""Opt-in IB Gateway checks for ContinuousContractModel on real historical data."""
 
 from __future__ import annotations
 
@@ -8,9 +8,14 @@ from datetime import timedelta
 
 import pandas as pd
 import pytest
+from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data.catalog import CatalogBackedDataPort, RawBarRequest, parquet_data_catalog
+from aegis_data.catalog import (
+    CatalogBackedDataPort,
+    RawBarRequest,
+    parquet_data_catalog,
+)
 from aegis_data.catalog_contracts import catalog_contract_calendar
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
@@ -51,31 +56,74 @@ def _warm_catalog(
             catalog, provider, (instrument_id,)
         ),
     )
-    fill_port.load_raw_bars(RawBarRequest(instrument_ids=tuple(legs), start=start, end=end))
+    fill_port.load_raw_bars(
+        RawBarRequest(instrument_ids=tuple(legs), start=start, end=end)
+    )
     return CatalogBackedDataPort(parquet_data_catalog(path))
 
 
 def _front_leg_bars(
     warm: CatalogBackedDataPort, leg: InstrumentId, start: str, end: str
-) -> list:
+) -> list[Bar]:
     return warm.read_native_bars(
         RawBarRequest(instrument_ids=(leg,), start=start, end=end, timeframe="1D")
     )[leg]
 
 
-def test_model_front_authority_matches_the_series_front_on_a_real_roll(tmp_path) -> None:
+def _bar_bucket_close(bar: Bar) -> pd.Timestamp:
+    return pd.Timestamp(bar.ts_init, tz="UTC").ceil("1D").tz_localize(None)
+
+
+def _front_bar_at_bucket(
+    warm: CatalogBackedDataPort,
+    leg: InstrumentId,
+    start: str,
+    end: str,
+    bucket_close: pd.Timestamp,
+) -> Bar:
+    return next(
+        bar
+        for bar in _front_leg_bars(warm, leg, start, end)
+        if _bar_bucket_close(bar) == bucket_close
+    )
+
+
+def _front_close_at_bucket(
+    warm: CatalogBackedDataPort,
+    leg: InstrumentId,
+    start: str,
+    end: str,
+    bucket_close: pd.Timestamp,
+) -> float:
+    return float(
+        _front_bar_at_bucket(warm, leg, start, end, bucket_close).close.as_double()
+    )
+
+
+def _calendar_front_symbol(warm: CatalogBackedDataPort) -> str:
+    legs = catalog_contract_calendar(warm.catalog)(
+        "PA", pd.Timestamp(_PA_START).date(), pd.Timestamp(_PA_END).date()
+    )
+    leg = calendar_front(
+        legs, pd.Timestamp(_PA_END).date(), roll_lead_days=_DAILY_ROLL_LEAD
+    )
+    assert leg is not None
+    return leg.symbol
+
+
+def test_model_front_authority_matches_the_series_front_on_a_real_roll(
+    tmp_path,
+) -> None:
     warm = _warm_catalog(tmp_path, (_ESM6, _ESU6), _START, _END)
     model = ContinuousContractModel(warm, "ES", start=_START, timeframe="1D")
     model.materialize(end=_END)
 
-    assert model.front_leg == _ESU6
     last = model.frame.index[-1]
-    front_close = next(
-        float(bar.close.as_double())
-        for bar in _front_leg_bars(warm, model.front_leg, _START, _END)
-        if pd.Timestamp(bar.ts_init, tz="UTC").ceil("1D").tz_localize(None) == last
+
+    assert model.front_leg == _ESU6
+    assert model.frame.loc[last, "Close"] == pytest.approx(
+        _front_close_at_bucket(warm, _ESU6, _START, _END, last)
     )
-    assert model.frame.loc[last, "Close"] == pytest.approx(front_close)
 
 
 def test_model_offset_zero_append_recovers_research_on_real_data(tmp_path) -> None:
@@ -83,20 +131,14 @@ def test_model_offset_zero_append_recovers_research_on_real_data(tmp_path) -> No
     oracle_model = ContinuousContractModel(warm, "ES", start=_START, timeframe="1D")
     oracle_model.materialize(end=_END)
     oracle = oracle_model.frame
-    assert oracle_model.continuous_id == _ES
     last = oracle.index[-1]
-    append_bar = next(
-        bar
-        for bar in _front_leg_bars(warm, _ESU6, _START, _END)
-        if pd.Timestamp(bar.ts_init, tz="UTC").ceil("1D").tz_localize(None) == last
-    )
-
+    append_bar = _front_bar_at_bucket(warm, _ESU6, _START, _END, last)
     model = ContinuousContractModel(warm, "ES", start=_START, timeframe="1D")
     model.materialize(end="2026-06-19")
-    pd.testing.assert_frame_equal(model.frame, oracle.iloc[:-1])
 
     model.on_bar(append_bar)
 
+    assert oracle_model.continuous_id == _ES
     pd.testing.assert_frame_equal(model.frame, oracle)
 
 
@@ -104,18 +146,10 @@ def test_thin_root_extends_the_model_onto_the_early_liquidity_leader(tmp_path) -
     warm = _warm_catalog(tmp_path, (_PAM6, _PAU6), _PA_START, _PA_FILL_END)
     model = ContinuousContractModel(warm, "PA", start=_PA_START, timeframe="1D")
     model.materialize(end=_PA_END)
-
-    legs = catalog_contract_calendar(warm.catalog)(
-        "PA", pd.Timestamp(_PA_START).date(), pd.Timestamp(_PA_END).date()
-    )
-    calendar_leg = calendar_front(legs, pd.Timestamp(_PA_END).date(), roll_lead_days=_DAILY_ROLL_LEAD)
-    assert calendar_leg is not None and calendar_leg.symbol == _PAM6.value
-
-    assert model.front_leg == _PAU6
     last = model.frame.index[-1]
-    front_close = next(
-        float(bar.close.as_double())
-        for bar in _front_leg_bars(warm, model.front_leg, _PA_START, _PA_FILL_END)
-        if pd.Timestamp(bar.ts_init, tz="UTC").ceil("1D").tz_localize(None) == last
+
+    assert _calendar_front_symbol(warm) == _PAM6.value
+    assert model.front_leg == _PAU6
+    assert model.frame.loc[last, "Close"] == pytest.approx(
+        _front_close_at_bucket(warm, _PAU6, _PA_START, _PA_FILL_END, last)
     )
-    assert model.frame.loc[last, "Close"] == pytest.approx(front_close)

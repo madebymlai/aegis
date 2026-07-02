@@ -12,7 +12,10 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.data import load_market_data_result
 from research.aegis_research.market_data.adapters import catalog as catalog_adapter
-from research.aegis_research.market_data.adapters.catalog import load_catalog_source
+from research.aegis_research.market_data.adapters.catalog import (
+    ContinuousRootCollisionError,
+    load_catalog_source,
+)
 from research.aegis_research.market_data.panels import market_data_bundle
 from tests.support.research.aegis_research.factories import make_data_config
 
@@ -101,9 +104,7 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
         "ESZ6.XCME",
     ]
     assert result.metadata.provenance.index_evidence["source"] == "nautilus_catalog"
-    assert result.metadata.provenance.provider_metadata == {
-        "source": "nautilus_data_provider_port"
-    }
+    assert result.metadata.provenance.provider_metadata == {"source": "nautilus_data_provider_port"}
 
 
 def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
@@ -162,9 +163,7 @@ def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrume
     # column on merge — fail loud instead.
     es = _id("ES.XCME")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port = _RecordingCatalogPort(
-        frames={es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])}
-    )
+    port = _RecordingCatalogPort(frames={es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])})
 
     class FakeContinuousModel:
         def __init__(self, _port_arg, _root, **_kwargs):
@@ -184,7 +183,7 @@ def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrume
         end="2024-01-03",
     )
 
-    with pytest.raises(ValueError, match="collide with raw instrument ids"):
+    with pytest.raises(ContinuousRootCollisionError, match="collide with raw instrument ids"):
         load_catalog_source(config, port=port)
 
 

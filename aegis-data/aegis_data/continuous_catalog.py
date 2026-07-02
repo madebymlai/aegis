@@ -12,6 +12,18 @@ from aegis_data.catalog_contracts import catalog_contract_calendar
 from aegis_data.roll import DatedContract
 
 
+class ContinuousCatalogError(Exception):
+    """Base class for continuous-root identity resolver failures."""
+
+
+class ContinuousRootLegsNotFoundError(ContinuousCatalogError):
+    """The catalog has no dated legs for a requested continuous root."""
+
+
+class ContinuousRootVenueMismatchError(ContinuousCatalogError):
+    """A continuous root's dated legs span more than one venue."""
+
+
 def continuous_instrument_ids(
     port: CatalogBackedDataPort,
     roots: Sequence[str],
@@ -35,7 +47,9 @@ def continuous_root_legs(
         root, pd.Timestamp(start).date(), pd.Timestamp(end).date()
     )
     if not legs:
-        raise ValueError(f"no dated legs in the catalog for continuous-future root {root!r}")
+        raise ContinuousRootLegsNotFoundError(
+            f"no dated legs in the catalog for continuous-future root {root!r}"
+        )
     return legs
 
 
@@ -43,7 +57,7 @@ def continuous_instrument_id(root: str, legs: Sequence[DatedContract]) -> Instru
     """The synthetic continuous-root id, with venue validated from the dated legs."""
     venues = {InstrumentId.from_str(leg.symbol).venue for leg in legs}
     if len(venues) != 1:
-        raise ValueError(
+        raise ContinuousRootVenueMismatchError(
             f"continuous-future root {root!r} legs span multiple venues "
             f"{sorted(venue.value for venue in venues)}; expected one"
         )
@@ -51,6 +65,9 @@ def continuous_instrument_id(root: str, legs: Sequence[DatedContract]) -> Instru
 
 
 __all__ = [
+    "ContinuousCatalogError",
+    "ContinuousRootLegsNotFoundError",
+    "ContinuousRootVenueMismatchError",
     "continuous_instrument_id",
     "continuous_instrument_ids",
     "continuous_root_legs",
