@@ -20,6 +20,7 @@ from nautilus_trader.model.objects import Quantity
 from aegis_data.rebasing import IDENTITY, Rebasing, spread_rebasing
 from aegis_runtime import DataContract
 from aegis_trader.data import raw_bar_type
+from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource, SleeveName
 from aegis_trader.trader.strategy import RebalanceStrategy
 
@@ -101,33 +102,32 @@ class _FakeFeed:
         return self._rebasing
 
 
-class _FakeLedger:
+class _FakePipeline:
     def __init__(self) -> None:
-        self.rebased: list[dict[InstrumentId, Rebasing]] = []
+        self.roll_events: list[RollEvent] = []
 
-    def rebase_closes(self, rebasings: dict[InstrumentId, Rebasing]) -> None:
-        self.rebased.append(dict(rebasings))
+    def apply_roll(self, event: RollEvent) -> None:
+        self.roll_events.append(event)
 
 
 class _DriveHarness:
-    # The production property + sibling methods _drive_feed calls, bound to the harness (the
-    # proven harness pattern: exercise the real code path, not a re-implementation).
-    sleeve_ledger = RebalanceStrategy.sleeve_ledger
+    # The production methods _drive_feed calls, bound to the harness (the proven harness pattern:
+    # exercise the real code path, not a re-implementation).
     _drive_feed: Any = RebalanceStrategy._drive_feed
     _on_feed_roll: Any = RebalanceStrategy._on_feed_roll
     _ensure_leg_subscribed: Any = RebalanceStrategy._ensure_leg_subscribed
+    _require_pipeline: Any = RebalanceStrategy._require_pipeline
     _require_book_timeframe: Any = RebalanceStrategy._require_book_timeframe
 
     def __init__(
         self,
         feed: _FakeFeed,
-        ledger: _FakeLedger,
+        pipeline: _FakePipeline,
         book_timeframe: str = "1D",
         cache: _FakeCache | None = None,
     ) -> None:
         self._leg_to_feed = {feed.front_contract(): feed}  # routing keyed by the current front leg
-        self._sleeve_ledger = ledger
-        self._pipeline = None
+        self._pipeline = pipeline
         self._book_timeframe = book_timeframe
         self.cache = cache or _FakeCache()
         self._pending_leg_subscriptions: set[InstrumentId] = set()
@@ -149,38 +149,57 @@ def _front_leg_bar(instrument_id: InstrumentId) -> object:
     return SimpleNamespace(bar_type=SimpleNamespace(instrument_id=instrument_id))
 
 
-def test_on_bar_roll_rebases_the_ledger_and_rolls_to_the_new_front() -> None:
-    """D4+G: when a front-leg bar advances the feed's causal front (a roll), the strategy re-bases
-    the SleeveLedger by the roll spread (Slice L — keep the allocator basis-consistent) and rolls
+def test_strategy_does_not_expose_mutable_ledger() -> None:
+    exposes_mutable_ledger = hasattr(RebalanceStrategy, "sleeve_ledger")
+
+    assert exposes_mutable_ledger is False
+
+
+def test_on_bar_roll_dispatches_roll_event_to_pipeline() -> None:
+    cont = InstrumentId.from_str("ES.XCME")
+    old_front = InstrumentId.from_str("ESM4.XCME")
+    new_front = InstrumentId.from_str("ESU4.XCME")
+    feed = _FakeFeed(cont, old_front, roll_to=new_front, rebasing=spread_rebasing(67.0))
+    pipeline = _FakePipeline()
+    harness = _DriveHarness(feed, pipeline)  # new_front absent from the (empty) cache
+
+    harness._drive_feed(_front_leg_bar(old_front))
+
+    assert pipeline.roll_events == [
+        RollEvent(continuous_id=cont, rebasing=spread_rebasing(67.0))
+    ]
+
+
+def test_on_bar_roll_rolls_execution_to_the_new_front() -> None:
+    """D4+G: when a front-leg bar advances the feed's causal front (a roll), the strategy rolls
     the execution target off the old front leg.  The new front is not preloaded (Slice G), so it is
     dynamically requested (subscription deferred to on_instrument), in lock-step with the data roll."""
     cont = InstrumentId.from_str("ES.XCME")
     old_front = InstrumentId.from_str("ESM4.XCME")
     new_front = InstrumentId.from_str("ESU4.XCME")
     feed = _FakeFeed(cont, old_front, roll_to=new_front, rebasing=spread_rebasing(67.0))
-    ledger = _FakeLedger()
-    harness = _DriveHarness(feed, ledger)  # new_front absent from the (empty) cache
+    pipeline = _FakePipeline()
+    harness = _DriveHarness(feed, pipeline)  # new_front absent from the (empty) cache
 
     harness._drive_feed(_front_leg_bar(old_front))
 
     assert len(feed.bars) == 1  # the bar was folded into the feed
-    assert ledger.rebased == [{cont: spread_rebasing(67.0)}]  # ledger carried into the new basis
     assert str(harness.unsubscribed[0]) == str(raw_bar_type(old_front, "1D"))
     assert harness.requested_instruments == [new_front]  # new front loaded on demand
     assert new_front in harness._pending_leg_subscriptions
     assert harness._leg_to_feed == {new_front: feed}  # routing now follows the new front
 
 
-def test_on_bar_without_a_roll_drives_the_feed_but_does_not_re_subscribe() -> None:
+def test_on_bar_without_a_roll_does_not_dispatch_roll_or_resubscribe() -> None:
     front = InstrumentId.from_str("ESM4.XCME")
     feed = _FakeFeed(InstrumentId.from_str("ES.XCME"), front)  # no roll_to → front stays put
-    ledger = _FakeLedger()
-    harness = _DriveHarness(feed, ledger)
+    pipeline = _FakePipeline()
+    harness = _DriveHarness(feed, pipeline)
 
     harness._drive_feed(_front_leg_bar(front))
 
     assert len(feed.bars) == 1
-    assert ledger.rebased == []
+    assert pipeline.roll_events == []
     assert harness.subscribed == [] and harness.unsubscribed == []
     assert harness._leg_to_feed == {front: feed}
 
@@ -190,7 +209,7 @@ def test_on_bar_ignores_a_bar_that_is_not_a_feeds_front_leg() -> None:
     recompute its causal front off a foreign bar's day and could spuriously roll."""
     front = InstrumentId.from_str("ESM4.XCME")
     feed = _FakeFeed(InstrumentId.from_str("ES.XCME"), front)
-    harness = _DriveHarness(feed, _FakeLedger())
+    harness = _DriveHarness(feed, _FakePipeline())
 
     harness._drive_feed(_front_leg_bar(InstrumentId.from_str("AAPL.NASDAQ")))
 

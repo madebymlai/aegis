@@ -25,6 +25,7 @@ from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import check_account_integrity
 from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
+from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain import startup as _startup
@@ -113,14 +114,30 @@ class RebalancePipeline:
         self._timeframe_by_instrument_id = timeframe_by_instrument_id
 
     @property
-    def sleeve_ledger(self) -> SleeveLedger:
-        """Cross-period analytics ledger owned by the pipeline."""
-        return self._ledger
-
-    @property
     def last_sleeve_weights(self) -> dict[SleeveName, float]:
         """Last allocator-applied sleeve multipliers, for evidence/backtest seams."""
         return dict(self._last_sleeve_weights)
+
+    @property
+    def observation_count(self) -> int:
+        """Number of completed rebalance observations in the owned ledger."""
+        return self._ledger.observation_count
+
+    def realized_book_skew(
+        self,
+        weights: Mapping[SleeveName, float],
+        names: Sequence[SleeveName],
+    ) -> float | None:
+        """Realized skew query over the owned ledger."""
+        return self._ledger.realized_book_skew(weights, names)
+
+    def attribution(self, budgets: Mapping[SleeveName, float]) -> dict[SleeveName, float]:
+        """Per-sleeve P&L attribution query over the owned ledger."""
+        return self._ledger.attribution(budgets)
+
+    def apply_roll(self, event: RollEvent) -> None:
+        """Carry ledger closes into the Roll's new continuous basis."""
+        self._ledger.rebase_closes({event.continuous_id: event.rebasing})
 
     def startup_check(self) -> _startup.StartupResult:
         """Run startup gates and return the decision as a value object."""

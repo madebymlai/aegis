@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.rebasing import ratio_rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
@@ -16,6 +18,7 @@ from aegis_runtime import (
 )
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.startup import StartupGate
@@ -226,6 +229,15 @@ def _period() -> CompletedRebalancePeriod:
     return CompletedRebalancePeriod(period=1, period_ns=_DAY_NS)
 
 
+def _record_close(ledger: SleeveLedger, close: float) -> None:
+    ledger.record(
+        nav=100.0,
+        realized_weights={_ES: 1.0},
+        sleeve_targets={_SLEEVE: {_ES: 1.0}},
+        closes={_ES: close},
+    )
+
+
 def _pipeline(
     *,
     book_state: _BookState | None = None,
@@ -278,6 +290,52 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
 
     assert result.orders[0].instrument_id == _ES
     assert result.orders[0].side == OrderSide.BUY
+
+
+def test_rebalance_pipeline_does_not_expose_mutable_ledger() -> None:
+    pipeline = _pipeline()
+
+    exposes_mutable_ledger = hasattr(pipeline, "sleeve_ledger")
+
+    assert exposes_mutable_ledger is False
+
+
+def test_apply_roll_rebases_ledger_by_spread_event() -> None:
+    ledger = SleeveLedger()
+    _record_close(ledger, 100.0)
+    _record_close(ledger, 110.0)
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(),
+        book=_book(),
+        sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
+        ledger=ledger,
+    )
+
+    pipeline.apply_roll(RollEvent(continuous_id=_ES, rebasing=spread_rebasing(50.0)))
+    _record_close(ledger, 170.0)
+    attribution = ledger.attribution({_SLEEVE: 1.0})
+
+    assert attribution[_SLEEVE] == pytest.approx(12.9166666667)
+
+
+def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
+    ledger = SleeveLedger()
+    _record_close(ledger, 100.0)
+    _record_close(ledger, 110.0)
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(),
+        book=_book(),
+        sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
+        ledger=ledger,
+    )
+
+    pipeline.apply_roll(RollEvent(continuous_id=_ES, rebasing=ratio_rebasing(1.5)))
+    _record_close(ledger, 180.0)
+    attribution = ledger.attribution({_SLEEVE: 1.0})
+
+    assert attribution[_SLEEVE] == pytest.approx(19.0909090909)
 
 
 def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_instrument() -> None:

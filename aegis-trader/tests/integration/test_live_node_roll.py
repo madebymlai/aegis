@@ -39,6 +39,7 @@ from aegis_data.rebasing import Rebasing, spread_rebasing
 from aegis_trader.data import raw_bar_type
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.pipeline import RebalancePipeline
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _CONT = InstrumentId.from_str("ES.XCME")
@@ -75,6 +76,13 @@ class _RecordingLedger:
 
     def rebase_closes(self, rebasings: dict[InstrumentId, Rebasing]) -> None:
         self.rebased.append(dict(rebasings))
+
+
+class _RecordingPipeline:
+    apply_roll = RebalancePipeline.apply_roll
+
+    def __init__(self, ledger: _RecordingLedger) -> None:
+        self._ledger = ledger
 
 
 class _RollingFeed:
@@ -137,7 +145,8 @@ async def test_forced_roll_drives_request_instrument_on_instrument_subscribe_on_
     strategy.register(trader_id, portfolio, msgbus, cache, clock)
     strategy._book_timeframe = "1D"
     ledger = _RecordingLedger()
-    strategy._sleeve_ledger = ledger  # type: ignore[assignment]
+    pipeline = _RecordingPipeline(ledger)
+    strategy._pipeline = pipeline  # type: ignore[assignment]
     strategy._install_feeds([_RollingFeed(_CONT, _OLD, _NEW)])  # type: ignore[list-item]
 
     engine.start()

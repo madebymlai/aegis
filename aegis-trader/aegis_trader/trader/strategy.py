@@ -57,6 +57,7 @@ from aegis_trader.data import (
 )
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
+from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.startup import StartupResult
 from aegis_trader.domain.types import (
@@ -163,11 +164,9 @@ class RebalanceStrategy(Strategy):
         self._sleeve_to_contract[name] = bundle.contract
 
     @property
-    def sleeve_ledger(self) -> SleeveLedger:
-        """Cross-period analytics ledger owned by the rebalance pipeline."""
-        if self._pipeline is not None:
-            return self._pipeline.sleeve_ledger
-        return self._sleeve_ledger
+    def last_attribution(self) -> dict[SleeveName, float]:
+        """Last realized per-sleeve attribution, for evidence/backtest seams."""
+        return dict(self._last_attribution)
 
     # ── port accessors ──────────────────────────────────────────────────────
     # The reconciled-book and market-data ports are wired in ``on_start``; every
@@ -423,9 +422,10 @@ class RebalanceStrategy(Strategy):
     def _on_feed_roll(
         self, feed: ContinuousFeed, front_before: InstrumentId, front_after: InstrumentId
     ) -> None:
-        """Carry a feed roll through the rest of the strategy: re-base the ledger by the roll's
-        Rebasing (Slice L) and roll the execution subscription from the old front leg to the new one."""
-        self.sleeve_ledger.rebase_closes({feed.continuous_id: feed.last_rebasing()})
+        """Carry a feed roll through the rest of the strategy."""
+        self._require_pipeline().apply_roll(
+            RollEvent(continuous_id=feed.continuous_id, rebasing=feed.last_rebasing())
+        )
         del self._leg_to_feed[front_before]
         self._leg_to_feed[front_after] = feed
         timeframe = self._require_book_timeframe()
@@ -527,9 +527,12 @@ class RebalanceStrategy(Strategy):
         convexity.  Stays ``None`` until enough complete return rows exist to
         define a skew.
         """
+        pipeline = self._pipeline
+        if pipeline is None:
+            return
         names = self._positive_risk_sleeve_names()
         weights = {name: self._last_sleeve_weights.get(name, 0.0) for name in names}
-        self._last_book_skew = self.sleeve_ledger.realized_book_skew(weights, names)
+        self._last_book_skew = pipeline.realized_book_skew(weights, names)
         if self._last_book_skew is None:
             return
         convexity = "convex" if self._last_book_skew >= 0.0 else "concave"
@@ -545,13 +548,17 @@ class RebalanceStrategy(Strategy):
         least two recorded rebalance periods.  The realized-book-skew recording
         has its own (longer) history requirement and runs first.
         """
+        pipeline = self._pipeline
+        if pipeline is None:
+            return
+
         self._record_book_skew()
 
-        if self.sleeve_ledger.observation_count < 2:
+        if pipeline.observation_count < 2:
             return
 
         risk_shares = self._book.allocator_risk_shares()
-        attribution = self.sleeve_ledger.attribution(risk_shares)
+        attribution = pipeline.attribution(risk_shares)
         self._last_attribution = attribution
 
         if attribution:

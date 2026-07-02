@@ -20,6 +20,7 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.catalog import CatalogCoverageGapError, raw_bar_type
+from aegis_data.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
@@ -38,13 +39,17 @@ from aegis_trader.backtest import (
 )
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.data.continuous_feed import ContinuousFeed
+from aegis_trader.domain.types import SleeveName
 from aegis_trader.portfolio import NautilusBookState
 from aegis_trader.trader.strategy import RebalanceStrategy
 
 _INSTRUMENT_ID = InstrumentId.from_str("VUSA.XLON")
 _SECOND_INSTRUMENT_ID = InstrumentId.from_str("AAPL.XNAS")
 _ES = InstrumentId.from_str("ES.XCME")
+_ES_OLD = InstrumentId.from_str("ESM4.XCME")
+_ES_NEW = InstrumentId.from_str("ESU4.XCME")
 _WHEEL = "synth-trend.whl"
+_TREND = SleeveName("trend")
 
 _BOOK_TOML = f"""
 base_currency = "EUR"
@@ -216,6 +221,45 @@ class _StaticContinuousFeed:
         return None
 
 
+class _RollingContinuousFeed:
+    def __init__(
+        self,
+        frame: pd.DataFrame,
+        *,
+        front: InstrumentId,
+        roll_to: InstrumentId,
+        rebasing: Rebasing,
+    ) -> None:
+        self._frame = frame
+        self._front = front
+        self._roll_to = roll_to
+        self._rebasing = rebasing
+        self._rolled = False
+
+    @property
+    def continuous_id(self) -> InstrumentId:
+        return _ES
+
+    def series(self) -> pd.DataFrame:
+        return self._frame
+
+    def front_contract(self) -> InstrumentId:
+        return self._front
+
+    def on_bar(self, _bar: Bar) -> None:
+        if self._rolled:
+            return
+        self._front = self._roll_to
+        self._rolled = True
+
+    @property
+    def rolled(self) -> bool:
+        return self._rolled
+
+    def last_rebasing(self) -> Rebasing:
+        return self._rebasing
+
+
 class _ContinuousRootDataSource:
     def __init__(self, frame: pd.DataFrame) -> None:
         self._frame = frame
@@ -233,6 +277,34 @@ class _ContinuousRootDataSource:
         return BacktestMarketData(
             instruments={_ES: _equity(_ES)},
             ohlcv={_ES: self._frame},
+        )
+
+
+class _RollingContinuousRootDataSource:
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+
+    def load(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        *,
+        timeframe: str,
+        start: str,
+        end: str,
+    ) -> BacktestMarketData:
+        assert instrument_ids == ()
+        assert (timeframe, start, end) == ("1D", "2020-01-01", "2020-01-06")
+        return BacktestMarketData(
+            instruments={
+                _ES: _equity(_ES),
+                _ES_OLD: _equity(_ES_OLD),
+                _ES_NEW: _equity(_ES_NEW),
+            },
+            ohlcv={
+                _ES: self._frame,
+                _ES_OLD: self._frame.iloc[:1],
+                _ES_NEW: self._frame.iloc[1:],
+            },
         )
 
 
@@ -284,6 +356,44 @@ def test_run_book_backtest_trades_a_declared_continuous_root(
     fills = [order for order in engine.cache.orders() if order.is_closed]
     assert fills
     assert {order.instrument_id for order in fills} == {_ES}
+    engine.dispose()
+
+
+def test_run_book_backtest_preserves_attribution_across_a_roll(
+    tmp_path, monkeypatch
+) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    frame = _ohlcv_frame([100.0, 110.0, 120.0, 130.0, 140.0])
+    feed = _RollingContinuousFeed(
+        frame,
+        front=_ES_OLD,
+        roll_to=_ES_NEW,
+        rebasing=spread_rebasing(50.0),
+    )
+
+    def install_rolling_feed(
+        self: RebalanceStrategy, _book_timeframe: str
+    ) -> None:
+        self._install_feeds(cast(Iterable[ContinuousFeed], (feed,)))
+
+    monkeypatch.setattr(RebalanceStrategy, "_init_feeds", install_rolling_feed)
+    registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
+
+    engine = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-06",
+        data_source=_RollingContinuousRootDataSource(frame),
+        registry=registry,
+    )
+    strategy = _strategy(engine)
+    fills = [order for order in engine.cache.orders() if order.is_closed]
+
+    assert feed.rolled is True
+    assert fills
+    assert {order.instrument_id for order in fills} == {_ES_NEW}
+    assert strategy.last_attribution[_TREND] == pytest.approx(0.0)
     engine.dispose()
 
 
@@ -463,3 +573,13 @@ def _bar(bar_type: BarType, day: pd.Timestamp, close: float) -> Bar:
         ts_event,
         ts_event,
     )
+
+
+def _strategy(engine) -> RebalanceStrategy:
+    strategies = [
+        strategy
+        for strategy in engine.trader.strategies()
+        if isinstance(strategy, RebalanceStrategy)
+    ]
+    assert len(strategies) == 1
+    return strategies[0]
