@@ -122,7 +122,7 @@ def _es_single_seam(
         roll_dates=(pd.Timestamp("2024-03-07"),),
         frames=(pre, post),
     )
-    future = continuous_future(chain, "ES", adjustment_mode=mode)
+    future = continuous_future(chain, InstrumentId.from_str("ES.XCME"), adjustment_mode=mode)
     return future, {esh4: _bars(esh4, pre), esm4: _bars(esm4, post)}
 
 
@@ -139,7 +139,7 @@ def test_request_path_series_is_byte_exact_with_the_oracle(mode) -> None:
         roll_dates=(pd.Timestamp("2024-03-07"),),
         frames=(pre, post),
     )
-    future = continuous_future(chain, "ES", adjustment_mode=mode)
+    future = continuous_future(chain, InstrumentId.from_str("ES.XCME"), adjustment_mode=mode)
     leg_bars = {esh4: _bars(esh4, pre), esm4: _bars(esm4, post)}
 
     engine_bars = materialize_continuous_bars(
@@ -177,7 +177,7 @@ def test_request_path_cumulative_offset_across_three_seams_is_byte_exact(mode) -
         ),
         frames=tuple(legs.values()),
     )
-    future = continuous_future(chain, "ES", adjustment_mode=mode)
+    future = continuous_future(chain, InstrumentId.from_str("ES.XCME"), adjustment_mode=mode)
     leg_bars = {InstrumentId.from_str(sym): _bars(InstrumentId.from_str(sym), fr) for sym, fr in legs.items()}
 
     engine_bars = materialize_continuous_bars(
@@ -213,7 +213,7 @@ def test_request_path_is_byte_exact_when_bars_sit_on_the_midnight_roll_boundary(
                   [120.0, 121.0, 122.0, 123.0, 124.0])
     chain = ContractChain(symbols=("ESH4.XCME", "ESM4.XCME"),
                           roll_dates=(pd.Timestamp("2024-03-07"),), frames=(pre, post))
-    future = continuous_future(chain, "ES", adjustment_mode=mode)
+    future = continuous_future(chain, InstrumentId.from_str("ES.XCME"), adjustment_mode=mode)
     leg_bars = {esh4: _bars(esh4, pre, at=time(0, 0)), esm4: _bars(esm4, post, at=time(0, 0))}
 
     engine_bars = materialize_continuous_bars(

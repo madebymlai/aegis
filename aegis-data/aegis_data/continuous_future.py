@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import pandas as pd
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
-from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import continuous_bar_type
 from aegis_data.chain import ContractChain
@@ -98,20 +98,20 @@ class ContinuousFuture:
 
 def continuous_future(
     chain: ContractChain,
-    root: str,
+    root_id: InstrumentId,
     *,
     timeframe: str = "1D",
     adjustment_mode: ContinuousFutureAdjustmentType = DEFAULT_ADJUSTMENT_MODE,
 ) -> ContinuousFuture:
-    """Assemble the :class:`ContinuousFuture` for ``root`` from its dated-leg chain.
+    """Assemble the :class:`ContinuousFuture` keyed by the resolved continuous ``root_id``.
 
-    The target root inherits the legs' venue (every leg of a root trades one venue), so
-    the synthetic root id is ``{root}.{venue}`` (e.g. ``ES`` over ``XCME`` legs →
-    ``ES.XCME``); ``root`` is supplied because it is not a derivable prefix of the leg
-    symbols.  ``adjustment_mode`` defaults to the one switch (:data:`DEFAULT_ADJUSTMENT_MODE`)
-    that also drives the live re-basing, so a caller never names spread or ratio.
+    Identity is resolved once, upstream, by
+    :func:`~aegis_data.continuous_catalog.continuous_instrument_id` (the sole venue-resolution
+    site); this assembler receives the synthetic ``{root}.{venue}`` id (e.g. ``ES.XCME``) and
+    never re-derives it from the chain.  ``adjustment_mode`` defaults to the one switch
+    (:data:`DEFAULT_ADJUSTMENT_MODE`) that also drives the live re-basing, so a caller never
+    names spread or ratio.
     """
-    root_id = InstrumentId(Symbol(root), _chain_venue(chain))
     return ContinuousFuture(
         target_bar_type=continuous_bar_type(root_id, timeframe),
         transitions=roll_transitions(chain),
@@ -181,10 +181,6 @@ def _spread_delta(seam: Sequence[RollTransition]) -> Rebasing:
     for transition in seam:
         delta += transition.post_price - transition.pre_price
     return spread_rebasing(delta)
-
-
-def _chain_venue(chain: ContractChain) -> Venue:
-    return InstrumentId.from_str(chain.symbols[0]).venue
 
 
 __all__ = [

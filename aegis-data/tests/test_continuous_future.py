@@ -166,7 +166,7 @@ def test_continuous_future_targets_the_internally_aggregated_root_bar_type() -> 
         frames=(pre, post),
     )
 
-    future = continuous_future(chain, "ES")
+    future = continuous_future(chain, InstrumentId.from_str("ES.XCME"))
 
     assert future.target_bar_type == BarType.from_str(
         "ES.XCME-1-DAY-LAST-INTERNAL@1-DAY-EXTERNAL"
@@ -182,7 +182,7 @@ def test_request_params_carry_transitions_and_the_default_backward_ratio_mode() 
         frames=(pre, post),
     )
 
-    params = continuous_future(chain, "ES").request_params()
+    params = continuous_future(chain, InstrumentId.from_str("ES.XCME")).request_params()
 
     assert (
         params["continuous_future_adjustment_mode"]

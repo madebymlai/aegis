@@ -201,7 +201,7 @@ def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None
         bar_cadence=timedelta(days=1),
         probe_volume=catalog_volume_probe(port),
     )
-    future = continuous_future(chain, "ES")
+    future = continuous_future(chain, InstrumentId.from_str("ES.XCME"))
     oracle = backward_series(native, future.transitions, mode=DEFAULT_ADJUSTMENT_MODE)
 
     model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")

@@ -134,12 +134,7 @@ class ContinuousContractModel:
             bar_cadence=self._bar_cadence,
             probe_volume=catalog_volume_probe(self._port, timeframe=self._timeframe),
         )
-        future = continuous_future(chain, self._root, timeframe=self._timeframe)
-        if future.instrument_id != resolved_id:
-            raise ValueError(
-                f"continuous-future root {self._root!r} resolved to {resolved_id.value!r}, "
-                f"but materialisation built {future.instrument_id.value!r}"
-            )
+        future = continuous_future(chain, resolved_id, timeframe=self._timeframe)
         leg_ids = tuple(InstrumentId.from_str(symbol) for symbol in chain.symbols)
         leg_bars = self._port.read_native_bars(
             RawBarRequest(leg_ids, self._start, end, self._timeframe)
