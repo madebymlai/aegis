@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
@@ -36,8 +38,9 @@ _DAY_NS = 86_400_000_000_000
 
 
 class _FixedWeightBundle(ExecutionBundle):
-    def __init__(self, weight: float) -> None:
+    def __init__(self, weight: float, *, band: DriftBand | None = None) -> None:
         self._weight = weight
+        instrument_band = band or DriftBand.symmetric(0.0)
         contract = DataContract(
             instrument_ids=(_INSTRUMENT_ID,),
             required_arrays=("Close",),
@@ -62,7 +65,7 @@ class _FixedWeightBundle(ExecutionBundle):
                 params={},
             ),
             indicators=(),
-            instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
+            instrument_bands={_INSTRUMENT_ID: instrument_band},
             gross_cap=1.0,
             net_cap=None,
             direction="both",
@@ -121,6 +124,12 @@ class _ContinuousWeightBundle(ExecutionBundle):
         target = pd.DataFrame({_ES: [self._weight, self._weight]}, index=close.index)
         target.columns.name = "instrument_id"
         return target
+
+
+class _BandAccessFailsBundle(_FixedWeightBundle):
+    @property
+    def instrument_bands(self) -> Mapping[InstrumentId, DriftBand]:
+        raise AssertionError("constructor must not read bundle drift bands")
 
 
 class _BookState:
@@ -254,8 +263,26 @@ def _pipeline(
     )
 
 
+def _started_pipeline(
+    *,
+    book_state: _BookState | None = None,
+    market_data: _MarketData | None = None,
+    book: BookConfig | None = None,
+    bundle: ExecutionBundle | None = None,
+) -> RebalancePipeline:
+    pipeline = _pipeline(
+        book_state=book_state,
+        market_data=market_data,
+        book=book,
+        bundle=bundle,
+    )
+    startup_result = pipeline.startup_check()
+    assert startup_result.trading_enabled is True
+    return pipeline
+
+
 def test_rebalance_pipeline_returns_sized_orders_and_summary() -> None:
-    result = _pipeline().rebalance_period(_period())
+    result = _started_pipeline().rebalance_period(_period())
 
     assert result.orders[0].instrument_id == _INSTRUMENT_ID
     assert result.orders[0].side == OrderSide.BUY
@@ -286,8 +313,10 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
         ledger=SleeveLedger(),
     )
 
+    startup_result = pipeline.startup_check()
     result = pipeline.rebalance_period(_period())
 
+    assert startup_result.trading_enabled is True
     assert result.orders[0].instrument_id == _ES
     assert result.orders[0].side == OrderSide.BUY
 
@@ -298,6 +327,26 @@ def test_rebalance_pipeline_does_not_expose_mutable_ledger() -> None:
     exposes_mutable_ledger = hasattr(pipeline, "sleeve_ledger")
 
     assert exposes_mutable_ledger is False
+
+
+def test_rebalance_pipeline_constructor_does_not_read_instrument_bands() -> None:
+    pipeline = _pipeline(bundle=_BandAccessFailsBundle(0.5))
+
+    assert pipeline.last_sleeve_weights == {}
+
+
+def test_rebalance_pipeline_uses_bands_built_by_startup_check() -> None:
+    pipeline = _pipeline(
+        book_state=_BookState({_INSTRUMENT_ID: 0.45}),
+        bundle=_FixedWeightBundle(0.5, band=DriftBand.symmetric(0.10)),
+    )
+
+    startup_result = pipeline.startup_check()
+    result = pipeline.rebalance_period(_period())
+
+    assert startup_result.trading_enabled is True
+    assert result.orders == ()
+    assert result.summary.gate_outcome == GateOutcome.PASS
 
 
 def test_apply_roll_rebases_ledger_by_spread_event() -> None:
@@ -339,7 +388,7 @@ def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
 
 
 def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_instrument() -> None:
-    result = _pipeline(
+    result = _started_pipeline(
         market_data=_MarketData(fresh_instrument_ids=frozenset())
     ).rebalance_period(_period())
 
@@ -349,7 +398,7 @@ def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_instru
 
 
 def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
-    result = _pipeline(
+    result = _started_pipeline(
         book=_book(per_name_cap=0.5),
         book_state=_BookState({_INSTRUMENT_ID: 0.7}),
         bundle=_FixedWeightBundle(0.8),

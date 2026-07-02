@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -95,14 +94,7 @@ class RebalancePipeline:
         self._book = book
         self._sleeve_to_bundle = sleeve_to_bundle
         self._ledger = ledger
-        self._instrument_bands: Mapping[InstrumentId, DriftBand]
-        try:
-            self._instrument_bands = build_instrument_bands(self._sleeve_to_bundle)
-            self._instrument_band_error: InstrumentBandError | None = None
-        except InstrumentBandError as exc:
-            # Match the happy path's read-only mapping; the gate halts before any read.
-            self._instrument_bands = MappingProxyType({})
-            self._instrument_band_error = exc
+        self._instrument_bands: Mapping[InstrumentId, DriftBand] | None = None
         self._last_sleeve_weights: dict[SleeveName, float] = {}
         timeframe_by_instrument_id: dict[InstrumentId, str] = {}
         for bundle in self._sleeve_to_bundle.values():
@@ -150,13 +142,15 @@ class RebalancePipeline:
         return self._account_integrity_startup_result()
 
     def _band_ownership_startup_result(self) -> _startup.StartupResult | None:
-        if self._instrument_band_error is None:
-            return None
-        return _startup.StartupResult(
-            trading_enabled=False,
-            halt_gate=_startup.StartupGate.BAND_OWNERSHIP,
-            halt_reason=str(self._instrument_band_error),
-        )
+        try:
+            self._instrument_bands = build_instrument_bands(self._sleeve_to_bundle)
+        except InstrumentBandError as exc:
+            return _startup.StartupResult(
+                trading_enabled=False,
+                halt_gate=_startup.StartupGate.BAND_OWNERSHIP,
+                halt_reason=str(exc),
+            )
+        return None
 
     def _cap_provenance_startup_result(self) -> _startup.StartupResult | None:
         try:
@@ -197,13 +191,6 @@ class RebalancePipeline:
 
     def rebalance_period(self, period: CompletedRebalancePeriod) -> RebalanceResult:
         """Run one completed-period rebalance and return orders plus summary."""
-        if self._instrument_band_error is not None:
-            nav = self._book_state.nav()
-            return RebalanceResult(
-                orders=(),
-                summary=_summary(nav, 0, 0, 0, GateOutcome.ERROR, 0.0),
-                halt_reason=str(self._instrument_band_error),
-            )
         pending = self._compute_sleeve_targets(period)
         nav = self._book_state.nav()
         if not pending:
@@ -269,17 +256,23 @@ class RebalancePipeline:
         _nav: float,
         realized_weights: dict[InstrumentId, float],
     ) -> RebalancePlan:
+        instrument_bands = self._require_instrument_bands()
         return rebalance_plan(
             pending,
             self._book,
             realized_weights=realized_weights,
-            instrument_bands=self._instrument_bands,
+            instrument_bands=instrument_bands,
             realized_covariance=self._ledger.realized_covariance(
                 self._positive_risk_sleeve_names()
             ),
             previous_sleeve_weights=self._last_sleeve_weights,
             realized_drawdown=self._ledger.current_drawdown(_nav),
         )
+
+    def _require_instrument_bands(self) -> Mapping[InstrumentId, DriftBand]:
+        if self._instrument_bands is None:
+            raise RuntimeError("instrument bands queried before startup_check built them")
+        return self._instrument_bands
 
     def _size_plan(
         self,
