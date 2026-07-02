@@ -356,8 +356,8 @@ def test_selection_and_held_out_sweeps_share_one_evaluator_carrying_the_invalid_
     assert selection_metrics.__self__ is held_out_metrics.__self__, (
         "selection and held-out sweeps must share one evaluator"
     )
-    assert selection_metrics.__self__.invalid_candidate_keys, (
-        "the shared evaluator should carry a non-empty Invalid-Candidate set"
+    assert selection_metrics.__self__.store.invalid_keys, (
+        "the shared evaluator's store should carry a non-empty Invalid-Candidate set"
     )
 
 

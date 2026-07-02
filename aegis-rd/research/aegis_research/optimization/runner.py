@@ -43,9 +43,7 @@ from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
-    invalid_candidates,
 )
-from research.aegis_research.optimization.precompute import candidate_keys
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -125,11 +123,11 @@ def execute_optimization(
     }
 
     # Stage 1: run each indicator's callable once over the full SIGNAL series (close).
-    sampled_candidate_keys = candidate_keys(sampled_lists)
     store = source.precompute(close, n_candidates, **sampled_lists)
-    invalid_candidate_keys = invalid_candidates(
-        store, sampled_candidate_keys
-    )
+    # Touch the store's Invalid-Candidate set once here — before the parallel sweep
+    # dill-ships the store to workers — so the cached_property scan runs a single
+    # time and the warm cache travels to every worker instead of being re-scanned.
+    invalid_candidate_keys = store.invalid_keys
 
     # The portfolio simulates P&L on the P&L series when one is supplied (a future's
     # ``pnl_adjustment`` mode); otherwise it reuses the signal series — single-series default.
@@ -146,7 +144,6 @@ def execute_optimization(
         close=portfolio_close,
         open_=portfolio_open,
         store=store,
-        invalid_candidate_keys=invalid_candidate_keys,
         extractors=extractors,
         fees_by_symbol=fees_by_symbol,
         instrument_bands=instrument_bands,

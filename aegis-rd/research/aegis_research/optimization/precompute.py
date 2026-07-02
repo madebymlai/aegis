@@ -25,7 +25,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from operator import index as operator_index
+from typing import Any
 
 import numpy as np
 
@@ -184,6 +186,47 @@ class IndicatorPrecompute:
         if self.output_candidate_index is None:
             return self.candidate_index
         return self.output_candidate_index.get(name, self.candidate_index)
+
+    @cached_property
+    def invalid_keys(self) -> set[CandidateKey]:
+        """Keys of the store's candidates whose indicator output is Invalid.
+
+        A candidate is Invalid when at least one indicator output block is
+        entirely non-finite (all-NaN / all-inf) over the full series — the
+        indicator's lookback exceeds all available history. A non-numeric output
+        block is a broken indicator contract and raises ``TypeError`` rather than
+        being classified. The scan ranges over the store's own ``candidate_index``:
+        the store is the authority on which candidates it holds.
+
+        Cached because the verdict is a pure function of the store's immutable
+        outputs and every reader wants the same set. ``cached_property`` writes to
+        ``__dict__`` (bypassing the frozen ``__setattr__``), so when the runner
+        touches this once before the parallel sweep, dill ships the warm cache to
+        every pathos worker instead of each worker re-scanning the full series.
+        """
+        if not self.outputs or self.n_symbols < 1:
+            return set()
+        invalid: set[CandidateKey] = set()
+        for key in self.candidate_index:
+            for output_name, output in self.outputs.items():
+                position = self._candidate_index_for_output(output_name)[key]
+                if _candidate_output_is_non_finite(output, position, self.n_symbols):
+                    invalid.add(key)
+                    break
+        return invalid
+
+
+def _candidate_output_is_non_finite(output: Any, position: int, n_symbols: int) -> bool:
+    start = position * n_symbols
+    stop = start + n_symbols
+    block = np.asarray(output)[:, start:stop]
+    return block.size == 0 or not _has_finite_value(block)
+
+
+def _has_finite_value(values: Any) -> bool:
+    # A non-numeric block is a broken Indicator contract: np.isfinite raises
+    # TypeError and the failure propagates instead of being classified.
+    return bool(np.isfinite(values).any())
 
 
 def empty_precompute(

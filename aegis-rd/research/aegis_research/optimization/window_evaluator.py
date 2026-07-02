@@ -2,10 +2,11 @@
 
 A :class:`WindowEvaluator` carries everything one optimization sweep needs that
 is constant across windows — the signal-side source, the portfolio policy, the
-report config, the full-series price frames, the precomputed indicator store,
-the Invalid-Candidate set, and the metric extractors — and exposes a single
-``evaluate(range_, **params)`` that the splitter calls once per (split, set) with
-the window's ``range_`` template and a chunk of Candidate parameter lists.
+report config, the full-series price frames, the precomputed indicator store
+(which answers its own Invalid-Candidate set), and the metric extractors — and
+exposes a single ``evaluate(range_, **params)`` that the splitter calls once per
+(split, set) with the window's ``range_`` template and a chunk of Candidate
+parameter lists.
 
 Pulling this coordination out of the sweep closure gives it a seam: a chunk can
 be evaluated directly, so the range/key slicing and the all-Invalid short-circuit
@@ -31,11 +32,7 @@ from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.contracts import ExtractorSpec
-from research.aegis_research.optimization.candidate_validity import (
-    invalid_candidate_positions,
-)
 from research.aegis_research.optimization.precompute import (
-    CandidateKey,
     IndicatorPrecompute,
     candidate_keys,
 )
@@ -51,8 +48,10 @@ class WindowEvaluator:
     slices them to the window the splitter hands it. The market index passed to
     the portfolio simulation is always the full loaded-data calendar
     (``close.index``) so the seam mask can detect gaps in purged/embargoed
-    windows. Selection and held-out sweeps share one evaluator, so they cannot
-    drift in the Invalid-Candidate set or any other captured input.
+    windows. The Invalid-Candidate set is read from ``store.invalid_keys`` rather
+    than carried as a separate field, so selection and held-out sweeps — which
+    share one evaluator and one store — cannot drift in it or any other captured
+    input.
     """
 
     source: OptimizationSource
@@ -61,7 +60,6 @@ class WindowEvaluator:
     close: pd.DataFrame
     open_: pd.DataFrame
     store: IndicatorPrecompute
-    invalid_candidate_keys: set[CandidateKey]
     extractors: Mapping[str, ExtractorSpec]
     # Per-symbol trade fees (FX-conversion surcharge on non-base legs); None keeps
     # the scalar-fee path, byte-identical to a single-currency book.
@@ -76,8 +74,8 @@ class WindowEvaluator:
         """Metric frame for the Candidate chunk ``params`` over the window ``range_``."""
         param_names, combo_lists, n_combos, metric_keys = _extract_combos(params)
         keys = candidate_keys(combo_lists)
-        invalid_positions = invalid_candidate_positions(keys, self.invalid_candidate_keys)
-        if len(invalid_positions) == n_combos:
+        invalid = self.store.invalid_keys
+        if all(key in invalid for key in keys):
             # A chunk whose every Candidate is Invalid is a pure performance guard:
             # skip simulation and return the same-shaped all-NaN frame. Partly-Invalid
             # chunks still simulate; their real values stay in the grid and are excluded

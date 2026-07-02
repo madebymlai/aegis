@@ -75,6 +75,142 @@ class _RuntimeParamDeduplication:
     n_candidates: int
 
 
+@dataclass(frozen=True)
+class _ComposedSource:
+    """The composed source: owned runtimes + swept param space behind two stages.
+
+    ``compose`` derives the candidate param space and input names from the built
+    runtimes (stage 2); ``precompute``/``simulate`` run over that owned state
+    (stage 3). The runtimes are internal — ``to_optimization_source`` is the one
+    place that projects this composition onto the ``OptimizationSource`` contract.
+    """
+
+    data: MarketDataBundle
+    strategy: _ComponentRuntime
+    indicators: tuple[_ComponentRuntime, ...]
+    input_names: tuple[str, ...]
+    params: dict[str, vbt.Param]
+
+    @classmethod
+    def compose(
+        cls,
+        data: MarketDataBundle,
+        strategy: _ComponentRuntime,
+        indicators: tuple[_ComponentRuntime, ...],
+    ) -> _ComposedSource:
+        _assert_output_contract(strategy, indicators)
+        params: dict[str, vbt.Param] = {}
+        for runtime in (*indicators, strategy):
+            for param_name, param_key in runtime.param_keys.items():
+                param = runtime.param_space[param_name]
+                if param_key in params:
+                    raise ComponentSourceError(f"duplicate component param key: {param_key}")
+                params[param_key] = param
+        if not params:
+            params[FIXED_CANDIDATE_PARAM] = vbt.Param([0])
+        return cls(
+            data=data,
+            strategy=strategy,
+            indicators=indicators,
+            input_names=_input_names(strategy, indicators),
+            params=params,
+        )
+
+    def precompute(
+        self, close: pd.DataFrame, n_candidates: int, **param_lists: Any
+    ) -> IndicatorPrecompute:
+        # Run each indicator's batched callable once over ``close`` (the full series in
+        # the selection phase) and return a candidate-major store sliceable by split
+        # range. Candidates whose warmup still exceeds the full series are marked
+        # invalid by the runner before ranking.
+        data_full = _slice_data(self.data, close, self.input_names)
+        n_symbols = len(close.columns)
+        outputs: dict[str, np.ndarray] = {}
+        full_candidate_keys = candidate_keys(param_lists)
+        candidate_index_by_output: dict[str, dict[CandidateKey, int]] = {}
+        for runtime in self.indicators:
+            deduped = _deduplicate_runtime_params(
+                runtime,
+                param_lists,
+                full_candidate_keys=full_candidate_keys,
+                n_candidates=n_candidates,
+            )
+            output = runtime.callable(
+                data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
+            )
+            output_arrays = _validated_indicator_output_arrays(
+                runtime,
+                output,
+                expected_shape=_candidate_major_shape(close, deduped.n_candidates),
+            )
+            for output_name, output_arr in output_arrays.items():
+                if output_name in outputs:
+                    raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
+                outputs[output_name] = output_arr
+                candidate_index_by_output[output_name] = deduped.candidate_index
+        return IndicatorPrecompute(
+            outputs=outputs,
+            candidate_index=build_candidate_index(param_lists),
+            n_symbols=n_symbols,
+            output_candidate_index=candidate_index_by_output,
+        )
+
+    def simulate(
+        self,
+        close_window: pd.DataFrame,
+        indicator_window: Mapping[str, np.ndarray],
+        n_candidates: int,
+        **param_lists: Any,
+    ) -> pd.DataFrame:
+        # Run the strategy allocation for one window given indicator outputs already
+        # sliced to that window; the central-metrics step prices the allocations.
+        data_slice = _slice_data(self.data, close_window, self.input_names)
+        n_symbols = len(close_window.columns)
+        strategy_inputs = ComponentStrategyInputs(
+            data=data_slice,
+            indicators=indicator_window,
+            n_candidates=n_candidates,
+            n_symbols=n_symbols,
+            metadata={
+                "strategy_id": self.strategy.definition.id,
+                "indicator_ids": [runtime.definition.id for runtime in self.indicators],
+                "component_optimization_source": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
+            },
+        )
+        strategy_params = _params_for_runtime(
+            self.strategy, param_lists, n_candidates=n_candidates
+        )
+        alloc_arr = _validated_component_array(
+            self.strategy,
+            self.strategy.callable(
+                strategy_inputs, n_candidates=n_candidates, **strategy_params
+            ),
+            expected_shape=_candidate_major_shape(close_window, n_candidates),
+            output_label="allocation",
+        )
+        return _build_frame(alloc_arr, close_window, n_candidates, param_lists, self.params)
+
+    def to_optimization_source(self) -> OptimizationSource:
+        strategy_manifest = self.strategy.definition.manifest
+        assert isinstance(strategy_manifest, StrategyManifest)
+        return OptimizationSource(
+            precompute=self.precompute,
+            simulate=self.simulate,
+            params=self.params,
+            output_name=strategy_manifest.output_name,
+            evidence=_source_evidence(self.strategy, self.indicators, self.params),
+            diagnostics={
+                "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
+                "candidate_param_count": len(self.params),
+                "uses_fixed_candidate_param": list(self.params) == [FIXED_CANDIDATE_PARAM],
+            },
+            metadata={
+                "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
+                "param_namespace": PARAM_KEY_PREFIX,
+            },
+        )
+
+
 def build_component_optimization_source(
     config: RunConfig,
     *,
@@ -103,112 +239,7 @@ def build_component_optimization_source(
         )
         for ref in config.indicators
     )
-    _assert_output_contract(strategy, indicators)
-
-    params: dict[str, vbt.Param] = {}
-    for runtime in (*indicators, strategy):
-        for param_name, param_key in runtime.param_keys.items():
-            param = runtime.param_space[param_name]
-            if param_key in params:
-                raise ComponentSourceError(f"duplicate component param key: {param_key}")
-            params[param_key] = param
-    if not params:
-        params[FIXED_CANDIDATE_PARAM] = vbt.Param([0])
-
-    input_names = _input_names(strategy, indicators)
-
-    def precompute(
-        close: pd.DataFrame, n_candidates: int, **param_lists: Any
-    ) -> IndicatorPrecompute:
-        # Run each indicator's batched callable once over ``close`` (the full series in
-        # the selection phase) and return a candidate-major store sliceable by split
-        # range. Candidates whose warmup still exceeds the full series are marked
-        # invalid by the runner before ranking.
-        data_full = _slice_data(data, close, input_names)
-        n_symbols = len(close.columns)
-        outputs: dict[str, np.ndarray] = {}
-        full_candidate_keys = candidate_keys(param_lists)
-        candidate_index_by_output: dict[str, dict[CandidateKey, int]] = {}
-        for runtime in indicators:
-            deduped = _deduplicate_runtime_params(
-                runtime,
-                param_lists,
-                full_candidate_keys=full_candidate_keys,
-                n_candidates=n_candidates,
-            )
-            output = runtime.callable(
-                data_full, n_candidates=deduped.n_candidates, **deduped.param_lists
-            )
-            output_arrays = _validated_indicator_output_arrays(
-                runtime,
-                output,
-                expected_shape=_candidate_major_shape(close, deduped.n_candidates),
-            )
-            for output_name, output_arr in output_arrays.items():
-                if output_name in outputs:
-                    raise ComponentSourceError(f"duplicate indicator output {output_name!r}")
-                outputs[output_name] = output_arr
-                candidate_index_by_output[output_name] = deduped.candidate_index
-        return IndicatorPrecompute(
-            outputs=outputs,
-            candidate_index=build_candidate_index(param_lists),
-            n_symbols=n_symbols,
-            output_candidate_index=candidate_index_by_output,
-        )
-
-    def simulate(
-        close_window: pd.DataFrame,
-        indicator_window: Mapping[str, np.ndarray],
-        n_candidates: int,
-        **param_lists: Any,
-    ) -> pd.DataFrame:
-        # Run the strategy allocation for one window given indicator outputs already
-        # sliced to that window; the central-metrics step prices the allocations.
-        data_slice = _slice_data(data, close_window, input_names)
-        n_symbols = len(close_window.columns)
-        strategy_inputs = ComponentStrategyInputs(
-            data=data_slice,
-            indicators=indicator_window,
-            n_candidates=n_candidates,
-            n_symbols=n_symbols,
-            metadata={
-                "strategy_id": strategy.definition.id,
-                "indicator_ids": [runtime.definition.id for runtime in indicators],
-                "component_optimization_source": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
-            },
-        )
-        strategy_params = _params_for_runtime(
-            strategy, param_lists, n_candidates=n_candidates
-        )
-        alloc_arr = _validated_component_array(
-            strategy,
-            strategy.callable(
-                strategy_inputs, n_candidates=n_candidates, **strategy_params
-            ),
-            expected_shape=_candidate_major_shape(close_window, n_candidates),
-            output_label="allocation",
-        )
-        return _build_frame(alloc_arr, close_window, n_candidates, param_lists, params)
-
-    evidence = _source_evidence(strategy, indicators, params)
-    strategy_manifest = strategy.definition.manifest
-    assert isinstance(strategy_manifest, StrategyManifest)
-    return OptimizationSource(
-        precompute=precompute,
-        simulate=simulate,
-        params=params,
-        output_name=strategy_manifest.output_name,
-        evidence=evidence,
-        diagnostics={
-            "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
-            "candidate_param_count": len(params),
-            "uses_fixed_candidate_param": list(params) == [FIXED_CANDIDATE_PARAM],
-        },
-        metadata={
-            "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
-            "param_namespace": PARAM_KEY_PREFIX,
-        },
-    )
+    return _ComposedSource.compose(data, strategy, indicators).to_optimization_source()
 
 
 def _build_runtime(

@@ -201,10 +201,11 @@ flowchart TB
         </article>
 
         <!-- ══════════════ 4 ══════════════ -->
-        <article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+        <article id="c4" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">4 · Deepen the Market Data loading pipeline (research)</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Implemented — beads aegis-rd-v36o (closed 2026-07-02)" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-v36o</span>
               <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
             </div>
@@ -259,15 +260,18 @@ flowchart TB
         </article>
 
         <!-- ══════════════ 5 ══════════════ -->
-        <article id="c5" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+        <article id="c5" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">5 · Give the Candidate optimization source internal seams</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled &amp; shipped 2026-07-02 — beads aegis-rd-obx4" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-obx4</span>
               <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
             </div>
           </div>
           <p class="font-mono text-sm text-slate-600">aegis-rd/research/aegis_research/optimization/component_source.py (561 lines, 14 private helpers)</p>
+
+          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Shipped 2026-07-02</span> — grilling narrowed the premise: the dedup/lock/runtime helpers were <em>already</em> module-level and directly unit-testable; only stages 2–3 (param composition + the precompute/simulate closures) were structurally locked behind the full build. Extracted a <span class="font-mono text-xs">_ComposedSource</span> value object — <span class="font-mono text-xs">compose()</span> owns stage 2, <span class="font-mono text-xs">precompute/simulate</span> become methods over owned state, <span class="font-mono text-xs">to_optimization_source()</span> projects the contract (Tell-Don't-Ask). Stage 1 (<span class="font-mono text-xs">_build_runtime</span>) left as-is; <span class="font-mono text-xs">build_…</span> is now a three-liner. External <span class="font-mono text-xs">OptimizationSource</span> (incl. v2 schema) byte-identical. +6 isolated seam tests. Tracked as <span class="font-mono text-xs">aegis-rd-obx4</span>.</div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
@@ -351,10 +355,11 @@ flowchart TB
         </article>
 
         <!-- ══════════════ 7 ══════════════ -->
-        <article id="c7" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+        <article id="c7" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">7 · Invalid Candidate detection owns one module</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled &amp; shipped 2026-07-02 — beads aegis-rd-o2s5" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-o2s5</span>
               <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
             </div>
@@ -362,6 +367,8 @@ flowchart TB
           <p class="font-mono text-sm text-slate-600">
             aegis-rd/research/aegis_research/optimization/candidate_validity.py:151–173 · runner.py:133, 213 · window_evaluator.py:75–95
           </p>
+
+          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Shipped 2026-07-02</span> — grilling exposed the real smell as <em>Feature Envy</em>: <span class="font-mono text-xs">invalid_candidates()</span> reached into <span class="font-mono text-xs">store.outputs</span> / <span class="font-mono text-xs">store._candidate_index_for_output</span> — a private method — so the detection scan wanted to live on the store, while <span class="font-mono text-xs">candidate_validity</span> keeps the <em>classification</em>. Moved detection onto <span class="font-mono text-xs">IndicatorPrecompute.invalid_keys</span> (a <span class="font-mono text-xs">cached_property</span> over the store's own <span class="font-mono text-xs">candidate_index</span> — the redundant <span class="font-mono text-xs">keys</span> arg dropped; warm cache ships to pathos workers via dill). The evaluator drops its <span class="font-mono text-xs">invalid_candidate_keys</span> field and reads the store, so selection/held-out can no longer drift; <span class="font-mono text-xs">invalid_candidate_positions</span> deleted for an inline <span class="font-mono text-xs">all(…)</span> guard. Verdict partition, short-circuit, and golden bytes all unchanged. Tracked as <span class="font-mono text-xs">aegis-rd-o2s5</span>.</div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="rounded-lg border border-slate-200 bg-white p-4">
@@ -388,9 +395,9 @@ flowchart TB
           <p class="text-sm"><span class="font-semibold">Problem</span> — <em>Invalid Candidate</em> detection is computed in one module but consumed via a key set the runner must remember to thread into <em>Window Evaluation</em>; forget it and the <em>Run</em> silently degrades instead of failing.</p>
           <p class="text-sm"><span class="font-semibold">Solution</span> — the precompute store answers <span class="font-mono text-xs">invalid_keys()</span> itself, so detection and consumption sit behind one interface.</p>
           <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
-            <li>silent dependency defined out of existence</li>
-            <li>one module owns invalidity</li>
-            <li>evaluator tests drop store setup</li>
+            <li>drift between the two consumers defined out of existence</li>
+            <li>the store owns its own invalidity (Feature Envy resolved)</li>
+            <li>invalid detection is unit-tested on the store; evaluator drops the parallel invalid-key bookkeeping</li>
           </ul>
           <p class="text-xs text-slate-500">Completes aegis-rd ADR-0010's intent — verdict logic in one place.</p>
         </article>
