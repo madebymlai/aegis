@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import subprocess
 
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
@@ -108,4 +109,13 @@ def test_fill_model_carries_configured_probability_and_seed():
 
 
 def test_cost_models_do_not_import_ibapi():
-    assert "ibapi" not in sys.modules
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import aegis_trader.trader.costs, sys; "
+            "sys.exit(1 if any(m == 'ibapi' or m.startswith('ibapi.') for m in sys.modules) else 0)",
+        ],
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr.decode()

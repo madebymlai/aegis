@@ -42,7 +42,7 @@ from aegis_trader.portfolio import NautilusBookState
 from aegis_trader.trader.strategy import RebalanceStrategy
 
 _INSTRUMENT_ID = InstrumentId.from_str("VUSA.XLON")
-_SECOND_INSTRUMENT_ID = InstrumentId.from_str("AAPL.NASDAQ")
+_SECOND_INSTRUMENT_ID = InstrumentId.from_str("AAPL.XNAS")
 _ES = InstrumentId.from_str("ES.XCME")
 _WHEEL = "synth-trend.whl"
 

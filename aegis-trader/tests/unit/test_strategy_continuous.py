@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import Any
 
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
@@ -112,10 +113,10 @@ class _DriveHarness:
     # The production property + sibling methods _drive_feed calls, bound to the harness (the
     # proven harness pattern: exercise the real code path, not a re-implementation).
     sleeve_ledger = RebalanceStrategy.sleeve_ledger
-    _drive_feed = RebalanceStrategy._drive_feed
-    _on_feed_roll = RebalanceStrategy._on_feed_roll
-    _ensure_leg_subscribed = RebalanceStrategy._ensure_leg_subscribed
-    _require_book_timeframe = RebalanceStrategy._require_book_timeframe
+    _drive_feed: Any = RebalanceStrategy._drive_feed
+    _on_feed_roll: Any = RebalanceStrategy._on_feed_roll
+    _ensure_leg_subscribed: Any = RebalanceStrategy._ensure_leg_subscribed
+    _require_book_timeframe: Any = RebalanceStrategy._require_book_timeframe
 
     def __init__(
         self,
@@ -200,8 +201,8 @@ def test_on_bar_ignores_a_bar_that_is_not_a_feeds_front_leg() -> None:
 
 
 class _WarmupFeedHarness:
-    _registered_instrument_ids = RebalanceStrategy._registered_instrument_ids
-    _warm_startup_cache = RebalanceStrategy._warm_startup_cache
+    _registered_instrument_ids: Any = RebalanceStrategy._registered_instrument_ids
+    _warm_startup_cache: Any = RebalanceStrategy._warm_startup_cache
 
     def __init__(self, contracts: dict[SleeveName, DataContract], feeds: list[_FakeFeed]) -> None:
         self.config = SimpleNamespace(warmup_cache_on_start=True)
@@ -250,7 +251,7 @@ def test_warmup_warms_front_legs_for_a_futures_only_book() -> None:
 
 
 class _InstallHarness:
-    _install_feeds = RebalanceStrategy._install_feeds
+    _install_feeds: Any = RebalanceStrategy._install_feeds
 
     def __init__(self) -> None:
         self._feeds: dict[InstrumentId, _FakeFeed] = {}
@@ -291,8 +292,8 @@ class _FakeMarketData:
 
 
 class _SubmitHarness:
-    _submit_order_intent = RebalanceStrategy._submit_order_intent
-    _require_market_data = RebalanceStrategy._require_market_data
+    _submit_order_intent: Any = RebalanceStrategy._submit_order_intent
+    _require_market_data: Any = RebalanceStrategy._require_market_data
 
     def __init__(self, market_data: _FakeMarketData) -> None:
         self._market_data = market_data
@@ -346,9 +347,9 @@ class _FakeCache:
 
 
 class _LegLoadHarness:
-    _ensure_leg_subscribed = RebalanceStrategy._ensure_leg_subscribed
-    on_instrument = RebalanceStrategy.on_instrument
-    _require_book_timeframe = RebalanceStrategy._require_book_timeframe
+    _ensure_leg_subscribed: Any = RebalanceStrategy._ensure_leg_subscribed
+    on_instrument: Any = RebalanceStrategy.on_instrument
+    _require_book_timeframe: Any = RebalanceStrategy._require_book_timeframe
 
     def __init__(self, cache: _FakeCache, book_timeframe: str = "1D") -> None:
         self.cache = cache
