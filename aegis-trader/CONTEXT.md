@@ -73,6 +73,21 @@ research-only substrates, never in the live loop. Resolution is fail-closed. The
 *identity* is the single, authoritative **InstrumentId**; only its *resolution* is vendor-native.
 _Avoid_: symbol map, instrument map, ticker table, security database, FIGI, FIGI resolver, VenueContract, InstrumentRef (resolution is vendor-native — no bespoke resolver or intermediate contract type)
 
+**Roll**:
+The advance of a continuous future's front leg from one dated contract to the next — detected
+causally at bar time when the newer leg overtakes the current front on observed volume, keyed by
+the `(from, to)` `InstrumentId` pair. It re-bases the back-adjusted continuous series across the
+seam so the series stays continuous, and uses no declarative roll calendar — the front is chosen
+live from volume, so live and research pick the same leg.
+_Avoid_: roll calendar, roll rule, rollover schedule, contract switch, expiry roll
+
+**Roll Desk**:
+The single authority for the **Commingled Book's** live continuous-future exposure — it owns
+each declared root's back-adjusted continuous series and the dated front leg the root currently
+resolves to, re-based across every **Roll** so live stays identical to research. One per book;
+the continuous series is read, and a continuous root's execution front is resolved, only through it.
+_Avoid_: roll manager, roll engine, feeds orchestrator, continuous feed manager, continuous service, roll handler
+
 **Broker Connection**:
 The environment-resolved IBKR connection (`IBConnectionSettings`: host, port, client
 id, account id) that a live trader run trades through. Paper and live are **not** run

@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — aegis</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { border-style: dashed; }
+      .band { display: flex; align-items: center; padding-left: 0.75rem; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-3">
+        <h1 class="font-serif text-3xl">Architecture review — <span class="text-indigo-700">aegis</span></h1>
+        <p class="text-sm text-slate-500">2026-07-02 · branch <span class="font-mono">market-data-unification-live-research-parity</span> · three parallel explorations (RD / Data+kernel / Trader)</p>
+        <div class="flex flex-wrap gap-4 text-xs text-slate-600 pt-1">
+          <span class="flex items-center gap-2"><span class="inline-block w-6 h-4 border border-slate-400 bg-white"></span>module</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-6 border-t-2 border-dashed border-slate-500"></span>seam</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-6 border-t-2 border-red-600"></span>leak</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-6 h-4 rounded bg-slate-900"></span>deep module</span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+
+        <!-- ══════════════ 1 ══════════════ -->
+        <article id="c1" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">1 · Collapse the live Roll lifecycle into one deep module</h2>
+            <div class="flex gap-2 shrink-0">
+              <span title="Scoped &amp; WIP — beads epic aegis-rd-ddzk (slices .1–.5)" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-ddzk</span>
+              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium px-3 py-1">Strong</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">
+            aegis-trader/aegis_trader/trader/strategy.py:213–287, 384–462<br/>
+            aegis-trader/aegis_trader/data/continuous_feed.py · data/market_data.py:54–57 · trader/pipeline.py:114, 131
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before — 8 methods, 3 hand-synced maps</p>
+              <div class="border-2 border-slate-400 rounded p-3 space-y-2">
+                <p class="text-xs uppercase tracking-wider">RebalanceStrategy (Nautilus callback surface)</p>
+                <div class="grid grid-cols-2 gap-1 text-[11px] font-mono">
+                  <div class="border border-slate-300 bg-white px-2 py-1">_init_feeds</div>
+                  <div class="border border-slate-300 bg-white px-2 py-1">_install_feeds</div>
+                  <div class="border border-slate-300 bg-white px-2 py-1">_warm_startup_cache</div>
+                  <div class="border border-slate-300 bg-white px-2 py-1">_drive_feed</div>
+                  <div class="border border-red-400 bg-red-50 px-2 py-1">_on_feed_roll</div>
+                  <div class="border border-red-400 bg-red-50 px-2 py-1">_ensure_leg_subscribed</div>
+                  <div class="border border-slate-300 bg-white px-2 py-1">on_instrument</div>
+                  <div class="border border-slate-300 bg-white px-2 py-1">_continuous_port</div>
+                </div>
+                <div class="flex gap-1 text-[11px] font-mono pt-1">
+                  <div class="border border-red-400 border-dashed bg-white px-2 py-1 flex-1">_feeds{}</div>
+                  <div class="border border-red-400 border-dashed bg-white px-2 py-1 flex-1">_leg_to_feed{}</div>
+                  <div class="border border-red-400 border-dashed bg-white px-2 py-1 flex-1">ids_by_root{}</div>
+                </div>
+                <p class="text-[11px] text-red-700">a Roll must mutate all three maps in the right order — verified only by e2e backtest</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">After — one deep module, thin adapter</p>
+              <div class="border border-slate-300 rounded p-3 bg-white space-y-2">
+                <p class="text-xs uppercase tracking-wider">RebalanceStrategy — thin Nautilus adapter</p>
+                <p class="text-[11px] font-mono text-slate-500">route_bar() · on_start() · submit orders</p>
+              </div>
+              <div class="text-center text-slate-400 text-xs py-1">│ 3 calls across the seam</div>
+              <div class="rounded p-3 text-white space-y-1" style="background: linear-gradient(135deg, #0f172a, #1e293b);">
+                <p class="text-xs uppercase tracking-wider">Live feeds orchestrator</p>
+                <p class="text-[11px] font-mono text-slate-400">materialise · route bars · detect Roll · re-subscribe legs · re-base Sleeve ledger</p>
+                <p class="text-[11px] text-slate-500">one owned state — internals faded from callers</p>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-sm"><span class="font-semibold">Problem</span> — the continuous-future <em>Roll</em> lifecycle is smeared across eight strategy methods and three maps the strategy must mutate in lock-step; a mis-ordered re-subscription or stale leg only surfaces in an e2e backtest.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — extract a feeds-orchestrator value object, parallel to the existing <span class="font-mono text-xs">RebalancePipeline</span>, that owns materialisation, bar routing, Roll detection, leg re-subscription and ledger re-basing behind one interface.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
+            <li>locality: Roll bugs concentrate in one module</li>
+            <li>tests hit one interface, not e2e</li>
+            <li>three maps become one owned state</li>
+            <li>strategy sheds ~200 stateful lines</li>
+          </ul>
+          <p class="text-xs text-slate-500">Aligned with trader ADR-0003 — the same deep-module shape it mandates for the rebalance pipeline.</p>
+        </article>
+
+        <!-- ══════════════ 2 ══════════════ -->
+        <article id="c2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">2 · One continuous-futures interface for research and live</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium px-3 py-1">Strong</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">ports &amp; adapters</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">
+            aegis-trader/aegis_trader/data/continuous_feed.py:23–29<br/>
+            aegis-data/aegis_data/continuous_catalog.py · liquidity.py · rebasing.py · roll.py · catalog_contracts.py · catalog.py
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — live reaches past the seam</p>
+              <pre class="mermaid">
+flowchart TB
+  RD[research request path] --> CC[continuous_catalog composer]
+  FEED[live ContinuousFeed] --> CC
+  CC --> INT[chain · roll · rebasing · liquidity · catalog_contracts · bar_type]
+  FEED -.->|reaches past the seam| INT
+  linkStyle 3 stroke:#dc2626,stroke-width:2px
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class FEED leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — two adapters, one real seam</p>
+              <pre class="mermaid">
+flowchart TB
+  RD2[research request path] --> DEEP[continuous futures — one deep interface]
+  FEED2[live ContinuousFeed] --> DEEP
+  DEEP --> HID[internals: chain · roll table · engine · liquidity · rebasing]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  classDef faded fill:#f1f5f9,color:#94a3b8,stroke:#cbd5e1;
+  class DEEP deep
+  class HID faded
+              </pre>
+            </div>
+          </div>
+
+          <p class="text-sm"><span class="font-semibold">Problem</span> — <span class="font-mono text-xs">continuous_catalog</span> declares itself the single entry point, but the live feed imports six aegis-data internals to re-compose the same series, so <em>live ≡ research</em> parity holds only "by construction" with nothing enforcing it.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — deepen the aegis-data seam to also serve the live feed's needs (causal front-leg detection, Roll lead days, re-basing transitions), so both consumers sit behind the one interface.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
+            <li>two adapters make the seam real</li>
+            <li>parity enforced by one implementation</li>
+            <li>leverage: one interface, both contexts</li>
+            <li>aegis-data internals stop leaking</li>
+          </ul>
+          <div class="rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm text-amber-900">This is the architectural form of the current branch's goal — extends aegis-data ADR-0003's deep-object posture; conflicts with nothing.</div>
+        </article>
+
+        <!-- ══════════════ 3 ══════════════ -->
+        <article id="c3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">3 · One resolver for continuous-root identity</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">
+            aegis-data/aegis_data/continuous_catalog.py:149–157 · aegis-runtime/aegis_runtime/bundle.py:281–302 · aegis-rd/research/aegis_research/market_data/identity.py:28–47
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4 space-y-2">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-1">Before — the same knowledge, three times</p>
+              <div class="border border-slate-300 bg-white rounded p-2">
+                <p class="text-xs uppercase tracking-wider">aegis-data · continuous_catalog</p>
+                <p class="text-[11px] font-mono bg-red-50 border border-red-300 rounded px-2 py-1 mt-1">root → ES.XCME + venue check</p>
+              </div>
+              <div class="border border-slate-300 bg-white rounded p-2">
+                <p class="text-xs uppercase tracking-wider">aegis-runtime · bundle</p>
+                <p class="text-[11px] font-mono bg-red-50 border border-red-300 rounded px-2 py-1 mt-1">root → ES.XCME + exactly-one check</p>
+              </div>
+              <div class="border border-slate-300 bg-white rounded p-2">
+                <p class="text-xs uppercase tracking-wider">research · identity</p>
+                <p class="text-[11px] font-mono bg-red-50 border border-red-300 rounded px-2 py-1 mt-1">root → ES.XCME + consistency check</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — one module owns the rule</p>
+              <div class="rounded p-3 text-white mb-2" style="background: linear-gradient(135deg, #0f172a, #1e293b);">
+                <p class="text-xs uppercase tracking-wider">continuous-root resolver (aegis-data)</p>
+                <p class="text-[11px] text-slate-400 font-mono">bare root → continuous InstrumentId · one venue per root · fail-closed</p>
+              </div>
+              <div class="grid grid-cols-3 gap-1 text-[11px] text-center">
+                <div class="border border-slate-300 bg-white rounded px-1 py-1">catalog<br/>calls it</div>
+                <div class="border border-slate-300 bg-white rounded px-1 py-1">kernel<br/>calls it</div>
+                <div class="border border-slate-300 bg-white rounded px-1 py-1">research<br/>calls it</div>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-sm"><span class="font-semibold">Problem</span> — resolving a bare root ("ES") to its continuous <em>InstrumentId</em> ("ES.XCME") is implemented three times across three contexts, each with its own consistency check, and nothing forces them to agree.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — one resolver at the aegis-data seam; root-resolution semantics live in exactly one module that catalog, kernel and research all call.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
+            <li>locality: semantics change in one place</li>
+            <li>identity drift defined out of existence</li>
+            <li>three checks become one</li>
+          </ul>
+          <p class="text-xs text-slate-500">Consistent with root ADR-0007 — same identity, single resolution rule.</p>
+        </article>
+
+        <!-- ══════════════ 4 ══════════════ -->
+        <article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">4 · Deepen the Market Data loading pipeline (research)</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium px-3 py-1">Strong</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">
+            aegis-rd/research/aegis_research/market_data/loading.py:53–139 · diagnostics.py · quality.py · metadata.py
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — sequence duplicated across two paths</p>
+              <div class="grid grid-cols-2 gap-2">
+                <div class="space-y-1">
+                  <p class="text-[11px] font-mono text-slate-500">load_market_data_result</p>
+                  <div class="band h-8 border-l-4 border-slate-400 bg-white text-[11px]">observe</div>
+                  <div class="band h-8 border-l-4 border-slate-400 bg-white text-[11px]">diagnose</div>
+                  <div class="band h-8 border-l-4 border-red-500 bg-red-50 text-[11px]">judge</div>
+                  <div class="band h-8 border-l-4 border-red-500 bg-red-50 text-[11px]">describe</div>
+                  <div class="band h-8 border-l-4 border-slate-400 bg-white text-[11px]">convert · distributions</div>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-[11px] font-mono text-slate-500">_provider_failed_result</p>
+                  <div class="band h-8 border-l-4 border-slate-300 bg-stone-100 text-[11px] text-slate-400">—</div>
+                  <div class="band h-8 border-l-4 border-slate-300 bg-stone-100 text-[11px] text-slate-400">—</div>
+                  <div class="band h-8 border-l-4 border-red-500 bg-red-50 text-[11px]">judge <span class="text-red-600 ml-1">(again)</span></div>
+                  <div class="band h-8 border-l-4 border-red-500 bg-red-50 text-[11px]">describe <span class="text-red-600 ml-1">(again)</span></div>
+                  <div class="band h-8 border-l-4 border-slate-300 bg-stone-100 text-[11px] text-slate-400">—</div>
+                </div>
+              </div>
+              <p class="text-[11px] text-red-700 mt-2">step order is implicit call order — the one part with no interface and no tests</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — the sequence is the module</p>
+              <div class="rounded p-3 text-white" style="background: linear-gradient(135deg, #0f172a, #1e293b);">
+                <p class="text-xs uppercase tracking-wider">market-data loading pipeline</p>
+                <p class="text-[11px] font-mono text-slate-400 mt-1">observe → diagnose → judge → describe → convert</p>
+                <p class="text-[11px] text-slate-500 mt-1">owns step order and the provider-failure path; leaf modules stay independently testable internals</p>
+              </div>
+              <div class="mt-2 text-[11px] text-slate-600">one interface: <span class="font-mono">load_result(config)</span> — the <em>Run</em> and its tests cross the same seam</div>
+            </div>
+          </div>
+
+          <p class="text-sm"><span class="font-semibold">Problem</span> — the <em>Run</em>'s market-data load threads five leaf modules in bare procedural order, and the provider-failure path re-implements half the sequence; the orchestration itself has no interface, so tests exercise leaves and skip the part where bugs live.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — make the loading sequence itself a module owning step order and the failure path, with the observe/judge/describe leaves as its internals.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
+            <li>orchestration gains an interface</li>
+            <li>failure path stops duplicating</li>
+            <li>tests stop rebuilding the sequence</li>
+          </ul>
+          <p class="text-xs text-slate-500">Honours aegis-rd ADR-0005 (decompose loading) and ADR-0020 (typed metadata) — both assume the orchestration is a seam.</p>
+        </article>
+
+        <!-- ══════════════ 5 ══════════════ -->
+        <article id="c5" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">5 · Give the Candidate optimization source internal seams</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-rd/research/aegis_research/optimization/component_source.py (561 lines, 14 private helpers)</p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — deep to callers, opaque to tests</p>
+              <div class="border-2 border-slate-500 bg-white rounded-t px-3 py-1 text-xs font-mono">build_component_optimization_source()</div>
+              <div class="border-2 border-t-0 border-slate-500 bg-slate-100 rounded-b px-3 py-2" style="min-height: 180px;">
+                <p class="text-[11px] text-slate-500 mb-1">133-line body + tangled helpers:</p>
+                <p class="text-[10px] font-mono text-slate-400 leading-relaxed">_build_runtime · _fixed_params_for_ref · _load_param_space · _validate_component_param_sources · _params_for_runtime · _deduplicate_runtime_params ×2 · precompute/simulate closures capturing the registry …</p>
+                <p class="text-[11px] text-red-700 mt-2">param dedup and Lock overrides testable only by running the whole build</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — same interface, staged internals</p>
+              <div class="border-2 border-slate-500 bg-white rounded-t px-3 py-1 text-xs font-mono">build_component_optimization_source()</div>
+              <div class="border-2 border-t-0 border-slate-500 rounded-b px-3 py-2 space-y-1" style="min-height: 180px; background: linear-gradient(135deg, #0f172a, #1e293b);">
+                <div class="border border-dashed border-slate-500 rounded px-2 py-1 text-[11px] text-slate-200 font-mono">stage 1 · component runtime</div>
+                <div class="border border-dashed border-slate-500 rounded px-2 py-1 text-[11px] text-slate-200 font-mono">stage 2 · param space (locked / swept)</div>
+                <div class="border border-dashed border-slate-500 rounded px-2 py-1 text-[11px] text-slate-200 font-mono">stage 3 · source composition (closures)</div>
+                <p class="text-[11px] text-slate-500">internal seams — private to the module, used by its own tests</p>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-sm"><span class="font-semibold">Problem</span> — the module is deep to its callers but its implementation hides <em>Lock</em>-override and param-dedup logic in 14 sequential helpers plus closures that capture the whole <em>Component</em> registry, so every test must run the entire build.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — keep the external interface; structure the implementation into three staged internal seams so each stage is testable alone.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
+            <li>internal seams, same external interface</li>
+            <li>param dedup testable in isolation</li>
+            <li>locked-vs-swept branches isolated</li>
+          </ul>
+          <p class="text-xs text-slate-500">ADR-0017's precompute/simulate interface is untouched — only the build's internals gain structure.</p>
+        </article>
+
+        <!-- ══════════════ 6 ══════════════ -->
+        <article id="c6" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">6 · Extract the strategy boot sequence</h2>
+            <div class="flex gap-2 shrink-0">
+              <span title="Scoped &amp; WIP — beads epic aegis-rd-ddzk (slice .6)" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-ddzk.6</span>
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-trader/aegis_trader/trader/strategy.py:291–349</p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — 9 ordered steps in a Nautilus callback</p>
+              <div class="space-y-0.5 text-[11px] font-mono">
+                <div class="band h-6 border-l-4 border-slate-400 bg-white">1 book-state port</div>
+                <div class="band h-6 border-l-4 border-slate-400 bg-white">2 Backtest Timeframe</div>
+                <div class="band h-6 border-l-4 border-red-500 bg-red-50">3 feeds materialised</div>
+                <div class="band h-6 border-l-4 border-slate-400 bg-white">4 market-data port</div>
+                <div class="band h-6 border-l-4 border-slate-400 bg-white">5 rebalance pipeline</div>
+                <div class="band h-6 border-l-4 border-red-500 bg-red-50">6 startup gates</div>
+                <div class="band h-6 border-l-4 border-slate-400 bg-white">7 cache warmup</div>
+                <div class="band h-6 border-l-4 border-red-500 bg-red-50">8 bar subscriptions</div>
+                <div class="band h-6 border-l-4 border-slate-400 bg-white">9 front-leg registration</div>
+              </div>
+              <p class="text-[11px] text-red-700 mt-2">ordering invariants (3 before 4, 6 halts before 7) tested nowhere — one unit test exists</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — boot is a module, on_start is an adapter</p>
+              <div class="border border-slate-300 bg-white rounded p-2 text-[11px] font-mono mb-2">on_start() — thin Nautilus adapter</div>
+              <div class="text-center text-slate-400 text-xs pb-1">│ one call</div>
+              <div class="rounded p-3 text-white" style="background: linear-gradient(135deg, #0f172a, #1e293b);">
+                <p class="text-xs uppercase tracking-wider">strategy bootstrapper</p>
+                <p class="text-[11px] text-slate-400 mt-1">owns the 9-step order · returns typed initialized state or a halt gate</p>
+              </div>
+              <p class="text-[11px] text-slate-600 mt-2">boot order becomes an assertable fact, not emergent behaviour</p>
+            </div>
+          </div>
+
+          <p class="text-sm"><span class="font-semibold">Problem</span> — <span class="font-mono text-xs">on_start</span> choreographs nine ordered steps inside a Nautilus callback, so its ordering invariants are only exercised by e2e backtests.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — move the choreography into a bootstrapper module that returns typed initialized state or a halt gate; pairs naturally with candidate 1.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
+            <li>boot order testable without Nautilus</li>
+            <li>halt gates verified per step</li>
+            <li>pairs with the feeds orchestrator</li>
+          </ul>
+        </article>
+
+        <!-- ══════════════ 7 ══════════════ -->
+        <article id="c7" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">7 · Invalid Candidate detection owns one module</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">
+            aegis-rd/research/aegis_research/optimization/candidate_validity.py:151–173 · runner.py:133, 213 · window_evaluator.py:75–95
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — a silent hand-off</p>
+              <pre class="mermaid">
+flowchart TB
+  P[IndicatorPrecompute] --> R[optimization runner]
+  CV[candidate_validity] --> R
+  R -.->|hand-threaded key set — forgettable| W[Window Evaluation]
+  linkStyle 2 stroke:#dc2626,stroke-width:2px
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — detection lives with the store</p>
+              <pre class="mermaid">
+flowchart TB
+  P2["IndicatorPrecompute — owns invalid_keys()"] --> W2[Window Evaluation]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  class P2 deep
+              </pre>
+            </div>
+          </div>
+
+          <p class="text-sm"><span class="font-semibold">Problem</span> — <em>Invalid Candidate</em> detection is computed in one module but consumed via a key set the runner must remember to thread into <em>Window Evaluation</em>; forget it and the <em>Run</em> silently degrades instead of failing.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — the precompute store answers <span class="font-mono text-xs">invalid_keys()</span> itself, so detection and consumption sit behind one interface.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
+            <li>silent dependency defined out of existence</li>
+            <li>one module owns invalidity</li>
+            <li>evaluator tests drop store setup</li>
+          </ul>
+          <p class="text-xs text-slate-500">Completes aegis-rd ADR-0010's intent — verdict logic in one place.</p>
+        </article>
+
+        <!-- ══════════════ 8 ══════════════ -->
+        <article id="c8" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">8 · The trader bar-type wrapper fails the deletion test</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">
+            aegis-trader/aegis_trader/data/bar_type.py (49 lines) · market_data.py:24 · backtest_data.py:18 · continuous_feed.py:23
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before — interface ≈ implementation</p>
+              <div class="flex items-end gap-6 justify-center pt-4">
+                <div class="text-center">
+                  <div class="w-28 border-2 border-slate-500 bg-white" style="height: 96px;"><p class="text-[10px] pt-1 text-slate-500">interface<br/>(re-exports)</p></div>
+                  <div class="w-28 border-2 border-t-0 border-slate-500 bg-slate-200" style="height: 24px;"><p class="text-[10px]">impl: 1 function</p></div>
+                  <p class="text-[11px] font-mono mt-1">data/bar_type.py</p>
+                </div>
+                <div class="text-[11px] text-red-700 max-w-[10rem]">and callers already split: continuous_feed imports aegis-data directly, bypassing it</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — pass-through deleted</p>
+              <div class="space-y-2 pt-4">
+                <div class="border border-slate-300 bg-white rounded p-2 text-[11px] font-mono text-center">market_data · backtest_data · continuous_feed</div>
+                <div class="text-center text-slate-400 text-xs">│ import directly</div>
+                <div class="rounded p-2 text-white text-center text-[11px] font-mono" style="background: linear-gradient(135deg, #0f172a, #1e293b);">aegis_data.bar_type</div>
+                <p class="text-[11px] text-slate-600 text-center">resolve_book_timeframe (the <em>Backtest Timeframe</em> rule) moves next to its callers</p>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-sm"><span class="font-semibold">Problem</span> — the module re-exports aegis-data's bar-type helpers and adds one function; delete it and no complexity reappears — the definition of a pass-through.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — delete the re-export layer, keep the one real behaviour (<em>Backtest Timeframe</em> resolution) beside its callers, import the rest from aegis-data directly.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
+            <li>delete a shallow module</li>
+            <li>one import path, not two</li>
+            <li>interface shrinks to one function</li>
+          </ul>
+        </article>
+
+      </section>
+
+      <!-- ══════════════ top recommendation ══════════════ -->
+      <section id="top-recommendation" class="rounded-xl border-2 border-emerald-300 bg-emerald-50 p-8 space-y-3">
+        <p class="text-xs uppercase tracking-wider text-emerald-700">Top recommendation</p>
+        <h2 class="font-serif text-2xl"><a href="#c1" class="underline decoration-emerald-400 hover:decoration-emerald-600">1 · Collapse the live Roll lifecycle into one deep module</a></h2>
+        <p class="text-sm text-emerald-950 max-w-3xl">It sits at the least-tested seam in the repo — the live loop, where Roll-ordering bugs today surface only in e2e backtests — and the codebase already proves the shape works (<span class="font-mono text-xs">RebalancePipeline</span>). Doing it first shrinks the strategy to a thin adapter and exposes cleanly the seam that candidate <a href="#c2" class="underline">2</a> (this branch's own concern) then deepens.</p>
+      </section>
+
+    </main>
+  </body>
+</html>
