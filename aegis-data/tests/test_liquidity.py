@@ -272,6 +272,49 @@ def test_liquid_roll_schedule_roll_dates_are_causal() -> None:
     assert causal.roll_dates == acausal.roll_dates
 
 
+def test_causal_front_picker_agrees_with_the_roll_schedule_front() -> None:
+    # Green here is the gate that lets the continuous model retire the second
+    # front-picker: the front leg used for execution and the schedule leg used
+    # for materialisation are the same at representative as-ofs, including the
+    # early liquidity migration that guards bd aegis-rd-6qp.
+    candidates, volume = _palladium_early_crossover()
+    _assert_front_picker_agrees(candidates, volume, date(2024, 1, 1), date(2024, 2, 2))
+    _assert_front_picker_agrees(candidates, volume, date(2024, 1, 1), date(2024, 2, 16))
+    _assert_front_picker_agrees(candidates, volume, date(2024, 1, 1), date(2024, 4, 1))
+
+    liquid_root = [
+        DatedContract("CLG4", date(2024, 2, 29)),
+        DatedContract("CLJ4", date(2024, 5, 31)),
+    ]
+    liquid_volume = {
+        "CLG4": _flat_volume(date(2024, 1, 1), date(2024, 2, 29), 1000),
+        "CLJ4": pd.Series(
+            [
+                100.0 if d <= pd.Timestamp("2024-02-29") else 2000.0
+                for d in pd.bdate_range("2024-01-01", "2024-04-01")
+            ],
+            index=pd.bdate_range("2024-01-01", "2024-04-01"),
+            dtype="float64",
+        ),
+    }
+    _assert_front_picker_agrees(liquid_root, liquid_volume, date(2024, 1, 1), date(2024, 2, 15))
+    _assert_front_picker_agrees(liquid_root, liquid_volume, date(2024, 1, 1), date(2024, 4, 1))
+
+
+def _assert_front_picker_agrees(
+    candidates: list[DatedContract],
+    volume: dict[str, pd.Series],
+    start: date,
+    as_of: date,
+) -> None:
+    causal = liquid_cycle_causal(candidates, volume, as_of, roll_lead_days=5)
+    schedule = liquid_roll_schedule(candidates, volume, start, as_of, roll_lead_days=5)
+
+    assert causal
+    assert schedule.symbols
+    assert causal[-1].symbol == schedule.symbols[-1]
+
+
 def test_liquid_cycle_agreement_returns_the_shared_schedule_for_matching_feeds() -> None:
     candidates = [
         DatedContract("GCK4", date(2024, 5, 28)),

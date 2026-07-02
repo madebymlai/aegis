@@ -34,7 +34,7 @@ backtest.py         -> backtest engine + non-live RiskEngine config (was trader/
 `RebalancePipeline` is the deep module ADR-0003 originally intended:
 
 - `startup_check() -> StartupResult` runs cap-provenance and account-integrity gates. A failed gate returns a typed halt gate plus human reason; the Strategy logs it and idles before any order can be submitted.
-- Identity needs no pipeline resolver: each Execution Bundle declares its native Nautilus `InstrumentId`s, `union_native_instrument_ids` unions them across sleeves (`bundles/book_sleeves.py`), and IBKR's `InstrumentProvider.load_ids` resolves them at boot (root ADR-0007). The futures roll is owned by the continuous data feed (`data/continuous_feed.py`) — live, causal, keyed by `InstrumentId` — not by a pipeline resolution step.
+- Identity needs no pipeline resolver: each Execution Bundle declares its native Nautilus `InstrumentId`s, `union_native_instrument_ids` unions them across sleeves (`bundles/book_sleeves.py`), and IBKR's `InstrumentProvider.load_ids` resolves them at boot (root ADR-0007). The futures roll is driven by the Roll Desk over `aegis-data`'s `ContinuousContractModel` — live, keyed by `InstrumentId` — not by a pipeline resolution step.
 - `rebalance_period(CompletedRebalancePeriod) -> RebalanceResult` reads completed-period windows and freshness through `MarketDataPort`, computes sleeve targets from Execution Bundles, builds the rebalance plan, sizes deltas, filters stale instruments, records the `SleeveLedger`, and returns `OrderIntent`s plus a `RebalanceSummary` carrying the real gate outcome.
 - The owned `SleeveLedger` supplies realized covariance for the next rebalance and end-of-run evidence (realized book skew and per-sleeve P&L attribution).
 
@@ -44,7 +44,7 @@ backtest.py         -> backtest engine + non-live RiskEngine config (was trader/
 
 - **No `ExecutionPort`.** Order submission goes through Nautilus's venue-agnostic order factory, `ExecutionEngine`, and `RiskEngine` from the Strategy. IBKR-specific behavior belongs in the single IBKR adapter (`aegis-data/ibkr.py`) — connection-config translation only, building Nautilus's *stock* `InteractiveBrokers{Data,Exec}ClientConfig` + registering the stock live factories — not in the Trader's `node.py` or a Trader execution adapter.
 - **No `ObservabilityPort`.** The shipped sink is Nautilus's native logger (`self.log`). A future subscriber-based backend should attach to Nautilus `MessageBus` (`publish_signal` / `publish_data`) rather than reintroducing a shallow Trader port.
-- **No Cache wrapper.** Cache remains Nautilus's reconciled source of truth. Trader-owned state is limited to the continuous feed's regenerable roll state and the pure `SleeveLedger` observations.
+- **No Cache wrapper.** Cache remains Nautilus's reconciled source of truth. Trader-owned state is limited to Roll Desk orchestration and the pure `SleeveLedger` observations; the continuous series state lives in `aegis-data`'s `ContinuousContractModel`.
 
 ## Directory layout
 

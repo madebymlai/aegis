@@ -8,7 +8,6 @@ from aegis_trader.data.backtest_data import (
     wrangle_bars,
     wrangle_fx_quotes,
 )
-from aegis_trader.data.continuous_feed import ContinuousFeed
 from aegis_trader.data.market_data import (
     ContinuousReadPort,
     MarketBar,
@@ -17,7 +16,6 @@ from aegis_trader.data.market_data import (
 )
 
 __all__ = [
-    "ContinuousFeed",
     "ContinuousReadPort",
     "MarketBar",
     "MarketDataPort",

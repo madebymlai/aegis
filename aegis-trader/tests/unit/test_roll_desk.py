@@ -18,7 +18,7 @@ from aegis_trader.domain.roll import (
 )
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.trader.roll_desk import RollDesk
-from test_continuous_feed import _es_port, _es_port_two_rolls
+from continuous_fixtures import es_port, es_port_two_rolls
 
 _HISTORY_START = datetime(2024, 1, 15, tzinfo=timezone.utc)
 _ES = InstrumentId.from_str("ES.XCME")
@@ -50,7 +50,7 @@ def _bar_on(native: dict[InstrumentId, list[Bar]], instrument_id: InstrumentId, 
 
 
 def test_start_returns_front_leg_warmup_and_subscribe_intents() -> None:
-    port, _native = _es_port()
+    port, _native = es_port()
     desk = _desk(port)
 
     intents = desk.start(
@@ -69,7 +69,7 @@ def test_start_returns_front_leg_warmup_and_subscribe_intents() -> None:
 
 
 def test_start_halts_when_materialized_continuous_venue_differs_from_declaration() -> None:
-    port, _native = _es_port()
+    port, _native = es_port()
     desk = _desk(port, declared=_ES_IFUS)
 
     intents = desk.start(
@@ -88,7 +88,7 @@ def test_start_halts_when_materialized_continuous_venue_differs_from_declaration
 
 
 def test_on_bar_without_a_roll_appends_offset_zero_and_emits_no_intents() -> None:
-    port, native = _es_port_two_rolls()
+    port, native = es_port_two_rolls()
     desk = _desk(port)
     desk.start(
         timeframe="1D",
@@ -109,7 +109,7 @@ def test_on_bar_without_a_roll_appends_offset_zero_and_emits_no_intents() -> Non
 
 
 def test_on_bar_with_a_roll_returns_unsubscribe_ensure_new_and_roll_event() -> None:
-    port, native = _es_port_two_rolls()
+    port, native = es_port_two_rolls()
     desk = _desk(port)
     desk.start(
         timeframe="1D",
@@ -131,7 +131,7 @@ def test_on_bar_with_a_roll_returns_unsubscribe_ensure_new_and_roll_event() -> N
 
 
 def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument() -> None:
-    port, native = _es_port_two_rolls()
+    port, native = es_port_two_rolls()
     desk = _desk(port, present=(_ESU4,))
     desk.start(
         timeframe="1D",
@@ -147,7 +147,7 @@ def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument(
 
 
 def test_on_instrument_completes_a_deferred_front_leg_subscription() -> None:
-    port, native = _es_port_two_rolls()
+    port, native = es_port_two_rolls()
     desk = _desk(port)
     desk.start(
         timeframe="1D",

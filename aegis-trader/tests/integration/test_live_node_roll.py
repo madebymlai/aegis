@@ -14,9 +14,8 @@ see the instrument the dynamic load brought in.
 
 Scope: the strategy's full ``on_start``/``on_stop`` lifecycle (warmup, gates, NautilusMarketData,
 pipeline) needs the whole node environment and is covered elsewhere; here they are no-ops so the
-test isolates the roll seam on the real engine.  The feed's own causal-roll detection is unit-tested
-in ``test_continuous_feed.py``; this fixture's feed simply advances its front on the next bar so the
-strategy's roll handler fires.
+test isolates the roll seam on the real engine. The data-layer model owns real roll detection; this
+fixture's desk simply advances its front on the next bar so the strategy's roll handler fires.
 """
 
 from __future__ import annotations

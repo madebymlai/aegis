@@ -7,10 +7,10 @@ from datetime import datetime
 
 import pandas as pd
 from aegis_data.catalog import CatalogBackedDataPort
+from aegis_data.continuous_contract_model import ContinuousContractModel
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_trader.data.continuous_feed import ContinuousFeed
 from aegis_trader.domain.roll import (
     Halt,
     RequestBars,
@@ -39,7 +39,7 @@ class RollDesk:
         self._instrument_present = instrument_present
         self._declared_continuous_ids_by_root = dict(declared_continuous_ids_by_root)
         self._timeframe: str | None = None
-        self._feeds: dict[InstrumentId, ContinuousFeed] = {}
+        self._models: dict[InstrumentId, ContinuousContractModel] = {}
         self._leg_to_continuous_id: dict[InstrumentId, InstrumentId] = {}
         self._pending_leg_subscriptions: set[InstrumentId] = set()
 
@@ -53,31 +53,31 @@ class RollDesk:
     ) -> RollIntentBatch:
         """Materialize declared roots and emit front-leg warmup/subscription intents."""
         self._timeframe = timeframe
-        feeds: dict[InstrumentId, ContinuousFeed] = {}
+        models: dict[InstrumentId, ContinuousContractModel] = {}
         leg_to_continuous_id: dict[InstrumentId, InstrumentId] = {}
         intents: list[RequestBars | SubscribeBars] = []
 
         for root, declared_id in sorted(self._declared_continuous_ids_by_root.items()):
-            feed = ContinuousFeed(
+            model = ContinuousContractModel(
                 self._catalog_port,
                 root,
                 start=history_start.date().isoformat(),
                 timeframe=timeframe,
             )
-            feed.materialize(end=end.date().isoformat())
-            if feed.continuous_id != declared_id:
+            model.materialize(end=end.date().isoformat())
+            if model.continuous_id != declared_id:
                 return (
                     Halt(
                         gate=StartupGate.CONTINUOUS_IDENTITY,
                         reason=(
                             f"continuous root {root!r} materialized as "
-                            f"{feed.continuous_id.value}, expected {declared_id.value}"
+                            f"{model.continuous_id.value}, expected {declared_id.value}"
                         ),
                     ),
                 )
 
-            front_leg = feed.front_contract()
-            feeds[declared_id] = feed
+            front_leg = model.front_leg
+            models[declared_id] = model
             leg_to_continuous_id[front_leg] = declared_id
             if warmup:
                 intents.append(
@@ -90,7 +90,7 @@ class RollDesk:
                 )
             intents.append(SubscribeBars(instrument_id=front_leg, timeframe=timeframe))
 
-        self._feeds = feeds
+        self._models = models
         self._leg_to_continuous_id = leg_to_continuous_id
         return tuple(intents)
 
@@ -100,10 +100,10 @@ class RollDesk:
         if continuous_id is None:
             return ()
 
-        feed = self._feeds[continuous_id]
-        front_before = feed.front_contract()
-        feed.on_bar(bar)
-        front_after = feed.front_contract()
+        model = self._models[continuous_id]
+        front_before = model.front_leg
+        model.on_bar(bar)
+        front_after = model.front_leg
         if front_after == front_before:
             return ()
 
@@ -112,7 +112,7 @@ class RollDesk:
         return (
             UnsubscribeBars(instrument_id=front_before, timeframe=self._require_timeframe()),
             self._ensure_front_leg(front_after),
-            RollEvent(continuous_id=continuous_id, rebasing=feed.last_rebasing()),
+            RollEvent(continuous_id=continuous_id, rebasing=model.last_rebasing),
         )
 
     def on_instrument(self, instrument_id: InstrumentId) -> RollIntentBatch:
@@ -124,17 +124,17 @@ class RollDesk:
 
     def front_leg(self, instrument_id: InstrumentId) -> InstrumentId | None:
         """Return the current execution front for a continuous root."""
-        feed = self._feeds.get(instrument_id)
-        if feed is None:
+        model = self._models.get(instrument_id)
+        if model is None:
             return None
-        return feed.front_contract()
+        return model.front_leg
 
     def series(self, instrument_id: InstrumentId) -> pd.DataFrame | None:
         """Return the current adjusted series for a continuous root."""
-        feed = self._feeds.get(instrument_id)
-        if feed is None:
+        model = self._models.get(instrument_id)
+        if model is None:
             return None
-        return feed.series()
+        return model.frame
 
     def _ensure_front_leg(self, instrument_id: InstrumentId) -> SubscribeBars | RequestInstrument:
         if self._instrument_present(instrument_id):

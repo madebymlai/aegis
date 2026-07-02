@@ -1,10 +1,10 @@
-"""Catalog-driven continuous-future materialisation (aegis-data, request path).
+"""Catalog-driven continuous-future materialisation (aegis-data, model path).
 
-:func:`continuous_ohlcv_frames` is the one entry point RD's request path calls: given
-the catalog-backed port and a bare root, it builds the dated-leg chain through the
-catalog seams, hands the roll-transition table to Nautilus's engine, and returns the
+``ContinuousContractModel`` is the entry point RD and Trader call: given the
+catalog-backed port and a bare root, it builds the dated-leg chain through the
+catalog seams, hands the roll-transition table to Nautilus's engine, and exposes the
 adjusted continuous OHLCV keyed by the synthetic root id — never persisting a continuous
-series (r8b.2 AC2).
+series.
 
 The arithmetic is byte-exact-tested elsewhere (``test_continuous_golden``); here the
 output is cross-checked against the independent Decimal spread oracle to prove the
@@ -32,10 +32,9 @@ from aegis_data.catalog_contracts import (
 )
 from aegis_data.chain import fetch_contract_chain
 from aegis_data.continuous_catalog import (
-    continuous_frame_and_future,
     continuous_instrument_ids,
-    continuous_ohlcv_frames,
 )
+from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import continuous_future
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from tests.support.continuous_oracle import backward_series
@@ -190,7 +189,7 @@ def _es_port() -> tuple[_FakePort, dict[InstrumentId, list[Bar]]]:
     return _FakePort(catalog, frames), native
 
 
-def test_continuous_ohlcv_frames_match_the_oracle_keyed_by_root_id() -> None:
+def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None:
     port, native = _es_port()
 
     # Build the chain through the same catalog seams the composer uses, then cross-check
@@ -205,12 +204,11 @@ def test_continuous_ohlcv_frames_match_the_oracle_keyed_by_root_id() -> None:
     future = continuous_future(chain, "ES")
     oracle = backward_series(native, future.transitions, mode=DEFAULT_ADJUSTMENT_MODE)
 
-    frames = continuous_ohlcv_frames(
-        port, ["ES"], start=_START, end=_END, timeframe="1D"
-    )
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    model.materialize(end=_END)
 
-    assert set(frames) == {InstrumentId.from_str("ES.XCME")}
-    frame = frames[InstrumentId.from_str("ES.XCME")]
+    assert model.continuous_id == InstrumentId.from_str("ES.XCME")
+    frame = model.frame
     assert list(frame.columns) == ["Open", "High", "Low", "Close", "Volume"]
     assert frame.index.is_monotonic_increasing and not frame.index.has_duplicates
 
@@ -219,18 +217,6 @@ def test_continuous_ohlcv_frames_match_the_oracle_keyed_by_root_id() -> None:
     assert frame["Open"].tolist() == pytest.approx([o.open_raw / _RAW_SCALE for o in head])
     # The first emitted bar is a pre-leg bar carried up by the seam (not raw 99.5).
     assert frame["Open"].iloc[0] != pytest.approx(99.5)
-
-
-def test_continuous_frame_and_future_exposes_the_roll_transitions() -> None:
-    port, _ = _es_port()
-    future, frame = continuous_frame_and_future(port, "ES", start=_START, end=_END, timeframe="1D")
-
-    # the same adjusted frame the dict entry point returns ...
-    expected = continuous_ohlcv_frames(port, ["ES"], start=_START, end=_END, timeframe="1D")
-    pd.testing.assert_frame_equal(frame, expected[future.target_bar_type.instrument_id])
-    # ... plus the ContinuousFuture (its seam transitions + mode) the live feed re-bases from.
-    assert future.transitions
-    assert future.target_bar_type.instrument_id == InstrumentId.from_str("ES.XCME")
 
 
 def test_continuous_instrument_ids_resolve_without_materialising_bars() -> None:
@@ -242,7 +228,7 @@ def test_continuous_instrument_ids_resolve_without_materialising_bars() -> None:
     assert port.read_native_bars_count == 0
 
 
-def test_continuous_ohlcv_frames_reject_legs_across_venues() -> None:
+def test_continuous_contract_model_rejects_legs_across_venues() -> None:
     # A continuous future is one venue's cycle; mismatched-venue legs fail loud.
     catalog = _FakeCatalog(
         instruments=[_future("ESH4.XCME", "2024-03-15"), _future("ESM4.XEUR", "2024-06-21")],
@@ -250,9 +236,10 @@ def test_continuous_ohlcv_frames_reject_legs_across_venues() -> None:
     )
     port = _FakePort(catalog, {})
 
-    with pytest.raises(ValueError, match="span multiple venues"):
-        continuous_ohlcv_frames(port, ["ES"], start=_START, end=_END)
+    model = ContinuousContractModel(port, "ES", start=_START)
 
+    with pytest.raises(ValueError, match="span multiple venues"):
+        model.materialize(end=_END)
 
 def test_continuous_instrument_ids_reject_legs_across_venues() -> None:
     catalog = _FakeCatalog(
@@ -265,11 +252,12 @@ def test_continuous_instrument_ids_reject_legs_across_venues() -> None:
         continuous_instrument_ids(port, ["ES"], start=_START, end=_END)
 
 
-def test_continuous_ohlcv_frames_reject_a_root_with_no_legs() -> None:
+def test_continuous_contract_model_rejects_a_root_with_no_legs() -> None:
     catalog = _FakeCatalog(
         instruments=[_future("CLF4.NYMEX", "2024-01-22", underlying="CL")], bars={}
     )
     port = _FakePort(catalog, {})
+    model = ContinuousContractModel(port, "ES", start=_START)
 
     with pytest.raises(ValueError, match="no dated legs"):
-        continuous_ohlcv_frames(port, ["ES"], start=_START, end=_END)
+        model.materialize(end=_END)

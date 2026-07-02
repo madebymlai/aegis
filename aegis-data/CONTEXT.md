@@ -38,6 +38,13 @@ continuous series on demand (Path A), `BACKWARD_SPREAD` (Panama), and it is neve
 persisted. A spread golden test pins the engine's output byte-for-byte.
 _Avoid_: Panama transform, bespoke back-adjust, persisted continuous series
 
+**ContinuousContractModel**:
+The stateful owner of one bare continuous-futures root's adjusted frame, front
+leg, offset-0 append, roll re-materialisation, and last re-basing. Research and
+live both drive this aegis-data object; live validates its synthetic continuous
+`InstrumentId` against the declaration and never resolves a competing identity.
+_Avoid_: trader-owned continuous feed, live identity resolver, duplicate front picker
+
 **Coverage Gap**:
 A requested catalog interval that `get_missing_intervals_for_request` says is
 not covered after any allowed lazy fill. A coverage gap is a fail-loud condition;

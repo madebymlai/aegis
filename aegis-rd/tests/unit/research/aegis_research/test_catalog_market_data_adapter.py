@@ -119,11 +119,16 @@ def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
 
     seen_roots: list = []
 
-    def fake_continuous(port_arg, roots, **kwargs):
-        seen_roots.append(list(roots))
-        return continuous if list(roots) == ["ES"] else {}
+    class FakeContinuousModel:
+        def __init__(self, _port_arg, root, **_kwargs):
+            seen_roots.append(str(root))
+            self.continuous_id = es
+            self.frame = continuous[es]
 
-    monkeypatch.setattr(catalog_adapter, "continuous_ohlcv_frames", fake_continuous)
+        def materialize(self, *, end: str) -> None:
+            assert end == "2024-01-03"
+
+    monkeypatch.setattr(catalog_adapter, "ContinuousContractModel", FakeContinuousModel)
 
     config = make_data_config(
         arrays=["Close", "Volume"],
@@ -142,7 +147,7 @@ def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
     bundle = market_data_bundle(result)
     # Continuous roots are synthetic — never raw-requested from the catalog.
     assert port.requested_ids == (aapl,)
-    assert seen_roots == [["ES"]]
+    assert seen_roots == ["ES"]
     # The continuous root is a first-class tradeable column, ordered after raw instruments.
     assert list(bundle.array("Close").columns) == [aapl, es]
     assert bundle.array("Close")[es].tolist() == [5000.0, 5010.0]
@@ -160,13 +165,16 @@ def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrume
     port = _RecordingCatalogPort(
         frames={es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])}
     )
-    monkeypatch.setattr(
-        catalog_adapter,
-        "continuous_ohlcv_frames",
-        lambda port_arg, roots, **kwargs: {
-            es: _frame(index, close=[99.0, 99.0], volume=[9.0, 9.0])
-        },
-    )
+
+    class FakeContinuousModel:
+        def __init__(self, _port_arg, _root, **_kwargs):
+            self.continuous_id = es
+            self.frame = _frame(index, close=[99.0, 99.0], volume=[9.0, 9.0])
+
+        def materialize(self, *, end: str) -> None:
+            assert end == "2024-01-03"
+
+    monkeypatch.setattr(catalog_adapter, "ContinuousContractModel", FakeContinuousModel)
     config = make_data_config(
         arrays=["Close"],
         base_currency="USD",

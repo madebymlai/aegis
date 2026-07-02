@@ -34,11 +34,10 @@ How it actually works:
    catalog definitions — resolution-via-IB is a live-boot concern only.
 4. **Futures are a bare root plus a continuous `InstrumentId`.** A root (e.g. `ES`) in
    `DataContract.futures` materializes a synthetic continuous id (`ES.XCME`); the live
-   front leg is chosen by **causal, volume-based liquidity detection** at bar time
-   (`aegis-trader/aegis_trader/data/continuous_feed.py`). A **Roll** re-bases the
-   continuous series (`BACKWARD_RATIO`) and is keyed by the `(from, to)` `InstrumentId`
-   pair — there is no declarative roll calendar, `roll_rule`, or `FuturesRef.dataset` in
-   the live loop.
+   Roll Desk drives `aegis-data`'s `ContinuousContractModel` to expose the current front
+   leg at bar time. A **Roll** re-bases the continuous series (`BACKWARD_RATIO`) and is
+   keyed by the `(from, to)` `InstrumentId` pair — there is no declarative roll calendar,
+   `roll_rule`, or `FuturesRef.dataset` in the live loop.
 5. **The strategy resolves nothing at runtime.** "Identity is the native `InstrumentId`
    declared by each Execution Bundle; the strategy never resolves symbols, FIGIs, or
    broker-specific aliases at runtime" (`aegis-trader/.../trader/strategy.py`).
@@ -77,10 +76,11 @@ How it actually works:
   resolves both equities and futures; the only residual is Nautilus's maintained
   exchange→MIC mapping plus a tiny override set — one line per *exchange*, zero per
   *instrument*.
-- **Futures continuity is live and causal, not declarative.** It is owned by the
-  continuous feed (volume-led front selection + ratio re-basing), keyed by `InstrumentId`
-  pairs. Per-symbol *research* dataset selection survives on the research side (see
-  `aegis-rd` ADR-0023) but is a data-fetch input, never an identity attribute.
+- **Futures continuity is live and data-layer-owned, not declarative.** It is driven by
+  the Roll Desk over `ContinuousContractModel` (volume-led front selection + ratio
+  re-basing), keyed by `InstrumentId` pairs. Per-symbol *research* dataset selection
+  survives on the research side (see `aegis-rd` ADR-0023) but is a data-fetch input,
+  never an identity attribute.
 - **Forward-First.** A new asset class is a new `InstrumentId` `{symbol}.{venue}` plus its
   IBKR resolution, not a new identity type; existing bundles are unchanged.
 - **FIGI is retired as an identity term.** It is no longer the cross-boundary identity,

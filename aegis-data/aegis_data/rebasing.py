@@ -4,8 +4,9 @@ Owns the back-adjustment ALGEBRA in one place — additive for spread modes, mul
 modes — mirroring Nautilus's own cumulative-offset formulas (``docs/concepts/continuous_futures.md``):
 spread adds a ``post - pre`` offset, ratio multiplies by a ``post / pre`` factor.
 
-A caller that carries co-moving absolute state across a roll — the live ``ContinuousFeed`` re-materializes
-the series while the ``SleeveLedger`` still holds closes recorded in the old basis — stays **mode-blind**:
+A caller that carries co-moving absolute state across a roll — the live
+``ContinuousContractModel`` re-materializes the series while the ``SleeveLedger`` still
+holds closes recorded in the old basis — stays **mode-blind**:
 it holds a :class:`Rebasing` and calls :meth:`~Rebasing.apply`, never naming spread or ratio.  The
 :class:`~aegis_data.continuous_future.ContinuousFuture` builds the right :class:`Rebasing` for a roll from
 its own adjustment mode (:meth:`~aegis_data.continuous_future.ContinuousFuture.rebasing_for_roll`), so the

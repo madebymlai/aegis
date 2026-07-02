@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pandas as pd
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     RawBarRequest,
     catalog_data_port,
 )
-from aegis_data.continuous_catalog import continuous_ohlcv_frames
+from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.distributions import Distribution, query_distribution_data
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
@@ -48,11 +50,9 @@ def load_catalog_source(
             timeframe=config.timeframe,
         )
     )
-    # Continuous-future roots are synthetic: aegis-data materialises each as an adjusted
-    # series on demand (Path A) and hands it back as an OHLCV frame keyed by its root id,
-    # so it merges into native_data exactly like a raw leg — first-class through the same
-    # diagnostics/quality/bundle path, never persisted.
-    continuous_frames = continuous_ohlcv_frames(
+    # Continuous-future roots are synthetic: aegis-data materialises each model as an
+    # adjusted series on demand and hands it back as an OHLCV frame keyed by its root id.
+    continuous_frames = _continuous_frames(
         data_port, config.futures, start=start, end=end, timeframe=config.timeframe
     )
     collisions = set(raw_frames) & set(continuous_frames)
@@ -103,6 +103,22 @@ def _distribution_data(
     if catalog is None:
         return ()
     return query_distribution_data(catalog, instrument_ids, start=start, end=end)
+
+
+def _continuous_frames(
+    data_port: CatalogBackedDataPort,
+    roots: Sequence[str],
+    *,
+    start: str,
+    end: str,
+    timeframe: str,
+) -> dict[InstrumentId, pd.DataFrame]:
+    frames: dict[InstrumentId, pd.DataFrame] = {}
+    for root in roots:
+        model = ContinuousContractModel(data_port, root, start=start, timeframe=timeframe)
+        model.materialize(end=end)
+        frames[model.continuous_id] = model.frame
+    return frames
 
 
 def _currency_conversion(
