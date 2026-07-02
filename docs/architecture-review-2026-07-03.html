@@ -72,10 +72,11 @@
         <h2 class="font-serif text-2xl">Deepening candidates</h2>
 
         <!-- ─────────── 1 · PARITY SUITE ─────────── -->
-        <article id="c1" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+        <article id="c1" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">1 · Pin the market-data parity seam with a cross-context suite</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled &amp; shipped 2026-07-03 — beads aegis-rd-93ip" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-93ip</span>
               <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium px-3 py-1">Strong</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">ports &amp; adapters</span>
             </div>
@@ -117,6 +118,7 @@ flowchart TB
             <li>Locality: parity bugs surface in one suite</li>
             <li>Two adapters already justify the seam</li>
           </ul>
+          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Shipped 2026-07-03</span> — grilling reframed the premise: the bug-catching invariant isn't research-adapter vs trader-adapter OHLCV (near-tautological — both are thin wrappers over the same <span class="font-mono text-xs">ContinuousContractModel</span>) but <em>one-shot <span class="font-mono text-xs">materialize</span> vs incremental <span class="font-mono text-xs">on_bar</span> folding across a roll</em>. <span class="font-mono text-xs">test_continuous_contract_model_live.py</span> already pinned single-append offset-zero recovery; the gap was a full front-leg replay across the ESM6→ESU6 roll. Added <span class="font-mono text-xs">test_incremental_replay_across_the_roll_holds_additive_invariance</span> (opt-in IB-gateway; run live on a gateway, 4 green). The umbrella cross-context suite was <em>rejected</em> — <span class="font-mono text-xs">aegis-rd</span> and <span class="font-mono text-xs">aegis-trader</span> are non-dependent siblings, so the seam is pinned at the shared model in <span class="font-mono text-xs">aegis-data</span>. <span class="font-semibold">The live run surfaced a real divergence:</span> the adjusted series is byte-identical on every shared bar (invariance holds), but the incremental/live path drops exactly the roll-trigger day's bar — it cannot backfill the new front's bar for that day — so research and live differ by one row per roll. Filed as <span class="font-mono text-xs">aegis-rd-y7fd</span>. Tracked as <span class="font-mono text-xs">aegis-rd-93ip</span>.</div>
         </article>
 
         <!-- ─────────── 2 · CATALOG PORT ─────────── -->
