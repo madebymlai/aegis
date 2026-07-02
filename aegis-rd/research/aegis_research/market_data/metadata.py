@@ -8,6 +8,7 @@ from research.aegis_research.market_data.contracts import (
     ArrayDescriptor,
     CoverageFacet,
     DataDiagnostics,
+    MarketDataAdapterResult,
     MarketDataMetadataV3,
     MarketDataQuality,
     ProvenanceFacet,
@@ -22,15 +23,10 @@ __all__ = ["MarketDataObservation", "describe"]
 def describe(
     config: DataConfig,
     *,
-    native_class: str | None,
+    source: MarketDataAdapterResult,
     observation: MarketDataObservation,
     diagnostics: tuple[DataDiagnostics, ...],
     quality: MarketDataQuality,
-    source_metadata: dict[str, Any],
-    evidence: dict[str, Any],
-    provider_metadata: dict[str, Any],
-    omitted_metadata_fields: list[dict[str, str]],
-    update_supported: bool,
     required_arrays: tuple[str, ...],
 ) -> MarketDataMetadataV3:
     """Assemble the schema-versioned ``market_data.v3`` typed metadata model.
@@ -39,11 +35,12 @@ def describe(
     (ADR-0020): one ``arrays`` descriptor list replaces eight parallel
     Array-name lists; duplicate, derivable, and vestigial keys are dropped.
 
-    The provider internals (``provider_metadata``, ``omitted_metadata_fields``,
-    ``update_supported``, ``native_class``) are scrubbed and supplied by the
-    source adapter; describe never reaches into the native object.  Tolerates
-    the provider-failure path, where those inputs collapse to their empty
-    shapes while the model keeps the same facet keys as the success shape.
+    The provenance facet is projected whole from the pull outcome
+    (``source``): provider internals come scrubbed off the adapter result,
+    and a failed pull's source metadata (error type and summary) is derived
+    here — the wire shape of failure is this module's knowledge, not the
+    loader's.  A failed pull keeps the same facet keys as the success shape,
+    with the provider internals collapsed to their empty values.
     """
     index = observation.index
     observed_arrays = list(observation.arrays)
@@ -79,12 +76,12 @@ def describe(
         quality=quality,
         diagnostics=list(diagnostics),
         provenance=ProvenanceFacet(
-            provider_class=native_class,
-            source_metadata=source_metadata,
-            index_evidence=evidence,
-            provider_metadata=provider_metadata,
-            omitted_metadata_fields=omitted_metadata_fields,
-            update_supported=update_supported,
+            provider_class=source.provider_class,
+            source_metadata=_source_metadata(source, quality),
+            index_evidence=source.evidence,
+            provider_metadata=source.provider_metadata,
+            omitted_metadata_fields=source.omitted_metadata_fields,
+            update_supported=source.update_supported,
             missing_index=config.missing_index,
             missing_columns=config.missing_columns,
             tz_localize=config.tz_localize,
@@ -93,3 +90,14 @@ def describe(
             silence_warnings=config.silence_warnings,
         ),
     )
+
+
+def _source_metadata(
+    source: MarketDataAdapterResult, quality: MarketDataQuality
+) -> dict[str, Any]:
+    if source.failure is None:
+        return source.source_metadata
+    return {
+        "provider_error_type": type(source.failure).__name__,
+        "provider_error_summary": quality.reasons[0] if quality.reasons else quality.state,
+    }

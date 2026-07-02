@@ -15,6 +15,7 @@ from research.aegis_research.data import (
 )
 from research.aegis_research.market_data import loading as data_loading
 from research.aegis_research.market_data import metadata as data_metadata
+from research.aegis_research.market_data.contracts import provider_failed_adapter_result
 from tests.support.research.aegis_research.factories import make_data_config
 
 
@@ -72,15 +73,15 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
 
     metadata = data_metadata.describe(
         config,
-        native_class="_FrozenData",
+        source=MarketDataAdapterResult(
+            native_data=_FrozenData(),
+            source_metadata={"frozen": True},
+            evidence={"source": "test_evidence", "raw_rows": 3},
+            provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
+        ),
         observation=observation,
         diagnostics=diagnostics,
         quality=quality,
-        source_metadata={"frozen": True},
-        evidence={"source": "test_evidence", "raw_rows": 3},
-        provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
-        omitted_metadata_fields=[],
-        update_supported=False,
         required_arrays=("Close",),
     )
 
@@ -164,20 +165,12 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
 
     expected = data_metadata.describe(
         config,
-        native_class=None,
+        source=provider_failed_adapter_result(
+            RemoteDataPullError("future", "network unavailable")
+        ),
         observation=MarketDataObservation_empty(),
         diagnostics=diagnostics,
         quality=quality,
-        source_metadata={
-            "provider_error_type": "RemoteDataPullError",
-            "provider_error_summary": (
-                "provider failed before usable native data was available"
-            ),
-        },
-        evidence={"source": "provider_failed"},
-        provider_metadata={},
-        omitted_metadata_fields=[],
-        update_supported=False,
         required_arrays=("Close", "OpenInterest"),
     )
 
@@ -191,6 +184,20 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
     )
 
     assert result.metadata == expected
+    # Pin the failure wire shape explicitly: expected and result share the
+    # describe derivation, so the equality above alone would not catch a
+    # regression in the derived failure provenance.
+    assert result.metadata.provenance.source_metadata == {
+        "provider_error_type": "RemoteDataPullError",
+        "provider_error_summary": (
+            "provider failed before usable native data was available"
+        ),
+    }
+    assert result.metadata.provenance.index_evidence == {"source": "provider_failed"}
+    assert result.metadata.provenance.provider_metadata == {}
+    assert result.metadata.provenance.omitted_metadata_fields == []
+    assert result.metadata.provenance.update_supported is False
+    assert result.metadata.provenance.provider_class is None
 
 
 def test_failed_shape_equals_success_shape_minus_data() -> None:
@@ -229,15 +236,13 @@ def test_describe_tolerates_empty_provider_internals() -> None:
 
     metadata = data_metadata.describe(
         config,
-        native_class=None,
+        source=MarketDataAdapterResult(
+            native_data=None,
+            evidence={"source": "provider_failed"},
+        ),
         observation=MarketDataObservation_empty(),
         diagnostics=(),
         quality=MarketDataQuality(state="provider_failed"),
-        source_metadata={},
-        evidence={"source": "provider_failed"},
-        provider_metadata={},
-        omitted_metadata_fields=[],
-        update_supported=False,
         required_arrays=("Close",),
     )
 

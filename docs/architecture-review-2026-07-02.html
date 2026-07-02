@@ -205,7 +205,7 @@ flowchart TB
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">4 · Deepen the Market Data loading pipeline (research)</h2>
             <div class="flex gap-2 shrink-0">
-              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium px-3 py-1">Strong</span>
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
             </div>
           </div>
@@ -234,27 +234,28 @@ flowchart TB
                   <div class="band h-8 border-l-4 border-slate-300 bg-stone-100 text-[11px] text-slate-400">—</div>
                 </div>
               </div>
-              <p class="text-[11px] text-red-700 mt-2">step order is implicit call order — the one part with no interface and no tests</p>
+              <p class="text-[11px] text-red-700 mt-2">the failure twin — every change to describe's inputs is made twice</p>
             </div>
             <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
-              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — the sequence is the module</p>
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After — one sequence, failure as an outcome</p>
               <div class="rounded p-3 text-white" style="background: linear-gradient(135deg, #0f172a, #1e293b);">
                 <p class="text-xs uppercase tracking-wider">market-data loading pipeline</p>
-                <p class="text-[11px] font-mono text-slate-400 mt-1">observe → diagnose → judge → describe → convert</p>
-                <p class="text-[11px] text-slate-500 mt-1">owns step order and the provider-failure path; leaf modules stay independently testable internals</p>
+                <p class="text-[11px] font-mono text-slate-400 mt-1">observe → diagnose → judge → describe — failure carried in the shapes, not a twin</p>
+                <p class="text-[11px] text-slate-500 mt-1">one describe entry point, fed wholes instead of 11 threaded kwargs</p>
               </div>
-              <div class="mt-2 text-[11px] text-slate-600">one interface: <span class="font-mono">load_result(config)</span> — the <em>Run</em> and its tests cross the same seam</div>
+              <div class="mt-2 text-[11px] text-slate-600">interface unchanged: <span class="font-mono">load_market_data_result(config, adapter=…)</span> — the seam already exists; the deepening is inside it</div>
             </div>
           </div>
 
-          <p class="text-sm"><span class="font-semibold">Problem</span> — the <em>Run</em>'s market-data load threads five leaf modules in bare procedural order, and the provider-failure path re-implements half the sequence; the orchestration itself has no interface, so tests exercise leaves and skip the part where bugs live.</p>
-          <p class="text-sm"><span class="font-semibold">Solution</span> — make the loading sequence itself a module owning step order and the failure path, with the observe/judge/describe leaves as its internals.</p>
+          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Revised 2026-07-02</span> — verification during grilling prep found the orchestration already has a real, tested seam: <span class="font-mono text-xs">load_market_data_result(config, adapter=…)</span>, prod catalog adapter + test fakes at 15+ call sites (two adapters — the seam is real). Downgraded from Strong; scope narrowed to the residuals below. <span class="font-semibold">Implemented same day</span> as <span class="font-mono text-xs">aegis-rd-v36o</span> (closed): failure now rides the one sequence as a degenerate adapter result, describe narrowed to 6 params, suite 936 green with golden bytes unchanged.</div>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — the provider-failure path is a hand-built twin of the sequence (<span class="font-mono text-xs">_provider_failed_result</span>, loading.py:104–139: placeholder evidence, a second full describe call), and <span class="font-mono text-xs">metadata.describe</span> takes 11 kwargs, 8 threaded straight from the adapter result — the orchestrator is a plumbing relay between two shapes kept compatible by convention.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — make failure a first-class outcome of the single sequence (one describe entry point), narrow the describe seam to wholes, and apply the deletion test to <span class="font-mono text-xs">MarketDataResult</span> vs <span class="font-mono text-xs">MarketDataAdapterResult</span> (three fields pass through untouched).</p>
           <ul class="text-sm text-slate-700 list-disc list-inside space-y-0.5">
-            <li>orchestration gains an interface</li>
             <li>failure path stops duplicating</li>
-            <li>tests stop rebuilding the sequence</li>
+            <li>describe seam narrows: 11 kwargs → wholes</li>
+            <li>relay knowledge concentrates in one module</li>
           </ul>
-          <p class="text-xs text-slate-500">Honours aegis-rd ADR-0005 (decompose loading) and ADR-0020 (typed metadata) — both assume the orchestration is a seam.</p>
+          <p class="text-xs text-slate-500">Honours aegis-rd ADR-0005 (decompose loading) and ADR-0020 (typed metadata); failure-as-data follows "define errors out of existence".</p>
         </article>
 
         <!-- ══════════════ 5 ══════════════ -->

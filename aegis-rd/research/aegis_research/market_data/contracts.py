@@ -10,6 +10,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data.currency import CurrencyConversion
+from research.aegis_research.market_data.native_metadata import supports_update
 
 LOGICAL_ARRAYS = {
     "open": "Open",
@@ -70,6 +71,31 @@ class MarketDataAdapterResult:
     currency_conversion: CurrencyConversion | None = None
     # Listed-ETF cash events read from the same Nautilus catalog as bars.
     distributions: tuple[Distribution, ...] = ()
+    # Set only by ``provider_failed_adapter_result``: adapters raise
+    # ``RemoteDataPullError``, they never return a failed result. Carrying the
+    # failure as data lets the one observe → judge → describe sequence handle
+    # both outcomes.
+    failure: RemoteDataPullError | None = None
+
+    @property
+    def provider_class(self) -> str | None:
+        return None if self.native_data is None else type(self.native_data).__name__
+
+    @property
+    def update_supported(self) -> bool:
+        if self.native_data is None:
+            return False
+        return supports_update(self.native_data)
+
+
+def provider_failed_adapter_result(error: RemoteDataPullError) -> MarketDataAdapterResult:
+    """The degenerate result a failed pull collapses to: no native data,
+    provider-failed index evidence, the error carried as data."""
+    return MarketDataAdapterResult(
+        native_data=None,
+        evidence={"source": "provider_failed"},
+        failure=error,
+    )
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

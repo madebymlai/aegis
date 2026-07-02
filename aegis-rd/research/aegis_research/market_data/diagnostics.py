@@ -1,6 +1,8 @@
 """Observe: a single pass over loaded data producing typed diagnostics.
 
-The one place market data is observed. ``observe`` shapes the native source
+The one place market data is observed. ``observe_source`` is the pull-outcome
+entry: a failed pull observes nothing and diagnoses every configured
+instrument as provider-failed. ``observe`` shapes the native source
 object into a :class:`MarketDataObservation` (index, arrays, instrument IDs, panels);
 ``diagnose`` turns that observation into the typed per-instrument, per-Array
 :class:`DataDiagnostics` records the judge reads. The adapter's index
@@ -22,6 +24,7 @@ from research.aegis_research.market_data.contracts import (
     QUALITY_PROVIDER_FAILED,
     DataArrayDiagnostics,
     DataDiagnostics,
+    MarketDataAdapterResult,
 )
 from research.aegis_research.market_data.identity import as_instrument_id, instrument_ids
 
@@ -50,6 +53,23 @@ def provider_failed_diagnostics(config: DataConfig) -> tuple[DataDiagnostics, ..
         )
         for instrument_id in _config_instrument_ids(config)
     )
+
+
+def observe_source(
+    config: DataConfig,
+    source: MarketDataAdapterResult,
+    *,
+    requested_arrays: tuple[str, ...],
+) -> tuple[MarketDataObservation, tuple[DataDiagnostics, ...]]:
+    """Observe one pull outcome: a failed pull observes nothing and diagnoses
+    every configured instrument as provider-failed; a loaded pull is observed
+    and diagnosed."""
+    if source.failure is not None:
+        return empty_observation(), provider_failed_diagnostics(config)
+    observation = observe(
+        config, native_data=source.native_data, requested_arrays=requested_arrays
+    )
+    return observation, diagnose(config, observation)
 
 
 def observe(
