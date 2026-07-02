@@ -56,6 +56,8 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         CDAR_RATIO_EXTRACTOR,
     )
     from research.aegis_research.metrics.custom.convexity import (
+        TREND_CONVEXITY_PAYOFF_DEFINITION,
+        TREND_CONVEXITY_PAYOFF_EXTRACTOR,
         convexity_metrics,
     )
     from research.aegis_research.metrics.custom.ulcer import (
@@ -67,6 +69,8 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         (ULCER_PERFORMANCE_INDEX_DEFINITION, ULCER_PERFORMANCE_INDEX_EXTRACTOR),
         (CDAR_RATIO_DEFINITION, CDAR_RATIO_EXTRACTOR),
         (CALMAR_RATIO_DEFINITION, CALMAR_RATIO_EXTRACTOR),
+        # Benchmark-free convexity ranker (no SPY needed): the trend sleeve's hired shape.
+        (TREND_CONVEXITY_PAYOFF_DEFINITION, TREND_CONVEXITY_PAYOFF_EXTRACTOR),
         # Benchmark-relative metrics vs the universe's macro benchmark (SPY default).
         *capture_metrics(),
         *convexity_metrics(),

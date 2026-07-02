@@ -7,7 +7,8 @@ from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
-    ListedRef,
+    DriftBand,
+    InstrumentId,
     LockedExecutionPlan,
 )
 
@@ -25,7 +26,7 @@ def _artifact(
     candidate_prefix = candidate_key[:8]
     package_name = f"aegis_exec_tests_strategy_{candidate_prefix}"
     dist_name = f"aegis-exec-tests-strategy-{candidate_prefix}"
-    ref = ListedRef("BBG000000001")
+    instrument_id = InstrumentId.from_str("AAPL.NASDAQ")
     strategy = ComponentSpec(
         family="strategies",
         component_id="tests.strategy",
@@ -42,10 +43,9 @@ def _artifact(
         package_name=package_name,
         wheel_filename=f"{dist_name.replace('-', '_')}-{version}-py3-none-any.whl",
         contract=DataContract(
-            refs=(ref,),
+            instrument_ids=(instrument_id,),
             required_arrays=("Close",),
             base_currency="EUR",
-            required_fx_currencies=(),
             timeframe="1D",
             lookback_bars=5,
         ),
@@ -54,16 +54,15 @@ def _artifact(
             role="best",
             candidate_key=candidate_key,
             component_source_hashes={"strategies/tests.strategy": "abc123"},
-            refs=(ref,),
+            instrument_ids=(instrument_id,),
         ),
         plan=LockedExecutionPlan(
             strategy=strategy,
             indicators=(),
+            instrument_bands={instrument_id: DriftBand(up=0.10, down=0.20)},
             gross_cap=1.0,
             net_cap=None,
             direction="longonly",
-            symbols=("SPY",),
-            currency_by_symbol={"SPY": "EUR"},
         ),
         component_sources={"strategy.py": "def run(*args, **kwargs):\n    raise AssertionError\n"},
     )
@@ -87,7 +86,10 @@ def test_write_wheel_materializes_data_manifest_and_constant_loader(tmp_path) ->
     assert "load_installed_bundle(__package__)" in loader
     assert "CONTRACT =" not in loader
     assert "PLAN =" not in loader
-    assert manifest["contract"]["refs"] == [{"kind": "listed", "figi": "BBG000000001"}]
+    assert manifest["contract"]["instrument_ids"] == ["AAPL.NASDAQ"]
+    assert manifest["plan"]["instrument_bands"] == {
+        "AAPL.NASDAQ": {"up": 0.10, "down": 0.20}
+    }
 
     sys.path.insert(0, str(wheel_path))
     try:

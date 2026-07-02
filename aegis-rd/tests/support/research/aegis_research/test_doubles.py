@@ -11,6 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from nautilus_trader.model.identifiers import InstrumentId
+
 from research.aegis_research.market_data.contracts import (
     ArrayDescriptor,
     CoverageFacet,
@@ -21,10 +23,13 @@ from research.aegis_research.market_data.contracts import (
 )
 
 
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)
+
+
 def default_metadata(
     *,
-    source: str = "synthetic",
-    symbols: list[str] | None = None,
+    instrument_ids: list[InstrumentId] | None = None,
     effective_arrays: list[str] | None = None,
     rows: int = 120,
     start: str | None = "2020-01-01",
@@ -35,13 +40,12 @@ def default_metadata(
     Callers that need a specific facet shape can pass keyword overrides;
     the defaults represent the simplest healthy synthetic-data fixture.
     """
-    syms = symbols or ["SYN"]
+    ids = instrument_ids or [_id("SYN.XNAS")]
     arrays = effective_arrays or ["Close", "Open"]
     return MarketDataMetadataV3(
         schema_version="market_data.v3",
         request=RequestFacet(
-            source=source,
-            requested_symbols=syms,
+            requested_instrument_ids=ids,
             timeframe="1D",
             authored_arrays=arrays,
             effective_arrays=arrays,
@@ -50,7 +54,7 @@ def default_metadata(
             ArrayDescriptor(name=name, required=True, loaded=True, observed=True, ohlc=name in {"Close", "Open", "High", "Low", "Volume"})
             for name in arrays
         ],
-        coverage=CoverageFacet(symbols=syms, rows=rows, start=start, end=end),
+        coverage=CoverageFacet(instrument_ids=ids, rows=rows, start=start, end=end),
         quality=MarketDataQuality(state="healthy"),
         diagnostics=[],
         provenance=ProvenanceFacet(

@@ -132,7 +132,7 @@ different order into a populated `bundles/` could shift a *referenced* wheel nam
 A content-addressed, regenerable artifact must have a name that is a **pure function of its
 content**. The prefix is therefore **fixed at 8 chars** and never lengthens. `aerd export`
 **fails closed** if a wheel owned by a *different* `candidate_key` already occupies that
-8-char name in the target directory — the same fail-closed posture as FIGI resolution,
+8-char name in the target directory — the same fail-closed posture as instrument resolution,
 `lookback()`, and exposure validation — rather than silently mutating the name. (At 8 hex
 chars in a single-operator project a genuine collision is ~1e-6 even across hundreds of
 bundles; if it ever fires, the operator re-exports to a clean `--out` dir.) The full
@@ -159,11 +159,11 @@ twice (Python literals *and* json), and ships *generated logic* inside every whe
 A bundle's typed payload is `aegis-runtime` vocabulary, so its serialization is
 **`aegis-runtime`'s single responsibility**. `aegis-runtime` gains a `bundle_loader`
 surface: a dump/load pair for the `DataContract` / `BundleManifest` / `LockedExecutionPlan`
-trio and `load_installed_bundle(package) -> ExecutionBundle`. The `InstrumentRef` union is
-encoded with an explicit **`kind`** discriminator (`{"kind": "listed", …}` /
-`{"kind": "futures", …}`) and **decoded fail-closed** on a missing/unknown kind —
-consistent with the codebase's fail-closed, canonical-representation posture, and cheap
-insurance against the next asset variant (the union already grew once, ADR-0002→0003).
+trio and `load_installed_bundle(package) -> ExecutionBundle`. The `DataContract`'s
+`instrument_ids` are Nautilus `InstrumentId`s, encoded as their `{symbol}.{venue}` value
+strings and **decoded fail-closed** via `InstrumentId.from_str` — consistent with the
+codebase's fail-closed, canonical-representation posture — while continuous-future roots
+travel as bare root symbols in `futures` (ADR-0007).
 
 A wheel therefore ships **only data plus a constant loader**: the copied component sources,
 one `bundle_manifest.json`, and a byte-identical `__init__.py` shim that calls

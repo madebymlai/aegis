@@ -1,5 +1,5 @@
 name: aegis_tail_vool
-schema_version: 8
+schema_version: 10
 output_dir: runs/aegis/tail_vool
 
 # Pinned winner of the latest sweep (role: best) for execution-bundle export.
@@ -25,15 +25,9 @@ lock: 20260615T034350426192Z_aegis_tail_vool
 # Feb-2018 / Q4-2018 / Mar-2020 / 2022.
 # Inferred from research/vault/research/the-ucits-constrained-tail-sleeve.md (Regime A, h1).
 data:
-  source: yf
-  arrays:
-  - OHLCV
-  # ccy = the line's native yfinance quote currency; prices are converted to
-  # portfolio.base_currency (EUR) before indicators/portfolio.
-  # mic = ISO 10383 venue (provider-agnostic), used only by aerd export to
-  # resolve the ticker to one FIGI; the research runtime ignores it.
-  symbols:
-  - {ticker: VOOL.DE, ccy: EUR, mic: XETR}   # the tail leg, native EUR, held 100%
+  base_currency: EUR
+  instruments: [VOOL.XETR]
+  arrays: [OHLCV]
   start: '2013-01-01'
   end: '2025-01-01'
   timeframe: 1D

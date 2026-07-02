@@ -1,11 +1,13 @@
-"""Assemble a dated-contract chain for back-adjustment.
+"""Assemble a dated-contract chain for the continuous-future roll-transition table.
 
 Given a futures root + date range, build the calendar roll schedule
 (:mod:`aegis_data.roll`), fetch each dated contract's OHLCV over its active
 window (extended past the roll dates so consecutive contracts overlap on the
 seam), snap each roll date to the latest common trading day, and return a
-:class:`ContractChain` ready for the back-adjustment transform.  The per-contract
-fetch is injected (``ContractFetcher``) so assembly is testable without I/O.
+:class:`ContractChain` ready for the roll-transition table
+(:mod:`aegis_data.continuous_future`), which Nautilus's engine back-adjusts on
+demand (Path A).  The per-contract fetch is injected (``ContractFetcher``) so
+assembly is testable without I/O.
 """
 
 from __future__ import annotations
@@ -87,8 +89,8 @@ def fetch_contract_chain(
     for i, symbol in enumerate(schedule.symbols):
         # Reach back past the prior roll for seam overlap, but never before ``start``: the
         # first leg begins at ``start``, so the seam intersection cannot use earlier days,
-        # and a fetch before the dataset's available history aborts the pull (Databento 422
-        # at the window's left edge).  Symmetric to the expiry clamp on the late edge below.
+        # and a fetch before the provider's available history aborts the pull (a 422 at the
+        # window's left edge).  Symmetric to the expiry clamp on the late edge below.
         window_start = max(schedule.roll_dates[i - 1] - _OVERLAP_BUFFER, start) if i > 0 else start
         if i < n - 1:
             # The +overlap buffer past the roll is a best-effort seam fetch, not
@@ -126,7 +128,7 @@ def _roll_schedule(
     per-contract definitions snapshot — anchored at the window's late edge — lands inside
     the contract's listed life: a contract is only listed a bounded horizon before expiry
     (ICE lists ~10 months out), so probing every candidate to the full edge left far-dated
-    contracts unresolvable (Databento 422).  With no probe the chain rolls on the calendar
+    contracts unresolvable (a provider 422).  With no probe the chain rolls on the calendar
     through whatever was listed — a caller that does not rank liquidity.
     """
     if probe_volume is None:

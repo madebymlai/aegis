@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,9 +10,7 @@ from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
-    FuturesRef,
-    InstrumentRef,
-    ListedRef,
+    InstrumentId,
     LockedExecutionPlan,
 )
 
@@ -25,13 +23,11 @@ from research.aegis_research.component_registry import (
 from research.aegis_research.component_registry.contracts import IndicatorManifest, StrategyManifest
 from research.aegis_research.configuration import (
     LOCK_ROLES,
-    DataConfig,
     RunConfig,
-    SymbolSpec,
     load_run_config,
 )
-from research.aegis_research.market_data.currency import required_fx_currencies
-from research.aegis_research.market_data.figi import resolve_symbol_figis
+from research.aegis_research.drift_bands import instrument_bands_from
+from research.aegis_research.market_data.identity import resolved_instruments
 from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.lock_run import ResolvedComponentParams, resolve_lock_run
@@ -39,9 +35,6 @@ from research.aegis_research.optimization.param_namespace import ComponentRef
 
 STRATEGY_SLOT = "strategy"
 CANDIDATE_PREFIX_LENGTH = 8
-
-# Resolves listed provider tickers to their ListedRef FIGI payloads.
-FigiResolver = Callable[[Sequence[SymbolSpec]], Mapping[str, str]]
 
 
 class UnlockedBundleConfigError(ValueError):
@@ -71,9 +64,7 @@ class AssembledComponents:
     lookback_bars: int = 0
 
 
-def assemble_bundle(
-    config_path: Path, *, figi_resolver: FigiResolver | None = None
-) -> BundleArtifact:
+def assemble_bundle(config_path: Path) -> BundleArtifact:
     component_registry = discover_component_registry()
     resolved = load_run_config(config_path, component_registry=component_registry)
     config = resolved.config
@@ -86,9 +77,8 @@ def assemble_bundle(
         )
     with CandidateStore(candidate_store_path(config)) as store:
         lock_run = resolve_lock_run(config.lock, store=store)
-    resolver = resolve_symbol_figis if figi_resolver is None else figi_resolver
-    figi_by_ticker = resolver(config.data.symbols)
-    refs = _instrument_refs(config.data, figi_by_ticker)
+    instruments = resolved_instruments(config)
+    instrument_ids = tuple(instrument_id for instrument_id, _ in instruments)
     strategy_definition = component_registry.get(
         ComponentSelection("strategies", config.strategy.id)
     )
@@ -104,22 +94,21 @@ def assemble_bundle(
         component_registry=component_registry,
         component_params=lock_run.component_params,
     )
-    contract = _bundle_contract(config, components, refs)
+    contract = _bundle_contract(config, components, instrument_ids)
     manifest = BundleManifest(
         run_id=lock_run.run_id,
         role=_manifest_role(config.lock.candidate_id),
         candidate_key=candidate_key,
         component_source_hashes=components.source_hashes,
-        refs=refs,
+        instrument_ids=instrument_ids,
     )
     plan = LockedExecutionPlan(
         strategy=components.strategy,
         indicators=components.indicators,
+        instrument_bands=instrument_bands_from(instruments, config.portfolio),
         gross_cap=config.portfolio.gross_cap,
         net_cap=config.portfolio.net_cap,
         direction=config.portfolio.direction,
-        symbols=tuple(config.data.tickers),
-        currency_by_symbol=dict(config.data.currency_by_symbol),
     )
     version = strategy_manifest.version
     wheel_filename = f"{_wheel_safe(dist_name)}-{version}-py3-none-any.whl"
@@ -229,41 +218,18 @@ def _component_spec(
 
 
 def _bundle_contract(
-    config: RunConfig, components: AssembledComponents, refs: Sequence[InstrumentRef]
+    config: RunConfig, components: AssembledComponents, instrument_ids: Sequence[InstrumentId]
 ) -> DataContract:
-    currency_by_symbol = config.data.currency_by_symbol
-    base_currency = config.portfolio.base_currency
     return DataContract(
-        refs=tuple(refs),
+        instrument_ids=tuple(instrument_ids),
         required_arrays=tuple(_required_arrays(components)),
-        base_currency=base_currency,
-        required_fx_currencies=tuple(
-            sorted(required_fx_currencies(currency_by_symbol, base_currency))
-        ),
+        base_currency=config.data.base_currency,
         timeframe=config.data.timeframe,
         lookback_bars=components.lookback_bars,
+        futures=tuple(config.data.futures),
     )
 
 
-def _instrument_refs(
-    data_config: DataConfig, figi_by_ticker: Mapping[str, str]
-) -> tuple[InstrumentRef, ...]:
-    refs: list[InstrumentRef] = []
-    for symbol in data_config.symbols:
-        if getattr(symbol, "is_future", False):
-            if symbol.dataset is None:
-                raise ValueError(f"dataset is required for futures symbol {symbol.root!r}")
-            refs.append(
-                FuturesRef(
-                    root=symbol.root,
-                    dataset=symbol.dataset,
-                    roll_rule=symbol.roll_rule,
-                    adjustment=symbol.adjustment,
-                )
-            )
-            continue
-        refs.append(ListedRef(figi_by_ticker[symbol.symbol_name]))
-    return tuple(refs)
 
 
 def _call_lookback(definition: ComponentDefinition, params: Mapping[str, Any]) -> int:

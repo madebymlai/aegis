@@ -61,18 +61,44 @@ failure, not a multi-timeframe simulation.
 _Avoid_: per-sleeve timeframe, mixed cadence backtest, implicit resampling
 
 **Security Master**:
-The resolution of an **InstrumentRef** to its live, tradable venue contract — a
-*responsibility fulfilled by vendor-native services, not a bespoke Aegis module* (ADR-0005).
-A **ListedRef** is resolved by handing its **FIGI** to Interactive Brokers'
-`InstrumentProvider` (`secIdType='FIGI'` + `convert_exchange_to_mic_venue`), which returns the
-qualified listing and MIC venue. A **FuturesRef** is resolved at **IBKR** (live/paper is
-IBKR-only, on a delayed subscription): the **roll rule** picks the front dated contract, qualified
-by its exchange-native Globex `localSymbol` — never IB `CONTFUT`. **Databento** and **yfinance**
-are research-only substrates (`dataset` is a research tag, not in the live loop). Resolution is
-fail-closed, and a **Roll** is detected when the roll rule advances the front contract. The
-cross-context *identity* (the **InstrumentRef**) is still single and authoritative; only its
-*resolution* is vendor-native.
-_Avoid_: symbol map, instrument map, ticker table, security database, FIGI resolver, VenueContract (resolution is vendor-native — no bespoke resolver or intermediate contract type)
+The resolution of an **InstrumentId** to its live, tradable venue contract — a
+*responsibility fulfilled by vendor-native services, not a bespoke Aegis module* (ADR-0005, root ADR-0007).
+An instrument is resolved by handing its declared `InstrumentId` to Interactive Brokers'
+`InstrumentProvider` (`load_ids` + `convert_exchange_to_mic_venue`), which returns the
+qualified listing and MIC venue (`CME → XCME`). Live/paper is **IBKR-only**, on a delayed
+subscription. A continuous future is declared as a bare **root**; its live front leg is chosen by
+causal, volume-based liquidity detection, and a **Roll** is detected when that front advances —
+keyed by `InstrumentId`, with no declarative roll calendar. **Databento** and **yfinance** are
+research-only substrates, never in the live loop. Resolution is fail-closed. The cross-context
+*identity* is the single, authoritative **InstrumentId**; only its *resolution* is vendor-native.
+_Avoid_: symbol map, instrument map, ticker table, security database, FIGI, FIGI resolver, VenueContract, InstrumentRef (resolution is vendor-native — no bespoke resolver or intermediate contract type)
+
+**Roll**:
+The advance of a continuous future's front leg from one dated contract to the next — detected
+causally at bar time when the newer leg overtakes the current front on observed volume, keyed by
+the `(from, to)` `InstrumentId` pair. It re-bases the back-adjusted continuous series across the
+seam so the series stays continuous, and uses no declarative roll calendar — the front is chosen
+live from volume, so live and research pick the same leg.
+_Avoid_: roll calendar, roll rule, rollover schedule, contract switch, expiry roll
+
+**Roll Desk**:
+The single authority for the **Commingled Book's** live continuous-future exposure — it owns
+each declared root's back-adjusted continuous series and the dated front leg the root currently
+resolves to, re-based across every **Roll** so live stays identical to research. One per book;
+the continuous series is read, and a continuous root's execution front is resolved, only through it.
+_Avoid_: roll manager, roll engine, feeds orchestrator, continuous feed manager, continuous service, roll handler
+
+**Broker Connection**:
+The environment-resolved IBKR connection (`IBConnectionSettings`: host, port, client
+id, account id) that a live trader run trades through. Paper and live are **not** run
+modes — they are the *same* code path pointed at different gateway ports, so the **port
+alone** distinguishes paper from live; the system requires `IB_PORT` and `account_id`
+explicitly and fails closed rather than assume which gateway it is talking to. Read from
+the process environment (never the committed **Book Config**) and handed to the single
+IBKR adapter, which translates it into Nautilus's stock client configs. There is no
+`--mode`: the operator-facing surface is `aegis-trader backtest` (offline) and
+`aegis-trader trader start`/`stop` (live; the port decides paper vs live).
+_Avoid_: mode, paper mode, live mode, run mode, environment, broker config, gateway profile
 
 Add domain terms here as decisions crystallise — one or two sentences each,
 defining what the term **is** (not what it does), with an `_Avoid_:` line

@@ -1,69 +1,68 @@
+"""Pure Roll lifecycle value objects."""
+
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime
+from typing import TypeAlias
 
-from aegis_runtime import FuturesRef, InstrumentRef, ListedRef
+from aegis_data.rebasing import Rebasing
+from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource, ResolvedContractId
+from aegis_trader.domain.startup import StartupGate
 
 
 @dataclass(frozen=True)
-class HeldContract:
-    """A reconciled held contract folded to its canonical InstrumentRef."""
+class RollEvent:
+    """A continuous root rolled into a new price basis."""
 
-    ref: InstrumentRef
-    contract_id: ResolvedContractId
-    quantity: float
-
-
-AsOfResolver = Callable[[InstrumentRef, date], ResolvedContractId]
+    continuous_id: InstrumentId
+    rebasing: Rebasing
 
 
-def roll_positions(
-    held: tuple[HeldContract, ...],
-    *,
-    as_of: date,
-    resolve: AsOfResolver,
-) -> tuple[OrderIntent, ...]:
-    """Emit mandatory exposure-neutral roll orders for stale futures contracts.
+@dataclass(frozen=True)
+class SubscribeBars:
+    """Subscribe to live bars for a front leg."""
 
-    ListedRefs never roll. A FuturesRef rolls only when the currently held dated
-    contract differs from the contract resolved for ``as_of``. The emitted pair
-    is labelled ``ROLL`` so the Strategy can log and submit it distinctly from
-    alpha drift orders; drift bands never participate in this pure step.
-    """
-    orders: list[OrderIntent] = []
-    for position in held:
-        if isinstance(position.ref, ListedRef):
-            continue
-        if not isinstance(position.ref, FuturesRef):
-            raise ValueError(f"unsupported InstrumentRef variant {type(position.ref).__name__}")
-        current = resolve(position.ref, as_of)
-        if current == position.contract_id:
-            continue
-        quantity = abs(position.quantity)
-        if quantity == 0.0:
-            continue
-        exit_side = OrderSide.SELL if position.quantity > 0 else OrderSide.BUY
-        enter_side = OrderSide.BUY if position.quantity > 0 else OrderSide.SELL
-        orders.append(
-            OrderIntent(
-                ref=position.ref,
-                side=exit_side,
-                quantity=quantity,
-                source=OrderSource.ROLL,
-                resolved_contract_id=position.contract_id,
-            )
-        )
-        orders.append(
-            OrderIntent(
-                ref=position.ref,
-                side=enter_side,
-                quantity=quantity,
-                source=OrderSource.ROLL,
-                resolved_contract_id=current,
-            )
-        )
-    return tuple(orders)
+    instrument_id: InstrumentId
+    timeframe: str
+
+
+@dataclass(frozen=True)
+class UnsubscribeBars:
+    """Unsubscribe from live bars for an old front leg."""
+
+    instrument_id: InstrumentId
+    timeframe: str
+
+
+@dataclass(frozen=True)
+class RequestInstrument:
+    """Load a front-leg instrument definition before subscribing."""
+
+    instrument_id: InstrumentId
+
+
+@dataclass(frozen=True)
+class RequestBars:
+    """Warm front-leg bars through Nautilus's native catalog request."""
+
+    instrument_id: InstrumentId
+    timeframe: str
+    start: datetime
+    end: datetime
+    update_catalog: bool = True
+
+
+@dataclass(frozen=True)
+class Halt:
+    """A typed startup halt emitted by the Roll Desk."""
+
+    gate: StartupGate
+    reason: str
+
+
+RollIntent: TypeAlias = (
+    SubscribeBars | UnsubscribeBars | RequestInstrument | RequestBars | RollEvent | Halt
+)
+RollIntentBatch: TypeAlias = tuple[RollIntent, ...]

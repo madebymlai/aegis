@@ -1,7 +1,7 @@
-"""Pure domain value types for Aegis Trader — no Nautilus, no I/O.
+"""Pure domain value types for Aegis Trader — no I/O.
 
-All instrument identifiers are canonical InstrumentRefs from the DataContract,
-so the domain core never depends on venue-specific instrument resolution.
+Instrument identity is the native Nautilus ``InstrumentId`` from the
+ExecutionBundle contract.  There is no runtime ref/symbol translation layer.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from aegis_runtime import InstrumentRef
+from nautilus_trader.model.identifiers import InstrumentId
 
 
 @dataclass(frozen=True)
@@ -34,26 +34,15 @@ class OrderSource(str, Enum):
 
 
 @dataclass(frozen=True)
-class ResolvedContractId:
-    """Venue-native contract id as a domain string, not a Nautilus type."""
-
-    value: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.value, str) or not self.value:
-            raise ValueError(f"ResolvedContractId must be a non-empty string; got {self.value!r}")
-
-
-@dataclass(frozen=True)
 class WeightDelta:
-    """A signed change in target weight for one InstrumentRef (fraction of NAV).
+    """A signed change in target weight for one instrument (fraction of NAV).
 
     The pure rebalancer emits these — netting, banding, and cap-gating all live
     in dimensionless weight space.  A separate sizing step (``sizing.size_deltas``)
     converts a WeightDelta into an :class:`OrderIntent` with a native share count.
     """
 
-    ref: InstrumentRef
+    instrument_id: InstrumentId
     delta: float  # signed weight to trade; positive = buy, negative = sell
 
     @property
@@ -65,12 +54,11 @@ class WeightDelta:
 class OrderIntent:
     """A provider-agnostic, *sized* order request from the rebalance pipeline.
 
-    Carries canonical identifiers; the Strategy asks the pipeline for the
-    current venue-specific instrument before submitting through Nautilus.
+    Carries the native ``InstrumentId`` that the Strategy submits through
+    Nautilus.
     """
 
-    ref: InstrumentRef
+    instrument_id: InstrumentId
     side: OrderSide
     quantity: float  # native share count (sized via NAV / FX / price)
     source: OrderSource = OrderSource.ALPHA
-    resolved_contract_id: ResolvedContractId | None = None

@@ -252,27 +252,13 @@ class TestBookConfig:
             )
 
 
-class TestBookConfigCapsAndBands:
-    """Caps and bands declaration.
+class TestBookConfigCaps:
+    """Caps declaration.
 
     Cap *provenance* (caps never exceeding the bundles' research-validated
     ceilings) is bundle-grounded and lives in test_cap_provenance.py — it is no
     longer a self-referential check on BookConfig.
     """
-
-    def test_default_bands(self):
-        """Default bands are 0.02 symmetric."""
-        book = BookConfig(sleeves=(make_sleeve("trend"),))
-        assert book.band_for("ANY_FIGI") == (0.02, 0.02)
-
-    def test_band_override(self):
-        """Per-FIGI asymmetric band override."""
-        book = BookConfig(
-            sleeves=(make_sleeve("trend"),),
-            band_overrides=(("FIGI_TAIL", 0.01, 0.05),),
-        )
-        assert book.band_for("FIGI_TAIL") == (0.01, 0.05)
-        assert book.band_for("OTHER") == (0.02, 0.02)
 
     def test_caps_default_none(self):
         """Caps default to None (unlimited)."""

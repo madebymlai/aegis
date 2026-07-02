@@ -9,10 +9,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
+from aegis_data.distributions import Distribution
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import (
     RunConfig,
 )
+from research.aegis_research.drift_bands import resolve_instrument_bands
+from research.aegis_research.market_data.currency import CurrencyConversion
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_evidence import result_evidence
 from research.aegis_research.optimization.evidence_ledger import (
@@ -40,17 +44,26 @@ class ExecutionResult:
     optimization_result: OptimizationResult
 
 
-def _fx_fees(config: RunConfig) -> pd.Series:
-    """Per-symbol trade fees for the book.
+def _fx_fees(config: RunConfig, currency_conversion: CurrencyConversion | None) -> pd.Series:
+    """Per-instrument trade fees for the book.
 
     ``fx_adjusted_fees`` is the single fee builder: it returns the base fee for
     every leg and adds the FX surcharge only to non-base legs, so a zero-cost or
     single-currency book gets a uniform no-op series - no branch, no special case.
+    A leg is non-base by its currency *derived from the resolved Instrument* (the
+    conversion's ``currency_by_instrument_id``), never a configured field; a
+    single-currency book has no conversion, so every leg reads as base.
     """
     portfolio = config.portfolio
+    instrument_ids = tuple(InstrumentId.from_str(value) for value in config.data.instruments)
+    currency_by_instrument_id = (
+        currency_conversion.currency_by_instrument_id
+        if currency_conversion is not None
+        else dict.fromkeys(instrument_ids, portfolio.base_currency)
+    )
     return fx_adjusted_fees(
-        config.data.tickers,
-        config.data.currency_by_symbol,
+        instrument_ids,
+        currency_by_instrument_id,
         portfolio.base_currency,
         base_fee=portfolio.fees,
         fx_conversion_cost=portfolio.fx_conversion_cost,
@@ -63,6 +76,8 @@ def run_pipeline_execution(
     setup: SetupResult,
     metric_registry: FrozenMetricRegistry,
     run_evidence: RunEvidence,
+    currency_conversion: CurrencyConversion | None = None,
+    distributions: tuple[Distribution, ...] = (),
 ) -> ExecutionResult:
     """Execute the preflight gate and two-phase optimization sweep."""
     # The public entry point rejects runs without an optimization block, so by the
@@ -95,7 +110,10 @@ def run_pipeline_execution(
             ranking=config.ranking,
             metric_registry=metric_registry,
             split_result=setup.split_result,
-            fees_by_symbol=_fx_fees(config),
+            fees_by_symbol=_fx_fees(config, currency_conversion),
+            instrument_bands=resolve_instrument_bands(config),
+            distributions=distributions,
+            currency_conversion=currency_conversion,
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)

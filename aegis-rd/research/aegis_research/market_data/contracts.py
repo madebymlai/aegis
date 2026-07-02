@@ -3,10 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+from aegis_data.distributions import Distribution
+from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration import DataConfig
+from research.aegis_research.market_data.currency import CurrencyConversion
+from research.aegis_research.market_data.native_metadata import supports_update
 
 LOGICAL_ARRAYS = {
     "open": "Open",
@@ -60,8 +64,38 @@ class MarketDataAdapterResult:
     provider_metadata: dict[str, Any] = field(default_factory=dict)
     omitted_metadata_fields: list[dict[str, str]] = field(default_factory=list)
     # Optional second continuous series (the ``pnl_adjustment`` mode) the portfolio
-    # simulates P&L on; ``None`` when no symbol declares a P&L series.
+    # simulates P&L on; ``None`` when no instrument declares a P&L series.
     pnl_native_data: Any = None
+    # Non-base → base FX conversion derived from the catalog's resolved instruments and
+    # ``exchange:`` FX series; ``None`` for a single-currency book (no ``exchange:``).
+    currency_conversion: CurrencyConversion | None = None
+    # Listed-ETF cash events read from the same Nautilus catalog as bars.
+    distributions: tuple[Distribution, ...] = ()
+    # Set only by ``provider_failed_adapter_result``: adapters raise
+    # ``RemoteDataPullError``, they never return a failed result. Carrying the
+    # failure as data lets the one observe → judge → describe sequence handle
+    # both outcomes.
+    failure: RemoteDataPullError | None = None
+
+    @property
+    def provider_class(self) -> str | None:
+        return None if self.native_data is None else type(self.native_data).__name__
+
+    @property
+    def update_supported(self) -> bool:
+        if self.native_data is None:
+            return False
+        return supports_update(self.native_data)
+
+
+def provider_failed_adapter_result(error: RemoteDataPullError) -> MarketDataAdapterResult:
+    """The degenerate result a failed pull collapses to: no native data,
+    provider-failed index evidence, the error carried as data."""
+    return MarketDataAdapterResult(
+        native_data=None,
+        evidence={"source": "provider_failed"},
+        failure=error,
+    )
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -78,16 +112,19 @@ class DataArrayDiagnostics:
     last_timestamp: str | None = None
 
 
-@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+@pydantic_dataclass(
+    frozen=True,
+    config=ConfigDict(extra="forbid", arbitrary_types_allowed=True),
+)
 class DataDiagnostics:
-    """Per-symbol observation record; serialises field-by-field as one entry
+    """Per-instrument observation record; serialises field-by-field as one entry
     of the ``diagnostics`` facet.
 
-    Index evidence is observation-level, not per-symbol — it lives once, in
+    Index evidence is observation-level, not per-instrument; it lives once, in
     the ``provenance`` facet.
     """
 
-    symbol: str
+    instrument_id: InstrumentId
     configured: bool
     arrays: dict[str, DataArrayDiagnostics] = field(default_factory=dict)
     provider_status: str = "loaded"
@@ -104,22 +141,27 @@ class ArrayDescriptor:
     ohlc: bool
 
 
-@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+@pydantic_dataclass(
+    frozen=True,
+    config=ConfigDict(extra="forbid", arbitrary_types_allowed=True),
+)
 class RequestFacet:
-    """What was asked for: source, symbols, timeframe, array declarations."""
+    """What was asked for: native InstrumentIds, timeframe, array declarations."""
 
-    source: str
-    requested_symbols: list[str]
+    requested_instrument_ids: list[InstrumentId]
     timeframe: str
     authored_arrays: list[str]
     effective_arrays: list[str]
 
 
-@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+@pydantic_dataclass(
+    frozen=True,
+    config=ConfigDict(extra="forbid", arbitrary_types_allowed=True),
+)
 class CoverageFacet:
-    """What was actually observed: symbol set, row count, index span."""
+    """What was actually observed: instrument-id set, row count, index span."""
 
-    symbols: list[str]
+    instrument_ids: list[InstrumentId]
     rows: int
     start: str | None
     end: str | None
@@ -168,6 +210,8 @@ class MarketDataResult:
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
     pnl_native_data: Any = None
+    currency_conversion: CurrencyConversion | None = None
+    distributions: tuple[Distribution, ...] = ()
 
     def assert_usable(self) -> None:
         if not self.quality.usable:

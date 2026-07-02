@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
-
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
+    DriftBand,
     ExecutionBundle,
-    ListedRef,
     LockedExecutionPlan,
-    MarketDataBundle,
 )
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -18,36 +15,28 @@ from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.trader.instrument_provider import (
-    declared_ref_currencies,
-    reconcile_quote_currency,
-)
-from aegis_trader.trader.pipeline import (
-    CompletedRebalancePeriod,
-    FixtureInstrumentResolver,
-    RebalancePipeline,
-)
+from aegis_trader.trader.pipeline import CompletedRebalancePeriod, RebalancePipeline
 
-_FIGI = "BBG000R20GS9"
-_REF = ListedRef(_FIGI)
 _INSTRUMENT_ID = InstrumentId.from_str("GBUS.XLON")
 
 
 class _MarketData:
     def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing | None:
         assert instrument_id == _INSTRUMENT_ID
-        return InstrumentSizing(currency="GBP", size_increment=1.0)
+        return InstrumentSizing(currency="GBp", size_increment=1.0)
 
     def make_quantity(self, instrument_id: InstrumentId, raw_shares: float) -> object:
         raise AssertionError("quantity construction is not part of this test")
 
+    def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
+        return instrument_id
+
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
-        assert (base_currency, quote_currency) == ("EUR", "GBP")
+        assert (base_currency, quote_currency) == ("EUR", "GBp")
         return 0.85
 
     def lookback_window(
         self,
-        ref: object,
         instrument_id: InstrumentId,
         timeframe: str,
         *,
@@ -55,13 +44,21 @@ class _MarketData:
         period_ns: int,
         limit: int,
     ) -> tuple[MarketBar, ...]:
-        assert (ref, instrument_id, timeframe) == (_REF, _INSTRUMENT_ID, "1D")
+        assert (instrument_id, timeframe) == (_INSTRUMENT_ID, "1D")
         assert (period, period_ns, limit) == (1, 86_400_000_000_000, 1)
-        return ()
+        return (
+            MarketBar(
+                ts_event=86_400_000_000_000,
+                open=850.0,
+                high=850.0,
+                low=850.0,
+                close=850.0,
+                volume=1.0,
+            ),
+        )
 
     def has_bar_in_period(
         self,
-        ref: object,
         instrument_id: InstrumentId,
         timeframe: str,
         *,
@@ -81,17 +78,16 @@ class _BookState:
     def is_cache_healthy(self) -> bool:
         return True
 
-    def realized_weights(self) -> dict[ListedRef, float]:
+    def realized_weights(self) -> dict[InstrumentId, float]:
         return {}
 
 
 class _PenceBundle(ExecutionBundle):
     def __init__(self) -> None:
         contract = DataContract(
-            refs=(_REF,),
+            instrument_ids=(_INSTRUMENT_ID,),
             required_arrays=("Close",),
             base_currency="EUR",
-            required_fx_currencies=(),
             timeframe="1D",
             lookback_bars=1,
         )
@@ -100,7 +96,7 @@ class _PenceBundle(ExecutionBundle):
             role="synth",
             candidate_key="k",
             component_source_hashes={},
-            refs=(_REF,),
+            instrument_ids=(_INSTRUMENT_ID,),
         )
         plan = LockedExecutionPlan(
             strategy=ComponentSpec(
@@ -112,19 +108,15 @@ class _PenceBundle(ExecutionBundle):
                 params={},
             ),
             indicators=(),
+            instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
             gross_cap=1.0,
             net_cap=None,
             direction="both",
-            symbols=("GBUS.L",),
-            currency_by_symbol={"GBUS.L": "GBp"},
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle, *, fx_series=None) -> object:
-        raise AssertionError("weight computation is not part of this test")
 
-
-def test_pipeline_sizing_uses_declared_pence_currency_with_major_fx_rate() -> None:
+def test_pipeline_collects_sizing_params_by_native_instrument_id() -> None:
     book = BookConfig(
         sleeves=(
             SleeveConfig(
@@ -136,24 +128,20 @@ def test_pipeline_sizing_uses_declared_pence_currency_with_major_fx_rate() -> No
         base_currency="EUR",
     )
     bundle = _PenceBundle()
-    declared_currencies = declared_ref_currencies((bundle,))
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
         book=book,
         sleeve_to_bundle={book.sleeves[0].name: bundle},
         ledger=SleeveLedger(),
-        resolve_instrument=FixtureInstrumentResolver({_REF: _INSTRUMENT_ID}),
-        reconcile_ref_currency=lambda ref, currency: reconcile_quote_currency(
-            ref, currency, declared_currencies
-        ),
     )
-    pipeline.initialize_identity(date(2026, 1, 1))
 
     instrument_metas, fx_rates, prices = pipeline._collect_sizing_params(
         CompletedRebalancePeriod(period=1, period_ns=86_400_000_000_000)
     )
 
-    assert instrument_metas == {_REF: InstrumentSizing(currency="GBp", size_increment=1.0)}
+    assert instrument_metas == {
+        _INSTRUMENT_ID: InstrumentSizing(currency="GBp", size_increment=1.0)
+    }
     assert fx_rates == {"GBp": 0.85}
-    assert prices == {}
+    assert prices == {_INSTRUMENT_ID: 850.0}

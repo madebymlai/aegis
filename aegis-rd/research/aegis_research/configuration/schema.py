@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, get_args
 
 import pandas as pd
+from aegis_runtime import DriftBand
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -11,10 +12,12 @@ from research.aegis_research.configuration.field_types import (
     IDENTIFIER_RE,  # noqa: F401 — re-exported for configuration
     ComponentIdStr,
     NonEmptyStr,
+    NonNegativeCash,
     NonNegativeInt,
     NonNegativeRate,
     PositiveCash,
     PositiveInt,
+    RootSymbol,
     StrictFloat,
     TimedeltaStr,
     UnitInterval,
@@ -41,7 +44,7 @@ Degradation = Literal[
     "duplicate_index",
     "missing_rows",
     "non_monotonic_index",
-    "skipped_symbols",
+    "skipped_instrument_ids",
 ]
 DATA_QUALITY_DEGRADATIONS = set(get_args(Degradation))
 FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
@@ -103,90 +106,22 @@ ArrayToken = Annotated[str, AfterValidator(_validate_array_token)]
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
-class SymbolSpec:
-    """One universe member: its RD symbol identity and quote currency.
-
-    Listed symbols use ``ticker`` as their RD name and provider locator. Futures
-    symbols use ``root`` as their RD name and carry their Databento Dataset on
-    ``dataset``. Currency is instrument identity, declared inline (never sniffed
-    from a data provider). ``ccy`` is the literal quote token, including minor
-    units such as ``GBp`` (pence); the converter owns the minor-unit math.
-
-    Optional, provider-agnostic identity hints — ``figi`` / ``isin`` / ``mic`` —
-    are used ONLY by ``aerd export`` to resolve the ticker to exactly one FIGI;
-    the research runtime never reads them. Supply whatever uniquely identifies
-    the instrument:
-
-    - ``figi``: pins the canonical OpenFIGI identity verbatim (the authoritative
-      override; also the catch-all for crypto and anything OpenFIGI cannot map).
-    - ``isin``: the global ISO 6166 security id; resolved via OpenFIGI ID_ISIN.
-    - ``mic``: the ISO 10383 venue code (e.g. ``XLON``); the venue filter for the
-      ticker lookup, replacing any provider-specific exchange suffix.
-    """
-
-    ccy: str
-    ticker: str | None = None
-    figi: str | None = None
-    isin: str | None = None
-    mic: str | None = None
-    root: str | None = None
-    dataset: str | None = None
-    roll_rule: str = "calendar"
-    adjustment: str = "unadjusted"
-    # Optional second continuous series for a futures store symbol: ``adjustment`` is the
-    # signal price (indicators), ``pnl_adjustment`` the price the portfolio simulates P&L /
-    # sizes against.  When unset the signal series is also the P&L series (single series).
-    pnl_adjustment: str | None = None
-
-    @property
-    def is_future(self) -> bool:
-        return self.root is not None
-
-    @property
-    def symbol_name(self) -> str:
-        if self.root is not None:
-            return self.root
-        if self.ticker is None:
-            raise ValueError("ticker is required for listed symbol")
-        return self.ticker
-
-    @model_validator(mode="after")
-    def _validate_instrument_identity(self) -> SymbolSpec:
-        if self.root is None:
-            if self.dataset is not None:
-                raise ValueError("dataset is only supported for futures symbols")
-            if self.ticker is None:
-                raise ValueError("ticker is required for listed symbol")
-            return self
-        if self.dataset is None:
-            raise ValueError("dataset is required when root declares a FuturesRef")
-        if self.figi is not None or self.isin is not None or self.mic is not None:
-            raise ValueError(
-                "futures fields are mutually exclusive with listed identity hints figi/isin/mic"
-            )
-        return self
-
-
-@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DataConfig:
-    source: str = "synthetic"
-    provider: str | None = None
-    # FX gap-fill provider, decoupled from the bars ``provider``: a futures book pulls
-    # bars from ``databento`` but its base-currency FX rates from ``yfinance`` (the only
-    # store FX gap-fill provider). ``None`` falls back to ``provider`` (prior behavior).
-    fx_provider: str | None = None
     # No schema default — required. Keyword-only so a required field can sit among
     # defaulted ones — every construction site splats **raw anyway.
     arrays: Annotated[list[ArrayToken], Field(min_length=1)] = field(kw_only=True)
-    symbols: list[SymbolSpec] = field(
-        default_factory=lambda: [SymbolSpec(ticker="SYN", ccy="EUR")]
-    )
+    base_currency: str = "EUR"
+    instruments: list[str] = field(default_factory=list)
+    exchange: list[str] = field(default_factory=list)
+    # Bare continuous-future root symbols (e.g. ``["ES", "KC"]``), not native ids: each
+    # is materialised on demand as an adjusted continuous series (Path A), venue and
+    # currency catalog-authoritative from its dated legs. Distinct from raw ``instruments``.
+    # ``RootSymbol`` rejects venue-qualified ids via the same validator live's DataContract uses.
+    futures: list[RootSymbol] = field(default_factory=list)
     start: str | None = None
     end: str | None = None
     timeframe: str = "1D"
     path: str | None = None
-    seed: int = 42
-    rows: PositiveInt = 750
     missing_index: MissingPolicy = "raise"
     missing_columns: MissingPolicy = "raise"
     tz_localize: str | bool | None = None
@@ -194,200 +129,64 @@ class DataConfig:
     skip_on_error: bool = False
     silence_warnings: bool = False
     quality: DataQualityConfig = field(default_factory=DataQualityConfig)
-    wrapper_kwargs: dict[str, Any] = field(default_factory=dict)
-    provider_kwargs: dict[str, Any] = field(default_factory=dict)
-    execution_kwargs: dict[str, Any] = field(default_factory=dict)
 
     @property
     def effective_arrays(self) -> tuple[str, ...]:
         return expand_data_arrays(self.arrays)
 
     @property
-    def effective_fx_provider(self) -> str:
-        """The provider used to gap-fill base-currency FX rates: ``fx_provider`` when
-        set, else the bars ``provider`` (so a single-provider book is unchanged)."""
-        return store_gap_fill_provider(self.fx_provider or self.provider)
-
-    @property
-    def tickers(self) -> list[str]:
-        """The RD symbol names, in declared order."""
-        return [spec.symbol_name for spec in self.symbols]
-
-    @property
-    def currency_by_symbol(self) -> dict[str, str]:
-        """Map RD symbol name -> declared quote currency."""
-        return {spec.symbol_name: spec.ccy for spec in self.symbols}
+    def native_instrument_ids(self) -> tuple[str, ...]:
+        """Native Nautilus InstrumentIds requested from the catalog/port."""
+        return tuple(dict.fromkeys([*self.instruments, *self.exchange]))
 
     @model_validator(mode="after")
     def _validate_conditional_requireds(self) -> DataConfig:
-        """Cross-field conditional requiredness.
-
-        - Remote sources require non-empty symbols.
-        - csv source requires a path.
-        - skip_on_error requires quality to allow 'skipped_symbols'.
-        - Local sources (synthetic, csv) do not support provider/execution kwargs.
-
-        Source whitelisting is NOT here — it's a post-pydantic check in the
-        resolution coordinator so programmatic DataConfig construction (which
-        uses internal source names like "frame") is not rejected at the model
-        level.
-        """
-        from research.aegis_research.market_data.sources import (
-            LOCAL_DATA_SOURCES,
-            remote_data_sources,
-        )
-
-        supported_remote = remote_data_sources()
-        if self.source in supported_remote:
-            _require_symbols_for_source(self.source, self.symbols)
-            _require_window_for_source(self.source, self)
-        if self.source == "csv" and not self.path:
-            raise ValueError("path is required for csv source")
-        if self.source == "store":
-            _require_symbols_for_source(self.source, self.symbols)
-            _require_window_for_source(self.source, self)
-            _require_store_symbols(self.symbols, provider=self.provider)
-            if self.fx_provider is not None:
-                store_gap_fill_provider(self.fx_provider)
-        else:
-            if self.provider is not None:
-                raise ValueError("data.provider is only supported for store source")
-            if self.fx_provider is not None:
-                raise ValueError("data.fx_provider is only supported for store source")
-        if self.skip_on_error and "skipped_symbols" not in self.quality.allowed_degradations:
+        """Cross-field requiredness for the native Nautilus catalog contract."""
+        _require_catalog_ids(self)
+        _require_catalog_window(self)
+        if self.skip_on_error and "skipped_instrument_ids" not in self.quality.allowed_degradations:
             raise ValueError(
-                "skip_on_error requires data.quality.allowed_degradations to include 'skipped_symbols'"
+                "skip_on_error requires data.quality.allowed_degradations "
+                "to include 'skipped_instrument_ids'"
             )
-        for symbol in self.symbols:
-            _validate_future_source_support(self.source, symbol)
-        if self.source in LOCAL_DATA_SOURCES:
-            for key in _UNSUPPORTED_LOCAL_KWARG_NAMES:
-                if getattr(self, key):
-                    raise ValueError(
-                        f"{key} is not supported for {self.source} source"
-                    )
         return self
 
 
-_UNSUPPORTED_LOCAL_KWARG_NAMES = ("wrapper_kwargs", "provider_kwargs", "execution_kwargs")
-
-
-def _require_symbols_for_source(source: str, symbols: list[SymbolSpec]) -> None:
-    if not symbols:
-        raise ValueError(f"symbols is required for {source} source")
-
-
-def _require_window_for_source(source: str, config: DataConfig) -> None:
+def _require_catalog_window(config: DataConfig) -> None:
     for field_name in _DATA_WINDOW_REQUIRED_FIELDS:
         if not getattr(config, field_name):
-            raise ValueError(f"{field_name} is required for {source} source")
+            raise ValueError(f"{field_name} is required for catalog data")
 
 
-def _require_store_symbols(
-    symbols: list[SymbolSpec],
-    *,
-    provider: str | None,
-) -> None:
-    normalized_provider = store_gap_fill_provider(provider)
-    futures_roots: set[str] = set()
-    for symbol in symbols:
-        if symbol.is_future:
-            _require_store_future_symbol(symbol, provider=normalized_provider)
-            root = symbol.symbol_name
-            if root in futures_roots:
-                raise ValueError(f"duplicate futures root {root!r} in store data block")
-            futures_roots.add(root)
-            continue
-        _require_store_listed_symbol(symbol, provider=normalized_provider)
-
-
-def _require_store_listed_symbol(symbol: SymbolSpec, *, provider: str) -> None:
-    if provider != "yfinance":
-        raise ValueError("listed store symbols require provider 'yfinance'")
-    if symbol.figi is None:
-        raise ValueError(f"figi is required for store source symbol {symbol.symbol_name!r}")
-
-
-def _require_store_future_symbol(symbol: SymbolSpec, *, provider: str) -> None:
-    if provider != "databento":
-        raise ValueError("futures store symbols require provider 'databento'")
-    if symbol.ticker is not None:
-        raise ValueError("futures store symbols must not declare ticker")
-
-
-def required_store_window_edge(value: str | None, name: str) -> str:
-    """Return a required store-source window edge, failing closed when absent."""
-    if value is None:
-        raise ValueError(f"{name} is required for store source")
-    return value
-
-
-def store_gap_fill_provider(provider: str | None) -> str:
-    if provider is None:
-        raise ValueError("provider is required for store source")
-    normalized = _STORE_PROVIDER_ALIASES.get(str(provider).lower())
-    if normalized is None:
-        allowed = sorted(_STORE_GAP_FILL_PROVIDERS)
+def _require_catalog_ids(config: DataConfig) -> None:
+    if not config.instruments and not config.futures:
         raise ValueError(
-            f"unsupported store gap-fill provider {provider!r}; expected one of {allowed}"
+            "at least one tradeable source is required: set data.instruments "
+            "(native ids) and/or data.futures (continuous-future roots)"
         )
-    return normalized
-
-
-# Sources that can supply per-contract dated-contract data (the overlap the
-# back-adjustment needs).  Only these may declare a back-adjusted ``adjustment``.
-_PER_CONTRACT_SOURCES = frozenset({"bento", "store"})
-# Back-adjustment modes, named to match NautilusTrader's backward
-# ContinuousFutureAdjustmentType so research and live agree: ``backward_ratio``
-# (multiplicative, returns-preserving) and ``backward_spread`` (additive/Panama).
-# Ordered tuples are the single source of truth for docs/UX; the validators use
-# the frozenset forms derived from them so a documented mode cannot fork from an
-# accepted one.
-UNADJUSTED = "unadjusted"
-BACK_ADJUSTMENT_MODES: tuple[str, ...] = ("backward_ratio", "backward_spread")
-# Every value a futures store symbol's ``adjustment`` / ``pnl_adjustment`` may take.
-FUTURES_ADJUSTMENT_MODES: tuple[str, ...] = (UNADJUSTED, *BACK_ADJUSTMENT_MODES)
-_PER_CONTRACT_ADJUSTMENTS = frozenset(BACK_ADJUSTMENT_MODES)
-_STORE_GAP_FILL_PROVIDERS = frozenset({"databento", "yfinance"})
-_STORE_PROVIDER_ALIASES = {
-    "bento": "databento",
-    "databento": "databento",
-    "yf": "yfinance",
-    "yfinance": "yfinance",
-}
-
-
-def _validate_future_source_support(source: str, symbol: SymbolSpec) -> None:
-    if not symbol.is_future:
-        if symbol.pnl_adjustment is not None:
-            raise ValueError("pnl_adjustment is only supported for futures store symbols")
-        return
-    if symbol.roll_rule != "calendar":
-        raise ValueError(
-            f"roll_rule {symbol.roll_rule!r} is not supported for {source} source"
-        )
-    _validate_pnl_adjustment(source, symbol)
-    if symbol.adjustment == "unadjusted":
-        return
-    if symbol.adjustment in _PER_CONTRACT_ADJUSTMENTS and source in _PER_CONTRACT_SOURCES:
-        return
-    raise ValueError(
-        f"adjustment {symbol.adjustment!r} is not supported for {source} source"
+    _require_unique_non_empty(config.instruments, "instruments")
+    _require_unique_non_empty(config.exchange, "exchange")
+    _require_unique_non_empty(
+        config.futures, "futures", value_desc="continuous-future root symbols"
     )
+    overlaps = sorted(set(config.instruments) & set(config.exchange))
+    if overlaps:
+        raise ValueError(f"instrument ids cannot be both tradeable and exchange-only: {overlaps}")
 
 
-# Modes a second (P&L) continuous series may take: the two backward back-adjustments or the
-# raw splice.  Anything else fails closed.
-_PNL_ADJUSTMENTS = frozenset(FUTURES_ADJUSTMENT_MODES)
-
-
-def _validate_pnl_adjustment(source: str, symbol: SymbolSpec) -> None:
-    if symbol.pnl_adjustment is None:
-        return
-    if symbol.pnl_adjustment not in _PNL_ADJUSTMENTS or source not in _PER_CONTRACT_SOURCES:
-        raise ValueError(
-            f"pnl_adjustment {symbol.pnl_adjustment!r} is not supported for {source} source"
-        )
+def _require_unique_non_empty(
+    values: list[str], field_name: str, *, value_desc: str = "native InstrumentId strings"
+) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{field_name} must contain non-empty {value_desc}")
+        if value in seen:
+            duplicates.add(value)
+        seen.add(value)
+    if duplicates:
+        raise ValueError(f"duplicate {field_name}: {sorted(duplicates)}")
 
 
 def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:
@@ -440,10 +239,23 @@ class SignalConfig:
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class InstrumentBandConfig:
+    up: NonNegativeRate
+    down: NonNegativeRate
+
+
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class PortfolioConfig:
     init_cash: PositiveCash = 10_000.0
     fees: NonNegativeRate = 0.001
     slippage: NonNegativeRate = 0.0005
+    # Flat per-order commission in the book's base currency (the broker's
+    # per-order MINIMUM, e.g. IBKR's EUR 1.25), charged on every fill on top of
+    # ``fees``. Unlike the proportional ``fees``/``slippage``, a fixed charge is
+    # absolute, so its drag scales with ``init_cash``: it only carries the real
+    # cost when ``init_cash`` is set to the modelled account NAV. Default 0 = off,
+    # so a returns-scaled book (the historical behaviour) is unaffected.
+    fixed_fee: NonNegativeCash = 0.0
     # Where a target decided from bar t's close fills: ``next_close`` (bar t+1 close,
     # the default), ``next_open`` (bar t+1 open — the only mode needing the Open array),
     # or ``same_close`` (bar t's own close — look-ahead, for mechanics tests). All non-
@@ -457,6 +269,22 @@ class PortfolioConfig:
     # book is unaffected.
     fx_conversion_cost: NonNegativeRate = 0.0
     net_cap: NonNegativeRate = 1.0
+    # Per-name no-trade band as a fraction of NAV (live-research parity). A
+    # position is left to drift and is rebalanced to target only once its weight
+    # crosses the directional width: ``band_up`` gates trims and ``band_down``
+    # gates adds. Enforced in the research sim by the shared DriftBand gate
+    # against the DRIFTED weight, so the same gate yields the same trades in
+    # both paths. This - not an in-strategy buffer - is the turnover /
+    # "few-trades" lever; a slow signal makes the target stable, so target ~
+    # realized stays inside the band and the book holds. Default 0 = rebalance
+    # every executable bar (the historical behaviour).
+    band_up: NonNegativeRate = 0.0
+    band_down: NonNegativeRate = 0.0
+    # Per-tradeable override for the sleeve-wide no-trade band. Keys are the
+    # configured tradeable names: native InstrumentId strings from data.instruments
+    # or bare roots from data.futures. Validation against the run's tradeable
+    # universe lives in the coordinator, where data and portfolio are both visible.
+    band_overrides: dict[str, InstrumentBandConfig] = field(default_factory=dict)
     # Short financing carry: flat annual rates. Effective net carry = borrow - rebate,
     # charged only on short legs (see ADR-0008). The non-zero borrow default means carry
     # is ON by default; a long-only book has no short legs and is unaffected.
@@ -467,6 +295,21 @@ class PortfolioConfig:
     gross_cap: PositiveCash = field(kw_only=True)
     # Required (validation rejects a config missing it); no silent long-only default.
     direction: Literal["longonly", "shortonly", "both"] = field(kw_only=True)
+
+    def resolved_band_for(self, key: str) -> DriftBand:
+        """Resolve one instrument's no-trade band: an override beats the sleeve default.
+
+        *key* is the instrument's single override key — the one the author writes in
+        ``band_overrides``: a native InstrumentId string, or a continuous future's bare
+        ``data.futures`` root. The caller resolves the instrument to that one canonical
+        key (no try-this-then-that); an exact miss means no override, so the sleeve-wide
+        ``band_up``/``band_down`` applies. This is the single authority for that
+        precedence — both research export and the sim resolve here.
+        """
+        override = self.band_overrides.get(key)
+        if override is None:
+            return DriftBand(up=self.band_up, down=self.band_down)
+        return DriftBand(up=override.up, down=override.down)
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

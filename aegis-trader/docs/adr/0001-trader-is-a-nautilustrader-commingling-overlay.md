@@ -71,8 +71,9 @@ interface and *called* by the overlay — never registered as node strategies.
   narrows root ADR-0001's "discover whatever is installed via the `aegis.execution_bundles`
   entry-point group" to explicit, fail-closed selection, with that group remaining the *load*
   interface for the selected wheel.
-- **Instrument identity via the Security Master / FIGI** (root ADR-0002): the overlay nets
-  in canonical FIGI space and resolves to a Nautilus `InstrumentId` at the execution edge.
+- **Instrument identity is the Nautilus `InstrumentId`** (root ADR-0007): the overlay nets
+  in `InstrumentId` space — each id is `{symbol}.{venue}`, resolved IBKR-native at boot —
+  with no FIGI hub or Security Master.
 - **Sizing is Trader's job.** Weights are dimensionless signed fractions (ADR-0007); the
   single capital base is the **account NAV in EUR** from the Nautilus `Portfolio`. FX and
   the GBp (pence) factor re-enter only at sizing, live from Nautilus, never from the bundle.
@@ -108,5 +109,5 @@ interface and *called* by the overlay — never registered as node strategies.
     unrecognized holding is **out of scope** rather than gated. Reconciliation is now a single
     rule — account-integrity → global halt. If unrecognized holdings become a real
     operational concern, reinstate quarantine as its own decision.
-- **Forward-First:** new venues plug in as Nautilus adapters resolving the same FIGIs; the
+- **Forward-First:** new venues plug in as Nautilus adapters resolving the same `InstrumentId`s; the
   cadence and identity layers are unchanged.

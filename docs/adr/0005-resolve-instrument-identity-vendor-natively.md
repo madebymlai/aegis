@@ -2,7 +2,16 @@
 
 Status: accepted (design; spike-validated against IB paper + Databento, 2026-06-19).
 **Supersedes this ADR's earlier within-session draft** (a bespoke runtime "Security Master"
-resolving an `InstrumentRef` to a venue-neutral `VenueContract`). Refines ADR-0002 and ADR-0003.
+resolving an `InstrumentRef` to a venue-neutral `VenueContract`).
+
+> **Identity model superseded by [ADR-0007](0007-instrument-identity-is-the-nautilus-instrumentid.md)**
+> (ADR-0002 and ADR-0003, which this ADR refined, are retired). The cross-boundary identity is the
+> Nautilus `InstrumentId`, not a FIGI or `InstrumentRef`, and live resolution hands the *declared
+> `InstrumentId`s* to IBKR's `InstrumentProvider.load_ids` — not a `secIdType='FIGI'` lookup. This
+> ADR's **surviving decision** is the vendor-native posture: resolve through IBKR's maintained
+> `InstrumentProvider`, build no bespoke resolver / `VenueContract` / OpenFIGI client. Read the
+> `ListedRef` / `FuturesRef` / FIGI-handoff specifics below as the 2026-06-19 spike record, not the
+> implemented path.
 
 A live spike confirmed that the bespoke instrument-identity resolver we were about to build —
 a Trader-side OpenFIGI client, a Bloomberg-exchange→MIC table, a `FuturesCalendar`, and a
@@ -29,7 +38,7 @@ what Aegis RD **mints** at export. What changes is *resolution* at Trader:
    the same front contract on the research series and at IBKR. Spike: all 23 universe roots resolve
    at IB.
 3. **The `InstrumentId ↔ InstrumentRef` inverse** (so the rebalancer reasons in continuous
-   `InstrumentRef` space, per ADR-0003) is built from the provider's load results — we requested a
+   `InstrumentRef` space, in the then-current model) is built from the provider's load results — we requested a
    known ref and record which `InstrumentId` came back.
 
 ## Considered options
@@ -65,7 +74,7 @@ what Aegis RD **mints** at export. What changes is *resolution* at Trader:
   Databento definitions rather than hand-specified specs.
 - **Retired (never built): the runtime Security Master and `VenueContract`. Deleted (existing):**
   the Trader `FigiInstrumentResolver`, its `_OpenFigiClient`, the `_bloomberg_exch_to_mic` table,
-  and the `FuturesCalendar`/`FuturesContractResolver` aliases. `aegis-runtime` keeps only the
-  `InstrumentRef` variant types.
+  and the `FuturesCalendar`/`FuturesContractResolver` aliases. `aegis-runtime` keeps no bespoke
+  identity type either — the cross-boundary identity is the Nautilus `InstrumentId` (ADR-0007).
 - **RD's mint is unchanged** — `ticker → FIGI` via OpenFIGI at export, Nautilus-free. It is the
   only OpenFIGI use left, and a vendor lookup, not a hand-maintained map.

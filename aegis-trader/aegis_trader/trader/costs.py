@@ -44,13 +44,21 @@ class SimulatedCostModels:
 def build_simulated_cost_models(book: BookConfig) -> SimulatedCostModels:
     """Derive simulated venue cost models from the Book Config."""
     return SimulatedCostModels(
-        fee_model=IbkrPerShareFeeModel(book.costs),
+        fee_model=IbkrEquityFeeModel(book.costs),
         fill_model=build_simulated_fill_model(book.costs),
     )
 
 
-class IbkrPerShareFeeModel(FeeModel):
-    """Currency-agnostic IBKR-style equity commission."""
+class IbkrEquityFeeModel(FeeModel):
+    """Currency-agnostic IBKR equity commission, per-share or per-value.
+
+    The variable charge is ``per_share_commission`` per share (IBKR US pricing) plus
+    ``commission_pct`` of notional (IBKR Europe pricing); a venue sets the basis it
+    uses and leaves the other at zero. That variable is floored at
+    ``min_commission_per_order`` (the per-order minimum, e.g. EUR 1.25) and, when
+    ``max_commission_pct`` is set, capped at that fraction of notional — the full
+    IBKR ``min(max(floor, variable), cap)`` shape.
+    """
 
     def __init__(self, costs: CostModelConfig) -> None:
         self._costs = costs
@@ -62,8 +70,11 @@ class IbkrPerShareFeeModel(FeeModel):
             price=fill_px,
             use_quote_for_inverse=False,
         ).as_double())
-        per_share = self._costs.per_share_commission * quantity
-        base_commission = max(self._costs.min_commission_per_order, per_share)
+        variable = (
+            self._costs.per_share_commission * quantity
+            + self._costs.commission_pct * notional
+        )
+        base_commission = max(self._costs.min_commission_per_order, variable)
         if self._costs.max_commission_pct > 0.0:
             base_commission = min(
                 base_commission,

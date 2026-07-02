@@ -32,6 +32,9 @@ from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,
 )
+from tests.support.research.aegis_research.market_data_fixtures import (
+    native_data_config_payload,
+)
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,7 +66,7 @@ def _resolve(portfolio: dict[str, Any], *, tmp_path: Path):
     raw: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "val-test",
-        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120, "arrays": ["OHLCV"]},
+        "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
         "portfolio": portfolio,
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
@@ -144,6 +147,73 @@ def test_portfolio_construction_accepts_net_cap_zero() -> None:
     assert config.net_cap == 0.0
 
 
+def test_portfolio_construction_defaults_directional_bands_to_zero() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 1.0, "direction": "longonly"})
+    assert config.band_up == 0.0
+    assert config.band_down == 0.0
+    assert config.band_overrides == {}
+
+
+def test_portfolio_construction_accepts_asymmetric_directional_band_pair() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python(
+        {
+            "gross_cap": 1.0,
+            "direction": "longonly",
+            "band_up": 0.01,
+            "band_down": 0.05,
+        }
+    )
+    assert config.band_up == 0.01
+    assert config.band_down == 0.05
+
+
+def test_portfolio_construction_accepts_per_instrument_band_overrides() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python(
+        {
+            "gross_cap": 1.0,
+            "direction": "longonly",
+            "band_up": 0.01,
+            "band_down": 0.02,
+            "band_overrides": {"SYN.XNAS": {"up": 0.03, "down": 0.07}},
+        }
+    )
+
+    assert config.band_overrides["SYN.XNAS"].up == 0.03
+    assert config.band_overrides["SYN.XNAS"].down == 0.07
+
+
+def test_portfolio_construction_rejects_negative_band_override_width() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python(
+            {
+                "gross_cap": 1.0,
+                "direction": "longonly",
+                "band_overrides": {"SYN.XNAS": {"up": -0.01, "down": 0.07}},
+            }
+        )
+
+    assert any(err["loc"] == ("band_overrides", "SYN.XNAS", "up") for err in e.value.errors())
+
+
+def test_portfolio_construction_rejects_removed_rebalance_band() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python(
+            {"gross_cap": 1.0, "direction": "longonly", "rebalance_band": 0.02}
+        )
+    assert any(
+        err["loc"] == ("rebalance_band",) and err["type"] == "unexpected_keyword_argument"
+        for err in e.value.errors()
+    )
+
+
+def test_portfolio_construction_accepts_one_directional_width_with_other_defaulted() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python(
+        {"gross_cap": 1.0, "direction": "longonly", "band_up": 0.01}
+    )
+    assert config.band_up == 0.01
+    assert config.band_down == 0.0
+
+
 def test_portfolio_construction_admits_direction_both() -> None:
     config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 2.0, "direction": "both"})
     assert config.direction == "both"
@@ -191,6 +261,58 @@ def test_portfolio_construction_rejects_unknown_key() -> None:
             {"gross_cap": 1.0, "direction": "longonly", "bogus": 42}
         )
     assert any(err["type"] == "unexpected_keyword_argument" for err in e.value.errors())
+
+
+def test_portfolio_band_override_key_must_be_in_tradeable_universe(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {
+                "gross_cap": 1.0,
+                "direction": "longonly",
+                "band_overrides": {"OTHER.XNAS": {"up": 0.03, "down": 0.07}},
+            },
+            tmp_path=tmp_path,
+        )
+
+    assert any(
+        i.path == "portfolio.band_overrides"
+        and "OTHER.XNAS" in i.message
+        and "SYN.XNAS" in i.message
+        for i in e.value.issues
+    )
+
+
+def test_portfolio_band_override_key_accepts_configured_future_root(tmp_path: Path) -> None:
+    raw = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "val-test",
+        "data": native_data_config_payload(
+            instruments=[],
+            futures=["ES"],
+            path="/catalog",
+            end="2024-04-30",
+        ),
+        "portfolio": {
+            "gross_cap": 1.0,
+            "direction": "longonly",
+            "band_overrides": {"ES": {"up": 0.03, "down": 0.07}},
+        },
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
+        "ranking": {"metric": "total_return"},
+        "optimization": {
+            "search": "grid",
+            "split": {
+                "method": "from_rolling",
+                "params": {"length": 20, "split": 0.5},
+                "max_splits": 10,
+            },
+        },
+    }
+
+    resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+    assert resolved.config.portfolio.band_overrides["ES"].up == 0.03
 
 
 # ── report structural validation ─────────────────────────────────────────────

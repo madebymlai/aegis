@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.configuration import DataConfig
@@ -14,16 +15,17 @@ from research.aegis_research.data import (
 )
 from research.aegis_research.market_data import loading as data_loading
 from research.aegis_research.market_data import metadata as data_metadata
+from research.aegis_research.market_data.contracts import provider_failed_adapter_result
 from tests.support.research.aegis_research.factories import make_data_config
 
 
 def _frozen_observation() -> data_loading.MarketDataObservation:
     index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
-    close = pd.DataFrame({"SYN": [1.0, 2.0, 3.0]}, index=index)
+    close = pd.DataFrame({_id("SYN.XNAS"): [1.0, 2.0, 3.0]}, index=index)
     return data_loading.MarketDataObservation(
         index=index,
         arrays=("Close",),
-        symbols=("SYN",),
+        instrument_ids=(_id("SYN.XNAS"),),
         panels={"Close": close},
     )
 
@@ -32,7 +34,7 @@ class _FrozenData:
     feature_oriented = True
 
     def __init__(self) -> None:
-        self.symbols = ["SYN"]
+        self.symbols = [_id("SYN.XNAS")]
         self.index = pd.date_range("2020-01-01", periods=3, tz="UTC", name="Open time")
         self.features = ["Close"]
 
@@ -47,11 +49,11 @@ class _FrozenData:
 
 
 def test_describe_builds_the_market_data_v3_facet_model() -> None:
-    config = make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
+    config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
     observation = _frozen_observation()
     diagnostics = (
         DataDiagnostics(
-            symbol="SYN",
+            instrument_id=_id("SYN.XNAS"),
             configured=True,
             arrays={
                 "Close": DataArrayDiagnostics(
@@ -71,22 +73,21 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
 
     metadata = data_metadata.describe(
         config,
-        native_class="_FrozenData",
+        source=MarketDataAdapterResult(
+            native_data=_FrozenData(),
+            source_metadata={"frozen": True},
+            evidence={"source": "test_evidence", "raw_rows": 3},
+            provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
+        ),
         observation=observation,
         diagnostics=diagnostics,
         quality=quality,
-        source_metadata={"frozen": True},
-        evidence={"source": "test_evidence", "raw_rows": 3},
-        provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
-        omitted_metadata_fields=[],
-        update_supported=False,
         required_arrays=("Close",),
     )
 
     # v3 facet-shaped model (ADR-0020): assert facets, not a flat dict
     assert metadata.schema_version == "market_data.v3"
-    assert metadata.request.source == "frozen"
-    assert metadata.request.requested_symbols == ["SYN"]
+    assert metadata.request.requested_instrument_ids == [_id("SYN.XNAS")]
     assert metadata.request.timeframe == "1D"
     assert metadata.request.authored_arrays == ["Close"]
     assert metadata.request.effective_arrays == ["Close"]
@@ -97,7 +98,7 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
     assert close_desc.observed is True
     assert close_desc.ohlc is True
     # coverage facet
-    assert metadata.coverage.symbols == ["SYN"]
+    assert metadata.coverage.instrument_ids == [_id("SYN.XNAS")]
     assert metadata.coverage.rows == 3
     assert metadata.coverage.start == "2020-01-01 00:00:00+00:00"
     assert metadata.coverage.end == "2020-01-03 00:00:00+00:00"
@@ -114,7 +115,7 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
     }
     assert wire["diagnostics"] == [
         {
-            "symbol": "SYN",
+            "instrument_id": "SYN.XNAS",
             "configured": True,
             "arrays": {
                 "Close": {
@@ -149,14 +150,14 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
 
 
 def test_provider_failure_routes_through_the_same_describe_builder() -> None:
-    config = make_data_config(source="future", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
+    config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
     quality = MarketDataQuality(
         state="provider_failed",
-        reasons=("future provider failed before usable native data was available",),
+        reasons=("provider failed before usable native data was available",),
     )
     diagnostics = (
         DataDiagnostics(
-            symbol="SYN",
+            instrument_id=_id("SYN.XNAS"),
             configured=True,
             provider_status="provider_failed",
         ),
@@ -164,20 +165,12 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
 
     expected = data_metadata.describe(
         config,
-        native_class=None,
+        source=provider_failed_adapter_result(
+            RemoteDataPullError("future", "network unavailable")
+        ),
         observation=MarketDataObservation_empty(),
         diagnostics=diagnostics,
         quality=quality,
-        source_metadata={
-            "provider_error_type": "RemoteDataPullError",
-            "provider_error_summary": (
-                "future provider failed before usable native data was available"
-            ),
-        },
-        evidence={"source": "provider_failed"},
-        provider_metadata={},
-        omitted_metadata_fields=[],
-        update_supported=False,
         required_arrays=("Close", "OpenInterest"),
     )
 
@@ -187,34 +180,47 @@ def test_provider_failure_routes_through_the_same_describe_builder() -> None:
     result = load_market_data_result(
         config,
         required_arrays=("OpenInterest",),
-        adapters={"future": fail},
+        adapter=fail,
     )
 
     assert result.metadata == expected
+    # Pin the failure wire shape explicitly: expected and result share the
+    # describe derivation, so the equality above alone would not catch a
+    # regression in the derived failure provenance.
+    assert result.metadata.provenance.source_metadata == {
+        "provider_error_type": "RemoteDataPullError",
+        "provider_error_summary": (
+            "provider failed before usable native data was available"
+        ),
+    }
+    assert result.metadata.provenance.index_evidence == {"source": "provider_failed"}
+    assert result.metadata.provenance.provider_metadata == {}
+    assert result.metadata.provenance.omitted_metadata_fields == []
+    assert result.metadata.provenance.update_supported is False
+    assert result.metadata.provenance.provider_class is None
 
 
 def test_failed_shape_equals_success_shape_minus_data() -> None:
+    config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
     success = load_market_data_result(
-        make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
-        adapters={
-            "frozen": lambda _config: MarketDataAdapterResult(
+        config,
+        adapter=lambda _config: MarketDataAdapterResult(
                 native_data=_FrozenData(),
                 source_metadata={"frozen": True},
                 evidence={"source": "test_evidence", "raw_rows": 3},
-            )
-        },
+        ),
     )
 
     def fail(_config: DataConfig) -> MarketDataAdapterResult:
         raise RemoteDataPullError("frozen", "network unavailable")
 
     failure = load_market_data_result(
-        make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
-        adapters={"frozen": fail},
+        config,
+        adapter=fail,
     )
 
     assert failure.metadata.schema_version == success.metadata.schema_version
-    assert failure.metadata.coverage.symbols == []
+    assert failure.metadata.coverage.instrument_ids == []
     loaded = [d.name for d in failure.metadata.arrays if d.loaded]
     assert loaded == []
     assert failure.metadata.coverage.rows == 0
@@ -226,19 +232,17 @@ def test_failed_shape_equals_success_shape_minus_data() -> None:
 
 
 def test_describe_tolerates_empty_provider_internals() -> None:
-    config = make_data_config(source="future", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
+    config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
 
     metadata = data_metadata.describe(
         config,
-        native_class=None,
+        source=MarketDataAdapterResult(
+            native_data=None,
+            evidence={"source": "provider_failed"},
+        ),
         observation=MarketDataObservation_empty(),
         diagnostics=(),
         quality=MarketDataQuality(state="provider_failed"),
-        source_metadata={},
-        evidence={"source": "provider_failed"},
-        provider_metadata={},
-        omitted_metadata_fields=[],
-        update_supported=False,
         required_arrays=("Close",),
     )
 
@@ -247,7 +251,7 @@ def test_describe_tolerates_empty_provider_internals() -> None:
     assert metadata.provenance.omitted_metadata_fields == []
     assert metadata.provenance.update_supported is False
     assert metadata.coverage.rows == 0
-    assert metadata.coverage.symbols == []
+    assert metadata.coverage.instrument_ids == []
     assert metadata.coverage.start is None
     assert metadata.coverage.end is None
 
@@ -256,7 +260,7 @@ def MarketDataObservation_empty() -> data_metadata.MarketDataObservation:
     return data_metadata.MarketDataObservation(
         index=pd.Index([]),
         arrays=(),
-        symbols=(),
+        instrument_ids=(),
         panels={},
     )
 
@@ -265,18 +269,20 @@ def test_loaded_metadata_round_trips_through_the_public_loader() -> None:
     native_data = _FrozenData()
 
     result = load_market_data_result(
-        make_data_config(source="frozen", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
-        adapters={
-            "frozen": lambda _config: MarketDataAdapterResult(
+        make_data_config(instruments=["SYN.XNAS"], arrays=["Close"]),
+        adapter=lambda _config: MarketDataAdapterResult(
                 native_data=native_data,
                 source_metadata={"frozen": True},
                 evidence={"source": "test_evidence", "raw_rows": 3},
                 provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
-            )
-        },
+        ),
     )
 
     loaded = [d.name for d in result.metadata.arrays if d.loaded]
     assert loaded == ["Close"]
     assert result.metadata.provenance.source_metadata == {"frozen": True}
     assert result.metadata.provenance.provider_metadata["class"] == f"{__name__}._FrozenData"
+
+
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)

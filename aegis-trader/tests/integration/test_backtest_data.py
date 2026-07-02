@@ -1,19 +1,21 @@
 """Integration tests for the backtest data loader (data/ load side).
 
 Where MarketDataPort is the runtime READ side over the cache, this is the
-backtest LOAD side: provider-agnostic OHLCV frames become Nautilus instruments
-and Bars via the kernel's BarDataWrangler, ready to feed a BacktestEngine.
+backtest LOAD side: catalog OHLCV frames plus Nautilus instrument definitions
+become Bars via the kernel's BarDataWrangler, ready to feed a BacktestEngine.
 """
 
 from __future__ import annotations
 
 import pandas as pd
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.objects import Currency, Price, Quantity
 
-from aegis_trader.data import InstrumentSpec, build_equity, wrangle_bars
+from aegis_trader.data import wrangle_bars
 
-_FIGI = "BBG0022FR5K6"
+_INSTRUMENT_ID = InstrumentId.from_str("VUSA.XLON")
 
 
 def _ohlcv(closes: list[float]) -> pd.DataFrame:
@@ -30,23 +32,25 @@ def _ohlcv(closes: list[float]) -> pd.DataFrame:
     )
 
 
-def test_build_equity_keys_instrument_by_figi_and_venue():
-    spec = InstrumentSpec(figi=_FIGI, venue="XLON", quote_currency="USD")
-
-    instrument = build_equity(spec)
-
-    assert isinstance(instrument, Equity)
-    assert instrument.id.value == f"{_FIGI}.XLON"
-    assert instrument.quote_currency.code == "USD"
-
-
 def test_wrangle_bars_turns_ohlcv_into_close_bars():
-    instrument = build_equity(InstrumentSpec(figi=_FIGI, venue="XLON", quote_currency="USD"))
+    instrument = _equity(_INSTRUMENT_ID, quote_currency="USD")
 
     bars = wrangle_bars(instrument, _ohlcv([100.0, 101.0, 102.0]), "1D")
 
     assert all(isinstance(b, Bar) for b in bars)
     assert len(bars) == 3
     assert [float(b.close.as_double()) for b in bars] == [100.0, 101.0, 102.0]
-    # The bar type carries the instrument's FIGI.venue id (the overlay keys on it).
     assert bars[0].bar_type.instrument_id == instrument.id
+
+
+def _equity(instrument_id: InstrumentId, *, quote_currency: str) -> Equity:
+    return Equity(
+        instrument_id=instrument_id,
+        raw_symbol=Symbol(instrument_id.symbol.value),
+        currency=Currency.from_str(quote_currency),
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )

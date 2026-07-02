@@ -5,11 +5,7 @@ from aegis_runtime import MarketDataBundle
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import OHLCV_ARRAYS
-from research.aegis_research.market_data.adapters.remote import (
-    SAFE_FETCH_KWARG_KEYS,
-    SAFE_RETURNED_KWARG_KEYS,
-    _pull_remote,
-)
+from research.aegis_research.market_data.adapters.catalog import load_catalog_source
 from research.aegis_research.market_data.contracts import (
     LOGICAL_ARRAYS,
     QUALITY_DEGRADED_ALLOWED,
@@ -46,8 +42,6 @@ __all__ = [
     "QUALITY_HEALTHY",
     "QUALITY_PROVIDER_FAILED",
     "QUALITY_REJECTED",
-    "SAFE_FETCH_KWARG_KEYS",
-    "SAFE_RETURNED_KWARG_KEYS",
     "DataArrayDiagnostics",
     "DataDiagnostics",
     "MarketDataAdapter",
@@ -57,10 +51,10 @@ __all__ = [
     "MarketDataQualityError",
     "MarketDataResult",
     "RemoteDataPullError",
-    "_pull_remote",
     "array_from_ohlcv",
     "close_from_ohlcv",
     "high_from_ohlcv",
+    "load_catalog_source",
     "load_market_data",
     "load_market_data_result",
     "low_from_ohlcv",

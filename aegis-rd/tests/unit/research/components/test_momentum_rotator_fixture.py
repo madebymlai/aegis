@@ -2,10 +2,22 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.data import MarketDataBundle
 
-_SYMBOLS = ["SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU"]
+_INSTRUMENT_ID_VALUES = [
+    "SPY.XNAS",
+    "IWM.XNAS",
+    "EEM.XNAS",
+    "TLT.XNAS",
+    "GLD.XNAS",
+    "DBC.XNAS",
+    "VNQ.XNAS",
+    "UUP.XNAS",
+    "XLE.XNAS",
+    "XLU.XNAS",
+]
 
 
 class FakeComponentInputs:
@@ -17,11 +29,18 @@ class FakeComponentInputs:
 
 
 def _make_data(n_dates: int = 120) -> MarketDataBundle:
+    instrument_ids = [
+        InstrumentId.from_str(value) for value in _INSTRUMENT_ID_VALUES
+    ]
     dates = pd.date_range("2023-01-01", periods=n_dates, freq="D")
     rng = np.random.default_rng(42)
-    returns = rng.normal(0.0003, 0.012, size=(n_dates, len(_SYMBOLS)))
+    returns = rng.normal(0.0003, 0.012, size=(n_dates, len(instrument_ids)))
     prices = 100.0 * np.exp(np.cumsum(returns, axis=0))
-    close = pd.DataFrame(prices, index=dates, columns=pd.Index(_SYMBOLS, name="symbol"))
+    close = pd.DataFrame(
+        prices,
+        index=dates,
+        columns=pd.Index(instrument_ids, name="instrument_id"),
+    )
     return MarketDataBundle(arrays={"Close": close})
 
 

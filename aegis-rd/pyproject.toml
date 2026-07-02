@@ -11,6 +11,7 @@ dependencies = [
   "aegis-runtime",
   "aegis-data",
   "dill",
+  "nautilus_trader",
   "numpy",
   "pandas",
   "pathos>=0.3.5",
@@ -18,7 +19,10 @@ dependencies = [
   "pyyaml",
   "tomlkit",
   "vectorbtpro",
-  "yfinance>=0.2.56",
+  "vectorbtpro-rust",
+  "nautilus-ibapi==10.45.1",
+  "protobuf>=7.35.1",
+  "yfinance",
 ]
 
 [project.scripts]
@@ -41,6 +45,7 @@ filterwarnings = [
 aegis-runtime = { path = "../aegis-runtime", editable = true }
 aegis-data = { path = "../aegis-data", editable = true }
 vectorbtpro = { git = "https://github.com/polakowo/vectorbt.pro.git", branch = "develop" }
+vectorbtpro-rust = { git = "https://github.com/polakowo/vectorbt.pro.git", branch = "develop", subdirectory = "rust" }
 
 [tool.mypy]
 python_version = "3.12"
@@ -58,6 +63,9 @@ module = [
   "aegis_runtime.*",
   "aegis_data",
   "aegis_data.*",
+  "numba",
+  "numba.*",
+  "nautilus_trader.*",
 ]
 ignore_missing_imports = true
 

@@ -16,15 +16,25 @@ from research.aegis_research.optimization.ranking import (
     OptimizationResult,
 )
 
+_DATA_IDENTITY = {
+    "schema_version": "candidate_data_identity.v2",
+    "requested_instrument_ids": ["SYN.XNAS"],
+    "instrument_ids": ["SYN.XNAS"],
+    "timeframe": "1D",
+}
+
 
 def test_component_param_keys_round_trip_to_component_slices() -> None:
     ref = ComponentRef("indicators", "demo.trend", "demo.trend")
     key = encode(ref, "window")
 
     assert decode(key) == (ref, "window")
-    assert slice_by_component({key: 5, FIXED_CANDIDATE_PARAM: 0}) == {
-        ref: {"window": 5}
-    }
+    assert slice_by_component(
+        {
+            key: 5,
+            FIXED_CANDIDATE_PARAM: 0,
+        }
+    ) == {ref: {"window": 5}}
 
 
 def test_golden_param_namespace_keys_pin_exact_hex_literals() -> None:
@@ -85,7 +95,7 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
     rows = candidate_rows_from_result(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
-        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        data_identity=_DATA_IDENTITY,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )

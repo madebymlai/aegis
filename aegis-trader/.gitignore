@@ -4,3 +4,7 @@ __pycache__/
 build/
 dist/
 .venv/
+
+# Local prototypes / scratch scripts (NOTES_*, prototype_*, etc.). Already-tracked
+# scripts (e.g. verify_paper_ibkr.py) stay tracked; new scratch work stays local.
+scripts/

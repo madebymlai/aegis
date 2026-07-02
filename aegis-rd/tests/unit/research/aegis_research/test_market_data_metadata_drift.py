@@ -8,11 +8,13 @@ dataclass is caught immediately.
 from __future__ import annotations
 
 import pytest
+from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import ValidationError
 
 from research.aegis_research.market_data.contracts import (
     ArrayDescriptor,
     CoverageFacet,
+    DataDiagnostics,
     MarketDataMetadataV3,
     MarketDataQuality,
     ProvenanceFacet,
@@ -26,8 +28,7 @@ def test_constructing_with_extra_field_is_rejected() -> None:
         MarketDataMetadataV3(
             schema_version="market_data.v3",
             request=RequestFacet(
-                source="synthetic",
-                requested_symbols=["SYN"],
+                requested_instrument_ids=[_id("SYN.XNAS")],
                 timeframe="1D",
                 authored_arrays=["Close"],
                 effective_arrays=["Close"],
@@ -37,9 +38,7 @@ def test_constructing_with_extra_field_is_rejected() -> None:
                     name="Close", required=True, loaded=False, observed=False, ohlc=True
                 )
             ],
-            coverage=CoverageFacet(
-                symbols=[], rows=0, start=None, end=None
-            ),
+            coverage=CoverageFacet(instrument_ids=[], rows=0, start=None, end=None),
             quality=MarketDataQuality(state="provider_failed"),
             diagnostics=[],
             provenance=ProvenanceFacet(
@@ -59,3 +58,15 @@ def test_constructing_with_extra_field_is_rejected() -> None:
             # This field does not exist on the model:
             unexpected_field="should be rejected",  # type: ignore[call-arg]
         )
+
+
+def test_diagnostics_rejects_primitive_instrument_id() -> None:
+    with pytest.raises(ValidationError):
+        DataDiagnostics(
+            instrument_id="SYN.XNAS",  # type: ignore[arg-type]
+            configured=True,
+        )
+
+
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)

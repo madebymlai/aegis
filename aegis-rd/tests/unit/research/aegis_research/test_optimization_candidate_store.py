@@ -20,6 +20,15 @@ from research.aegis_research.optimization.ranking import (
 )
 
 
+def _data_identity(instrument_id: str = "SYN.XNAS") -> dict[str, object]:
+    return {
+        "schema_version": "candidate_data_identity.v2",
+        "requested_instrument_ids": [instrument_id],
+        "instrument_ids": [instrument_id],
+        "timeframe": "1D",
+    }
+
+
 def test_candidate_store_persists_three_candidates_and_queries_by_run(tmp_path: Path) -> None:
     store_path = tmp_path / "candidate-store" / "candidates.sqlite3"
     candidates = _candidate_rows(values=(0.30, 0.20, 0.10))
@@ -73,7 +82,7 @@ def test_candidate_store_deduplicates_single_candidate_into_three_roles(tmp_path
     candidates = candidate_rows_from_result(
         OptimizationResult(best=only, median=only, worst=only),
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
-        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        data_identity=_data_identity(),
     )
 
     with CandidateStore(store_path) as store:
@@ -152,7 +161,7 @@ def test_candidate_store_persists_json_columns_in_canonical_form(tmp_path: Path)
     candidates = candidate_rows_from_result(
         OptimizationResult(best=only, median=only, worst=only),
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
-        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        data_identity=_data_identity(),
     )
 
     with CandidateStore(store_path) as store:
@@ -281,7 +290,7 @@ def _candidate(params: dict[str, Any], score: float, *, total_return: float) -> 
 
 def _candidate_rows(
     *,
-    data_symbol: str = "SYN",
+    data_instrument_id: str = "SYN.XNAS",
     values: tuple[float, float, float] = (0.30, 0.20, 0.10),
 ) -> list[dict[str, Any]]:
     best, median, worst = values
@@ -293,7 +302,7 @@ def _candidate_rows(
     return candidate_rows_from_result(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
-        data_identity={"source": "synthetic", "symbols": [data_symbol], "timeframe": "1D"},
+        data_identity=_data_identity(data_instrument_id),
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )

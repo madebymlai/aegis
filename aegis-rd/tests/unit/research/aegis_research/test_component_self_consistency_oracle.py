@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
@@ -23,9 +24,21 @@ from research.aegis_research.component_registry import (
 from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import ComponentStrategyInputs
 
-# ── Symbol list that satisfies tests.momentum_rotator's sleeve constants ──
-_MOMENTUM_ROTATOR_SYMBOLS = [
-    "SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU",
+# ── Instrument IDs that satisfy tests.momentum_rotator's sleeve constants ──
+_MOMENTUM_ROTATOR_INSTRUMENT_IDS = [
+    InstrumentId.from_str(value)
+    for value in (
+        "SPY.XNAS",
+        "IWM.XNAS",
+        "EEM.XNAS",
+        "TLT.XNAS",
+        "GLD.XNAS",
+        "DBC.XNAS",
+        "VNQ.XNAS",
+        "UUP.XNAS",
+        "XLE.XNAS",
+        "XLU.XNAS",
+    )
 ]
 
 _N_BARS = 100
@@ -64,15 +77,19 @@ def _fixture_component_ids() -> list[Any]:
 
 def _make_data(
     n_dates: int = _N_BARS,
-    symbols: list[str] | None = None,
+    instrument_ids: list[InstrumentId] | None = None,
     seed: int = 42,
 ) -> MarketDataBundle:
-    symbols = symbols or _MOMENTUM_ROTATOR_SYMBOLS
+    instrument_ids = instrument_ids or _MOMENTUM_ROTATOR_INSTRUMENT_IDS
     dates = pd.date_range("2023-01-01", periods=n_dates, freq="D")
     rng = np.random.default_rng(seed)
-    returns = rng.normal(0.0003, 0.012, size=(n_dates, len(symbols)))
+    returns = rng.normal(0.0003, 0.012, size=(n_dates, len(instrument_ids)))
     prices = 100.0 * np.exp(np.cumsum(returns, axis=0))
-    close = pd.DataFrame(prices, index=dates, columns=pd.Index(symbols, name="symbol"))
+    close = pd.DataFrame(
+        prices,
+        index=dates,
+        columns=pd.Index(instrument_ids, name="instrument_id"),
+    )
     return MarketDataBundle(arrays={"Close": close})
 
 
@@ -284,7 +301,14 @@ def _setup_batch_dependent(
         root=tmp_path / "components", repo_root=tmp_path
     )
     defin = registry.definitions["indicators"]["toy.batch_dependent"]
-    data = _make_data(n_dates=20, symbols=[{"ticker": "A", "ccy": "EUR"}, {"ticker": "B", "ccy": "EUR"}], seed=1)
+    data = _make_data(
+        n_dates=20,
+        instrument_ids=[
+            InstrumentId.from_str("A.XNAS"),
+            InstrumentId.from_str("B.XNAS"),
+        ],
+        seed=1,
+    )
     return defin, data
 
 

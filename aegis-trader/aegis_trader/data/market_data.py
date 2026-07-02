@@ -15,13 +15,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+import pandas as pd
 from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency, Quantity
-from aegis_runtime import InstrumentRef
-
-from aegis_trader.data.bar_type import bar_type
+from aegis_data.bar_type import raw_bar_type
 from aegis_trader.domain.sizing import InstrumentSizing
 
 
@@ -51,6 +50,11 @@ class MarketDataPort(Protocol):
         the instrument is not in the reconciled cache."""
         ...
 
+    def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
+        """The real instrument an order for ``instrument_id`` trades — a continuous root maps to
+        its current dated front leg; a native instrument is itself."""
+        ...
+
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         """FX rate as quote units per 1 base (base→quote, e.g. EUR→GBP = 0.85),
         or ``None`` when no rate is available — the overlay fails closed rather
@@ -59,7 +63,6 @@ class MarketDataPort(Protocol):
 
     def lookback_window(
         self,
-        ref: InstrumentRef,
         instrument_id: InstrumentId,
         timeframe: str,
         *,
@@ -77,7 +80,6 @@ class MarketDataPort(Protocol):
 
     def has_bar_in_period(
         self,
-        ref: InstrumentRef,
         instrument_id: InstrumentId,
         timeframe: str,
         *,
@@ -88,26 +90,55 @@ class MarketDataPort(Protocol):
         ...
 
 
-class NautilusMarketData:
-    """MarketDataPort backed by the Nautilus Cache read interface."""
+@runtime_checkable
+class ContinuousReadPort(Protocol):
+    """Multi-root continuous-future read surface for cache-backed market data."""
 
-    def __init__(self, *, cache: CacheFacade) -> None:
+    def series(self, instrument_id: InstrumentId) -> pd.DataFrame | None:
+        """The root's back-adjusted OHLCV frame, or ``None`` for a native id."""
+        ...
+
+    def front_leg(self, instrument_id: InstrumentId) -> InstrumentId | None:
+        """The root's current dated front leg, or ``None`` for a native id."""
+        ...
+
+
+class NautilusMarketData:
+    """MarketDataPort backed by the Nautilus Cache, with continuous roots read through a port.
+
+    Raw instruments are read from the cache by their raw bar type; continuous-future roots are
+    read from a back-adjusted series outside the live cache, so the rebalance lookback sees the
+    adjusted series for either kind alike.
+    """
+
+    def __init__(
+        self, *, cache: CacheFacade, continuous: ContinuousReadPort | None = None
+    ) -> None:
         self._cache = cache
+        self._continuous = continuous
 
     def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing | None:
-        instrument = self._cache.instrument(instrument_id)
+        instrument = self._cache.instrument(self.execution_instrument_id(instrument_id))
         if instrument is None:
             return None
         return InstrumentSizing(
             currency=instrument.quote_currency.code,
             size_increment=float(instrument.size_increment),
+            multiplier=float(instrument.multiplier),
         )
 
     def make_quantity(self, instrument_id: InstrumentId, raw_shares: float) -> Quantity | None:
-        instrument = self._cache.instrument(instrument_id)
+        instrument = self._cache.instrument(self.execution_instrument_id(instrument_id))
         if instrument is None:
             return None
         return instrument.make_qty(raw_shares)
+
+    def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
+        """The real instrument an order trades for *instrument_id*: a continuous root resolves to
+        its current front leg (the synthetic root is never a cached, tradeable instrument);
+        anything else is itself."""
+        front_leg = self._continuous_front_leg(instrument_id)
+        return front_leg if front_leg is not None else instrument_id
 
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         if base_currency == quote_currency:
@@ -121,7 +152,6 @@ class NautilusMarketData:
 
     def lookback_window(
         self,
-        _ref: InstrumentRef,
         instrument_id: InstrumentId,
         timeframe: str,
         *,
@@ -130,15 +160,15 @@ class NautilusMarketData:
         limit: int,
     ) -> tuple[MarketBar, ...]:
         period_end = _period_end(period, period_ns)
-        bars = _completed_bars(
-            self._cache_bars(instrument_id, timeframe),
-            period_end=period_end,
-        )
-        return tuple(_to_market_bar(bar) for bar in bars[-limit:])
+        completed = [
+            bar
+            for bar in self._market_bars(instrument_id, timeframe)
+            if bar.ts_event < period_end
+        ]
+        return tuple(completed[-limit:])
 
     def has_bar_in_period(
         self,
-        _ref: InstrumentRef,
         instrument_id: InstrumentId,
         timeframe: str,
         *,
@@ -148,11 +178,27 @@ class NautilusMarketData:
         period_start, period_end = _period_bounds(period, period_ns)
         return any(
             period_start <= bar.ts_event < period_end
-            for bar in self._cache_bars(instrument_id, timeframe)
+            for bar in self._market_bars(instrument_id, timeframe)
         )
 
-    def _cache_bars(self, instrument_id: InstrumentId, timeframe: str) -> list[Bar]:
-        return self._cache.bars(bar_type(instrument_id.value, timeframe))
+    def _market_bars(self, instrument_id: InstrumentId, timeframe: str) -> list[MarketBar]:
+        """Chronological market bars for an instrument: continuous root or raw cache bars."""
+        series = self._continuous_series(instrument_id)
+        if series is not None:
+            return _frame_to_market_bars(series)
+        # Cache.bars returns newest-first; bundles need chronological arrays.
+        cache_bars = self._cache.bars(raw_bar_type(instrument_id, timeframe))
+        return [_to_market_bar(bar) for bar in reversed(cache_bars)]
+
+    def _continuous_series(self, instrument_id: InstrumentId) -> pd.DataFrame | None:
+        if self._continuous is None:
+            return None
+        return self._continuous.series(instrument_id)
+
+    def _continuous_front_leg(self, instrument_id: InstrumentId) -> InstrumentId | None:
+        if self._continuous is None:
+            return None
+        return self._continuous.front_leg(instrument_id)
 
 
 def _period_bounds(period: int, period_ns: int) -> tuple[int, int]:
@@ -164,9 +210,19 @@ def _period_end(period: int, period_ns: int) -> int:
     return (period + 1) * period_ns
 
 
-def _completed_bars(bars: list[Bar], *, period_end: int) -> list[Bar]:
-    # Cache.bars returns newest-first; bundles need chronological arrays.
-    return [bar for bar in reversed(bars) if bar.ts_event < period_end]
+def _frame_to_market_bars(frame: pd.DataFrame) -> list[MarketBar]:
+    """Project a continuous OHLCV frame (UTC-naive index) into chronological MarketBars."""
+    return [
+        MarketBar(
+            ts_event=pd.Timestamp(index, tz="UTC").value,
+            open=float(row["Open"]),
+            high=float(row["High"]),
+            low=float(row["Low"]),
+            close=float(row["Close"]),
+            volume=float(row["Volume"]),
+        )
+        for index, row in frame.iterrows()
+    ]
 
 
 def _to_market_bar(bar: Bar) -> MarketBar:

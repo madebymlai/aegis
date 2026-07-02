@@ -13,15 +13,17 @@ records what the contexts are and how they relate.
   trades strategies promoted by Aegis RD against real venues. _(stub — only the
   handoff contract is designed; see ADR-0001)_
 - [Aegis Data](./aegis-data/CONTEXT.md) — shared historical market-data context
-  that stores bars by cross-boundary **InstrumentRef** rather than provider
-  ticker, and serves both research sourcing and Trader backtests.
+  that stores Nautilus-native bars by **InstrumentId** in one
+  `ParquetDataCatalog`, and serves both research sourcing and live warmup
+  through the same DataProvider port.
 - **`aegis-runtime`** — shared runtime (shared kernel) that executes one Locked
   **Candidate**: component loading, the single-candidate (`force_locked`,
-  `n_candidates=1`) orchestration, currency conversion, and **Exposure
-  Validation**. Depended on by both Aegis RD and every **Execution Bundle**, so
-  the research apparatus (optimizer, Candidate Store, preflight, ranking) never
-  crosses into execution. _(top-level package `aegis-runtime/`; Aegis RD depends
-  on it today, Aegis Trader will once it exists)_
+  `n_candidates=1`) orchestration, and **Exposure Validation** over native
+  **InstrumentId** columns. Depended on by both Aegis RD and every
+  **Execution Bundle**, so the research apparatus (optimizer, Candidate Store,
+  preflight, ranking) never crosses into execution. _(top-level package
+  `aegis-runtime/`; Aegis RD depends on it today, Aegis Trader will once it
+  exists)_
 
 ## Relationships
 
@@ -37,14 +39,13 @@ records what the contexts are and how they relate.
   `aerd export` resolves a Lock, bakes the Candidate's parameters, and builds a
   versioned uv wheel carrying the strategy + wired indicators + **Provenance**.
   Aegis Trader installs the wheel and runs it through **`aegis-runtime`**,
-  supplying native-currency market data and FX series; the bundle converts to
-  base currency, computes, and gates — with no **Candidate Store** access at
-  runtime.
+  supplying Nautilus **InstrumentId**-keyed market data; the bundle computes and
+  gates — with no **Candidate Store** access at runtime.
 
-- **Aegis RD → Aegis Data**: Aegis RD asks Aegis Data for historical market
-  data when building evidence. RD may translate its **Run Config** into a data
-  request, but provider ticker/source details remain inside the data context.
+- **Aegis RD → Aegis Data**: Aegis RD declares native Nautilus
+  **InstrumentIds** in its **Run Config**. Aegis Data serves raw bars from the
+  catalog, lazily filling misses through the DataProvider port.
 
 - **Aegis Trader → Aegis Data**: Aegis Trader backtests read historical bars for
-  the **InstrumentRef** values baked into each **Execution Bundle**. Trader does
+  the **InstrumentId** values baked into each **Execution Bundle**. Trader does
   not select a universe by provider ticker.

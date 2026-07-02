@@ -11,7 +11,6 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from aegis_data.back_adjust import back_adjust_chain
 from aegis_data.chain import fetch_contract_chain
 from aegis_data.roll import DatedContract
 
@@ -276,11 +275,14 @@ def test_chain_keeps_liquid_days_when_liquidity_migrates_before_the_calendar_rol
         list_contracts=list_contracts, fetch=fetch,
         bar_cadence=timedelta(days=1), probe_volume=probe_volume,
     )
-    continuous = back_adjust_chain(chain)
-    # 02-05..02-19: U is the liquid leader and prints every weekday; M has no bars there.
+    # Liquidity left M on ~02-05, so the chain must roll by then (not the late 02-22
+    # calendar roll); the back leg U then owns the active span [roll, end) and printed
+    # every liquid day in it, so the materialised continuous keeps them (the splice
+    # itself is Nautilus's job under Path A — covered by the spread golden test).
     liquid_days = pd.bdate_range("2024-02-05", "2024-02-19")
-    dropped = [d.date() for d in liquid_days if d not in continuous.index]
-    assert not dropped, f"continuous dropped liquid days the back contract traded: {dropped}"
+    assert chain.roll_dates[0] <= pd.Timestamp("2024-02-05")
+    missing = [d.date() for d in liquid_days if d not in chain.frames[1].index]
+    assert not missing, f"the back leg is missing liquid days it traded: {missing}"
 
 
 def test_roll_dates_snap_back_to_the_latest_common_trading_day() -> None:

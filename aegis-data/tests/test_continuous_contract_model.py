@@ -1,0 +1,284 @@
+"""ContinuousContractModel interface tests."""
+
+from __future__ import annotations
+
+from datetime import date
+
+import pandas as pd
+import pytest
+from nautilus_trader.cache.cache import Cache
+from nautilus_trader.model.data import Bar
+from nautilus_trader.model.identifiers import InstrumentId
+
+from aegis_data.bar_type import continuous_bar_type, raw_bar_type
+from aegis_data.catalog_contracts import catalog_volume_probe
+from aegis_data.continuous_catalog import continuous_root_legs
+from aegis_data.continuous_contract_model import ContinuousContractModel
+from aegis_data.liquidity import liquid_cycle_causal
+from tests.test_continuous_catalog import (
+    _END,
+    _START,
+    _FakeCatalog,
+    _FakePort,
+    _bars,
+    _es_port,
+    _future,
+)
+
+_ES_XCME = InstrumentId.from_str("ES.XCME")
+_ESH4 = InstrumentId.from_str("ESH4.XCME")
+_ESM4 = InstrumentId.from_str("ESM4.XCME")
+_ESU4 = InstrumentId.from_str("ESU4.XCME")
+
+
+def _lead_frame(
+    start: str, end: str, base: float, lead_lo: str, lead_hi: str
+) -> pd.DataFrame:
+    idx = pd.bdate_range(start, end)
+    close = [base + i for i in range(len(idx))]
+    lo, hi = pd.Timestamp(lead_lo), pd.Timestamp(lead_hi)
+    volume = [1000.0 if lo <= day <= hi else 50.0 for day in idx]
+    return pd.DataFrame(
+        {
+            "Open": [c - 0.5 for c in close],
+            "High": [c + 1 for c in close],
+            "Low": [c - 1 for c in close],
+            "Close": close,
+            "Volume": volume,
+        },
+        index=idx,
+    )
+
+
+def _es_port_two_rolls() -> tuple[_FakePort, dict[InstrumentId, list[Bar]]]:
+    frames = {
+        _ESH4: _lead_frame(_START, "2024-03-15", 100.0, _START, "2024-02-29"),
+        _ESM4: _lead_frame(_START, "2024-06-21", 200.0, "2024-03-01", "2024-06-06"),
+        _ESU4: _lead_frame(
+            "2024-03-01", "2024-09-19", 300.0, "2024-06-07", "2024-09-19"
+        ),
+    }
+    native = {iid: _bars(iid, frame) for iid, frame in frames.items()}
+    catalog = _FakeCatalog(
+        instruments=[
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("ESM4.XCME", "2024-06-21"),
+            _future("ESU4.XCME", "2024-09-20"),
+        ],
+        bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
+    )
+    return _FakePort(catalog, frames), native
+
+
+def _early_crossover_es_port() -> _FakePort:
+    frames = {
+        _ESH4: _lead_frame(_START, "2024-03-15", 100.0, _START, "2024-02-29"),
+        _ESM4: _lead_frame(_START, "2024-06-21", 200.0, "2024-03-01", "2024-04-14"),
+        _ESU4: _lead_frame(
+            "2024-03-01", "2024-09-19", 300.0, "2024-04-15", "2024-09-19"
+        ),
+    }
+    native = {iid: _bars(iid, frame) for iid, frame in frames.items()}
+    catalog = _FakeCatalog(
+        instruments=[
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("ESM4.XCME", "2024-06-21"),
+            _future("ESU4.XCME", "2024-09-20"),
+        ],
+        bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
+    )
+    return _FakePort(catalog, frames)
+
+
+def _bar_on(
+    native: dict[InstrumentId, list[Bar]], instrument_id: InstrumentId, day: date
+) -> Bar:
+    return next(
+        bar
+        for bar in native[instrument_id]
+        if pd.Timestamp(bar.ts_event, tz="UTC").date() == day
+    )
+
+
+def _expected_ohlcv_row(
+    stamp: str, *, open_: float, high: float, low: float, close: float, volume: float
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Open": [open_],
+            "High": [high],
+            "Low": [low],
+            "Close": [close],
+            "Volume": [volume],
+        },
+        index=pd.DatetimeIndex([stamp]),
+    )
+
+
+def _causal_front(port: _FakePort, root: str, as_of: date) -> InstrumentId:
+    candidates = continuous_root_legs(port.catalog, root, _START, as_of.isoformat())
+    probe = catalog_volume_probe(port, timeframe="1D")
+    volume_by_symbol = {
+        leg.symbol: probe(leg.symbol, pd.Timestamp(_START).date(), as_of)
+        for leg in candidates
+    }
+    cycle = liquid_cycle_causal(candidates, volume_by_symbol, as_of, roll_lead_days=5)
+    return InstrumentId.from_str(cycle[-1].symbol)
+
+
+def _materialized_two_roll_model() -> ContinuousContractModel:
+    port, native = _es_port_two_rolls()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    model.materialize(end="2024-06-10")
+    model.on_bar(_bar_on(native, _ESU4, date(2024, 6, 14)))
+    return model
+
+
+def _live_cache_with_raw_bar() -> Cache:
+    live_cache = Cache()
+    live_cache.add_instrument(_future("ESH4.XCME", "2024-03-15"))
+    leg_bar = _bars(
+        _ESH4, _lead_frame(_START, "2024-01-20", 100.0, _START, "2024-01-20")
+    )[0]
+    live_cache.add_bar(leg_bar)
+    return live_cache
+
+
+def test_materialize_exposes_the_continuous_root_id() -> None:
+    port, _native = _es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    model.materialize(end="2024-02-15")
+
+    assert model.continuous_id == _ES_XCME
+
+
+def test_materialize_exposes_the_schedule_front_before_migration() -> None:
+    port, _native = _es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    model.materialize(end="2024-02-15")
+
+    assert model.front_leg == _ESH4
+
+
+def test_front_leg_as_of_follows_the_schedule_after_migration() -> None:
+    port, _native = _es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    front = model.front_leg_as_of("2024-05-31")
+
+    assert front == _ESM4
+
+
+def test_materialize_exposes_the_ohlcv_frame_shape() -> None:
+    port, _native = _es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    model.materialize(end="2024-02-15")
+
+    assert list(model.frame.columns) == ["Open", "High", "Low", "Close", "Volume"]
+
+
+def test_front_picker_agreement_names_the_near_leg_before_regular_migration() -> None:
+    port, _native = _es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    assert _causal_front(port, "ES", date(2024, 2, 15)) == _ESH4
+    assert model.front_leg_as_of(date(2024, 2, 15)) == _ESH4
+
+
+def test_front_picker_agreement_names_the_next_leg_after_regular_migration() -> None:
+    port, _native = _es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    assert _causal_front(port, "ES", date(2024, 5, 31)) == _ESM4
+    assert model.front_leg_as_of(date(2024, 5, 31)) == _ESM4
+
+
+def test_front_picker_agreement_names_the_mid_leg_before_early_crossover() -> None:
+    port = _early_crossover_es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    assert _causal_front(port, "ES", date(2024, 4, 12)) == _ESM4
+    assert model.front_leg_as_of(date(2024, 4, 12)) == _ESM4
+
+
+def test_front_picker_agreement_names_the_back_leg_after_early_crossover() -> None:
+    port = _early_crossover_es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    assert _causal_front(port, "ES", date(2024, 5, 1)) == _ESU4
+    assert model.front_leg_as_of(date(2024, 5, 1)) == _ESU4
+
+
+def test_on_bar_appends_a_front_leg_bar_at_offset_zero() -> None:
+    port, native = _es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    model.materialize(end="2024-04-29")
+    bar = _bar_on(native, _ESM4, date(2024, 4, 30))
+
+    model.on_bar(bar)
+
+    pd.testing.assert_frame_equal(
+        model.frame.tail(1),
+        _expected_ohlcv_row(
+            "2024-05-01", open_=275.5, high=277.0, low=275.0, close=276.0, volume=1000.0
+        ),
+    )
+
+
+def test_on_bar_keeps_the_front_leg_when_appending_current_front() -> None:
+    port, native = _es_port()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    model.materialize(end="2024-04-29")
+    bar = _bar_on(native, _ESM4, date(2024, 4, 30))
+
+    model.on_bar(bar)
+
+    assert model.front_leg == _ESM4
+
+
+def test_roll_advances_the_front() -> None:
+    model = _materialized_two_roll_model()
+
+    assert model.front_leg == _ESU4
+
+
+def test_roll_records_the_rebasing_from_the_seam() -> None:
+    model = _materialized_two_roll_model()
+
+    assert model.last_rebasing.apply(100.0) == pytest.approx(121.56862745098039)
+
+
+def test_roll_rematerializes_prior_closes_in_the_new_basis() -> None:
+    model = _materialized_two_roll_model()
+    expected = pd.Series(
+        [363.5, 364.7, 365.9, 367.1, 368.4],
+        index=pd.DatetimeIndex(
+            ["2024-06-01", "2024-06-04", "2024-06-05", "2024-06-06", "2024-06-07"]
+        ),
+        name="Close",
+    )
+
+    pd.testing.assert_series_equal(model.frame.loc[expected.index, "Close"], expected)
+
+
+def test_materialize_does_not_write_continuous_bars_into_a_live_cache() -> None:
+    port, _native = _es_port()
+    live_cache = _live_cache_with_raw_bar()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    model.materialize(end=_END)
+
+    assert live_cache.bars(continuous_bar_type(_ES_XCME, "1D")) == []
+
+
+def test_materialize_leaves_existing_live_cache_raw_leg_bars_in_place() -> None:
+    port, _native = _es_port()
+    live_cache = _live_cache_with_raw_bar()
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+
+    model.materialize(end=_END)
+
+    assert live_cache.bar_count(raw_bar_type(_ESH4, "1D")) == 1

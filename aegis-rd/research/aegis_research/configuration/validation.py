@@ -8,7 +8,7 @@ The coordinator owns:
 - Top-level prepass: ``schema_version`` presence/version check,
   ``split.method`` inspection.
 - Whole-tree pydantic ``validate_python`` call + error-to-issue adapter.
-- Name check, data-source whitelist, lock shape check.
+- Name check and lock shape check.
 - One unconditional call to the registry cross-checks module.
 
 Returns ``(RunConfig | None, list[ConfigValidationIssue])`` so the caller
@@ -28,7 +28,6 @@ from research.aegis_research.configuration.schema import (
     PREPASS_CONST_FIELDS,
     PREPASS_REQUIRED_FIELDS,
     ConfigValidationIssue,
-    DataConfig,
     Lock,
     RunConfig,
 )
@@ -71,8 +70,8 @@ def validate_run_config(
     # ── Post-pydantic checks (need runtime state) ─────────────────────────
     if config is not None:
         _post_validate_name(config.name, issues)
-        _post_validate_data_source(config.data, issues)
         _check_lock_shape(config.lock, raw.get("lock"), issues)
+        _check_portfolio_band_overrides(config, issues)
 
     # ── Registry cross-checks (always run, even when pydantic failed) ─────
     from research.aegis_research.configuration.cross_checks import cross_check_registries
@@ -164,21 +163,21 @@ def _post_validate_name(
         )
 
 
-def _post_validate_data_source(
-    data: DataConfig,
+def _check_portfolio_band_overrides(
+    config: RunConfig,
     issues: list[ConfigValidationIssue],
 ) -> None:
-    """Source whitelist (post-pydantic: needs runtime state)."""
-    from research.aegis_research.market_data.sources import (
-        LOCAL_DATA_SOURCES,
-        remote_data_sources,
-    )
-
-    supported = LOCAL_DATA_SOURCES | remote_data_sources()
-    if data.source not in supported:
+    if not config.portfolio.band_overrides:
+        return
+    allowed = set(config.data.instruments) | set(config.data.futures)
+    unknown = sorted(set(config.portfolio.band_overrides) - allowed)
+    if unknown:
         issues.append(
             ConfigValidationIssue(
-                "data.source", f"must be one of {sorted(supported)}"
+                "portfolio.band_overrides",
+                "unknown tradeable keys "
+                f"{unknown}; expected keys from data.instruments or data.futures: "
+                f"{sorted(allowed)}",
             )
         )
 

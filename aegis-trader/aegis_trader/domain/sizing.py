@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from aegis_runtime import InstrumentRef
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.types import OrderIntent, WeightDelta
 
@@ -23,6 +23,7 @@ class InstrumentSizing:
 
     currency: str
     size_increment: float
+    multiplier: float = 1.0
 
 
 def size_order(
@@ -58,7 +59,9 @@ def size_order(
     if instrument.currency == _GBP_CURRENCY:
         notional_native *= _PENCE_FACTOR
 
-    raw_quantity = notional_native / price
+    # One contract controls ``price × multiplier`` of native notional (the
+    # contract multiplier is 1 for equities/FX, ≠1 for futures — e.g. ES ×50).
+    raw_quantity = notional_native / (price * instrument.multiplier)
     rounded = _round_to_increment(raw_quantity, instrument.size_increment)
 
     if rounded <= 0.0:
@@ -77,9 +80,9 @@ def size_deltas(
     deltas: tuple[WeightDelta, ...],
     nav: float,
     *,
-    instrument_metas: Mapping[InstrumentRef, InstrumentSizing],
+    instrument_metas: Mapping[InstrumentId, InstrumentSizing],
     fx_rates: Mapping[str, float],
-    prices: Mapping[InstrumentRef, float],
+    prices: Mapping[InstrumentId, float],
 ) -> tuple[OrderIntent, ...]:
     """Convert signed weight deltas into sized, provider-agnostic orders.
 
@@ -98,8 +101,8 @@ def size_deltas(
 
     orders: list[OrderIntent] = []
     for d in deltas:
-        meta = instrument_metas.get(d.ref)
-        price = prices.get(d.ref)
+        meta = instrument_metas.get(d.instrument_id)
+        price = prices.get(d.instrument_id)
         if meta is None or price is None:
             continue
         fx_rate = fx_rates.get(meta.currency)
@@ -108,6 +111,11 @@ def size_deltas(
         quantity = size_order(abs(d.delta) * nav, price, fx_rate, meta)
         if quantity is None:
             continue  # sub-increment -> no order
-        orders.append(OrderIntent(ref=d.ref, side=d.side, quantity=quantity))
+        orders.append(
+            OrderIntent(
+                instrument_id=d.instrument_id,
+                side=d.side,
+                quantity=quantity,
+            )
+        )
     return tuple(orders)
-

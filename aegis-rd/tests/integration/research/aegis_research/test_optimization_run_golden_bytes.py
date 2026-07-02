@@ -26,22 +26,24 @@ from tests.support.research.aegis_research.golden import (
     assert_matches_golden,
     masked_canonical_manifest,
 )
+from tests.support.research.aegis_research.market_data_fixtures import (
+    ETF_INSTRUMENT_ID_VALUES,
+    native_data_config_payload,
+    seed_catalog_ohlcv,
+)
 
 _FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
 _GOLDEN_PATH = _FIXTURES / "goldens" / "optimization_run_manifest.json"
 _RUN_ID = "golden-bytes-oracle"
 
-# The rotator hardcodes its canary/offensive/defensive sleeves to these names;
-# the synthetic source generates deterministic OHLCV for whatever symbols the
-# config lists, so the names just have to match the sleeves.
-_SYMBOLS = [
-    {"ticker": ticker, "ccy": "EUR"}
-    for ticker in ("SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU")
-]
-
-
 def test_optimization_run_manifest_matches_golden_bytes(tmp_path, monkeypatch) -> None:
     _install_fixture_components(tmp_path)
+    seed_catalog_ohlcv(
+        tmp_path / "catalog",
+        ETF_INSTRUMENT_ID_VALUES,
+        periods=1008,
+        seed=42,
+    )
     config_path = _write_oracle_config(tmp_path)
     monkeypatch.chdir(tmp_path)
 
@@ -69,9 +71,9 @@ def _write_oracle_config(tmp_path: Path) -> Path:
 
     Both Indicators are frozen via ``params`` (values taken from their declared
     param spaces, momentum values verbatim from the lock fixture config), so the
-    Strategy's 30-combo space is the entire grid. Synthetic data with a pinned
-    seed; 1008 rows = two rolling 504-row Splits at the momentum Indicator's
-    200-bar maximum lookback.
+    Strategy's 30-combo space is the entire grid. The temp Nautilus catalog is
+    seeded with 1008 rows = two rolling 504-row Splits at the momentum
+    Indicator's 200-bar maximum lookback.
     """
     path = tmp_path / "golden_oracle.yaml"
     path.write_text(
@@ -80,14 +82,11 @@ def _write_oracle_config(tmp_path: Path) -> Path:
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "golden_bytes_oracle",
                 "output_dir": "runs",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": _SYMBOLS,
-                    "rows": 1008,
-                    "seed": 42,
-                    "timeframe": "1D",
-                    "arrays": ["OHLCV"],
-                },
+                "data": native_data_config_payload(
+                    instruments=ETF_INSTRUMENT_ID_VALUES,
+                    end="2026-10-05",
+                    path="catalog",
+                ),
                 "portfolio": {
                     "gross_cap": 1.0,
                     "direction": "longonly",

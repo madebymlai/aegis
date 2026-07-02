@@ -9,12 +9,13 @@ import yaml
 
 from research.aegis_research import cli
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
+from tests.support.research.aegis_research.market_data_fixtures import (
+    ETF_INSTRUMENT_ID_VALUES,
+    native_data_config_payload,
+    seed_catalog_ohlcv,
+)
 
 COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components"
-_SYMBOLS = [
-    {"ticker": ticker, "ccy": "EUR"}
-    for ticker in ("SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU")
-]
 
 
 def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
@@ -25,6 +26,11 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     monkeypatch.chdir(tmp_path)
     dest = tmp_path / "research" / "components"
     shutil.copytree(COMPONENTS_ROOT, dest)
+    seed_catalog_ohlcv(
+        tmp_path / "catalog",
+        ETF_INSTRUMENT_ID_VALUES,
+        periods=300,
+    )
 
     config_path = tmp_path / "run.yaml"
     config_path.write_text(
@@ -33,12 +39,11 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "pipeline_e2e",
                 "output_dir": "runs",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": _SYMBOLS,
-                    "rows": 300,
-                    "arrays": ["OHLCV"],
-                },
+                "data": native_data_config_payload(
+                    instruments=ETF_INSTRUMENT_ID_VALUES,
+                    end="2024-10-27",
+                    path=tmp_path / "catalog",
+                ),
                 "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
                 "strategy": {"id": "tests.momentum_rotator"},
                 "indicators": [

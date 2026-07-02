@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
+from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime import ListedRef
 from aegis_runtime.bundle import (
     BundleManifest,
     ComponentSpec,
@@ -10,10 +10,15 @@ from aegis_runtime.bundle import (
     LockedExecutionPlan,
     MarketDataBundle,
 )
+from aegis_runtime.drift_band import DriftBand
 
 
 def _index(n: int) -> pd.DatetimeIndex:
     return pd.date_range("2024-01-01", periods=n, freq="D")
+
+
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)
 
 
 def _spec(module: str, family: str, output: str) -> ComponentSpec:
@@ -33,35 +38,35 @@ def _bundle(
     contract: DataContract,
     indicators: tuple[ComponentSpec, ...] = (),
     direction: str = "longonly",
-    symbols: tuple[str, ...] | None = None,
-    currency_by_symbol: dict[str, str] | None = None,
 ) -> ExecutionBundle:
-    plan_symbols = tuple(ref.value for ref in contract.refs) if symbols is None else symbols
     plan = LockedExecutionPlan(
         strategy=_spec(strategy_module, "strategies", "target_weights"),
         indicators=indicators,
+        instrument_bands={
+            instrument_id: DriftBand.symmetric(0.0) for instrument_id in contract.instrument_ids
+        },
         gross_cap=1.0,
         net_cap=1.0,
         direction=direction,
-        symbols=plan_symbols,
-        currency_by_symbol=currency_by_symbol or {s: "EUR" for s in plan_symbols},
     )
     manifest = BundleManifest(
         run_id="r",
         role="best",
         candidate_key="k",
         component_source_hashes={},
-        refs=contract.refs,
+        instrument_ids=contract.instrument_ids,
     )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
 
 
-def _eur_contract(refs=(ListedRef("A"), ListedRef("B")), lookback_bars=0) -> DataContract:
+def _eur_contract(
+    instrument_ids: tuple[InstrumentId, ...] = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ")),
+    lookback_bars=0,
+) -> DataContract:
     return DataContract(
-        refs=refs,
+        instrument_ids=instrument_ids,
         required_arrays=("Close",),
         base_currency="EUR",
-        required_fx_currencies=(),
         timeframe="1D",
         lookback_bars=lookback_bars,
     )
@@ -69,8 +74,11 @@ def _eur_contract(refs=(ListedRef("A"), ListedRef("B")), lookback_bars=0) -> Dat
 
 def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:
     idx = _index(3)
-    refs = (ListedRef("A"), ListedRef("B"))
-    close = pd.DataFrame({refs[0]: [10.0, 11.0, 12.0], refs[1]: [20.0, 21.0, 22.0]}, index=idx)
+    instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
+    close = pd.DataFrame(
+        {instrument_ids[0]: [10.0, 11.0, 12.0], instrument_ids[1]: [20.0, 21.0, 22.0]},
+        index=idx,
+    )
     bundle = _bundle(
         "equal_weight_strategy",
         contract=_eur_contract(),
@@ -79,64 +87,38 @@ def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:
 
     weights = bundle.compute_weights(MarketDataBundle({"Close": close}))
 
-    assert list(weights.columns) == list(refs)
+    assert list(weights.columns) == list(instrument_ids)
     assert weights.index.equals(idx)
     assert (weights.to_numpy() == 0.5).all()
 
 
-def test_compute_weights_keys_output_by_ref_and_feeds_components_authored_labels() -> None:
-    # The consumer supplies InstrumentRef-keyed prices (the cross-boundary identity); the
-    # baked strategy resolves the instrument by its authored label ('A').
+def test_compute_weights_keys_output_by_native_instrument_id() -> None:
     idx = _index(3)
-    refs = (ListedRef("BBG000000001"), ListedRef("BBG000000002"))
-    close = pd.DataFrame({refs[0]: [10.0, 11.0, 12.0], refs[1]: [20.0, 21.0, 22.0]}, index=idx)
+    instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
+    close = pd.DataFrame(
+        {instrument_ids[0]: [10.0, 11.0, 12.0], instrument_ids[1]: [20.0, 21.0, 22.0]},
+        index=idx,
+    )
     bundle = _bundle(
         "label_select_strategy",
-        contract=_eur_contract(refs=refs),
-        symbols=("A", "B"),
+        contract=_eur_contract(instrument_ids=instrument_ids),
     )
 
     weights = bundle.compute_weights(MarketDataBundle({"Close": close}))
 
-    assert list(weights.columns) == list(refs)
-    assert weights.columns.name == "instrument_ref"
-    assert weights[refs[0]].tolist() == [1.0, 1.0, 1.0]
-    assert weights[refs[1]].tolist() == [0.0, 0.0, 0.0]
-
-
-def test_compute_weights_converts_foreign_prices_before_the_strategy_sees_them() -> None:
-    idx = _index(2)
-    # A quoted in USD, B in EUR (base). EURUSD = 1.25 => A_eur = A_usd / 1.25.
-    refs = (ListedRef("A"), ListedRef("B"))
-    close = pd.DataFrame({refs[0]: [100.0, 125.0], refs[1]: [20.0, 20.0]}, index=idx)
-    contract = DataContract(
-        refs=refs,
-        required_arrays=("Close",),
-        base_currency="EUR",
-        required_fx_currencies=("USD",),
-        timeframe="1D",
-    )
-    bundle = _bundle(
-        "price_proportional_strategy",
-        contract=contract,
-        currency_by_symbol={"A": "USD", "B": "EUR"},
-    )
-
-    weights = bundle.compute_weights(
-        MarketDataBundle({"Close": close}),
-        fx_series={"USD": pd.Series([1.25, 1.25], index=idx)},
-    )
-
-    # Converted closes: A=[80,100], B=[20,20]; row sums [100,120].
-    # wA reflects CONVERTED prices (0.80), not native (which would be 100/120≈0.833).
-    assert weights[ListedRef("A")].tolist() == pytest.approx([80 / 100, 100 / 120])
-    assert weights[ListedRef("B")].tolist() == pytest.approx([20 / 100, 20 / 120])
+    assert list(weights.columns) == list(instrument_ids)
+    assert weights.columns.name == "instrument_id"
+    assert weights[instrument_ids[0]].tolist() == [1.0, 1.0, 1.0]
+    assert weights[instrument_ids[1]].tolist() == [0.0, 0.0, 0.0]
 
 
 def test_compute_weights_raises_when_window_shorter_than_lookback_bars() -> None:
     idx = _index(3)
-    refs = (ListedRef("A"), ListedRef("B"))
-    close = pd.DataFrame({refs[0]: [1.0, 1.0, 1.0], refs[1]: [1.0, 1.0, 1.0]}, index=idx)
+    instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
+    close = pd.DataFrame(
+        {instrument_ids[0]: [1.0, 1.0, 1.0], instrument_ids[1]: [1.0, 1.0, 1.0]},
+        index=idx,
+    )
     bundle = _bundle("equal_weight_strategy", contract=_eur_contract(lookback_bars=5))
 
     with pytest.raises(ValueError, match="at least 5 lookback bars"):
@@ -145,30 +127,12 @@ def test_compute_weights_raises_when_window_shorter_than_lookback_bars() -> None
 
 def test_compute_weights_raises_when_latest_weight_row_is_non_finite() -> None:
     idx = _index(3)
-    refs = (ListedRef("A"), ListedRef("B"))
-    close = pd.DataFrame({refs[0]: [1.0, 1.0, 1.0], refs[1]: [1.0, 1.0, 1.0]}, index=idx)
+    instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
+    close = pd.DataFrame(
+        {instrument_ids[0]: [1.0, 1.0, 1.0], instrument_ids[1]: [1.0, 1.0, 1.0]},
+        index=idx,
+    )
     bundle = _bundle("nan_tail_strategy", contract=_eur_contract())
 
     with pytest.raises(ValueError, match="latest weight row contains NaN"):
         bundle.compute_weights(MarketDataBundle({"Close": close}))
-
-
-def test_compute_weights_fails_closed_when_required_fx_series_is_missing() -> None:
-    idx = _index(2)
-    refs = (ListedRef("A"), ListedRef("B"))
-    close = pd.DataFrame({refs[0]: [100.0, 125.0], refs[1]: [20.0, 20.0]}, index=idx)
-    contract = DataContract(
-        refs=refs,
-        required_arrays=("Close",),
-        base_currency="EUR",
-        required_fx_currencies=("USD",),
-        timeframe="1D",
-    )
-    bundle = _bundle(
-        "price_proportional_strategy",
-        contract=contract,
-        currency_by_symbol={"A": "USD", "B": "EUR"},
-    )
-
-    with pytest.raises(ValueError, match=r"missing=\['USD'\]"):
-        bundle.compute_weights(MarketDataBundle({"Close": close}))  # no fx_series

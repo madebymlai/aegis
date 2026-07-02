@@ -9,6 +9,11 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
+from tests.support.research.aegis_research.market_data_fixtures import (
+    DEFAULT_INSTRUMENT_ID_VALUES,
+    native_data_config_payload,
+    seed_catalog_ohlcv,
+)
 
 
 def test_strategy_run_cli_rejects_component_strategy_without_optimization(
@@ -314,11 +319,9 @@ def test_strategy_run_reports_config_validation_failure(
     config_path = _write_run_config(
         tmp_path,
         data={
-            "source": "yf",
             "start": "2020-01-01",
             "end": "2020-02-01",
             "timeframe": "1D",
-            "provider_kwargs": {"password": {"env": "REMOTE_PASSWORD"}},
         },
     )
 
@@ -393,12 +396,7 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "ml_config",
                 "output_dir": "runs",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-                    "rows": 120,
-                    "arrays": ["OHLCV"],
-                },
+                "data": native_data_config_payload(instruments=["SYN.XNAS"]),
                 "model": {"source": "plugin", "id": "demo.model"},
                 "portfolio": {"entry_budget": 1.0},
             },
@@ -473,6 +471,11 @@ def _write_run_config(
     candidate_grid: dict[str, object] | None = None,
     optimization: dict[str, object] | None = None,
 ) -> Path:
+    seed_catalog_ohlcv(
+        tmp_path / "catalog",
+        DEFAULT_INSTRUMENT_ID_VALUES,
+        periods=80,
+    )
     path = tmp_path / "run.yaml"
     path.write_text(
         yaml.safe_dump(
@@ -480,12 +483,12 @@ def _write_run_config(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "strategy_run_contract",
                 "output_dir": "runs",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}, {"ticker": "SYN2", "ccy": "EUR"}],
-                    "rows": 80,
-                    "arrays": arrays or ["OHLCV"],
-                }
+                "data": native_data_config_payload(
+                    instruments=DEFAULT_INSTRUMENT_ID_VALUES,
+                    arrays=arrays or ["OHLCV"],
+                    end="2024-03-21",
+                    path=tmp_path / "catalog",
+                )
                 | (data or {}),
                 "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
                 "strategy": {"id": strategy_id},

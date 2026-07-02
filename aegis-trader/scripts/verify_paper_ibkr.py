@@ -1,26 +1,35 @@
-"""Live verification for aegis-rd-fuu.9 — IBKR paper (DU) account under Environment.LIVE.
+"""Live verification for the Dockerized IBKR paper/live daemon.
 
-Connects to a running IB Gateway / TWS *paper* session, lets Nautilus reconcile the
-account, and prints the per-currency balances — proving the account is multi-currency
-(``base_currency`` is ``None``; balances are held per currency) and broker-reported.
-With ``--submit`` it also places a 1-share *foreign* market order so a per-currency
-cash balance / margin loan appears alongside an IBKR-reported commission.
+Builds a live Nautilus node that hands Nautilus a Dockerized IB Gateway config,
+lets Nautilus start or reuse the gateway, reconciles the account, and prints the
+per-currency balances — proving the account is multi-currency (``base_currency``
+is ``None``; balances are held per currency) and broker-reported. With
+``--submit`` it also places a small market order so live routing is exercised.
 
-This is the operator runtime step (no offline substrate): it makes a real connection
-to your Gateway and, with --submit, a real (paper) order.
+This is the operator runtime step (no offline substrate): it makes a real
+connection to IBKR and, with ``--submit``, a real paper/live order. Use this as
+the short acceptance checklist before running the full Execution Bundle:
+
+    [ ] FX instrument resolves and streams
+    [ ] Listed instrument resolves and streams
+    [ ] Continuous future resolves, streams, and rolls from the configured table
 
 Connection is read from the environment (``IBConnectionSettings``):
 
     IB_ACCOUNT_ID   required, e.g. DUxxxxxxx
-    IB_PORT         default 4002 (IB Gateway paper); TWS paper = 7497
-    IB_HOST         default 127.0.0.1
+    IB_PORT         required — the dockerized gateway switch
+                    (IB Gateway paper = 4002, live = 4001)
     IB_CLIENT_ID    default 1
+    TWS_USERNAME    required by Nautilus's dockerized gateway
+    TWS_PASSWORD    required by Nautilus's dockerized gateway
 
-Example (read-only reconcile first, then with the order):
+Example (reconcile-only first, then with the order):
 
-    IB_ACCOUNT_ID=DUxxxxxx IB_PORT=4002 uv run python scripts/verify_paper_ibkr.py
-    IB_ACCOUNT_ID=DUxxxxxx IB_PORT=4002 uv run python scripts/verify_paper_ibkr.py \
-        --symbol VOD --exchange LSE --currency GBP --submit
+    TWS_USERNAME=<user> TWS_PASSWORD=<pass> IB_ACCOUNT_ID=DUxxxxxx IB_PORT=4002 \
+        uv run python scripts/verify_paper_ibkr.py
+    TWS_USERNAME=<user> TWS_PASSWORD=<pass> IB_ACCOUNT_ID=DUxxxxxx IB_PORT=4002 \
+        uv run python scripts/verify_paper_ibkr.py --symbol VOD --exchange LSE \
+        --currency GBP --submit
 """
 
 from __future__ import annotations
@@ -47,8 +56,9 @@ from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.trading.strategy import Strategy
 
+from aegis_data.ibkr import _gateway_endpoint
 from aegis_trader.config import IBConnectionSettings
-from aegis_trader.trader.modes import build_paper_trading_node_config
+from aegis_trader.trader.node import build_live_node_config
 
 _log = logging.getLogger("verify_paper_ibkr")
 
@@ -195,22 +205,21 @@ def _build_node(args, settings: IBConnectionSettings) -> TradingNode:
         currency=args.currency,
     )
     provider = InteractiveBrokersInstrumentProviderConfig(load_contracts=frozenset([contract]))
+    endpoint = _gateway_endpoint(settings)
     data_cfg = InteractiveBrokersDataClientConfig(
-        ibg_host=settings.host,
-        ibg_port=settings.port,
         ibg_client_id=settings.client_id,
         market_data_type=IBMarketDataTypeEnum.DELAYED_FROZEN,
         use_regular_trading_hours=True,
         instrument_provider=provider,
+        **endpoint,
     )
     exec_cfg = InteractiveBrokersExecClientConfig(
-        ibg_host=settings.host,
-        ibg_port=settings.port,
         ibg_client_id=settings.client_id,
         account_id=settings.account_id,
         instrument_provider=provider,
+        **endpoint,
     )
-    base = build_paper_trading_node_config(trader_id=settings.trader_id)
+    base = build_live_node_config(trader_id=settings.trader_id)
     config = msgspec.structs.replace(
         base,
         data_clients={_IB: data_cfg},
@@ -268,10 +277,10 @@ def main() -> int:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
-    settings = IBConnectionSettings.from_env("paper")
+    settings = IBConnectionSettings.from_env()
     _log.info(
-        "verify: connecting paper(LIVE) account=%s @ %s:%d submit=%s instrument=%s.%s/%s",
-        settings.account_id, settings.host, settings.port, args.submit,
+        "verify: connecting dockerized account=%s IB_PORT=%d submit=%s instrument=%s.%s/%s",
+        settings.account_id, settings.port, args.submit,
         args.symbol, args.exchange, args.currency,
     )
     try:

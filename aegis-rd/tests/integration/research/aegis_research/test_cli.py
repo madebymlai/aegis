@@ -13,6 +13,10 @@ from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
     write_strategy_component,
 )
+from tests.support.research.aegis_research.market_data_fixtures import (
+    native_data_config_payload,
+    seed_catalog_ohlcv,
+)
 
 
 def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
@@ -220,12 +224,7 @@ def test_run_rejects_removed_labeler_without_train_guidance(
             {
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "bad_run",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-                    "rows": 120,
-                    "arrays": ["OHLCV"],
-                },
+                "data": native_data_config_payload(instruments=["SYN.XNAS"]),
                 "portfolio": {"entry_budget": 1.0},
                 "strategy": {"id": "missing_strategy"},
                 "labeler": {"id": "demo.fixlb"},
@@ -245,17 +244,20 @@ def test_run_rejects_removed_labeler_without_train_guidance(
     assert not (tmp_path / "runs" / "bad-run").exists()
 
 
-def _signed_book_run_config(direction: str) -> dict[str, object]:
+def _signed_book_run_config(
+    direction: str,
+    *,
+    catalog_path: Path | None = None,
+) -> dict[str, object]:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "directional_run",
         "output_dir": "runs",
-        "data": {
-            "source": "synthetic",
-            "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-            "rows": 120,
-            "arrays": ["OHLCV"],
-        },
+        "data": native_data_config_payload(
+            instruments=["SYN.XNAS"],
+            end="2024-04-30",
+            path=catalog_path,
+        ),
         "portfolio": {"gross_cap": 1.0, "direction": direction},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
@@ -298,9 +300,13 @@ def test_run_accepts_shortonly_portfolio_direction(
     monkeypatch.chdir(tmp_path)
     write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
     write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    seed_catalog_ohlcv(tmp_path / "catalog", ["SYN.XNAS"], periods=120)
     config_path = tmp_path / "run.yaml"
     config_path.write_text(
-        yaml.safe_dump(_signed_book_run_config("shortonly"), sort_keys=False)
+        yaml.safe_dump(
+            _signed_book_run_config("shortonly", catalog_path=tmp_path / "catalog"),
+            sort_keys=False,
+        )
     )
 
     cli.main(["run", str(config_path), "--run-id", "short-dir"])
@@ -310,8 +316,12 @@ def test_run_accepts_shortonly_portfolio_direction(
     assert "portfolio.direction" not in combined
 
 
-def _carry_run_config(short_borrow_rate: float | None) -> dict[str, object]:
-    config = _signed_book_run_config("both")
+def _carry_run_config(
+    short_borrow_rate: float | None,
+    *,
+    catalog_path: Path,
+) -> dict[str, object]:
+    config = _signed_book_run_config("both", catalog_path=catalog_path)
     config["name"] = "carry_run"
     if short_borrow_rate is not None:
         config["portfolio"]["short_borrow_rate"] = short_borrow_rate  # type: ignore[index]
@@ -324,7 +334,13 @@ def _run_candidate_returns(
 ) -> list[object]:
     config_path = tmp_path / f"{run_id}.yaml"
     config_path.write_text(
-        yaml.safe_dump(_carry_run_config(short_borrow_rate), sort_keys=False)
+        yaml.safe_dump(
+            _carry_run_config(
+                short_borrow_rate,
+                catalog_path=tmp_path / "catalog",
+            ),
+            sort_keys=False,
+        )
     )
     assert cli.main(["run", str(config_path), "--run-id", run_id]) == 0
     artifact = json.loads(
@@ -344,6 +360,7 @@ def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
     monkeypatch.chdir(tmp_path)
     write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
     write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    seed_catalog_ohlcv(tmp_path / "catalog", ["SYN.XNAS"], periods=120)
 
     carry_on = _run_candidate_returns(tmp_path, short_borrow_rate=None, run_id="carry-on")
     carry_off = _run_candidate_returns(tmp_path, short_borrow_rate=0.0, run_id="carry-off")
@@ -365,12 +382,7 @@ def test_run_rejects_stale_train_shaped_config_before_run_directory(
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "name": "stale_train",
                 "output_dir": "runs",
-                "data": {
-                    "source": "synthetic",
-                    "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
-                    "rows": 120,
-                    "arrays": ["OHLCV"],
-                },
+                "data": native_data_config_payload(instruments=["SYN.XNAS"]),
                 "portfolio": {"entry_budget": 1.0},
                 "labeler": {"id": "demo.fixlb"},
                 "indicators": [{"id": "demo.returns"}],
@@ -601,58 +613,40 @@ def test_show_config_schema_points_at_splitters_and_components(
     assert "`aerd show components`" in guide
 
 
-def test_show_config_schema_documents_continuous_adjustment_modes(
+def test_show_config_schema_documents_native_data_contract(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The guide enumerates the futures continuous-series adjustment vocabulary,
-    derived from the schema constant so it cannot list a mode the validator rejects."""
-    from research.aegis_research.configuration.schema import FUTURES_ADJUSTMENT_MODES
-
+    """The guide documents native ids, not legacy source/provider selectors."""
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
 
-    assert "Continuous-Futures Adjustment Modes" in guide
-    # Every accepted mode is listed (catalog is interpolated from the constant).
-    for mode in FUTURES_ADJUSTMENT_MODES:
-        assert f"`{mode}`" in guide
-    assert "backward_ratio" in guide
-    assert "backward_spread" in guide
+    assert "`instruments`" in guide
+    assert "`exchange`" in guide
+    assert "native Nautilus `InstrumentId`" in guide
+    assert "data.source" in guide
+    assert "Continuous-Futures Adjustment Modes" not in guide
+    assert "pnl_adjustment" not in guide
 
 
-def test_show_config_schema_explains_signal_and_pnl_adjustment(
+def test_show_config_schema_embeds_continuous_future_example(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The guide explains the dual-series split: adjustment drives indicators
-    (signal), pnl_adjustment drives the portfolio (P&L), futures-store only."""
+    """The guide carries a worked continuous-future example snippet."""
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
 
-    assert "pnl_adjustment" in guide
-    assert "signal" in guide.lower()
-    assert "P&L" in guide
-    # The dual series is a futures-store-only capability.
-    assert "futures" in guide.lower()
+    assert "## Example: Continuous Future" in guide
+    assert "ESZ6.XCME" in guide
+    assert "futures: [ES]" in guide
+    assert "source: store" not in guide
 
 
-def test_show_config_schema_embeds_dual_series_futures_example(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The guide carries a worked futures dual-series example snippet."""
-    assert cli.main(["show", "config-schema"]) == 0
-    guide = capsys.readouterr().out
-
-    assert "adjustment: backward_ratio" in guide
-    assert "pnl_adjustment: backward_spread" in guide
-    assert "source: store" in guide
-
-
-def test_show_config_schema_dual_series_example_validates(
+def test_show_config_schema_continuous_future_example_validates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The embedded futures dual-series YAML validates through the real
-    validation coordinator — the documented vocabulary is a real, accepted config."""
+    """The embedded continuous-future YAML validates through the real validation coordinator."""
     monkeypatch.chdir(tmp_path)
     write_indicator_component(
         tmp_path / "research" / "components" / "indicators" / "returns.py"
@@ -664,20 +658,15 @@ def test_show_config_schema_dual_series_example_validates(
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
 
-    raw = yaml.safe_load(
-        _yaml_block_after(guide, "## Example: Futures Dual Continuous Series")
-    )
+    raw = yaml.safe_load(_yaml_block_after(guide, "## Example: Continuous Future"))
 
     from research.aegis_research.configuration import resolve_run_config
 
     resolved = resolve_run_config(raw)
-    symbols = resolved.config.data.symbols
-    es = next(s for s in symbols if s.root == "ES")
-    assert es.adjustment == "backward_ratio"
-    assert es.pnl_adjustment == "backward_spread"
-    # A symbol without pnl_adjustment signals and realizes P&L on the same series.
-    cl = next(s for s in symbols if s.root == "CL")
-    assert cl.pnl_adjustment is None
+    assert resolved.config.data.instruments == ["ESZ6.XCME"]
+    assert resolved.config.data.futures == ["ES"]
+    assert resolved.config.data.exchange == []
+    assert not hasattr(resolved.config.data, "source")
 
 
 def _yaml_block_after(guide: str, heading: str) -> str:
@@ -711,10 +700,13 @@ def test_show_config_schema_embedded_example_validates(
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "example.run",
         "data": {
-            "source": "synthetic",
-            "symbols": [{"ticker": "A", "ccy": "EUR"}, {"ticker": "B", "ccy": "EUR"}, {"ticker": "C", "ccy": "EUR"}],
-            "rows": 250,
+            "base_currency": "USD",
+            "instruments": ["AAPL.NASDAQ", "MSFT.NASDAQ", "SPY.ARCA"],
+            "exchange": ["EUR/USD.IDEALPRO"],
             "arrays": ["OHLCV"],
+            "start": "2024-01-01",
+            "end": "2024-12-31",
+            "timeframe": "1D",
         },
         "portfolio": {
             "gross_cap": 1.0,
@@ -736,7 +728,7 @@ def test_show_config_schema_embedded_example_validates(
     resolved = resolve_run_config(example_raw)
     assert resolved is not None
     assert resolved.config.name == "example.run"
-    assert resolved.config.data.source == "synthetic"
+    assert resolved.config.data.instruments == ["AAPL.NASDAQ", "MSFT.NASDAQ", "SPY.ARCA"]
     assert resolved.config.portfolio.direction == "longonly"
     assert resolved.config.optimization is not None
     assert resolved.config.optimization.search == "grid"
@@ -774,7 +766,7 @@ def test_show_config_schema_coherence_optimization_required(
     raw_no_optimization = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "test",
-        "data": {"source": "synthetic", "symbols": [{"ticker": "A", "ccy": "EUR"}], "rows": 100, "arrays": ["OHLCV"]},
+        "data": native_data_config_payload(instruments=["A.XNAS"], end="2024-04-10"),
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
@@ -1215,12 +1207,10 @@ def test_authoring_story_round_trip(
     example_raw = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "authoring.story",
-        "data": {
-            "source": "synthetic",
-            "symbols": [{"ticker": "A", "ccy": "EUR"}, {"ticker": "B", "ccy": "EUR"}, {"ticker": "C", "ccy": "EUR"}],
-            "rows": 250,
-            "arrays": ["OHLCV"],
-        },
+        "data": native_data_config_payload(
+            instruments=["A.XNAS", "B.XNAS", "C.XNAS"],
+            end="2024-09-07",
+        ),
         "portfolio": {
             "gross_cap": 1.0,
             "direction": "longonly",
@@ -1345,16 +1335,34 @@ def test_config_schema_guide_marks_schema_version_const() -> None:
     assert "schema_version`** — must be present and exactly `10`" in guide
 
 
-def test_config_schema_guide_states_allowed_data_sources() -> None:
-    """Drift: data source whitelist is interpolated from code."""
+def test_config_schema_guide_states_native_data_contract() -> None:
+    """Drift: data contract documents native ids, not source selectors."""
     guide = _render_guide("config-schema")
-    assert "`synthetic`" in guide
-    assert "`csv`" in guide
+    assert "`instruments`" in guide
+    assert "`exchange`" in guide
+    assert "native Nautilus `InstrumentId`" in guide
+    assert "`synthetic`" not in guide
+    assert "`csv`" not in guide
+
+
+def test_config_schema_guide_documents_band_override_shape() -> None:
+    """Drift: per-instrument bands document native-id and futures-root keys."""
+    guide = _render_guide("config-schema")
+    assert "`band_overrides`" in guide
+    assert "native `data.instruments` ids" in guide
+    assert "bare `data.futures` roots" in guide
+    assert "AAPL.NASDAQ:" in guide
+    assert "ES:" in guide
+    assert "up: 0.03" in guide
+    assert "down: 0.08" in guide
 
 
 def test_config_schema_guide_states_removed_fields_unknown() -> None:
     """Drift: labeler/train/model are called out as removed/unknown."""
     guide = _render_guide("config-schema")
+    assert "`data.source`" in guide
+    assert "`data.symbols`" in guide
+    assert "`data.provider`" in guide
     assert "`labeler`" in guide
     assert "`train`" in guide
     assert "`model`" in guide

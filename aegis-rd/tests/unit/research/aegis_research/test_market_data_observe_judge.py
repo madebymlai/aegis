@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.market_data import diagnostics as observe
 from research.aegis_research.market_data import quality as judge
@@ -13,10 +14,10 @@ from tests.support.research.aegis_research.factories import make_data_config
 
 def test_judge_is_a_pure_verdict_over_typed_diagnostics() -> None:
     verdict = judge.evaluate(
-        make_data_config(source="diagnostic", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"]),
+        make_data_config(instruments=["SYN.XNAS"], arrays=["Close"]),
         (
             DataDiagnostics(
-                symbol="SYN",
+                instrument_id=_id("SYN.XNAS"),
                 configured=True,
                 arrays={
                     "Close": DataArrayDiagnostics(
@@ -40,18 +41,18 @@ def test_judge_is_a_pure_verdict_over_typed_diagnostics() -> None:
         "raw data index contains duplicate timestamps",
         "raw data index is not monotonic increasing",
         "required array 'Close' contains missing values",
-        "required array 'Close' has non-numeric symbols ['SYN']",
+        "required array 'Close' has non-numeric instrument IDs ['SYN.XNAS']",
     )
 
 
 def test_observe_reports_per_symbol_array_diagnostics() -> None:
     index = pd.date_range("2020-01-01", periods=3, tz="UTC")
     frame = pd.DataFrame(
-        {("SYN", "Close"): [1.0, 2.0, 3.0]},
+        {("SYN.XNAS", "Close"): [1.0, 2.0, 3.0]},
         index=index,
     )
     frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["symbol", "feature"])
-    config = make_data_config(source="frame", symbols=[{"ticker": "SYN", "ccy": "EUR"}], arrays=["Close"])
+    config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
 
     observation = observe.observe(
         config,
@@ -60,6 +61,10 @@ def test_observe_reports_per_symbol_array_diagnostics() -> None:
     )
     diagnostics = observe.diagnose(config, observation)
 
-    assert diagnostics[0].symbol == "SYN"
+    assert diagnostics[0].instrument_id == _id("SYN.XNAS")
     assert diagnostics[0].arrays["Close"].available is True
     assert diagnostics[0].arrays["Close"].rows == 3
+
+
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)

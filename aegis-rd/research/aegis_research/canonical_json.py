@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from typing import Any
 
+from nautilus_trader.model.identifiers import InstrumentId
+
 _CANONICAL_JSON_SEPARATORS = (",", ":")
 _RESOLVED_RUN_CONFIG_TYPE_NAME = "ResolvedRunConfig"
 
@@ -26,6 +28,8 @@ def to_builtin(value: Any) -> Any:
     """Recursively convert project dataclasses and scalar wrappers to JSON-ready builtins."""
     if _is_resolved_run_config(value):
         return to_builtin(value.config)
+    if isinstance(value, InstrumentId):
+        return value.value
     if _is_dataclass_instance(value):
         return {field.name: to_builtin(getattr(value, field.name)) for field in fields(value)}
     if hasattr(value, "item"):
