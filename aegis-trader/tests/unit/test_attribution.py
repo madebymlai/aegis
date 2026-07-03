@@ -46,8 +46,8 @@ def _book_pnl(periods) -> float:
     """The realized-weight book P&L the sleeves must reconcile to."""
     total = 0.0
     for prev, curr in zip(periods, periods[1:]):
-        for figi, w in prev.realized_weights.items():
-            total += w * (curr.closes[figi] / prev.closes[figi] - 1.0) * prev.nav
+        for instrument_id, w in prev.realized_weights.items():
+            total += w * (curr.closes[instrument_id] / prev.closes[instrument_id] - 1.0) * prev.nav
     return total
 
 
@@ -76,8 +76,8 @@ def test_sleeve_attributions_sum_to_book_pnl():
     assert result[_TREND] + result[_CARRY] == pytest.approx(_book_pnl(periods), rel=1e-12)
 
 
-def test_shared_figi_split_by_budget_scaled_target_share():
-    """Two sleeves on the same FIGI split its P&L by budget×target proportion."""
+def test_shared_instrument_split_by_budget_scaled_target_share():
+    """Two sleeves on the same instrument split its P&L by budget×target proportion."""
     budgets = {_TREND: 0.6, _CARRY: 0.4}
     # intended: trend 0.6×1.0=0.6, carry 0.4×0.5=0.2 -> total 0.8 (= realized)
     periods = [
@@ -126,8 +126,8 @@ def test_short_realized_weight_reverses_sign():
     assert compute_sleeve_attribution(periods, budgets={_TREND: 1.0})[_TREND] < 0
 
 
-def test_figi_missing_a_close_contributes_nothing():
-    """A FIGI without a usable close pair is skipped (no fabricated return)."""
+def test_instrument_missing_a_close_contributes_nothing():
+    """An instrument without a usable close pair is skipped (no fabricated return)."""
     periods = [
         AttributionPeriod(nav=100_000.0, realized_weights={_iid("A"): 0.5, _iid("GAP"): 0.5},
                           sleeve_targets={_TREND: {_iid("A"): 0.5, _iid("GAP"): 0.5}},

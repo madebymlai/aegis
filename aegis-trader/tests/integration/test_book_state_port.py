@@ -29,8 +29,8 @@ from nautilus_trader.model.objects import Money
 
 from aegis_trader.portfolio import NautilusBookState
 
-_FIGI_A = "BBG000B9XRY4"
-_IID_A = InstrumentId.from_str(f"{_FIGI_A}.XLON")
+_SYMBOL_A = "VOD"
+_IID_A = InstrumentId.from_str(f"{_SYMBOL_A}.XLON")
 _ACCT_XLON = AccountId("XLON-001")
 _ACCT_XETR = AccountId("XETR-001")
 
