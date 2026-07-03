@@ -1,47 +1,41 @@
-"""Shared test fakes for the catalog port and continuous-futures fixtures.
+"""Shared test fixtures for the catalog port and continuous-futures scenarios.
 
 Importable test support (the ``pandas.testing`` pattern) so aegis-data and the
 packages that consume it drive the same fake corpus instead of copying it:
 
 - ``FakeCatalog`` — a ``ParquetDataCatalog`` stand-in: instrument definitions
-  plus native bars by identifier.  Usable beneath the real
-  ``CatalogBackedDataPort`` or beneath ``FakePort``.
-- ``FakePort`` — a ``CatalogBackedDataPort`` stand-in: OHLCV frames for the
-  chain, the fake catalog beneath.
+  plus native bars by identifier, served beneath the real
+  ``CatalogBackedDataPort`` (the port itself is never faked — one
+  implementation, so the fixtures inherit production behavior).
 - ``es_port`` / ``es_port_two_rolls`` / ``early_crossover_es_port`` — canned ES
   scenarios: one liquidity migration, two rolls, and an early crossover.
 
-Bars carry a single 21:00 UTC close stamp for both ``ts_event`` and
-``ts_init``; consumers key off the event date and the bucket-close ceiling,
-which this convention satisfies.
+Bars carry production IBKR daily stamps — ``ts_event`` at the session date's
+midnight UTC and ``ts_init`` at the day's last nanosecond (verified against a
+live gateway, r8b.2) — so consumers see the event date and the bucket-close
+ceiling exactly as they do live.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import datetime, time, timezone
 
 import pandas as pd
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import AssetClass
-from nautilus_trader.model.identifiers import InstrumentId, Symbol
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import FuturesContract
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.catalog import (
-    ContinuousRootLegsNotFoundError,
-    ContinuousRootVenueMismatchError,
-    RawBarRequest,
-    ResolvedContinuousRoot,
-)
-from aegis_data.roll import DatedContract
+from aegis_data.catalog import CatalogBackedDataPort
 
 ES_START = "2024-01-15"
 ES_END = "2024-05-31"
 
 _UTC = timezone.utc
-_CLOSE = time(21, 0)
+_DAY_NS = 86_400_000_000_000
 _PRECISION = 2
 _CROSSOVER = pd.Timestamp("2024-03-01")
 
@@ -104,11 +98,14 @@ def _ohlcv(
 
 
 def bars(instrument_id: InstrumentId, ohlcv: pd.DataFrame) -> list[Bar]:
-    """Native daily bars for an OHLCV frame, stamped at the 21:00 UTC close."""
+    """Native daily bars for an OHLCV frame, stamped as IBKR serves them:
+    ``ts_event`` at the session date's midnight UTC, ``ts_init`` at day end."""
     bar_type = raw_bar_type(instrument_id, "1D")
     out: list[Bar] = []
     for day, row in ohlcv.iterrows():
-        ts = int(datetime.combine(day.date(), _CLOSE, _UTC).timestamp() * 1e9)
+        ts_event = int(
+            datetime.combine(day.date(), time(0, 0), _UTC).timestamp() * 1e9
+        )
         out.append(
             Bar(
                 bar_type,
@@ -117,8 +114,8 @@ def bars(instrument_id: InstrumentId, ohlcv: pd.DataFrame) -> list[Bar]:
                 Price.from_str(str(row["Low"])),
                 Price.from_str(str(row["Close"])),
                 Quantity.from_int(int(row["Volume"])),
-                ts,
-                ts,
+                ts_event,
+                ts_event + _DAY_NS - 1,
             )
         )
     return out
@@ -149,12 +146,14 @@ class FakeCatalog:
 
     def query(
         self,
-        data_cls: type,  # noqa: ARG002 - Bar only in this fixture
+        data_cls: type,
         identifiers: list[str] | None = None,
         start: object = None,
         end: object = None,
         **_kwargs: object,
-    ) -> list[Bar]:
+    ) -> list:
+        if data_cls is not Bar:
+            return []  # no non-bar data stored; distributions read as honestly empty
         lo, hi = pd.Timestamp(start).value, pd.Timestamp(end).value
         return [
             bar
@@ -169,96 +168,7 @@ class FakeCatalog:
         return []
 
 
-class FakePort:
-    """A CatalogBackedDataPort stand-in: OHLCV frames for the chain, the catalog beneath."""
-
-    def __init__(
-        self, catalog: FakeCatalog, frames: dict[InstrumentId, pd.DataFrame]
-    ) -> None:
-        self.catalog = catalog
-        self._frames = frames
-
-    def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
-        start, end = pd.Timestamp(request.start), pd.Timestamp(request.end)
-        return {
-            iid: self._frames[iid].loc[
-                (self._frames[iid].index >= start) & (self._frames[iid].index <= end)
-            ]
-            for iid in request.instrument_ids
-        }
-
-    def read_native_bars(self, request: RawBarRequest) -> dict[InstrumentId, list[Bar]]:
-        return {
-            iid: self.catalog.query(
-                Bar,
-                identifiers=[str(raw_bar_type(iid, request.timeframe))],
-                start=request.start,
-                end=request.end,
-            )
-            for iid in request.instrument_ids
-        }
-
-    def instruments(
-        self, instrument_ids: tuple[InstrumentId, ...]
-    ) -> list[FuturesContract]:
-        return self.catalog.instruments(
-            instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
-        )
-
-    def fetch_contract_ohlcv(
-        self,
-        symbol: str,
-        start: date,
-        end: date,
-        *,
-        timeframe: str = "1D",
-    ) -> pd.DataFrame:
-        instrument_id = InstrumentId.from_str(symbol)
-        return self.load_raw_bars(
-            RawBarRequest(
-                (instrument_id,), start.isoformat(), end.isoformat(), timeframe
-            )
-        )[instrument_id]
-
-    def probe_contract_volume(
-        self,
-        symbol: str,
-        start: date,
-        end: date,
-        *,
-        timeframe: str = "1D",
-    ) -> pd.Series:
-        return self.fetch_contract_ohlcv(symbol, start, end, timeframe=timeframe)[
-            "Volume"
-        ]
-
-    def _continuous_root_legs(self, root: str) -> list[DatedContract]:
-        legs = [
-            DatedContract(
-                symbol=instrument.id.value,
-                last_trade=instrument.expiration_utc.date(),
-            )
-            for instrument in self.catalog.instruments(instrument_type=FuturesContract)
-            if instrument.underlying == root
-        ]
-        return sorted(legs, key=lambda leg: leg.last_trade)
-
-    def resolve_continuous(self, root: str) -> ResolvedContinuousRoot:
-        legs = tuple(self._continuous_root_legs(root))
-        if not legs:
-            raise ContinuousRootLegsNotFoundError(
-                f"no dated legs in the catalog for continuous-future root {root!r}"
-            )
-        venues = {InstrumentId.from_str(leg.symbol).venue for leg in legs}
-        if len(venues) != 1:
-            raise ContinuousRootVenueMismatchError(
-                f"continuous-future root {root!r} legs span multiple venues "
-                f"{sorted(venue.value for venue in venues)}; expected one"
-            )
-        return ResolvedContinuousRoot(InstrumentId(Symbol(root), next(iter(venues))), legs)
-
-
-def es_port() -> tuple[FakePort, dict[InstrumentId, list[Bar]]]:
+def es_port() -> tuple[CatalogBackedDataPort, dict[InstrumentId, list[Bar]]]:
     """ES with two legs and one liquidity migration at the crossover."""
     esh4 = InstrumentId.from_str("ESH4.XCME")
     esm4 = InstrumentId.from_str("ESM4.XCME")
@@ -272,7 +182,7 @@ def es_port() -> tuple[FakePort, dict[InstrumentId, list[Bar]]]:
     )
 
 
-def es_port_two_rolls() -> tuple[FakePort, dict[InstrumentId, list[Bar]]]:
+def es_port_two_rolls() -> tuple[CatalogBackedDataPort, dict[InstrumentId, list[Bar]]]:
     """ES with three legs and two liquidity-led rolls."""
     esh4 = InstrumentId.from_str("ESH4.XCME")
     esm4 = InstrumentId.from_str("ESM4.XCME")
@@ -292,7 +202,7 @@ def es_port_two_rolls() -> tuple[FakePort, dict[InstrumentId, list[Bar]]]:
     )
 
 
-def early_crossover_es_port() -> FakePort:
+def early_crossover_es_port() -> CatalogBackedDataPort:
     """ES with three legs where liquidity crosses to the back leg early."""
     esh4 = InstrumentId.from_str("ESH4.XCME")
     esm4 = InstrumentId.from_str("ESM4.XCME")
@@ -315,20 +225,19 @@ def early_crossover_es_port() -> FakePort:
 
 def _port(
     frames: dict[InstrumentId, pd.DataFrame], instruments: list[FuturesContract]
-) -> tuple[FakePort, dict[InstrumentId, list[Bar]]]:
+) -> tuple[CatalogBackedDataPort, dict[InstrumentId, list[Bar]]]:
     native = {iid: bars(iid, ohlcv) for iid, ohlcv in frames.items()}
     catalog = FakeCatalog(
         instruments=instruments,
         bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
     )
-    return FakePort(catalog, frames), native
+    return CatalogBackedDataPort(catalog), native
 
 
 __all__ = [
     "ES_END",
     "ES_START",
     "FakeCatalog",
-    "FakePort",
     "bars",
     "early_crossover_es_port",
     "es_port",

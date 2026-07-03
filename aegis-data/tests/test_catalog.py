@@ -405,7 +405,7 @@ def test_catalog_port_fetches_a_legs_ohlcv_over_its_window() -> None:
             "Close": [100.0, 101.0],
             "Volume": [1000.0, 1000.0],
         },
-        index=pd.DatetimeIndex(["2024-01-02 21:00:00", "2024-01-03 21:00:00"]),
+        index=pd.DatetimeIndex(["2024-01-02", "2024-01-03"]),
     )
     native = bars(instrument_id, frame)
     catalog = FakeCatalog(
@@ -431,7 +431,7 @@ def test_catalog_port_probes_a_legs_daily_volume() -> None:
             "Close": [100.0, 101.0],
             "Volume": [1000.0, 1100.0],
         },
-        index=pd.DatetimeIndex(["2024-01-02 21:00:00", "2024-01-03 21:00:00"]),
+        index=pd.DatetimeIndex(["2024-01-02", "2024-01-03"]),
     )
     native = bars(instrument_id, frame)
     catalog = FakeCatalog(

@@ -12,6 +12,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import continuous_bar_type, raw_bar_type
 from aegis_data.catalog import (
+    CatalogBackedDataPort,
     ContinuousRootLegsNotFoundError,
     ContinuousRootVenueMismatchError,
 )
@@ -24,7 +25,6 @@ from aegis_data.testing import (
     ES_END,
     ES_START,
     FakeCatalog,
-    FakePort,
     bars,
     early_crossover_es_port,
     es_port,
@@ -65,7 +65,7 @@ def _expected_ohlcv_row(
     )
 
 
-def _causal_front(port: FakePort, root: str, as_of: date) -> InstrumentId:
+def _causal_front(port: CatalogBackedDataPort, root: str, as_of: date) -> InstrumentId:
     candidates = port.resolve_continuous(root).legs
     volume_by_symbol = {
         leg.symbol: port.probe_contract_volume(
@@ -320,7 +320,7 @@ def test_continuous_contract_model_rejects_legs_across_venues() -> None:
         ],
         bars={},
     )
-    port = FakePort(catalog, {})
+    port = CatalogBackedDataPort(catalog)
     model = ContinuousContractModel(port, "ES", start=ES_START)
 
     with pytest.raises(ContinuousRootVenueMismatchError, match="span multiple venues"):
@@ -332,7 +332,7 @@ def test_continuous_contract_model_rejects_a_root_with_no_legs() -> None:
         instruments=[future("CLF4.NYMEX", "2024-01-22", underlying="CL")],
         bars={},
     )
-    port = FakePort(catalog, {})
+    port = CatalogBackedDataPort(catalog)
     model = ContinuousContractModel(port, "ES", start=ES_START)
 
     with pytest.raises(ContinuousRootLegsNotFoundError, match="no dated legs"):

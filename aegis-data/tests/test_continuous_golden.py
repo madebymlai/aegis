@@ -27,12 +27,7 @@ from nautilus_trader.model.instruments import FuturesContract
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.catalog import (
-    ContinuousRootLegsNotFoundError,
-    ContinuousRootVenueMismatchError,
-    RawBarRequest,
-    ResolvedContinuousRoot,
-)
+from aegis_data.catalog import CatalogBackedDataPort
 from aegis_data.chain import ContractChain
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import (
@@ -41,7 +36,7 @@ from aegis_data.continuous_future import (
     continuous_future,
 )
 from aegis_data.continuous_materialize import materialize_continuous_bars
-from aegis_data.roll import DatedContract
+from aegis_data.testing import FakeCatalog, bars as production_bars
 from tests.support.continuous_oracle import AdjustedBar, backward_series
 from tests.support.continuous_subscribe import (
     materialize_continuous_bars_via_subscription,
@@ -119,136 +114,6 @@ def _bars(
     return bars
 
 
-class _GoldenCatalog:
-    def __init__(
-        self, instruments: list[FuturesContract], bars: dict[str, list[Bar]]
-    ) -> None:
-        self._instruments = instruments
-        self._bars = bars
-
-    def instruments(
-        self,
-        instrument_type: type | None = None,
-        instrument_ids: list[str] | None = None,
-        **_kwargs: object,
-    ) -> list[FuturesContract]:
-        out = self._instruments
-        if instrument_type is not None:
-            out = [
-                instrument
-                for instrument in out
-                if isinstance(instrument, instrument_type)
-            ]
-        if instrument_ids is not None:
-            wanted = set(instrument_ids)
-            out = [instrument for instrument in out if instrument.id.value in wanted]
-        return out
-
-    def query(
-        self,
-        data_cls: type,  # noqa: ARG002 - Bar only in this fixture
-        identifiers: list[str] | None = None,
-        start: object = None,
-        end: object = None,
-        **_kwargs: object,
-    ) -> list[Bar]:
-        lo, hi = pd.Timestamp(start).value, pd.Timestamp(end).value
-        return [
-            bar
-            for identifier in (identifiers or [])
-            for bar in self._bars.get(identifier, [])
-            if lo <= bar.ts_event <= hi
-        ]
-
-
-class _GoldenPort:
-    def __init__(
-        self, catalog: _GoldenCatalog, frames: dict[InstrumentId, pd.DataFrame]
-    ) -> None:
-        self.catalog = catalog
-        self._frames = frames
-
-    def load_raw_bars(self, request: object) -> dict[InstrumentId, pd.DataFrame]:
-        start, end = pd.Timestamp(request.start), pd.Timestamp(request.end)  # type: ignore[attr-defined]
-        return {
-            instrument_id: self._frames[instrument_id].loc[
-                (self._frames[instrument_id].index >= start)
-                & (self._frames[instrument_id].index <= end)
-            ]
-            for instrument_id in request.instrument_ids  # type: ignore[attr-defined]
-        }
-
-    def read_native_bars(self, request: object) -> dict[InstrumentId, list[Bar]]:
-        return {
-            instrument_id: self.catalog.query(
-                Bar,
-                identifiers=[str(raw_bar_type(instrument_id, request.timeframe))],  # type: ignore[attr-defined]
-                start=request.start,  # type: ignore[attr-defined]
-                end=request.end,  # type: ignore[attr-defined]
-            )
-            for instrument_id in request.instrument_ids  # type: ignore[attr-defined]
-        }
-
-    def instruments(
-        self, instrument_ids: tuple[InstrumentId, ...]
-    ) -> list[FuturesContract]:
-        return self.catalog.instruments(
-            instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
-        )
-
-    def fetch_contract_ohlcv(
-        self,
-        symbol: str,
-        start,
-        end,
-        *,
-        timeframe: str = "1D",
-    ) -> pd.DataFrame:
-        instrument_id = InstrumentId.from_str(symbol)
-        return self.load_raw_bars(
-            RawBarRequest(
-                (instrument_id,), start.isoformat(), end.isoformat(), timeframe
-            )
-        )[instrument_id]
-
-    def probe_contract_volume(
-        self,
-        symbol: str,
-        start,
-        end,
-        *,
-        timeframe: str = "1D",
-    ) -> pd.Series:
-        return self.fetch_contract_ohlcv(symbol, start, end, timeframe=timeframe)[
-            "Volume"
-        ]
-
-    def _continuous_root_legs(self, root: str) -> list[DatedContract]:
-        legs = [
-            DatedContract(
-                symbol=instrument.id.value,
-                last_trade=instrument.expiration_utc.date(),
-            )
-            for instrument in self.catalog.instruments(instrument_type=FuturesContract)
-            if instrument.underlying == root
-        ]
-        return sorted(legs, key=lambda leg: leg.last_trade)
-
-    def resolve_continuous(self, root: str) -> ResolvedContinuousRoot:
-        legs = tuple(self._continuous_root_legs(root))
-        if not legs:
-            raise ContinuousRootLegsNotFoundError(
-                f"no dated legs in the catalog for continuous-future root {root!r}"
-            )
-        venues = {InstrumentId.from_str(leg.symbol).venue for leg in legs}
-        if len(venues) != 1:
-            raise ContinuousRootVenueMismatchError(
-                f"continuous-future root {root!r} legs span multiple venues "
-                f"{sorted(venue.value for venue in venues)}; expected one"
-            )
-        return ResolvedContinuousRoot(InstrumentId(Symbol(root), next(iter(venues))), legs)
-
-
 def _raws(bars: list[Bar]) -> list[tuple[int, int, int, int]]:
     return [(b.open.raw, b.high.raw, b.low.raw, b.close.raw) for b in bars]
 
@@ -257,7 +122,7 @@ def _oracle_raws(oracle: list[AdjustedBar]) -> list[tuple[int, int, int, int]]:
     return [(o.open_raw, o.high_raw, o.low_raw, o.close_raw) for o in oracle]
 
 
-def _golden_model_port() -> _GoldenPort:
+def _golden_model_port() -> CatalogBackedDataPort:
     esh4 = InstrumentId(Symbol("ESH4"), Venue("XCME"))
     esm4 = InstrumentId(Symbol("ESM4"), Venue("XCME"))
     pre = _frame_with_volume(
@@ -270,15 +135,15 @@ def _golden_model_port() -> _GoldenPort:
         [120.0, 121.0, 122.0, 123.0, 124.0],
         [100, 1000, 1000, 1000, 1000],
     )
-    native = {esh4: _bars(esh4, pre), esm4: _bars(esm4, post)}
-    catalog = _GoldenCatalog(
+    native = {esh4: production_bars(esh4, pre), esm4: production_bars(esm4, post)}
+    catalog = FakeCatalog(
         [_future(esh4, "2024-03-15"), _future(esm4, "2024-06-21")],
         {
             str(raw_bar_type(instrument_id, "1D")): bars
             for instrument_id, bars in native.items()
         },
     )
-    return _GoldenPort(catalog, {esh4: pre, esm4: post})
+    return CatalogBackedDataPort(catalog)
 
 
 def _expected_model_ratio_frame() -> pd.DataFrame:
