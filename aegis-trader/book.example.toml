@@ -4,9 +4,11 @@
 # It is *not* where secrets go: the IBKR connection and account come from the
 # environment, never this file.
 #
-#   Run:   aegis-trader --mode {backtest,paper,live} --book book.toml
+#   Run:   aegis-trader backtest --start YYYY-MM-DD --end YYYY-MM-DD [--book book.toml]
+#          aegis-trader trader start|stop [--book book.toml]
 #          (--book is optional: if omitted, book.toml is discovered by walking
-#           up from the current directory)
+#           up from the current directory. Paper vs live is the IB_PORT alone,
+#           not a --mode flag.)
 #
 #   Paper/live also read the broker connection from the environment:
 #     IB_ACCOUNT_ID   (required; e.g. DU1234567 paper, U7654321 live)
