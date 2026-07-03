@@ -1,0 +1,70 @@
+name: atalanta_trend_memgate
+schema_version: 10
+output_dir: runs/atalanta/trend-memgate
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# COMMODITY MEMORY GATE on the live champion (atalanta trend.yaml). Tests h54.
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# [[is-the-trend-premium-decaying]] h54 (Mehlitz-Auer 2024): condition the commodity-leg trend on a
+# variance-ratio memory measure - trust the trend where the series has memory (VR high), stand aside
+# where it mean-reverts (VR low). Their design is cross-sectional double-sort; we hold two commodity
+# names, so this is a per-leg TIME-SERIES conditioner, represented as a CONTINUOUS ramp (not a binary
+# gate: the regime literature is explicit that a switch maximizes whipsaw/turnover cost, which this
+# fixed-fee book cannot afford - see the memgate component header).
+#
+# Everything is pinned to the champion (keystone_shortmute short_cap 0.10, lb189, vw126, asymmetric
+# drift band, EUR EUR5k, IDTL borrow-gated); the ADDED atalanta.variance_ratio indicator (k21/W252,
+# neutral ~1.0) feeds a continuous [0,1] memory-weight on the IGLN/ICOM legs only. The strategy's
+# param_space sweeps the ramp: vr_lo {2.0 (=off, nested champion control), 0.60, 0.70, 0.80} at
+# vr_hi 1.0. Data warm (IDTL/IGLN/ICOM cached; VR is derived, no new fetch). No lock (a sweep).
+# See [[runs/atalanta/2026-07-03]] for the pre-registered keep/kill.
+data:
+  base_currency: EUR
+  instruments: [IDTL.LSEETF, IGLN.LSEETF, ICOM.LSEETF]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.trend_score_regress
+    params:
+      lookback: 189
+  - id: atalanta.realized_vol
+    params:
+      vol_window: 126
+  - id: atalanta.variance_ratio
+    params:
+      vr_horizon: 21        # k: monthly persistence horizon
+      vr_window: 252        # W: 1yr rolling estimation (neutral ~1.0, > lb189 so it frames the regime)
+
+strategy:
+  id: atalanta.keystone_memgate   # ramp knots swept via param_space (vr_lo {off,0.6,0.7,0.8}, vr_hi 1.0)
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

@@ -1,0 +1,110 @@
+---
+title: "Allocating and rebalancing a multi-strategy book"
+date: "2026-07-03"
+topic: portfolio construction - risk budgeting across strategies and cost-aware rebalancing policy
+distilled-into:
+tags:
+  - article
+---
+
+# Allocating and rebalancing a multi-strategy book
+
+> [!abstract] One-line takeaway
+> Estimation error, not optimization, is the binding constraint on a multi-strategy book: allocate by risk budgets refined only with risk estimates (never expected returns), scale with vol targeting for its tail effect rather than a Sharpe boost, and trade through no-trade bands to the boundary - each refinement must beat the naive baseline it replaces, because most don't.
+
+A book of heterogeneous strategy sleeves faces two separable decisions. The *allocation* decision assigns each sleeve a share of the book's risk. The *rebalancing* decision chooses when the realized book has drifted far enough from that intent to be worth paying transaction costs to correct. The literatures behind the two are old, deep, and unusually consistent on one point: the sophisticated version of each decision loses to the simple version whenever it needs an input that must be estimated from short histories. What follows organizes the evidence around which refinements survive that test.
+
+## Estimation error is the binding constraint
+
+The anchor result is DeMiguel, Garlappi and Uppal (2009): across seven datasets, none of fourteen optimizing portfolio models - sample mean-variance and its shrinkage, Bayesian, and constrained extensions - consistently beat equal weight (1/N) out of sample on Sharpe, certainty-equivalent, or turnover. For mean-variance to beat 1/N on parameters calibrated to US equities, the required estimation window is about 3,000 months for 25 assets and about 6,000 months for 50, against the 60-120 months practitioners actually use. Errors in expected-return estimates dominate errors in covariance estimates.[^1]
+
+The result generalizes beyond equities and beyond mean-variance. Anderson, Bianchi and Goldberg (2012) rerun levered risk parity over 1926-2010 and find that trading and borrowing frictions erase its headline outperformance, that decade-scale sub-periods reverse rankings, and that a statistically significant premium does not guarantee outperformance over any horizon an investor actually has.[^2]
+
+Two design rules follow, and both are well-established rather than contested. First, no expected-return estimates anywhere in the allocator: risk estimates are the only statistical input that pays for itself, because second moments are far more stable than first moments.[^1][^3] Second, every candidate refinement must be benchmarked against the naive rule it replaces - not against an obviously weak straw man - because the naive rule usually wins.
+
+## Risk budgeting: the defensible middle ground
+
+Given that expected returns are off the table, the allocation question becomes how to split *risk*, not capital. The canonical answer is the equal risk contribution (ERC) portfolio of Maillard, Roncalli and Teiletche (2010): weights such that each component contributes equally to portfolio volatility. ERC sits provably between the two poles that don't need a covariance at all - its volatility satisfies sigma_mv <= sigma_erc <= sigma_1/n - so it behaves like a diversification-constrained minimum-variance portfolio and degrades gracefully toward inverse-volatility weighting as correlations flatten.[^3] Generalizing the equal budgets to operator-chosen risk shares gives risk budgeting proper, which is the standard industrial pattern for multi-strategy books: set shares top-down by strategy group, then allocate within groups, because the group-level problem is smaller, more stable, and closer to where conviction actually lives.[^4]
+
+The estimation-error logic has a sharp implication inside this family too: the covariance refinement must itself be questioned. Three findings discipline it.
+
+- ERC's advantage over plain inverse-vol weighting comes entirely from the correlation structure. When sleeves are engineered to be near-orthogonal - which is the point of a well-built roster (see [[convexity-as-the-axis-of-strategy-diversification]]) - the diagonal approximation captures most of the value, and the full solver mostly re-derives it with extra moving parts.
+- Hierarchical Risk Parity (López de Prado 2016) was pitched as the estimation-robust alternative to quadratic optimizers: cluster the correlation matrix, then allocate down the tree without inverting anything.[^5] The controlled evidence is less flattering. A known-covariance comparison across structure families finds HRP beats *raw* sample minimum-variance exactly where advertised (data-starved regimes, T/N <= 1, winning ~87% of experiments), but plain Ledoit-Wolf shrinkage beats HRP at every sample size in factor-structured markets, and HRP never converges to the oracle as data grows (its realized-risk ratio plateaus at 1.4-3.2x oracle). HRP behaves like inverse-variance unless clusters are genuinely asymmetric.[^6] Simulation work agrees: HRP only dominates naive risk parity when the true correlation matrix is genuinely hierarchical.[^7]
+- What survives from HRP is the *grouping idea*, not the algorithm: allocating top-down across declared strategy groups prevents a correlated cluster with many members from hogging the budget, and declared (economic) groups sidestep the instability of estimated dendrograms.
+
+Confidence: the ERC math and the DeMiguel result are as solid as this field gets; the HRP-vs-shrinkage ranking rests on practitioner-grade replications rather than journals, and we flag it as such - but the burden of proof sits on HRP, not on the simple baseline.
+
+## Vol targeting: buy it for the tails, not the Sharpe
+
+Scaling the whole book to a volatility target is the second layer. The pro case (Moreira and Muir 2017) is that volatility is highly forecastable at short horizons while expected returns barely move with it, so de-risking when volatility spikes raises Sharpe - for the US market portfolio, a claimed 4.9%/yr alpha and a 25% Sharpe improvement.[^8]
+
+The evidence splits cleanly by what is being claimed:
+
+- **Sharpe improvement is asset-dependent.** Across 60+ assets with daily data from 1926, vol scaling raises Sharpe for *risk assets* (equities, credit) and portfolios dominated by them, because those assets have a leverage effect that makes vol scaling a momentum overlay in disguise. For bonds, currencies and commodities the Sharpe effect is negligible.[^9]
+- **The out-of-sample and after-cost record is bad.** On 103 equity strategies, volatility-managed versions beat the originals in only 53 of 103 direct comparisons; the spanning-regression alphas that made the idea famous are not implementable in real time, and realistic out-of-sample versions earn *lower* Sharpe and certainty-equivalent than doing nothing, driven by structural instability in the scaling regressions.[^10] Baseline vol-managed factors also multiply turnover up to 15x, and after costs none of them earn positive alpha.[^11] Correcting a look-ahead bias in the scaling coefficient leaves max drawdowns of 68-93%.[^12]
+- **The tail effect is the robust part.** Vol targeting reduces the likelihood of extreme returns and the vol-of-vol across *all* asset classes, because left tails cluster in high-volatility episodes when a targeted book is small.[^9] This claim has no serious counter-lane.
+- **Netting rescues some of the cost problem.** When managed exposures are traded jointly across many factors, offsetting trades cut the cost of vol management enough that a conditional multifactor portfolio beats its unconditional twin out of sample net of costs by ~13% Sharpe - the diversification is in the *trading*, not just the returns.[^13] This is a single (though top-journal) study; treat it as promising, not settled.
+
+The synthesis: vol targeting a multi-strategy book is defensible as *risk plumbing* - stabilizing the risk the operator bought and thinning tails - and indefensible as an alpha source. Netting across sleeves before trading is what keeps its cost bill payable.
+
+## Drawdown control: cheap insurance with a known failure mode
+
+Deleveraging on realized drawdown descends from Grossman-Zhou (1993) and the CPPI family: scale exposure to the cushion between current equity and a floor. Modern multi-period implementations find drawdown limits can be enforced with little loss of mean-variance efficiency - the control mostly raises average risk aversion rather than mistiming good periods, and daily updates suffice.[^14] The known failure mode is cash-lock: a hard floor plus a sharp drawdown leaves the book too small to recover, and the probability of locking is driven more by the multiplier and horizon than by the asset itself.[^15] The design implication is a *curve* (gradual delever as drawdown deepens, with a floor on the multiplier) rather than a hard stop, and acceptance that a V-shaped recovery is where this insurance pays its premium.
+
+## Rebalancing: bands beat calendars, and the boundary beats the target
+
+The rebalancing theory is one of the most settled corners of portfolio mathematics. With transaction costs, the optimal policy is never continuous tracking: there is a no-trade region around the target inside which trading destroys value (Davis-Norman 1990; Leland 1996). Three results carry the design:
+
+1. **Threshold beats calendar.** An optimal band policy cuts turnover roughly in half versus quarterly full rebalancing at equal tracking error.[^16] An allocator-scale calibration finds a 6-percentage-point no-trade band saves ~60% of rebalancing costs versus continuous rebalancing;[^17] a fund-scale study finds threshold rebalancing costs roughly one third of quarterly and one quarter of monthly calendar rebalancing at better drift control.[^18] Calendar policies also carry timing luck: in concentrated tactical books the choice of rebalance day alone is worth ~150bp/yr of dispersion.[^19]
+2. **Trade to the boundary, not the target.** With proportional costs, the optimal correction stops at the band edge; trading all the way back to target is the single largest inefficiency in naive policies, and the exact band *shape* matters much less than stopping at the edge.[^20] Trading to the edge rather than target roughly halves turnover again (3% to 1.5%/yr in the same allocator calibration).[^17]
+3. **Fixed costs change the destination.** When costs have a fixed per-order component, the optimal correction goes *inside* the band, never a full rebalance and never just the edge - an interior destination amortizes the fixed fee over a larger trade.[^21] For a book paying per-order fees (see [[trend-following-under-a-fixed-per-order-fee]]) this is the relevant regime, and it also motivates partial-adjustment rules: Gârleanu and Pedersen (2013) show the optimal cost-aware policy trades a fixed *fraction* of the distance toward an aim portfolio each period rather than closing the gap.[^22]
+
+One caveat keeps the band-width dial honest: part of the measured benefit of rebalancing *less* often in long-only stock/bond books is just the equity premium harvested by drifting - Vanguard attributes 80-90% of annual-versus-monthly rebalancing benefit to market drift, not cost savings.[^23] For a vol-targeted long-short book that mechanism mostly disappears, so band width should be set on the cost-versus-tracking-error tradeoff alone, not on return claims.
+
+## Should the allocator chase winning sleeves?
+
+Tilting risk shares toward recently winning strategies is the allocation-level version of factor momentum, and the evidence genuinely cuts both ways. Time-series factor momentum is strong on paper - a combined strategy across 65 factors earns a Sharpe near 0.84, and most factors are positively autocorrelated.[^24] But momentum's own crashes are *more* likely precisely after momentum has performed well and capital has chased in.[^25] At the sleeve level this remains a conjecture either way: the honest position is that static risk shares are the default, and any performance-chasing tilt needs pre-registered kill criteria before it touches a book.
+
+## Limitations
+
+- The rebalancing-cost figures (band savings, boundary-vs-target) come from long-only institutional calibrations (sovereign funds, target-date funds); the qualitative results are theory-backed and should transfer to long-short books, but the specific basis-point figures will not.
+- The vol-targeting disagreement is unresolved in the literature itself: Moreira-Muir's alphas are real in-sample; Cederburg et al. and Barroso-Detzel show they are not harvestable naively; DeMiguel et al. show netting may rescue them. Our stance (tails yes, Sharpe no) is a synthesis, not a consensus.
+- The HRP-vs-shrinkage ranking rests on replications outside peer review; a journal-grade adversarial comparison could shift it.
+- Everything above assumes sleeves whose risk is well-described by second moments; sleeves bought for convexity (tail legs) are mis-served by variance budgets, and their sizing belongs to a cost-budget logic instead (see [[the-ucits-constrained-tail-sleeve]]).
+
+## Strategy hypotheses this could seed
+
+- [ ] Diagonal (vol-only) risk budgeting vs full-covariance ERC on a near-orthogonal sleeve roster: measure realized book-vol tracking and net Sharpe; expect the covariance refinement to add little once cross-sleeve correlations are low, making the simpler estimator the default.
+- [ ] Ledoit-Wolf-shrunk vs raw sample sleeve covariance feeding the ERC solver at short lookbacks (6-24 months of daily sleeve returns): expect shrinkage to dominate raw and to narrow the gap to the diagonal path.
+- [x] Rebalance-destination sweep under a fixed per-order fee: trade-to-target vs trade-to-band-edge vs interior/partial-reversion destinations; theory predicts the interior destination wins in the fixed-fee regime, and the band width matters less than the destination. Tested [[runs/atalanta/2026-07-03#Result - KEEP f=1.0; the fee floor makes trade-to-target the optimum (edge is a fill storm)|2026-07-03 destsweep]]: confirmed in its strong form on the fee-floor UCITS book - the interior optimum degenerates to the target itself (f=1.0 conv 0.4474 / Sharpe 1.18 vs f=0.0 conv 0.275 / Sharpe 0.76 with 5x the fills); trade-to-edge is killed for fee-floor books, may re-enter where trades clear the floor.
+- [ ] Book-level vol target on/off by sleeve family: expect Sharpe improvement concentrated in equity-like and carry sleeves, negligible for trend on rates/FX/commodities, but reduced tail and vol-of-vol everywhere; judge on tails, not Sharpe.
+- [ ] Drawdown-delever curve on/off over crash-and-recovery windows: expect thinner left tail at small average-exposure cost, with the V-shaped-recovery whipsaw quantified as the premium paid.
+- [ ] Sleeve performance-chasing tilt (risk shares scaled by trailing 12-month sleeve Sharpe, capped) vs static shares: mixed prior; pre-register the kill threshold before running.
+
+## Sources
+
+[^1]: DeMiguel, Garlappi, Uppal, "Optimal Versus Naive Diversification: How Inefficient is the 1/N Portfolio Strategy?", Review of Financial Studies 22(5), 2009. https://papers.ssrn.com/sol3/papers.cfm?abstract_id=911512
+[^2]: Anderson, Bianchi, Goldberg, "Will My Risk Parity Strategy Outperform?", Financial Analysts Journal 68(6), 2012. https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2101898
+[^3]: Maillard, Roncalli, Teiletche, "The Properties of Equally Weighted Risk Contribution Portfolios", Journal of Portfolio Management 36(4), 2010. http://www.thierry-roncalli.com/download/erc.pdf
+[^4]: Man Group, "Building a Multi-Strategy Portfolio", n.d. (multi-strategy manager, COI on the pitch; used for the top-down-groups-first pattern only). https://www.man.com/insights/building-a-multi-strategy-portfolio
+[^5]: López de Prado, "Building Diversified Portfolios that Outperform Out of Sample", Journal of Portfolio Management 42(4), 2016. https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2708678
+[^6]: "When Does Hierarchical Risk Parity Beat Markowitz? A Controlled Comparison Under Known Covariance", 2025 (practitioner replication with published code; not peer-reviewed). https://hrp.marketmaker.cc/
+[^7]: Marti, "Hierarchical Risk Parity - Implementation & Experiments (Part III)", 2019 (practitioner simulations). https://www.marti.ai/qfin/2019/12/04/hierarchical-risk-parity-part-3.html
+[^8]: Moreira, Muir, "Volatility-Managed Portfolios", Journal of Finance 72(4), 2017. https://onlinelibrary.wiley.com/doi/10.1111/jofi.12513
+[^9]: Harvey, Hoyle, Korgaonkar, Rattray, Sargaison, Van Hemert, "The Impact of Volatility Targeting", Journal of Portfolio Management 45(1), 2018 (Man Group co-authors, CTA COI). https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3175538
+[^10]: Cederburg, O'Doherty, Wang, Yan, "On the performance of volatility-managed portfolios", Journal of Financial Economics 138(1), 2020. https://www.lehigh.edu/~xuy219/research/COWY.pdf
+[^11]: Barroso, Detzel, "Do limits to arbitrage explain the benefits of volatility-managed portfolios?", Journal of Financial Economics 140(3), 2021. https://www.sciencedirect.com/science/article/abs/pii/S0304405X21000775
+[^12]: Liu, Tang, Zhou, "Volatility-Managed Portfolio: Does It Really Work?", Journal of Portfolio Management 46(1), 2019. https://doi.org/10.3905/jpm.2019.1.107
+[^13]: DeMiguel, Martín-Utrera, Uppal, "A Multifactor Perspective on Volatility-Managed Portfolios", Journal of Finance 79(6), 2024. https://doi.org/10.1111/jofi.13395
+[^14]: Nystrup, Boyd, Lindström, Madsen, "Multi-period portfolio selection with drawdown control", Annals of Operations Research, 2019. https://web.stanford.edu/~boyd/papers/pdf/multiperiod_portfolio_drawdown.pdf
+[^15]: Carvalho et al., "Design risk: the curse of CPPIs", 2023 (SSRN working paper). https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4595818
+[^16]: Leland, "Optimal Asset Rebalancing in the Presence of Transactions Costs", UC Berkeley working paper, 1996. https://ideas.repec.org/p/wpa/wuwpfi/9610004.html
+[^17]: Norges Bank Investment Management, "No-Trade Band Rebalancing Rules: Expected Returns and Transaction Costs", NBIM note (allocator's own calibration, bootstrap methodology shown). https://www.nbim.no/contentassets/8cb41f89dce345f5a6a295238f7872fb/no-trade-band-rebalancing-rules-expected-returns-and-transaction-costs.pdf
+[^18]: Vanguard, "The rebalancing edge: optimizing target-date fund rebalancing through threshold-based strategies", 2024 (fund manager, COI on the product; methodology shown). https://corporate.vanguard.com/content/dam/corp/research/pdf/the_rebalancing_edge_optimizing_target_date_fund_rebalancing_through_threshold_based_strategies.pdf
+[^19]: Hoffstein (Newfound Research), "Quantifying Timing Luck", 2018. https://blog.thinknewfound.com/2018/01/quantifying-timing-luck/
+[^20]: Brown, "Rebalancing Revisited: The Role of Derivatives", Financial Analysts Journal 63(5), 2007 (confirms Donohue-Yip 2003: boundary-vs-target drives the ~50% cost gain; band shape is second-order). https://www.tandfonline.com/doi/abs/10.2469/faj.v63.n5.4838
+[^21]: Holden, Holden, "Optimal rebalancing of portfolios with transaction costs", Norwegian Computing Center, 2013 (fixed costs imply an interior rebalance destination; example cuts costs to 1/4). http://publications.nr.no/1503320049/rebalance-HLHolde-2013.pdf
+[^22]: Gârleanu, Pedersen, "Dynamic Trading with Predictable Returns and Transaction Costs", Journal of Finance 68(6), 2013. http://docs.lhpedersen.com/DynamicTrading.pdf
+[^23]: Vanguard, "Rational rebalancing: An analytical approach to multiasset portfolio rebalancing decisions and insights", 2022. https://www.vanguardsouthamerica.com/content/dam/intl/americas/documents/latam/en/2022/10/mx-sa-2558523-rational-rebalancing-an-analytical-approach.pdf
+[^24]: Gupta, Kelly, "Factor Momentum Everywhere", Journal of Portfolio Management 45(3), 2019, as surveyed in Theissen & Yilanci, "Momentum: what do we know 30 years after Jegadeesh and Titman's seminal paper?", Financial Markets and Portfolio Management, 2022. https://link.springer.com/article/10.1007/s11408-022-00417-8
+[^25]: Chabot, Ghysels, Jagannathan, "Momentum Trading, Return Chasing, and Predictable Crashes", NBER w20660, 2014. https://www.nber.org/system/files/working_papers/w20660/w20660.pdf
