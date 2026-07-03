@@ -54,6 +54,17 @@ _CREDIT_LONG = frozenset({
     # duration-stripped: iShares $ Corp Bond Interest-Rate-Hedged (long IG, rates removed
     # inside the wrapper) — the carry_duration.yaml pole leg.
     "LQDH.L",
+    # The same London UCITS names as venue-qualified Nautilus instrument ids — the column
+    # labels the pipeline delivers since the instrument-id rename (matched via str(col)).
+    "IHYU.LSEETF", "LQDE.LSEETF", "IEMB.LSEETF", "SEMB.LSEETF", "LQDH.LSEETF",
+    # SOTA-pole legs (carry_sota.yaml): short-duration HY (defensive tilt; iShares SDHY /
+    # PIMCO STHY) and EM local-currency sovereigns (IEML — the FX-carry skew source). All
+    # held LONG to harvest their carry; the common spread richness sizes the whole book.
+    "SDHY.L", "SDHY.LSEETF", "STHY.L", "STHY.LSEETF", "IEML.L", "IEML.LSEETF",
+    # Subordinated bank capital (carry_sota_at1.yaml): Invesco AT1 EUR-hedged Dist —
+    # crash-rent income the defensive axis cannot dilute ([[the-skew-is-the-product]]).
+    # XBRU is the MIC the gateway mints for IB primary exchange EBS.
+    "XAT1.XBRU", "XAT1.EBS", "XAT1.IBIS2",
 })
 
 # %% define component metadata
@@ -110,9 +121,13 @@ def _fred_series(series_id):
 
 
 def _credit_sign(col):
-    """Per-column credit polarity: +1 hold LONG. Unknown ticker raises (fail-loud)."""
+    """Per-column credit polarity: +1 hold LONG. Unknown ticker raises (fail-loud).
 
-    if col in _CREDIT_LONG:
+    Columns arrive as plain tickers or as Nautilus ``InstrumentId`` objects (whose str
+    form is the venue-qualified id); both are matched on their string form.
+    """
+
+    if str(col) in _CREDIT_LONG:
         return 1.0
     raise ValueError(
         f"demeter_eu.credit_carry: {col!r} is not a known credit vehicle. Add it to "

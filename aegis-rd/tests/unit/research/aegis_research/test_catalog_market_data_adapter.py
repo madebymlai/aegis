@@ -270,3 +270,41 @@ def _frame(
         },
         index=index,
     )
+
+
+def test_catalog_adapter_drop_policy_intersects_mixed_exchange_calendars() -> None:
+    # An LSE leg and a Xetra/SIX leg share most days but hold disjoint holidays; the
+    # declared ``missing_index: drop`` policy must intersect the calendars instead of
+    # union-joining a NaN-holed panel the quality gate then rejects.
+    lse = _id("SDHY.LSEETF")
+    xbru = _id("XAT1.XBRU")
+    lse_index = pd.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-04"])
+    xbru_index = pd.DatetimeIndex(["2024-01-01", "2024-01-03", "2024-01-04"])
+    port = _RecordingCatalogPort(
+        frames={
+            lse: _frame(lse_index, close=[10.0, 11.0, 12.0], volume=[100.0, 110.0, 120.0]),
+            xbru: _frame(xbru_index, close=[20.0, 21.0, 22.0], volume=[200.0, 210.0, 220.0]),
+        }
+    )
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="USD",
+        instruments=["SDHY.LSEETF", "XAT1.XBRU"],
+        start="2024-01-01",
+        end="2024-01-05",
+        missing_index="drop",
+    )
+
+    result = load_market_data_result(
+        config,
+        adapter=lambda current: load_catalog_source(current, port=port),
+    )
+
+    close = market_data_bundle(result).array("Close")
+    assert list(close.index) == list(
+        pd.DatetimeIndex(["2024-01-01", "2024-01-04"], tz=close.index.tz)
+    )
+    assert not close.isna().any().any()
+    assert close[lse].tolist() == [10.0, 12.0]
+    assert close[xbru].tolist() == [20.0, 22.0]
+    assert result.quality.state == "healthy"

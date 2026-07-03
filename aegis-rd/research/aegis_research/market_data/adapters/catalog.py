@@ -170,12 +170,35 @@ def _array_panels(
     frames: dict[InstrumentId, pd.DataFrame],
     instrument_ids: tuple[InstrumentId, ...],
 ) -> dict[str, pd.DataFrame]:
-    return {
+    # ``missing_index: drop`` promises calendar intersection (vbt's own drop semantics),
+    # but the dict-of-Series constructor below union-joins first — on a mixed-calendar
+    # book (LSE + Xetra/SIX legs) that would hand vbt a single pre-holed index with
+    # nothing left to drop. Intersect here so the declared policy holds; any NaN that
+    # survives intersection is a real data defect and still fails the quality gate.
+    index = _panel_index(config, frames, instrument_ids)
+    panels = {
         array: pd.DataFrame(
             {instrument_id: frames[instrument_id][array] for instrument_id in instrument_ids}
         )
         for array in config.effective_arrays
     }
+    if index is None:
+        return panels
+    return {array: panel.loc[index] for array, panel in panels.items()}
+
+
+def _panel_index(
+    config: DataConfig,
+    frames: dict[InstrumentId, pd.DataFrame],
+    instrument_ids: tuple[InstrumentId, ...],
+) -> pd.Index | None:
+    if config.missing_index != "drop" or not instrument_ids:
+        return None
+    index: pd.Index | None = None
+    for instrument_id in instrument_ids:
+        leg = frames[instrument_id].index
+        index = leg if index is None else index.intersection(leg)
+    return index
 
 
 def _required_window_edge(value: str | None, name: str) -> str:

@@ -51,6 +51,12 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         CALMAR_RATIO_EXTRACTOR,
     )
     from research.aegis_research.metrics.custom.capture import capture_metrics
+    from research.aegis_research.metrics.custom.carry import (
+        CARRY_INCOME_UTILITY_DEFINITION,
+        CARRY_INCOME_UTILITY_EXTRACTOR,
+        CARRY_TAIL_BUDGET_DEFINITION,
+        CARRY_TAIL_BUDGET_EXTRACTOR,
+    )
     from research.aegis_research.metrics.custom.cdar import (
         CDAR_RATIO_DEFINITION,
         CDAR_RATIO_EXTRACTOR,
@@ -71,6 +77,10 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         (CALMAR_RATIO_DEFINITION, CALMAR_RATIO_EXTRACTOR),
         # Benchmark-free convexity ranker (no SPY needed): the trend sleeve's hired shape.
         (TREND_CONVEXITY_PAYOFF_DEFINITION, TREND_CONVEXITY_PAYOFF_EXTRACTOR),
+        # The concave mirror: manipulation-proof income ranker + tail-budget gate
+        # for the carry pole (what-makes-a-carry-sleeve-an-income-engine).
+        (CARRY_INCOME_UTILITY_DEFINITION, CARRY_INCOME_UTILITY_EXTRACTOR),
+        (CARRY_TAIL_BUDGET_DEFINITION, CARRY_TAIL_BUDGET_EXTRACTOR),
         # Benchmark-relative metrics vs the universe's macro benchmark (SPY default).
         *capture_metrics(),
         *convexity_metrics(),

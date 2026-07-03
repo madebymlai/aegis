@@ -29,17 +29,15 @@ output_dir: runs/atalanta/trend-shortmute-usetf
 # 7-cap curve is read in batches (see the run diary).
 data:
   base_currency: USD
-  # Option 2 (catalog-pristine): point at a DISPOSABLE scratch catalog holding the
-  # EDV/GLD/DBC INTERSECTION - the common 4249-day calendar, with the 18 ragged union
-  # dates (where the thinner EDV lacks a bar) dropped IN-MEMORY at staging time. The
-  # canonical catalog is never mutated. Re-stage via scratchpad/stage_intersection.py.
-  path: /tmp/claude-1000/-home-laimk-git-aegis/bcd83369-5afe-498d-b7d7-f99b5d45a2b9/scratchpad/gfc_catalog
+  # DISPOSABLE scratch catalog holding the EDV/GLD/DBC INTERSECTION (4259 common bars; vbt
+  # `missing_index: drop` does NOT clean value-NaNs on ragged dates, so the intersection is pre-staged).
+  # Re-stage via scratchpad/stage_intersection.py (reads the canonical catalog, never mutates it).
+  path: /tmp/claude-1000/-home-laimk-git-aegis/55c828a4-673d-4ea6-8dfe-09d943aae2ae/scratchpad/gfc_catalog
   instruments: [EDV.ARCX, GLD.ARCX, DBC.ARCX]
   arrays: [OHLCV]
   start: '2008-01-15'
-  end: '2024-12-26'   # = last intersected bar; exact coverage -> no IBKR fetch
+  end: '2024-12-26'
   timeframe: 1D
-  # pre-intersected at staging -> no ragged dates, so no missing_index/quality knob needed
 
 indicators:
   - id: atalanta.trend_score_regress
@@ -72,7 +70,7 @@ optimization:
   split:
     method: from_rolling
     params:
-      length: 504
+      length: 504        # loop-edit for the split ladder: 504 (15 splits, 12mo test) -> 378 (21, 9mo) -> 252 (32, 6mo)
       offset: 0
       split: 0.5
-    max_splits: 20
+    max_splits: 40

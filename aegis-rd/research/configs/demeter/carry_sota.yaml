@@ -1,0 +1,81 @@
+name: demeter_eu_credit_carry_sota
+schema_version: 10
+output_dir: runs/demeter_eu/credit_carry_sota
+
+# Pinned winner of the live-mechanics re-sweep (role: best) for execution-bundle export:
+# defensive 1.0 / fx_weight 0.15 / carry_gain 2.0 — SDHY+LQDH+15% IEML under the drift
+# band. Held-out vs the fx=0 cell: utility tie (+0.0097 vs +0.0098), tail budget clearly
+# shallower (-9.6 vs -11.2%/yr), maxDD 6.02 vs 7.08, at ~0.3%/yr less income — the tie
+# breaks to the shallower tail per the pole's own gate. NOTE the EM leg is viable ONLY
+# under the band: on the unbanded daily-rebalanced book it was utility-negative at every
+# weight (see graveyard + runs/demeter/2026-07-03). Bands + fixed_fee also make the book
+# live-tradable: ~3 trades/yr vs 254 (order minimums alone would have eaten 3-6%/yr).
+lock: 20260703T183523549479Z_demeter_eu_credit_carry_sota
+
+
+# THE CONSTRUCTION SWEEP from [[the-ucits-constrained-carry-sleeve]] — the research-backed
+# upgrade grid for the concave income pole, on SHAPE axes only:
+#   defensive {0, 0.5, 1.0}  — HY bucket shifted broad (IHYU) -> short-duration (SDHY);
+#                              the long-only duration strip inside HY (2022: 0-5yr -5.65%
+#                              vs >8yr -18.35%).
+#   fx_weight {0, 0.15, 0.30} — EM local-currency leg (IEML): the investable FX-carry
+#                              premium WITH its negative skew (BIS WP474/775, Burger-
+#                              Warnock); calm-market diversifier only, crash-clustering
+#                              expected (Koijen et al.).
+#   carry_gain {0, 1, 2}     — spread-richness lean (the value half of the signal, the
+#                              half that survives the bond-factor replication crisis).
+# vol_target is PINNED at 0.10 (mandate) — the 2026-07-03 ranker A/B showed a swept scale
+# axis feeds mu-noise to the utility ranker; on this shape-only grid carry_income_utility
+# is the legitimate ranker (the payoff SHAPE varies across cells).
+# Nested control: (defensive 0, fx 0) reproduces the incumbent IHYU+LQDH book in-grid.
+# Rejected by the article, deliberately absent: fallen-angel leg (smuggles duration back
+# in), trend/vol gate on the credit legs (flips the pole's skew convex).
+#
+# Pre-registered criteria: research/vault/runs/demeter/2026-07-03.md (construction sweep).
+data:
+  base_currency: EUR
+  instruments: [IHYU.LSEETF, SDHY.LSEETF, LQDH.LSEETF, IEML.LSEETF]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: demeter_eu.credit_carry
+  params:
+    carry_window: 252
+- id: demeter.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: demeter.carry_mix   # defensive x fx_weight x carry_gain swept via param_space; vol_target pinned 0.10
+  params:
+    at1_weight: 0.0       # v1.1.0 axis pinned OFF here — swept separately in carry_sota_at1.yaml
+
+portfolio:
+  gross_cap: 1.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003  # 0.03% IBKR auto-conversion, charged per trade on non-EUR legs
+  fixed_fee: 1.25            # IBKR per-order minimum — the live fee floor the trend book already models
+  band_up: 0.10              # atalanta's asymmetric drift band: without it the book rebalances daily
+  band_down: 0.20            # (254 trades/yr -> ~3; live order minimums alone would eat 3-6%/yr)
+
+ranking:
+  metric: carry_income_utility
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
