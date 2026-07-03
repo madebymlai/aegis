@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 import numpy as np
@@ -15,6 +16,24 @@ from aegis_runtime.exposure_validation import ExposureLimits, validate_exposure
 from aegis_runtime.futures_roots import validate_bare_root
 
 INSTRUMENT_ID_LEVEL = "instrument_id"
+
+
+class MissingIndexPolicy(str, Enum):
+    NAN = "nan"
+    DROP = "drop"
+    RAISE = "raise"
+
+
+class DataContractError(ValueError):
+    """The Execution Bundle data contract is malformed or violated."""
+
+
+class InvalidMissingIndexPolicy(DataContractError):
+    """The contract declares an unknown missing-index policy."""
+
+
+class MarketDataMissingIndexError(DataContractError):
+    """Market data contains missing values forbidden by the contract policy."""
 
 
 @dataclass(frozen=True)
@@ -39,6 +58,7 @@ class DataContract:
     required_arrays: tuple[str, ...]
     base_currency: str
     timeframe: str
+    missing_index: MissingIndexPolicy
     lookback_bars: int = 0
     # Bare continuous-future root symbols (e.g. ``("ES",)``), declared identically to
     # research's ``DataConfig.futures``. Each root must resolve to exactly one synthetic
@@ -48,6 +68,11 @@ class DataContract:
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
+        object.__setattr__(
+            self,
+            "missing_index",
+            _coerce_missing_index_policy(self.missing_index),
+        )
         _validate_bare_roots(self.futures, "DataContract.futures")
         _continuous_instrument_ids(self.instrument_ids, self.futures)
 
@@ -103,6 +128,7 @@ class LockedExecutionPlan:
     gross_cap: float
     net_cap: float | None
     direction: str
+    _exposure_limits: ExposureLimits = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         for instrument_id, band in self.instrument_bands.items():
@@ -263,6 +289,16 @@ def _validate_instrument_ids(instrument_ids: Sequence[InstrumentId], label: str)
         raise ValueError(f"{label} contains duplicates: {sorted(duplicates)}")
 
 
+def _coerce_missing_index_policy(value: object) -> MissingIndexPolicy:
+    try:
+        return MissingIndexPolicy(value)
+    except ValueError:
+        allowed = [policy.value for policy in MissingIndexPolicy]
+        raise InvalidMissingIndexPolicy(
+            f"DataContract.missing_index must be one of {allowed}; got {value!r}"
+        ) from None
+
+
 def _validate_instrument_band_contract(
     *, contract: DataContract, plan: LockedExecutionPlan
 ) -> None:
@@ -375,6 +411,11 @@ def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> N
             )
         if not frame.index.is_unique:
             raise ValueError(f"market data array {name!r} index must be unique")
+        if contract.missing_index is not MissingIndexPolicy.NAN and frame.isna().any().any():
+            raise MarketDataMissingIndexError(
+                f"market data array {name!r} contains NaN under "
+                f"missing_index={contract.missing_index.value!r}"
+            )
     first_index = prices.array(contract.required_arrays[0]).index
     for name in contract.required_arrays[1:]:
         if not prices.array(name).index.equals(first_index):
@@ -397,5 +438,3 @@ def _assert_latest_row_not_nan(weights: pd.DataFrame) -> None:
             "latest weight row contains NaN; warmup may be insufficient "
             f"(lookback_bars={weights.shape[0]})"
         )
-
-

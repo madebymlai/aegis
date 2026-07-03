@@ -9,8 +9,12 @@ from aegis_runtime.bundle import (
     ComponentSpec,
     DataContract,
     LockedExecutionPlan,
+    MissingIndexPolicy,
 )
 from aegis_runtime.bundle_loader import (
+    BUNDLE_PAYLOAD_SCHEMA_VERSION,
+    BundlePayloadFieldError,
+    BundlePayloadSchemaError,
     dump_bundle_payload,
     load_bundle_payload,
     load_installed_bundle,
@@ -24,6 +28,7 @@ def _contract() -> DataContract:
         required_arrays=("Close", "Open"),
         base_currency="EUR",
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=20,
     )
 
@@ -84,7 +89,9 @@ def test_bundle_payload_round_trips_native_instrument_ids() -> None:
     )
     bundle = load_bundle_payload(json.loads(json.dumps(payload)))
 
+    assert payload["schema_version"] == BUNDLE_PAYLOAD_SCHEMA_VERSION
     assert payload["contract"]["instrument_ids"] == ["AAPL.NASDAQ", "ESZ6.XCME"]
+    assert payload["contract"]["missing_index"] == "drop"
     assert payload["plan"]["instrument_bands"] == {
         "AAPL.NASDAQ": {"up": 0.10, "down": 0.20, "destination_fraction": 1.0},
         "ESZ6.XCME": {"up": 0.10, "down": 0.20, "destination_fraction": 1.0},
@@ -140,6 +147,7 @@ def test_bundle_payload_round_trips_continuous_future_roots() -> None:
         required_arrays=("Close",),
         base_currency="USD",
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=20,
         futures=("ES",),
     )
@@ -151,6 +159,28 @@ def test_bundle_payload_round_trips_continuous_future_roots() -> None:
 
     assert payload["contract"]["futures"] == ["ES"]
     assert bundle.contract.futures == ("ES",)
+
+
+def test_bundle_payload_rejects_pre_v2_payload_without_schema_version() -> None:
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    del payload["schema_version"]
+
+    with pytest.raises(BundlePayloadSchemaError, match="schema_version"):
+        load_bundle_payload(payload)
+
+
+def test_bundle_payload_rejects_contract_without_missing_index_policy() -> None:
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    del payload["contract"]["missing_index"]
+
+    with pytest.raises(BundlePayloadFieldError, match="missing_index"):
+        load_bundle_payload(payload)
 
 
 def test_bundle_payload_without_futures_loads_as_no_roots() -> None:

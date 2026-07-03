@@ -10,6 +10,7 @@ from aegis_runtime import (
     DriftBand,
     InstrumentId,
     LockedExecutionPlan,
+    MissingIndexPolicy,
 )
 
 from research.aegis_research.execution_bundle import BundleArtifact
@@ -47,6 +48,7 @@ def _artifact(
             required_arrays=("Close",),
             base_currency="EUR",
             timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
             lookback_bars=5,
         ),
         manifest=BundleManifest(
@@ -86,7 +88,9 @@ def test_write_wheel_materializes_data_manifest_and_constant_loader(tmp_path) ->
     assert "load_installed_bundle(__package__)" in loader
     assert "CONTRACT =" not in loader
     assert "PLAN =" not in loader
+    assert manifest["schema_version"] == "execution_bundle.v2"
     assert manifest["contract"]["instrument_ids"] == ["AAPL.NASDAQ"]
+    assert manifest["contract"]["missing_index"] == "drop"
     assert manifest["plan"]["instrument_bands"] == {
         "AAPL.NASDAQ": {"up": 0.10, "down": 0.20, "destination_fraction": 1.0}
     }

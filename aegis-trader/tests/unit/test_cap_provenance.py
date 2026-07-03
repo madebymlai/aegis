@@ -19,6 +19,7 @@ from aegis_runtime import (
     DriftBand,
     ExecutionBundle,
     LockedExecutionPlan,
+    MissingIndexPolicy,
 )
 
 from aegis_trader.bundles.provenance import (
@@ -37,6 +38,7 @@ def _bundle(*, gross_cap: float, net_cap: float | None = None) -> ExecutionBundl
         required_arrays=("Close",),
         base_currency="EUR",
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=1,
     )
     manifest = BundleManifest(

@@ -10,6 +10,7 @@ from aegis_runtime import (
     ExecutionBundle,
     InstrumentId,
     LockedExecutionPlan,
+    MissingIndexPolicy,
 )
 
 from aegis_trader.bundles.bands import InstrumentBandError, build_instrument_bands
@@ -26,6 +27,7 @@ def _bundle(instrument_id: InstrumentId, band: DriftBand) -> ExecutionBundle:
         required_arrays=("Close",),
         base_currency="EUR",
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=1,
     )
     manifest = BundleManifest(

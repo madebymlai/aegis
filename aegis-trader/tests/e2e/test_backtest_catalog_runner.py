@@ -28,6 +28,7 @@ from aegis_runtime import (
     ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
+    MissingIndexPolicy,
 )
 
 from aegis_trader.backtest import (
@@ -84,6 +85,7 @@ class _FixedWeightBundle(ExecutionBundle):
             required_arrays=("Close",),
             base_currency="EUR",
             timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
         )
         manifest = BundleManifest(
@@ -130,6 +132,7 @@ class _TwoVenueBundle(ExecutionBundle):
             required_arrays=("Close",),
             base_currency="EUR",
             timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
         )
         manifest = BundleManifest(
@@ -180,6 +183,7 @@ class _ContinuousRootBundle(ExecutionBundle):
             required_arrays=("Close",),
             base_currency="EUR",
             timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
             futures=("ES",),
         )

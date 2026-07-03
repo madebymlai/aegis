@@ -7,7 +7,9 @@ from aegis_runtime.bundle import (
     ComponentSpec,
     DataContract,
     LockedExecutionPlan,
+    MarketDataMissingIndexError,
     MarketDataBundle,
+    MissingIndexPolicy,
     _assert_latest_row_not_nan,
     _validate_market_data,
 )
@@ -26,12 +28,14 @@ def _id(value: str) -> InstrumentId:
 def _contract(
     instrument_ids: tuple[InstrumentId, ...] = (_id("A.XNAS"), _id("B.XNAS")),
     required_arrays=("Close",),
+    missing_index=MissingIndexPolicy.DROP,
 ):
     return DataContract(
         instrument_ids=instrument_ids,
         required_arrays=required_arrays,
         base_currency="EUR",
         timeframe="1D",
+        missing_index=missing_index,
     )
 
 
@@ -110,6 +114,59 @@ def test_validate_market_data_rejects_mismatched_indices_across_arrays() -> None
     })
     with pytest.raises(ValueError, match="must share one index"):
         _validate_market_data(prices, _contract(required_arrays=("Close", "Open")))
+
+
+def test_validate_market_data_rejects_nan_values_under_drop_policy() -> None:
+    instrument_ids = (_id("A.XNAS"), _id("B.XNAS"))
+    prices = MarketDataBundle(
+        {
+            "Close": pd.DataFrame(
+                {instrument_ids[0]: [1.0], instrument_ids[1]: [np.nan]},
+                index=_index(1),
+            )
+        }
+    )
+
+    with pytest.raises(MarketDataMissingIndexError, match="missing_index='drop'"):
+        _validate_market_data(prices, _contract(instrument_ids=instrument_ids))
+
+
+def test_validate_market_data_rejects_nan_values_under_raise_policy() -> None:
+    instrument_ids = (_id("A.XNAS"), _id("B.XNAS"))
+    prices = MarketDataBundle(
+        {
+            "Close": pd.DataFrame(
+                {instrument_ids[0]: [1.0], instrument_ids[1]: [np.nan]},
+                index=_index(1),
+            )
+        }
+    )
+
+    with pytest.raises(MarketDataMissingIndexError, match="missing_index='raise'"):
+        _validate_market_data(
+            prices,
+            _contract(
+                instrument_ids=instrument_ids,
+                missing_index=MissingIndexPolicy.RAISE,
+            ),
+        )
+
+
+def test_validate_market_data_allows_nan_values_under_nan_policy() -> None:
+    instrument_ids = (_id("A.XNAS"), _id("B.XNAS"))
+    prices = MarketDataBundle(
+        {
+            "Close": pd.DataFrame(
+                {instrument_ids[0]: [1.0], instrument_ids[1]: [np.nan]},
+                index=_index(1),
+            )
+        }
+    )
+
+    _validate_market_data(
+        prices,
+        _contract(instrument_ids=instrument_ids, missing_index=MissingIndexPolicy.NAN),
+    )
 
 
 # --- _assert_latest_row_not_nan ----------------------------------------------

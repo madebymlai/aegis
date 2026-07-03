@@ -16,6 +16,20 @@ from aegis_runtime.bundle import (
 )
 from aegis_runtime.drift_band import DriftBand
 
+BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v2"
+
+
+class BundlePayloadError(ValueError):
+    """A serialized Execution Bundle payload is malformed."""
+
+
+class BundlePayloadSchemaError(BundlePayloadError):
+    """The serialized bundle payload has an unsupported schema."""
+
+
+class BundlePayloadFieldError(BundlePayloadError):
+    """The serialized bundle payload is missing a required field."""
+
 
 def dump_bundle_payload(
     *,
@@ -24,11 +38,13 @@ def dump_bundle_payload(
     plan: LockedExecutionPlan,
 ) -> dict[str, Any]:
     return {
+        "schema_version": BUNDLE_PAYLOAD_SCHEMA_VERSION,
         "contract": {
             "instrument_ids": [_dump_instrument_id(item) for item in contract.instrument_ids],
             "required_arrays": list(contract.required_arrays),
             "base_currency": contract.base_currency,
             "timeframe": contract.timeframe,
+            "missing_index": contract.missing_index.value,
             "lookback_bars": contract.lookback_bars,
             "futures": list(contract.futures),
         },
@@ -51,6 +67,12 @@ def dump_bundle_payload(
 
 
 def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
+    schema_version = _required_schema_version(payload)
+    if schema_version != BUNDLE_PAYLOAD_SCHEMA_VERSION:
+        raise BundlePayloadSchemaError(
+            "bundle payload schema_version must be "
+            f"{BUNDLE_PAYLOAD_SCHEMA_VERSION!r}; got {schema_version!r}"
+        )
     contract_payload = _required_mapping(payload, "contract", "bundle payload")
     manifest_payload = _required_mapping(payload, "manifest", "bundle payload")
     plan_payload = _required_mapping(payload, "plan", "bundle payload")
@@ -64,6 +86,7 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
         ),
         base_currency=_required_value(contract_payload, "base_currency", "DataContract"),
         timeframe=_required_value(contract_payload, "timeframe", "DataContract"),
+        missing_index=_required_value(contract_payload, "missing_index", "DataContract"),
         lookback_bars=_required_value(contract_payload, "lookback_bars", "DataContract"),
         # Optional: pre-r8b.9 wheels carry no continuous-future roots (forward-safe default).
         futures=tuple(contract_payload.get("futures", ())),
@@ -184,7 +207,18 @@ def _required_value(payload: Mapping[str, Any], field: str, owner: str) -> Any:
     try:
         return payload[field]
     except KeyError:
-        raise ValueError(f"{owner} is missing required field {field!r}") from None
+        raise BundlePayloadFieldError(
+            f"{owner} is missing required field {field!r}"
+        ) from None
+
+
+def _required_schema_version(payload: Mapping[str, Any]) -> Any:
+    try:
+        return payload["schema_version"]
+    except KeyError:
+        raise BundlePayloadSchemaError(
+            "bundle payload is missing required field 'schema_version'"
+        ) from None
 
 
 def _ensure_mapping(value: Any, label: str) -> Mapping[str, Any]:

@@ -9,6 +9,7 @@ from aegis_runtime.bundle import (
     ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
+    MissingIndexPolicy,
 )
 from aegis_runtime.drift_band import DriftBand
 
@@ -68,6 +69,7 @@ def _eur_contract(
         required_arrays=("Close",),
         base_currency="EUR",
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=lookback_bars,
     )
 

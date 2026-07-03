@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from aegis_runtime import ComponentSpec
+from aegis_runtime import ComponentSpec, MissingIndexPolicy
 from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import TypeAdapter
 
@@ -48,6 +48,7 @@ def test_bundle_contract_carries_the_continuous_future_roots() -> None:
             "start": "2024-01-01",
             "end": "2024-01-03",
             "timeframe": "1D",
+            "missing_index": "drop",
         }
     )
 
@@ -62,6 +63,7 @@ def test_bundle_contract_carries_the_continuous_future_roots() -> None:
     )
 
     assert contract.futures == ("ES", "KC")
+    assert contract.missing_index is MissingIndexPolicy.DROP
 
 
 def test_bundle_contract_has_no_roots_when_none_declared() -> None:

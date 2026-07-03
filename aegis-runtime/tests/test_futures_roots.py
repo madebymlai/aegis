@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from aegis_runtime import DataContract, validate_bare_root
+from aegis_runtime import DataContract, MissingIndexPolicy, validate_bare_root
 from nautilus_trader.model.identifiers import InstrumentId
 
 _AAPL = InstrumentId.from_str("AAPL.NASDAQ")
@@ -29,6 +29,7 @@ def _contract(
         required_arrays=("Close",),
         base_currency="EUR",
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=1,
         futures=futures,
     )
@@ -59,7 +60,11 @@ def test_malformed_or_whitespaced_root_is_rejected(garbage: str) -> None:
 
 def test_data_contract_defaults_to_no_futures() -> None:
     contract = DataContract(
-        instrument_ids=(_AAPL,), required_arrays=("Close",), base_currency="EUR", timeframe="1D"
+        instrument_ids=(_AAPL,),
+        required_arrays=("Close",),
+        base_currency="EUR",
+        timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
     )
     assert contract.futures == ()
 

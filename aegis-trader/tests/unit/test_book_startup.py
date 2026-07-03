@@ -15,6 +15,7 @@ from aegis_runtime import (
     ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
+    MissingIndexPolicy,
 )
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
@@ -54,6 +55,7 @@ class _FixedWeightBundle(ExecutionBundle):
             required_arrays=("Close",),
             base_currency="EUR",
             timeframe=timeframe,
+            missing_index=MissingIndexPolicy.DROP,
             lookback_bars=lookback_bars,
         )
         manifest = BundleManifest(

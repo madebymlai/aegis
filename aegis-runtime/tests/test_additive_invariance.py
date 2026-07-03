@@ -32,6 +32,7 @@ from aegis_runtime.bundle import (
     ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
+    MissingIndexPolicy,
 )
 from aegis_runtime.drift_band import DriftBand
 
@@ -60,6 +61,7 @@ def _contract(*, futures: tuple[str, ...]) -> DataContract:
         required_arrays=("Close",),
         base_currency="USD",
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=0,
         futures=futures,
     )
@@ -141,6 +143,7 @@ def test_root_colliding_with_a_same_symbol_native_is_rejected() -> None:
             required_arrays=("Close",),
             base_currency="USD",
             timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
             lookback_bars=0,
             futures=("ES",),
         )

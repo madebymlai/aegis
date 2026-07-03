@@ -7,6 +7,7 @@ from aegis_runtime import (
     DriftBand,
     ExecutionBundle,
     LockedExecutionPlan,
+    MissingIndexPolicy,
 )
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -89,6 +90,7 @@ class _PenceBundle(ExecutionBundle):
             required_arrays=("Close",),
             base_currency="EUR",
             timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
         )
         manifest = BundleManifest(

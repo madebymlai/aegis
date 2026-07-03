@@ -17,6 +17,7 @@ from aegis_runtime import (
     ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
+    MissingIndexPolicy,
 )
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
@@ -28,11 +29,14 @@ from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
     GateOutcome,
+    MissingIndexAlignmentError,
     RebalancePipeline,
 )
 
 _INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")
 _ES = InstrumentId.from_str("ES.XCME")  # synthetic continuous-root id (root "ES")
+_LSE_LEG = InstrumentId.from_str("AAA.XLON")
+_BRU_LEG = InstrumentId.from_str("BBB.XBRU")
 _SLEEVE = SleeveName("trend")
 _DAY_NS = 86_400_000_000_000
 
@@ -46,6 +50,7 @@ class _FixedWeightBundle(ExecutionBundle):
             required_arrays=("Close",),
             base_currency="EUR",
             timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
         )
         manifest = BundleManifest(
@@ -92,6 +97,7 @@ class _ContinuousWeightBundle(ExecutionBundle):
             required_arrays=("Close",),
             base_currency="EUR",
             timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
             futures=("ES",),
         )
@@ -124,6 +130,56 @@ class _ContinuousWeightBundle(ExecutionBundle):
         target = pd.DataFrame({_ES: [self._weight, self._weight]}, index=close.index)
         target.columns.name = "instrument_id"
         return target
+
+
+class _CalendarParityBundle(ExecutionBundle):
+    def __init__(
+        self, *, missing_index: MissingIndexPolicy = MissingIndexPolicy.DROP
+    ) -> None:
+        self.close_panel: pd.DataFrame | None = None
+        self.weights: pd.DataFrame | None = None
+        contract = DataContract(
+            instrument_ids=(_LSE_LEG, _BRU_LEG),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=missing_index,
+            lookback_bars=2,
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(_LSE_LEG, _BRU_LEG),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="calendar-parity",
+                module="tests.calendar_parity",
+                input_names=("Close",),
+                output_names=("target_weights",),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={
+                _LSE_LEG: DriftBand.symmetric(0.0),
+                _BRU_LEG: DriftBand.symmetric(0.0),
+            },
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+        close = prices.array("Close")
+        self.close_panel = close.copy()
+        weights = close.div(close.sum(axis=1), axis=0)
+        weights.columns.name = "instrument_id"
+        self.weights = weights
+        return weights
 
 
 class _BandAccessFailsBundle(_FixedWeightBundle):
@@ -234,6 +290,23 @@ def _bars_by_instrument_id() -> dict[InstrumentId, tuple[MarketBar, ...]]:
     }
 
 
+def _mixed_calendar_bars() -> dict[InstrumentId, tuple[MarketBar, ...]]:
+    return {
+        _LSE_LEG: (
+            MarketBar(0, 10.0, 10.0, 10.0, 10.0, 1_000.0),
+            MarketBar(_DAY_NS, 11.0, 11.0, 11.0, 11.0, 1_000.0),
+            MarketBar(3 * _DAY_NS, 30.0, 30.0, 30.0, 30.0, 1_000.0),
+            MarketBar(4 * _DAY_NS, 40.0, 40.0, 40.0, 40.0, 1_000.0),
+        ),
+        _BRU_LEG: (
+            MarketBar(0, 12.0, 12.0, 12.0, 12.0, 1_000.0),
+            MarketBar(_DAY_NS, 13.0, 13.0, 13.0, 13.0, 1_000.0),
+            MarketBar(2 * _DAY_NS, 22.0, 22.0, 22.0, 22.0, 1_000.0),
+            MarketBar(4 * _DAY_NS, 60.0, 60.0, 60.0, 60.0, 1_000.0),
+        ),
+    }
+
+
 def _period() -> CompletedRebalancePeriod:
     return CompletedRebalancePeriod(period=1, period_ns=_DAY_NS)
 
@@ -319,6 +392,81 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
     assert startup_result.trading_enabled is True
     assert result.orders[0].instrument_id == _ES
     assert result.orders[0].side == OrderSide.BUY
+
+
+def test_rebalance_pipeline_intersects_drop_policy_mixed_calendar_panel() -> None:
+    bundle = _CalendarParityBundle()
+    pipeline = _started_pipeline(
+        market_data=_MarketData(
+            bars_by_instrument_id=_mixed_calendar_bars(),
+            fresh_instrument_ids=frozenset({_LSE_LEG, _BRU_LEG}),
+        ),
+        bundle=bundle,
+    )
+
+    result = pipeline.rebalance_period(_period())
+
+    expected_index = pd.DatetimeIndex([0, _DAY_NS, 4 * _DAY_NS])
+    expected_close = pd.DataFrame(
+        {
+            _LSE_LEG: [10.0, 11.0, 40.0],
+            _BRU_LEG: [12.0, 13.0, 60.0],
+        },
+        index=expected_index,
+    )
+    expected_weights = pd.DataFrame(
+        {
+            _LSE_LEG: [0.45454545454545453, 0.4583333333333333, 0.4],
+            _BRU_LEG: [0.5454545454545454, 0.5416666666666666, 0.6],
+        },
+        index=expected_index,
+    )
+    expected_weights.columns.name = "instrument_id"
+
+    assert result.halt_reason is None
+    assert result.summary.num_sleeves == 1
+    assert result.summary.num_targets == 2
+    assert bundle.close_panel is not None
+    assert bundle.weights is not None
+    pd.testing.assert_frame_equal(bundle.close_panel, expected_close)
+    assert not bundle.close_panel.isna().any().any()
+    pd.testing.assert_frame_equal(bundle.weights, expected_weights)
+
+
+def test_rebalance_pipeline_holds_when_drop_policy_has_too_few_common_bars() -> None:
+    bundle = _CalendarParityBundle()
+    bars = _mixed_calendar_bars()
+    bars[_BRU_LEG] = (
+        MarketBar(2 * _DAY_NS, 22.0, 22.0, 22.0, 22.0, 1_000.0),
+        MarketBar(3 * _DAY_NS, 30.0, 30.0, 30.0, 30.0, 1_000.0),
+        MarketBar(4 * _DAY_NS, 60.0, 60.0, 60.0, 60.0, 1_000.0),
+    )
+    pipeline = _started_pipeline(
+        market_data=_MarketData(
+            bars_by_instrument_id=bars,
+            fresh_instrument_ids=frozenset({_LSE_LEG, _BRU_LEG}),
+        ),
+        bundle=bundle,
+    )
+
+    result = pipeline.rebalance_period(_period())
+
+    assert result.orders == ()
+    assert result.summary.num_sleeves == 0
+    assert result.halt_reason is None
+
+
+def test_rebalance_pipeline_raises_when_raise_policy_panel_is_misaligned() -> None:
+    pipeline = _started_pipeline(
+        market_data=_MarketData(
+            bars_by_instrument_id=_mixed_calendar_bars(),
+            fresh_instrument_ids=frozenset({_LSE_LEG, _BRU_LEG}),
+        ),
+        bundle=_CalendarParityBundle(missing_index=MissingIndexPolicy.RAISE),
+    )
+
+    with pytest.raises(MissingIndexAlignmentError, match="missing_index='raise'"):
+        pipeline.rebalance_period(_period())
 
 
 def test_rebalance_pipeline_does_not_expose_mutable_ledger() -> None:

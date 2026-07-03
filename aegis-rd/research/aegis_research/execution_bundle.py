@@ -12,6 +12,7 @@ from aegis_runtime import (
     DataContract,
     InstrumentId,
     LockedExecutionPlan,
+    MissingIndexPolicy,
 )
 
 from research.aegis_research.component_registry import (
@@ -225,6 +226,7 @@ def _bundle_contract(
         required_arrays=tuple(_required_arrays(components)),
         base_currency=config.data.base_currency,
         timeframe=config.data.timeframe,
+        missing_index=MissingIndexPolicy(config.data.missing_index),
         lookback_bars=components.lookback_bars,
         futures=tuple(config.data.futures),
     )

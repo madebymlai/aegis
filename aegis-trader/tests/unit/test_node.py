@@ -28,7 +28,7 @@ from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.catalog import catalog_root
-from aegis_runtime import DataContract
+from aegis_runtime import DataContract, MissingIndexPolicy
 
 from aegis_trader.bundles.book_sleeves import (
     load_book_sleeves,
@@ -67,6 +67,7 @@ def _contract(*ids: str) -> DataContract:
         required_arrays=("Close",),
         base_currency="EUR",
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=1,
     )
 
@@ -198,6 +199,7 @@ def test_union_native_instrument_ids_excludes_continuous_future_roots():
         required_arrays=("Close",),
         base_currency="EUR",
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=1,
         futures=("ES",),
     )

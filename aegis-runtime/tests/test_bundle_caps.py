@@ -15,6 +15,7 @@ from aegis_runtime import (
     DriftBand,
     ExecutionBundle,
     LockedExecutionPlan,
+    MissingIndexPolicy,
 )
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -24,7 +25,7 @@ _INSTRUMENT_ID = InstrumentId.from_str("AAPL.NASDAQ")
 def _bundle(*, gross_cap: float, net_cap: float | None) -> ExecutionBundle:
     contract = DataContract(
         instrument_ids=(_INSTRUMENT_ID,), required_arrays=("Close",), base_currency="EUR",
-        timeframe="1D", lookback_bars=1,
+        timeframe="1D", missing_index=MissingIndexPolicy.DROP, lookback_bars=1,
     )
     manifest = BundleManifest(
         run_id="r", role="x", candidate_key="k",

@@ -16,7 +16,13 @@ from typing import TYPE_CHECKING
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime import DataContract, DriftBand, ExecutionBundle, MarketDataBundle
+from aegis_runtime import (
+    DataContract,
+    DriftBand,
+    ExecutionBundle,
+    MarketDataBundle,
+    MissingIndexPolicy,
+)
 
 from aegis_trader.bundles.bands import InstrumentBandError, build_instrument_bands
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
@@ -69,6 +75,13 @@ class RebalanceResult:
     orders: tuple[OrderIntent, ...]
     summary: RebalanceSummary
     halt_reason: str | None = None
+
+
+DROP_POLICY_LOOKBACK_SLACK = 256
+
+
+class MissingIndexAlignmentError(ValueError):
+    """A sleeve's bar panel violates the bundle contract's missing-index policy."""
 
 
 class RebalancePipeline:
@@ -321,17 +334,27 @@ class RebalancePipeline:
         period: CompletedRebalancePeriod,
     ) -> dict[InstrumentId, Sequence[MarketBar]] | None:
         needed = contract.lookback_bars + 1
+        target_ids = self._contract_target_ids(contract)
+        limit = _lookback_limit(contract, target_count=len(target_ids), needed=needed)
         sleeve_bars: dict[InstrumentId, Sequence[MarketBar]] = {}
-        for instrument_id in self._contract_target_ids(contract):
+        for instrument_id in target_ids:
             bars = self._lookback_window(
                 instrument_id,
                 contract.timeframe,
                 period,
-                limit=needed,
+                limit=limit,
             )
             if len(bars) < needed:
                 return None
             sleeve_bars[instrument_id] = bars
+        if contract.missing_index is MissingIndexPolicy.DROP:
+            return _last_common_bars(sleeve_bars, needed)
+        if contract.missing_index is MissingIndexPolicy.RAISE and not _bars_share_timestamps(
+            sleeve_bars
+        ):
+            raise MissingIndexAlignmentError(
+                "missing_index='raise' bundle contract received misaligned bar timestamps"
+            )
         return sleeve_bars
 
     def _fresh_instrument_ids(self, period: CompletedRebalancePeriod) -> frozenset[InstrumentId]:
@@ -437,6 +460,52 @@ def _combine_array_series(
     if len(frames) == 1:
         return next(iter(frames.values()))
     return pd.concat(frames.values(), axis=1)
+
+
+def _lookback_limit(
+    contract: DataContract, *, target_count: int, needed: int
+) -> int:
+    if contract.missing_index is not MissingIndexPolicy.DROP or target_count <= 1:
+        return needed
+    return needed + DROP_POLICY_LOOKBACK_SLACK
+
+
+def _last_common_bars(
+    bars_by_instrument_id: Mapping[InstrumentId, Sequence[MarketBar]], needed: int
+) -> dict[InstrumentId, Sequence[MarketBar]] | None:
+    if len(bars_by_instrument_id) <= 1:
+        return {
+            instrument_id: tuple(bars[-needed:])
+            for instrument_id, bars in bars_by_instrument_id.items()
+        }
+    timestamp_sets = [
+        {bar.ts_event for bar in bars} for bars in bars_by_instrument_id.values()
+    ]
+    common_timestamps = sorted(set.intersection(*timestamp_sets))
+    if len(common_timestamps) < needed:
+        return None
+    selected_timestamps = tuple(common_timestamps[-needed:])
+    selected: dict[InstrumentId, Sequence[MarketBar]] = {}
+    for instrument_id, bars in bars_by_instrument_id.items():
+        by_timestamp = {bar.ts_event: bar for bar in bars}
+        selected[instrument_id] = tuple(
+            by_timestamp[timestamp] for timestamp in selected_timestamps
+        )
+    return selected
+
+
+def _bars_share_timestamps(
+    bars_by_instrument_id: Mapping[InstrumentId, Sequence[MarketBar]],
+) -> bool:
+    expected: tuple[int, ...] | None = None
+    for bars in bars_by_instrument_id.values():
+        timestamps = tuple(bar.ts_event for bar in bars)
+        if expected is None:
+            expected = timestamps
+            continue
+        if timestamps != expected:
+            return False
+    return True
 
 
 def _orders_for_fresh_instruments(

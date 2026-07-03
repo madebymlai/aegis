@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -123,8 +124,9 @@ def validate_exposure(
         gross, limits.gross_cap, name="gross", expr="Σ|wᵢ|",
         breach=GrossExposureBreach, describe=describe,
     )
+    net_cap = cast(float, limits.net_cap)
     _assert_within_cap(
-        net, limits.net_cap, name="net", expr="|Σwᵢ|",
+        net, net_cap, name="net", expr="|Σwᵢ|",
         breach=NetExposureBreach, describe=describe,
     )
 
