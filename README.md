@@ -11,34 +11,10 @@ relate.
 
 ## Architecture at a glance
 
-```
-   ┌──────────────┐        bars         ┌───────────────────┐
-   │  aegis-data  │ ──────────────────► │     aegis-rd      │  RESEARCH
-   │ market-data  │                     │  optimize, score, │
-   │  corpus      │ ◄────────────────── │  validate,        │
-   │ (Nautilus/   │   InstrumentId req  │  promote a Lock   │
-   │  Parquet)    │                     └─────────┬─────────┘
-   └──────┬───────┘                               │ aerd export
-          │ bars                                  ▼
-          │                             ┌───────────────────┐
-          │                             │  Execution Bundle │  a versioned wheel:
-          │                             │  (baked wheel)    │  strategy + indicators
-          │                             └─────────┬─────────┘  + locked params
-          │                                       │ install
-          │                                       ▼
-          │  bars                       ┌───────────────────┐
-          └───────────────────────────►│   aegis-trader    │  EXECUTION
-                                        │  commingled book, │  backtest (Nautilus)
-                                        │  sleeves, roll,   │  or live (IBKR;
-                                        │  live TradingNode │  paper vs live = port)
-                                        └───────────────────┘
-
-              both sides run one Locked Candidate through the shared
-              ┌───────────────────────────────────────────────┐
-              │   aegis-runtime: component loading, single-    │
-              │   candidate orchestration, Exposure Validation │
-              └───────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/assets/architecture.png" width="830"
+       alt="Aegis architecture: aegis-data feeds market-data bars to both aegis-rd and aegis-trader. aegis-rd (research) promotes a scored Candidate as a Lock, which aerd export bakes into an Execution Bundle wheel. aegis-trader installs the bundle and executes the commingled book either in backtest or live against Interactive Brokers. aegis-runtime is the shared execution kernel both stages run on.">
+</p>
 
 ## Contexts
 
