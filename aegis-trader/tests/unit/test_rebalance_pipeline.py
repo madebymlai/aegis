@@ -29,7 +29,6 @@ from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
     GateOutcome,
-    MissingIndexAlignmentError,
     RebalancePipeline,
 )
 
@@ -180,6 +179,53 @@ class _CalendarParityBundle(ExecutionBundle):
         weights.columns.name = "instrument_id"
         self.weights = weights
         return weights
+
+
+class _PoisonBundle(ExecutionBundle):
+    """A sleeve whose compute blows up — the blast-radius probe for per-sleeve isolation."""
+
+    def __init__(self) -> None:
+        contract = DataContract(
+            instrument_ids=(_LSE_LEG,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(_LSE_LEG,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="poison",
+                module="tests.poison",
+                input_names=("Close",),
+                output_names=("target_weights",),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={_LSE_LEG: DriftBand.symmetric(0.0)},
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+        raise RuntimeError("component exploded")
+
+
+class _PoisonFixedInstrumentBundle(_FixedWeightBundle):
+    """A poison sleeve owning the fixed instrument's band (for the all-fail case)."""
+
+    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+        raise RuntimeError("component exploded")
 
 
 class _BandAccessFailsBundle(_FixedWeightBundle):
@@ -456,7 +502,9 @@ def test_rebalance_pipeline_holds_when_drop_policy_has_too_few_common_bars() -> 
     assert result.halt_reason is None
 
 
-def test_rebalance_pipeline_raises_when_raise_policy_panel_is_misaligned() -> None:
+def test_rebalance_pipeline_surfaces_raise_policy_misalignment_as_sleeve_failure() -> None:
+    # The raise policy still refuses to compute on a misaligned panel, but the
+    # refusal is bounded to the sleeve (aegis-rd-hd54): surfaced, never propagated.
     pipeline = _started_pipeline(
         market_data=_MarketData(
             bars_by_instrument_id=_mixed_calendar_bars(),
@@ -465,8 +513,12 @@ def test_rebalance_pipeline_raises_when_raise_policy_panel_is_misaligned() -> No
         bundle=_CalendarParityBundle(missing_index=MissingIndexPolicy.RAISE),
     )
 
-    with pytest.raises(MissingIndexAlignmentError, match="missing_index='raise'"):
-        pipeline.rebalance_period(_period())
+    result = pipeline.rebalance_period(_period())
+
+    assert result.orders == ()
+    assert [failure.sleeve for failure in result.sleeve_failures] == [_SLEEVE]
+    assert "MissingIndexAlignmentError" in result.sleeve_failures[0].reason
+    assert "missing_index='raise'" in result.sleeve_failures[0].reason
 
 
 def test_rebalance_pipeline_does_not_expose_mutable_ledger() -> None:
@@ -632,3 +684,74 @@ def test_startup_check_halts_when_account_integrity_fails() -> None:
         "NAV/cash mismatch: NAV=100000.00, cash=90000.00, "
         "gap=10000.00 exceeds tolerance 0.00 (fraction=0.0)"
     )
+
+
+def _two_sleeve_pipeline(
+    healthy_bundle: ExecutionBundle, poison_bundle: ExecutionBundle
+) -> RebalancePipeline:
+    bars = _bars_by_instrument_id()
+    bars[_LSE_LEG] = (
+        MarketBar(0, 10.0, 10.0, 10.0, 10.0, 1_000.0),
+        MarketBar(_DAY_NS, 11.0, 11.0, 11.0, 11.0, 1_000.0),
+    )
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=_SLEEVE, wheel_filename="trend.whl", risk_share=0.5),
+            SleeveConfig(
+                name=SleeveName("poison"), wheel_filename="poison.whl", risk_share=0.5
+            ),
+        ),
+        base_currency="EUR",
+    )
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(
+            bars_by_instrument_id=bars,
+            fresh_instrument_ids=frozenset({_INSTRUMENT_ID, _LSE_LEG}),
+        ),
+        book=book,
+        sleeve_to_bundle={_SLEEVE: healthy_bundle, SleeveName("poison"): poison_bundle},
+        ledger=SleeveLedger(),
+    )
+    startup_result = pipeline.startup_check()
+    assert startup_result.trading_enabled is True
+    return pipeline
+
+
+def test_rebalance_pipeline_isolates_a_sleeve_whose_compute_raises() -> None:
+    # aegis-rd-hd54: one sleeve's compute failure must not abort the book —
+    # the healthy sleeve still rebalances and the failure is surfaced, not raised.
+    pipeline = _two_sleeve_pipeline(_FixedWeightBundle(0.5), _PoisonBundle())
+
+    result = pipeline.rebalance_period(_period())
+
+    assert result.summary.gate_outcome == GateOutcome.PASS
+    assert [failure.sleeve for failure in result.sleeve_failures] == [SleeveName("poison")]
+    assert "component exploded" in result.sleeve_failures[0].reason
+    assert result.summary.num_sleeves == 1
+    assert [order.instrument_id for order in result.orders] == [_INSTRUMENT_ID]
+    assert result.orders[0].side == OrderSide.BUY
+    assert result.orders[0].quantity > 0.0
+
+
+def test_rebalance_pipeline_failing_sleeve_holds_without_orders() -> None:
+    # The failing sleeve's disposition is HOLD: no orders for its instruments,
+    # no fabricated weights.
+    pipeline = _two_sleeve_pipeline(_FixedWeightBundle(0.5), _PoisonBundle())
+
+    result = pipeline.rebalance_period(_period())
+
+    assert _LSE_LEG not in {order.instrument_id for order in result.orders}
+
+
+def test_rebalance_pipeline_surfaces_failures_when_every_sleeve_fails() -> None:
+    # All sleeves failing must still return a result (no orders), never raise.
+    pipeline = _two_sleeve_pipeline(_PoisonFixedInstrumentBundle(0.5), _PoisonBundle())
+
+    result = pipeline.rebalance_period(_period())
+
+    assert result.orders == ()
+    assert {failure.sleeve for failure in result.sleeve_failures} == {
+        SleeveName("poison"),
+        SleeveName("trend"),
+    }

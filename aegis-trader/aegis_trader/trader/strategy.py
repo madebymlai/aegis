@@ -415,6 +415,11 @@ class RebalanceStrategy(Strategy):
             )
         )
         self._last_sleeve_weights = pipeline.last_sleeve_weights
+        for failure in result.sleeve_failures:
+            self.log.error(
+                f"Sleeve compute FAILED: sleeve={failure.sleeve} "
+                f"reason={failure.reason}. Sleeve holds this period."
+            )
         if result.summary.num_sleeves == 0:
             return
 

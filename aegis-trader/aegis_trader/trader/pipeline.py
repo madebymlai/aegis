@@ -69,12 +69,21 @@ class CompletedRebalancePeriod:
 
 
 @dataclass(frozen=True)
+class SleeveComputeFailure:
+    """One sleeve's failed weight computation, surfaced instead of raised."""
+
+    sleeve: SleeveName
+    reason: str
+
+
+@dataclass(frozen=True)
 class RebalanceResult:
     """Plain output of one rebalance period."""
 
     orders: tuple[OrderIntent, ...]
     summary: RebalanceSummary
     halt_reason: str | None = None
+    sleeve_failures: tuple[SleeveComputeFailure, ...] = ()
 
 
 DROP_POLICY_LOOKBACK_SLACK = 256
@@ -204,12 +213,13 @@ class RebalancePipeline:
 
     def rebalance_period(self, period: CompletedRebalancePeriod) -> RebalanceResult:
         """Run one completed-period rebalance and return orders plus summary."""
-        pending = self._compute_sleeve_targets(period)
+        pending, sleeve_failures = self._compute_sleeve_targets(period)
         nav = self._book_state.nav()
         if not pending:
             return RebalanceResult(
                 orders=(),
                 summary=_summary(nav, 0, 0, 0, GateOutcome.PASS, 0.0),
+                sleeve_failures=sleeve_failures,
             )
 
         realized_weights = self._book_state.realized_weights()
@@ -242,26 +252,48 @@ class RebalancePipeline:
                 GateOutcome.PASS,
                 total_notional,
             ),
+            sleeve_failures=sleeve_failures,
         )
 
     def _compute_sleeve_targets(
         self, period: CompletedRebalancePeriod
-    ) -> dict[SleeveName, pd.DataFrame]:
+    ) -> tuple[dict[SleeveName, pd.DataFrame], tuple[SleeveComputeFailure, ...]]:
+        """Each sleeve's targets, computed in isolation: a sleeve whose compute raises
+        is excluded (it holds this period) and surfaced as a failure — one bad sleeve
+        must never abort the other sleeves' rebalance (aegis-rd-hd54)."""
         pending: dict[SleeveName, pd.DataFrame] = {}
+        failures: list[SleeveComputeFailure] = []
         for sleeve in self._book.sleeves:
             bundle = self._sleeve_to_bundle.get(sleeve.name)
             if bundle is None:
                 continue
-            contract = bundle.contract
-            sleeve_bars = self._bars_for_contract(contract, period)
-            if sleeve_bars is None:
+            try:
+                targets = self._sleeve_targets(bundle, period)
+            except Exception as exc:  # noqa: BLE001 — fail closed per sleeve, not per book
+                failures.append(
+                    SleeveComputeFailure(
+                        sleeve=sleeve.name,
+                        reason=f"{type(exc).__name__}: {exc}",
+                    )
+                )
                 continue
-            arrays = {
-                name: _combine_array_series(sleeve_bars, name)
-                for name in contract.required_arrays
-            }
-            pending[sleeve.name] = bundle.compute_weights(MarketDataBundle(arrays))
-        return pending
+            if targets is None:
+                continue
+            pending[sleeve.name] = targets
+        return pending, tuple(failures)
+
+    def _sleeve_targets(
+        self, bundle: ExecutionBundle, period: CompletedRebalancePeriod
+    ) -> pd.DataFrame | None:
+        contract = bundle.contract
+        sleeve_bars = self._bars_for_contract(contract, period)
+        if sleeve_bars is None:
+            return None
+        arrays = {
+            name: _combine_array_series(sleeve_bars, name)
+            for name in contract.required_arrays
+        }
+        return bundle.compute_weights(MarketDataBundle(arrays))
 
     def _build_rebalance_plan(
         self,
