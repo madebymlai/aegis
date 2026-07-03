@@ -140,13 +140,20 @@ def _load_instrument_bands(payload: Mapping[str, Any]) -> dict[InstrumentId, Dri
 
 
 def _dump_drift_band(band: DriftBand) -> dict[str, float]:
-    return {"up": band.up, "down": band.down}
+    return {
+        "up": band.up,
+        "down": band.down,
+        "destination_fraction": band.destination_fraction,
+    }
 
 
 def _load_drift_band(payload: Mapping[str, Any]) -> DriftBand:
     return DriftBand(
         up=_required_value(payload, "up", "DriftBand"),
         down=_required_value(payload, "down", "DriftBand"),
+        # Optional: older bundles carry no destination; 1.0 is their exact
+        # trade-to-target behaviour (forward-safe default).
+        destination_fraction=payload.get("destination_fraction", 1.0),
     )
 
 

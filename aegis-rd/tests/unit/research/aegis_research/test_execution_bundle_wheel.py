@@ -88,7 +88,7 @@ def test_write_wheel_materializes_data_manifest_and_constant_loader(tmp_path) ->
     assert "PLAN =" not in loader
     assert manifest["contract"]["instrument_ids"] == ["AAPL.NASDAQ"]
     assert manifest["plan"]["instrument_bands"] == {
-        "AAPL.NASDAQ": {"up": 0.10, "down": 0.20}
+        "AAPL.NASDAQ": {"up": 0.10, "down": 0.20, "destination_fraction": 1.0}
     }
 
     sys.path.insert(0, str(wheel_path))

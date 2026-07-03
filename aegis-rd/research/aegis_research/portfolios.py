@@ -156,7 +156,9 @@ def _realized_weight_nb(c, price, val_price, order_i, col, group_value):
 
 
 @njit
-def _band_pre_order_segment_nb(c, target_alloc, price, val_price, from_ago, up_arr, down_arr):
+def _band_pre_order_segment_nb(
+    c, target_alloc, price, val_price, from_ago, up_arr, down_arr, dest_arr
+):
     """Apply the shared DriftBand no-trade gate to each pending order in the segment.
 
     Runs once per order-bearing segment, after ``order_mode`` has resolved the
@@ -169,8 +171,9 @@ def _band_pre_order_segment_nb(c, target_alloc, price, val_price, from_ago, up_a
     allocations - by this stage ``order_mode`` has overwritten its own ``size`` array
     with resolved order amounts) against the live-drifted ``realized`` weight, valued
     at the order price exactly as the retired adjust path did. ``gate`` returns either
-    ``realized`` (hold) or the original ``target`` (trade): a hold suppresses the
-    pending order; a trade rewrites it to the target weight with the same
+    ``realized`` (hold) or the breach destination — the ``destination_fraction``
+    interpolation between band edge and target (1.0 = the target itself): a hold
+    suppresses the pending order; a trade rewrites it to the resolved weight with the same
     ``current/sizing`` correction the adjust used, because the engine's pending order
     was sized off ``last_value`` which lags a bar at this stage.
     """
@@ -197,7 +200,8 @@ def _band_pre_order_segment_nb(c, target_alloc, price, val_price, from_ago, up_a
         realized_w = _realized_weight_nb(c, price, val_price, order_i, col, group_value)
         up = float(flex_select_nb(up_arr, order_i, col))
         down = float(flex_select_nb(down_arr, order_i, col))
-        resolved_w = _gate_nb(realized_w, target_w, up, down)
+        dest = float(flex_select_nb(dest_arr, order_i, col))
+        resolved_w = _gate_nb(realized_w, target_w, up, down, dest)
         if resolved_w == realized_w:
             c.order_info[col]["size"] = np.nan
         elif sizing_group_value != 0.0:
@@ -293,7 +297,7 @@ def _build_portfolio(
         unique_only=False,
     )
     exec_kwargs = _execution_settings(config.fill_timing, open_frame)
-    band_up, band_down = _band_arrays(masked, config, instrument_bands)
+    band_up, band_down, band_destination = _band_arrays(masked, config, instrument_bands)
     # The gate reads targets from our own copy of the allocations: ``order_mode``
     # overwrites its internal ``size`` array with resolved order amounts before the
     # pre-order-segment callback runs.
@@ -319,6 +323,7 @@ def _build_portfolio(
             vbt.Rep("from_ago"),
             band_up,
             band_down,
+            band_destination,
         ),
         staticized={"path": _vbt_staticized_cache_dir()},
         direction=config.direction,
@@ -343,8 +348,8 @@ def _band_arrays(
     allocations: pd.DataFrame,
     config: PortfolioConfig,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Per-column ``(up, down)`` band widths over a sleeve-default base.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-column ``(up, down, destination_fraction)`` bands over a sleeve-default base.
 
     *instrument_bands* is the run's resolved instrument → :class:`DriftBand` map (the
     same one the bundle carries), so the sim gates each column with exactly the band the
@@ -353,8 +358,9 @@ def _band_arrays(
     shape = (1, len(allocations.columns))
     up = np.full(shape, config.band_up, dtype=float)
     down = np.full(shape, config.band_down, dtype=float)
+    destination = np.full(shape, config.band_destination_fraction, dtype=float)
     if not instrument_bands:
-        return up, down
+        return up, down, destination
     symbols = allocations.columns.get_level_values(SYMBOL_LEVEL)
     for col, symbol in enumerate(symbols):
         band = instrument_bands.get(as_instrument_id(symbol))
@@ -362,7 +368,8 @@ def _band_arrays(
             continue
         up[0, col] = band.up
         down[0, col] = band.down
-    return up, down
+        destination[0, col] = band.destination_fraction
+    return up, down, destination
 
 
 def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:

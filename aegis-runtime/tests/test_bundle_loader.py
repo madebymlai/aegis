@@ -86,14 +86,50 @@ def test_bundle_payload_round_trips_native_instrument_ids() -> None:
 
     assert payload["contract"]["instrument_ids"] == ["AAPL.NASDAQ", "ESZ6.XCME"]
     assert payload["plan"]["instrument_bands"] == {
-        "AAPL.NASDAQ": {"up": 0.10, "down": 0.20},
-        "ESZ6.XCME": {"up": 0.10, "down": 0.20},
+        "AAPL.NASDAQ": {"up": 0.10, "down": 0.20, "destination_fraction": 1.0},
+        "ESZ6.XCME": {"up": 0.10, "down": 0.20, "destination_fraction": 1.0},
     }
     assert bundle.contract == contract
     assert bundle.manifest == _manifest(contract)
     assert bundle.instrument_bands == plan.instrument_bands
     assert bundle.gross_cap == plan.gross_cap
     assert bundle.net_cap == plan.net_cap
+
+
+def test_bundle_payload_round_trips_band_destination_fraction() -> None:
+    contract = _contract()
+    plan = _plan(contract.instrument_ids)
+    banded = LockedExecutionPlan(
+        strategy=plan.strategy,
+        indicators=plan.indicators,
+        instrument_bands={
+            instrument_id: DriftBand(up=0.10, down=0.20, destination_fraction=0.5)
+            for instrument_id in contract.instrument_ids
+        },
+        gross_cap=plan.gross_cap,
+        net_cap=plan.net_cap,
+        direction=plan.direction,
+    )
+
+    payload = dump_bundle_payload(contract=contract, manifest=_manifest(contract), plan=banded)
+    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
+
+    assert bundle.instrument_bands == banded.instrument_bands
+
+
+def test_bundle_payload_without_destination_fraction_loads_trade_to_target() -> None:
+    """Pre-destination bundles carry only widths; 1.0 is their exact behaviour."""
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    for band_payload in payload["plan"]["instrument_bands"].values():
+        del band_payload["destination_fraction"]
+
+    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
+
+    for band in bundle.instrument_bands.values():
+        assert band.destination_fraction == 1.0
 
 
 def test_bundle_payload_round_trips_continuous_future_roots() -> None:

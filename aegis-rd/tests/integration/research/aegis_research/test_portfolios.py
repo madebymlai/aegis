@@ -143,6 +143,32 @@ def test_symmetric_directional_band_trades_drift_outside_shared_gate() -> None:
     assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.01, 0.01))
 
 
+def test_band_breach_trades_to_interior_destination_fraction() -> None:
+    """destination_fraction=0.5 stops the breach trade halfway between band edge
+    and target (0.505 here) — distinct from both hold (~0.524) and target (0.5),
+    so this pins the destination array reaching the compiled gate."""
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({"A": [100.0, 110.0, 110.0, 110.0]}, index=index)
+    allocations = pd.DataFrame({"A": [0.5, 0.5, np.nan, np.nan]}, index=index)
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        fixed_fee=0,
+        direction="longonly",
+        band_up=0.01,
+        band_down=0.01,
+        band_destination_fraction=0.5,
+    )
+
+    pf = simulate_single_book(close, allocations, config)
+
+    realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
+    expected = gate(realized_before_gate, 0.5, 0.01, 0.01, 0.5)
+    assert expected == pytest.approx(0.505)
+    realized = pf.get_allocations(group_by=None).loc[index[1], (_SINGLE_CANDIDATE_ID, "A")]
+    assert realized == pytest.approx(expected)
+
+
 def test_symmetric_directional_band_holds_at_inclusive_boundary() -> None:
     index = pd.date_range("2024-01-01", periods=4)
     boundary_price = 2600.0 / 24.0

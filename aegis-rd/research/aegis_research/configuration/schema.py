@@ -234,6 +234,8 @@ class SignalConfig:
 class InstrumentBandConfig:
     up: NonNegativeRate
     down: NonNegativeRate
+    # Unset inherits the sleeve-wide ``band_destination_fraction``.
+    destination_fraction: UnitInterval | None = None
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -272,6 +274,12 @@ class PortfolioConfig:
     # every executable bar (the historical behaviour).
     band_up: NonNegativeRate = 0.0
     band_down: NonNegativeRate = 0.0
+    # Where a band breach trades to: 0.0 stops at the band edge (the
+    # proportional-cost optimum), 1.0 trades all the way to target (the
+    # per-order-fee optimum, the historical behaviour). Interior values
+    # amortize a fixed fee over a larger trade while keeping headroom
+    # inside the band. Overridable per tradeable via ``band_overrides``.
+    band_destination_fraction: UnitInterval = 1.0
     # Per-tradeable override for the sleeve-wide no-trade band. Keys are the
     # configured tradeable names: native InstrumentId strings from data.instruments
     # or bare roots from data.futures. Validation against the run's tradeable
@@ -300,8 +308,20 @@ class PortfolioConfig:
         """
         override = self.band_overrides.get(key)
         if override is None:
-            return DriftBand(up=self.band_up, down=self.band_down)
-        return DriftBand(up=override.up, down=override.down)
+            return DriftBand(
+                up=self.band_up,
+                down=self.band_down,
+                destination_fraction=self.band_destination_fraction,
+            )
+        return DriftBand(
+            up=override.up,
+            down=override.down,
+            destination_fraction=(
+                self.band_destination_fraction
+                if override.destination_fraction is None
+                else override.destination_fraction
+            ),
+        )
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

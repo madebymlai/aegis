@@ -37,6 +37,39 @@ def test_resolved_band_for_prefers_exact_key_over_sleeve_default() -> None:
     assert cfg.resolved_band_for("AAPL.NASDAQ") == DriftBand(up=0.01, down=0.03)
 
 
+def test_resolved_band_for_carries_the_sleeve_destination_fraction() -> None:
+    cfg = PortfolioConfig(
+        gross_cap=1.0,
+        direction="both",
+        band_up=0.10,
+        band_down=0.20,
+        band_destination_fraction=0.5,
+    )
+    assert cfg.resolved_band_for("AAPL.NASDAQ") == DriftBand(
+        up=0.10, down=0.20, destination_fraction=0.5
+    )
+
+
+def test_override_without_destination_fraction_inherits_the_sleeve_default() -> None:
+    cfg = PortfolioConfig(
+        gross_cap=1.0,
+        direction="both",
+        band_up=0.10,
+        band_down=0.20,
+        band_destination_fraction=0.5,
+        band_overrides={
+            "AAPL.NASDAQ": InstrumentBandConfig(up=0.01, down=0.03),
+            "ES": InstrumentBandConfig(up=0.05, down=0.08, destination_fraction=1.0),
+        },
+    )
+    assert cfg.resolved_band_for("AAPL.NASDAQ") == DriftBand(
+        up=0.01, down=0.03, destination_fraction=0.5
+    )
+    assert cfg.resolved_band_for("ES") == DriftBand(
+        up=0.05, down=0.08, destination_fraction=1.0
+    )
+
+
 def test_resolved_band_for_matches_the_override_key_exactly() -> None:
     cfg = PortfolioConfig(
         gross_cap=1.0,
