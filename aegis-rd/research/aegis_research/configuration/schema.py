@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, get_args
 
 import pandas as pd
-from aegis_runtime import DriftBand
+from aegis_runtime import DriftBand, ExposureLimits
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -322,6 +322,11 @@ class PortfolioConfig:
                 else override.destination_fraction
             ),
         )
+
+    @property
+    def exposure_limits(self) -> ExposureLimits:
+        """This Run's validated Exposure Limits, built from the gross/net/direction triple."""
+        return ExposureLimits(self.gross_cap, self.net_cap, self.direction)
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

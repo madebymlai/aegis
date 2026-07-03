@@ -1074,3 +1074,25 @@ def test_next_open_fill_timing_without_open_prices_raises() -> None:
             make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="next_open"),
             # open_ omitted -> next_open cannot resolve a fill price
         )
+
+
+def test_batch_exposure_gate_names_the_breaching_candidate() -> None:
+    # Wiring of the kernel Exposure Validation gate: the candidate labels are derived
+    # from the SYMBOL_LEVEL complement and the offender is phrased as a Candidate.
+    # Gate math itself is pinned kernel-side (aegis-runtime test_exposure_validation).
+    index = pd.date_range("2024-01-01", periods=2)
+    close = pd.DataFrame({"A": [10.0, 10.0], "B": [20.0, 20.0]}, index=index)
+    columns = pd.MultiIndex.from_tuples(
+        [(candidate, symbol) for candidate in ("candidate-a", "candidate-b") for symbol in ("A", "B")],
+        names=["candidate_id", "symbol"],
+    )
+    # candidate-a stays at gross 1.0; candidate-b breaches (Σ|wᵢ| = 1.5).
+    allocations = pd.DataFrame([[0.5, 0.5, 1.0, 0.5]] * 2, index=index, columns=columns)
+
+    with pytest.raises(ValueError, match="candidate 'candidate-b' gross exposure"):
+        simulate_portfolio_batch(
+            close,
+            allocations,
+            make_portfolio_config(direction="longonly"),
+            periods_per_year=252,
+        )

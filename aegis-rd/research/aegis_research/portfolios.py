@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from aegis_data.distributions import Distribution
-from aegis_runtime import DriftBand, gate
+from aegis_runtime import DriftBand, gate, validate_exposure
 from nautilus_trader.model.identifiers import InstrumentId
 from numba import njit
 from vectorbtpro import vbt
@@ -18,9 +18,6 @@ from vectorbtpro.portfolio.enums import Direction, OrderStatusInfo, SizeType
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.exposure_validation import (
-    validate_exposure,
-)
 from research.aegis_research.market_data.currency import CurrencyConversion
 from research.aegis_research.market_data.identity import as_instrument_id
 
@@ -575,11 +572,14 @@ def simulate_portfolio_batch(
         feature_name="Close",
     )
     _validate_allocations_frame(expanded_close, allocations)
+    # Candidate-wide Exposure Validation: one kernel gate, each Candidate's columns
+    # reduced independently via the opaque label array (the kernel never learns what
+    # a Candidate is; the offender phrasing is supplied here).
     validate_exposure(
         allocations,
-        gross_cap=config.gross_cap,
-        net_cap=config.net_cap,
-        direction=config.direction,
+        config.exposure_limits,
+        group_by=allocations.columns.droplevel(SYMBOL_LEVEL),
+        describe_group=lambda candidate: f"candidate {candidate!r}",
     )
     expanded_open = (
         None

@@ -27,6 +27,15 @@ loaded iff it is a key.
 _Avoid_: feature bundle, price dict, MarketDataResult
 
 **Exposure Validation**:
-The runtime gate that checks computed target weights against the locked plan's
-gross, net, and direction caps before weights leave the bundle.
+The single fail-closed gate that rejects a signed target-weight frame breaching
+its **Exposure Limits**. Both sides of the Execution Bundle seam gate here:
+research before simulation (each **Candidate**'s columns gated independently),
+the bundle before computed weights leave it.
 _Avoid_: broker risk check, portfolio simulation, sizing
+
+**Exposure Limits**:
+The validated caps a signed target-weight book must satisfy: the gross cap
+(`Σ|wᵢ|`), the net cap (`|Σwᵢ|`, defaulting to the gross cap when unset), and
+the admissible direction sign. A constructed value is proof the triple is
+legal.
+_Avoid_: allocation policy, risk limits, mandate, caps triple

@@ -8,7 +8,6 @@ from aegis_runtime.bundle import (
     MarketDataBundle,
     _assert_latest_row_not_nan,
     _validate_market_data,
-    validate_exposure,
 )
 
 
@@ -37,40 +36,6 @@ def _close(instrument_ids: tuple[InstrumentId, ...] = (_id("A.XNAS"), _id("B.XNA
     return MarketDataBundle(
         {"Close": pd.DataFrame({item: [1.0] * n for item in instrument_ids}, index=idx)}
     )
-
-
-# --- validate_exposure -------------------------------------------------------
-
-def test_validate_exposure_accepts_compliant_longonly_book() -> None:
-    weights = pd.DataFrame({"A": [0.5], "B": [0.5]})
-    validate_exposure(weights, gross_cap=1.0, net_cap=1.0, direction="longonly")
-
-
-def test_validate_exposure_rejects_negative_weight_in_longonly() -> None:
-    weights = pd.DataFrame({"A": [0.6], "B": [-0.1]})
-    with pytest.raises(ValueError, match="violating direction 'longonly'"):
-        validate_exposure(weights, gross_cap=1.0, direction="longonly")
-
-
-def test_validate_exposure_rejects_gross_over_cap() -> None:
-    weights = pd.DataFrame({"A": [0.8], "B": [0.8]})  # gross 1.6
-    with pytest.raises(ValueError, match="gross exposure"):
-        validate_exposure(weights, gross_cap=1.0, direction="longonly")
-
-
-def test_validate_exposure_rejects_net_over_cap() -> None:
-    weights = pd.DataFrame({"A": [0.6], "B": [0.6]})  # gross 1.2, net 1.2
-    with pytest.raises(ValueError, match="net exposure"):
-        validate_exposure(weights, gross_cap=2.0, net_cap=1.0, direction="both")
-
-
-def test_validate_exposure_rejects_nonpositive_gross_cap() -> None:
-    with pytest.raises(ValueError, match="gross_cap must be > 0"):
-        validate_exposure(pd.DataFrame({"A": [0.5]}), gross_cap=0.0)
-
-
-def test_validate_exposure_empty_book_is_noop() -> None:
-    validate_exposure(pd.DataFrame(), gross_cap=1.0)  # no raise
 
 
 # --- _validate_market_data ---------------------------------------------------

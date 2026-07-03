@@ -15,6 +15,7 @@ from aegis_runtime.bundle_loader import (
     load_installed_bundle,
 )
 from aegis_runtime.drift_band import DriftBand, gate
+from aegis_runtime.exposure_validation import ExposureLimits, validate_exposure
 from aegis_runtime.futures_roots import validate_bare_root
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "DriftBand",
     "dump_bundle_payload",
     "ExecutionBundle",
+    "ExposureLimits",
     "gate",
     "InstrumentId",
     "LockedExecutionPlan",
@@ -33,4 +35,5 @@ __all__ = [
     "load_installed_bundle",
     "MarketDataBundle",
     "validate_bare_root",
+    "validate_exposure",
 ]

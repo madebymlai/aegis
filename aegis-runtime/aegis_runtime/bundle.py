@@ -11,11 +11,10 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.additive_invariance import assert_additive_invariance
 from aegis_runtime.drift_band import DriftBand
+from aegis_runtime.exposure_validation import ExposureLimits, validate_exposure
 from aegis_runtime.futures_roots import validate_bare_root
 
 INSTRUMENT_ID_LEVEL = "instrument_id"
-_EXPOSURE_TOLERANCE = 1e-9
-_DIRECTIONS = frozenset({"longonly", "shortonly", "both"})
 
 
 @dataclass(frozen=True)
@@ -115,6 +114,11 @@ class LockedExecutionPlan:
                 raise ValueError(
                     "LockedExecutionPlan.instrument_bands values must be DriftBand values"
                 )
+
+    @property
+    def exposure_limits(self) -> ExposureLimits:
+        """This plan's validated Exposure Limits, built from the locked triple."""
+        return ExposureLimits(self.gross_cap, self.net_cap, self.direction)
 
 
 @dataclass(frozen=True)
@@ -235,12 +239,7 @@ class ExecutionBundle:
         weights = pd.DataFrame(arr[:, :n_symbols], index=close.index, columns=close.columns)
         weights.columns.name = INSTRUMENT_ID_LEVEL
         _assert_latest_row_not_nan(weights)
-        validate_exposure(
-            weights,
-            gross_cap=self._plan.gross_cap,
-            net_cap=self._plan.net_cap,
-            direction=self._plan.direction,
-        )
+        validate_exposure(weights, self._plan.exposure_limits)
         return weights
 
 
@@ -393,45 +392,3 @@ def _assert_latest_row_not_nan(weights: pd.DataFrame) -> None:
         )
 
 
-def validate_exposure(
-    allocations: pd.DataFrame,
-    *,
-    gross_cap: float,
-    net_cap: float | None = None,
-    direction: str = "both",
-) -> None:
-    if gross_cap <= 0:
-        raise ValueError(f"gross_cap must be > 0; got {gross_cap!r}")
-    if direction not in _DIRECTIONS:
-        raise ValueError(f"direction must be one of {sorted(_DIRECTIONS)}; got {direction!r}")
-    if net_cap is None:
-        net_cap = gross_cap
-    if allocations.empty or len(allocations.columns) == 0:
-        return
-    decided = allocations.to_numpy(dtype=float, copy=False)
-    _assert_sign_consistent(decided, direction)
-    gross = allocations.abs().sum(axis=1)
-    if (gross > gross_cap + _EXPOSURE_TOLERANCE).any():
-        raise ValueError(
-            f"gross exposure Σ|wᵢ| {float(gross.max())} exceeds gross_cap {gross_cap}"
-        )
-    net = allocations.sum(axis=1).abs()
-    if (net > net_cap + _EXPOSURE_TOLERANCE).any():
-        raise ValueError(f"net exposure |Σwᵢ| {float(net.max())} exceeds net_cap {net_cap}")
-
-
-def _assert_sign_consistent(decided: np.ndarray, direction: str) -> None:
-    if direction == "longonly":
-        offenders = decided < -_EXPOSURE_TOLERANCE
-        guard = "≥ 0"
-    elif direction == "shortonly":
-        offenders = decided > _EXPOSURE_TOLERANCE
-        guard = "≤ 0"
-    else:
-        return
-    if offenders.any():
-        offending = float(decided[offenders][0])
-        raise ValueError(
-            f"target_weights has weight {offending} violating direction {direction!r} "
-            f"(requires wᵢ {guard})"
-        )
