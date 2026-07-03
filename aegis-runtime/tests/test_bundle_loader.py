@@ -183,18 +183,15 @@ def test_bundle_payload_rejects_contract_without_missing_index_policy() -> None:
         load_bundle_payload(payload)
 
 
-def test_bundle_payload_without_futures_loads_as_no_roots() -> None:
-    """A pre-r8b.9 wheel carries no ``futures`` key; it loads as no continuous roots
-    (forward-safe default), so old bundles keep loading."""
+def test_bundle_payload_rejects_contract_without_futures() -> None:
     contract = _contract()
     payload = dump_bundle_payload(
         contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
     )
-    payload["contract"].pop("futures", None)
+    del payload["contract"]["futures"]
 
-    bundle = load_bundle_payload(payload)
-
-    assert bundle.contract.futures == ()
+    with pytest.raises(BundlePayloadFieldError, match="futures"):
+        load_bundle_payload(payload)
 
 
 def test_bundle_payload_rejects_future_root_without_matching_continuous_id() -> None:

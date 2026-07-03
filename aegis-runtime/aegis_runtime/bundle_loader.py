@@ -88,8 +88,7 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
         timeframe=_required_value(contract_payload, "timeframe", "DataContract"),
         missing_index=_required_value(contract_payload, "missing_index", "DataContract"),
         lookback_bars=_required_value(contract_payload, "lookback_bars", "DataContract"),
-        # Optional: pre-r8b.9 wheels carry no continuous-future roots (forward-safe default).
-        futures=tuple(contract_payload.get("futures", ())),
+        futures=tuple(_required_sequence(contract_payload, "futures", "DataContract")),
     )
     manifest = BundleManifest(
         run_id=_required_value(manifest_payload, "run_id", "BundleManifest"),
