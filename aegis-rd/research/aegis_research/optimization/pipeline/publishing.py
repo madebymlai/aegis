@@ -19,10 +19,13 @@ from research.aegis_research.data import (
     MarketDataResult,
 )
 from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
-from research.aegis_research.optimization.candidate_publishing import (
+from research.aegis_research.optimization.candidate_store import (
+    PUBLICATION_PENDING,
+    CandidateStore,
+)
+from research.aegis_research.optimization.candidate_store_identity import (
     build_candidate_store_provenance,
     candidate_store_namespace,
-    publish_candidates,
 )
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
@@ -77,12 +80,13 @@ def run_pipeline_publishing(
             config=config,
             metric_registry_fingerprint=metric_registry_fingerprint,
         )
-        publish_candidates(
-            store_path,
-            run_id=recorder.manifest.run_id,
-            candidate_rows=candidate_rows,
-            provenance=candidate_store_provenance,
-        )
+        with CandidateStore(store_path) as candidate_store:
+            candidate_store.insert_completed_run(
+                run_id=recorder.manifest.run_id,
+                candidate_rows=candidate_rows,
+                provenance=candidate_store_provenance,
+                publication_state=PUBLICATION_PENDING,
+            )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.PUBLISHING, error)
         raise

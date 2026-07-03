@@ -225,17 +225,37 @@ def test_load_book_sleeves_resolves_each_sleeve_via_the_registry():
 
 
 def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves():
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(
+                name=SleeveName("trend"), wheel_filename="trend.whl", risk_share=0.5
+            ),
+            SleeveConfig(
+                name=SleeveName("fx_overlay"),
+                wheel_filename="fx_overlay.whl",
+                risk_share=0.5,
+            ),
+        ),
+        base_currency="EUR",
+    )
     sleeves = (
         (SleeveName("trend"), SimpleNamespace(contract=_contract("VUSA.XLON"))),
+        (
+            SleeveName("fx_overlay"),
+            SimpleNamespace(contract=_contract("EUR/USD.IDEALPRO", "VUSA.XLON")),
+        ),
     )
 
-    strategy = build_live_strategy(_book(), sleeves)
+    strategy = build_live_strategy(book, sleeves)
+    registered_ids = strategy._registered_instrument_ids()
 
     assert strategy.config.fill_time_in_force == TimeInForce.AT_THE_CLOSE
     assert strategy.config.warmup_cache_on_start is True
-    assert strategy._registered_instrument_ids() == (
+    assert registered_ids == (
+        InstrumentId.from_str("EUR/USD.IDEALPRO"),
         InstrumentId.from_str("VUSA.XLON"),
     )
+    assert registered_ids == union_native_instrument_ids(sleeves)
 
 
 # --------------------------------------------------------------------------- #

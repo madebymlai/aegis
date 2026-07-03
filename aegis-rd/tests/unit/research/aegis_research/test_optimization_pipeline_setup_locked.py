@@ -15,7 +15,7 @@ import pytest
 
 from research.aegis_research.configuration import resolve_run_config
 from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
-from research.aegis_research.optimization.candidate_publishing import candidate_store_path
+from research.aegis_research.optimization.candidate_store_identity import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM

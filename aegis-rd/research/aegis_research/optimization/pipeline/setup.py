@@ -24,10 +24,10 @@ from research.aegis_research.data import (
     MarketDataBundle,
     MarketDataResult,
 )
-from research.aegis_research.optimization.candidate_publishing import (
+from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.candidate_store_identity import (
     candidate_store_path,
 )
-from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.component_source import (
     build_component_optimization_source,
 )

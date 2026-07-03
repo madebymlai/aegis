@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from research.aegis_research import cli
+from research.aegis_research.cli_commands import run as run_command
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
@@ -210,6 +211,86 @@ def test_run_rejects_removed_train_flag(
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "invocation"
     assert "--train" in payload["error"]["message"]
+
+
+def test_run_success_payload_is_the_emitted_json_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_strategy_component(tmp_path / "research/components/strategies/strategy.py")
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": CONFIG_SCHEMA_VERSION,
+                "name": "stubbed_run",
+                "output_dir": "runs",
+                "data": native_data_config_payload(instruments=["SYN.XNAS"]),
+                "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+                "strategy": {"id": "demo.strategy"},
+                "indicators": [],
+                "ranking": {"metric": "total_return"},
+                "optimization": {
+                    "search": "grid",
+                    "split": {
+                        "method": "from_rolling",
+                        "params": {"length": 40, "offset": 40, "split": 0.5},
+                        "max_splits": 2,
+                    },
+                },
+            },
+            sort_keys=False,
+        )
+    )
+    long_base = tmp_path.joinpath(*(f"long-path-segment-{i:02d}" for i in range(35)))
+    artifact_path = long_base / "strategy_run.json"
+    store_path = long_base / ".candidate_store" / "candidates.sqlite3"
+
+    def stub_run_strategy_sweep(*_args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "run_id": kwargs["run_id"],
+            "status": "completed",
+            "run_dir": str(long_base),
+            "manifest_path": str(long_base / "manifest.json"),
+            "started_at": "2026-06-12T00:00:00Z",
+            "finished_at": "2026-06-12T00:01:00Z",
+            "strategy_artifact_id": "strategy.run",
+            "strategy_artifact_path": str(artifact_path),
+            "candidate_store_path": str(store_path),
+            "optimization": {"total": 4, "held_out_warning": None},
+            "candidates": [{"role": "best", "lock": kwargs["run_id"]}],
+        }
+
+    monkeypatch.setattr(run_command, "run_strategy_sweep", stub_run_strategy_sweep)
+
+    assert cli.main(["run", str(config_path), "--run-id", "stubbed-success"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "success"
+    assert payload["command"] == "run"
+    assert payload["selection"] == {
+        "source": "explicit",
+        "config_path": str(config_path.resolve()),
+    }
+    assert payload["run"] == {
+        "id": "stubbed-success",
+        "status": "completed",
+        "run_dir": str(long_base.resolve(strict=False)),
+        "manifest_path": str((long_base / "manifest.json").resolve(strict=False)),
+        "started_at": "2026-06-12T00:00:00Z",
+        "finished_at": "2026-06-12T00:01:00Z",
+    }
+    assert payload["artifacts"] == {
+        "strategy_artifact_id": "strategy.run",
+        "strategy_artifact_path": str(artifact_path.resolve(strict=False)),
+    }
+    assert payload["candidate_store"] == {
+        "path": str(store_path.resolve(strict=False)),
+    }
+    assert payload["optimization"] == {"total": 4, "held_out_warning": None}
+    assert payload["candidates"] == [{"role": "best", "lock": "stubbed-success"}]
 
 
 def test_run_rejects_removed_labeler_without_train_guidance(

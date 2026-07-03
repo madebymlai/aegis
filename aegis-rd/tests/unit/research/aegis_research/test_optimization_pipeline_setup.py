@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.optimization.candidate_publishing import candidate_store_path
+from research.aegis_research.optimization.candidate_store_identity import candidate_store_path
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.setup import (
     SetupResult,

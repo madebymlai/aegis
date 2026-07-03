@@ -131,7 +131,7 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
         metric_registry_fingerprint=None,
     )
 
-    # publish_candidates writes in the pending state; activate to expose for querying.
+    # Publishing writes in the pending state; activate to expose for querying.
     with CandidateStore(store_path) as store:
         store.activate_run("run-pub")
         stored = [

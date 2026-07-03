@@ -38,7 +38,7 @@ def write_success(
     contract (ADR-0021)."""
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
-    payload = _envelope(result.command, "success", result.payload)
+    payload = _envelope(result.command, "success", result.payload, clip_strings=False)
     document = _json_document(payload)
     if document is None:
         return write_error(
@@ -158,20 +158,25 @@ def clip_message(text: str, *, max_chars: int = MAX_ERROR_MESSAGE_CHARS) -> str:
     return str(text)[:max_chars]
 
 
-def jsonable_value(value: Any) -> Any:
+def jsonable_value(value: Any, *, clip_strings: bool = True) -> Any:
     value = to_builtin(value)
     if value is None or isinstance(value, bool | int):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, str):
-        return clip_message(value, max_chars=MAX_REASON_CHARS)
+        if clip_strings:
+            return clip_message(value, max_chars=MAX_REASON_CHARS)
+        return value
     if isinstance(value, Path):
         return real_path_text(value)
     if isinstance(value, Mapping):
-        return {str(key): jsonable_value(item) for key, item in value.items()}
+        return {
+            str(key): jsonable_value(item, clip_strings=clip_strings)
+            for key, item in value.items()
+        }
     if isinstance(value, list | tuple):
-        return [jsonable_value(item) for item in value]
+        return [jsonable_value(item, clip_strings=clip_strings) for item in value]
     return clip_message(repr(value), max_chars=MAX_REASON_CHARS)
 
 
@@ -194,10 +199,16 @@ def _envelope_header(
     }
 
 
-def _envelope(command: str, status: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+def _envelope(
+    command: str,
+    status: str,
+    payload: Mapping[str, Any],
+    *,
+    clip_strings: bool = True,
+) -> dict[str, Any]:
     return {
         **_envelope_header(command, status),
-        **jsonable_value(payload),
+        **jsonable_value(payload, clip_strings=clip_strings),
     }
 
 

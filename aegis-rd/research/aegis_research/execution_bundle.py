@@ -28,8 +28,8 @@ from research.aegis_research.configuration import (
 )
 from research.aegis_research.drift_bands import instrument_bands_from
 from research.aegis_research.market_data.identity import resolved_instruments
-from research.aegis_research.optimization.candidate_publishing import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.candidate_store_identity import candidate_store_path
 from research.aegis_research.optimization.lock_run import ResolvedComponentParams, resolve_lock_run
 from research.aegis_research.optimization.param_namespace import ComponentRef
 

@@ -10,9 +10,9 @@ deleted rather than relocated. The `show`/guide commands keep their dual-mode to
 *success* output — their consumer is plausibly a human at a terminal; a run's consumer
 is a script or an agent, and run output had already grown two diverging shape-owners
 (the handler's hand-built payload and the dead, divergent `run_success_payload`). The
-result shaping moves to one home, `cli_support/run_output.py`, with a single public
-entry; future human-facing affordances (e.g. plot display) arrive as explicit flags on
-top of the JSON contract, not as a second output mode.
+result shaping has one home; as amended on 2026-07-03, that home is the `run` command
+handler itself. Future human-facing affordances (e.g. plot display) arrive as explicit
+flags on top of the JSON contract, not as a second output mode.
 
 **There is no output mode in the dispatcher.** `write_error` emits the JSON envelope
 unconditionally for every command, which removes the only reason `json_requested` (a raw
@@ -63,3 +63,15 @@ guide commands (`*-schema`), whose content is authored markdown, not data; ADR-0
 stands. In the same change `safe_path` is deleted outright: the generic JSON
 sanitizer's `Path` branch emits real resolved absolute paths, so the scrub-vs-real
 decision has one answer everywhere, including error `details`.
+
+**Amendment (2026-07-03).** The run success-payload shape moves from the separate
+`cli_support/run_output.py` module into `cli_commands/run.py` as a handler-local private
+helper, and the separate module is deleted. The one-shape-owner invariant is unchanged:
+the command handler owns the run result and now also owns its success projection, while
+`cli_support/output.py` still owns the shared run-ref projection and the JSON envelope.
+The pre-serialization unit seam is retired; the payload contract is tested only through
+the emitted JSON by driving `cli.main(["run", ...])` with a stubbed sweep result and
+capturing stdout. That seam also pins the ADR's real-path requirement against the
+success-envelope serializer: success payload strings are preserved in full, so long
+resolved artifact and Candidate Store paths are not clipped. Error messages and error
+details keep their clipping behavior.
