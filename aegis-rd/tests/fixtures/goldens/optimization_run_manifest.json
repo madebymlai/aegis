@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "7b00e2298339438bd3a4a88b0a2c28e3b7592bb384ed35a0765135ce7905551a",
+      "hash": "d3b62658fdc0a95b66f411e816a94611dd2f80954f29fddda43b5019cd10cc2b",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 62554,
+      "size": 62766,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -112,6 +112,7 @@
     },
     "output_dir": "runs",
     "portfolio": {
+      "band_destination_fraction": 1.0,
       "band_down": 0.0,
       "band_overrides": {},
       "band_up": 0.0,
@@ -153,7 +154,7 @@
       "raw_config_identity": {
         "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
       },
-      "resolved_config_hash": "5ad3a1692072b241dbaacde60267d737a36fd4922645ff4af1ca014bccf858f0",
+      "resolved_config_hash": "b3c4fb7237872eec397041b5d21ab4b7baa6721169939802146b9ec97138f52e",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",
@@ -186,7 +187,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_5ac51982c7eb693e4cb15adb127b8b63",
+          "candidate_key": "cand_42d839e5389186682aa4271a0f075906",
           "held_out_metrics": {
             "0": {
               "max_dd": 17.34401245220589,
@@ -223,6 +224,7 @@
           },
           "identity": {
             "book_settings": {
+              "band_destination_fraction": 1.0,
               "band_down": 0.0,
               "band_overrides": {},
               "band_up": 0.0,
@@ -549,7 +551,7 @@
           }
         },
         {
-          "candidate_key": "cand_4fe0ef7bddf5af421c8d663e182028b9",
+          "candidate_key": "cand_334bc9119a1d550e757bc8b1f958a140",
           "held_out_metrics": {
             "0": {
               "max_dd": 24.329296546012046,
@@ -586,6 +588,7 @@
           },
           "identity": {
             "book_settings": {
+              "band_destination_fraction": 1.0,
               "band_down": 0.0,
               "band_overrides": {},
               "band_up": 0.0,
@@ -912,7 +915,7 @@
           }
         },
         {
-          "candidate_key": "cand_f6db8a2e6888433b1907fa3c5dab1413",
+          "candidate_key": "cand_e6f2baf50eb23075f4580b480728a50c",
           "held_out_metrics": {
             "0": {
               "max_dd": 21.879582100013717,
@@ -949,6 +952,7 @@
           },
           "identity": {
             "book_settings": {
+              "band_destination_fraction": 1.0,
               "band_down": 0.0,
               "band_overrides": {},
               "band_up": 0.0,

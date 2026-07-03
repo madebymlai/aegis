@@ -48,8 +48,8 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 }
 
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "485fe482e474da9ebb4fa36a42ebec4a54c76d53d0e67d4abba455a6212d2d8f",
-    "int_valued_caps": "d68ee7eca0eddb0282f71ce8394dd6c4e83284f88935fb9ba2ec4330b9861bb0",
+    "canonical_grid": "2f08b1f72c299c3cb6fc60a4650157adfd3145433b304945346fad7f5b85cd54",
+    "int_valued_caps": "76dd4748b2227e76f72143919c98af216ec579a6608903ec1f8fb72201940303",
 }
 
 
