@@ -18,7 +18,8 @@ from aegis_trader.domain.roll import (
 )
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.trader.roll_desk import RollDesk
-from continuous_fixtures import es_port, es_port_two_rolls
+
+from aegis_data.testing import es_port, es_port_two_rolls
 
 _HISTORY_START = datetime(2024, 1, 15, tzinfo=timezone.utc)
 _ES = InstrumentId.from_str("ES.XCME")

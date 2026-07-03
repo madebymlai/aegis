@@ -20,14 +20,17 @@ from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE, continuous_future
 from aegis_data.liquidity import liquid_cycle_causal
 from tests.support.continuous_oracle import backward_series
-from tests.support.catalog_fakes import (
-    _END,
-    _START,
-    _FakeCatalog,
-    _FakePort,
-    _bars,
-    _es_port,
-    _future,
+from aegis_data.testing import (
+    ES_END,
+    ES_START,
+    FakeCatalog,
+    FakePort,
+    bars,
+    early_crossover_es_port,
+    es_port,
+    es_port_two_rolls,
+    future,
+    lead_frame,
 )
 
 _ES_XCME = InstrumentId.from_str("ES.XCME")
@@ -35,65 +38,6 @@ _ESH4 = InstrumentId.from_str("ESH4.XCME")
 _ESM4 = InstrumentId.from_str("ESM4.XCME")
 _ESU4 = InstrumentId.from_str("ESU4.XCME")
 _RAW_SCALE = 10**16
-
-
-def _lead_frame(
-    start: str, end: str, base: float, lead_lo: str, lead_hi: str
-) -> pd.DataFrame:
-    idx = pd.bdate_range(start, end)
-    close = [base + i for i in range(len(idx))]
-    lo, hi = pd.Timestamp(lead_lo), pd.Timestamp(lead_hi)
-    volume = [1000.0 if lo <= day <= hi else 50.0 for day in idx]
-    return pd.DataFrame(
-        {
-            "Open": [c - 0.5 for c in close],
-            "High": [c + 1 for c in close],
-            "Low": [c - 1 for c in close],
-            "Close": close,
-            "Volume": volume,
-        },
-        index=idx,
-    )
-
-
-def _es_port_two_rolls() -> tuple[_FakePort, dict[InstrumentId, list[Bar]]]:
-    frames = {
-        _ESH4: _lead_frame(_START, "2024-03-15", 100.0, _START, "2024-02-29"),
-        _ESM4: _lead_frame(_START, "2024-06-21", 200.0, "2024-03-01", "2024-06-06"),
-        _ESU4: _lead_frame(
-            "2024-03-01", "2024-09-19", 300.0, "2024-06-07", "2024-09-19"
-        ),
-    }
-    native = {iid: _bars(iid, frame) for iid, frame in frames.items()}
-    catalog = _FakeCatalog(
-        instruments=[
-            _future("ESH4.XCME", "2024-03-15"),
-            _future("ESM4.XCME", "2024-06-21"),
-            _future("ESU4.XCME", "2024-09-20"),
-        ],
-        bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
-    )
-    return _FakePort(catalog, frames), native
-
-
-def _early_crossover_es_port() -> _FakePort:
-    frames = {
-        _ESH4: _lead_frame(_START, "2024-03-15", 100.0, _START, "2024-02-29"),
-        _ESM4: _lead_frame(_START, "2024-06-21", 200.0, "2024-03-01", "2024-04-14"),
-        _ESU4: _lead_frame(
-            "2024-03-01", "2024-09-19", 300.0, "2024-04-15", "2024-09-19"
-        ),
-    }
-    native = {iid: _bars(iid, frame) for iid, frame in frames.items()}
-    catalog = _FakeCatalog(
-        instruments=[
-            _future("ESH4.XCME", "2024-03-15"),
-            _future("ESM4.XCME", "2024-06-21"),
-            _future("ESU4.XCME", "2024-09-20"),
-        ],
-        bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
-    )
-    return _FakePort(catalog, frames)
 
 
 def _bar_on(
@@ -121,11 +65,11 @@ def _expected_ohlcv_row(
     )
 
 
-def _causal_front(port: _FakePort, root: str, as_of: date) -> InstrumentId:
+def _causal_front(port: FakePort, root: str, as_of: date) -> InstrumentId:
     candidates = port.resolve_continuous(root).legs
     volume_by_symbol = {
         leg.symbol: port.probe_contract_volume(
-            leg.symbol, pd.Timestamp(_START).date(), as_of
+            leg.symbol, pd.Timestamp(ES_START).date(), as_of
         )
         for leg in candidates
     }
@@ -134,7 +78,7 @@ def _causal_front(port: _FakePort, root: str, as_of: date) -> InstrumentId:
 
 
 def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None:
-    port, native = _es_port()
+    port, native = es_port()
 
     chain = fetch_contract_chain(
         "ES",
@@ -148,8 +92,8 @@ def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None
     future = continuous_future(chain, InstrumentId.from_str("ES.XCME"))
     oracle = backward_series(native, future.transitions, mode=DEFAULT_ADJUSTMENT_MODE)
 
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
-    model.materialize(end=_END)
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model.materialize(end=ES_END)
 
     assert model.continuous_id == InstrumentId.from_str("ES.XCME")
     frame = model.frame
@@ -167,8 +111,8 @@ def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None
 
 
 def _materialized_two_roll_model() -> ContinuousContractModel:
-    port, native = _es_port_two_rolls()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, native = es_port_two_rolls()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
     model.materialize(end="2024-06-10")
     model.on_bar(_bar_on(native, _ESU4, date(2024, 6, 14)))
     return model
@@ -181,10 +125,10 @@ def _replayed_across_the_roll(
     the ESH4->ESM4 roll, mirroring the live incremental-replay seam. ``tie_order``
     decides which leg's bar arrives first on a shared day — either leg's bar can
     be the roll trigger in a live stream."""
-    port, native = _es_port()
-    oracle = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, native = es_port()
+    oracle = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
     oracle.materialize(end="2024-04-30")
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
     model.materialize(end="2024-02-15")
     lower = pd.Timestamp("2024-02-15")
     bars = sorted(
@@ -204,17 +148,17 @@ def _replayed_across_the_roll(
 
 def _live_cache_with_raw_bar() -> Cache:
     live_cache = Cache()
-    live_cache.add_instrument(_future("ESH4.XCME", "2024-03-15"))
-    leg_bar = _bars(
-        _ESH4, _lead_frame(_START, "2024-01-20", 100.0, _START, "2024-01-20")
+    live_cache.add_instrument(future("ESH4.XCME", "2024-03-15"))
+    leg_bar = bars(
+        _ESH4, lead_frame(ES_START, "2024-01-20", 100.0, ES_START, "2024-01-20")
     )[0]
     live_cache.add_bar(leg_bar)
     return live_cache
 
 
 def test_materialize_exposes_the_continuous_root_id() -> None:
-    port, _native = _es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, _native = es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
     model.materialize(end="2024-02-15")
 
@@ -222,8 +166,8 @@ def test_materialize_exposes_the_continuous_root_id() -> None:
 
 
 def test_materialize_exposes_the_schedule_front_before_migration() -> None:
-    port, _native = _es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, _native = es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
     model.materialize(end="2024-02-15")
 
@@ -231,8 +175,8 @@ def test_materialize_exposes_the_schedule_front_before_migration() -> None:
 
 
 def test_front_leg_as_of_follows_the_schedule_after_migration() -> None:
-    port, _native = _es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, _native = es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
     front = model.front_leg_as_of("2024-05-31")
 
@@ -240,8 +184,8 @@ def test_front_leg_as_of_follows_the_schedule_after_migration() -> None:
 
 
 def test_materialize_exposes_the_ohlcv_frame_shape() -> None:
-    port, _native = _es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, _native = es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
     model.materialize(end="2024-02-15")
 
@@ -249,40 +193,40 @@ def test_materialize_exposes_the_ohlcv_frame_shape() -> None:
 
 
 def test_front_picker_agreement_names_the_near_leg_before_regular_migration() -> None:
-    port, _native = _es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, _native = es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
     assert _causal_front(port, "ES", date(2024, 2, 15)) == _ESH4
     assert model.front_leg_as_of(date(2024, 2, 15)) == _ESH4
 
 
 def test_front_picker_agreement_names_the_next_leg_after_regular_migration() -> None:
-    port, _native = _es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, _native = es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
     assert _causal_front(port, "ES", date(2024, 5, 31)) == _ESM4
     assert model.front_leg_as_of(date(2024, 5, 31)) == _ESM4
 
 
 def test_front_picker_agreement_names_the_mid_leg_before_early_crossover() -> None:
-    port = _early_crossover_es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port = early_crossover_es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
     assert _causal_front(port, "ES", date(2024, 4, 12)) == _ESM4
     assert model.front_leg_as_of(date(2024, 4, 12)) == _ESM4
 
 
 def test_front_picker_agreement_names_the_back_leg_after_early_crossover() -> None:
-    port = _early_crossover_es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port = early_crossover_es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
     assert _causal_front(port, "ES", date(2024, 5, 1)) == _ESU4
     assert model.front_leg_as_of(date(2024, 5, 1)) == _ESU4
 
 
 def test_on_bar_appends_a_front_leg_bar_at_offset_zero() -> None:
-    port, native = _es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, native = es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
     model.materialize(end="2024-04-29")
     bar = _bar_on(native, _ESM4, date(2024, 4, 30))
 
@@ -297,8 +241,8 @@ def test_on_bar_appends_a_front_leg_bar_at_offset_zero() -> None:
 
 
 def test_on_bar_keeps_the_front_leg_when_appending_current_front() -> None:
-    port, native = _es_port()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    port, native = es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
     model.materialize(end="2024-04-29")
     bar = _bar_on(native, _ESM4, date(2024, 4, 30))
 
@@ -349,47 +293,47 @@ def test_replay_where_the_new_front_bar_triggers_the_roll_matches_the_one_shot()
 
 
 def test_materialize_does_not_write_continuous_bars_into_a_live_cache() -> None:
-    port, _native = _es_port()
+    port, _native = es_port()
     live_cache = _live_cache_with_raw_bar()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
-    model.materialize(end=_END)
+    model.materialize(end=ES_END)
 
     assert live_cache.bars(continuous_bar_type(_ES_XCME, "1D")) == []
 
 
 def test_materialize_leaves_existing_live_cache_raw_leg_bars_in_place() -> None:
-    port, _native = _es_port()
+    port, _native = es_port()
     live_cache = _live_cache_with_raw_bar()
-    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
 
-    model.materialize(end=_END)
+    model.materialize(end=ES_END)
 
     assert live_cache.bar_count(raw_bar_type(_ESH4, "1D")) == 1
 
 
 def test_continuous_contract_model_rejects_legs_across_venues() -> None:
-    catalog = _FakeCatalog(
+    catalog = FakeCatalog(
         instruments=[
-            _future("ESH4.XCME", "2024-03-15"),
-            _future("ESM4.XEUR", "2024-06-21"),
+            future("ESH4.XCME", "2024-03-15"),
+            future("ESM4.XEUR", "2024-06-21"),
         ],
         bars={},
     )
-    port = _FakePort(catalog, {})
-    model = ContinuousContractModel(port, "ES", start=_START)
+    port = FakePort(catalog, {})
+    model = ContinuousContractModel(port, "ES", start=ES_START)
 
     with pytest.raises(ContinuousRootVenueMismatchError, match="span multiple venues"):
-        model.materialize(end=_END)
+        model.materialize(end=ES_END)
 
 
 def test_continuous_contract_model_rejects_a_root_with_no_legs() -> None:
-    catalog = _FakeCatalog(
-        instruments=[_future("CLF4.NYMEX", "2024-01-22", underlying="CL")],
+    catalog = FakeCatalog(
+        instruments=[future("CLF4.NYMEX", "2024-01-22", underlying="CL")],
         bars={},
     )
-    port = _FakePort(catalog, {})
-    model = ContinuousContractModel(port, "ES", start=_START)
+    port = FakePort(catalog, {})
+    model = ContinuousContractModel(port, "ES", start=ES_START)
 
     with pytest.raises(ContinuousRootLegsNotFoundError, match="no dated legs"):
-        model.materialize(end=_END)
+        model.materialize(end=ES_END)

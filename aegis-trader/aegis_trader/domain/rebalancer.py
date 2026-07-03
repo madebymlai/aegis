@@ -30,12 +30,7 @@ import pandas as pd
 from aegis_runtime import DriftBand
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_trader.domain.allocator import (
-    Allocation,
-    SleeveWeightBand,
-    allocate_covariance_vol_target,
-    allocate_diagonal_vol_target,
-)
+from aegis_trader.domain.allocator import Allocation, SleeveWeightBand, allocate
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.types import SleeveName, WeightDelta
 
@@ -103,10 +98,10 @@ def rebalance_plan(
     weight (signed fraction of NAV).  When supplied, the realised book is gated against
     caps and drift bands before any delta is emitted.
 
-    *realized_covariance* selects the covariance-aware ERC/HRP allocator.  When
-    it is absent (a cold book with no estimate yet) the rebalancer routes to the
-    diagonal path, where the configured risk shares are the base allocation and
-    ``realized_vols`` refines them toward equal diagonal risk once available.
+    *realized_covariance* and *realized_vols* are handed to the allocator as-is;
+    which estimate refines the configured risk shares (covariance-aware ERC/HRP,
+    the diagonal limit, or a cold book on the raw shares) is the allocator's own
+    routing (``allocator.allocate``).
     ``realized_drawdown`` is the current
     book drawdown fraction; when the book declares a drawdown-de-lever curve it
     scales the whole allocation down after risk budgeting.
@@ -242,31 +237,16 @@ def _allocate_sleeves(
     previous_sleeve_weights: dict[SleeveName, float] | None,
     realized_drawdown: float | None = None,
 ) -> Allocation:
-    risk_shares = book.allocator_risk_shares()
-    sleeve_weight_bands = _sleeve_weight_bands(book)
-
-    if realized_covariance is not None:
-        groups = {sleeve.name: sleeve.group for sleeve in book.sleeves}
-        return allocate_covariance_vol_target(
-            sleeve_targets=latest_targets,
-            risk_shares=risk_shares,
-            realized_covariance=realized_covariance,
-            book_vol_target=book.book_vol_target,
-            groups=groups,
-            previous_multipliers=previous_sleeve_weights,
-            sleeve_weight_bands=sleeve_weight_bands,
-            sleeve_reversion_fraction=book.sleeve_reversion_fraction,
-            realized_drawdown=realized_drawdown,
-            drawdown_delever_curve=book.drawdown_delever,
-        )
-
-    return allocate_diagonal_vol_target(
+    """Adapt *book* facts to allocator kwargs; the allocator owns the routing."""
+    return allocate(
         sleeve_targets=latest_targets,
-        risk_shares=risk_shares,
-        realized_vols=realized_vols,
+        risk_shares=book.allocator_risk_shares(),
         book_vol_target=book.book_vol_target,
+        realized_vols=realized_vols,
+        realized_covariance=realized_covariance,
+        groups={sleeve.name: sleeve.group for sleeve in book.sleeves},
         previous_multipliers=previous_sleeve_weights,
-        sleeve_weight_bands=sleeve_weight_bands,
+        sleeve_weight_bands=_sleeve_weight_bands(book),
         sleeve_reversion_fraction=book.sleeve_reversion_fraction,
         realized_drawdown=realized_drawdown,
         drawdown_delever_curve=book.drawdown_delever,

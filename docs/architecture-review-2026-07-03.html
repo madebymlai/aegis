@@ -118,7 +118,7 @@ flowchart TB
             <li>Locality: parity bugs surface in one suite</li>
             <li>Two adapters already justify the seam</li>
           </ul>
-          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Shipped 2026-07-03</span> — grilling reframed the premise: the bug-catching invariant isn't research-adapter vs trader-adapter OHLCV (near-tautological — both are thin wrappers over the same <span class="font-mono text-xs">ContinuousContractModel</span>) but <em>one-shot <span class="font-mono text-xs">materialize</span> vs incremental <span class="font-mono text-xs">on_bar</span> folding across a roll</em>. <span class="font-mono text-xs">test_continuous_contract_model_live.py</span> already pinned single-append offset-zero recovery; the gap was a full front-leg replay across the ESM6→ESU6 roll. Added <span class="font-mono text-xs">test_incremental_replay_across_the_roll_holds_additive_invariance</span> (opt-in IB-gateway; run live on a gateway, 4 green). The umbrella cross-context suite was <em>rejected</em> — <span class="font-mono text-xs">aegis-rd</span> and <span class="font-mono text-xs">aegis-trader</span> are non-dependent siblings, so the seam is pinned at the shared model in <span class="font-mono text-xs">aegis-data</span>. <span class="font-semibold">The live run surfaced a real divergence:</span> the adjusted series is byte-identical on every shared bar (invariance holds), but the incremental/live path drops exactly the roll-trigger day's bar — it cannot backfill the new front's bar for that day — so research and live differ by one row per roll. Filed as <span class="font-mono text-xs">aegis-rd-y7fd</span>. Tracked as <span class="font-mono text-xs">aegis-rd-93ip</span>.</div>
+          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Shipped 2026-07-03</span> — grilling reframed the premise: the bug-catching invariant isn't research-adapter vs trader-adapter OHLCV (near-tautological — both are thin wrappers over the same <span class="font-mono text-xs">ContinuousContractModel</span>) but <em>one-shot <span class="font-mono text-xs">materialize</span> vs incremental <span class="font-mono text-xs">on_bar</span> folding across a roll</em>. <span class="font-mono text-xs">test_continuous_contract_model_live.py</span> already pinned single-append offset-zero recovery; the gap was a full front-leg replay across the ESM6→ESU6 roll. Added <span class="font-mono text-xs">test_incremental_replay_across_the_roll_holds_additive_invariance</span> (opt-in IB-gateway; run live on a gateway, 4 green). The umbrella cross-context suite was <em>rejected</em> — <span class="font-mono text-xs">aegis-rd</span> and <span class="font-mono text-xs">aegis-trader</span> are non-dependent siblings, so the seam is pinned at the shared model in <span class="font-mono text-xs">aegis-data</span>. <span class="font-semibold">The live run surfaced a real divergence:</span> the adjusted series is byte-identical on every shared bar (invariance holds), but the incremental/live path drops exactly the roll-trigger day's bar — it cannot backfill the new front's bar for that day — so research and live differed by one row per roll. Filed as <span class="font-mono text-xs">aegis-rd-y7fd</span> and fixed in <span class="font-mono text-xs">7780911</span> (roll re-materialize bounded by the trigger's bucket close + new-front trigger folded back at offset zero); the live test now asserts full byte-identity and passed against a gateway 2026-07-03. Tracked as <span class="font-mono text-xs">aegis-rd-93ip</span>.</div>
         </article>
 
         <!-- ─────────── 2 · CATALOG PORT ─────────── -->
@@ -240,6 +240,7 @@ flowchart TB
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">4 · Drift-band resolution has three homes</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled 2026-07-03 — premise stale, no action" class="rounded-full bg-slate-600 text-white text-xs font-semibold px-3 py-1">✗ Closed · no action</span>
               <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
             </div>
@@ -277,6 +278,11 @@ flowchart LR
             <li>Test once, in the kernel</li>
             <li>Export/load provably symmetric</li>
           </ul>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Closed 2026-07-03 — premise stale, no action</p>
+            <p class="text-sm text-slate-700">Grilling found the duplicated overkey resolution no longer exists. Override-key resolution has exactly one home: <span class="font-mono">aegis-rd drift_bands.py</span> via <span class="font-mono">resolved_band_for</span>, called by both the bundle export and the sim — parity by construction. The trader does no key resolution at all: <span class="font-mono">bundles/bands.py</span> is a sleeve-ownership merge, and the rebalancer does an exact <span class="font-mono">InstrumentId</span> lookup. The kernel already validates the seam contract (<span class="font-mono">bundle.py</span>: bands must exactly cover the contract universe).</p>
+            <p class="text-sm text-slate-700">The narrowed residual — move the sleeve merge into <span class="font-mono">aegis-runtime</span> — was also rejected: the ownership invariant is a book-composition concern, the merge has one caller with no structural second (research never holds multiple bundles), and the kernel has no sleeve vocabulary to receive it. Revisit only if a multi-sleeve composed-book simulation lands in research.</p>
+          </div>
         </article>
 
         <!-- ─────────── 5 · STARTUP ─────────── -->
@@ -284,6 +290,7 @@ flowchart LR
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">5 · One module decides trading may start</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled 2026-07-03 — already built, no action" class="rounded-full bg-slate-600 text-white text-xs font-semibold px-3 py-1">✗ Closed · no action</span>
               <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
             </div>
@@ -322,6 +329,11 @@ flowchart TB
             <li>Strategy.on_start shrinks</li>
           </ul>
           <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">Continues the Book Startup funnel extraction — the funnel exists; the gates it composes are still scattered.</div>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Closed 2026-07-03 — the proposed sequencer already exists, no action</p>
+            <p class="text-sm text-slate-700">Grilling found the "After" is already built: <span class="font-mono">book_startup.bootstrap()</span> is the single composition point that runs all five gates in a fixed order and returns one typed decision (<span class="font-mono">BootResult | Halt</span>), and <span class="font-mono">test_book_startup.py</span> already unit-tests every halt ordering against ports with no Nautilus engine. The <span class="font-mono">isinstance(boot, Halt)</span> in the Strategy is standard union narrowing, not interpretation.</p>
+            <p class="text-sm text-slate-700">The residual — gate <em>bodies</em> live in three owners — was judged correct layering, not scattering: each gate lives with the state it validates (band ownership where the band map is built in <span class="font-mono">pipeline.startup_check()</span>, continuous identity where models are materialized in <span class="font-mono">RollDesk.start()</span>). Hoisting the bodies into a sequencer module would force it into pipeline and roll-desk internals — worse information hiding. A new gate's home is obvious: body with its state, wiring in <span class="font-mono">bootstrap</span>. Revisit only if gates ever need dynamic composition (per-book rosters, config-driven ordering).</p>
+          </div>
         </article>
 
         <!-- ─────────── 6 · MATERIALIZER ─────────── -->
@@ -329,6 +341,7 @@ flowchart TB
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">6 · An internal materializer seam inside the ContinuousContractModel</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled 2026-07-03 — narrowed to shared test fakes, shipped; seam deferred — beads aegis-rd-pnli" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Narrowed &amp; shipped · aegis-rd-pnli</span>
               <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">local-substitutable</span>
             </div>
@@ -384,6 +397,12 @@ flowchart TB
             <li>Interface unchanged for both consumers</li>
           </ul>
           <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">ADR-0009 intact: the model stays the continuous-series owner — the seam is internal to its implementation.</div>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Grilled 2026-07-03 — narrowed and shipped as shared test fakes (aegis-rd-pnli); the seam itself deferred</p>
+            <p class="text-sm text-slate-700">Grilling reframed the pain: the six-step composition in <span class="font-mono">_materialize_frame</span> is real but the model is only ~200 lines, and the strongest tests (<span class="font-mono">incremental_replay matches one-shot</span>, the oracle test) are properties of the state machine <em>composed with</em> the real materializer — a fake materializer would gut them. The concrete, present cost was elsewhere: the fake catalog/port apparatus was duplicated ~250 lines each in <span class="font-mono">aegis-data</span> and <span class="font-mono">aegis-trader</span>, and again inside the model's own test file.</p>
+            <p class="text-sm text-slate-700">Shipped: one public test-support module <span class="font-mono">aegis_data/testing.py</span> (the <span class="font-mono">pandas.testing</span> pattern) — <span class="font-mono">FakeCatalog</span>, <span class="font-mono">FakePort</span>, frame/bar builders, and the canned ES roll scenarios — now driving <span class="font-mono">test_catalog.py</span>, <span class="font-mono">test_continuous_contract_model.py</span>, and the trader's <span class="font-mono">test_roll_desk.py</span>; both duplicated copies deleted.</p>
+            <p class="text-sm text-slate-700">Deferred: the internal materializer seam. If revisited, it must cover <span class="font-mono">front_leg_as_of</span> as well as <span class="font-mono">_materialize_frame</span> (the roll trigger runs through the former), and the replay/oracle property tests must stay on the real composition. Trigger: the next behavioral change to <span class="font-mono">on_bar</span>/<span class="font-mono">_roll_across</span> (intraday cadences, new roll triggers).</p>
+          </div>
         </article>
 
         <!-- ─────────── 7 · IBKR SPLIT ─────────── -->
@@ -391,6 +410,7 @@ flowchart TB
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">7 · ibkr.py carries two modules in one file</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled &amp; shipped 2026-07-03 — beads aegis-rd-mext" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-mext</span>
               <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">ports &amp; adapters</span>
             </div>
@@ -433,6 +453,11 @@ flowchart TB
             <li>Port seam readable in one file</li>
             <li>Live wiring failures localise</li>
           </ul>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Grilled &amp; shipped 2026-07-03 (aegis-rd-mext)</p>
+            <p class="text-sm text-slate-700">Grilling confirmed the premise with the consumer map: the two halves have disjoint importers — the trader touches only the live wiring (<span class="font-mono">attach_live_clients</span>, <span class="font-mono">IB_CLIENT_NAME</span>), research/catalog only the historic fetch (<span class="font-mono">IbkrHistoricalProvider</span>, <span class="font-mono">seed_instrument_definitions</span>). The docstring already documented the one-module choice and the review flagged the file anyway, so "document it" was not a remedy. One genuinely shared piece surfaced: <span class="font-mono">mic_instrument_provider_config</span> — the MIC venue pin — called by both sides.</p>
+            <p class="text-sm text-slate-700">Shipped: <span class="font-mono">ibkr.py</span> became the package <span class="font-mono">aegis_data/ibkr/</span> — <span class="font-mono">historical.py</span> (provider, raw ADJUSTED_LAST machinery, connection singleton, definition seeding), <span class="font-mono">live.py</span> (BrokerConnection, attach_live_clients, gateway trading-mode), <span class="font-mono">symbology.py</span> (the shared venue pin). <span class="font-mono">__init__.py</span> re-exports the same eight public names, so no importer changed and the lazy-<span class="font-mono">ibapi</span> boundary is preserved (the import-for-effect test now pops the submodules too).</p>
+          </div>
         </article>
 
         <!-- ─────────── 8 · ALLOCATION CROSSING ─────────── -->
@@ -440,6 +465,7 @@ flowchart TB
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">8 · The Allocation crossing is thinner than the modules it joins</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled 2026-07-03 — narrowed to allocator-owned estimator routing, shipped — beads aegis-rd-qbr7" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Narrowed &amp; shipped · aegis-rd-qbr7</span>
               <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
             </div>
@@ -489,6 +515,12 @@ flowchart TB
             <li>Unpack-and-transform code deleted</li>
           </ul>
           <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">ADR-0002 / ADR-0004 responsibilities unchanged — only the object crossing between them deepens.</div>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Grilled 2026-07-03 — narrowed to allocator-owned estimator routing, shipped (aegis-rd-qbr7)</p>
+            <p class="text-sm text-slate-700">The card's premise mostly did not survive contact with the code. The "~50 lines of unpack + re-transform" is really an 8-line netting loop — and netting is the Rebalancer's <em>own</em> ADR-0002 charter (even this card's "After" box keeps "nets and gates" there). "Seam only exercised at full-pipeline level" was also false on the Allocator side: <span class="font-mono">test_allocator.py</span> holds 14 direct tests. And <span class="font-mono">Allocation</span> has exactly one consumer, so deepening the crossing object itself would be YAGNI.</p>
+            <p class="text-sm text-slate-700">The genuine leak the card gestured at: the diagonal-vs-covariance <em>routing</em> lived in <span class="font-mono">rebalancer._allocate_sleeves</span>, with the allocator's docstring confessing "the rebalancer routes there". Which estimator refines the risk budget, and when, is allocation policy — a third path (shrinkage, minimum sample count) would have changed both modules together.</p>
+            <p class="text-sm text-slate-700">Shipped: one public <span class="font-mono">allocate()</span> entry point in <span class="font-mono">allocator.py</span> owning the cold-book → vols → covariance routing; <span class="font-mono">allocate_diagonal_vol_target</span> / <span class="font-mono">allocate_covariance_vol_target</span> made private; <span class="font-mono">_allocate_sleeves</span> collapsed to a <span class="font-mono">BookConfig</span>→kwargs adapter with no branch; the 14 seam tests repointed to <span class="font-mono">allocate()</span> so they now exercise the production entry point, routing included. <span class="font-mono">Allocation</span> and the Rebalancer's netting untouched.</p>
+          </div>
         </article>
 
         <!-- ─────────── WATCHED ─────────── -->

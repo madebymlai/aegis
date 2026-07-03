@@ -31,9 +31,9 @@ from aegis_data.catalog import NautilusDataProviderPort
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
     IbkrRequestError,
-    _ib_request_end_datetime,
     seed_instrument_definitions,
 )
+from aegis_data.ibkr.historical import _ib_request_end_datetime
 
 
 class _FakeHistoricClient:
@@ -208,8 +208,9 @@ def test_importing_the_adapter_does_not_import_ibapi() -> None:
     """The lazy-``ibapi`` boundary: importing the adapter (historic fetch *and*
     live wiring both live here) must not pull ``ibapi`` — every IBKR import is
     deferred to call time, so non-IBKR code does not initialize the vendor stack."""
-    sys.modules.pop("aegis_data.ibkr", None)
     for module_name in tuple(sys.modules):
+        if module_name == "aegis_data.ibkr" or module_name.startswith("aegis_data.ibkr."):
+            sys.modules.pop(module_name)
         if module_name == "ibapi" or module_name.startswith("ibapi."):
             sys.modules.pop(module_name)
 
@@ -224,14 +225,14 @@ def test_importing_the_adapter_does_not_import_ibapi() -> None:
 
 
 def test_trading_mode_for_port_maps_ib_gateway_ports() -> None:
-    from aegis_data.ibkr import _trading_mode_for_port
+    from aegis_data.ibkr.live import _trading_mode_for_port
 
     assert _trading_mode_for_port(4002) == "paper"
     assert _trading_mode_for_port(4001) == "live"
 
 
 def test_trading_mode_for_port_rejects_any_other_port() -> None:
-    from aegis_data.ibkr import _trading_mode_for_port
+    from aegis_data.ibkr.live import _trading_mode_for_port
 
     with pytest.raises(
         ValueError,

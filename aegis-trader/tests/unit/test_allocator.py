@@ -1,4 +1,4 @@
-"""Unit tests for the pure diagonal risk-budget allocator."""
+"""Unit tests for the pure risk-budget allocator behind its one entry point."""
 
 from __future__ import annotations
 
@@ -6,8 +6,7 @@ import pytest
 
 from aegis_trader.domain.allocator import (
     SleeveWeightBand,
-    allocate_covariance_vol_target,
-    allocate_diagonal_vol_target,
+    allocate,
     covariance_book_vol,
     diagonal_book_vol,
     equal_risk_contribution_weights,
@@ -29,7 +28,7 @@ _TAIL = SleeveName("tail")
 
 
 def test_equal_vols_make_multipliers_track_risk_shares():
-    allocation = allocate_diagonal_vol_target(
+    allocation = allocate(
         sleeve_targets={_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}},
         risk_shares={_TREND: 0.75, _CARRY: 0.25},
         realized_vols={_TREND: 0.10, _CARRY: 0.10},
@@ -41,7 +40,7 @@ def test_equal_vols_make_multipliers_track_risk_shares():
 
 
 def test_higher_vol_sleeve_is_scaled_down_to_hold_its_share():
-    allocation = allocate_diagonal_vol_target(
+    allocation = allocate(
         sleeve_targets={_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.20},
@@ -54,7 +53,7 @@ def test_higher_vol_sleeve_is_scaled_down_to_hold_its_share():
 
 
 def test_diagonal_book_hits_vol_target():
-    allocation = allocate_diagonal_vol_target(
+    allocation = allocate(
         sleeve_targets={_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.20},
@@ -69,7 +68,7 @@ def test_diagonal_book_hits_vol_target():
 
 def test_missing_or_zero_vol_fails_closed():
     with pytest.raises(ValueError, match="missing realized vol"):
-        allocate_diagonal_vol_target(
+        allocate(
             sleeve_targets={_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}},
             risk_shares={_TREND: 0.5, _CARRY: 0.5},
             realized_vols={_TREND: 0.10},
@@ -77,7 +76,7 @@ def test_missing_or_zero_vol_fails_closed():
         )
 
     with pytest.raises(ValueError, match="degenerate realized vol"):
-        allocate_diagonal_vol_target(
+        allocate(
             sleeve_targets={_TREND: {_iid("A"): 1.0}},
             risk_shares={_TREND: 1.0},
             realized_vols={_TREND: 0.0},
@@ -86,7 +85,7 @@ def test_missing_or_zero_vol_fails_closed():
 
 
 def test_warmup_without_vols_falls_back_to_raw_risk_share():
-    allocation = allocate_diagonal_vol_target(
+    allocation = allocate(
         sleeve_targets={_TREND: {_iid("A"): 0.5}, _CARRY: {_iid("B"): -0.25}},
         risk_shares={_TREND: 0.6, _CARRY: 0.4},
         realized_vols=None,
@@ -101,14 +100,14 @@ def test_covariance_zero_correlation_reproduces_diagonal_result():
     sleeve_targets = {_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}}
     risk_shares = {_TREND: 0.75, _CARRY: 0.25}
     vols = {_TREND: 0.10, _CARRY: 0.20}
-    diagonal = allocate_diagonal_vol_target(
+    diagonal = allocate(
         sleeve_targets=sleeve_targets,
         risk_shares=risk_shares,
         realized_vols=vols,
         book_vol_target=0.09,
     )
 
-    covariance = allocate_covariance_vol_target(
+    covariance = allocate(
         sleeve_targets=sleeve_targets,
         risk_shares=risk_shares,
         realized_covariance={
@@ -125,7 +124,7 @@ def test_covariance_zero_correlation_reproduces_diagonal_result():
 def test_correlated_sleeves_receive_smaller_combined_weight_than_uncorrelated():
     sleeve_targets = {_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}}
     risk_shares = {_TREND: 0.5, _CARRY: 0.5}
-    uncorrelated = allocate_covariance_vol_target(
+    uncorrelated = allocate(
         sleeve_targets=sleeve_targets,
         risk_shares=risk_shares,
         realized_covariance={
@@ -134,7 +133,7 @@ def test_correlated_sleeves_receive_smaller_combined_weight_than_uncorrelated():
         },
         book_vol_target=0.09,
     )
-    correlated = allocate_covariance_vol_target(
+    correlated = allocate(
         sleeve_targets=sleeve_targets,
         risk_shares=risk_shares,
         realized_covariance={
@@ -159,7 +158,7 @@ def test_top_down_group_split_prevents_correlated_cluster_dominating_book_risk()
         _TAIL: {_TREND: 0.0, _CARRY: 0.0, _TAIL: 0.10**2},
     }
 
-    allocation = allocate_covariance_vol_target(
+    allocation = allocate(
         sleeve_targets={_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}, _TAIL: {_iid("C"): 1.0}},
         risk_shares={_TREND: 0.25, _CARRY: 0.25, _TAIL: 0.5},
         realized_covariance=covariance,
@@ -175,7 +174,7 @@ def test_top_down_group_split_prevents_correlated_cluster_dominating_book_risk()
 
 
 def test_sleeve_weight_band_suppresses_inside_band_churn():
-    allocation = allocate_diagonal_vol_target(
+    allocation = allocate(
         sleeve_targets={_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.101},
@@ -195,14 +194,14 @@ def test_sleeve_weight_band_suppresses_inside_band_churn():
 
 def test_sleeve_weight_band_reverts_partially_after_breach():
     previous = 0.6363961030678927
-    full_target = allocate_diagonal_vol_target(
+    full_target = allocate(
         sleeve_targets={_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.102},
         book_vol_target=0.09,
     )
 
-    allocation = allocate_diagonal_vol_target(
+    allocation = allocate(
         sleeve_targets={_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.102},
@@ -263,7 +262,7 @@ def _drawdown_delevered_gross_exposure(
     *,
     drawdown: float,
 ) -> float:
-    allocation = allocate_diagonal_vol_target(
+    allocation = allocate(
         sleeve_targets={_TREND: {_iid("A"): 1.0}, _CARRY: {_iid("B"): 1.0}},
         risk_shares={_TREND: 0.5, _CARRY: 0.5},
         realized_vols={_TREND: 0.10, _CARRY: 0.10},

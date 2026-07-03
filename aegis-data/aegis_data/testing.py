@@ -1,8 +1,24 @@
-"""Continuous-root catalog fixtures for trader unit tests."""
+"""Shared test fakes for the catalog port and continuous-futures fixtures.
+
+Importable test support (the ``pandas.testing`` pattern) so aegis-data and the
+packages that consume it drive the same fake corpus instead of copying it:
+
+- ``FakeCatalog`` — a ``ParquetDataCatalog`` stand-in: instrument definitions
+  plus native bars by identifier.  Usable beneath the real
+  ``CatalogBackedDataPort`` or beneath ``FakePort``.
+- ``FakePort`` — a ``CatalogBackedDataPort`` stand-in: OHLCV frames for the
+  chain, the fake catalog beneath.
+- ``es_port`` / ``es_port_two_rolls`` / ``early_crossover_es_port`` — canned ES
+  scenarios: one liquidity migration, two rolls, and an early crossover.
+
+Bars carry a single 21:00 UTC close stamp for both ``ts_event`` and
+``ts_init``; consumers key off the event date and the bucket-close ceiling,
+which this convention satisfies.
+"""
 
 from __future__ import annotations
 
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timezone
 
 import pandas as pd
 from nautilus_trader.model.currencies import USD
@@ -21,13 +37,19 @@ from aegis_data.catalog import (
 )
 from aegis_data.roll import DatedContract
 
+ES_START = "2024-01-15"
+ES_END = "2024-05-31"
+
 _UTC = timezone.utc
+_CLOSE = time(21, 0)
 _PRECISION = 2
-_START = "2024-01-15"
 _CROSSOVER = pd.Timestamp("2024-03-01")
 
 
-def future(instrument_id: str, expiry: str, *, underlying: str = "ES") -> FuturesContract:
+def future(
+    instrument_id: str, expiry: str, *, underlying: str = "ES"
+) -> FuturesContract:
+    """A dated futures-contract definition for the fake catalog."""
     iid = InstrumentId.from_str(instrument_id)
     return FuturesContract(
         instrument_id=iid,
@@ -48,26 +70,27 @@ def future(instrument_id: str, expiry: str, *, underlying: str = "ES") -> Future
 
 
 def frame(start: str, end: str, base: float, *, leads_early: bool) -> pd.DataFrame:
+    """A business-day OHLCV frame whose volume leads before or after the crossover."""
     idx = pd.bdate_range(start, end)
     close = [base + i for i in range(len(idx))]
     volume = [(1000.0 if (day < _CROSSOVER) == leads_early else 100.0) for day in idx]
-    return pd.DataFrame(
-        {
-            "Open": [c - 0.5 for c in close],
-            "High": [c + 1 for c in close],
-            "Low": [c - 1 for c in close],
-            "Close": close,
-            "Volume": volume,
-        },
-        index=idx,
-    )
+    return _ohlcv(idx, close, volume)
 
 
-def lead_frame(start: str, end: str, base: float, lead_lo: str, lead_hi: str) -> pd.DataFrame:
+def lead_frame(
+    start: str, end: str, base: float, lead_lo: str, lead_hi: str
+) -> pd.DataFrame:
+    """A business-day OHLCV frame whose volume leads inside ``[lead_lo, lead_hi]``."""
     idx = pd.bdate_range(start, end)
     close = [base + i for i in range(len(idx))]
     lo, hi = pd.Timestamp(lead_lo), pd.Timestamp(lead_hi)
     volume = [1000.0 if lo <= day <= hi else 50.0 for day in idx]
+    return _ohlcv(idx, close, volume)
+
+
+def _ohlcv(
+    idx: pd.DatetimeIndex, close: list[float], volume: list[float]
+) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "Open": [c - 0.5 for c in close],
@@ -81,11 +104,11 @@ def lead_frame(start: str, end: str, base: float, lead_lo: str, lead_hi: str) ->
 
 
 def bars(instrument_id: InstrumentId, ohlcv: pd.DataFrame) -> list[Bar]:
+    """Native daily bars for an OHLCV frame, stamped at the 21:00 UTC close."""
     bar_type = raw_bar_type(instrument_id, "1D")
     out: list[Bar] = []
     for day, row in ohlcv.iterrows():
-        open_ns = int(datetime.combine(day.date(), time(0, 0), _UTC).timestamp() * 1e9)
-        close_ns = open_ns + 86_400_000_000_000 - 1
+        ts = int(datetime.combine(day.date(), _CLOSE, _UTC).timestamp() * 1e9)
         out.append(
             Bar(
                 bar_type,
@@ -94,17 +117,21 @@ def bars(instrument_id: InstrumentId, ohlcv: pd.DataFrame) -> list[Bar]:
                 Price.from_str(str(row["Low"])),
                 Price.from_str(str(row["Close"])),
                 Quantity.from_int(int(row["Volume"])),
-                open_ns,
-                close_ns,
+                ts,
+                ts,
             )
         )
     return out
 
 
 class FakeCatalog:
-    def __init__(self, instruments: list[FuturesContract], native: dict[str, list[Bar]]) -> None:
+    """A ParquetDataCatalog stand-in: instrument definitions + native bars by identifier."""
+
+    def __init__(
+        self, instruments: list[FuturesContract], bars: dict[str, list[Bar]]
+    ) -> None:
         self._instruments = instruments
-        self._native = native
+        self._bars = bars
 
     def instruments(
         self,
@@ -114,15 +141,15 @@ class FakeCatalog:
     ) -> list[FuturesContract]:
         out = self._instruments
         if instrument_type is not None:
-            out = [instrument for instrument in out if isinstance(instrument, instrument_type)]
+            out = [i for i in out if isinstance(i, instrument_type)]
         if instrument_ids is not None:
             wanted = set(instrument_ids)
-            out = [instrument for instrument in out if instrument.id.value in wanted]
+            out = [i for i in out if i.id.value in wanted]
         return out
 
     def query(
         self,
-        data_cls: type,  # noqa: ARG002
+        data_cls: type,  # noqa: ARG002 - Bar only in this fixture
         identifiers: list[str] | None = None,
         start: object = None,
         end: object = None,
@@ -131,35 +158,44 @@ class FakeCatalog:
         lo, hi = pd.Timestamp(start).value, pd.Timestamp(end).value
         return [
             bar
-            for identifier in (identifiers or [])
-            for bar in self._native.get(identifier, [])
+            for ident in (identifiers or [])
+            for bar in self._bars.get(ident, [])
             if lo <= bar.ts_event <= hi
         ]
 
+    def get_missing_intervals_for_request(
+        self, *_args: object, **_kwargs: object
+    ) -> list:
+        return []
+
 
 class FakePort:
-    def __init__(self, catalog: FakeCatalog, frames: dict[InstrumentId, pd.DataFrame]) -> None:
+    """A CatalogBackedDataPort stand-in: OHLCV frames for the chain, the catalog beneath."""
+
+    def __init__(
+        self, catalog: FakeCatalog, frames: dict[InstrumentId, pd.DataFrame]
+    ) -> None:
         self.catalog = catalog
         self._frames = frames
 
-    def load_raw_bars(self, request: object) -> dict[InstrumentId, pd.DataFrame]:
-        start, end = pd.Timestamp(request.start), pd.Timestamp(request.end)  # type: ignore[attr-defined]
+    def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
+        start, end = pd.Timestamp(request.start), pd.Timestamp(request.end)
         return {
             iid: self._frames[iid].loc[
                 (self._frames[iid].index >= start) & (self._frames[iid].index <= end)
             ]
-            for iid in request.instrument_ids  # type: ignore[attr-defined]
+            for iid in request.instrument_ids
         }
 
-    def read_native_bars(self, request: object) -> dict[InstrumentId, list[Bar]]:
+    def read_native_bars(self, request: RawBarRequest) -> dict[InstrumentId, list[Bar]]:
         return {
             iid: self.catalog.query(
                 Bar,
-                identifiers=[str(raw_bar_type(iid, request.timeframe))],  # type: ignore[attr-defined]
-                start=request.start,  # type: ignore[attr-defined]
-                end=request.end,  # type: ignore[attr-defined]
+                identifiers=[str(raw_bar_type(iid, request.timeframe))],
+                start=request.start,
+                end=request.end,
             )
-            for iid in request.instrument_ids  # type: ignore[attr-defined]
+            for iid in request.instrument_ids
         }
 
     def instruments(
@@ -172,8 +208,8 @@ class FakePort:
     def fetch_contract_ohlcv(
         self,
         symbol: str,
-        start,
-        end,
+        start: date,
+        end: date,
         *,
         timeframe: str = "1D",
     ) -> pd.DataFrame:
@@ -187,8 +223,8 @@ class FakePort:
     def probe_contract_volume(
         self,
         symbol: str,
-        start,
-        end,
+        start: date,
+        end: date,
         *,
         timeframe: str = "1D",
     ) -> pd.Series:
@@ -223,36 +259,81 @@ class FakePort:
 
 
 def es_port() -> tuple[FakePort, dict[InstrumentId, list[Bar]]]:
+    """ES with two legs and one liquidity migration at the crossover."""
     esh4 = InstrumentId.from_str("ESH4.XCME")
     esm4 = InstrumentId.from_str("ESM4.XCME")
     frames = {
-        esh4: frame(_START, "2024-03-15", 100.0, leads_early=True),
-        esm4: frame(_START, "2024-04-30", 200.0, leads_early=False),
+        esh4: frame(ES_START, "2024-03-15", 100.0, leads_early=True),
+        esm4: frame(ES_START, "2024-04-30", 200.0, leads_early=False),
     }
-    native = {iid: bars(iid, ohlcv) for iid, ohlcv in frames.items()}
-    catalog = FakeCatalog(
-        instruments=[future("ESH4.XCME", "2024-03-15"), future("ESM4.XCME", "2024-06-21")],
-        native={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
+    return _port(
+        frames,
+        [future("ESH4.XCME", "2024-03-15"), future("ESM4.XCME", "2024-06-21")],
     )
-    return FakePort(catalog, frames), native
 
 
 def es_port_two_rolls() -> tuple[FakePort, dict[InstrumentId, list[Bar]]]:
+    """ES with three legs and two liquidity-led rolls."""
     esh4 = InstrumentId.from_str("ESH4.XCME")
     esm4 = InstrumentId.from_str("ESM4.XCME")
     esu4 = InstrumentId.from_str("ESU4.XCME")
     frames = {
-        esh4: lead_frame(_START, "2024-03-15", 100.0, _START, "2024-02-29"),
-        esm4: lead_frame(_START, "2024-06-21", 200.0, "2024-03-01", "2024-06-06"),
+        esh4: lead_frame(ES_START, "2024-03-15", 100.0, ES_START, "2024-02-29"),
+        esm4: lead_frame(ES_START, "2024-06-21", 200.0, "2024-03-01", "2024-06-06"),
         esu4: lead_frame("2024-03-01", "2024-09-19", 300.0, "2024-06-07", "2024-09-19"),
     }
-    native = {iid: bars(iid, ohlcv) for iid, ohlcv in frames.items()}
-    catalog = FakeCatalog(
-        instruments=[
+    return _port(
+        frames,
+        [
             future("ESH4.XCME", "2024-03-15"),
             future("ESM4.XCME", "2024-06-21"),
             future("ESU4.XCME", "2024-09-20"),
         ],
-        native={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
+    )
+
+
+def early_crossover_es_port() -> FakePort:
+    """ES with three legs where liquidity crosses to the back leg early."""
+    esh4 = InstrumentId.from_str("ESH4.XCME")
+    esm4 = InstrumentId.from_str("ESM4.XCME")
+    esu4 = InstrumentId.from_str("ESU4.XCME")
+    frames = {
+        esh4: lead_frame(ES_START, "2024-03-15", 100.0, ES_START, "2024-02-29"),
+        esm4: lead_frame(ES_START, "2024-06-21", 200.0, "2024-03-01", "2024-04-14"),
+        esu4: lead_frame("2024-03-01", "2024-09-19", 300.0, "2024-04-15", "2024-09-19"),
+    }
+    port, _native = _port(
+        frames,
+        [
+            future("ESH4.XCME", "2024-03-15"),
+            future("ESM4.XCME", "2024-06-21"),
+            future("ESU4.XCME", "2024-09-20"),
+        ],
+    )
+    return port
+
+
+def _port(
+    frames: dict[InstrumentId, pd.DataFrame], instruments: list[FuturesContract]
+) -> tuple[FakePort, dict[InstrumentId, list[Bar]]]:
+    native = {iid: bars(iid, ohlcv) for iid, ohlcv in frames.items()}
+    catalog = FakeCatalog(
+        instruments=instruments,
+        bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
     )
     return FakePort(catalog, frames), native
+
+
+__all__ = [
+    "ES_END",
+    "ES_START",
+    "FakeCatalog",
+    "FakePort",
+    "bars",
+    "early_crossover_es_port",
+    "es_port",
+    "es_port_two_rolls",
+    "frame",
+    "future",
+    "lead_frame",
+]

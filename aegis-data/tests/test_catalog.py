@@ -22,7 +22,7 @@ from aegis_data.catalog import (
 )
 from aegis_data.distributions import Distribution, write_distribution_data
 from aegis_data.roll import DatedContract
-from tests.support.catalog_fakes import _FakeCatalog, _bars, _future
+from aegis_data.testing import FakeCatalog, bars, future
 
 
 def _bar(bar_type: BarType, day: str, close: float) -> Bar:
@@ -333,11 +333,11 @@ def test_catalog_port_reads_distribution_events_from_catalog(tmp_path: Path) -> 
 
 
 def test_catalog_port_lists_a_roots_dated_legs_from_catalog_definitions() -> None:
-    catalog = _FakeCatalog(
+    catalog = FakeCatalog(
         [
-            _future("ESM4.XCME", "2024-06-21"),
-            _future("ESH4.XCME", "2024-03-15"),
-            _future("CLF4.NYMEX", "2024-01-22", underlying="CL"),
+            future("ESM4.XCME", "2024-06-21"),
+            future("ESH4.XCME", "2024-03-15"),
+            future("CLF4.NYMEX", "2024-01-22", underlying="CL"),
         ],
         bars={},
     )
@@ -352,10 +352,10 @@ def test_catalog_port_lists_a_roots_dated_legs_from_catalog_definitions() -> Non
 
 
 def test_catalog_port_resolves_continuous_root_to_id_and_legs() -> None:
-    catalog = _FakeCatalog(
+    catalog = FakeCatalog(
         [
-            _future("ESM4.XCME", "2024-06-21"),
-            _future("ESH4.XCME", "2024-03-15"),
+            future("ESM4.XCME", "2024-06-21"),
+            future("ESH4.XCME", "2024-03-15"),
         ],
         bars={},
     )
@@ -371,10 +371,10 @@ def test_catalog_port_resolves_continuous_root_to_id_and_legs() -> None:
 
 
 def test_catalog_port_rejects_continuous_root_legs_across_venues() -> None:
-    catalog = _FakeCatalog(
+    catalog = FakeCatalog(
         [
-            _future("ESH4.XCME", "2024-03-15"),
-            _future("ESM4.XEUR", "2024-06-21"),
+            future("ESH4.XCME", "2024-03-15"),
+            future("ESM4.XEUR", "2024-06-21"),
         ],
         bars={},
     )
@@ -385,8 +385,8 @@ def test_catalog_port_rejects_continuous_root_legs_across_venues() -> None:
 
 
 def test_catalog_port_rejects_continuous_root_with_no_legs() -> None:
-    catalog = _FakeCatalog(
-        [_future("CLF4.NYMEX", "2024-01-22", underlying="CL")],
+    catalog = FakeCatalog(
+        [future("CLF4.NYMEX", "2024-01-22", underlying="CL")],
         bars={},
     )
     port = CatalogBackedDataPort(catalog)
@@ -407,10 +407,10 @@ def test_catalog_port_fetches_a_legs_ohlcv_over_its_window() -> None:
         },
         index=pd.DatetimeIndex(["2024-01-02 21:00:00", "2024-01-03 21:00:00"]),
     )
-    bars = _bars(instrument_id, frame)
-    catalog = _FakeCatalog(
-        [_future("ESH4.XCME", "2024-03-15")],
-        bars={str(raw_bar_type(instrument_id, "1D")): bars},
+    native = bars(instrument_id, frame)
+    catalog = FakeCatalog(
+        [future("ESH4.XCME", "2024-03-15")],
+        bars={str(raw_bar_type(instrument_id, "1D")): native},
     )
     port = CatalogBackedDataPort(catalog)
 
@@ -433,10 +433,10 @@ def test_catalog_port_probes_a_legs_daily_volume() -> None:
         },
         index=pd.DatetimeIndex(["2024-01-02 21:00:00", "2024-01-03 21:00:00"]),
     )
-    bars = _bars(instrument_id, frame)
-    catalog = _FakeCatalog(
-        [_future("ESH4.XCME", "2024-03-15")],
-        bars={str(raw_bar_type(instrument_id, "1D")): bars},
+    native = bars(instrument_id, frame)
+    catalog = FakeCatalog(
+        [future("ESH4.XCME", "2024-03-15")],
+        bars={str(raw_bar_type(instrument_id, "1D")): native},
     )
     port = CatalogBackedDataPort(catalog)
 
