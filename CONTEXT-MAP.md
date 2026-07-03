@@ -10,8 +10,10 @@ records what the contexts are and how they relate.
   market hypotheses into reproducible, scored evidence and promotes validated
   strategies.
 - [Aegis Trader](./aegis-trader/CONTEXT.md) — live execution context that
-  trades strategies promoted by Aegis RD against real venues. _(stub — only the
-  handoff contract is designed; see ADR-0001)_
+  trades strategies promoted by Aegis RD against real venues. It runs a
+  **Commingled Book** of **Sleeves**, sized by a risk-budgeting **Allocator**,
+  both offline through Nautilus' `BacktestEngine` and live against Interactive
+  Brokers — the same rebalance path for backtest, paper, and live (ADR-0001).
 - [Aegis Data](./aegis-data/CONTEXT.md) — shared historical market-data context
   that stores Nautilus-native bars by **InstrumentId** in one
   `ParquetDataCatalog`, and serves both research sourcing and live warmup
@@ -32,8 +34,8 @@ records what the contexts are and how they relate.
   validated strategy as a **Lock** — a `run_id[:role]` reference that
   reproduces one scored **Candidate** with its exact parameters and
   **Provenance**, resolved against Aegis RD's **Candidate Store**. Aegis Trader
-  is the intended downstream consumer: it takes a promoted strategy and
-  executes it live rather than re-deriving parameters.
+  is the downstream consumer: it installs a promoted strategy and executes it
+  (live or in backtest) rather than re-deriving parameters.
 
   The handoff crosses the boundary as an **Execution Bundle** (ADR-0001):
   `aerd export` resolves a Lock, bakes the Candidate's parameters, and builds a
