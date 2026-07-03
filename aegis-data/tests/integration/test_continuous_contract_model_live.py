@@ -16,7 +16,6 @@ from aegis_data.catalog import (
     RawBarRequest,
     parquet_data_catalog,
 )
-from aegis_data.catalog_contracts import catalog_contract_calendar
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
 from aegis_data.roll import front_contract as calendar_front
@@ -106,9 +105,7 @@ def _front_close_at_bucket(
 
 
 def _calendar_front_symbol(warm: CatalogBackedDataPort) -> str:
-    legs = catalog_contract_calendar(warm.catalog)(
-        "PA", pd.Timestamp(_PA_START).date(), pd.Timestamp(_PA_END).date()
-    )
+    legs = warm.resolve_continuous("PA").legs
     leg = calendar_front(
         legs, pd.Timestamp(_PA_END).date(), roll_lead_days=_DAILY_ROLL_LEAD
     )

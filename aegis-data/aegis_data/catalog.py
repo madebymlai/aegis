@@ -3,14 +3,18 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
+from nautilus_trader.model.instruments import FuturesContract
 from platformdirs import user_data_dir
 
 from aegis_data.bar_type import raw_bar_type
+from aegis_data.distributions import Distribution, query_distribution_data
+from aegis_data.roll import DatedContract
 
 if TYPE_CHECKING:
     from nautilus_trader.model.data import Bar, BarType
@@ -22,6 +26,14 @@ CATALOG_DIRNAME = "catalog"
 
 class CatalogCoverageGapError(ValueError):
     """Raised when the Nautilus catalog cannot serve the requested window."""
+
+
+class ContinuousRootLegsNotFoundError(ValueError):
+    """The catalog has no dated legs for a requested continuous root."""
+
+
+class ContinuousRootVenueMismatchError(ValueError):
+    """A continuous root's dated legs span more than one venue."""
 
 
 class NautilusDataProviderPort(Protocol):
@@ -48,6 +60,12 @@ class RawBarRequest:
     start: str
     end: str
     timeframe: str = "1D"
+
+
+@dataclass(frozen=True)
+class ResolvedContinuousRoot:
+    instrument_id: InstrumentId
+    legs: tuple[DatedContract, ...]
 
 
 @dataclass(frozen=True)
@@ -100,6 +118,75 @@ class CatalogBackedDataPort:
                 instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
             )
         )
+
+    def distributions(
+        self,
+        instrument_ids: Sequence[InstrumentId],
+        *,
+        start: str | int | pd.Timestamp | None = None,
+        end: str | int | pd.Timestamp | None = None,
+    ) -> tuple[Distribution, ...]:
+        """Read stored cash distributions for instruments through the catalog port.
+
+        The port owns the raw catalog query so consumers and fakes declare distribution
+        behavior on the same interface they use for bars and definitions.
+        """
+        return query_distribution_data(self.catalog, instrument_ids, start=start, end=end)
+
+    def fetch_contract_ohlcv(
+        self,
+        symbol: str,
+        start: date,
+        end: date,
+        *,
+        timeframe: str = "1D",
+    ) -> pd.DataFrame:
+        """Fetch one dated contract leg's OHLCV frame through the catalog port."""
+        instrument_id = InstrumentId.from_str(symbol)
+        request = RawBarRequest(
+            (instrument_id,), start.isoformat(), end.isoformat(), timeframe
+        )
+        return self.load_raw_bars(request)[instrument_id]
+
+    def probe_contract_volume(
+        self,
+        symbol: str,
+        start: date,
+        end: date,
+        *,
+        timeframe: str = "1D",
+    ) -> pd.Series:
+        """Read one dated contract leg's daily volume for liquidity leadership."""
+        return self.fetch_contract_ohlcv(symbol, start, end, timeframe=timeframe)[
+            "Volume"
+        ]
+
+    def resolve_continuous(self, root: str) -> ResolvedContinuousRoot:
+        """Resolve a bare continuous root to its synthetic id and dated legs."""
+        legs = self._continuous_root_legs(root)
+        if not legs:
+            raise ContinuousRootLegsNotFoundError(
+                f"no dated legs in the catalog for continuous-future root {root!r}"
+            )
+        venues = {InstrumentId.from_str(leg.symbol).venue for leg in legs}
+        if len(venues) != 1:
+            raise ContinuousRootVenueMismatchError(
+                f"continuous-future root {root!r} legs span multiple venues "
+                f"{sorted(venue.value for venue in venues)}; expected one"
+            )
+        return ResolvedContinuousRoot(InstrumentId(Symbol(root), next(iter(venues))), legs)
+
+    def _continuous_root_legs(self, root: str) -> tuple[DatedContract, ...]:
+        """List a root's expiry-ordered dated legs from catalog definitions."""
+        legs = [
+            DatedContract(
+                symbol=instrument.id.value,
+                last_trade=instrument.expiration_utc.date(),
+            )
+            for instrument in self.catalog.instruments(instrument_type=FuturesContract)
+            if instrument.underlying == root
+        ]
+        return tuple(sorted(legs, key=lambda leg: leg.last_trade))
 
     def _ensure_covered(self, bar_type: BarType, request: RawBarRequest) -> None:
         missing = self._missing_intervals(bar_type, request)
@@ -226,8 +313,12 @@ def bars_to_ohlcv(bars: Sequence[Any]) -> pd.DataFrame:
 __all__ = [
     "CatalogBackedDataPort",
     "CatalogCoverageGapError",
+    "ContinuousRootLegsNotFoundError",
+    "ContinuousRootVenueMismatchError",
+    "Distribution",
     "NautilusDataProviderPort",
     "RawBarRequest",
+    "ResolvedContinuousRoot",
     "bars_to_ohlcv",
     "catalog_data_port",
     "catalog_root",

@@ -106,7 +106,7 @@ def continuous_future(
     """Assemble the :class:`ContinuousFuture` keyed by the resolved continuous ``root_id``.
 
     Identity is resolved once, upstream, by
-    :func:`~aegis_data.continuous_catalog.continuous_instrument_id` (the sole venue-resolution
+    :meth:`~aegis_data.catalog.CatalogBackedDataPort.resolve_continuous` (the sole venue-resolution
     site); this assembler receives the synthetic ``{root}.{venue}`` id (e.g. ``ES.XCME``) and
     never re-derives it from the chain.  ``adjustment_mode`` defaults to the one switch
     (:data:`DEFAULT_ADJUSTMENT_MODE`) that also drives the live re-basing, so a caller never

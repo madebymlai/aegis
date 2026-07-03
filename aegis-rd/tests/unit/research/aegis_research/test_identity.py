@@ -6,8 +6,11 @@ contract instrument ids and the per-instrument drift-band map are both derived f
 
 from __future__ import annotations
 
+from datetime import date
 from types import SimpleNamespace
 
+from aegis_data.catalog import ResolvedContinuousRoot
+from aegis_data.roll import DatedContract
 from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import TypeAdapter
 
@@ -48,27 +51,27 @@ def test_resolved_instruments_pairs_continuous_ids_with_their_root(monkeypatch) 
             "instruments": ["AAPL.NASDAQ"],
             "futures": ["ES"],
             "path": "/catalog",
-            "start": "2024-01-01",
-            "end": "2024-01-03",
             "timeframe": "1D",
         }
     )
-    calls: list[tuple[object, tuple[str, ...], str, str]] = []
+    calls: list[str] = []
+
+    class FakePort:
+        def resolve_continuous(self, root: str) -> ResolvedContinuousRoot:
+            calls.append(root)
+            return ResolvedContinuousRoot(
+                InstrumentId.from_str("ES.XCME"),
+                (DatedContract("ESH4.XCME", date(2024, 3, 15)),),
+            )
 
     def fake_catalog_data_port(path):
-        return f"port:{path}"
-
-    def fake_continuous_instrument_ids(port, roots, *, start, end):
-        calls.append((port, tuple(roots), start, end))
-        return (InstrumentId.from_str("ES.XCME"),)
+        assert path == "/catalog"
+        return FakePort()
 
     monkeypatch.setattr(identity_module, "catalog_data_port", fake_catalog_data_port)
-    monkeypatch.setattr(
-        identity_module, "continuous_instrument_ids", fake_continuous_instrument_ids
-    )
 
     assert resolved_instruments(SimpleNamespace(data=data)) == (
         (InstrumentId.from_str("AAPL.NASDAQ"), None),
         (InstrumentId.from_str("ES.XCME"), "ES"),
     )
-    assert calls == [("port:/catalog", ("ES",), "2024-01-01", "2024-01-03")]
+    assert calls == ["ES"]

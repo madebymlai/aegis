@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from aegis_data.catalog import catalog_data_port
-from aegis_data.continuous_catalog import continuous_instrument_ids
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import RunConfig
@@ -31,23 +30,14 @@ def resolved_instruments(config: RunConfig) -> tuple[tuple[InstrumentId, str | N
     The single source of the native→future ordering and the id↔root pairing: callers
     derive both the contract instrument ids and the per-instrument band map from this,
     so no second site re-zips resolved ids against ``data.futures``. The continuous-id
-    venue is catalog-authoritative, so resolving futures opens the catalog over the run
-    window; a run with no futures needs neither.
+    venue is catalog-authoritative; a run with no futures never opens the catalog.
     """
     data = config.data
     native = tuple((InstrumentId.from_str(value), None) for value in data.instruments)
     if not data.futures:
         return native
-    future_ids = continuous_instrument_ids(
-        catalog_data_port(data.path),
-        data.futures,
-        start=_required_catalog_window_edge(data.start, "start"),
-        end=_required_catalog_window_edge(data.end, "end"),
+    port = catalog_data_port(data.path)
+    future_ids = tuple(
+        port.resolve_continuous(root).instrument_id for root in data.futures
     )
     return (*native, *tuple(zip(future_ids, data.futures, strict=True)))
-
-
-def _required_catalog_window_edge(value: str | None, label: str) -> str:
-    if value is None:
-        raise ValueError(f"data.{label} is required to resolve continuous-future roots")
-    return value

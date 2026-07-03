@@ -8,11 +8,18 @@ import pandas as pd
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import AssetClass
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import FuturesContract
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
+from aegis_data.catalog import (
+    ContinuousRootLegsNotFoundError,
+    ContinuousRootVenueMismatchError,
+    RawBarRequest,
+    ResolvedContinuousRoot,
+)
+from aegis_data.roll import DatedContract
 
 _UTC = timezone.utc
 _PRECISION = 2
@@ -154,6 +161,65 @@ class FakePort:
             )
             for iid in request.instrument_ids  # type: ignore[attr-defined]
         }
+
+    def instruments(
+        self, instrument_ids: tuple[InstrumentId, ...]
+    ) -> list[FuturesContract]:
+        return self.catalog.instruments(
+            instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
+        )
+
+    def fetch_contract_ohlcv(
+        self,
+        symbol: str,
+        start,
+        end,
+        *,
+        timeframe: str = "1D",
+    ) -> pd.DataFrame:
+        instrument_id = InstrumentId.from_str(symbol)
+        return self.load_raw_bars(
+            RawBarRequest(
+                (instrument_id,), start.isoformat(), end.isoformat(), timeframe
+            )
+        )[instrument_id]
+
+    def probe_contract_volume(
+        self,
+        symbol: str,
+        start,
+        end,
+        *,
+        timeframe: str = "1D",
+    ) -> pd.Series:
+        return self.fetch_contract_ohlcv(symbol, start, end, timeframe=timeframe)[
+            "Volume"
+        ]
+
+    def _continuous_root_legs(self, root: str) -> list[DatedContract]:
+        legs = [
+            DatedContract(
+                symbol=instrument.id.value,
+                last_trade=instrument.expiration_utc.date(),
+            )
+            for instrument in self.catalog.instruments(instrument_type=FuturesContract)
+            if instrument.underlying == root
+        ]
+        return sorted(legs, key=lambda leg: leg.last_trade)
+
+    def resolve_continuous(self, root: str) -> ResolvedContinuousRoot:
+        legs = tuple(self._continuous_root_legs(root))
+        if not legs:
+            raise ContinuousRootLegsNotFoundError(
+                f"no dated legs in the catalog for continuous-future root {root!r}"
+            )
+        venues = {InstrumentId.from_str(leg.symbol).venue for leg in legs}
+        if len(venues) != 1:
+            raise ContinuousRootVenueMismatchError(
+                f"continuous-future root {root!r} legs span multiple venues "
+                f"{sorted(venue.value for venue in venues)}; expected one"
+            )
+        return ResolvedContinuousRoot(InstrumentId(Symbol(root), next(iter(venues))), legs)
 
 
 def es_port() -> tuple[FakePort, dict[InstrumentId, list[Bar]]]:

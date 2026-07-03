@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 import pytest
+from aegis_data.distributions import Distribution
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
@@ -54,7 +55,11 @@ def _definition(instrument_id: InstrumentId) -> Instrument:
 @dataclass
 class _RecordingCatalogPort:
     frames: dict[InstrumentId, pd.DataFrame]
+    distribution_events: tuple[Distribution, ...] = ()
     requested_ids: tuple[InstrumentId, ...] = ()
+    distribution_requests: list[tuple[tuple[InstrumentId, ...], str, str]] = field(
+        default_factory=list
+    )
 
     def load_raw_bars(self, request) -> dict[InstrumentId, pd.DataFrame]:
         self.requested_ids = tuple(request.instrument_ids)
@@ -62,6 +67,16 @@ class _RecordingCatalogPort:
 
     def instruments(self, instrument_ids: Sequence[InstrumentId]) -> list[Instrument]:
         return [_definition(instrument_id) for instrument_id in instrument_ids]
+
+    def distributions(
+        self,
+        instrument_ids: Sequence[InstrumentId],
+        *,
+        start: str,
+        end: str,
+    ) -> tuple[Distribution, ...]:
+        self.distribution_requests.append((tuple(instrument_ids), start, end))
+        return self.distribution_events
 
 
 def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_columns() -> None:
@@ -105,6 +120,7 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
     ]
     assert result.metadata.provenance.index_evidence["source"] == "nautilus_catalog"
     assert result.metadata.provenance.provider_metadata == {"source": "nautilus_data_provider_port"}
+    assert result.distributions == ()
 
 
 def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
@@ -185,6 +201,53 @@ def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrume
 
     with pytest.raises(ContinuousRootCollisionError, match="collide with raw instrument ids"):
         load_catalog_source(config, port=port)
+
+
+def test_catalog_adapter_reads_distributions_through_the_port() -> None:
+    aapl = _id("AAPL.NASDAQ")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    distribution = Distribution.from_ex_date(
+        aapl,
+        "2024-01-02",
+        amount=0.42,
+        currency="USD",
+    )
+    port = _RecordingCatalogPort(
+        frames={aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])},
+        distribution_events=(distribution,),
+    )
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="USD",
+        instruments=["AAPL.NASDAQ"],
+        start="2024-01-01",
+        end="2024-01-03",
+    )
+
+    result = load_catalog_source(config, port=port)
+
+    assert result.distributions == (distribution,)
+    assert port.distribution_requests == [((aapl,), "2024-01-01", "2024-01-03")]
+
+
+def test_catalog_adapter_accepts_declared_empty_distributions() -> None:
+    aapl = _id("AAPL.NASDAQ")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    port = _RecordingCatalogPort(
+        frames={aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    )
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="USD",
+        instruments=["AAPL.NASDAQ"],
+        start="2024-01-01",
+        end="2024-01-03",
+    )
+
+    result = load_catalog_source(config, port=port)
+
+    assert result.distributions == ()
+    assert port.distribution_requests == [((aapl,), "2024-01-01", "2024-01-03")]
 
 
 def _id(value: str) -> InstrumentId:

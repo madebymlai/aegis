@@ -122,15 +122,16 @@ flowchart TB
         </article>
 
         <!-- ─────────── 2 · CATALOG PORT ─────────── -->
-        <article id="c2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+        <article id="c2" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
           <div class="flex items-start justify-between gap-4">
             <h2 class="font-serif text-xl">2 · One interface for the Nautilus Catalog port</h2>
             <div class="flex gap-2 shrink-0">
+              <span title="Grilled &amp; shipped 2026-07-03 — beads aegis-rd-nbb9" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-nbb9</span>
               <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium px-3 py-1">Strong</span>
               <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
             </div>
           </div>
-          <p class="font-mono text-sm text-slate-600">aegis-data/aegis_data/catalog.py · catalog_contracts.py · continuous_catalog.py</p>
+          <p class="font-mono text-sm text-slate-600">aegis-data/aegis_data/catalog.py · CatalogBackedDataPort</p>
           <div class="grid md:grid-cols-2 gap-4">
             <div class="rounded-lg border border-slate-200 p-4">
               <p class="modlabel text-slate-500 mb-3">Before — one seam, three modules</p>
@@ -175,6 +176,7 @@ flowchart TB
             <li>Delete one shallow module</li>
           </ul>
           <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">Aligns with ADR-0008 (the fill is one pure fetch port) — this finishes centralising that seam.</div>
+          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Shipped 2026-07-03</span> — implemented as <span class="font-mono text-xs">aegis-rd-nbb9</span>. Grilling expanded the card: distributions, leg OHLCV fetch, volume probing, and continuous-root identity now live behind <span class="font-mono text-xs">CatalogBackedDataPort</span>; <span class="font-mono text-xs">catalog_contracts.py</span> and <span class="font-mono text-xs">continuous_catalog.py</span> were deleted with no shims. The identity fold added <span class="font-mono text-xs">resolve_continuous(root)</span> returning the synthetic id plus expiry-ordered legs, removed the dead RD start/end identity guard, and left actual bar loading to fail loud at the adapter window gate. Acceptance passed with the raw-catalog reach grep clean and <span class="font-mono text-xs">test_continuous_contract_model_live.py</span> green against an IB Gateway on 2026-07-03 (4 green).</div>
         </article>
 
         <!-- ─────────── 3 · RELAYS ─────────── -->

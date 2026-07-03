@@ -11,7 +11,7 @@ from aegis_data.catalog import (
     catalog_data_port,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
-from aegis_data.distributions import Distribution, query_distribution_data
+from aegis_data.distributions import Distribution
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 
@@ -103,10 +103,7 @@ def _distribution_data(
     start: str,
     end: str,
 ) -> tuple[Distribution, ...]:
-    catalog = getattr(data_port, "catalog", None)
-    if catalog is None:
-        return ()
-    return query_distribution_data(catalog, instrument_ids, start=start, end=end)
+    return data_port.distributions(instrument_ids, start=start, end=end)
 
 
 def _continuous_frames(

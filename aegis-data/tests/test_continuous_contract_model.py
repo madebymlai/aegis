@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
@@ -11,11 +11,16 @@ from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import continuous_bar_type, raw_bar_type
-from aegis_data.catalog_contracts import catalog_volume_probe
-from aegis_data.continuous_catalog import continuous_root_legs
+from aegis_data.catalog import (
+    ContinuousRootLegsNotFoundError,
+    ContinuousRootVenueMismatchError,
+)
+from aegis_data.chain import fetch_contract_chain
 from aegis_data.continuous_contract_model import ContinuousContractModel
+from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE, continuous_future
 from aegis_data.liquidity import liquid_cycle_causal
-from tests.test_continuous_catalog import (
+from tests.support.continuous_oracle import backward_series
+from tests.support.catalog_fakes import (
     _END,
     _START,
     _FakeCatalog,
@@ -29,6 +34,7 @@ _ES_XCME = InstrumentId.from_str("ES.XCME")
 _ESH4 = InstrumentId.from_str("ESH4.XCME")
 _ESM4 = InstrumentId.from_str("ESM4.XCME")
 _ESU4 = InstrumentId.from_str("ESU4.XCME")
+_RAW_SCALE = 10**16
 
 
 def _lead_frame(
@@ -116,14 +122,48 @@ def _expected_ohlcv_row(
 
 
 def _causal_front(port: _FakePort, root: str, as_of: date) -> InstrumentId:
-    candidates = continuous_root_legs(port.catalog, root, _START, as_of.isoformat())
-    probe = catalog_volume_probe(port, timeframe="1D")
+    candidates = port.resolve_continuous(root).legs
     volume_by_symbol = {
-        leg.symbol: probe(leg.symbol, pd.Timestamp(_START).date(), as_of)
+        leg.symbol: port.probe_contract_volume(
+            leg.symbol, pd.Timestamp(_START).date(), as_of
+        )
         for leg in candidates
     }
     cycle = liquid_cycle_causal(candidates, volume_by_symbol, as_of, roll_lead_days=5)
     return InstrumentId.from_str(cycle[-1].symbol)
+
+
+def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None:
+    port, native = _es_port()
+
+    chain = fetch_contract_chain(
+        "ES",
+        date(2024, 1, 15),
+        date(2024, 5, 31),
+        list_contracts=lambda *_args: port.resolve_continuous("ES").legs,
+        fetch=port.fetch_contract_ohlcv,
+        bar_cadence=timedelta(days=1),
+        probe_volume=port.probe_contract_volume,
+    )
+    future = continuous_future(chain, InstrumentId.from_str("ES.XCME"))
+    oracle = backward_series(native, future.transitions, mode=DEFAULT_ADJUSTMENT_MODE)
+
+    model = ContinuousContractModel(port, "ES", start=_START, timeframe="1D")
+    model.materialize(end=_END)
+
+    assert model.continuous_id == InstrumentId.from_str("ES.XCME")
+    frame = model.frame
+    assert list(frame.columns) == ["Open", "High", "Low", "Close", "Volume"]
+    assert frame.index.is_monotonic_increasing and not frame.index.has_duplicates
+
+    head = oracle[: len(frame)]
+    assert frame["Close"].tolist() == pytest.approx(
+        [bar.close_raw / _RAW_SCALE for bar in head]
+    )
+    assert frame["Open"].tolist() == pytest.approx(
+        [bar.open_raw / _RAW_SCALE for bar in head]
+    )
+    assert frame["Open"].iloc[0] != pytest.approx(99.5)
 
 
 def _materialized_two_roll_model() -> ContinuousContractModel:
@@ -326,3 +366,30 @@ def test_materialize_leaves_existing_live_cache_raw_leg_bars_in_place() -> None:
     model.materialize(end=_END)
 
     assert live_cache.bar_count(raw_bar_type(_ESH4, "1D")) == 1
+
+
+def test_continuous_contract_model_rejects_legs_across_venues() -> None:
+    catalog = _FakeCatalog(
+        instruments=[
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("ESM4.XEUR", "2024-06-21"),
+        ],
+        bars={},
+    )
+    port = _FakePort(catalog, {})
+    model = ContinuousContractModel(port, "ES", start=_START)
+
+    with pytest.raises(ContinuousRootVenueMismatchError, match="span multiple venues"):
+        model.materialize(end=_END)
+
+
+def test_continuous_contract_model_rejects_a_root_with_no_legs() -> None:
+    catalog = _FakeCatalog(
+        instruments=[_future("CLF4.NYMEX", "2024-01-22", underlying="CL")],
+        bars={},
+    )
+    port = _FakePort(catalog, {})
+    model = ContinuousContractModel(port, "ES", start=_START)
+
+    with pytest.raises(ContinuousRootLegsNotFoundError, match="no dated legs"):
+        model.materialize(end=_END)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -12,11 +13,16 @@ from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogCoverageGapError,
+    ContinuousRootLegsNotFoundError,
+    ContinuousRootVenueMismatchError,
     RawBarRequest,
     catalog_data_port,
     catalog_root,
     raw_bar_type,
 )
+from aegis_data.distributions import Distribution, write_distribution_data
+from aegis_data.roll import DatedContract
+from tests.support.catalog_fakes import _FakeCatalog, _bars, _future
 
 
 def _bar(bar_type: BarType, day: str, close: float) -> Bar:
@@ -299,3 +305,143 @@ def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Pa
                 end="2024-01-02",
             )
         )
+
+
+def test_catalog_port_reads_distribution_events_from_catalog(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("AAPL.NASDAQ")
+    distribution = Distribution.from_ex_date(
+        instrument_id,
+        "2024-01-15",
+        amount=0.42,
+        currency="USD",
+    )
+    write_distribution_data(catalog, [distribution])
+    port = CatalogBackedDataPort(catalog)
+
+    events = port.distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-31",
+    )
+
+    assert [(event.instrument_id, event.ex_date, event.amount) for event in events] == [
+        (instrument_id, distribution.ex_date, pytest.approx(0.42))
+    ]
+
+
+def test_catalog_port_lists_a_roots_dated_legs_from_catalog_definitions() -> None:
+    catalog = _FakeCatalog(
+        [
+            _future("ESM4.XCME", "2024-06-21"),
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("CLF4.NYMEX", "2024-01-22", underlying="CL"),
+        ],
+        bars={},
+    )
+    port = CatalogBackedDataPort(catalog)
+
+    legs = port.resolve_continuous("ES").legs
+
+    assert legs == (
+        DatedContract("ESH4.XCME", date(2024, 3, 15)),
+        DatedContract("ESM4.XCME", date(2024, 6, 21)),
+    )
+
+
+def test_catalog_port_resolves_continuous_root_to_id_and_legs() -> None:
+    catalog = _FakeCatalog(
+        [
+            _future("ESM4.XCME", "2024-06-21"),
+            _future("ESH4.XCME", "2024-03-15"),
+        ],
+        bars={},
+    )
+    port = CatalogBackedDataPort(catalog)
+
+    resolved = port.resolve_continuous("ES")
+
+    assert resolved.instrument_id == _id("ES.XCME")
+    assert resolved.legs == (
+        DatedContract("ESH4.XCME", date(2024, 3, 15)),
+        DatedContract("ESM4.XCME", date(2024, 6, 21)),
+    )
+
+
+def test_catalog_port_rejects_continuous_root_legs_across_venues() -> None:
+    catalog = _FakeCatalog(
+        [
+            _future("ESH4.XCME", "2024-03-15"),
+            _future("ESM4.XEUR", "2024-06-21"),
+        ],
+        bars={},
+    )
+    port = CatalogBackedDataPort(catalog)
+
+    with pytest.raises(ContinuousRootVenueMismatchError, match="span multiple venues"):
+        port.resolve_continuous("ES")
+
+
+def test_catalog_port_rejects_continuous_root_with_no_legs() -> None:
+    catalog = _FakeCatalog(
+        [_future("CLF4.NYMEX", "2024-01-22", underlying="CL")],
+        bars={},
+    )
+    port = CatalogBackedDataPort(catalog)
+
+    with pytest.raises(ContinuousRootLegsNotFoundError, match="no dated legs"):
+        port.resolve_continuous("ES")
+
+
+def test_catalog_port_fetches_a_legs_ohlcv_over_its_window() -> None:
+    instrument_id = _id("ESH4.XCME")
+    frame = pd.DataFrame(
+        {
+            "Open": [100.0, 101.0],
+            "High": [101.0, 102.0],
+            "Low": [99.0, 100.0],
+            "Close": [100.0, 101.0],
+            "Volume": [1000.0, 1000.0],
+        },
+        index=pd.DatetimeIndex(["2024-01-02 21:00:00", "2024-01-03 21:00:00"]),
+    )
+    bars = _bars(instrument_id, frame)
+    catalog = _FakeCatalog(
+        [_future("ESH4.XCME", "2024-03-15")],
+        bars={str(raw_bar_type(instrument_id, "1D")): bars},
+    )
+    port = CatalogBackedDataPort(catalog)
+
+    result = port.fetch_contract_ohlcv(
+        "ESH4.XCME", date(2024, 1, 1), date(2024, 3, 1)
+    )
+
+    pd.testing.assert_frame_equal(result, frame)
+
+
+def test_catalog_port_probes_a_legs_daily_volume() -> None:
+    instrument_id = _id("ESH4.XCME")
+    frame = pd.DataFrame(
+        {
+            "Open": [100.0, 101.0],
+            "High": [101.0, 102.0],
+            "Low": [99.0, 100.0],
+            "Close": [100.0, 101.0],
+            "Volume": [1000.0, 1100.0],
+        },
+        index=pd.DatetimeIndex(["2024-01-02 21:00:00", "2024-01-03 21:00:00"]),
+    )
+    bars = _bars(instrument_id, frame)
+    catalog = _FakeCatalog(
+        [_future("ESH4.XCME", "2024-03-15")],
+        bars={str(raw_bar_type(instrument_id, "1D")): bars},
+    )
+    port = CatalogBackedDataPort(catalog)
+
+    volume = port.probe_contract_volume(
+        "ESH4.XCME", date(2024, 1, 1), date(2024, 3, 1)
+    )
+
+    pd.testing.assert_series_equal(volume, frame["Volume"])

@@ -28,7 +28,6 @@ OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
 # Full VBT feature names are source-specific and discovered from native_data.features.
 DATA_ARRAY_SHORTCUTS = {"OHLCV": OHLCV_ARRAYS}
-_DATA_WINDOW_REQUIRED_FIELDS = ("start", "end", "timeframe")
 
 PORTFOLIO_DIRECTIONS = {"longonly", "shortonly", "both"}
 # For each catalog below the Literal is the field type, the set is the
@@ -143,19 +142,12 @@ class DataConfig:
     def _validate_conditional_requireds(self) -> DataConfig:
         """Cross-field requiredness for the native Nautilus catalog contract."""
         _require_catalog_ids(self)
-        _require_catalog_window(self)
         if self.skip_on_error and "skipped_instrument_ids" not in self.quality.allowed_degradations:
             raise ValueError(
                 "skip_on_error requires data.quality.allowed_degradations "
                 "to include 'skipped_instrument_ids'"
             )
         return self
-
-
-def _require_catalog_window(config: DataConfig) -> None:
-    for field_name in _DATA_WINDOW_REQUIRED_FIELDS:
-        if not getattr(config, field_name):
-            raise ValueError(f"{field_name} is required for catalog data")
 
 
 def _require_catalog_ids(config: DataConfig) -> None:

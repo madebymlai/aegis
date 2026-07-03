@@ -8,13 +8,10 @@ from typing import TypeVar
 import pandas as pd
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.instruments import FuturesContract
 
 from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, RawBarRequest, bars_to_ohlcv
-from aegis_data.catalog_contracts import catalog_contract_fetcher, catalog_volume_probe
 from aegis_data.chain import fetch_contract_chain
-from aegis_data.continuous_catalog import continuous_instrument_id, continuous_root_legs
 from aegis_data.continuous_future import ContinuousFuture, continuous_future
 from aegis_data.continuous_materialize import materialize_continuous_bars
 from aegis_data.liquidity import liquid_roll_schedule
@@ -98,12 +95,12 @@ class ContinuousContractModel:
         """Return the front leg named by the liquidity-timed roll schedule at ``as_of``."""
         start = pd.Timestamp(self._start).date()
         end = pd.Timestamp(as_of).date()
-        candidates = continuous_root_legs(
-            self._port.catalog, self._root, self._start, end.isoformat()
-        )
-        probe = catalog_volume_probe(self._port, timeframe=self._timeframe)
+        candidates = self._port.resolve_continuous(self._root).legs
         volume_by_symbol = {
-            leg.symbol: probe(leg.symbol, start, end) for leg in candidates
+            leg.symbol: self._port.probe_contract_volume(
+                leg.symbol, start, end, timeframe=self._timeframe
+            )
+            for leg in candidates
         }
         schedule = liquid_roll_schedule(
             candidates,
@@ -155,26 +152,29 @@ class ContinuousContractModel:
         )
 
     def _materialize_frame(self, end: str) -> tuple[ContinuousFuture, pd.DataFrame]:
-        catalog = self._port.catalog
-        legs = continuous_root_legs(catalog, self._root, self._start, end)
-        resolved_id = continuous_instrument_id(self._root, legs)
+        resolved = self._port.resolve_continuous(self._root)
+        legs = resolved.legs
         chain = fetch_contract_chain(
             self._root,
             pd.Timestamp(self._start).date(),
             pd.Timestamp(end).date(),
             list_contracts=lambda *_args: legs,
-            fetch=catalog_contract_fetcher(self._port, timeframe=self._timeframe),
+            fetch=lambda symbol, start, end: self._port.fetch_contract_ohlcv(
+                symbol, start, end, timeframe=self._timeframe
+            ),
             bar_cadence=self._bar_cadence,
-            probe_volume=catalog_volume_probe(self._port, timeframe=self._timeframe),
+            probe_volume=lambda symbol, start, end: self._port.probe_contract_volume(
+                symbol, start, end, timeframe=self._timeframe
+            ),
         )
-        future = continuous_future(chain, resolved_id, timeframe=self._timeframe)
+        future = continuous_future(
+            chain, resolved.instrument_id, timeframe=self._timeframe
+        )
         leg_ids = tuple(InstrumentId.from_str(symbol) for symbol in chain.symbols)
         leg_bars = self._port.read_native_bars(
             RawBarRequest(leg_ids, self._start, end, self._timeframe)
         )
-        leg_instruments = catalog.instruments(
-            instrument_type=FuturesContract, instrument_ids=list(chain.symbols)
-        )
+        leg_instruments = self._port.instruments(leg_ids)
         bars = materialize_continuous_bars(
             future,
             leg_instruments=leg_instruments,
