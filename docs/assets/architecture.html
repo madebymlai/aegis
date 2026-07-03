@@ -12,90 +12,134 @@
     -webkit-font-smoothing: antialiased;
   }
   .pkg  { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; }
+  .cmd  { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-weight: 500; }
   .role { font-weight: 400; }
   .lbl  { font-style: italic; }
   .chip { font-weight: 600; }
-  .stage{ font-weight: 700; letter-spacing: .14em; }
+  .stage{ font-weight: 700; letter-spacing: .3em; }
+  .tag  { font-weight: 700; letter-spacing: .16em; }
 </style>
 </head>
 <body>
 <div class="diagram">
 <svg viewBox="0 0 1180 640" width="1180" height="640" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <marker id="arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L7,3 L0,6 Z" fill="#94A3B8"/>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,3 L0,6 L2.2,3 Z" fill="#94A3B8"/>
     </marker>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
-      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#0F172A" flood-opacity="0.08"/>
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#0F172A" flood-opacity="0.05"/>
+      <feDropShadow dx="0" dy="5" stdDeviation="9" flood-color="#0F172A" flood-opacity="0.06"/>
     </filter>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.1" fill="#E2E8F0" fill-opacity="0.7"/>
+    </pattern>
+    <linearGradient id="gData" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#ECFEFF"/>
+    </linearGradient>
+    <linearGradient id="gRd" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#EEF2FF"/>
+    </linearGradient>
+    <linearGradient id="gBundle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F5F3FF"/>
+    </linearGradient>
+    <linearGradient id="gTrader" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#ECFDF5"/>
+    </linearGradient>
+    <linearGradient id="gVenue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F1F5F9"/>
+    </linearGradient>
+    <linearGradient id="gRuntime" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBFCFE"/><stop offset="1" stop-color="#EEF2F6"/>
+    </linearGradient>
   </defs>
 
   <rect x="0" y="0" width="1180" height="640" fill="#ffffff"/>
+  <rect x="0" y="72" width="1180" height="568" fill="url(#dots)"/>
 
   <!-- title -->
-  <text x="590" y="30" text-anchor="middle" class="stage" font-size="12" fill="#94A3B8">AEGIS ARCHITECTURE</text>
-  <text x="590" y="54" text-anchor="middle" font-size="17" fill="#475569">One pipeline, from research hypothesis to live execution</text>
+  <text x="590" y="32" text-anchor="middle" class="stage" font-size="11" fill="#94A3B8">AEGIS ARCHITECTURE</text>
+  <text x="590" y="57" text-anchor="middle" font-size="19" font-weight="600" fill="#334155">One pipeline, from research hypothesis to live execution</text>
 
-  <!-- ===== arrows (drawn first, under cards) ===== -->
+  <!-- ===== research / execution boundary (under everything) ===== -->
+  <path d="M330 287 L482 287" fill="none" stroke="#E2E8F0" stroke-width="1.5" stroke-dasharray="2 7" stroke-linecap="round"/>
+  <path d="M698 287 L1040 287" fill="none" stroke="#E2E8F0" stroke-width="1.5" stroke-dasharray="2 7" stroke-linecap="round"/>
+  <text x="1054" y="282" class="tag" font-size="9.5" fill="#94A3B8">RESEARCH</text>
+  <text x="1054" y="300" class="tag" font-size="9.5" fill="#94A3B8">EXECUTION</text>
+
+  <!-- ===== arrows (drawn under cards) ===== -->
   <!-- data -> rd -->
-  <path d="M296 214 C 360 214 378 150 428 142" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
-  <text x="350" y="150" text-anchor="middle" class="lbl" font-size="12.5" fill="#64748B">bars</text>
+  <path d="M296 206 C 352 206 368 150 423 148" fill="none" stroke="#94A3B8" stroke-width="1.75" stroke-linecap="round" marker-end="url(#arrow)"/>
   <!-- data -> trader -->
-  <path d="M296 300 C 360 300 378 424 428 432" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
-  <text x="350" y="384" text-anchor="middle" class="lbl" font-size="12.5" fill="#64748B">bars</text>
+  <path d="M296 308 C 352 308 368 434 423 436" fill="none" stroke="#94A3B8" stroke-width="1.75" stroke-linecap="round" marker-end="url(#arrow)"/>
   <!-- rd -> bundle -->
-  <path d="M590 224 L 590 258" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
-  <text x="600" y="247" class="lbl" font-size="12.5" fill="#64748B">aerd export</text>
+  <path d="M590 230 L 590 251" fill="none" stroke="#94A3B8" stroke-width="1.75" stroke-linecap="round" marker-end="url(#arrow)"/>
   <!-- bundle -> trader -->
-  <path d="M590 316 L 590 356" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
-  <text x="600" y="341" class="lbl" font-size="12.5" fill="#64748B">install</text>
+  <path d="M590 322 L 590 352" fill="none" stroke="#94A3B8" stroke-width="1.75" stroke-linecap="round" marker-end="url(#arrow)"/>
   <!-- trader -> venues -->
-  <path d="M750 438 L 880 446" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
-  <text x="795" y="430" class="lbl" font-size="12.5" fill="#64748B">orders</text>
-  <!-- support ticks onto runtime -->
-  <path d="M520 556 l 7 -11 l 7 11 Z" fill="#CBD5E1"/>
-  <path d="M654 556 l 7 -11 l 7 11 Z" fill="#CBD5E1"/>
+  <path d="M754 440 L 876 440" fill="none" stroke="#94A3B8" stroke-width="1.75" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+  <!-- arrow labels -->
+  <g>
+    <rect x="339" y="168" width="44" height="20" rx="10" fill="#ffffff" stroke="#E2E8F0"/>
+    <text x="361" y="182" text-anchor="middle" class="lbl" font-size="11.5" fill="#64748B">bars</text>
+    <rect x="339" y="361" width="44" height="20" rx="10" fill="#ffffff" stroke="#E2E8F0"/>
+    <text x="361" y="375" text-anchor="middle" class="lbl" font-size="11.5" fill="#64748B">bars</text>
+    <rect x="600" y="230" width="96" height="20" rx="10" fill="#ffffff" stroke="#E2E8F0"/>
+    <text x="648" y="244" text-anchor="middle" class="cmd" font-size="11" fill="#64748B">aerd export</text>
+    <rect x="600" y="326" width="66" height="20" rx="10" fill="#ffffff" stroke="#E2E8F0"/>
+    <text x="633" y="340" text-anchor="middle" class="cmd" font-size="11" fill="#64748B">install</text>
+    <rect x="786" y="410" width="58" height="20" rx="10" fill="#ffffff" stroke="#E2E8F0"/>
+    <text x="815" y="424" text-anchor="middle" class="lbl" font-size="11.5" fill="#64748B">orders</text>
+  </g>
+
+  <!-- support connectors onto runtime -->
+  <path d="M530 517 L530 551" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="3 4" stroke-linecap="round"/>
+  <path d="M650 517 L650 551" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="3 4" stroke-linecap="round"/>
 
   <!-- ===== aegis-data ===== -->
   <g filter="url(#shadow)">
-    <rect x="44" y="150" width="252" height="214" rx="18" fill="#ECFEFF" stroke="#A5F3FC" stroke-width="1.5"/>
+    <rect x="44" y="150" width="252" height="214" rx="16" fill="url(#gData)" stroke="#A5F3FC" stroke-width="1.5"/>
   </g>
-  <text x="64" y="188" class="pkg" font-size="19" fill="#0E7490">aegis-data</text>
-  <text x="64" y="212" class="role" font-size="14" fill="#475569">Market-data corpus</text>
+  <rect x="66" y="173" width="12" height="12" rx="3.5" fill="#06B6D4"/>
+  <text x="86" y="184" class="pkg" font-size="18" fill="#0E7490">aegis-data</text>
+  <text x="66" y="211" class="role" font-size="13" fill="#475569">Market-data corpus</text>
   <g font-size="12.5" class="chip">
-    <rect x="64" y="238" width="196" height="27" rx="13" fill="#CFFAFE"/>
-    <text x="76" y="256" fill="#0E7490">Nautilus catalog</text>
-    <rect x="64" y="274" width="196" height="27" rx="13" fill="#CFFAFE"/>
-    <text x="76" y="292" fill="#0E7490">InstrumentId keyed</text>
-    <rect x="64" y="310" width="196" height="27" rx="13" fill="#CFFAFE"/>
-    <text x="76" y="328" fill="#0E7490">roll-adjusted futures</text>
+    <rect x="66" y="238" width="196" height="27" rx="13" fill="#CFFAFE"/>
+    <text x="78" y="256" fill="#0E7490">Nautilus catalog</text>
+    <rect x="66" y="274" width="196" height="27" rx="13" fill="#CFFAFE"/>
+    <text x="78" y="292" fill="#0E7490">InstrumentId keyed</text>
+    <rect x="66" y="310" width="196" height="27" rx="13" fill="#CFFAFE"/>
+    <text x="78" y="328" fill="#0E7490">roll-adjusted futures</text>
   </g>
 
   <!-- ===== aegis-rd ===== -->
   <g filter="url(#shadow)">
-    <rect x="430" y="72" width="320" height="152" rx="18" fill="#EEF2FF" stroke="#C7D2FE" stroke-width="1.5"/>
+    <rect x="430" y="72" width="320" height="152" rx="16" fill="url(#gRd)" stroke="#C7D2FE" stroke-width="1.5"/>
   </g>
-  <text x="452" y="112" class="pkg" font-size="19" fill="#4338CA">aegis-rd</text>
-  <text x="452" y="136" class="role" font-size="14" fill="#475569">Research operating system</text>
+  <rect x="452" y="96" width="12" height="12" rx="3.5" fill="#6366F1"/>
+  <text x="472" y="107" class="pkg" font-size="18" fill="#4338CA">aegis-rd</text>
+  <text x="452" y="134" class="role" font-size="13" fill="#475569">Research operating system</text>
   <g font-size="12.5" class="chip">
-    <rect x="452" y="164" width="276" height="27" rx="13" fill="#E0E7FF"/>
-    <text x="464" y="182" fill="#4338CA">optimize · score · validate</text>
+    <rect x="452" y="156" width="276" height="27" rx="13" fill="#E0E7FF"/>
+    <text x="464" y="174" fill="#4338CA">optimize · score · validate</text>
   </g>
-  <text x="452" y="212" class="lbl" font-size="12.5" fill="#6366F1">promotes a scored Candidate as a Lock</text>
+  <text x="452" y="206" class="lbl" font-size="12.5" fill="#6366F1">promotes a scored Candidate as a Lock</text>
 
   <!-- ===== Execution Bundle ===== -->
   <g filter="url(#shadow)">
-    <rect x="490" y="258" width="200" height="58" rx="29" fill="#F5F3FF" stroke="#DDD6FE" stroke-width="1.5"/>
+    <rect x="490" y="258" width="200" height="58" rx="29" fill="url(#gBundle)" stroke="#C4B5FD" stroke-width="1.5"/>
   </g>
-  <text x="590" y="284" text-anchor="middle" font-size="15" font-weight="700" fill="#6D28D9">Execution Bundle</text>
-  <text x="590" y="302" text-anchor="middle" font-size="11.5" fill="#8B7EC8">baked wheel · locked params</text>
+  <text x="590" y="283" text-anchor="middle" font-size="15" font-weight="700" fill="#6D28D9">Execution Bundle</text>
+  <text x="590" y="301" text-anchor="middle" font-size="11.5" fill="#64748B">baked wheel · locked params</text>
 
   <!-- ===== aegis-trader ===== -->
   <g filter="url(#shadow)">
-    <rect x="430" y="360" width="320" height="152" rx="18" fill="#ECFDF5" stroke="#A7F3D0" stroke-width="1.5"/>
+    <rect x="430" y="360" width="320" height="152" rx="16" fill="url(#gTrader)" stroke="#A7F3D0" stroke-width="1.5"/>
   </g>
-  <text x="452" y="400" class="pkg" font-size="19" fill="#047857">aegis-trader</text>
-  <text x="452" y="424" class="role" font-size="14" fill="#475569">Live + backtest execution</text>
+  <rect x="452" y="384" width="12" height="12" rx="3.5" fill="#10B981"/>
+  <text x="472" y="395" class="pkg" font-size="18" fill="#047857">aegis-trader</text>
+  <text x="452" y="422" class="role" font-size="13" fill="#475569">Live + backtest execution</text>
   <g font-size="12.5" class="chip">
     <rect x="452" y="450" width="276" height="27" rx="13" fill="#D1FAE5"/>
     <text x="464" y="468" fill="#047857">commingled book · sleeves · roll</text>
@@ -103,22 +147,23 @@
 
   <!-- ===== venues ===== -->
   <g filter="url(#shadow)">
-    <rect x="884" y="384" width="208" height="122" rx="18" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.5"/>
+    <rect x="884" y="384" width="208" height="122" rx="16" fill="url(#gVenue)" stroke="#E2E8F0" stroke-width="1.5"/>
   </g>
-  <text x="904" y="420" font-size="15" font-weight="700" fill="#334155">Interactive Brokers</text>
-  <text x="904" y="443" class="role" font-size="13" fill="#475569">paper / live venue</text>
-  <text x="904" y="463" class="lbl" font-size="12" fill="#64748B">the gateway port decides</text>
+  <text x="904" y="417" font-size="15" font-weight="700" fill="#334155">Interactive Brokers</text>
+  <text x="904" y="439" class="role" font-size="13" fill="#475569">paper / live venue</text>
+  <text x="904" y="459" class="lbl" font-size="12" fill="#64748B">the gateway port decides</text>
   <g font-size="12" class="chip">
-    <rect x="904" y="474" width="168" height="24" rx="12" fill="#E2E8F0"/>
-    <text x="915" y="491" fill="#334155">or the backtest engine</text>
+    <rect x="904" y="471" width="168" height="24" rx="12" fill="#E2E8F0"/>
+    <text x="916" y="488" fill="#334155">or the backtest engine</text>
   </g>
 
   <!-- ===== aegis-runtime (foundation) ===== -->
   <g filter="url(#shadow)">
-    <rect x="44" y="556" width="1048" height="66" rx="16" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.5"/>
+    <rect x="44" y="556" width="1048" height="66" rx="16" fill="url(#gRuntime)" stroke="#CBD5E1" stroke-width="1.5"/>
   </g>
-  <text x="72" y="585" class="pkg" font-size="17" fill="#334155">aegis-runtime</text>
-  <text x="72" y="606" class="role" font-size="12.5" fill="#64748B">shared execution kernel · both stages run one Locked Candidate here</text>
+  <rect x="66" y="574" width="12" height="12" rx="3.5" fill="#64748B"/>
+  <text x="86" y="585" class="pkg" font-size="17" fill="#334155">aegis-runtime</text>
+  <text x="86" y="607" class="role" font-size="12.5" fill="#64748B">shared execution kernel · both stages run one Locked Candidate here</text>
   <g font-size="12" class="chip">
     <rect x="596" y="576" width="150" height="26" rx="13" fill="#E2E8F0"/>
     <text x="608" y="593" fill="#334155">component loading</text>
