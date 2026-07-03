@@ -114,11 +114,18 @@ class LockedExecutionPlan:
                 raise ValueError(
                     "LockedExecutionPlan.instrument_bands values must be DriftBand values"
                 )
+        # An illegal caps triple fails here — at plan construction (bundle load) —
+        # not on the first weight computation.
+        object.__setattr__(
+            self,
+            "_exposure_limits",
+            ExposureLimits(self.gross_cap, self.net_cap, self.direction),
+        )
 
     @property
     def exposure_limits(self) -> ExposureLimits:
-        """This plan's validated Exposure Limits, built from the locked triple."""
-        return ExposureLimits(self.gross_cap, self.net_cap, self.direction)
+        """This plan's validated Exposure Limits, built once from the locked triple."""
+        return self._exposure_limits
 
 
 @dataclass(frozen=True)

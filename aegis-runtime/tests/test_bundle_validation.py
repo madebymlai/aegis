@@ -4,11 +4,15 @@ import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.bundle import (
+    ComponentSpec,
     DataContract,
+    LockedExecutionPlan,
     MarketDataBundle,
     _assert_latest_row_not_nan,
     _validate_market_data,
 )
+from aegis_runtime.drift_band import DriftBand
+from aegis_runtime.exposure_validation import InvalidExposureLimits
 
 
 def _index(n: int) -> pd.DatetimeIndex:
@@ -36,6 +40,25 @@ def _close(instrument_ids: tuple[InstrumentId, ...] = (_id("A.XNAS"), _id("B.XNA
     return MarketDataBundle(
         {"Close": pd.DataFrame({item: [1.0] * n for item in instrument_ids}, index=idx)}
     )
+
+
+# --- LockedExecutionPlan caps validation ---------------------------------------
+
+def test_locked_execution_plan_rejects_illegal_caps_at_construction() -> None:
+    # An illegal triple must fail when the plan is built (bundle load), not on the
+    # first weight computation.
+    with pytest.raises(InvalidExposureLimits, match="gross_cap must be > 0"):
+        LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy", component_id="s", module="m",
+                input_names=(), output_names=(), params={},
+            ),
+            indicators=(),
+            instrument_bands={_id("A.XNAS"): DriftBand.symmetric(0.0)},
+            gross_cap=0.0,
+            net_cap=None,
+            direction="both",
+        )
 
 
 # --- _validate_market_data ---------------------------------------------------
