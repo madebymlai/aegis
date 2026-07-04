@@ -2,15 +2,20 @@ name: demeter_eu_credit_carry_sota
 schema_version: 10
 output_dir: runs/demeter_eu/credit_carry_sota
 
-# Pinned winner of the live-mechanics re-sweep (role: best) for execution-bundle export:
-# defensive 1.0 / fx_weight 0.15 / carry_gain 2.0 — SDHY+LQDH+15% IEML under the drift
-# band. Held-out vs the fx=0 cell: utility tie (+0.0097 vs +0.0098), tail budget clearly
-# shallower (-9.6 vs -11.2%/yr), maxDD 6.02 vs 7.08, at ~0.3%/yr less income — the tie
-# breaks to the shallower tail per the pole's own gate. NOTE the EM leg is viable ONLY
-# under the band: on the unbanded daily-rebalanced book it was utility-negative at every
-# weight (see graveyard + runs/demeter/2026-07-03). Bands + fixed_fee also make the book
-# live-tradable: ~3 trades/yr vs 254 (order minimums alone would have eaten 3-6%/yr).
-lock: 20260703T183523549479Z_demeter_eu_credit_carry_sota
+# Pinned FLOOR-PARTNER cell (role: best) for execution-bundle export and the floor's carry
+# pole: defensive 1.0 / fx_weight 0.0 / carry_gain 0.0 - SDHY + LQDH, no EM leg, no spread
+# lean. RE-PINNED 2026-07-04 (P2 floor re-verification, GH #78). At the floor's MONTHLY
+# horizon this cell STRICTLY DOMINATES the prior champion (def1/fx0.15/cg2) on every book
+# metric AND on standalone income: income +5.40 vs +3.83%/yr, blend Sharpe +1.67 vs +1.62,
+# maxDD -5.1 vs -5.5%, monthly corr-to-trend +0.050 vs +0.081, allocator delta_theta -0.0115
+# vs -0.0136 (both fast-crash-limited; ex-Mar-2020 +0.0117 vs +0.0081). The spread lean
+# (carry_gain) and the EM leg (fx_weight) that won the STANDALONE-income re-sweep are
+# net-negative FOR THE PAIRING - the 2026-07-03 lock's standalone tail-budget tie-break
+# optimized the wrong objective. The composite floor-contribution ranker is not yet a
+# registered sweep metric, so the cell is pinned directly in strategy.params below (the
+# param_space grid collapses to it) rather than re-crowned by aerd. See
+# runs/demeter/2026-07-04 and [[the-tiered-strategy-roster]].
+lock: 20260704T170256351625Z_demeter_eu_credit_carry_sota
 
 
 # THE CONSTRUCTION SWEEP from [[the-ucits-constrained-carry-sleeve]] — the research-backed
@@ -51,9 +56,12 @@ indicators:
     vol_window: 63
 
 strategy:
-  id: demeter.carry_mix   # defensive x fx_weight x carry_gain swept via param_space; vol_target pinned 0.10
+  id: demeter.carry_mix   # param_space grid COLLAPSED to the pinned floor-partner cell (below); vol_target pinned 0.10
   params:
-    at1_weight: 0.0       # v1.1.0 axis pinned OFF here — swept separately in carry_sota_at1.yaml
+    at1_weight: 0.0       # v1.1.0 axis pinned OFF here - swept separately in carry_sota_at1.yaml
+    defensive: 1.0        # short-duration HY bucket (SDHY replaces broad IHYU)
+    fx_weight: 0.0        # EM local-currency leg DROPPED - net-negative for the pairing (P2, 2026-07-04)
+    carry_gain: 0.0       # spread-richness lean DROPPED - lowers income AND hurts the book (P2, 2026-07-04)
 
 portfolio:
   gross_cap: 1.0
